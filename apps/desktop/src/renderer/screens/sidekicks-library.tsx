@@ -4,8 +4,9 @@ import { SidebarSearch } from '../components/sidebar-search';
 import { desktopBridge } from '../lib/platform';
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
+import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { EmptyState, InlineError, OpeningState } from '../components/primitives';
 
 export function SidekicksLibraryScreen(): React.JSX.Element {
@@ -40,9 +41,9 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
 
 /** Retained main-window links hand library navigation to its dedicated window. */
 export function SidekicksWindowRedirect(): React.JSX.Element {
-  const navigate = useNavigate();
+  const openFirstWorkstream = useOpenFirstWorkstream();
   useEffect(() => {
-    void desktopBridge().openSidekicks().then(() => navigate('/workstreams/new', { replace: true }));
-  }, [navigate]);
+    void desktopBridge().openSidekicks().then(() => openFirstWorkstream());
+  }, [openFirstWorkstream]);
   return <OpeningState label="Opening Sidekicks…" />;
 }

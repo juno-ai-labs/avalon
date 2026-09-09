@@ -2,6 +2,7 @@ import { AccountProfileEditor } from '../lib/account-profile-editor';
 import { settings } from '../settings/registry';
 import { SettingLabel } from '../settings/setting-label';
 import { MemberPresentationContext } from '../lib/member-presentation';
+import { WORKSTREAM_LANDING_ROUTE } from '../lib/workstream-landing';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useMemo, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Search, X } from 'lucide-react';
@@ -205,7 +206,9 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   if (state.stage === 'complete') return <>{children}</>;
   const finishOnboarding = async (): Promise<void> => {
     await advance('complete');
-    window.location.hash = '/workstreams/new';
+    // A creator's workspace is empty and lands on the composer anyway; a
+    // member joining one that already has work streams enters the first.
+    window.location.hash = WORKSTREAM_LANDING_ROUTE;
   };
   if (state.stage === 'profile') return <OnboardingPage title="This is you in Rally" subtitle="Your team will see your avatar and color. They follow you across devices."><PersonalSetup onSaved={() => state.path === 'creator' ? advance('people') : finishOnboarding()} /></OnboardingPage>;
   const changeConnectorPage = (scope: 'workspace' | 'you'): void => {
