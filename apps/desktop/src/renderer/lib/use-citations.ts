@@ -217,7 +217,7 @@ export function useCitations({ loadResourceContent, onOpenPreview, onOpenResourc
 
   const attachmentPreview = useCallback((resourceId: string, returnFocus: HTMLElement): AttachmentPreview | undefined => {
     const entry = local.get(resourceId);
-    if (!entry) return undefined;
+    if (!entry || entry.citation.resourceType === 'generated_site') return undefined;
     return {
       name: entry.citation.title,
       ...(entry.citation.mimeType ? { mimeType: entry.citation.mimeType } : {}),
@@ -229,7 +229,7 @@ export function useCitations({ loadResourceContent, onOpenPreview, onOpenResourc
     };
   }, [loadResourceContent, local, onOpenResourceDetails]);
 
-  const openPreview = useCallback((resourceId: string, returnFocus: HTMLElement, resourceIds?: readonly string[]): void => {
+  const openPreview = useCallback((resourceId: string, returnFocus: HTMLElement, resourceIds?: readonly string[], selectedIndex?: number): void => {
     const entry = local.get(resourceId);
     if (!entry) return;
     if (entry.citation.resourceType === 'generated_site') {
@@ -242,17 +242,20 @@ export function useCitations({ loadResourceContent, onOpenPreview, onOpenResourc
       const preview = attachmentPreview(id, returnFocus);
       return preview ? [{ id, preview }] : [];
     });
-    const galleryIndex = members?.findIndex(({ id }) => id === resourceId) ?? -1;
+    const galleryIndex = selectedIndex !== undefined && members?.[selectedIndex]?.id === resourceId ? selectedIndex : members?.findIndex(({ id }) => id === resourceId) ?? -1;
     onOpenPreview(members && galleryIndex >= 0 ? {
       ...selected, gallery: members.map(({ preview }) => preview), galleryIndex,
     } : selected);
   }, [attachmentPreview, local, onOpenPreview, onOpenResourceDetails]);
 
+  const currentContent = useRef({ local, loadResourceContent });
+  useEffect(() => { currentContent.current = { local, loadResourceContent }; }, [local, loadResourceContent]);
   const loadContent = useCallback(async (resourceId: string, signal?: AbortSignal): Promise<Blob> => {
-    const entry = local.get(resourceId);
-    if (!entry?.contentAvailable || !loadResourceContent) throw new Error('This resource has no preview available.');
-    return loadResourceContent(entry.citation.id, signal);
-  }, [loadResourceContent, local]);
+    const current = currentContent.current;
+    const entry = current.local.get(resourceId);
+    if (!entry?.contentAvailable || !current.loadResourceContent || entry.citation.resourceType === 'generated_site') throw new Error('This resource has no preview available.');
+    return current.loadResourceContent(entry.citation.id, signal);
+  }, []);
 
   const open = useCallback((target: CitationTarget): void => {
     if (target.scheme === 'external') {

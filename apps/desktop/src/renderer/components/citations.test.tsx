@@ -94,15 +94,15 @@ describe('resource citations', () => {
     const view = render(<MarkdownBody citations={citations} streaming>{first}</MarkdownBody>);
     view.rerender(<MarkdownBody citations={citations} streaming>{source}</MarkdownBody>);
     expect(document.querySelectorAll('.citation-card-row')).toHaveLength(1);
-    expect(document.querySelectorAll('.message-attachment-images .citation-card')).toHaveLength(4);
+    expect(document.querySelectorAll('.message-attachment-image-cell .citation-card')).toHaveLength(4);
     const overflow = screen.getByRole('button', { name: 'Open three.png' });
     fireEvent.click(overflow);
-    expect(openPreview).toHaveBeenCalledWith('three', overflow, ['one', 'two', 'three', 'four']);
+    expect(openPreview).toHaveBeenCalledWith('three', overflow, ['one', 'two', 'three', 'four'], 2);
     const before = document.querySelector('.citation-card-row')!.textContent;
     view.rerender(<MarkdownBody citations={citations}>{source}</MarkdownBody>);
     expect(document.querySelector('.citation-card-row')!.textContent).toBe(before);
-    expect(document.querySelectorAll('.message-attachment-images .citation-card')).toHaveLength(4);
-    expect(document.querySelector('.citation-card-row')!.lastElementChild).toHaveTextContent('Notes');
+    expect(document.querySelectorAll('.message-attachment-image-cell .citation-card')).toHaveLength(4);
+    expect(document.querySelector('.citation-card-row')!.children[1]).toHaveTextContent('Notes');
   });
 
   it('keeps every image title in an exported still instead of hiding it behind a gallery count', () => {
