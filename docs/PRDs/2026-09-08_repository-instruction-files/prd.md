@@ -242,6 +242,28 @@ the file contents it reads today.
 
 ## Decision log
 
+### 2026-09-09 — The section bound measures the emitted section, and the probe trailer is keyed by a nonce
+
+**Decided:** `MAX_RESIDENT_CONTEXT_SECTION_BYTES` bounds the whole section a
+kind emits (heading, preamble, separators, admitted blocks, and the omission
+notice), not the sum of the admitted block bodies. Blocks are dropped from the
+leaf end until the section fits; the omitted ones are named one per line when
+that fits and counted on one line otherwise. The heading, preamble, and
+counting line are the floor the bound has to sit above. Separately, the probe's
+trailer starts with a marker minted per invocation rather than the fixed string
+decision 1 implied, and the parser matches only the value it was handed.
+
+**Why:** Review of the implementing pull request found that decision 9's
+wording, admitting blocks "until the next one would exceed the bound" with a
+fixed line per omission, left the fixed text and every omission line outside
+the count, so the emitted section could exceed the bound without limit. It also
+found that a fixed marker searched for anywhere in stdout let repository
+content, which precedes the trailer, truncate a tool's output or plant a
+trailer of its own.
+
+**Changes:** Decision 9's admission sentence is superseded by the rule above;
+the "marked line" of decision 1 is a nonce-marked line. Nothing else moves.
+
 ### 2026-09-09 — The implementing change is built with both limits open, and does not ship until they are set
 
 **Decided:** `MAX_RESIDENT_CONTEXT_BLOCK_BYTES` and

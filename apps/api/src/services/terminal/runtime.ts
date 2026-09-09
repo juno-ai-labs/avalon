@@ -34,7 +34,7 @@ import type { TerminalRepositorySelector } from "./repository-selection";
 import { TERMINAL_OUTPUT_DIRECTORY, TERMINAL_OUTPUT_ROOT, TERMINAL_WORKSPACE_ROOT } from "./contract";
 import { recordTerminalAcquisition } from "./tracing";
 import { INSTRUCTIONS_PENDING_EXIT_CODE } from "./instruction-files";
-import { instructionsPendingError, type TerminalInstructionFiles } from "./instructions";
+import { instructionsPendingError, type TerminalInstructionFiles, type TerminalInstructionProbe } from "./instructions";
 
 const ROOT = TERMINAL_WORKSPACE_ROOT;
 const RESOURCE_ROOT = ".rally/resources";
@@ -326,7 +326,7 @@ export function createDaytonaTerminalRuntime(
   async function probeFragment(
     mode: "report" | "abort",
     touched: readonly string[],
-  ): Promise<string | null> {
+  ): Promise<TerminalInstructionProbe | null> {
     return instructions ? instructions.fragment({ mode, touched }) : null;
   }
 
@@ -338,10 +338,12 @@ export function createDaytonaTerminalRuntime(
   async function settleProbe(
     sandbox: AcquiredTerminalSandbox,
     result: { exitCode: number; stdout: string },
+    probe: TerminalInstructionProbe | null,
   ): Promise<string> {
-    if (!instructions) return result.stdout;
+    if (!instructions || !probe) return result.stdout;
     const recorded = await instructions.record({
       stdout: result.stdout,
+      marker: probe.marker,
       sourceGeneration: sandbox.generation,
     });
     if (result.exitCode === INSTRUCTIONS_PENDING_EXIT_CODE) {
@@ -360,16 +362,16 @@ export function createDaytonaTerminalRuntime(
     sandbox: AcquiredTerminalSandbox,
     touched: readonly string[],
   ): Promise<void> {
-    const fragment = await probeFragment("abort", touched);
-    if (!fragment) return;
+    const probe = await probeFragment("abort", touched);
+    if (!probe) return;
     const result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
       operation: "instructions.probe",
-      command: fragment,
+      command: probe.text,
       cwd: ROOT,
       timeoutMs: 30_000,
       signal: context.signal,
     });
-    await settleProbe(sandbox, result);
+    await settleProbe(sandbox, result, probe);
   }
 
   async function acquire(
@@ -716,7 +718,7 @@ export function createDaytonaTerminalRuntime(
         command: [
           `target=${shellQuote(path)}`,
           ...containmentCommands(),
-          ...(probe ? [probe] : []),
+          ...(probe ? [probe.text] : []),
           'if [ ! -e "$target" ]; then exit 44; fi',
           'if [ -L "$target" ] || [ ! -f "$target" ]; then exit 45; fi',
           'stat -c %s -- "$target"',
@@ -726,7 +728,7 @@ export function createDaytonaTerminalRuntime(
         signal: context.signal,
       });
       if (metadata.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
-      const metadataStdout = await settleProbe(sandbox, metadata);
+      const metadataStdout = await settleProbe(sandbox, metadata, probe);
       if (metadata.exitCode === FILE_NOT_FOUND_EXIT_CODE) return null;
       if (metadata.exitCode === FILE_NOT_REGULAR_EXIT_CODE) {
         throw new TerminalToolError("file_read_failed", "The path is not a regular file. Use terminal_run_command with `ls -l` or `file` to inspect it.", { filePath });
@@ -759,12 +761,12 @@ export function createDaytonaTerminalRuntime(
         operation: "file.read_page",
         // The read's exit status is the command's: the probe runs after it in
         // its own isolated group and reports without touching that status.
-        command: probe ? `${read}; s=$?\n${probe}\nexit $s` : read,
+        command: probe ? `${read}; s=$?\n${probe.text}\nexit $s` : read,
         cwd: ROOT,
         timeoutMs: 30_000,
         signal: context.signal,
       });
-      const result = { ...raw, stdout: await settleProbe(sandbox, raw) };
+      const result = { ...raw, stdout: await settleProbe(sandbox, raw, probe) };
       if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
       if (result.exitCode === FILE_NOT_FOUND_EXIT_CODE) return null;
       if (result.exitCode === FILE_NOT_REGULAR_EXIT_CODE) {
@@ -821,7 +823,7 @@ export function createDaytonaTerminalRuntime(
               `previous_lines=${lineCount(options.previousText)}`,
             ] : [
               ...containmentCommands(),
-              ...(probe ? [probe] : []),
+              ...(probe ? [probe.text] : []),
               "created=1",
               "previous_lines=0",
               'if [ -e "$target" ]; then',
@@ -845,7 +847,7 @@ export function createDaytonaTerminalRuntime(
         throw error;
       }
       if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
-      result = { ...result, stdout: await settleProbe(sandbox, result) };
+      result = { ...result, stdout: await settleProbe(sandbox, result, probe) };
       if (result.exitCode === FILE_NOT_REGULAR_EXIT_CODE) {
         throw new TerminalToolError("file_write_failed", "The path is not a regular file. Inspect it with terminal_run_command before replacing it.", { filePath });
       }
@@ -880,7 +882,7 @@ export function createDaytonaTerminalRuntime(
           command: [
             `trap 'rm -f -- ${shellQuote(temporary)}' EXIT`,
             `git apply --check -- ${shellQuote(temporary)} || exit $?`,
-            ...(probe ? [probe] : []),
+            ...(probe ? [probe.text] : []),
             `git apply -- ${shellQuote(temporary)}`,
           ].join("\n"),
           cwd: ROOT,
@@ -891,7 +893,7 @@ export function createDaytonaTerminalRuntime(
         await cleanupTemporaryFile(sandbox.providerSandboxId, temporary);
         throw error;
       }
-      await settleProbe(sandbox, result);
+      await settleProbe(sandbox, result, probe);
       if (result.exitCode !== 0) {
         throw new TerminalToolError(
           "patch_does_not_apply",

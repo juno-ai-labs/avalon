@@ -245,9 +245,10 @@ describe("Terminal repository publication", () => {
     // The simulated sandbox answers the bootstrap with the probe's trailer, as
     // the real one would after the clone: the root file exists, at this content.
     const sha = "d".repeat(64);
-    vi.mocked(provider.runUtilityCommand).mockImplementationOnce(async () => ({
+    vi.mocked(provider.runUtilityCommand).mockImplementationOnce(async (_id, input) => ({
       exitCode: 0,
-      stdout: `__RALLY_INSTRUCTION_PROBE__${JSON.stringify({ entries: [{ path: "AGENTS.md", sha256: sha, bytes: 11, content: "root rules\n", truncated: false, resident: false }], pending: true })}\n`,
+      // The trailer starts with the marker this invocation was told to print.
+      stdout: `${/'(__RALLY_INSTRUCTION_PROBE_[0-9a-f]{32}__)'/u.exec(input.command)?.[1]}${JSON.stringify({ entries: [{ path: "AGENTS.md", sha256: sha, bytes: 11, content: "root rules\n", truncated: false, resident: false }], pending: true })}\n`,
       stderr: "",
     }));
 
@@ -263,7 +264,7 @@ describe("Terminal repository publication", () => {
     const bootstrapCommand = vi.mocked(provider.runUtilityCommand).mock.calls.at(-1)?.[1].command ?? "";
     // After the checkout, isolated from `set -e`, reporting only.
     expect(bootstrapCommand.indexOf(".git/info/exclude")).toBeLessThan(bootstrapCommand.indexOf("( set +e; python3 -c '"));
-    expect(bootstrapCommand).toMatch(/'\/workspace' 'report' '0' '\[\]' 'AGENTS\.md' \) \|\| true$/u);
+    expect(bootstrapCommand).toMatch(/'\/workspace' 'report' '0' '\[\]' '__RALLY_INSTRUCTION_PROBE_[0-9a-f]{32}__' 'AGENTS\.md' \) \|\| true$/u);
     expect(ledger.pendingDeliveries().map((delivery) => [delivery.block.blockId, delivery.block.sourceGeneration, delivery.block.content]))
       .toEqual([["AGENTS.md", 3, "root rules\n"]]);
     expect(failures).toEqual([]);

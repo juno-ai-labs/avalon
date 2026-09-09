@@ -61,8 +61,22 @@ export function instructionFileCandidates(touchedPaths: readonly string[]): stri
   return ordered;
 }
 
-/** The line the probe prints before its JSON so a caller can split it off. */
-export const INSTRUCTION_PROBE_MARKER = "__RALLY_INSTRUCTION_PROBE__";
+/** The prefix every probe marker carries; the rest is a per-invocation nonce. */
+export const INSTRUCTION_PROBE_MARKER_PREFIX = "__RALLY_INSTRUCTION_PROBE_";
+
+/**
+ * A fresh marker for one probe invocation, printed by the probe before its JSON
+ * and handed to the parser that splits the trailer off.
+ *
+ * Everything before the trailer on stdout is untrusted (a file's content, a
+ * command's output) and may contain any fixed string, so a fixed marker would
+ * let a repository truncate a tool's output or hide a real trailer behind a
+ * planted one. A marker the repository cannot know matches only what the probe
+ * printed.
+ */
+export function instructionProbeMarker(): string {
+  return `${INSTRUCTION_PROBE_MARKER_PREFIX}${crypto.randomUUID().replace(/-/gu, "")}__`;
+}
 
 /** The exit status the probe uses to stop a mutation whose instructions are not resident. */
 export const INSTRUCTIONS_PENDING_EXIT_CODE = 52;
@@ -91,20 +105,21 @@ export interface InstructionProbeResult {
 }
 
 /**
- * The probe. Arguments: `root mode max_bytes known_json candidate...`.
+ * The probe. Arguments: `root mode max_bytes known_json marker candidate...`.
  *
  * For each candidate beneath the root it refuses a symlink or a non-regular
  * file, refuses a real path that escapes the root, hashes the bytes, and, when
  * `<path>@<sha>` is not in the caller's known-resident list, reports the content
  * (cut on a code-point boundary at or below `max_bytes`, where 0 means no cut).
- * It prints one marker line followed by one JSON object, and in `abort` mode
+ * It prints the marker it was given followed by one JSON object on the same
+ * line, and in `abort` mode
  * exits 52 when any candidate is not resident so the enclosing command stops
  * before it mutates anything. Every other failure exits 0 with what it has: the
  * probe is best-effort and never decides a tool's own outcome.
  */
 export const TERMINAL_INSTRUCTION_PROBE_PYTHON = [
   "import hashlib, json, os, sys",
-  "root, mode, max_bytes, known, candidates = os.path.realpath(sys.argv[1]), sys.argv[2], int(sys.argv[3]), set(json.loads(sys.argv[4])), sys.argv[5:]",
+  "root, mode, max_bytes, known, marker, candidates = os.path.realpath(sys.argv[1]), sys.argv[2], int(sys.argv[3]), set(json.loads(sys.argv[4])), sys.argv[5], sys.argv[6:]",
   "entries, pending = [], False",
   "def cut(data, limit):",
   "    if limit <= 0 or len(data) <= limit: return data.decode('utf-8'), False",
@@ -131,7 +146,7 @@ export const TERMINAL_INSTRUCTION_PROBE_PYTHON = [
   "    elif 'status' not in entry: entry['content'] = text; entry['truncated'] = truncated",
   "    if not entry['resident']: pending = True",
   "    entries.append(entry)",
-  `print('${INSTRUCTION_PROBE_MARKER}' + json.dumps({'entries': entries, 'pending': pending}, ensure_ascii=False, separators=(',', ':')))`,
+  "print(marker + json.dumps({'entries': entries, 'pending': pending}, ensure_ascii=False, separators=(',', ':')))",
   `sys.exit(${INSTRUCTIONS_PENDING_EXIT_CODE} if mode == 'abort' and pending else 0)`,
 ].join("\n");
 
@@ -153,6 +168,8 @@ export function instructionProbeFragment(input: {
   mode: InstructionProbeMode;
   candidates: readonly string[];
   knownResident: readonly string[];
+  /** From `instructionProbeMarker()`; the same value goes to `splitInstructionProbeTrailer`. */
+  marker: string;
   maxBytes?: number;
 }): string {
   const maxBytes = input.maxBytes ?? MAX_RESIDENT_CONTEXT_BLOCK_BYTES;
@@ -161,6 +178,7 @@ export function instructionProbeFragment(input: {
     input.mode,
     String(Number.isFinite(maxBytes) ? maxBytes : 0),
     JSON.stringify(input.knownResident),
+    input.marker,
     ...input.candidates,
   ].map(shellQuote).join(" ");
   const invoke = `python3 -c ${shellQuote(TERMINAL_INSTRUCTION_PROBE_PYTHON)} ${args}`;
@@ -170,7 +188,8 @@ export function instructionProbeFragment(input: {
 }
 
 /**
- * Split a probe trailer off a command's stdout.
+ * Split a probe trailer off a command's stdout, given the marker that probe
+ * invocation was told to print.
  *
  * The tool's own stdout comes back without the marker line; a stdout with no
  * marker (a probe that never ran or failed) comes back whole with `probe: null`.
@@ -178,15 +197,16 @@ export function instructionProbeFragment(input: {
  * so an open bound stays inert here and a finite one holds even if the probe's
  * cut and this one ever disagreed.
  */
-export function splitInstructionProbeTrailer(stdout: string): { stdout: string; probe: InstructionProbeResult | null } {
+export function splitInstructionProbeTrailer(stdout: string, marker: string): { stdout: string; probe: InstructionProbeResult | null } {
   // The marker is searched for anywhere, not only at a line start: a tool
   // whose own output ends without a newline would otherwise glue the trailer
-  // onto its last line and hide it.
-  const start = stdout.indexOf(INSTRUCTION_PROBE_MARKER);
+  // onto its last line and hide it. Anywhere is safe because the marker is a
+  // per-invocation nonce no earlier byte of stdout can contain.
+  const start = marker.startsWith(INSTRUCTION_PROBE_MARKER_PREFIX) ? stdout.indexOf(marker) : -1;
   if (start === -1) return { stdout, probe: null };
   const lineEnd = stdout.indexOf("\n", start);
   const stop = lineEnd === -1 ? stdout.length : lineEnd + 1;
-  const raw = stdout.slice(start + INSTRUCTION_PROBE_MARKER.length, lineEnd === -1 ? stdout.length : lineEnd);
+  const raw = stdout.slice(start + marker.length, lineEnd === -1 ? stdout.length : lineEnd);
   const rest = stdout.slice(0, start) + stdout.slice(stop);
   let parsed: unknown;
   try {

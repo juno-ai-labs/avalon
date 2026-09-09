@@ -80,13 +80,17 @@ export const MAX_RESIDENT_CONTEXT_BLOCK_BYTES = Number.POSITIVE_INFINITY;
  * docs/adding-security-defensive-and-other-limits.md and open question 4 of the
  * repository-instruction-files PRD.
  *
- * Bounds: UTF-8 bytes of one kind's blocks rendered into its system-prompt
- *   section after a compaction.
+ * Bounds: UTF-8 bytes of one kind's whole system-prompt section after a
+ *   compaction: heading, preamble, separators, admitted blocks, and the
+ *   omission notice, measured on the string that is emitted.
  * Without it: every resident block of a kind is rendered into the prefix of
  *   every turn for the residency lifetime, at roughly 250 tokens per kilobyte.
- * Trips: blocks are admitted in `id` order until the next would exceed the
- *   bound; each omitted block renders as one fixed line naming its locator and
- *   the reader tool. Omission is a render decision, never a ledger transition.
+ * Trips: blocks are admitted in `id` order, root first, and dropped from the
+ *   leaf end until the section fits; the blocks left out are named on one
+ *   line each, or counted on one line when naming them would not fit. The
+ *   heading, preamble, and that counting line are the section's floor: a
+ *   bound below the floor admits nothing and the floor is still emitted.
+ *   Omission is a render decision, never a ledger transition.
  * Derive from: the base prompt's 8,500-byte assertion; the default context
  *   window of 200,000 tokens with compaction at 80% of it; the skill body bound
  *   `maxActiveSkillBodyTokens` this section sits beside.
@@ -149,39 +153,66 @@ function omittedLine(block: Pick<ResidentContextBlock, "kind" | "blockId">): str
   return `Omitted: ${policy.locator(block.blockId)} exceeds the instruction budget; read it with ${policy.readerTool}`;
 }
 
+/** The one-line notice used when naming every omitted block would itself not fit. */
+export function omittedCountLine(kind: ResidentContextKind, count: number): string {
+  return `Omitted: ${count} beyond the instruction budget; read them with ${RESIDENT_CONTEXT_KIND_POLICIES[kind].readerTool}`;
+}
+
+/**
+ * One kind's section: heading, preamble, the admitted blocks, and a notice for
+ * the rest, sized on the string that is emitted. Blocks are dropped from the
+ * leaf end (the highest id) until the whole section fits, so the root stays
+ * admitted longest and the same rows render the same bytes. Below the floor
+ * (heading, preamble, counting line) nothing is admitted and the floor is
+ * emitted anyway; a bound that small is a misconfiguration the constant's
+ * derivation rules out.
+ */
+function renderKindSection(
+  kind: ResidentContextKind,
+  resident: readonly ResidentContextBlock[],
+  maxSectionBytes: number,
+): string {
+  const policy = RESIDENT_CONTEXT_KIND_POLICIES[kind];
+  const encoder = new TextEncoder();
+  const bytesOf = (text: string) => encoder.encode(text).byteLength;
+  const bounded = Number.isFinite(maxSectionBytes);
+  const compose = (admittedCount: number): string => {
+    const admitted = resident.slice(0, admittedCount).map(renderResidentContextBlock);
+    const omitted = resident.slice(admittedCount);
+    const head = [policy.heading, policy.preamble, ...admitted];
+    if (omitted.length === 0) return head.join("\n\n");
+    const named = [...head, omitted.map(omittedLine).join("\n")].join("\n\n");
+    if (!bounded || bytesOf(named) <= maxSectionBytes) return named;
+    return [...head, omittedCountLine(kind, omitted.length)].join("\n\n");
+  };
+  let admittedCount = resident.length;
+  let section = compose(admittedCount);
+  while (bounded && admittedCount > 0 && bytesOf(section) > maxSectionBytes) {
+    admittedCount -= 1;
+    section = compose(admittedCount);
+  }
+  return section;
+}
+
 /**
  * The system-prompt sections for every block in `system` residency.
  *
  * A pure render of the rows: kinds in registry order, blocks sorted by id, the
- * same bytes for the same rows. Admission against the section bound is root to
- * leaf by id so the render is deterministic across retries; an omitted block is
- * named rather than dropped.
+ * same bytes for the same rows. Each kind's section is bounded as a whole by
+ * `maxSectionBytes`; an omitted block is named or counted rather than dropped
+ * silently.
  */
 export function renderResidentContextSections(
   blocks: readonly ResidentContextBlock[],
   maxSectionBytes: number = MAX_RESIDENT_CONTEXT_SECTION_BYTES,
 ): string | null {
-  const encoder = new TextEncoder();
   const sections: string[] = [];
   for (const kind of RESIDENT_CONTEXT_KINDS) {
     const resident = blocks
       .filter((block) => block.kind === kind && block.residency === "system")
       .sort((left, right) => left.blockId < right.blockId ? -1 : left.blockId > right.blockId ? 1 : 0);
     if (resident.length === 0) continue;
-    const policy = RESIDENT_CONTEXT_KIND_POLICIES[kind];
-    const parts: string[] = [];
-    let bytes = 0;
-    for (const block of resident) {
-      const rendered = renderResidentContextBlock(block);
-      const size = encoder.encode(rendered).byteLength;
-      if (Number.isFinite(maxSectionBytes) && bytes + size > maxSectionBytes) {
-        parts.push(omittedLine(block));
-        continue;
-      }
-      parts.push(rendered);
-      bytes += size;
-    }
-    sections.push([policy.heading, policy.preamble, ...parts].join("\n\n"));
+    sections.push(renderKindSection(kind, resident, maxSectionBytes));
   }
   return sections.length === 0 ? null : sections.join("\n\n");
 }
