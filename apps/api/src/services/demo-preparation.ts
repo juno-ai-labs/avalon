@@ -305,6 +305,22 @@ async function assertTemplateCast(env: Env, presenterUserId: string, cast: Recor
 }
 
 /**
+ * The Workflow instance id for one attempt of one operation.
+ *
+ * Cloudflare accepts an instance id only if it matches
+ * `^[a-zA-Z0-9_][a-zA-Z0-9-_]*$` and is at most 100 characters
+ * (`workflows-shared/src/lib/validators.ts`, the validator Miniflare bundles
+ * and production enforces). The first version joined the parts with colons,
+ * which that pattern refuses, so every launch failed in production while the
+ * Node tests — whose driver is a fake — passed. Hyphens only, like every other
+ * Workflow id in this Worker; a UUID and a small integer keep it well under
+ * the length limit.
+ */
+export function demoPreparationInstanceId(operationId: string, attempt: number): string {
+  return `demo-preparation-${operationId}-${attempt}`;
+}
+
+/**
  * Start one attempt's driver. A launch that fails leaves the row saying so,
  * with Retry as the way back, rather than a `running` row nothing is running.
  */
@@ -312,7 +328,7 @@ async function launchAttempt(env: Env, operationId: string, attempt: number): Pr
   const workflow = requireDriver(env);
   try {
     await workflow.create({
-      id: `demo-preparation:${operationId}:${attempt}`,
+      id: demoPreparationInstanceId(operationId, attempt),
       params: { region: env.AVALON_REGION, operationId, attempt },
     });
   } catch (error) {

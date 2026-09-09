@@ -28,7 +28,7 @@ import type { Env } from "../src/env";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { encryptString } from "../src/lib/crypto";
-import { demoOperationStatus, runDemoPreparationPhase, startDemoOperation } from "../src/services/demo-preparation";
+import { demoOperationStatus, demoPreparationInstanceId, runDemoPreparationPhase, startDemoOperation } from "../src/services/demo-preparation";
 import { demoSeedReceipts } from "../src/services/demo-seeder";
 import { DEMO_TEMPLATE_WORKSPACE_ID } from "../src/services/demo-workspace-visibility";
 import { workspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
@@ -333,5 +333,24 @@ describe("preparing a demo", () => {
       error: { code: "demo_template_missing" },
       phases: [expect.objectContaining({ phase: "checking_template", status: "failed" })],
     });
+  });
+});
+
+describe("the demo Workflow binding", () => {
+  it("accepts the launch id, through the validator production applies", async () => {
+    // The real binding, not the fake the tests above drive: Cloudflare refuses
+    // an instance id outside `^[a-zA-Z0-9_][a-zA-Z0-9-_]*$`, which is how the
+    // colon-joined first version failed every production launch. The
+    // instance created here points at an operation no row exists for, so its
+    // run fails on first read and touches nothing; it is terminated anyway.
+    const operationId = crypto.randomUUID();
+    await expect(env.DEMO_PREPARATION_WORKFLOW!.create({ id: `demo-preparation:${operationId}:1`, params: { region: "global", operationId, attempt: 1 } }))
+      .rejects.toThrow();
+    const instance = await env.DEMO_PREPARATION_WORKFLOW!.create({
+      id: demoPreparationInstanceId(operationId, 1),
+      params: { region: "global", operationId, attempt: 1 },
+    });
+    expect(instance.id).toBe(demoPreparationInstanceId(operationId, 1));
+    await instance.terminate().catch(() => undefined);
   });
 });
