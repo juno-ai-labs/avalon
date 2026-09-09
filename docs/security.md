@@ -320,7 +320,8 @@ production constructor. Electron's WorkstreamDO and SubstreamAgent connections
 instead cross a typed preload bridge to the main-process broker. Main accepts
 that capability only from the primary application window, validates the URL
 against configured regional `ws`/`wss` origins and the declared control/feed
-route shape, rejects credentials, query, and fragment, requires the public
+route shape, rejects credentials and fragments, allows only the exact
+`workstreamAppearance=1` query on control sockets, requires the public
 ticket sentinel, and supplies the exact `app://rallywithai` Origin itself. The
 renderer chooses only the validated ticket subprotocol offer that becomes
 `Sec-WebSocket-Protocol`; it cannot choose arbitrary headers or turn the broker
@@ -853,6 +854,12 @@ without a per-member fan-out; the desktop's wording is the remaining gap
 confirmation on retirement is a client-side ceremony; the server-side
 comparison of the confirmation with the path is a consistency check, not a
 second factor.
+### 2026-09-08 — Match the control socket capability contract
+
+The main-process socket guard accepts the exact appearance capability query
+already emitted by the control ticket endpoint. A blanket query rejection had
+blocked child discovery entirely. Unknown and duplicate parameters, URL tickets,
+and all feed-socket queries remain forbidden; the broker test proves the boundary.
 
 ### 2026-09-08 — Locate the member search metadata contract
 

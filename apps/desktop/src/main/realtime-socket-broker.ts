@@ -444,7 +444,10 @@ export function realtimeSocketTargetAllowed(
   } catch {
     return false;
   }
-  if (url.username || url.password || url.search || url.hash) return false;
+  if (url.username || url.password || url.hash) return false;
+  // The control endpoint negotiates appearance metadata with this exact flag.
+  // Tickets still travel exclusively in subprotocols; all other queries fail.
+  if (url.search && (input.kind !== 'workstream_control' || url.search !== '?workstreamAppearance=1')) return false;
   if (!apiBaseUrls.map(socketOrigin).includes(url.origin)) return false;
   if (input.protocols[0] !== SOCKET_TICKET_SUBPROTOCOL) return false;
   return validSocketPath(input, url);

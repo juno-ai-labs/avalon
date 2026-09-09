@@ -267,14 +267,14 @@ describe('WorkstreamHeader presence', () => {
 });
 
 describe('WorkstreamHeader GrokBot shell', () => {
-  it('keeps the centered conversation title without a right-sidebar entry point', () => {
+  it('shows the conversation title and participant facepile without a right-sidebar entry point', () => {
     renderWorkstreamHeader(headerWorkstream, { grokBotMode: true });
 
     expect(screen.getByRole('heading', { name: 'Daily product brief' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Daily product brief' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Show HyperSight' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'More work-stream actions' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Add participant' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Manage work-stream participants' }).closest('header')).not.toBeNull();
 
     expect(screen.queryByRole('button', { name: 'Work-stream context' })).not.toBeInTheDocument();
   });
