@@ -35,7 +35,7 @@ their team keeps recreating from scratch.
 
 Think of your 3 now, and you’ll be up and running in no time.
 
-— Adam  
+— Adam\
 Rally
 
 ## Process
@@ -68,9 +68,9 @@ Request early access →
 
 You made a Claude skill your coworker wants.
 
-So you send them the file.  
-Explain how to install it.  
-Explain how to use it.  
+So you send them the file.\
+Explain how to install it.\
+Explain how to use it.\
 And two weeks later, they’re still not using it.
 
 Put it in Rally once. Let your team use it where they already work.
@@ -81,8 +81,8 @@ Request early access →
 
 “Can you send me the prompt you used for that?”
 
-Then the prompt.  
-Then the docs.  
+Then the prompt.\
+Then the docs.\
 Then three Slack messages explaining the context.
 
 Or just work on it together.
