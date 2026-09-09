@@ -33,6 +33,7 @@ export function contractCompleteEnv(overrides: Partial<Env> = {}): Env {
     ACCESS_REVOCATION_QUEUE: binding(),
     CONNECTOR_POLL_WORKFLOW: binding(),
     CONNECTOR_EVENT_WORKFLOW: binding(), WORK_OPPORTUNITY_WORKFLOW: binding(),
+    DEMO_PREPARATION_WORKFLOW: binding(),
     APP_ENV: "production",
     AVALON_REGION: "global",
     LOG_LEVEL: "info",

@@ -1,22 +1,48 @@
 import type { SidekickAttachment } from '@rally/contracts';
+import * as ContextMenu from '@radix-ui/react-context-menu';
 import { AttachedSidekicks } from './attached-sidekicks';
-import { FileBox, GripVertical, MessageSquare, PanelLeftClose, PanelLeftOpen, UserPlus } from 'lucide-react';
+import { Archive, FileBox, GripVertical, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
 import { IconBorderCornerPill, IconPlus } from '@tabler/icons-react';
-import { useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { WorkstreamDetail } from '../lib/types';
 import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-socket';
 import { COLLAPSED_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '../lib/ui-store';
-import { Avatar, AvatarStack, IconButton } from './primitives';
+import { AvatarStack, IconButton } from './primitives';
 import { ResourceIcon } from './markdown-citations';
+import { WorkstreamMark } from './workstream-glyph';
 
 const COLLAPSED_KEY = 'rally.workstream-sidebar-collapsed';
 const WIDTH_KEY = 'rally.workstream-sidebar-width';
 const clampWidth = (width: number): number => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
 
+export interface SubstreamRowTarget { substreamId: string; title: string }
+export interface SubstreamRowActions {
+  onRename: (target: SubstreamRowTarget) => void;
+  onArchive: (target: SubstreamRowTarget) => void;
+}
+
+function SubstreamRowMenu({ actions, children, target }: {
+  actions: SubstreamRowActions; children: React.ReactNode; target: SubstreamRowTarget;
+}): React.JSX.Element {
+  return <ContextMenu.Root>
+    <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
+    <ContextMenu.Portal>
+      <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
+        <ContextMenu.Item className="menu-item" onSelect={() => actions.onRename(target)}>
+          <Pencil aria-hidden="true" size={16} /> Rename
+        </ContextMenu.Item>
+        <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => actions.onArchive(target)}>
+          <Archive aria-hidden="true" size={16} /> Archive substream
+        </ContextMenu.Item>
+      </ContextMenu.Content>
+    </ContextMenu.Portal>
+  </ContextMenu.Root>;
+}
+
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, attachedSidekicks, attachedSidekicksError, onRemoveSidekick }: {
-  workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'resources' | 'participants'> & Pick<WorkstreamChildDirectory, 'privateChildren'>;
+export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, attachedSidekicks, attachedSidekicksError, onRemoveSidekick, substreamActions }: {
+  workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'appearance' | 'resources' | 'participants'> & Pick<WorkstreamChildDirectory, 'privateChildren'>;
   presentUserIds: readonly string[];
   attachedSidekicks?: SidekickAttachment[] | undefined;
   attachedSidekicksError?: string | undefined;
@@ -27,6 +53,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
   onOpenArtifact: (id: string, returnFocus: HTMLElement) => void;
   onParticipants: () => void;
   onFocusTranscript: () => void;
+  substreamActions?: SubstreamRowActions | undefined;
 }): React.JSX.Element {
   const sidebar = useRef<HTMLElement>(null);
   const [collapsed, setCollapsed] = useState(() => {
@@ -40,6 +67,11 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
   });
   const [paneWidth, setPaneWidth] = useState(Number.POSITIVE_INFINITY);
   const [resizing, setResizing] = useState(false);
+  // The keyboard's drag: held arrow keys write the width repeatedly, and
+  // animating each step would leave the edge trailing the width the collapse
+  // threshold is judged against. Separate from `resizing` so it raises the
+  // class without entering the pointer drag's state.
+  const [keyResizing, setKeyResizing] = useState(false);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const drag = useRef<{ pointerId: number; offset: number } | null>(null);
   // Observe the available pane, never this sidebar or the transcript. Its
@@ -80,7 +112,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
   };
   const artifacts = workstream.resources.filter((resource) => resource.direction === 'artifact');
   return (
-    <aside aria-label="Work-stream sidebar" className={clsx('workstream-context-sidebar', compact && 'is-compact', resizing && 'is-resizing')} ref={sidebar} style={{ flexBasis: effectiveWidth }}>
+    <aside aria-label="Work-stream sidebar" className={clsx('workstream-context-sidebar', compact && 'is-compact', (resizing || keyResizing) && 'is-resizing')} ref={sidebar} style={{ flexBasis: effectiveWidth }}>
       <div className="workstream-context-toolbar window-drag" />
       <div className="workstream-context-scroll">
         <button
@@ -91,35 +123,42 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
           type="button"
           onClick={() => { onSelectSubstream?.('0'); onFocusTranscript(); }}
         >
-          {compact && <MessageSquare aria-hidden="true" size={20} />}
+          <span className="workstream-context-mark"><WorkstreamMark appearance={workstream.appearance} id={workstream.id} /></span>
           <span className="workstream-context-copy"><span>{workstream.title}</span></span>
         </button>
         <div className="workstream-substream-list">
           {workstream.privateChildren?.map((child) => {
-            const creator = workstream.participants.find((person) => person.id === child.createdByUserId);
-            return (
-              <div className="workstream-substream-branch" key={child.substreamId}>
-                <IconBorderCornerPill aria-hidden="true" className="workstream-substream-connector" size={24} stroke={1.5} />
-                <button
-                  aria-current={selectedSubstreamId === child.substreamId ? 'page' : undefined}
-                  aria-label={`Go to substream: ${child.title}`}
-                  className={clsx('workstream-context-row workstream-conversation-row', selectedSubstreamId === child.substreamId && 'is-current')}
-                  onClick={() => onSelectSubstream?.(child.substreamId)}
-                  title={child.title}
-                  type="button"
-                >
-                  <span className="workstream-substream-avatar" aria-hidden="true">{creator ? <Avatar member={creator} title={null} /> : <MessageSquare size={20} />}</span>
-                  <span className="workstream-context-copy"><span>{child.title}</span></span>
-                </button>
-              </div>
+            // Compact hides the title, and a rail of identical branch lines
+            // says only that these are substreams, not which is which. The
+            // first letter is the only part of the title a 36px mark can hold.
+            const initial = [...child.title.trim()][0]?.toUpperCase();
+            const row = (
+              <button
+                aria-current={selectedSubstreamId === child.substreamId ? 'page' : undefined}
+                aria-label={`Go to substream: ${child.title}`}
+                className={clsx('workstream-context-row workstream-conversation-row', selectedSubstreamId === child.substreamId && 'is-current')}
+                onClick={() => onSelectSubstream?.(child.substreamId)}
+                title={child.title}
+                type="button"
+              >
+                <span aria-hidden="true" className="workstream-context-mark">
+                  {compact && initial
+                    ? <span className="workstream-substream-initial">{initial}</span>
+                    : <IconBorderCornerPill className="workstream-substream-connector" size={24} stroke={1.5} />}
+                </span>
+                <span className="workstream-context-copy"><span>{child.title}</span></span>
+              </button>
             );
+            return substreamActions
+              ? <SubstreamRowMenu actions={substreamActions} key={child.substreamId} target={{ substreamId: child.substreamId, title: child.title }}>{row}</SubstreamRowMenu>
+              : <Fragment key={child.substreamId}>{row}</Fragment>;
           })}
-          {onNewSubstream && <div className="workstream-substream-branch">
-            <IconBorderCornerPill aria-hidden="true" className="workstream-substream-connector" size={24} stroke={1.5} />
+          {onNewSubstream && (
             <button className="workstream-context-row workstream-new-substream" onClick={onNewSubstream} title="New substream" aria-label="New substream" type="button">
-              <span className="workstream-substream-avatar"><IconPlus aria-hidden="true" size={20} stroke={1.5} /></span><span className="workstream-context-copy"><span>New substream</span></span>
+              <span className="workstream-context-mark"><IconPlus aria-hidden="true" size={22} stroke={1.5} /></span>
+              <span className="workstream-context-copy"><span>New substream</span></span>
             </button>
-          </div>}
+          )}
         </div>
         <section aria-label="Generated artifacts" className="workstream-context-section">
           <h2>Generated artifacts</h2>
@@ -163,12 +202,15 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
         className={clsx('sidebar-resizer workstream-context-resizer', resizing && 'is-near')}
         tabIndex={0}
         onDoubleClick={() => { if (!narrow) saveCollapsed(!collapsed); }}
+        onBlur={() => setKeyResizing(false)}
         onKeyDown={(event) => {
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
           event.preventDefault();
+          setKeyResizing(true);
           if (event.key === 'ArrowLeft' && !compact) resize(width > MIN_SIDEBAR_WIDTH ? width - 16 : SIDEBAR_COLLAPSE_DRAG_THRESHOLD - 1);
           if (event.key === 'ArrowRight') resize(compact ? MIN_SIDEBAR_WIDTH : width + 16);
         }}
+        onKeyUp={() => setKeyResizing(false)}
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           event.preventDefault();

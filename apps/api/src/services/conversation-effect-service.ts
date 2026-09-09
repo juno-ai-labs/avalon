@@ -1,4 +1,4 @@
-import { asWorkspaceId } from "@rally/contracts";
+import { asWorkspaceId, asWorkstreamId, asUserId, asSubstreamId } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -12,7 +12,7 @@ import {
   isDirectoryEffect,
   type ParentEffectEnvelope,
 } from "@rally/contracts/conversation-effects";
-import { workspaceDOName } from "../durable-objects/names";
+import { workspaceDOName, workstreamDOName } from "../durable-objects/names";
 import {
   WorkspaceDirectoryApplyResultSchema,
   WorkspaceDirectoryNotificationStateSchema,
@@ -304,6 +304,24 @@ export async function processWorkstreamNotificationIntent(
     return "skipped";
   }
 
+  const payload: unknown = JSON.parse(row.payloadJson);
+  const participantAdded = row.notificationKind === "participant_added";
+  const effect = participantAdded
+    ? WorkstreamParticipantNotificationEffectSchema.parse(payload)
+    : WorkstreamMentionNotificationEffectSchema.parse(payload);
+  const childId = effect.substreamId && effect.substreamId !== "0" ? effect.substreamId : null;
+  if (childId) {
+    const parent = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, typedWorkspaceId,
+      workstreamDOName(env.AVALON_REGION, typedWorkspaceId, asWorkstreamId(row.workstreamId)));
+    const access = await parent.authorizeViewer({ workspaceId: typedWorkspaceId, parentId: row.workstreamId,
+      userId: asUserId(row.recipientUserId), substreamId: asSubstreamId(childId) });
+    if (!access.authorized || access.archived) {
+      await requireNotificationIntentTransition(workspace, { workspaceId: typedWorkspaceId, intentId, leaseId,
+        transition: "settle", state: "skipped" });
+      return "skipped";
+    }
+  }
+
   const rawDirectoryState = await workspace.notificationDirectoryState({
     workspaceId: row.workspaceId,
     workstreamId: row.workstreamId,
@@ -347,7 +365,7 @@ export async function processWorkstreamNotificationIntent(
     if (transition.outcome === "lease_lost" && transition.state === "skipped") return "skipped";
     return "busy";
   }
-  if (!viewer.listable) {
+  if (!childId && !viewer.listable) {
     await requireNotificationIntentTransition(workspace, {
       workspaceId: typedWorkspaceId,
       intentId,
@@ -367,11 +385,6 @@ export async function processWorkstreamNotificationIntent(
     return "skipped";
   }
 
-  const payload: unknown = JSON.parse(row.payloadJson);
-  const participantAdded = row.notificationKind === "participant_added";
-  const effect = participantAdded
-    ? WorkstreamParticipantNotificationEffectSchema.parse(payload)
-    : WorkstreamMentionNotificationEffectSchema.parse(payload);
   // Nobody is told about their own doing, whichever kind this is: a person who
   // mentions themselves, or who adds themselves on the way to making a work
   // stream personal, already knows.
@@ -408,6 +421,7 @@ export async function processWorkstreamNotificationIntent(
       workspaceName: identity.workspace_name,
       workstreamId: row.workstreamId,
       workstreamTitle: effect.workstreamTitleSnapshot,
+      ...(childId ? { substreamId: childId } : {}),
     };
     const sourceId = effect.kind === "participant_notification" ? effect.sourceId : effect.messageId;
     const slack = effect.kind === "participant_notification"

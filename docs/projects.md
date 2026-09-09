@@ -12,7 +12,7 @@ behavior is in the approved [Projects design](PRDs/2026-08-26_projects/prd.md).
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/contracts/src/projects.ts` | Closed project IDs, icon/color registries, picker choices, `paintProjectColor`, scopes, statuses, and wire shapes. |
+| `packages/contracts/src/projects.ts` | Closed project IDs, icon/color registries, scopes, statuses, and wire shapes. |
 | `apps/api/src/durable-objects/workspace-do.ts` | WorkspaceDO schema migration and authenticated project RPC entry points. |
 | `apps/api/src/durable-objects/workspace-project-protocol.ts` | Strict RPC requests, results, and stable error codes. |
 | `apps/api/src/durable-objects/workspace-project-storage.ts` | Synchronous project transactions, visibility filtering, and per-person ordering. |
@@ -228,25 +228,27 @@ duplicate because the consumer rechecks target generations.
 
 ## Changelog
 
-### 2026-09-08 — Retire neon yellow from the project picker
+### 2026-09-09 — New projects start blue, because the palette has no neutral left
 
-**What changed:** The project color grid now offers `PROJECT_COLOR_CHOICES`,
-which omits `orange`. Stored `orange` remains in `PROJECT_COLOR_KEYS` and the
-WorkspaceDO check. Chips and icons resolve through `paintProjectColor`, so a
-leftover orange project paints as gold yellow.
+**What changed:** The new-project dialog's initial and reset colour is `blue`.
+`gray` was retired from the picker with the palette change, and `black` — the
+only other candidate for a neutral — is reserved for account accents and never
+offered for a project. Both call sites now read one `PROJECT_COLOR_DEFAULT`
+constant instead of repeating the literal.
 
-**Why:** Neon yellow failed contrast on identity chips. Hiding the swatch stops
-new projects from choosing it without a schema migration that would reject
-existing rows.
+**Why:** The 2026-08-31 entry below chose gray deliberately — a neutral start
+that does not imply the creator picked a colour. That option no longer exists:
+the palette is fourteen hues, and the one achromatic key belongs to accounts. So
+the default is now a hue like any other, chosen for being the quietest rather
+than for meaning "unset", and it is the team's to change. The two hard-coded
+`'gray'` literals in the same component were how the initial value and the reset
+value could disagree, which is why they collapsed into one constant.
 
-**Considered and rejected:** Deleting `orange` from the stored registry. The
-SQLite check and the appearance wire schema would then fail closed on every
-already-saved orange project. Remapping only in CSS tokens without hiding the
-swatch would still let people pick an unreadable color.
-
-**Consequences:** Creation and edit pickers must not name Neon yellow. A test
-that counts pressed picker buttons should use `PROJECT_COLOR_CHOICES`. Server
-tests that persist every stored key should still include `orange`.
+**Consequences:** Projects created before this keep `gray` and still render; the
+key remains storable, it simply cannot be chosen again. Nothing signals "no
+colour chosen" any more — if that distinction is wanted back it needs a nullable
+column, not a palette entry. Creation-flow checks assert `Blue` is pressed and
+icon previews stroke `var(--av-sys-color-project-blue)`.
 
 ### 2026-09-02 — A project counts the members it can show
 

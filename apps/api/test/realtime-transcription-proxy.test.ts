@@ -179,6 +179,12 @@ describe("realtime transcription proxy", () => {
       session: { audio: { input: { transcription: { model: "gpt-live-transcribe" } } } },
     });
     expect(database.activeSessions()).toBe(1);
+    const server = pairs[0]!.server;
+    server.emit("message", { data: JSON.stringify({ type: "future_audio_event" }) });
+    expect(server.sent).toEqual([]);
+    expect(upstream.sent).toHaveLength(1);
+    server.emit("message", { data: JSON.stringify({ type: "input_audio_buffer.commit", future: true }) });
+    expect(JSON.parse(upstream.sent[1]!)).toEqual({ type: "input_audio_buffer.commit" });
 
     pairs[0]?.server.emit("close", { code: 1000, reason: "Client closed" });
     await Promise.all(deferred);

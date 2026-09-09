@@ -260,7 +260,7 @@ where its state rolls up; its parent does, through the contract in
 
 | RPC | Answers | `WorkstreamDO` | `AutomationDO` |
 | --- | --- | --- | --- |
-| `authorizeViewer({workspaceId, parentId, userId})` | `{authorized, archived}` | `scope = 'workspace'`, or the person's aggregated viewer row says participant; `archived` from `workstream_metadata.archived_at` | scope `workspace`, the author, the run-as principal, or, for a room's automation, `WorkspaceDO.workstreamParticipant`; `archived` when the owning room is archived; a deleted automation answers unauthorized |
+| `authorizeViewer({workspaceId, parentId, userId})` | `{authorized, archived}` | `scope = 'workspace'`, or the person's Main viewer row says participant; `archived` from `workstream_metadata.archived_at` | scope `workspace`, the author, the run-as principal, or, for a room's automation, `WorkspaceDO.workstreamParticipant`; `archived` when the owning room is archived; a deleted automation answers unauthorized |
 | `authority({workspaceId, parentId})` | `{exists, authorityGeneration, archived}` | from `workstream_metadata` | from the automation row; `archived` when deleted or the owning room is archived |
 | `reserveChild({workspaceId, parentId, substreamId, kind, createdByUserId, authorityGeneration, directory?})` | `{reserved: true, authorityGeneration}`, idempotent on `(parentId, substreamId)` | inserts `conversation_children`; for `"0"` with `directory` it also creates the provisional `workstream_metadata` row and delivers the provisional directory row to WorkspaceDO synchronously | inserts `conversation_children` |
 | `receiveChildEffects({substreamId, envelopes})` | `{accepted: [{messageId, payloadHash}]}` | shared | shared |
@@ -914,12 +914,11 @@ and refuses a replay whose hash differs, and WorkspaceDO does the same in
 `workspace_workstream_effect_receipts`. A redelivery older than the receipt
 window converges on the per-key waterlines instead.
 
-The parent stores the latest common and per-user projection from each child and
-computes one aggregate. Common state uses a deterministic state priority
-(`canonicalState`); last activity is the maximum child timestamp; completion is
-when every child has completed. Viewer unread counts sum across children, while
-participation, listability, unseen, and "You Are Mentioned" are logical ORs
-(`aggregateUserProjections`). The parent numbers its own projections: an
+The parent stores the latest common and per-user projection from each child.
+WorkstreamDO derives its workspace directory, attention and participant state
+from Main (`0`) only. Private-child ordinals are independent and must never be
+summed or ORed into Main. AutomationDO may aggregate its children's execution
+state locally. The parent numbers its own projections: an
 envelope's `sourceVersion` on the parent leg is the parent's waterline for that
 projection key, not any child's, because two children numbering independently
 could not be compared at the workspace. Every changed aggregate partition gets
@@ -931,8 +930,14 @@ with a message id prefixed by the substream, and a person notification records
 the recipient's viewer projection version as `requiredProjectionVersion` so it
 cannot be delivered before that person's directory row has landed.
 
-`WorkstreamDO` forwards everything its children say. `AutomationDO` forwards
-nothing: an automation's conversation and its runs are not workspace rooms, so
+`WorkstreamDO` forwards Main effects, plus mention and participant-added
+notifications addressed to current private-child members. It stamps these with
+the child ID, preserving the child's title and notification identity. Child
+common projections update only the private-child title registry; child activity
+and viewer state do not enter shared surfaces. Before forwarding a person
+notification, it ensures an unchanged Main viewer projection (or a neutral
+nonparticipant projection) supplies the existing delivery barrier. `AutomationDO`
+forwards nothing: an automation's conversation and its runs are not workspace rooms, so
 their directory, activity, and notification effects are receipted, applied to
 the parent's own projections, and dropped. What the workspace hears from an
 automation is the automation's own `directory_automation` row, enqueued by the
@@ -1060,9 +1065,10 @@ emitted are deliberately not re-enqueued, because a notification is versioned on
 a projection key it only reads and would be refused under a new payload hash.
 
 Mention intent delivery rechecks current D1 membership and WorkspaceDO-owned
-destination state only after WorkspaceDO reports the required viewer-directory
-version. This prevents an out-of-order notification from emailing someone whose
-access or listability was removed. Delivery compute remains a regional
+destination state and waits for the required viewer-directory version. Child
+notifications additionally check WorkstreamDO's current child membership and
+archive state. That child authorization permits delivery without Main listability;
+it never grants Main participation or changes its unread state. Delivery compute remains a regional
 Worker/service, but intent, attempt, idempotency key, frozen destination, and
 provider receipt are WorkspaceDO rows. They must not be copied into a child.
 
@@ -1145,6 +1151,7 @@ misrouted product statement now fails because the table or column is absent.
 ## Invariants
 
 - **Exactly one object name owns each region/workspace/work-stream/substream tuple.** A second naming formula forks ordering and storage.
+- **Every callable method on these classes is fenced by the retirement gate, and an unclassified one refuses on a retired object.** `applyRetirementGate` wraps the prototype chain at module load; a method retirement's own walk needs is permitted, a Queue-delivered effect receiver answers a terminal acknowledgement, and a Queue consumer, Workflow or cron pass that meets a refusal acknowledges it. [`workspace-retirement.md`](workspace-retirement.md) owns the dispositions; read it before adding an RPC or an effect receiver to any of these classes.
 - **Every workspace-scoped stub is resolved through `durableObjectStubForWorkspace`.** It combines the hard jurisdiction lock with the parent's immutable affinity; only non-workspace regional singletons use the fallback resolver. ESLint rejects direct namespace and low-level resolver bypasses.
 - **The object jurisdiction matches the immutable workspace region.** Product-object constructors fail closed when `ctx.id.jurisdiction` is not `us` for Global or `eu` for EU.
 - **`WorkstreamDO` and `AutomationDO` run no model and own no transcript.** Putting an agent in a parent recreates one serialization bottleneck across substreams.
@@ -1169,7 +1176,7 @@ misrouted product statement now fails because the table or column is absent.
 - **No publish path asks D1 anything.** Losing workspace access is carried by the queue in [`access-revocation.md`](access-revocation.md) and by nothing else — no object polls, revalidates on a timer, or re-reads `workspace_members` before sending. Putting a D1 query back on a publish path is where the waterline ordering bug came from, and the transcript feed would pay it per token frame. An object enforcing its *own* SQL — `canRead`, `product.canRead` — is not that: it is synchronous, local, and answers a question no queue message carries.
 - **D1 workspace membership is rechecked for every WorkspaceDO operation and every WorkstreamDO admission.** SubstreamAgent's fallback admission does the same; a child of an automation, or any substream other than `0`, additionally accepts the parent's forwarded viewer decision, because its own participant row is narrower than what the parent admits. Its prepared fast path rechecks session/membership during ticket transit and spends that result only when the signed identity, role, one-time ticket, expiry, cursor, and authority generation exactly match the room's single request-scoped in-memory preparation; every upgrade still reads current regional maintenance authority. A constant-size revocation fence prevents older in-flight preparation from reappearing. The accepted post-preparation/pre-fan-out revocation window is recorded in [`security.md`](security.md). A direct substream message spends the authority already admitted to that exact socket; it does not re-ask D1. The revocation queue closes that socket when the authority ends, and object-local participation is still checked by the message transaction.
 - **A SubstreamAgent cold wake separates storage readiness from runtime recovery.** Schema, repositories, and durable identity gate socket admission. Lease repair and alarm re-arming begin immediately under `waitUntil` and have their own trace phase, but an accepted read socket does not await them. Any operation that can mutate or run agent work still waits for full initialization. A failed recovery attempt is not cached forever: that caller sees the failure and the next mutation retries the idempotent recovery.
-- **A product request names its auth principal, and each is verified against the fact that owns it.** (An *auth* principal — who is asking — is distinct from the run's `ExecutionPrincipal`, which names whose authority a run spends.) A login session (`principal` absent) is re-verified against its `sessions` row joined to membership, which is what makes a revoked login stop working mid-flight. A connector principal (`principal: "connector"`, connector ingress only) has no session row — its standing authority is the connector link, verified by the Worker on the very message being delivered — so the object re-checks membership alone (`connectorPrincipalAuth`) and refuses staleness as `connector_member_revoked`. Sockets never carry a connector principal; tickets are issued to login sessions only.
+- **A product request names its auth principal, and each is verified against the fact that owns it.** (An *auth* principal — who is asking — is distinct from the run's `ExecutionPrincipal`, which names whose authority a run spends.) A login session (`principal` absent) is re-verified against its `sessions` row joined to membership, which is what makes a revoked login stop working mid-flight. A connector principal (`principal: "connector"`, connector ingress only) has no session row — its standing authority is the connector link, verified by the Worker on the very message being delivered — so the object re-checks membership alone (`connectorPrincipalAuth`) and refuses staleness as `connector_member_revoked`. The demo seeder's principal (`"demo_seed"`, the seeder only) is verified the same way: a cast member never signs in, and the seeder acts as them on a workspace it is preparing ([`demo-workspaces.md`](demo-workspaces.md#seeding-a-demo-from-a-pack)). Sockets never carry either; tickets are issued to login sessions only.
 - **Participant removal leaves an active reader.** Any authorized current reader may remove themself or another participant, but the target check, active count, and state change share one object-local transaction. A client-side disabled action is only presentation; without the authority check, two racing removals could leave a private work stream nobody can open.
 - **A transcript turn id is an opaque key, not an entity id.** A participant turn carries the client message UUID, while an assistant turn's id is derived as `<loopId>:turn:<ordinal>`. Anything that reads a turn id out of `canonical_conversation_turn_details` and passes it on — the manual retry's `transcriptFenceMessageId` above all — validates it as `TranscriptTurnIdSchema`; typed as a UUID it accepts exactly the turns a person wrote and rejects every one the agent did.
 - **Legacy D1 product rows do not exist and are never a fallback.** Fallback would silently split authority after an object failure.
@@ -1403,6 +1410,8 @@ already have committed across the object boundary.
 | `workspace_identity` | Singleton row (`id = 1`) binding the object to workspace, region, and immutable placement affinity. |
 | `workspace_socket_ticket_receipts` | One consumed workspace-scoped ticket including user, expiry, and consumption time; its expiry index supports bounded cleanup. |
 | `workspace_sync_events` | Monotonic `waterline`, UUIDv7 `event_id`, JSON topic set, and occurrence time for the bounded 1,024-event reconciliation window. Rows are invalidations only, never workspace data copies. |
+| `object_retirement` | Singleton (`id = 1`): the retirement tombstone — instant, operation, actor, reason. Present in all four object classes from one shared constant; migration 40 here. [`workspace-retirement.md`](workspace-retirement.md). |
+| `workspace_retirement_graph` | `(parent_kind, parent_id)`: one row per work stream and automation recorded before the tombstone, with a nullable `retired_at` receipt the walk writes. Migration 41. |
 | `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and processing claim/terminal state. It is never shared with another workspace. |
 | `workspace_connector_event_ingress_receipts` | One ingress UUID/content-hash to canonical-event mapping. It makes provider replay and at-least-once Queue delivery idempotent even when a second delivery used a different UUIDv7; ingest opportunistically reaps the oldest receipts after 30 days while the provider/dedupe keys continue to resolve the canonical event. |
 | `connector_connections`, `external_user_identities` | Workspace connector credentials, cursor/configuration/health, model plugin identity, refresh lease, and verified provider-user mappings. Global/provider ingress routes retain only the opaque fields needed to find this object. |
@@ -1464,7 +1473,8 @@ remain bounded and exclude the supplemented rows.
 | --- | --- |
 | `_sql_schema_migrations` | Immutable parent schema history. |
 | `workstream_metadata` | Singleton aggregate identity/generation and revisioned complete common metadata: title/description/preview/email/creator/state/attention/activity/completion/archive/schedule timestamps. `origin_type`, `automation_subscription_id`, `automation_run_id`, and `planned_for` are dead columns kept because released migration text names them. Created provisionally by `reserveChild("0")` at creation, or by the first child effect for an object that predates that. |
-| `conversation_children` | The child registry: one row per substream the parent has reserved, with `kind` (`main` or `child`), who created it, and when. Added by migration 6. `listChildren` reads it and always includes `"0"`, because a work stream created before the registry existed has no row for its main conversation. |
+| `conversation_children` | The child registry: one row per substream the parent has reserved, with `kind` (`main` or `child`), who created it, and when. Added by migration 6; migration 9 adds `archived_at`, and migration 10 adds lifecycle version, delivered-version and retry-time columns. `listChildren` reads it and always includes `"0"`, because a work stream created before the registry existed has no row for its main conversation. `childrenForRetirement` reads the same registry with a three-way answer (`ok`, `missing`, `identity_mismatch`) and is permitted on a retired parent. |
+| `object_retirement` | Singleton tombstone, migration 8; shared constant, see `WorkspaceDO`. |
 | `substream_directory` | Latest common envelope per child, keyed by external substream ID. |
 | `substream_user_directory` | Latest viewer envelope per child/user pair. |
 | `child_effect_receipts` | Child/message/hash inbox proving idempotent acceptance of a Queue delivery; a replay whose hash differs is refused. Receipts older than 180 days are reaped a hundred at a time on each apply; past that window a redelivery converges on the per-key waterlines. |
@@ -1491,7 +1501,7 @@ alone.
 
 ### `AutomationDO`
 
-One migration, v1, in `automation-do.ts`: the automation's own tables, then the
+Five migrations in `sidekick-do.ts`; v1 is the automation's own tables, then the
 shared parent statements `conversation-parent-object.ts` exports (the same
 `conversation_children`, `substream_directory`, `substream_user_directory`,
 `child_effect_receipts`, `projection_keys`, `workstream_state_clock`,
@@ -1516,6 +1526,7 @@ onto `runs.state` forward only.
 | Table group | Meaning and relationships |
 | --- | --- |
 | `_sql_schema_migrations`, `object_versions` | Schema versions and the applied-migration receipts. |
+| `object_retirement` | Singleton tombstone, conversation-object schema v48; shared constant, see `WorkspaceDO`. |
 | `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. The root's `workstream_key` is the parent id and `parent_kind` (v39, default `workstream`) says which kind; `origin_type`, `automation_subscription_id`, `automation_run_id`, and `planned_for` are dead columns, never written or projected, kept because the runtime-compat triggers in `workstream-runtime-compat-schema.ts` name them inside released migration hashes. Existing main data uses local context `0`. |
 | `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
 | `participant_transcript_turns`, `participant_transcript_blocks`, `participant_transcript_attachments`, `participant_transcript_mentions`, `transcript_facts`, `transcript_payloads`, `content_refs` | One provider-neutral semantic order whose canonical turns reference content-addressed payloads plus exact attachment, mention, and large-content joins. Accepted human and assistant content, identity, and order never change. One stable tool turn may advance only its explicit lifecycle from started to terminal; a different turn under the same client id remains an ignored replay. Terminal residual-receipt repair asynchronously prepares the replacement payload, then commits its fact and tool metadata synchronously so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; pending messages have no canonical order and enter Bind only through the persistent loop's delivery transaction. |
@@ -1555,7 +1566,7 @@ added by each one's own migration history from the statements
 
 | Table | Key and relationship |
 | --- | --- |
-| `_internal_durable_alarms` | `(kind, alarm_key)`: one row per thing this object wants woken for, with its due instant, optional repeat, and its own attempt/`retry_at` gate. The object's single Cloudflare alarm is always armed for `MIN(MAX(due_at, retry_at))` across these rows and whatever the object derives from its other tables. |
+| `_internal_durable_alarms` | `(kind, alarm_key)`: one row per thing this object wants woken for, with its due instant, optional repeat, and its own attempt/`retry_at` gate. The object's single Cloudflare alarm is always armed for `MIN(MAX(due_at, retry_at))` across these rows and whatever the object derives from its other tables — except on a retired object, where retirement empties this table in the tombstone's transaction, deletes the alarm, and makes every mutator inert ([`durable-object-alarms.md`](durable-object-alarms.md#invariants)). |
 
 WorkspaceDO reconciles `schedule`, `watch`, `maintenance`, and `terminal`
 entries from the tables above; SubstreamAgent reconciles `agent_timer` entries
@@ -1647,6 +1658,50 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-08 — Deliver child archive to the executing object
+
+**What changed:** WorkstreamDO migration 10 tracks pending child lifecycle deliveries in the child registry, drained on the existing alarm. SubstreamAgent migration 50 stores the accepted lifecycle version. The local archive and agent stop request commit together; older deliveries cannot undo a restoration. Socket commands read local archive state. Person notifications pass through the parent and revalidate recipient access at delivery; Main-only projections remain unchanged. AutomationDO continues to use `aggregateUserProjections` for its child aggregates.
+
+**Why:** A directory-only archive hid a still-running agent, while a parent RPC on every child command introduced avoidable latency. Notification identity now derives child scope in the shared producer so every seating path stays distinct from Main.
+
+**Considered and rejected:** Remote command reauthorization, child unread aggregation into Main, and a second queue. Lifecycle retries reuse the parent's durable alarm and existing retry interval. A failed delivery remains pending; archive restoration is currently API-only.
+
+
+### 2026-09-08 — Forward child notifications without merging attention
+
+WorkstreamDO now forwards person notifications from private children and stores
+child archive state. Child title projections update the child registry only.
+Previously the forwarding gate dropped every child notification. Reusing child
+viewer aggregation was rejected because child attention ordinals cannot be
+compared to Main and child membership must not grant Main permissions. The
+existing notification dependency instead carries unchanged Main state or a
+neutral viewer row. Delivery reuses current child membership and archive checks;
+command admission checks archive for open child sockets without changing socket
+revocation or adding polling.
+
+### 2026-09-08 — Every object under a workspace can be retired
+
+**What changed:** Each of the four object classes gains the `object_retirement`
+tombstone table (WorkspaceDO 41, WorkstreamDO 8, SidekickDO 5,
+conversation-object v48) and WorkspaceDO gains `workspace_retirement_graph`
+(42); the shared parent base gains `childrenForRetirement`. Every callable
+method of these classes is wrapped by the retirement gate at module load.
+`SubstreamAgent`'s runtime recovery is a prototype method rather than a
+constructor-bound closure, and returns at once on a retired object.
+
+**Why:** [`workspace-retirement.md`](workspace-retirement.md) records the
+pressure: a product write reaches `SubstreamAgent` and `WorkstreamDO` without
+passing WorkspaceDO, so closing a workspace has to be a property each object
+answers for itself. This document owns the class catalog and had not moved
+with the classes.
+
+**Considered and rejected:** Recorded in the owning document.
+
+**Consequences:** A new RPC on any of these classes refuses on a retired object
+until classified; a new effect receiver needs a `drop` entry; a new background
+caller acknowledges the refusal. The always-armed alarm invariant is suspended
+on a retired object.
 
 ### 2026-09-08 — Reserve Sidekick skill names across executions
 
@@ -1755,6 +1810,35 @@ hide archived/system conversation text, while reusing the bounded lookup schema
 made searches fail above 100 scopes. The reader preserves the participant and
 authority-generation predicate; canonical conversation checks remain decisive.
 Shipped in #576.
+
+### 2026-09-07 — A seed rides the message into the run
+
+**What changed:** `WorkstreamObjectCreateMessageInputSchema` and
+`InitializeWorkstreamObjectInputSchema` accept an optional `seed`
+(`DemoSeedSchema`). `createMessage` takes the seed's answer on whether the
+line starts a run instead of classifying it, stores the seed in the pending
+input's `authorization_json`, and activation copies it onto the run's
+`execution_context_json`; `initialize` puts it on the opening run's context
+directly and refuses a seed that says nothing. `ProductAuthSchema.principal`
+accepts `"demo_seed"` beside `"connector"`, verified by the same membership
+check.
+
+**Why:** A message-started run's context is rebuilt from the authorization blob
+at activation, so that blob is the only carrier a seed has; the spike found the
+same and this keeps its route. The object decides addressing from the seed
+rather than from `forcedHarnessOrigin` so there is one statement of intent per
+seeded message, not two that can disagree. A run an elicitation answer resumes
+is built from the answer's own authorization, which carries no seed — the
+presenter's answer must reach a real model. Owned by
+[`demo-workspaces.md`](demo-workspaces.md).
+
+**What a future change has to respect:** The seed is not an instant and must
+not become one; `createMessage` and `initialize` stamp a seeded turn with the
+real clock like any other. A retry of a seeded run keeps its seed — the retry
+spreads the previous context. Preparation does not lean on that: a seeded
+turn is written once, by a derived client message id, so a seeded run that
+failed ends its operation rather than being retried
+([`demo-workspaces.md`](demo-workspaces.md#failure-modes-and-limits)).
 
 ### 2026-09-05 — Durable search delivery
 

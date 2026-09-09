@@ -14,6 +14,7 @@
     "sys.color.success": "Positive state. `fill` and `fill-edge` are a filled control — a switch that is on, a selected preset — which is neither the vivid hue nor the wash.",
     "sys.color.warning": "Attention short of failure.",
     "sys.color.danger": "Failure and destructive action.",
+    "sys.color.palette-ink": "The two inks a palette fill can carry, absolute in both appearances. A fill does not change with the theme, so the ink over it must not either — the neutral ramp inverts and is the wrong source here. Which one a given fill takes is PALETTE_INK in @rally/contracts, not a judgement made in CSS.",
     "sys.color.project": "The semantic identity palette shared by projects, work streams, and personal accents. Stored color keys remain stable; each light/dark appearance defines its own values so shades can be tuned for contrast without changing saved choices.",
     "sys.color.workstream": "One colour per state a work stream can show a person in the sidebar and on the home screen. Every marker in the product draws from this group and nowhere else, so a state has one colour wherever it appears; which state wins when several are true at once is the client’s ordering, not the palette’s. Five of them are the run’s (`running`, `needs-input`, `completed`, `failed`, `stopped`) and three are the reader’s own (`unread`, `mentioned`, `unseen`), which is why they are one vocabulary: they compete for one dot.",
     "sys.color.scrim": "What sits between a layer and what it covers.",
@@ -54,8 +55,7 @@
     "cmp.connector": "Connector faces. Each keeps enough of the provider's own colour to be recognised at 20px, on a block the theme can still sit behind.",
     "cmp.button": "Neutral primary actions, separate from brand identity and semantic danger or success states.",
     "cmp.control": "Shared secondary controls, independent of message and sidebar geometry.",
-    "cmp.surface": "Shared secondary cards, dialogs and menus, independent of message bubbles.",
-    "cmp.member-message": "Profile color roles for human message backgrounds, foregrounds, and author dots. Each appearance tunes each role independently of avatars and project icons."
+    "cmp.surface": "Shared secondary cards, dialogs and menus, independent of message bubbles."
   },
   "tokens": {
     "cmp.control.radius": {
@@ -310,10 +310,19 @@
     "sys.color.danger.on": {
       "$type": "color"
     },
-    "sys.color.project.gray": {
+    "sys.color.palette-ink.light": {
       "$type": "color"
     },
-    "sys.color.project.brown": {
+    "sys.color.palette-ink.dark": {
+      "$type": "color"
+    },
+    "sys.color.project.edge": {
+      "$type": "color"
+    },
+    "sys.color.project.black": {
+      "$type": "color"
+    },
+    "sys.color.project.rose": {
       "$type": "color"
     },
     "sys.color.project.red": {
@@ -322,13 +331,16 @@
     "sys.color.project.orange": {
       "$type": "color"
     },
-    "sys.color.project.yellow": {
+    "sys.color.project.amber": {
+      "$type": "color"
+    },
+    "sys.color.project.lime": {
       "$type": "color"
     },
     "sys.color.project.green": {
       "$type": "color"
     },
-    "sys.color.project.teal": {
+    "sys.color.project.emerald": {
       "$type": "color"
     },
     "sys.color.project.cyan": {
@@ -340,10 +352,28 @@
     "sys.color.project.indigo": {
       "$type": "color"
     },
+    "sys.color.project.violet": {
+      "$type": "color"
+    },
     "sys.color.project.purple": {
       "$type": "color"
     },
+    "sys.color.project.fuchsia": {
+      "$type": "color"
+    },
     "sys.color.project.pink": {
+      "$type": "color"
+    },
+    "sys.color.project.gray": {
+      "$type": "color"
+    },
+    "sys.color.project.brown": {
+      "$type": "color"
+    },
+    "sys.color.project.yellow": {
+      "$type": "color"
+    },
+    "sys.color.project.teal": {
       "$type": "color"
     },
     "sys.color.workstream.running": {
@@ -833,78 +863,6 @@
       "$type": "color"
     },
     "cmp.button.primary-hover": {
-      "$type": "color"
-    },
-    "cmp.member-message.blue.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.blue.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.blue.dot": {
-      "$type": "color"
-    },
-    "cmp.member-message.teal.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.teal.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.teal.dot": {
-      "$type": "color"
-    },
-    "cmp.member-message.green.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.green.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.green.dot": {
-      "$type": "color"
-    },
-    "cmp.member-message.amber.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.amber.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.amber.dot": {
-      "$type": "color"
-    },
-    "cmp.member-message.orange.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.orange.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.orange.dot": {
-      "$type": "color"
-    },
-    "cmp.member-message.rose.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.rose.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.rose.dot": {
-      "$type": "color"
-    },
-    "cmp.member-message.violet.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.violet.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.violet.dot": {
-      "$type": "color"
-    },
-    "cmp.member-message.slate.background": {
-      "$type": "color"
-    },
-    "cmp.member-message.slate.foreground": {
-      "$type": "color"
-    },
-    "cmp.member-message.slate.dot": {
       "$type": "color"
     }
   }

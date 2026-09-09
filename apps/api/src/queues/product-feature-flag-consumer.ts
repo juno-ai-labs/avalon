@@ -10,7 +10,8 @@ import {
   durableObjectStubForWorkspace,
   workspacePlacementAffinity,
 } from "../lib/durable-object-namespace";
-import { logWarn } from "../observability/logger";
+import { isRetirementRefusal } from "../durable-objects/object-retirement";
+import { logInfo, logWarn } from "../observability/logger";
 
 const QUEUES = new Set([
   "avalon-global-product-feature-flags",
@@ -59,6 +60,19 @@ export async function consumeProductFeatureFlagQueue(
       await applyProductFeatureFlagChange(env, parsed.data);
       message.ack();
     } catch (error) {
+      // Ace's fan-out skips a closed workspace, but a message already in the
+      // queue when the tombstone landed still arrives, and the object refuses
+      // it the same way on every redelivery. Nobody is connected to a retired
+      // workspace to receive the flag, so the message is done.
+      if (isRetirementRefusal(error)) {
+        logInfo(env, "product_feature_flag_fanout_terminal", {
+          workspace_id: parsed.data.workspaceId,
+          flag_key: parsed.data.flagKey,
+          outcome: "workspace_retired",
+        });
+        message.ack();
+        return;
+      }
       logWarn(env, "product_feature_flag_fanout_failed", {
         workspace_id: parsed.data.workspaceId,
         flag_key: parsed.data.flagKey,

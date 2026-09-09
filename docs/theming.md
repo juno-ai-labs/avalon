@@ -116,6 +116,75 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-09 — A fill's ink is absolute, and the glyph follows it
+
+**What changed:** `sys.color.palette-ink.light` and `sys.color.palette-ink.dark`
+join the token set, identical in both appearances. `WorkstreamGlyph` and
+`AutomationGlyph` set `--glyph-ink` per glyph from `PALETTE_INK` instead of
+painting every symbol in the one `text-on-inverse` near-white.
+
+**Why:** Review caught the symbol going illegible on the brighter half of the new
+ring — white on `lime` is 1.98:1 and on `emerald` 2.47:1, under the 3:1 WCAG asks
+of a meaningful graphical object. One fixed light foreground worked only because
+the previous ramp was uniformly dark, so this is a regression the palette change
+introduced rather than a pre-existing gap.
+
+The inks had to be new tokens rather than the neutral ramp. `ref.color.neutral.*`
+inverts between appearances, which is right for text on a themed surface and
+wrong here: a palette fill is the same colour in both themes, so its ink must be
+too. The first attempt reached for `neutral.14` and produced white-on-orange in
+dark mode, which `palette.css.node.test.ts` caught.
+
+**Consequences:** Anything drawing on a palette fill takes its ink from
+`PALETTE_INK` and these two tokens, never from `text-on-inverse`. The test walks
+every fill in both appearances and holds the 3:1 floor, so a future palette value
+that would go unreadable fails the build.
+
+### 2026-09-09 — The identity palette becomes a hue ring, and accents step it in twos
+
+**What changed:** `sys.color.project.*` moved to fourteen hues in wheel order —
+`rose` through `pink`, on a lighter ramp — plus `black`, a near-black that each
+appearance tunes separately (`#17171a` light, `#45454d` dark) so it stays legible
+as a glyph stroke rather than vanishing into a dark sidebar. `gray`, `brown`,
+`yellow` and `teal` keep their tokens but left the picker. `#ccff00` is no longer
+a palette entry: it stays `sys.color.brand.base` and nothing else. A new
+`sys.color.project.edge` gives every swatch a hairline, and the
+`cmp.member-message.*` tokens are gone, message bubbles reading the palette
+directly.
+
+**Why:** The previous palette carried the brand lime in a slot named `orange`,
+so the one colour that must stay reserved for the brand was also a colour any
+person could paint a project. Separating them is the point of the change; the
+ring ordering is what lets the picker close into an oval rather than reading as
+two unrelated rows. The `cmp.member-message.*` hexes were duplicating palette
+values by hand and had already drifted, which is why they were removed rather
+than repointed.
+
+The palette is now a vocabulary rather than a menu. `PALETTE_KEYS` is every
+colour with a token; `PROJECT_COLOR_KEYS` is the ring, which is what projects and
+work streams offer; `PERSONAL_COLOR_KEYS` is every *other* colour around the ring
+plus `black`, which is what an account offers. Stepping the ring in twos is what
+makes eight accents distinguishable — adjacent hues are neighbours by
+construction, so a contiguous eight would collect the least separable colours.
+`black` is offered only to accounts: a person appears once on a screen, where an
+absence of colour reads as a choice, while a work stream sits in a list where it
+reads as one that failed to get a colour. It stays storable everywhere regardless
+— narrowing what can be stored is how a held colour becomes a failed read.
+
+The `cmp.member-message.*` tokens are gone entirely, twenty-four of them. They
+restated palette fills and inks by hand for each accent name, had already drifted
+from the palette, and could not survive the accent set changing; the accent is a
+palette colour now, so message bubbles read the palette directly.
+
+**Consequences:** The label "Neon yellow" is gone — the 2026-09-07 entry below is
+superseded on that point, and `orange` is an actual orange now. Ink is no longer
+guessed from a list of four dark fills: `PALETTE_INK` in `@rally/contracts`
+is the table, black wins on every fill but the three darkest — `black`, and the
+retained `gray` and `brown` — and
+`palette.css.node.test.ts` recomputes it from the token values in both
+appearances. A fill whose contrast flips must move the table in the same change
+or that test fails.
+
 ### 2026-09-08 — Give member messages independent appearance roles
 
 Human message colors use `cmp.member-message.<profile-color>.background`,
@@ -124,26 +193,6 @@ These roles preserve the current colors while allowing light and dark tuning
 without changing avatar or project colors. Components select a profile role;
 they do not decide text contrast from a hard-coded list of hues.
 
-
-### 2026-09-08 — Retire neon yellow from identity pickers
-
-The `orange` identity swatch is no longer offered. Its neon paint failed chip
-contrast, and retuning it toward `#ffff3c` did not fix that. Stored `orange`
-remains valid and now paints as gold `yellow` (`#ca8a04`) in both appearances,
-matching the remaining Yellow swatch. Brand fills stay `#ccff00`. Member-message
-`orange` tokens match amber so leftover personal-accent bubbles are not lime.
-Pickers use `PROJECT_COLOR_CHOICES` / `PERSONAL_COLOR_CHOICES`; do not delete
-`orange` from the stored registries.
-
-### 2026-09-08 — Soften the neon-yellow identity swatch
-
-Work-stream chips that use the legacy `orange` key were painting Rally's brand
-lime `#ccff00`. On the sidebar glyph that color reads as a harsh lime (sampled
-around 193, 255, 60 after the 78% mix with the surface). The identity token is
-now `#ffff3c` (255, 255, 60) in both appearances so the chip is yellow rather
-than lime. Brand fills stay `#ccff00` to match the public site; member-message
-orange is independently tunable and is left on the brand lime. The stored key
-and "Neon yellow" label are unchanged.
 
 ### 2026-09-08 — Identity palette keys are stable; shades are appearance-specific
 

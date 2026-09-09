@@ -29,7 +29,9 @@ changing the Slack unfurl card or the sweep that keeps it current.
 
 ## How it works
 
-### The two forms
+#Private-child links append `/substreams/<substream-uuid>` to the canonical HTTPS path and to the deep-link path (before its workspace query). Writers omit the suffix for Main (`0`). Both parsers preserve the child ID; desktop workspace activation navigates to `/workstreams/<parent>?substream=<child>`. The header's Copy link and child notifications use this same primitive. Email reply routing is unchanged.
+
+## The two forms
 
 | Form | Shape | Who mints it |
 | --- | --- | --- |
@@ -319,6 +321,15 @@ copied into this table; they come from `WorkspaceDO.workspace_workstream_directo
 [`data-model.md`](data-model.md) is authoritative for the columns.
 
 ## Changelog
+
+### 2026-09-08 — Preserve private-child destinations
+
+**What changed:** Canonical HTTPS links and desktop deep links accept an optional `/substreams/<id>` suffix. Notifications and Copy link preserve the child, including across workspace activation.
+
+**Why:** A child notification that opens Main loses the conversation it describes.
+
+**Considered and rejected:** A separate child URL scheme; the existing link primitive carries the optional child address. Main URLs and legacy readers retain their existing forms.
+
 
 ### 2026-09-02 — A link to the active workspace navigates without re-activating
 

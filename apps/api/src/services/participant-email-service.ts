@@ -19,6 +19,7 @@ export interface WorkstreamParticipantAddedEmail {
   workspaceName: string;
   workspaceId: string;
   workstreamId: string;
+  substreamId?: string;
   workstreamTitle: string;
   workstreamObjective: string;
   /** The work stream has no settled name yet; do not print the placeholder. */
@@ -54,6 +55,7 @@ export async function sendWorkstreamParticipantAddedEmail(
   const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, {
     region: input.region,
     workspaceId: input.workspaceId,
+    ...(input.substreamId ? { substreamId: input.substreamId } : {}),
     workstreamId: input.workstreamId,
   });
   const replyTo = input.workstreamEmailAddress?.trim() || null;

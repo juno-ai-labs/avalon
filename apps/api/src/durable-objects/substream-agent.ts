@@ -1,3 +1,4 @@
+import { safeParseSocketEvent, isUnknownSocketEvent, ClientSocketEventTypeSchema } from "@rally/contracts";
 import { SidekickSkillSnapshotSchema } from "@rally/contracts";
 import { sidekickSkillCatalog, sidekickSkillRef } from "../services/sidekick-skills";
 import { flushAuthorizationProjection, nextAuthorizationProjectionAt } from './authorization-projection';
@@ -44,6 +45,7 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamSocketCommandResultSchema,
   WorkstreamWorkflowInputSchema,
+  DemoSeedSchema,
   type ServerSocketEvent,
   type TranscriptRangeResult,
   type TranscriptTurn,
@@ -196,6 +198,11 @@ import {
   ScheduledDurableObject,
   type ScheduledAlarm,
 } from "./scheduled-alarms";
+import {
+  applyRetirementGate,
+  readObjectRetirement,
+  retiredObjectResponse,
+} from "./object-retirement";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import {
   InitializeWorkstreamObjectInputSchema,
@@ -372,8 +379,10 @@ const ProductAuthSchema = z.strictObject({
   // `"connector"`: a connector ingress already verified the link that binds
   // this member on the message being delivered, `sessionId` is correlation
   // only, and the object verifies current membership instead — see
-  // `connectorPrincipalAuth`.
-  principal: z.literal("connector").optional(),
+  // `connectorPrincipalAuth`. `"demo_seed"`: the demo seeder acting as a cast
+  // member who never signs in, verified the same way. Both are constructed
+  // only by server code; `IdentityAuthContext.principal` says why.
+  principal: z.enum(["connector", "demo_seed"]).optional(),
 });
 const ProductRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({ operation: z.literal("initialize"), auth: ProductAuthSchema,
@@ -877,7 +886,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private harnessRuns!: WorkstreamHarnessRunStorage;
   /** Schema, repositories, and identity required to admit and snapshot a feed. */
   private readonly storageReady: Promise<void>;
-  private readonly runtimeRecoveryAttempt: () => Promise<void>;
   private runtimeRecovery: Promise<void> | null = null;
   private get initialized(): Promise<void> {
     return this.startRuntimeRecovery();
@@ -987,10 +995,42 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         this.ensurePersistentLoop();
       }
     });
-    // Lease repair and alarm derivation protect execution, not feed reads. Keep
-    // them durable and single-flight, but do not hold a cold socket upgrade
-    // behind the storage alarm round trip once its schema is usable.
-    this.runtimeRecoveryAttempt = () => this.storageReady.then(() => inDurableObjectPhase(
+    const initialRecovery = this.initialized;
+    this.state.waitUntil(initialRecovery.catch((error) => {
+      // Read through a guard: this closure holds the raw receiver, outside the
+      // construction window, so on a retired object the id read itself is
+      // refused — and a throw inside a `waitUntil` callback is an unhandled
+      // rejection rather than the warning this exists to write.
+      let substreamId = "unknown";
+      try {
+        substreamId = this.externalSubstreamId();
+      } catch {
+        // Logged as unknown rather than not at all.
+      }
+      logWarn(this.env, "substream_runtime_recovery_failed", {
+        substream_id: substreamId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    }));
+    // Exact text ping/pong frames are answered by the runtime without waking a
+    // hibernated object, so keepalives do not accrue Durable Object duration.
+    this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+  }
+
+  /**
+   * Lease repair and alarm derivation for an isolate that replaced another.
+   *
+   * A prototype method rather than a closure the constructor binds, and the
+   * reason is retirement. This runs *outside* the construction window on
+   * purpose — a cold socket upgrade must not wait on the storage alarm round
+   * trip — so on a retired object it meets the gate, and the gate can only lift
+   * itself for a call whose receiver it supplied. A closure over the
+   * constructor's `this` is invisible to that, and is refused on the first
+   * private helper it touches — which is what left a retired agent unreachable
+   * after its first eviction.
+   */
+  private runtimeRecoveryAttempt(): Promise<void> {
+    return this.storageReady.then(() => inDurableObjectPhase(
       this.env,
       "runtime_recovery",
       {
@@ -999,12 +1039,19 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         latestVersion: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
       },
       async () => {
+      // Nothing to recover on a retired object, and nothing this may write.
+      // The permit that lets recovery run at all carries the whole call, so
+      // without this the lease repair below wrote rows and the alarm sync
+      // re-derived wake reasons into `_internal_durable_alarms` on every
+      // rebuild of a closed agent — a retired object "writing again", and the
+      // one path by which a cleared alarm index could refill.
+      if (readObjectRetirement(this.state.storage.sql) !== null) return;
       // Still-live local leases belong to the isolate this one replaced, so
       // their runs are recoverable now. Already-expired rows stay with the
       // ordinary stale-run reaper.
       const recoveryStartedAt = Date.now();
       const recoverableAttempts = expireLocalAttemptLeasesFromPreviousInstance(
-        state.storage,
+        this.state.storage,
         recoveryStartedAt,
       );
       for (const attempt of recoverableAttempts) {
@@ -1055,16 +1102,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       await this.armNextAlarm();
       },
     ));
-    const initialRecovery = this.initialized;
-    this.state.waitUntil(initialRecovery.catch((error) => {
-      logWarn(this.env, "substream_runtime_recovery_failed", {
-        substream_id: this.externalSubstreamId(),
-        reason: error instanceof Error ? error.message : "unknown",
-      });
-    }));
-    // Exact text ping/pong frames are answered by the runtime without waking a
-    // hibernated object, so keepalives do not accrue Durable Object duration.
-    this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
 
   /**
@@ -1181,6 +1218,23 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     await this.storageReady;
   }
 
+  async applyPrivateChildLifecycle(input: {
+    workspaceId: string; parentId: string; substreamId: string; version: number; archivedAt: number | null;
+  }): Promise<void> {
+    await this.storageReady;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
+      substreamId: SubstreamIdSchema.refine((id) => id !== "0"),
+      version: z.number().int().positive(), archivedAt: z.number().int().nonnegative().nullable(),
+    }).parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity || identity.parentKind !== "workstream" || identity.workspaceId !== request.workspaceId
+      || identity.parentId !== request.parentId || this.externalSubstreamId() !== request.substreamId) {
+      throw new Error("private_child_lifecycle_identity_mismatch");
+    }
+    await this.product.applyPrivateChildLifecycle(request.version, request.archivedAt);
+    await this.armNextAlarm();
+  }
+
   /** Apply one versioned mirror of the parent-owned roster for a private child. */
   async applyPrivateChildMembership(input: {
     workspaceId: string;
@@ -1211,7 +1265,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       throw new Error("private_child_membership_identity_mismatch");
     }
     const now = Date.now();
-    const outcome = this.state.storage.transactionSync(() => {
+    // Read before the commit, because the effects that carry them are built
+    // inside it and an effect callback cannot await a regional round trip.
+    // This is the same preparation `addParticipant` does for the main
+    // conversation's add.
+    const names = await this.product.participantEffectNames(request.actorUserId, request.userId);
+    const { result: outcome } = await this.objectStore.commitWithRegionalEffects(() => {
       const current = this.state.storage.sql.exec<{ version: number; active: number }>(
         `SELECT version, active FROM private_child_membership_authority WHERE user_id = ?`,
         request.userId,
@@ -1250,7 +1309,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         );
       }
       return "applied" as const;
-    });
+    }, (_sql, applied) => applied !== "applied" ? [] : this.product.privateChildMembershipEffects({
+      substreamId: request.substreamId,
+      userId: request.userId,
+      actorUserId: request.actorUserId,
+      actorName: names.actorName,
+      recipientName: names.recipientName,
+      active: request.active,
+      now,
+    }));
     if (!request.active && outcome === "applied") this.evictReadersWhoLostLocalAccess();
     return { outcome };
   }
@@ -2029,6 +2096,28 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       parts: operation.preparedContext.parts.map((part) => part.content),
     } });
     return { installed: true };
+  }
+
+  /** Internal content-only RPC. The Worker has already admitted these candidates through search authz. */
+  async readAdmittedSearchContent(input: unknown) {
+    await this.storageReady;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
+      substreamId: SubstreamIdSchema, turnIds: z.array(TranscriptTurnIdSchema),
+      links: z.array(z.strictObject({ turnId: TranscriptTurnIdSchema, linkId: z.string() })),
+    }).parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.parentId
+      || this.externalSubstreamId() !== request.substreamId) throw new Error('search_content_identity_mismatch');
+    if (this.identityRows.identity()?.archived_at != null) return responseToRpcResult(jsonResponse({ title: '', turns: [], links: [] }));
+    return responseToRpcResult(jsonResponse({ title: this.identityRows.identity()?.title ?? '',
+      turns: request.turnIds.flatMap((turnId) => {
+        const turn = this.transcript.participantTurn(turnId);
+        return turn?.entryKind === 'conversation' ? [turn] : [];
+      }),
+      links: request.links.map(({ turnId, linkId }) => ({ linkId,
+        link: readConversationSearchLink(this.state.storage.sql, linkId, this.transcript.participantTurn(turnId)),
+      })),
+    }));
   }
 
   async executeIdentityOperation(input: IdentityOperationRequest): Promise<DurableObjectRpcResult> {
@@ -2826,8 +2915,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // this region. Before this branch existed, connector ingress synthesized a
     // session id that no `sessions` row could ever match, and every linked
     // member's Slack message died here as `session_revoked` (2026-08-22).
-    const connectorPrincipal = request.auth.principal === "connector";
-    const current = connectorPrincipal
+    // Any non-session principal — `connector`, `demo_seed` — is verified by
+    // membership rather than by a session row. The enum on `principal` is the
+    // gate: a value added to it inherits this branch.
+    const nonSessionPrincipal = request.auth.principal !== undefined;
+    const current = nonSessionPrincipal
       ? await span.step("workstream.room.connector_auth", () => this.connectorPrincipalAuth(request.auth))
       : await span.step("workstream.room.session_auth", () => this.socketAuth({
         workspaceId: request.auth.workspaceId,
@@ -2835,13 +2927,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         sessionId: request.auth.sessionId,
       }));
     if (!current || current.role !== request.auth.role || current.region !== request.auth.region) {
-      const refusal = connectorPrincipal ? "connector_member_revoked" : "session_revoked";
+      const refusal = nonSessionPrincipal ? "connector_member_revoked" : "session_revoked";
       span.setError(refusal);
       // The message rides to `WorkstreamObjectClient.decode`, whose fallback
       // ("The work stream could not be loaded") misdescribes a refused send.
       return jsonResponse({
         error: refusal,
-        message: connectorPrincipal
+        message: nonSessionPrincipal
           ? "You are no longer an active member of this workspace"
           : "Sign in again to continue",
       }, 401);
@@ -3226,6 +3318,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         telemetryOperationId: z.string().nullable().optional(),
         slackOrigin: z.unknown().nullable().optional(),
         slackSearchAuthorization: z.unknown().nullable().optional(),
+        seed: DemoSeedSchema.nullable().optional(),
       }).parse(JSON.parse(pending.authorization_json));
       const runId = asHarnessRunId(uuidV7(now));
       const input = WorkstreamWorkflowInputSchema.parse({
@@ -3256,6 +3349,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ...(authorization.slackSearchAuthorization
           ? { slackSearchAuthorization: authorization.slackSearchAuthorization }
           : {}),
+        // Carries the seed from the message that started this run onto the
+        // run's own execution receipt, which is what the harness reads.
+        ...(authorization.seed ? { seed: authorization.seed } : {}),
         reason: authorization.reason,
       });
       const leaseOwner = uuidV7(now + 1);
@@ -4660,7 +4756,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return;
     }
 
-    const parsed = ClientSocketEventSchema.safeParse(decoded);
+    if (isUnknownSocketEvent(decoded, ClientSocketEventTypeSchema)) return;
+    const parsed = safeParseSocketEvent(ClientSocketEventSchema, decoded);
     if (!parsed.success) {
       const recognizableMutation = recognizableSocketMutation(decoded);
       if (recognizableMutation) {
@@ -4765,6 +4862,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     await this.mutateSocketSubstream(socket, attachment, parsed.data);
   }
 
+  private assertPrivateChildNotArchived(): void {
+    if (this.objectStore.identity()?.parentKind !== "workstream" || this.externalSubstreamId() === "0") return;
+    if (this.identityRows.identity()?.archived_at != null) {
+      throw new ApiError(409, "substream_archived", "This substream is archived");
+    }
+  }
+
   private async mutateSocketSubstream(
     socket: WebSocket,
     attachment: SocketAttachment,
@@ -4799,6 +4903,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
       }
       assertParentWritable(attachment);
+      this.assertPrivateChildNotArchived();
       const auth = await this.socketViewerAuth(attachment);
       if (!auth) {
         disconnect(socket, 1012, "Reconnect for substream commands");
@@ -4981,6 +5086,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
         }
         assertParentWritable(attachment);
+        this.assertPrivateChildNotArchived();
         if (!attachment.sessionId || !attachment.role) {
           // A socket admitted before this command path existed has no role in
           // its hibernation attachment. A normal reconnect obtains a fresh
@@ -6803,3 +6909,26 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return this.objectStore.commitRealtimeEvent(unsequencedEvent, requestedSequence);
   }
 }
+
+applyRetirementGate(SubstreamAgent, {
+  permit: [
+    // Construction, arriving late. This object recovers its runtime lazily on
+    // first access rather than in its constructor, so the window
+    // `blockConcurrencyWhile` opens for the others closes before this runs.
+    // It is the same category — making the object exist — and refusing it
+    // fences the object out of existence rather than out of use. What recovery
+    // must not do, re-arm an alarm, is prevented by those methods being inert.
+    "startRuntimeRecovery",
+  ],
+  drop: {
+    fetch: () => retiredObjectResponse(),
+    // Hibernated socket callbacks. The socket is already dead to the product;
+    // throwing here would only turn a quiet close into an error nobody reads.
+    webSocketMessage: () => Promise.resolve(),
+    webSocketClose: () => Promise.resolve(),
+    webSocketError: () => Promise.resolve(),
+    // The platform retries an alarm that throws. A retired object answers the
+    // wake by doing nothing and arming nothing, which is what quiet means.
+    alarm: () => Promise.resolve(),
+  },
+});

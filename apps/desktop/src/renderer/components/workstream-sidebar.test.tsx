@@ -15,7 +15,7 @@ const workstream = { id: '00000000-0000-7000-8000-000000000021', title: 'Launch 
 let width: number;
 let resized: () => void;
 
-function setup(detail = workstream) {
+function setup(detail: React.ComponentProps<typeof WorkstreamSidebar>['workstream'] = workstream) {
   const onOpenArtifact = vi.fn();
   const onParticipants = vi.fn();
   const onFocusTranscript = vi.fn();
@@ -51,7 +51,16 @@ describe('WorkstreamSidebar', () => {
     expect(screen.queryByText('Source ticket')).not.toBeInTheDocument();
     expect(screen.queryByText('Substreams')).not.toBeInTheDocument();
     expect(screen.getByText('document · v2')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }).querySelector('svg, img')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }).querySelector('.workstream-mark')).not.toBeNull();
+  });
+
+  it('marks the main conversation with the work stream\u2019s own icon and colour', () => {
+    // 'rocket' is not what this id generates ('atom'), so the assertion fails
+    // if the saved icon stops being read rather than passing down either branch.
+    setup({ ...workstream, appearance: { icon: 'rocket', color: 'teal' } });
+    const mark = screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }).querySelector('.workstream-mark');
+    expect(mark).toHaveClass('lucide-rocket');
+    expect(mark).toHaveStyle({ color: 'var(--av-sys-color-project-teal)' });
   });
 
   it('toggles from the right edge and labels the main conversation with its title', () => {
@@ -63,6 +72,29 @@ describe('WorkstreamSidebar', () => {
     expect(edge).toHaveAttribute('aria-valuenow', '96');
     fireEvent.doubleClick(edge);
     expect(edge).toHaveAttribute('aria-valuenow', '280');
+  });
+
+  // As for the navigation: `flex-basis` is transitioned, and the drag takes that
+  // transition off while it tracks the pointer. The second release of a
+  // double-click has to have restored it before the toggle lands, or the one
+  // gesture that asks for the animation is the one that does not get it.
+  it('leaves the resize suppression off when a double-click on the edge toggles', () => {
+    setup();
+    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+    edge.setPointerCapture = vi.fn();
+    edge.releasePointerCapture = vi.fn();
+    const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
+
+    for (const pointerId of [7, 8]) {
+      fireEvent.pointerDown(edge, { button: 0, clientX: 563, pointerId });
+      expect(sidebar).toHaveClass('is-resizing');
+      fireEvent.pointerUp(edge, { pointerId });
+    }
+
+    expect(sidebar).not.toHaveClass('is-resizing');
+    fireEvent.doubleClick(edge);
+    expect(edge).toHaveAttribute('aria-valuenow', '96');
+    expect(sidebar).not.toHaveClass('is-resizing');
   });
 
   it('opens artifacts only on click with the clicked button as the preview focus return target', () => {
@@ -95,7 +127,7 @@ describe('WorkstreamSidebar', () => {
     expect(screen.getByRole('complementary')).not.toHaveClass('is-compact');
   });
 
-  it('places creator-attributed children below Main and creation last while retaining compact navigation', async () => {
+  it('places children below Main and creation last while retaining compact navigation', () => {
     const onSelectSubstream = vi.fn();
     const onNewSubstream = vi.fn();
     render(<Tooltip.Provider><WorkstreamSidebar
@@ -113,13 +145,16 @@ describe('WorkstreamSidebar', () => {
     /></Tooltip.Provider>);
     expect(screen.getByRole('button', { name: /Launch risks/ })).toHaveAttribute('aria-current', 'page');
     const child = screen.getByRole('button', { name: /Launch risks/ });
-    expect(await within(child).findByText('AL')).toBeInTheDocument();
+    // The branch line is the substream's own mark now, in the slot the main
+    // row gives the work stream's icon: no creator avatar, no outer connector.
+    expect(child.querySelector('.workstream-context-mark > .tabler-icon-border-corner-pill')).not.toBeNull();
+    expect(child.querySelector('.avatar')).toBeNull();
     const sidebar = screen.getByRole('complementary');
     const navigation = within(sidebar).getAllByRole('button').slice(0, 3);
     expect(navigation.map((button) => button.getAttribute('aria-label'))).toEqual([
       'Go to conversation: Launch preparation', 'Go to substream: Launch risks', 'New substream',
     ]);
-    expect(sidebar.querySelectorAll('.tabler-icon-border-corner-pill')).toHaveLength(2);
+    expect(sidebar.querySelectorAll('.tabler-icon-border-corner-pill')).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'New substream' }).querySelector('.tabler-icon-plus')).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Launch risks/ }));
     expect(onSelectSubstream).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000099');
@@ -127,10 +162,32 @@ describe('WorkstreamSidebar', () => {
     expect(onNewSubstream).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
     expect(sidebar).toHaveClass('is-compact');
+    // Compact has no title, so the mark carries the substream's first letter.
+    expect(screen.getByRole('button', { name: /Launch risks/ }).querySelector('.workstream-substream-initial')?.textContent).toBe('L');
+    expect(sidebar.querySelectorAll('.tabler-icon-border-corner-pill')).toHaveLength(0);
     fireEvent.click(child);
     expect(onSelectSubstream).toHaveBeenLastCalledWith('00000000-0000-7000-8000-000000000099');
     fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }));
     expect(onSelectSubstream).toHaveBeenLastCalledWith('0');
+  });
+
+  it('keeps the branch line for a substream whose title has no first character', () => {
+    render(<Tooltip.Provider><WorkstreamSidebar
+      workstream={{ ...workstream, privateChildren: [{
+        substreamId: asSubstreamId('00000000-0000-7000-8000-000000000098'), title: '   ', createdByUserId: asUserId(person.id),
+        createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
+      }] }}
+      presentUserIds={[]}
+      onOpenArtifact={vi.fn()}
+      onParticipants={vi.fn()}
+      onFocusTranscript={vi.fn()}
+    /></Tooltip.Provider>);
+    const sidebar = screen.getByRole('complementary');
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
+    expect(sidebar).toHaveClass('is-compact');
+    // A lone space is wire-legal, and an empty mark square says nothing at all.
+    expect(sidebar.querySelector('.workstream-substream-initial')).toBeNull();
+    expect(sidebar.querySelector('.tabler-icon-border-corner-pill')).not.toBeNull();
   });
 
   it('collapses for available pane width without overwriting the manual preference', () => {

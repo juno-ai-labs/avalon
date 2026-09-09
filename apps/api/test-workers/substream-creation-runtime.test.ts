@@ -2,18 +2,18 @@
 
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { AuthContext, Env } from "../src/env";
-import { conversationObjectName, workstreamDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workstreamDOName, workspaceDOName } from "../src/durable-objects/names";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { SubstreamCreationService } from "../src/services/substream-creation-service";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
 } from "../src/services/workstream-runtime-database";
-import { deliverEffectsToWorkspace, deliverChildEffects } from "./helpers/conversation-effects";
+import { deliverEffectsToWorkspace, deliverChildEffects, pendingParentEffects, deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { post, seedParticipantMessage, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
@@ -25,6 +25,13 @@ let WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-00000000ce13");
 let fixtureOrdinal = 0;
 const SESSION_ID = "00000000-0000-7000-8000-00000000ce14";
 const TEST_ENV: Env = env;
+const classifierEnv: { OPENROUTER_CLASSIFIER_MODEL?: string } = env;
+const originalClassifierModel = classifierEnv.OPENROUTER_CLASSIFIER_MODEL;
+afterEach(() => {
+  vi.unstubAllGlobals();
+  if (originalClassifierModel === undefined) delete classifierEnv.OPENROUTER_CLASSIFIER_MODEL;
+  else classifierEnv.OPENROUTER_CLASSIFIER_MODEL = originalClassifierModel;
+});
 
 const creatorAuth: AuthContext = {
   sessionId: SESSION_ID,
@@ -38,7 +45,9 @@ const otherAuth: AuthContext = { ...creatorAuth, userId: OTHER_ID, sessionId: "o
 useHeldEffectQueue();
 const provider = useOpenRouterDouble((call) => ({ say: call.stream
   ? "The child used its frozen context."
-  : JSON.stringify({ summary: "A frozen source summary." }) }));
+  : JSON.stringify(call.body.response_format ?? {}).includes('message_addressing')
+    ? JSON.stringify({ classification: "both", confidence: 1, rationaleCode: "imperative" })
+    : JSON.stringify({ summary: "A frozen source summary." }) }));
 
 function parent() {
   return env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
@@ -68,6 +77,7 @@ beforeEach(async () => {
     sessionId: SESSION_ID,
   });
   await env.DB.batch([
+    env.DB.prepare(`ALTER TABLE workspaces ADD COLUMN name TEXT DEFAULT 'Test workspace'`),
     env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
       .bind(otherAuth.sessionId, OTHER_ID, WORKSPACE_ID),
@@ -157,11 +167,179 @@ describe("substream preparation on workerd", () => {
     }))).rejects.toThrow("private_child_preparation_forbidden");
   });
 
-  it("executes the first child instruction against its frozen seed without reading later Main messages", async () => {
+  it.each(["active", "active-main", "removed", "archived"] as const)("delivers a child mention only to a currently active recipient (%s), without changing parent attention or participation", async (recipientState) => {
+    // The defect this covers: `forwardsChildEffect` answered
+    // `substreamId === "0"` for every kind, so a mention written in a
+    // substream reached the parent's outbox and stopped there. Nobody was ever
+    // told they had been tagged in a substream, by Slack or by mail.
+    const mainParticipant = recipientState === "active-main";
+    if (mainParticipant) {
+      expect((await post(conversation(), "/internal/product", {
+        operation: "add_participant", auth: creatorAuth, userId: OTHER_ID,
+      })).status).toBe(200);
+      await deliverChildEffects(TEST_ENV, conversation());
+      await deliverParentEffects(TEST_ENV, parent());
+    }
+    const originalMain = await runInDurableObject(parent(), (_instance, state) =>
+      state.storage.sql.exec(`SELECT effect_json FROM substream_user_directory WHERE substream_id = '0' AND user_id = ?`, OTHER_ID).toArray());
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000ce31";
+    await service.prepare(WORKSTREAM_ID, { operationId, title: "Mentioning child", throughTurnId: "source-turn-1" });
+    const substreamId = (await service.confirm(WORKSTREAM_ID, operationId)).substreamId;
+    await service.changeParticipant(WORKSTREAM_ID, substreamId, {
+      userId: OTHER_ID, operationId: "00000000-0000-7000-8000-00000000ce32",
+    }, true);
+    const child = conversation(substreamId);
+    // Everything the seating produced, out of the way: what follows must be
+    // the mention's own effects.
+    await deliverChildEffects(TEST_ENV, child);
+    await deliverParentEffects(TEST_ENV, parent());
+
+    const text = "@Other take a look at this";
+    const sent = await post(child, "/internal/product", {
+      operation: "create_message", auth: creatorAuth, input: {
+        text, clientMessageId: "substream-mention", attachmentIds: [], confirmedParticipantUserIds: [],
+        mentions: [{ type: "person", userId: OTHER_ID, connectorType: null, startOffset: 0, endOffset: "@Other".length }],
+        // Skips the addressing classifier, whose own model routing is not what
+        // this test is about; the delivery effects it stands in front of are
+        // identical either way.
+        forcedHarnessOrigin: "test_mention",
+      },
+    });
+    expect(sent.status).toBe(200);
+    // A submitted message is pending until the transcript promotes it, and
+    // the delivery effects — the viewer rows and the mention — are written in
+    // that same transaction.
+    await expect.poll(async () => {
+      await runDurableObjectAlarm(child);
+      await deliverChildEffects(TEST_ENV, child);
+      return (await pendingParentEffects(parent())).some((envelope) => envelope.effect.kind === "mention_notification");
+    }, { timeout: 10_000 }).toBe(true);
+
+    const forwarded = await pendingParentEffects(parent());
+    const mention = forwarded.find((envelope) => envelope.effect.kind === "mention_notification");
+    expect(mention?.effect).toMatchObject({
+      kind: "mention_notification",
+      recipientUserId: OTHER_ID,
+      substreamId,
+      authorUserId: CREATOR_ID,
+      // Canonicalised on the way in, which is what the mail and the Slack DM
+      // then render; the assertion follows the payload rather than the input.
+      messageText: expect.stringContaining("take a look at this"),
+      // The substream's own name, not its parent's: an inbox that says where
+      // this happened has to name the conversation the reader can open.
+      workstreamTitleSnapshot: "Mentioning child",
+    });
+    // Delivery is gated on the recipient's own directory row having reached
+    // the workspace, and for a private child nothing else advances that key.
+    // Forwarding the notification without it is a poison retry, not a missing
+    // badge, so the row has to be queued *ahead* of it rather than merely
+    // queued.
+    expect(mention?.requiredProjectionVersion).toBeGreaterThan(0);
+    const outbound: { text: string; to: string[] }[] = [];
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url === "https://api.resend.com/emails") {
+        outbound.push(JSON.parse(String(init?.body)));
+        return Response.json({ id: "provider-message" });
+      }
+      return originalFetch(input, init);
+    });
+    // Miniflare cannot implement jurisdiction selection; retain real objects
+    // and replace only that unsupported namespace operation.
+    const localJurisdiction = <T extends Env["WORKSPACE_DOS"] | Env["WORKSTREAM_DOS"]>(namespace: T): T => new Proxy(namespace, {
+      get(target, property) {
+        if (property === "jurisdiction") return () => target;
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    if (recipientState === "removed") {
+      await service.changeParticipant(WORKSTREAM_ID, substreamId, { userId: OTHER_ID, operationId: "remove-before-delivery" }, false);
+    } else if (recipientState === "archived") {
+      await service.archive(WORKSTREAM_ID, substreamId, true);
+    }
+    await deliverParentEffects({ ...TEST_ENV,
+      WORKSPACE_DOS: localJurisdiction(TEST_ENV.WORKSPACE_DOS),
+      WORKSTREAM_DOS: localJurisdiction(TEST_ENV.WORKSTREAM_DOS),
+      APP_ENV: "production", RESEND_API_KEY: "test-only",
+      RESEND_NOTIFICATION_FROM_EMAIL: "Rally <test@example.test>",
+    }, parent());
+    expect(outbound).toHaveLength(recipientState.startsWith("active") ? 1 : 0);
+    if (recipientState.startsWith("active")) {
+      expect(outbound[0]?.to).toEqual(["other@example.com"]);
+      expect(outbound[0]?.text).toContain(`/substreams/${substreamId}`);
+      expect(outbound[0]?.text).toContain("take a look at this");
+    }
+    const workspace = TEST_ENV.WORKSPACE_DOS.get(TEST_ENV.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
+    expect(await workspace.notificationDirectoryState({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, userId: OTHER_ID }))
+      .toMatchObject({ listable: mainParticipant, title: "Source" });
+    expect(await runInDurableObject(workspace, (_instance, state) => state.storage.sql.exec(
+      `SELECT is_participant, unread_count, you_are_mentioned FROM workspace_workstream_viewers
+        WHERE workstream_id = ? AND user_id = ?`, WORKSTREAM_ID, OTHER_ID,
+    ).one())).toEqual({ is_participant: Number(mainParticipant), unread_count: 0, you_are_mentioned: 0 });
+    expect(await runInDurableObject(parent(), (_instance, state) =>
+      state.storage.sql.exec(`SELECT effect_json FROM substream_user_directory WHERE substream_id = '0' AND user_id = ?`, OTHER_ID).toArray())).toEqual(originalMain);
+
+    // Everything addressed to a surface rather than a person stays here: a
+    // private child is in no feed, no digest and no workspace sidebar row.
+    expect(forwarded.some((envelope) => envelope.effect.kind === "activity_event")).toBe(false);
+    expect(forwarded.some((envelope) => envelope.effect.kind === "directory_common")).toBe(false);
+    expect(await runInDurableObject(parent(), (_instance, state) =>
+      state.storage.sql.exec<{ title: string }>(`SELECT title FROM workstream_metadata WHERE id = 1`).one().title,
+    )).toBe("Source");
+
+
+  });
+
+  it("tells somebody they were added to a substream, under an identity the main room cannot collide with", async () => {
+    // Seat the same person in the main room first. Both seatings are that
+    // person's first, so both carry epoch 0 — which is what made the two
+    // identities collide while the parent id alone scoped them, and a
+    // collision here is a hash conflict the parent retries forever.
+    const seated = await post(conversation(), "/internal/product", {
+      operation: "add_participant", auth: creatorAuth, userId: OTHER_ID,
+    });
+    expect(seated.status).toBe(200);
+    const roomAdd = (await deliverChildEffects(TEST_ENV, conversation()))
+      .find((envelope) => envelope.effect.kind === "participant_notification");
+    expect(roomAdd).toBeDefined();
+
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000ce33";
+    await service.prepare(WORKSTREAM_ID, { operationId, title: "Seating child", throughTurnId: "source-turn-1" });
+    const substreamId = (await service.confirm(WORKSTREAM_ID, operationId)).substreamId;
+    await service.changeParticipant(WORKSTREAM_ID, substreamId, {
+      userId: OTHER_ID, operationId: "00000000-0000-7000-8000-00000000ce34",
+    }, true);
+    const childAdd = (await deliverChildEffects(TEST_ENV, conversation(substreamId)))
+      .find((envelope) => envelope.effect.kind === "participant_notification");
+    expect(childAdd?.effect).toMatchObject({
+      kind: "participant_notification",
+      recipientUserId: OTHER_ID,
+      actorUserId: CREATOR_ID,
+      workstreamTitleSnapshot: "Seating child",
+    });
+    const roomIntent = roomAdd?.effect.kind === "participant_notification" ? roomAdd.effect.intentId : null;
+    const childIntent = childAdd?.effect.kind === "participant_notification" ? childAdd.effect.intentId : null;
+    expect(childIntent).not.toBe(roomIntent);
+    expect(childIntent).toContain(substreamId);
+    // And it leaves the parent, which is the point of telling them at all.
+    // Matched on the substream's own intent id, not just the recipient: the
+    // main room's add is queued here too and would answer for it.
+    expect((await pendingParentEffects(parent())).some((envelope) =>
+      envelope.effect.kind === "participant_notification"
+      && envelope.effect.intentId === childIntent)).toBe(true);
+  });
+
+  it("persists a member mention in the first child instruction and uses its frozen seed", async () => {
     const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
     const operationId = "00000000-0000-7000-8000-00000000ce22";
     await service.prepare(WORKSTREAM_ID, { operationId, title: "Executing child", throughTurnId: "source-turn-1" });
-    const child = conversation((await service.confirm(WORKSTREAM_ID, operationId)).substreamId);
+    const { substreamId } = await service.confirm(WORKSTREAM_ID, operationId);
+    await service.changeParticipant(WORKSTREAM_ID, substreamId, { userId: OTHER_ID, operationId: "mention-admission" }, true);
+    const child = conversation(substreamId);
     await runInDurableObject(child, (instance, state) => {
       const target = instance as unknown as { env: Env };
       target.env = new Proxy(target.env, { get: (env, key) => key === "OPENROUTER_PRIMARY_MODEL"
@@ -172,14 +350,16 @@ describe("substream preparation on workerd", () => {
       id: "later-main-turn", sequence: 2, text: "MAIN_ONLY_AFTER_FORK", authorUserId: CREATOR_ID,
       attentionOrdinal: 2, now: Date.now(),
     }));
+    TEST_ENV.OPENROUTER_CLASSIFIER_MODEL = "double/classifier";
     const response = await child.fetch("https://object.test/internal/product", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ operation: "create_message", auth: creatorAuth, input: {
-        text: "CHILD_ONLY_INSTRUCTION", clientMessageId: "first-child-instruction",
-        mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
+        text: "@Other CHILD_ONLY_INSTRUCTION", clientMessageId: "first-child-instruction",
+        mentions: [{ type: "person", userId: OTHER_ID, connectorType: null, startOffset: 0, endOffset: 6 }], confirmedParticipantUserIds: [], attachmentIds: [],
       } }),
     });
-    expect(response.status).toBe(200);
+    const responseBody = await response.json();
+    expect(response.status, JSON.stringify(responseBody)).toBe(200);
     await runDurableObjectAlarm(child);
     await expect.poll(async () => {
       if (provider.calls.some((call) => call.stream)) return "inference";
@@ -196,6 +376,9 @@ describe("substream preparation on workerd", () => {
         `SELECT COUNT(*) AS count FROM substream_loops WHERE status = 'executing'`,
       ).one().count), { timeout: 10_000 }).toBe(0);
     await runInDurableObject(child, (_instance, state) => {
+      expect(state.storage.sql.exec<{ target_user_id: string }>(
+        `SELECT target_user_id FROM participant_transcript_mentions WHERE mention_kind = 'person'`,
+      ).toArray()).toEqual([{ target_user_id: OTHER_ID }]);
       expect(state.storage.sql.exec<{ substream_id: string }>(`SELECT substream_id FROM runs`).one().substream_id).toBe("0");
       const context = state.storage.sql.exec<{ execution_context_json: string }>(
         `SELECT execution_context_json FROM runs`,

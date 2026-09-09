@@ -178,6 +178,24 @@ export const ListVisiblePrivateChildrenResultSchema = z.strictObject({
   })),
 });
 
+/**
+ * Archive or restore one private child.
+ *
+ * Archiving is the work stream's own `archived` field one level down, so the
+ * request carries the state to move to rather than naming an action: the same
+ * call restores, and a repeat of either is not an error.
+ */
+export const SetPrivateChildArchivedRequestSchema = z.strictObject({
+  ...ParentAddressed,
+  substreamId: SubstreamIdSchema.refine((value) => value !== "0", "A private child must be nonzero"),
+  actorUserId: UserIdSchema,
+  archived: z.boolean(),
+});
+export const SetPrivateChildArchivedResultSchema = z.strictObject({
+  outcome: z.enum(["archived", "restored", "unchanged"]),
+  archivedAt: z.number().int().nonnegative().nullable(),
+});
+
 export const MutatePrivateChildParticipantRequestSchema = z.strictObject({
   ...ParentAddressed,
   substreamId: SubstreamIdSchema.refine((value) => value !== "0", "A private child must be nonzero"),
@@ -189,6 +207,31 @@ export const MutatePrivateChildParticipantResultSchema = z.strictObject({
   outcome: z.enum(["added", "removed", "unchanged", "not_found"]),
   membershipVersion: z.number().int().positive(),
 });
+
+/**
+ * The same listing, asked by a caller that is about to close this parent.
+ *
+ * Retirement needs "this object was never built" and "this object disagrees
+ * about which parent it is" as *answers*, not exceptions. Deciding either by
+ * comparing an error message across an RPC boundary is one rename away from
+ * permanently tombstoning a parent without walking its children.
+ */
+export const ConversationParentRetirementChildrenResultSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("ok"),
+    children: z.array(z.strictObject({
+      substreamId: SubstreamIdSchema,
+      kind: z.enum(["main", "child"]),
+      createdAt: z.number().int().nonnegative(),
+    })),
+  }),
+  /** Named by a directory, never materialized. It has no children by construction. */
+  z.strictObject({ status: z.literal("missing") }),
+  /** Built, and holding a different identity than the directory row that named it. */
+  z.strictObject({ status: z.literal("identity_mismatch") }),
+]);
+export type ConversationParentRetirementChildrenResult =
+  z.infer<typeof ConversationParentRetirementChildrenResultSchema>;
 
 export type ConversationParentAuthorizeViewerRequest =
   z.infer<typeof ConversationParentAuthorizeViewerRequestSchema>;
@@ -218,3 +261,5 @@ export type ListVisiblePrivateChildrenRequest = z.infer<typeof ListVisiblePrivat
 export type ListVisiblePrivateChildrenResult = z.infer<typeof ListVisiblePrivateChildrenResultSchema>;
 export type MutatePrivateChildParticipantRequest = z.infer<typeof MutatePrivateChildParticipantRequestSchema>;
 export type MutatePrivateChildParticipantResult = z.infer<typeof MutatePrivateChildParticipantResultSchema>;
+export type SetPrivateChildArchivedRequest = z.infer<typeof SetPrivateChildArchivedRequestSchema>;
+export type SetPrivateChildArchivedResult = z.infer<typeof SetPrivateChildArchivedResultSchema>;

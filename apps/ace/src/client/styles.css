@@ -58,6 +58,8 @@ button { cursor: pointer; }
 .ace-button { border-radius: 8px; font-size: 12px; font-weight: 750; padding: 10px 15px; }
 .ace-button-primary { background: #ff5b28; border: 0; color: white; }
 .ace-button-primary:hover { background: #e84a18; }
+.ace-button-danger { background: #d9472b; border: 0; color: white; }
+.ace-button-danger:hover:not(:disabled) { background: #b8371f; }
 .ace-button-secondary { background: #fffefa; border: 1px solid #d6d5d0; color: #29394a; }
 .ace-button-quiet { background: transparent; border: 0; color: #8a6460; font-size: 10px; margin-left: auto; padding: 6px; }
 .ace-button:disabled { opacity: .55; }
@@ -196,3 +198,71 @@ input, select { background: #fff; border: 1px solid #d6d6d1; border-radius: 6px;
 .model-preservation { color: #788492; font-size: 10px; line-height: 1.5; margin: 14px 2px; }
 @media (max-width: 900px) { .ace-shell { grid-template-columns: 72px 245px minmax(500px, 1fr); } .primary-nav .brand strong, .primary-nav nav button { font-size: 0; } .primary-nav { padding-inline: 12px; } .primary-nav footer div { display: none; } .brand { justify-content: center; padding-inline: 0; } .primary-nav nav button { justify-content: center; } .primary-nav nav i { font-size: 16px; } }
 @media (max-width: 680px) { .ace-shell { display: block; } .primary-nav { align-items: center; flex-direction: row; height: 64px; padding: 10px 16px; } .brand { padding: 0; } .primary-nav nav { display: flex; margin-left: 20px; } .primary-nav nav button { font-size: 12px; } .primary-nav footer { border: 0; margin-left: auto; padding: 0; } .flag-list, .model-list, .queue-list { border-bottom: 1px solid #ddd; border-right: 0; } .flag-list header, .model-list > header, .queue-list > header { padding: 18px 20px; } .flags, .models, .queues { display: flex; gap: 8px; overflow-x: auto; } .flags > button, .models > button, .queues > button { min-width: 240px; } .flag-list > footer, .model-list > footer, .queue-list > footer { display: none; } .editor-header, .default-section, .targeting, .model-editor-header, .model-purpose, .model-routing, .queue-detail-header, .queue-messages { padding-left: 20px; padding-right: 20px; } .default-section, .model-purpose { align-items: flex-start; gap: 18px; } .flag-controls { align-items: stretch; flex-direction: column; } .condition-grid { grid-template-columns: 1fr; } .rule-result { align-items: flex-start; flex-wrap: wrap; } .rollout { margin-left: 0; } .fallback-row { align-items: start; grid-template-columns: 24px 1fr; } .fallback-actions { grid-column: 2; } .queue-metrics { padding: 0 20px; } .queue-source { padding-inline: 20px; } }
+
+/* A form card any detail pane can use: a bordered card of labelled fields, a note, and an action row. */
+.ace-form { background: #fffefa; border: 1px solid #d9d8d2; border-radius: 10px; padding: 22px 24px; display: grid; gap: 14px; }
+.ace-form label { display: grid; gap: 6px; font-size: 12px; }
+.ace-form label > span { color: #788492; font-size: 10px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.ace-form input, .ace-form select { border: 1px solid #d6d5d0; border-radius: 7px; padding: 9px 11px; background: #fff; }
+.ace-form .queue-error { margin: 0; }
+.ace-form-note { color: #7d8791; font-size: 11px; margin: 0; }
+.ace-form-note code { font-size: 10px; }
+.ace-form-actions { display: flex; gap: 10px; }
+.ace-id { color: #7b8792; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+
+/* Workspaces: the queue page's list-and-detail shape, with a typed confirmation. */
+.workspaces > button { grid-template-columns: minmax(34px, auto) 1fr 10px; }
+.workspaces > button.retired strong { color: #66717d; text-decoration: line-through; }
+.workspaces > button:disabled { cursor: default; opacity: .6; }
+.retire-form { border-color: #efc7bc; margin-top: 22px; }
+.retire-consequence { color: #5a2416; font-size: 12px; margin: 0; }
+.retire-receipt { margin-top: 18px; border: 1px solid #d9d8d2; border-radius: 10px; }
+/* The receipt is a result, not an error: it does not inherit the source panel's red. */
+.retire-receipt p { color: #3a4653; }
+.retire-receipt-title { font-size: 13px; margin: 0 0 6px; }
+.retire-incomplete { background: #fff7ec; border: 1px solid #f0d9b5; border-radius: 7px; color: #6b4a12; font-size: 12px; line-height: 1.5; margin: 0; padding: 10px 12px; }
+.retire-incomplete ul { margin: 6px 0 0; padding-left: 18px; }
+.directory-notice { background: #fff7ec; border: 1px solid #f0d9b5; border-radius: 7px; color: #6b4a12; font-size: 11px; margin: 12px 20px; padding: 10px 12px; }
+
+/* Demos: the same list-and-detail shape, with phases. */
+.demo-state { border-radius: 50%; display: block; height: 10px; width: 10px; background: #b6bdc4; }
+.demo-state-running { background: #f0a23b; box-shadow: 0 0 0 3px #fdefd8; }
+.demo-state-ready { background: #24a66f; box-shadow: 0 0 0 3px #daf2e7; }
+.demo-state-failed { background: #d9472b; box-shadow: 0 0 0 3px #f9ddd6; }
+.demo-state-abandoned, .demo-state-retired { background: #9aa1a8; }
+.demos > button { grid-template-columns: 22px 1fr 10px; }
+.demo-stale { background: #fdf3e2; border: 1px solid #f0d6a8; border-radius: 7px; color: #7a4d0c; font-size: 11px; margin: 12px 20px 0; padding: 10px 12px; }
+.demo-detail-actions { display: flex; gap: 10px; align-items: center; }
+.demo-next-step { background: #eaf7f0; border: 1px solid #bfe5d0; border-radius: 10px; color: #1f5a3d; display: grid; gap: 8px; font-size: 13px; margin: 18px 42px 0; padding: 16px 18px; }
+.demo-next-step p { margin: 0; }
+.demo-next-step small { color: #3f6f55; font-size: 11px; }
+.demo-confirm { background: #fff0ec; border: 1px solid #efc7bc; border-radius: 10px; display: grid; gap: 10px; margin: 18px 42px 0; padding: 16px 18px; }
+.demo-detail > .queue-error { margin: 12px 42px 0; }
+.demo-read-at { color: #7d8791; font-size: 11px; }
+.demo-read-at.stale { color: #7a4d0c; }
+.demo-confirm p { color: #5a2416; font-size: 12px; margin: 0; }
+.demo-retired-note { color: #7d8791; font-size: 11px; }
+.demo-failure { background: #fff0ec; border-color: #efc7bc; }
+.demo-failure > span { color: #9b3b24; }
+.demo-failure-message { color: #5a2416; font-size: 11px; align-self: center; }
+.demo-failure p { color: #5a2416; }
+.demo-phases { display: grid; gap: 0; list-style: none; margin: 22px 0 0; padding: 0; }
+.demo-phase { display: grid; gap: 14px; grid-template-columns: 18px 1fr; padding: 14px 0; border-top: 1px solid #e4e2dc; }
+.demo-phase:first-child { border-top: 0; }
+.demo-phase div { display: grid; gap: 4px; min-width: 0; }
+.demo-phase strong { font-size: 13px; }
+.demo-phase small { color: #7d8791; font-size: 11px; }
+.demo-phase-marker { border-radius: 50%; display: block; height: 12px; margin-top: 3px; width: 12px; background: #dcdad4; }
+.demo-phase-running .demo-phase-marker { background: #f0a23b; box-shadow: 0 0 0 3px #fdefd8; }
+.demo-phase-completed .demo-phase-marker { background: #24a66f; }
+.demo-phase-failed .demo-phase-marker { background: #d9472b; }
+.demo-phase-pending strong { color: #66717d; }
+.demo-phase-past strong, .demo-phase-past small { color: #8a94a0; }
+.demo-phase-error { background: #fff0ec; border: 1px solid #efc7bc; border-radius: 7px; color: #9b3b24; font-size: 11px; margin: 6px 0 0; padding: 8px 10px; }
+.demo-gaps { color: #5f6c78; font-size: 11px; margin: 6px 0 0; padding-left: 18px; display: grid; gap: 3px; }
+.demo-gaps code { color: #536170; font-size: 10px; }
+.demo-form-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 680px) { .demo-form-grid { grid-template-columns: 1fr; } .demo-next-step, .demo-confirm { margin-inline: 20px; } }
+.workspace-list .queue-list-actions label { display: grid; gap: 6px; font-size: 12px; }
+.workspace-list .queue-list-actions label > span { color: #788492; font-size: 10px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.workspace-list .queue-list-actions input { border: 1px solid #d6d5d0; border-radius: 7px; padding: 9px 11px; width: 100%; }

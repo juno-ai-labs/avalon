@@ -43,6 +43,59 @@ describe('secondary surface focus and layout', () => {
   });
 });
 
+/**
+ * Collapsing a sidebar is the same state change however it was asked for — the
+ * edge double-clicked, the toolbar button, or `⌘B` — so the motion is attached
+ * to the width itself rather than to any one of those handlers, and none of
+ * them has to remember to animate. What that costs is a drag: it writes the
+ * same width many times a second and must land on the pointer, so the gesture
+ * takes its own channel back out for as long as it lasts. These check that the
+ * two halves are still both there, since either alone is a defect that looks
+ * like a working feature — no transition is the cut this replaced, and a
+ * transition left on during a drag is a sidebar that trails the pointer.
+ */
+describe('sidebar collapse motion', () => {
+  it('transitions the navigation width alongside the rail, and drops it for a drag', () => {
+    // Interpolating a custom property at all requires the syntax be declared;
+    // an unregistered one switches over at the halfway point.
+    expect(stylesheet).toMatch(/@property --av-cmp-sidebar-width \{\n {2}syntax: '<length>';/u);
+    // `.workspace-shell` is declared twice; this reads the one that carries the
+    // width channels rather than whichever the rule helper reaches first.
+    expect(stylesheet).toContain(
+      'transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1),'
+      + ' --av-cmp-sidebar-width var(--sidebar-collapse-motion),'
+      + ' --workstream-sidebar-width var(--sidebar-collapse-motion);',
+    );
+    // Each drag drops only its own channel. The other two are restated rather
+    // than left out, so dragging one sidebar cannot silently stop the other, or
+    // a rail closing on its own, from moving.
+    expect(rule('.workspace-shell:has(.sidebar.is-resizing)'))
+      .toBe(' transition-property: --rail-width, --workstream-sidebar-width; ');
+    expect(rule('.workspace-shell:has(.workstream-context-sidebar.is-resizing)'))
+      .toBe(' transition-property: --rail-width, --av-cmp-sidebar-width; ');
+  });
+
+  it('transitions the work-stream sidebar on the one property that sizes it', () => {
+    expect(rule('.workstream-context-sidebar'))
+      .toContain('transition: flex-basis var(--sidebar-collapse-motion)');
+    expect(rule('.workstream-context-sidebar.is-resizing')).toContain('transition: none');
+  });
+
+  // `--rail-max-slot` spends the width this sidebar publishes, so the published
+  // copy has to travel on the same interval as the `flex-basis` that draws it.
+  // Registered as a length, or it reaches its final value in one frame and the
+  // inspector's width steps while the sidebar beside it is still moving.
+  it('moves the width the work-stream sidebar publishes with the width it draws', () => {
+    expect(stylesheet).toMatch(/@property --workstream-sidebar-width \{\n {2}syntax: '<length>';/u);
+    expect(rule('@property --workstream-sidebar-width')).toContain('initial-value: 0px;');
+    expect(stylesheet).toContain('var(--workstream-sidebar-width, 0px)');
+  });
+
+  it('spends one duration on both sidebars', () => {
+    expect(rule(':root')).toContain('--sidebar-collapse-motion: 240ms cubic-bezier(.22, 1, .36, 1);');
+  });
+});
+
 describe('work-stream context sidebar layout', () => {
   it('keeps the transcript flexible and anchors the drag target to its panel', () => {
     expect(rule('.conversation-layout')).toContain('display: flex');
@@ -743,19 +796,77 @@ describe('message header meta typography', () => {
   });
 
   /**
-   * The identity line over a person's turn stops where the bubble's top edge
-   * does, so the name and time sit over the flat of the pill rather than over
-   * the round of its corner. That is one number in two rules, and a literal
-   * copied into either drifts the first time the corner is tuned — a few pixels
-   * on one line, which is exactly what a screenshot pass looks past.
+   * The substream control appears in both action rows, so the rows share one set
+   * of button metrics. Restating them per row is not merely duplication: inside
+   * the agent's row `.agent-message-actions button` outranks the control's own
+   * class, so a per-row copy silently wins there and loses under the bubble, and
+   * tuning one row moves the control on Rally's turn while leaving it behind on
+   * the person's.
    */
-  it('insets the human identity line by the bubble corner it is named once for', () => {
+  /**
+   * The defect this PR's action-row move introduced and then fixed: the control
+   * carried its own hover opacity into a row that already fades, the two
+   * multiplied, and it settled paler and later than the four buttons beside it.
+   * The fix is the deletion of a declaration, so this is where it is held —
+   * nothing in the DOM says what opacity a pixel ended up at.
+   */
+  it('leaves the hover fade to the row that holds the control', () => {
+    expect(rule('.message-start-substream')).not.toContain('opacity');
+    expect(rule('.agent-message-actions')).toContain('opacity: 0;');
+    expect(rule('.human-message-actions')).toContain('opacity: 0;');
+  });
+
+  it('gives both action rows one set of button metrics', () => {
+    const shared = rule(':is(.agent-message-actions, .human-message-actions) button');
+    expect(shared).not.toBeNull();
+    expect(shared).toContain('font-size: 10px;');
+    expect(shared).toContain('padding: 2px;');
+    expect(rule('.agent-message-actions button')).toBeNull();
+  });
+
+  /**
+   * The identity line over a person's turn, and the action row under it, stop
+   * where the bubble's top edge does, so the name, the time and the actions sit
+   * over the flat of the pill rather than over the round of its corner. That is
+   * one number in four rules, and a literal copied into any of them drifts the
+   * first time the corner is tuned — a few pixels on one line, which is exactly
+   * what a screenshot pass looks past.
+   */
+  it('insets the human identity line and action row by the bubble corner they are named once for', () => {
     const block = rule(':is(.workstream-screen, .automation-chat-surface) .human-message');
     expect(block).toContain('--turn-bubble-radius:');
     expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message-bubble'))
       .toContain('border-radius: var(--turn-bubble-radius);');
     expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message > header'))
       .toContain('padding-inline-end: var(--turn-bubble-radius);');
+    expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message .human-message-actions'))
+      .toContain('padding-inline-end: var(--turn-bubble-radius);');
+  });
+
+  /**
+   * A theme that wants a different corner restates the token, not the corner.
+   * The work-stream theme wrote `18px` onto the bubble and onto the header's
+   * padding instead, which held only while those two literals agreed: the
+   * action row, reading the token, came out inset by the shared 14px against an
+   * 18px corner.
+   */
+  it('lets the work-stream theme move the corner by the token rather than by a literal', () => {
+    const themed = rule('.workstream-screen .human-message');
+    expect(themed).not.toBeNull();
+    expect(themed).toContain('--turn-bubble-radius:');
+    // The two token declarations tie on specificity — `:is()` takes its most
+    // specific argument — so source order is what makes the theme's value win.
+    // Without this, moving the theme rule above the shared one keeps every
+    // assertion here green while restoring the 4px drift they exist to prevent.
+    expect(stylesheet.indexOf('.workstream-screen .human-message {'))
+      .toBeGreaterThan(stylesheet.indexOf(':is(.workstream-screen, .automation-chat-surface) .human-message {'));
+    expect(rule('.workstream-screen .human-message-bubble'))
+      .toContain('border-radius: var(--turn-bubble-radius);');
+    // On the value, not one spelling of the property: a literal creeping back
+    // as `padding-inline-end: 18px` — now the file's usual spelling, and so the
+    // likelier regression — would pass a check that only banned `padding-right`.
+    expect(rule('.workstream-screen .human-message > header'))
+      .not.toMatch(/padding(-right|-inline-end)?:/u);
   });
 });
 

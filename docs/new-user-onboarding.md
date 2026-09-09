@@ -65,7 +65,9 @@ and API before releasing the desktop client; existing accounts are exempted by
 the identity migration, with no feature flag.
 The journey owns setup stage and revision. Creators proceed through connectors,
 personal appearance, then invitations; members finish after personal appearance.
-Finishing saves `complete` before opening `/workstreams/new`. No workstream or
+Finishing saves `complete` and then leaves for the first work stream through
+`useOpenFirstWorkstream` — the composer only when the workspace is empty, as a
+creator's is. No workstream or
 agent run is created by onboarding. The unshipped starter columns and removed first-task stages are not part of the schema.
 
 The invite page uses manual email chips separated by spaces, commas or semicolons.
@@ -130,12 +132,14 @@ Real external OAuth requires configured provider credentials; onboarding no long
 
 ## Changelog
 
-### 2026-09-08 — Drop neon yellow from the personal palette
+### 2026-09-09 — Finishing lands on the first work stream
 
-The profile picker no longer offers `orange` (Neon yellow). The stored personal
-color remains valid; `paintPersonalColor` maps leftover `orange` onto `amber` so
-avatars, sidebar accents, and member-message bubbles use gold instead of lime.
-Do not remove `orange` from `PersonalColorSchema`.
+Finishing used to set the hash to `/workstreams/new`. It now leaves through
+`useOpenFirstWorkstream`, which replaces the journey's entry and resolves to
+the first sidebar work stream, so a member joining a workspace that already
+has conversations enters one rather than an empty draft; a creator's empty
+workspace still opens the composer. The rule and the reason are in
+[`workstream-pinning.md`](workstream-pinning.md#leaving-for-the-first-work-stream).
 
 ### 2026-09-08 — Preserve live text and scope profile notifications
 

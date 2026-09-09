@@ -13,7 +13,8 @@ import { RESOURCE_RELATIONSHIP_TYPES } from "@rally/contracts";
 import { SCHEDULED_ALARM_SCHEMA_STATEMENTS } from "./scheduled-alarms";
 import { ORDERED_TRANSCRIPT_SCHEMA_V1 } from "./ordered-transcript-sqlite/schema-v1";
 import { WORKSTREAM_RUNTIME_COMPAT_SCHEMA } from "./workstream-runtime-compat-schema";
-import { AUTHORIZATION_PROJECTION_MIGRATION } from './authorization-projection';
+import { AUTHORIZATION_PROJECTION_MIGRATION, AUTHORIZATION_PROJECTION_TIMING_MIGRATION } from './authorization-projection';
+import { OBJECT_RETIREMENT_SCHEMA_STATEMENTS } from "./object-retirement";
 import {
   applyDurableObjectSqliteMigrations,
   durableObjectMigrationHash,
@@ -21,7 +22,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 47;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 50;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2911,6 +2912,26 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
 
   { version: 47, description: "shared workstream appearance", statements: [
     `ALTER TABLE workstream ADD COLUMN appearance_json TEXT CHECK (appearance_json IS NULL OR json_valid(appearance_json))`,
+  ] },
+
+  {
+    version: 48,
+    description: "record a permanent retirement tombstone",
+    statements: [
+      // A retired workspace never reopens, and the fence in front of every
+      // method here reads this table. It lives in the object rather than D1
+      // because the gate answers during constructor recovery, before anything
+      // else this object could consult is admitted.
+      ...OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
+    ],
+  },
+  { version: 49, description: 'retain source mutation time through authorization projection delivery',
+    statements: AUTHORIZATION_PROJECTION_TIMING_MIGRATION },
+  { version: 50, description: 'mirror private child lifecycle versions', statements: [
+    `CREATE TABLE private_child_lifecycle_authority (
+      id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL,
+      archived_at INTEGER
+    ) STRICT`,
   ] },
 ];
 

@@ -81,12 +81,13 @@ import {
   substreamInitialContextQueryKey,
   type SocketState,
   type WorkstreamMessageDeliveryMode,
-  workstreamDetailQueryKey,
 } from '../lib/use-workstream-socket';
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
-import { evictCachedWorkstream, setCachedWorkstreams } from '../lib/workstreams-cache';
+import { evictCachedWorkstream, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
+import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
+import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
@@ -607,6 +608,7 @@ export function ConversationSurface({
   const readSocketOpenContext = useWorkstreamSocketOpenContext(id);
   const parentNoun = parentKind === 'automation' ? 'automation' : 'work stream';
   const navigate = useNavigate();
+  const openFirstWorkstream = useOpenFirstWorkstream();
   const [searchParams, setSearchParams] = useSearchParams();
   const searchSequence = Number(searchParams.get('sequence'));
   const searchTurnId = Number.isSafeInteger(searchSequence) && searchSequence > 0 ? searchParams.get('turn') : null;
@@ -1271,6 +1273,14 @@ export function ConversationSurface({
     }
   }, [jumpToLatest, loadNewerMessages, loadOlderMessages, socketState]);
 
+  const cacheAddedParticipant = (target: string, member: WorkspaceMember): void => {
+    queryClient.setQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, target), (current) => current ? {
+      ...current,
+      participants: current.participants.some((person) => person.id === member.id)
+        ? current.participants : [...current.participants, member],
+    } : current);
+  };
+
   const addParticipant = useMutation({
     mutationFn: async ({ member, target }: { member: WorkspaceMember; target: string }): Promise<WorkstreamDetail | undefined> => {
       if (target === '0') return api!.addParticipant(id, member.id);
@@ -1279,11 +1289,7 @@ export function ConversationSurface({
     },
     onSuccess: (updated, { target, member }) => {
       if (updated) queryClient.setQueryData(workstreamDetailQueryKey(id, target), updated);
-      else queryClient.setQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, target), (current) => current ? {
-        ...current,
-        participants: current.participants.some((person) => person.id === member.id)
-          ? current.participants : [...current.participants, member],
-      } : current);
+      else cacheAddedParticipant(target, member);
       setParticipantDialogOpen(false);
     },
   });
@@ -1300,7 +1306,7 @@ export function ConversationSurface({
         participants: current.participants.filter((participant) => participant.id !== member.id),
       } : current);
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-      if (member.id === session?.user.id && previous?.scope === 'personal') {
+      if (member.id === session?.user.id && (target !== '0' || previous?.scope === 'personal')) {
         setParticipantDialogOpen(false);
         if (target !== '0') {
           queryClient.removeQueries({ queryKey: targetKey, exact: true });
@@ -1308,7 +1314,7 @@ export function ConversationSurface({
           return;
         }
         evictCachedWorkstream(queryClient, id);
-        void navigate('/workstreams/new', { replace: true });
+        openFirstWorkstream([id]);
       }
     },
   });
@@ -1316,14 +1322,14 @@ export function ConversationSurface({
   // The header renames in place, so both the open detail and the sidebar list
   // have to show the new title without a refetch round trip.
   const renameWorkstream = useMutation({
-    mutationFn: (title: string) => api!.renameWorkstream(id, title),
+    mutationFn: async (title: string) => {
+      if (substreamId === '0') return api!.renameWorkstream(id, title);
+      await api!.renameSubstream(id, substreamId, title);
+      return undefined;
+    },
     onSuccess: (updated) => {
-      queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
-        current ? { ...current, title: updated.title } : current,
-      );
-      setCachedWorkstreams(queryClient, (current) =>
-        current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
-      );
+      if (!updated) return;
+      patchCachedWorkstream(queryClient, updated.id, { title: updated.title, titleStatus: updated.titleStatus, updatedAt: updated.updatedAt });
     },
   });
 
@@ -1626,11 +1632,21 @@ export function ConversationSurface({
       });
     });
     try {
+      // Private-child membership belongs to the parent. The generic message
+      // confirmation only updates the conversation-local participant roster,
+      // which cannot grant discovery or socket admission to a private child.
+      if (parentKind === 'workstream' && substreamId !== '0') {
+        for (const userId of confirmedParticipantUserIds) {
+          await api.addSubstreamParticipant(id, substreamId, userId);
+          const member = members.data?.find((person) => person.id === userId);
+          if (member) cacheAddedParticipant(substreamId, member);
+        }
+      }
       const created = await socketConnection.createMessage({
         text,
         clientId,
         mentions,
-        confirmedParticipantUserIds,
+        confirmedParticipantUserIds: parentKind === 'workstream' && substreamId !== '0' ? [] : confirmedParticipantUserIds,
         attachmentIds: readyAttachments.flatMap((attachment) => attachment.resource ? [attachment.resource.id] : []),
         ...(deliveryMode ? { runMode: deliveryMode } : {}),
       });
@@ -1739,6 +1755,8 @@ export function ConversationSurface({
   }, [id, routedDetail, transcript, transcriptVirtualizer]);
 
   const acknowledgeVisibleMessages = useCallback((): void => {
+    // This endpoint owns Main attention; child ordinals are a separate sequence.
+    if (substreamId !== '0') return;
     const detail = queryClient.getQueryData<WorkstreamDetail>(detailQueryKey);
     const element = transcriptRef.current;
     if (!conversationVisibleRef.current || !api || !detail || !element || document.visibilityState !== 'visible' || !document.hasFocus()) return;
@@ -1768,16 +1786,15 @@ export function ConversationSurface({
       currentSurfaceEntrypoint(),
     ).then((updated) => {
       if (activeConversationAddressRef.current !== conversationAddress) return;
-      queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
-        current ? { ...current, ...updated } : current);
-      setCachedWorkstreams(queryClient, (current) =>
-        current?.map((item) => item.id === id ? { ...item, ...updated } : item));
+      // The entry this loop reads back is the addressed one, so it is the one
+      // that has to carry the new read waterline or the next scroll re-sends.
+      patchCachedWorkstreamViewerState(queryClient, id, updated, substreamId);
     }).catch(() => {
       requestSocketSnapshot();
     }).finally(() => {
       if (readAckInFlightRef.current === ackKey) readAckInFlightRef.current = null;
     });
-  }, [api, id, queryClient, requestSocketSnapshot, transcript, transcriptVirtualizer]);
+  }, [api, conversationAddress, detailQueryKey, id, queryClient, requestSocketSnapshot, substreamId, transcript, transcriptVirtualizer]);
 
   const scheduleReadAcknowledgement = useVisibleReadAcknowledgement(acknowledgeVisibleMessages);
 
