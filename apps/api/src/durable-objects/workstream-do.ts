@@ -557,6 +557,14 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     `ALTER TABLE conversation_children
        ADD COLUMN archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0)`,
   ],
+}, {
+  version: 10,
+  description: "durably deliver private child archive state to its executing room",
+  statements: [
+    `ALTER TABLE conversation_children ADD COLUMN lifecycle_version INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE conversation_children ADD COLUMN lifecycle_delivered_version INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE conversation_children ADD COLUMN lifecycle_not_before INTEGER NOT NULL DEFAULT 0`,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -1232,7 +1240,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       }
       const archivedAt = request.archived ? now : null;
       this.parentSql.exec(
-        `UPDATE conversation_children SET archived_at = ?, updated_at = ? WHERE substream_id = ?`,
+        `UPDATE conversation_children SET archived_at = ?, updated_at = ?, lifecycle_version = lifecycle_version + 1, lifecycle_not_before = 0 WHERE substream_id = ?`,
         archivedAt, now, request.substreamId,
       );
       // After the update and inside the same transaction, so each member's
@@ -1244,10 +1252,45 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         archivedAt,
       };
     });
-    // Archive preserves read access; command admission checks the parent's current
-    // archive state, including for sockets that were already open.
+    await this.armNextAlarm();
+    await this.drainPrivateChildLifecycleEffects();
+    // The child enforces the pushed archive locally, including already-open sockets.
     if (result.outcome !== "unchanged") await this.broadcastMetadata();
     return SetPrivateChildArchivedResultSchema.parse(result);
+  }
+
+  private privateChildLifecycleDueAt(): number | null {
+    return first(this.parentSql.exec<{ due_at: number | null }>(
+      `SELECT MIN(lifecycle_not_before) AS due_at FROM conversation_children
+       WHERE lifecycle_version > lifecycle_delivered_version`,
+    ))?.due_at ?? null;
+  }
+
+  private async drainPrivateChildLifecycleEffects(): Promise<void> {
+    const identity = this.parentIdentity();
+    if (!identity) return;
+    const rows = this.parentSql.exec<{ substream_id: string; archived_at: number | null; lifecycle_version: number }>(
+      `SELECT substream_id, archived_at, lifecycle_version FROM conversation_children
+       WHERE lifecycle_version > lifecycle_delivered_version AND lifecycle_not_before <= ?`, Date.now(),
+    ).toArray();
+    for (const row of rows) {
+      try {
+        const child = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
+          identity.workspaceId, conversationObjectName(this.env.AVALON_REGION,
+            identity.workspaceId, identity.parentId, asSubstreamId(row.substream_id)));
+        await child.applyPrivateChildLifecycle({ workspaceId: identity.workspaceId,
+          parentId: identity.parentId, substreamId: row.substream_id,
+          version: row.lifecycle_version, archivedAt: row.archived_at });
+        this.parentSql.exec(`UPDATE conversation_children SET lifecycle_delivered_version = MAX(lifecycle_delivered_version, ?)
+          WHERE substream_id = ?`, row.lifecycle_version, row.substream_id);
+      } catch (error) {
+        this.parentSql.exec(`UPDATE conversation_children SET lifecycle_not_before = ? WHERE substream_id = ?`,
+          Date.now() + PRIVATE_CHILD_EFFECT_RETRY_MS, row.substream_id);
+        logWarn(this.env, "private_child_lifecycle_effect_failed", {
+          ...this.parentLogFields(), substream_id: row.substream_id, error: String(error),
+        });
+      }
+    }
   }
 
   private privateChildPreparation(operationId: string): PrivateChildPreparationOperation | null {
@@ -1382,7 +1425,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
             WHERE substream_id = ? AND active = 1`,
           request.substreamId,
         ))?.count ?? 0;
-        if (remaining <= 1) throw new Error("private_child_participant_required");
+        if (remaining <= 1) throw new Error("private_child_last_participant");
       }
       const version = (current?.version ?? 0) + 1;
       this.parentSql.exec(
@@ -1603,8 +1646,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   /** Only recipient-addressed child notifications leave this parent. */
   protected override forwardsChildEffect(substreamId: string, effect: ConversationEffect): boolean {
     if (substreamId === "0") return true;
-    return isPersonNotificationEffect(effect) && this.canRead(effect.recipientUserId)
-      && this.metadataRow()?.archived_at === null && this.privateChildMemberIsActive(substreamId, effect.recipientUserId);
+    return isPersonNotificationEffect(effect);
   }
 
   /** A notification needs a delivery barrier, never a merge of child attention or permissions. */
@@ -1620,16 +1662,6 @@ export class WorkstreamDO extends ConversationParentDurableObject {
 
   protected override aggregatesChildProjection(substreamId: string): boolean {
     return substreamId === "0";
-  }
-
-  private privateChildMemberIsActive(substreamId: string, userId: string): boolean {
-    return first(this.parentSql.exec<{ one: number }>(
-      `SELECT 1 AS one FROM private_child_memberships member
-         JOIN conversation_children child ON child.substream_id = member.substream_id
-        WHERE member.substream_id = ? AND member.user_id = ? AND member.active = 1
-          AND child.status = 'ready' AND child.archived_at IS NULL`,
-      substreamId, userId,
-    )) !== null;
   }
 
   protected override childCommonProjections(): DirectoryCommonEffect[] {
@@ -1773,6 +1805,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     return Promise.all([
       this.drainParentOutbox(),
       this.drainPrivateChildMembershipEffects(),
+      this.drainPrivateChildLifecycleEffects(),
     ]).then(() => undefined);
   }
 
@@ -2181,7 +2214,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   }
 
   protected override nextDerivedAlarmCandidates(): readonly number[] {
-    return [this.nextParentOutboxDueAt(), this.privateChildMembershipEffectsDueAt()]
+    return [this.nextParentOutboxDueAt(), this.privateChildMembershipEffectsDueAt(), this.privateChildLifecycleDueAt()]
       .filter((due): due is number => due !== null);
   }
 }

@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
   IdSchema,
+  UpdateWorkstreamRequestSchema,
   WorkstreamResourceSchema,
   WorkstreamBootSchema,
 } from "@rally/contracts";
@@ -102,7 +103,7 @@ conversationRoutes.post("/:parentId/substreams/:substreamId/participants/remove"
 /** Rename the child's conversation, or archive its parent-owned directory entry. */
 conversationRoutes.patch("/:parentId/substreams/:substreamId", zValidator("param", substreamSocketParam),
   zValidator("json", z.strictObject({
-    title: z.string().trim().min(1).max(500).optional(),
+    title: UpdateWorkstreamRequestSchema.shape.title,
     archived: z.boolean().optional(),
   }).refine((body) => (body.title !== undefined) !== (body.archived !== undefined),
     "Change either the title or archive state in one request")), async (c) => {

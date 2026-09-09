@@ -1473,7 +1473,7 @@ remain bounded and exclude the supplemented rows.
 | --- | --- |
 | `_sql_schema_migrations` | Immutable parent schema history. |
 | `workstream_metadata` | Singleton aggregate identity/generation and revisioned complete common metadata: title/description/preview/email/creator/state/attention/activity/completion/archive/schedule timestamps. `origin_type`, `automation_subscription_id`, `automation_run_id`, and `planned_for` are dead columns kept because released migration text names them. Created provisionally by `reserveChild("0")` at creation, or by the first child effect for an object that predates that. |
-| `conversation_children` | The child registry: one row per substream the parent has reserved, with `kind` (`main` or `child`), who created it, and when. Added by migration 6. `listChildren` reads it and always includes `"0"`, because a work stream created before the registry existed has no row for its main conversation. `childrenForRetirement` reads the same registry with a three-way answer (`ok`, `missing`, `identity_mismatch`) and is permitted on a retired parent. |
+| `conversation_children` | The child registry: one row per substream the parent has reserved, with `kind` (`main` or `child`), who created it, and when. Added by migration 6; migration 9 adds `archived_at`, and migration 10 adds lifecycle version, delivered-version and retry-time columns. `listChildren` reads it and always includes `"0"`, because a work stream created before the registry existed has no row for its main conversation. `childrenForRetirement` reads the same registry with a three-way answer (`ok`, `missing`, `identity_mismatch`) and is permitted on a retired parent. |
 | `object_retirement` | Singleton tombstone, migration 8; shared constant, see `WorkspaceDO`. |
 | `substream_directory` | Latest common envelope per child, keyed by external substream ID. |
 | `substream_user_directory` | Latest viewer envelope per child/user pair. |
@@ -1658,6 +1658,15 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-08 — Deliver child archive to the executing object
+
+**What changed:** WorkstreamDO migration 10 tracks pending child lifecycle deliveries in the child registry, drained on the existing alarm. SubstreamAgent migration 50 stores the accepted lifecycle version. The local archive and agent stop request commit together; older deliveries cannot undo a restoration. Socket commands read local archive state. Person notifications pass through the parent and revalidate recipient access at delivery; Main-only projections remain unchanged. AutomationDO continues to use `aggregateUserProjections` for its child aggregates.
+
+**Why:** A directory-only archive hid a still-running agent, while a parent RPC on every child command introduced avoidable latency. Notification identity now derives child scope in the shared producer so every seating path stays distinct from Main.
+
+**Considered and rejected:** Remote command reauthorization, child unread aggregation into Main, and a second queue. Lifecycle retries reuse the parent's durable alarm and existing retry interval. A failed delivery remains pending; archive restoration is currently API-only.
+
 
 ### 2026-09-08 — Forward child notifications without merging attention
 

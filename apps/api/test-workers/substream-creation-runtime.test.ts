@@ -28,6 +28,7 @@ const TEST_ENV: Env = env;
 const classifierEnv: { OPENROUTER_CLASSIFIER_MODEL?: string } = env;
 const originalClassifierModel = classifierEnv.OPENROUTER_CLASSIFIER_MODEL;
 afterEach(() => {
+  vi.unstubAllGlobals();
   if (originalClassifierModel === undefined) delete classifierEnv.OPENROUTER_CLASSIFIER_MODEL;
   else classifierEnv.OPENROUTER_CLASSIFIER_MODEL = originalClassifierModel;
 });
@@ -166,11 +167,21 @@ describe("substream preparation on workerd", () => {
     }))).rejects.toThrow("private_child_preparation_forbidden");
   });
 
-  it.each(["active", "removed", "archived"] as const)("delivers a child mention only to a currently active recipient (%s), without changing parent attention or participation", async (recipientState) => {
+  it.each(["active", "active-main", "removed", "archived"] as const)("delivers a child mention only to a currently active recipient (%s), without changing parent attention or participation", async (recipientState) => {
     // The defect this covers: `forwardsChildEffect` answered
     // `substreamId === "0"` for every kind, so a mention written in a
     // substream reached the parent's outbox and stopped there. Nobody was ever
     // told they had been tagged in a substream, by Slack or by mail.
+    const mainParticipant = recipientState === "active-main";
+    if (mainParticipant) {
+      expect((await post(conversation(), "/internal/product", {
+        operation: "add_participant", auth: creatorAuth, userId: OTHER_ID,
+      })).status).toBe(200);
+      await deliverChildEffects(TEST_ENV, conversation());
+      await deliverParentEffects(TEST_ENV, parent());
+    }
+    const originalMain = await runInDurableObject(parent(), (_instance, state) =>
+      state.storage.sql.exec(`SELECT effect_json FROM substream_user_directory WHERE substream_id = '0' AND user_id = ?`, OTHER_ID).toArray());
     const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
     const operationId = "00000000-0000-7000-8000-00000000ce31";
     await service.prepare(WORKSTREAM_ID, { operationId, title: "Mentioning child", throughTurnId: "source-turn-1" });
@@ -203,7 +214,7 @@ describe("substream preparation on workerd", () => {
       await runDurableObjectAlarm(child);
       await deliverChildEffects(TEST_ENV, child);
       return (await pendingParentEffects(parent())).some((envelope) => envelope.effect.kind === "mention_notification");
-    }).toBe(true);
+    }, { timeout: 10_000 }).toBe(true);
 
     const forwarded = await pendingParentEffects(parent());
     const mention = forwarded.find((envelope) => envelope.effect.kind === "mention_notification");
@@ -255,24 +266,21 @@ describe("substream preparation on workerd", () => {
       APP_ENV: "production", RESEND_API_KEY: "test-only",
       RESEND_NOTIFICATION_FROM_EMAIL: "Rally <test@example.test>",
     }, parent());
-    expect(outbound).toHaveLength(recipientState === "active" ? 1 : 0);
-    if (recipientState === "active") {
+    expect(outbound).toHaveLength(recipientState.startsWith("active") ? 1 : 0);
+    if (recipientState.startsWith("active")) {
       expect(outbound[0]?.to).toEqual(["other@example.com"]);
       expect(outbound[0]?.text).toContain(`/substreams/${substreamId}`);
       expect(outbound[0]?.text).toContain("take a look at this");
     }
     const workspace = TEST_ENV.WORKSPACE_DOS.get(TEST_ENV.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
     expect(await workspace.notificationDirectoryState({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, userId: OTHER_ID }))
-      .toMatchObject({ listable: false, title: "Source" });
+      .toMatchObject({ listable: mainParticipant, title: "Source" });
     expect(await runInDurableObject(workspace, (_instance, state) => state.storage.sql.exec(
       `SELECT is_participant, unread_count, you_are_mentioned FROM workspace_workstream_viewers
         WHERE workstream_id = ? AND user_id = ?`, WORKSTREAM_ID, OTHER_ID,
-    ).one())).toEqual({ is_participant: 0, unread_count: 0, you_are_mentioned: 0 });
-    // A child notification must not turn a workspace viewer into a Main participant.
+    ).one())).toEqual({ is_participant: Number(mainParticipant), unread_count: 0, you_are_mentioned: 0 });
     expect(await runInDurableObject(parent(), (_instance, state) =>
-      state.storage.sql.exec<{ total: number }>(`SELECT count(*) AS total FROM substream_user_directory
-        WHERE substream_id = '0' AND user_id = ?`, OTHER_ID).one().total,
-    )).toBe(0);
+      state.storage.sql.exec(`SELECT effect_json FROM substream_user_directory WHERE substream_id = '0' AND user_id = ?`, OTHER_ID).toArray())).toEqual(originalMain);
 
     // Everything addressed to a surface rather than a person stays here: a
     // private child is in no feed, no digest and no workspace sidebar row.

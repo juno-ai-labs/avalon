@@ -77,9 +77,9 @@ projection updates the parent-owned child registry. The desktop applies child
 rename events only to the child detail, never the workspace's parent row.
 Archive stores `conversation_children.archived_at`, removes the row from every
 member's child directory, and refuses messages, membership changes and new
-socket tickets. Already-open sockets check current archive state on commands.
+socket tickets. A durable, versioned delivery mirrors archive state into the child; it commits the agent stop request with the local archive. Already-open sockets check that local state without a parent RPC.
 Membership and transcript are retained; the same API accepts `archived: false`
-to restore them. The UI returns an archived conversation's viewer to Main.
+to restore them. Restoration is API-only; the app has no restore control and its confirmation says so. The UI returns an archived conversation's viewer to Main, including when another member archives it.
 
 Mentions and participant-added notifications leave the parent with their child
 address. Delivery uses the existing Slack/email pipeline, rechecks current
@@ -223,6 +223,15 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-08 — Review fixes for lifecycle and command boundaries
+
+**What changed:** Child archive now stops the local agent through durable versioned delivery; title validation uses the 180-character contract. Nonparticipants and final-participant removal have distinct errors (`substream_participant_required` and `substream_last_participant`). Other refusals are `substream_member_needs_workstream_access`, `substream_archived`, and `substream_not_found`.
+
+**Why:** Hiding an executing conversation left its agent running, and remote checks added latency to every command. Dialog failures and stale rename completions also needed explicit handling.
+
+**Considered and rejected:** Per-command parent RPCs and a new restore-management screen. Restoration remains available through the existing API, with explicit UI copy. [Work-stream links](workstream-links.md) owns child-addressed links.
+
 
 ### 2026-09-08 — Make child lifecycle and notifications reachable
 

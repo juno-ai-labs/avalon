@@ -146,11 +146,14 @@ export class SubstreamCreationService {
         throw new ApiError(409, "substream_member_needs_workstream_access",
           "Add this person to the work stream before adding them to a substream.");
       }
+      if (error.message.includes("private_child_last_participant")) {
+        throw new ApiError(409, "substream_last_participant", "A substream keeps at least one participant.");
+      }
       if (error.message.includes("private_child_participant_required")) {
         throw new ApiError(403, "substream_participant_required",
           active
             ? "Only a participant can add somebody to this substream."
-            : "A substream keeps at least one participant.");
+            : "Only a participant can remove somebody from this substream.");
       }
       if (error.message.includes("private_child_archived")) {
         throw new ApiError(409, "substream_archived",

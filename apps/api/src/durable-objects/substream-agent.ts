@@ -1218,6 +1218,23 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     await this.storageReady;
   }
 
+  async applyPrivateChildLifecycle(input: {
+    workspaceId: string; parentId: string; substreamId: string; version: number; archivedAt: number | null;
+  }): Promise<void> {
+    await this.storageReady;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
+      substreamId: SubstreamIdSchema.refine((id) => id !== "0"),
+      version: z.number().int().positive(), archivedAt: z.number().int().nonnegative().nullable(),
+    }).parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity || identity.parentKind !== "workstream" || identity.workspaceId !== request.workspaceId
+      || identity.parentId !== request.parentId || this.externalSubstreamId() !== request.substreamId) {
+      throw new Error("private_child_lifecycle_identity_mismatch");
+    }
+    await this.product.applyPrivateChildLifecycle(request.version, request.archivedAt);
+    await this.armNextAlarm();
+  }
+
   /** Apply one versioned mirror of the parent-owned roster for a private child. */
   async applyPrivateChildMembership(input: {
     workspaceId: string;
@@ -4845,16 +4862,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     await this.mutateSocketSubstream(socket, attachment, parsed.data);
   }
 
-  // Membership is already fenced locally on every socket command; only the
-  // parent-owned lifecycle state needs this lookup.
-  private async assertPrivateChildNotArchived(attachment: SocketAttachment): Promise<void> {
-    const identity = this.objectStore.identity();
-    if (!identity || identity.parentKind !== "workstream" || this.externalSubstreamId() === "0") return;
-    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS,
-      identity.workspaceId, workstreamDOName(this.env.AVALON_REGION, identity.workspaceId, asWorkstreamId(identity.parentId)));
-    const access = await parent.authorizeViewer({ workspaceId: identity.workspaceId, parentId: identity.parentId,
-      substreamId: this.externalSubstreamId(), userId: asUserId(attachment.userId) });
-    if (access.archived) throw new ApiError(409, "substream_archived", "This substream is archived");
+  private assertPrivateChildNotArchived(): void {
+    if (this.objectStore.identity()?.parentKind !== "workstream" || this.externalSubstreamId() === "0") return;
+    if (this.identityRows.identity()?.archived_at != null) {
+      throw new ApiError(409, "substream_archived", "This substream is archived");
+    }
   }
 
   private async mutateSocketSubstream(
@@ -4891,7 +4903,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
       }
       assertParentWritable(attachment);
-      await this.assertPrivateChildNotArchived(attachment);
+      this.assertPrivateChildNotArchived();
       const auth = await this.socketViewerAuth(attachment);
       if (!auth) {
         disconnect(socket, 1012, "Reconnect for substream commands");
@@ -5074,7 +5086,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
         }
         assertParentWritable(attachment);
-        await this.assertPrivateChildNotArchived(attachment);
+        this.assertPrivateChildNotArchived();
         if (!attachment.sessionId || !attachment.role) {
           // A socket admitted before this command path existed has no role in
           // its hibernation attachment. A normal reconnect obtains a fresh
