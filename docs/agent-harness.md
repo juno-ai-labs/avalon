@@ -425,11 +425,19 @@ A run a demo seed started is an ordinary run with one substitution: the source
 of model output. Its execution context carries the seed, and
 `runWorkstreamHarness` sets `OpenRouterConfig.fetch` — an injection point the
 client already exposes for exactly this purpose — to a function that answers
-the run's one chat-completion request from the seed's turn, in the streamed or
-JSON form the request asked for, and answers everything else emptily so nothing
+the run's one chat-completion request from the seed's turn, in the streamed
+form every run asks for, and answers everything else emptily so nothing
 leaves the machine. A second chat-completion request is refused with a 400 the
-client does not retry on the same endpoint; the route's remaining candidates
-each get one refusal before the run fails. A seed has one turn because a
+client does not retry on the same endpoint, and a seeded run carries no
+fallback models, so that refusal is the run's failure rather than the first
+of several. The seam covers the OpenRouter client and nothing else, so the
+seeded run is routed where the seam is: `demoSeedModelRoute` keeps the
+resolved primary model when it is not Azure-bound, otherwise takes the first
+unbound fallback, otherwise a fixed unbound id, and the run's config omits the
+Azure transport. Production's default `x-ai/grok-4.3` is Azure-first, and a
+seeded run left on it would be answered by a live model, never by the seed.
+The id is only what the run records about itself, since the seam answers
+whatever name the request carries. A seed has one turn because a
 seeded run makes no tool calls, and without tool calls the loop asks once. The
 seam covers the client it is handed to, so a seeded origin is also exempt from
 admission-time memory recall, as a human message is — otherwise the recall
@@ -1247,6 +1255,28 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-09 — A seeded run is routed where its seam is
+
+**What changed:** The harness exports `isAzureBoundModel`, and
+`runWorkstreamHarness` routes a seeded run through `demoSeedModelRoute`: the
+resolved primary model when it is not Azure-bound, otherwise the first unbound
+fallback, otherwise `google/gemini-2.5-flash-lite`; no fallback models, and no
+Azure transport in the run's config.
+
+**Why:** The seam replaces the OpenRouter client's `fetch` and nothing else,
+and production's default model, `x-ai/grok-4.3`, is Azure-first. A seeded run
+in production would have gone to Azure — a live model answering in the seed's
+place, and an `ask` turn failing its settlement — while every local and test
+environment, routed to OpenRouter, passed. Found by tracing the production path
+rather than by a failure. The seam was not widened to the Azure client because
+the seed answers a request by name and cares nothing for the transport;
+pinning the route is one function with no second seam to keep honest.
+
+**What a future change has to respect:** A transport added to the router is a
+transport the seam does not cover. Either the seeded route stays on the
+OpenRouter client or the seam is handed to the new client too; a seeded run
+that reaches a live provider is the failure the demo exists to avoid.
 
 ### 2026-09-08 — Readable Sidekick skill names
 
