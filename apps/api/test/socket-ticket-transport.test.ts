@@ -182,33 +182,33 @@ describe("socket ticket transport", () => {
     expect(roomFetch).toHaveBeenCalledOnce();
   });
 
-  it("refuses to mint any socket ticket for a connector principal", async () => {
+  it.each(["connector", "demo_seed"] as const)("refuses to mint any socket ticket for a %s principal", async (principal) => {
     // A socket ticket is a session credential: admission stores its `sid`, and
     // the access-revocation queue closes sockets by matching that id against
-    // real `sessions` rows. A connector principal's correlation id matches no
-    // session, so a ticket minted from one would open a read feed that no
+    // real `sessions` rows. A non-session principal's correlation id matches
+    // no session, so a ticket minted from one would open a read feed that no
     // session revocation could ever close. The documented invariant — sockets
-    // never carry a connector principal — is enforced at the mint, and this is
-    // the assertion behind it.
+    // never carry a non-session principal — is enforced at the mint, and this
+    // is the assertion behind it, for each principal the product has.
     const env = createTestEnv({
       APP_ENV: "test",
       AVALON_REGION: "global",
       SESSION_SIGNING_KEY: "socket-ticket-test-signing-key",
     });
-    const connector = {
-      sessionId: "slack:T123:U456",
+    const auth = {
+      sessionId: principal === "connector" ? "slack:T123:U456" : "demo-seed:op:action",
       userId: asUserId("00000000-0000-7000-8000-000000000722"),
       workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000723"),
       region: "global" as const,
       role: "member" as const,
-      principal: "connector" as const,
+      principal,
     };
-    const refusal = { status: 403, code: "connector_principal_cannot_hold_socket" };
+    const refusal = { status: 403, code: "non_session_principal_cannot_hold_socket" };
 
-    await expect(issueSocketTicket(env, connector, { kind: "workstream", id: "00000000-0000-7000-8000-000000000724" }))
+    await expect(issueSocketTicket(env, auth, { kind: "workstream", id: "00000000-0000-7000-8000-000000000724" }))
       .rejects.toMatchObject(refusal);
-    await expect(issueWorkspaceSocketTicket(env, connector)).rejects.toMatchObject(refusal);
-    await expect(issueWorkstreamControlSocketTicket(env, connector, "00000000-0000-7000-8000-000000000724"))
+    await expect(issueWorkspaceSocketTicket(env, auth)).rejects.toMatchObject(refusal);
+    await expect(issueWorkstreamControlSocketTicket(env, auth, "00000000-0000-7000-8000-000000000724"))
       .rejects.toMatchObject(refusal);
   });
 
@@ -260,13 +260,13 @@ describe("socket ticket transport", () => {
     });
   });
 
-  it.each([false, true])("routes a separately scoped metadata ticket to WorkstreamDO (appearance support: %s)", async (supportsAppearance) => {
+  it.each([false, true])("ignores legacy query configuration when routing a metadata ticket (%s)", async (supportsAppearance) => {
     const sessionId = "00000000-0000-7000-8000-000000000721";
     const userId = asUserId("00000000-0000-7000-8000-000000000722");
     const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000723");
     const workstreamId = "00000000-0000-7000-8000-000000000724";
     const workstreamFetch = vi.fn(async (request: Request) => {
-      expect(new URL(request.url).searchParams.get("workstreamAppearance")).toBe(supportsAppearance ? "1" : null);
+      expect(new URL(request.url).search).toBe("");
       expect(request.headers.get("x-rally-workspace-id")).toBe(workspaceId);
       expect(request.headers.get("x-rally-workstream-id")).toBe(workstreamId);
       expect(request.headers.get("x-rally-session-id")).toBe(sessionId);

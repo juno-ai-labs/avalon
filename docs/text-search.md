@@ -80,7 +80,7 @@ recency). This deterministic position is never an authorization grant.
 Continuation exposes matching index progress even if the page has no admitted
 results; it does not guarantee a readable match on a subsequent page. Each page obtains
 readable conversation scopes from WorkspaceDO and filters retrieval by those
-scopes. Each source admits its candidate batch once through `checkMany`, then
+scopes. Each source admits its candidate batch through the eventually consistent search authorization projection (`checkMany`), then
 loads canonical content without repeating authorization after asynchronous reads.
 Conversation messages and links are grouped by parent/substream. Resources load
 metadata and revisions in one WorkspaceDO RPC, then load bodies concurrently.
@@ -89,8 +89,7 @@ Canonical revision and content-hash checks still reject stale index candidates.
 Older clients omit `pageSize` and retain the array response shape with up to 50
 results from one candidate batch. They receive no pagination or timing fields and
 do not trigger hidden refill scans. The 250ms typing debounce, REST, and final
-workspace membership check remain unchanged. No search-result cache or permission
-cache is introduced.
+workspace membership check remain unchanged. Search decisions are cached in regional KV/SQLite and updated by DO mutation pushes through the activity queue. Reads do not trigger refresh, and decisions do not expire by age. No search-result cache is introduced.
 
 The user-facing targets are p50 <= 500ms and p90 <= 1000ms from the last
 keystroke to painted results, including debounce. An empty page with continuation
@@ -129,6 +128,17 @@ load the latest canonical text through trusted RPC and return `SearchDocumentBat
 source, source ID, scope, stable document ID, revision, and text (null for deletion).
 Adapters extract text and preserve authority; they cannot choose chunk sizes,
 embedding models, normalization, or indexing behavior. No adapter writes Turbopuffer.
+
+Resource updates invalidate search only when category or text inputs change:
+provider, title, canonical URL, original/derivative MIME types, content references
+and hashes, or the string description in metadata. WorkspaceDO migration 43
+replaces only the update trigger; insert/delete watermarks and pending retries
+survive unchanged. Bookkeeping, hydration status, slug, and unrelated metadata
+edits do not publish indexing work. Keep the trigger aligned with
+`resourceSearchCategory` and `resourceSearchText` when extending extraction.
+Duplicate description keys use the final occurrence, matching `JSON.parse`.
+Content hashes conservatively invalidate same-reference body replacements,
+including the one-time hash backfill during extraction.
 
 `createSearchIndexingPipeline` is the single processing path. It writes the full,
 lossless canonical text for BM25/substring search, then runs the same chunker and
@@ -356,6 +366,11 @@ The cursor follows [Turbopuffer attribute pagination](https://turbopuffer.com/do
 
 ## Testing
 
+`apps/api/test-workers/resource-update-cost.test.ts` exercises the populated v42
+upgrade, each search input, duplicate description keys against canonical extraction,
+no-op writes, and deletion watermarks using real workerd storage.
+
+
 Run `pnpm --filter @rally/api exec vitest run test/text-search.test.ts test/semantic-chunks.test.ts test/search-embedding-policy.test.ts`.
 The external SDK is doubled to prove source filtering and canonical result
 loading. No database or Durable Object runtime is simulated by this suite.
@@ -462,6 +477,32 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-08 — Remove canonical authorization from cache-hit hydration
+
+Trust the search authorization projection across requests to avoid serial owner
+round trips seen in production. Admitted conversation text uses a storage-only
+RPC, without another product authorization or viewer seating. Permissions are
+eventually consistent; missing decisions still resolve through canonical owners,
+and source mutations push replacement decisions while cached decisions remain usable. Revision/hash checks
+continue to reject stale indexed content.
+
+
+### 2026-09-08 — Index resource content changes, not bookkeeping
+
+**What changed:** A forward migration narrows the resource update trigger to
+search inputs, including body hashes. Insert/delete and revision fencing remain.
+
+**Why:** Every resource update previously queued indexing, including webhook
+provenance and processing state, causing unnecessary storage and Queue/RPC work.
+
+**Considered and rejected:** Filtering only webhook writers would leave other
+canonical writers producing the same redundant indexing jobs.
+
+**Consequences:** New extraction inputs must extend the trigger through another
+forward migration. Existing pending work is retained, with no forced backfill.
+
+PR: #611.
 
 ### 2026-09-08 — Validate snapshot revisions and reconcile older search contracts
 

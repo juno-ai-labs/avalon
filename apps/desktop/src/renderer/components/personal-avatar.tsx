@@ -1,15 +1,21 @@
 import { useEffect, useRef, type CSSProperties } from 'react';
 import { onboardingMotion } from '../lib/onboarding-motion';
-import { paintPersonalColor, type PersonalPresentation } from '@rally/contracts';
+import { PALETTE_INK, personalColorKey, type PersonalPresentation } from '@rally/contracts';
 
-export const personalColorTokens = {
-  blue: 'blue', teal: 'cyan', green: 'green', amber: 'yellow', rose: 'pink', violet: 'purple', slate: 'gray',
-} as const;
 export function personalColor(color: PersonalPresentation['color']): string {
-  return `var(--av-sys-color-project-${personalColorTokens[paintPersonalColor(color)]})`;
+  return `var(--av-sys-color-project-${personalColorKey(color)})`;
 }
+
+/**
+ * Which ink reads on the accent, looked up rather than listed.
+ *
+ * `--personal-ink-light` is near-white and `--personal-ink-dark` near-black in
+ * both appearances — the variables swap with the theme so these names stay
+ * absolute. The table is keyed by palette colour, so a retired accent name is
+ * followed to its replacement first.
+ */
 export function personalColorInk(color: PersonalPresentation['color']): string {
-  return ['amber', 'green', 'teal'].includes(paintPersonalColor(color)) ? 'var(--personal-ink-dark)' : 'var(--personal-ink-light)';
+  return PALETTE_INK[personalColorKey(color)] === 'white' ? 'var(--personal-ink-light)' : 'var(--personal-ink-dark)';
 }
 export function PersonalAvatar({ color = 'blue', avatar = 'circle', className = '', style, motion, land = false, initials }: {
   initials?: string;

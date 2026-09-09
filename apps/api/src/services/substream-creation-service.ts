@@ -134,7 +134,62 @@ export class SubstreamCreationService {
       workspaceId: this.auth.workspaceId, parentId, substreamId: asSubstreamId(substreamId),
       actorUserId: this.auth.userId, userId: asUserId(input.userId), operationId: input.operationId,
     };
-    return active ? parent.addPrivateChildParticipant(request) : parent.removePrivateChildParticipant(request);
+    try {
+      return await (active ? parent.addPrivateChildParticipant(request) : parent.removePrivateChildParticipant(request));
+    } catch (error) {
+      // The parent refuses in prose the person in the dialog can act on. Left
+      // unmapped these reach the client as an anonymous 500, which is what the
+      // first real add hit: the only way to find out that a substream member
+      // must already be in the work stream was to read the Worker's log.
+      if (!(error instanceof Error)) throw error;
+      if (error.message.includes("private_child_member_not_admitted_to_parent")) {
+        throw new ApiError(409, "substream_member_needs_workstream_access",
+          "Add this person to the work stream before adding them to a substream.");
+      }
+      if (error.message.includes("private_child_last_participant")) {
+        throw new ApiError(409, "substream_last_participant", "A substream keeps at least one participant.");
+      }
+      if (error.message.includes("private_child_participant_required")) {
+        throw new ApiError(403, "substream_participant_required",
+          active
+            ? "Only a participant can add somebody to this substream."
+            : "Only a participant can remove somebody from this substream.");
+      }
+      if (error.message.includes("private_child_archived")) {
+        throw new ApiError(409, "substream_archived",
+          "This substream is archived. Restore it before changing who is in it.");
+      }
+      if (error.message.includes("private_child_not_ready")) {
+        throw new ApiError(404, "substream_not_found", "Substream not found.");
+      }
+      throw error;
+    }
+  }
+
+  /** Members retain read access after archive, so they can also restore the child. */
+  async archive(parentId: string, substreamId: string, archived: boolean) {
+    const parent = await this.parent(parentId);
+    if (substreamId === "0") throw new ApiError(400, "private_substream_required", "Choose a substream.");
+    // Authorized in both directions by the same call, and it keeps answering
+    // once the child is archived: `authorizeViewer` decides admission from
+    // membership and readiness, and reports the archive separately rather than
+    // folding it in — so the members of an archived substream can still reach
+    // the one control that brings it back.
+    await new ConversationService(this.env, this.auth).authorizeViewer(parentId, substreamId);
+    try {
+      return await parent.setPrivateChildArchived({
+        workspaceId: this.auth.workspaceId, parentId, substreamId: asSubstreamId(substreamId),
+        actorUserId: asUserId(this.auth.userId), archived,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("private_child_participant_required")) {
+        throw new ApiError(403, "substream_participant_required", "Only a participant can archive this substream.");
+      }
+      if (error instanceof Error && error.message.includes("private_child_not_ready")) {
+        throw new ApiError(404, "substream_not_found", "Substream not found.");
+      }
+      throw error;
+    }
   }
 
   async cancel(parentId: string, operationId: string): Promise<void> {

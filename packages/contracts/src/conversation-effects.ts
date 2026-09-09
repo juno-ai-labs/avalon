@@ -125,6 +125,7 @@ export const WorkstreamActivityEffectSchema = z.strictObject({
 
 export const WorkstreamMentionNotificationEffectSchema = z.strictObject({
   kind: z.literal("mention_notification"),
+  substreamId: SubstreamIdSchema.optional(),
   intentId: z.string().min(1).max(300),
   messageId: IdSchema,
   recipientUserId: IdSchema,
@@ -142,6 +143,7 @@ export const WorkstreamMentionNotificationEffectSchema = z.strictObject({
  */
 export const WorkstreamParticipantNotificationEffectSchema = z.strictObject({
   kind: z.literal("participant_notification"),
+  substreamId: SubstreamIdSchema.optional(),
   intentId: z.string().min(1).max(300),
   sourceId: z.string().min(1).max(300),
   recipientUserId: IdSchema,

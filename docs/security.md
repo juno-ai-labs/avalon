@@ -202,8 +202,14 @@ are canonical storage services, not authorization layers.
   This is the only safe point to enforce opt-out, region, and the local deadline.
 - Restricted telemetry operations use a separate per-region bearer credential,
   not a desktop session or request-supplied role. The Worker resolves the fixed
-  operator UUID and `support`/`security` role from `TELEMETRY_OPERATORS_JSON` with
-  timing-safe token comparison. Raw access and replay derive audit identity from
+  operator UUID and role with timing-safe token comparison — `support` and
+  `security` from `TELEMETRY_OPERATORS_JSON`, `demos` from the separate
+  `DEMO_OPERATORS_JSON`; every operator router names the roles it admits and
+  the secret it reads, so the `demos` role reaches only the demo preparation
+  and workspace retirement routes Ace calls
+  ([`demo-workspaces.md`](demo-workspaces.md#preparing-a-demo)), and neither
+  telemetry role reaches those. Ace holds one `demos` token per region, each
+  known to that region alone. Raw access and replay derive audit identity from
   that principal; neither endpoint accepts an operator ID or role in its body.
 
 ### macOS distribution and updates
@@ -279,7 +285,10 @@ membership role. A connector ingress may assert a member's own authority by
 marking its auth `principal: "connector"` — set only after verifying the account
 link on the delivered message, re-checked against current membership by the
 work-stream object, and refused by every socket-ticket issuer (see
-[`workstream-durable-object.md`](workstream-durable-object.md#invariants)).
+[`workstream-durable-object.md`](workstream-durable-object.md#invariants)). The
+demo seeder asserts a cast member's authority the same way under
+`principal: "demo_seed"`, verified and refused identically; only server code
+constructs either value ([`demo-workspaces.md`](demo-workspaces.md#security-and-trust-model)).
 Every connector tool checks its execution principal, connection
 scope, granted capability, and resource visibility. Workspace-scoped connector
 capabilities roll down to every work stream in that workspace and execute as the
@@ -301,9 +310,8 @@ the `WebSocket` constructor's `protocols` argument — as the sentinel
 `rally.ticket.v1` followed by the ticket. Current clients never place it in the
 query string: Cloudflare records whole request URLs into the invocation log, the
 Logpush export, and trace spans, and no redaction in this repository can reach
-them. Legacy workspace/work-stream/substream/dictation issuers retain a query
-field only for old desktop compatibility, and the current renderer strips any
-legacy field before opening. The
+them. All issuers return query-free URLs; the renderer and main broker discard any
+query data returned by older servers before opening. The
 server echoes only the sentinel, never the ticket, because a selected subprotocol
 is a response header. [`realtime-sockets.md`](realtime-sockets.md) owns the
 admission path.
@@ -314,7 +322,8 @@ production constructor. Electron's WorkstreamDO and SubstreamAgent connections
 instead cross a typed preload bridge to the main-process broker. Main accepts
 that capability only from the primary application window, validates the URL
 against configured regional `ws`/`wss` origins and the declared control/feed
-route shape, rejects credentials, query, and fragment, requires the public
+route shape, rejects credentials and fragments, discards query configuration,
+requires the public
 ticket sentinel, and supplies the exact `app://rallywithai` Origin itself. The
 renderer chooses only the validated ticket subprotocol offer that becomes
 `Sec-WebSocket-Protocol`; it cannot choose arbitrary headers or turn the broker
@@ -560,7 +569,10 @@ it has no R2 credentials and no network egress.
 
 `TELEMETRY_OPERATORS_JSON` is an independent secret in each region. Its bearer
 tokens never cross regions or enter URLs; its stored principal is the only source
-of operator identity and role for `/internal/telemetry`.
+of operator identity and role for `/internal/telemetry`. `DEMO_OPERATORS_JSON`
+is its sibling for the `demos` role Ace presents: the same shape, read only by
+the surfaces Ace calls, and set and rotated independently, so neither secret's
+holders can overwrite the other's tokens.
 
 `OPS_SLACK_BOT_TOKEN` and `OPS_SLACK_CHANNEL_ID` are optional independent
 secrets in each region: the bot token of a small internal Slack app with
@@ -802,6 +814,82 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-08 — The demo seeder acts as a cast member without a session
+
+**What changed:** `ProductAuthSchema.principal` accepts `demo_seed` beside
+`connector`. Only server code constructs it, the message route's request
+schema has no `seed` field, the room verifies it against current membership
+as it verifies a connector ingress, and every socket-ticket issuer refuses
+it. The `demos` operator role now also reaches the demo preparation routes.
+A demo receives copies of the template's Google connections only; a
+connection of any other provider is skipped and reported, because a copy
+shares the upstream grant and the presenter's Disconnect would revoke it
+remotely for the template and every live demo.
+
+**Why:** The cast never signs in, and a session minted for them would be a
+credential nobody holds. A distinct principal value rather than a reuse of
+`connector` so a seeded run's authorization record says who acted. Google's
+disconnect is local (`connection-service.ts`, `mayRevokeRemotely`), which is
+the one property that makes a shared grant safe to hold in several
+workspaces. [`demo-workspaces.md`](demo-workspaces.md#security-and-trust-model)
+owns both.
+
+### 2026-09-08 — The `demos` role moves to its own secret
+
+**What changed:** The `demos` operator role is read from `DEMO_OPERATORS_JSON`,
+a per-region secret with the same shape as `TELEMETRY_OPERATORS_JSON`, which
+goes back to the telemetry roles only. Each operator router names the secret
+it verifies against as well as the roles it admits.
+
+**Why:** Reversing the entry below on its rotation argument. A Worker secret
+cannot be read back; the telemetry map was set by someone else, and adding
+one token to it meant overwriting tokens nobody could name. Two credentials
+set by different people for different surfaces should not share a value.
+
+**Consequences:** A leaked demo token holds the surfaces Ace calls and no
+telemetry route; a leaked telemetry token holds no operator surface Ace calls.
+Owned by [`workspace-retirement.md`](workspace-retirement.md#changelog).
+
+### 2026-09-08 — A `demos` operator role, isolated per router
+
+**What changed:** `TELEMETRY_OPERATORS_JSON` carries a third role, `demos`,
+which reaches only the workspace retirement route; every operator router names
+the roles it admits with `requireOperatorRole`. Ace holds one `demos` token per
+region. Retirement writes `workspaces.abandoned_at`, the fence every D1
+authority read applies, before closing any object, so a session into a retired
+workspace fails authentication on its next request.
+
+**Why:** An operator tool that can close any workspace needed a credential that
+can do that and nothing else. A second secret with the same shape would be a
+second thing to rotate for no isolation gained: the role isolates, and only if
+every surface names the roles it admits. The D1 fence is from review — the
+objects' gate stopped everything that reached an object, and nothing else:
+sign-in, the member list and invitations are D1 reads.
+
+**Considered and rejected:** A separate secret for the role. Revoking sessions
+on retirement — the fence answers `session_revoked` on the next request
+without a per-member fan-out; the desktop's wording is the remaining gap
+([`workspace-retirement.md`](workspace-retirement.md#open-questions)).
+
+**Consequences:** Adding an operator router means naming its roles. The typed
+confirmation on retirement is a client-side ceremony; the server-side
+comparison of the confirmation with the path is a consistency check, not a
+second factor.
+### 2026-09-08 — Remove socket URL capabilities
+
+The broker discards query data instead of rejecting connections carrying an
+unknown configuration flag. Regional origin, target identity, ticket subprotocol,
+and renderer ownership checks remain. All socket receivers ignore unknown types
+and extra fields while validating known data; stored and outgoing contracts are
+unchanged. This supersedes the query allowlist described below.
+
+### 2026-09-08 — Match the control socket capability contract
+
+The main-process socket guard accepts the exact appearance capability query
+already emitted by the control ticket endpoint. A blanket query rejection had
+blocked child discovery entirely. Unknown and duplicate parameters, URL tickets,
+and all feed-socket queries remain forbidden; the broker test proves the boundary.
 
 ### 2026-09-08 — Locate the member search metadata contract
 

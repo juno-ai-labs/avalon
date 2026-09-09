@@ -16,28 +16,40 @@ platform policies, not controls offered to the user.
 | `packages/contracts/src/substream-creation.ts` | Versioned recipes, frozen captures, context parts and preview contracts. |
 | `apps/api/src/services/substream-context.ts` | Static strategy, selector, transform and membership registries; platform policies; validation and hashes. |
 | `apps/api/src/services/substream-context-summary.ts` | Structured Gemini summary through the shared inference gateway. |
-| `apps/api/src/services/substream-creation-service.ts` | Authenticated prepare, confirm, cancel and participant coordination. |
+| `apps/api/src/services/substream-creation-service.ts` | Authenticated prepare, confirm, cancel, archive and participant coordination. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Creation receipts, ready-child directory and authoritative private membership. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Frozen source export and immutable inert child seed. |
 | `apps/api/src/durable-objects/substream-context-transfer.ts` | Frame-sized initial-context snapshot transfer. |
 | `apps/api/src/services/substream-initial-context.ts` | Inert seed to model-context conversion. |
-| `apps/desktop/src/renderer/screens/workstream.tsx` | Main/child navigation and prepare-preview-confirm dialog. |
+| `apps/desktop/src/renderer/screens/workstream.tsx` | Main/child navigation, creation flow, rename and archive dialogs. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Authoritative baseline, initial-context assembly and readiness. |
 
 ## How it works
 
-The middle sidebar puts **Main log** first, then indented child rows with creator
-avatars and Tabler `border-corner-pill` connectors, and finally a dashed
-**New substream** row with Tabler `plus`. It retains the existing sidebar colors,
-row sizing, drag width and icon-only collapse; compact mode hides connectors and
-labels. A creator absent from the available roster uses a conversation icon
-rather than invented identity. A completed
-main-feed message also offers **New substream** with that message as the cutoff.
-Both enter the same creation flow; there is no context-strategy picker.
+The middle sidebar puts the main conversation first, then one full-width row per
+child, then **New substream**. Every row is the navigation sidebar's work-stream
+row — borderless, one 36px leading mark slot — and the mark is what tells them
+apart: the work stream's own tinted icon for the main conversation, a Tabler
+`border-corner-pill` branch line for a child, Tabler `plus` for creation.
+Compact hides the titles and swaps a child's branch line for the first character
+of its title. It retains the existing sidebar colors, row sizing, drag width and
+icon-only collapse. A completed
+main-feed message also offers **New substream** with that message as the cutoff:
+last in the assistant turn's action row, after Copy, Speak, Image and PDF, and in
+a row of its own under any person's bubble — the reader's own turn and a
+colleague's alike — ending on the same vertical as the identity line above it.
+Both placements appear on hover, alongside the other things a settled turn can be
+asked to do. [Conversation surfaces](conversation-surfaces.md) owns the rows
+themselves.
+
+The sidebar row and the message control enter the same creation flow; there is no
+context-strategy picker.
 
 Every section of the center sidebar belongs to the parent work stream. Switching
 substreams changes the conversation, not the sidebar's artifact inventory,
-participant roster or management target. The parent socket remains retained on
+parent participant roster or management target. The right side of the conversation title bar shows a participant facepile for the
+selected conversation. Main participants appear in both the sidebar and Main
+title bar; a child title bar manages only that child. The parent socket remains retained on
 direct child links. This shared chrome does not publish private child resources
 or replace the child's creator-only conversation membership.
 
@@ -60,6 +72,37 @@ or replace the child's creator-only conversation membership.
 7. The parent's existing control socket publishes viewer-filtered ready
    children. The child's socket supplies its own transcript and initial context.
    The child is idle until the creator sends a new instruction.
+
+### Membership, rename, archive and notifications
+
+The child title-bar facepile opens its participant dialog. Adding grants explicit
+child membership after checking parent access; removal and self-removal use the
+same authority, and the final participant cannot leave. Confirming a mention of
+somebody outside the child adds them through that API before sending.
+
+A child row's context menu offers **Rename** and **Archive substream**.
+`PATCH /conversations/:parentId/substreams/:substreamId` changes either `title`
+or `archived` per request. Rename writes the child's own title; its common
+projection updates the parent-owned child registry. The desktop applies child
+rename events only to the child detail, never the workspace's parent row.
+Archive stores `conversation_children.archived_at`, removes the row from every
+member's child directory, and refuses messages, membership changes and new
+socket tickets. A durable, versioned delivery mirrors archive state into the child; it commits the agent stop request with the local archive. Already-open sockets check that local state without a parent RPC.
+Membership and transcript are retained; the same API accepts `archived: false`
+to restore them. Restoration is API-only; the app has no restore control and its confirmation says so. The UI returns an archived conversation's viewer to Main, including when another member archives it.
+
+Mentions and participant-added notifications leave the parent with their child
+address. Delivery uses the existing Slack/email pipeline, rechecks current
+membership and archive state, and links to that child. Child activity stays out
+of the shared activity feed and digests. Parent unread counts, mention markers,
+and participant permissions still come only from Main; there are no child unread
+dots. The existing notification dependency uses the unchanged Main viewer
+projection, or a neutral nonparticipant row if Main has never reported that
+viewer, so a child notification can settle without merging two attention clocks.
+
+Notification links include `/substreams/<child-id>` through the website handoff
+and desktop workspace activation. This does not create a child email address or
+change inbound email reply routing.
 
 ### Extending initial context
 
@@ -172,7 +215,7 @@ human review interval. Instrumented targets are not asserted achievements.
   completed-prefix capture, frozen retry, excluded execution blocks and idle
   immutable installation. Mutation proof removes the cutoff turn.
 - `apps/api/test-workers/substream-creation-runtime.test.ts`: real workerd
-  parent/source/child prepare-confirm with only provider HTTP doubled;
+  parent/source/child prepare-confirm with provider HTTP doubled;
   duplicate confirmation, creator-only access, cancellation and no initial run.
   Mutation proof skips target seed installation. The first-instruction test
   reaches a provider double through the real loop, checks the frozen seed and
@@ -190,6 +233,73 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-09 — Move the message cutoff into the turn's action row
+
+**What changed:** The per-message entry point left the identity line for the
+turn's action row. Nothing about how a substream is created changed — only where
+the control that starts one is drawn.
+
+**Why and how:** The row is shared rendering, which
+[conversation surfaces](conversation-surfaces.md) owns per this document's
+**Boundary**; its entry there carries the reasoning and the constraints a future
+change has to respect.
+
+
+### 2026-09-08 — Review fixes for lifecycle and command boundaries
+
+**What changed:** Child archive now stops the local agent through durable versioned delivery; title validation uses the 180-character contract. Nonparticipants and final-participant removal have distinct errors (`substream_participant_required` and `substream_last_participant`). Other refusals are `substream_member_needs_workstream_access`, `substream_archived`, and `substream_not_found`.
+
+**Why:** Hiding an executing conversation left its agent running, and remote checks added latency to every command. Dialog failures and stale rename completions also needed explicit handling.
+
+**Considered and rejected:** Per-command parent RPCs and a new restore-management screen. Restoration remains available through the existing API, with explicit UI copy. [Work-stream links](workstream-links.md) owns child-addressed links.
+
+
+### 2026-09-08 — Make child lifecycle and notifications reachable
+
+Added child rename/archive controls and forwarded recipient-addressed child
+notifications. Previously membership could succeed while every child notification
+was dropped, and no archive control existed. Child rename now updates its own
+registry and cache instead of overwriting Main. Parent attention aggregation was
+rejected: child and Main counters have independent ordinals, and combining them
+would also broaden parent participation. The notification delivery barrier keeps
+Main state unchanged. Existing membership rules remain; email reply routing is
+outside this change. Runtime tests cover delivery, delayed removal/archive,
+archive/restore, open-socket writes and rename; desktop tests cover cache isolation. Real Electron QA confirmed
+rename updates the child row and title while preserving Main, and archive removes
+the child and returns to Main with both Main participant facepiles retained.
+
+### 2026-09-08 — Expose conversation membership in title-bar facepiles
+
+The selected conversation now displays its title and a right-aligned participant
+facepile. One tooltip covers the entire title-bar facepile and reads
+“Participants of <conversation name>”; per-person tooltips are suppressed there,
+including for present members. While naming is pending the tooltip uses “Participants
+of this conversation” to avoid exposing the provisional request. The header keeps
+Main’s authoritative appearance while displaying the child title and roster.
+Child facepiles omit presence rings because workspace presence is scoped to the
+whole work stream and cannot establish that someone is viewing the private child. The parent participant section remains in the sidebar, including while
+a child is selected. Previously the compact header omitted participant controls,
+so child add/remove APIs had no direct entry point. Both locations reuse the
+participant dialog and preserve their parent or child target.
+Self-removal from a child returns to Main regardless of the cached scope value.
+
+Confirmed child mentions now call the parent's child-membership API before sending
+through the conversation socket. Generic message confirmation only writes the
+child's local roster and cannot grant discovery or socket admission; using it alone
+could claim to add someone who still could not open the child. Existing members
+can be mentioned directly. Adding still requires parent access and cannot remove
+the final child participant. If admission fails, the message draft is restored;
+if sending fails after admission, accepted membership changes remain in place.
+The workstream-open tests cover child add/remove isolation, mention admission
+ordering and refusal. The real-workerd creation test now admits another member,
+sends a mention through the child, and verifies its durable transcript target;
+skipping person-mention writes makes that assertion fail. Real Electron QA covers
+creation with the temporary empty-context strategy, child discovery, add/remove,
+and expanded/compact controls. Follow-up Electron QA verifies Main facepiles in
+both locations, child-only title-bar removal, and parent management from the
+sidebar while a child is selected. Provider credentials remain required for live
+summary preparation and multiplayer message classification.
 
 ### 2026-09-05 — Review closes authority, delivery and ordering gaps
 

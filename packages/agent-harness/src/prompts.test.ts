@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import type { AutomationDraft } from "@rally/contracts";
+import {
+  DEFAULT_WORKSTREAM_ICON_KEY,
+  WORKSTREAM_ICON_DESCRIPTIONS,
+  WORKSTREAM_ICON_KEYS,
+  type AutomationDraft,
+} from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import {
   renderAddressingMessages,
@@ -113,7 +118,7 @@ describe("prompt renderers", () => {
           objective: "Draft an email to Danny sharing the Rally download link.",
           openingMessage: "Draft an email to Danny sharing the Rally download link, and ask him to add Alex to the Tuesday call.",
         }),
-        hash: "790fe925a07d14f7727a87d17867607350d6784b0421bf8a53641bf610faad0d",
+        hash: "53a2c550d0b62face82c3bc7e117714744525f3839aa41530373c5cc36198cfe",
       },
       workstreamNameFromConversation: {
         actual: renderWorkstreamNameMessages({
@@ -124,7 +129,7 @@ describe("prompt renderers", () => {
             { author: "person", text: "Use founder@example.com and mention the Tuesday call." },
           ],
         }),
-        hash: "4c35e1576ff81ac26804092d233af3ba1cd8fe552caf7b674da9a9c729700782",
+        hash: "5f5a0cdb5391684e5603096838d93cca88a78049b903515bcafb19eb98b172ee",
       },
       workstreamDescription: {
         actual: renderWorkstreamDescriptionMessages({
@@ -541,6 +546,37 @@ describe("prompt renderers", () => {
     // change the answer, and only safe if a digression cannot.
     expect(policy).toContain("name that instead");
     expect(policy).toContain("keep naming the work the request opened");
+
+    // The icon is a closed set the schema enforces, so the prompt owes the
+    // model a description of each one — a bare key says nothing about the mark
+    // a person will see. Every key is described, and only the tie-break and the
+    // fallback say anything about choosing, so a work stream no mark suits gets
+    // a deliberate answer rather than the nearest stretch.
+    for (const icon of WORKSTREAM_ICON_KEYS) {
+      expect(policy).toContain(`- ${icon}: ${WORKSTREAM_ICON_DESCRIPTIONS[icon]}`);
+    }
+    expect(new Set(WORKSTREAM_ICON_KEYS).size).toBe(WORKSTREAM_ICON_KEYS.length);
+    expect(policy).toContain("Choose an icon as well, by its exact key from the catalog below");
+    expect(policy).toContain("what suits this work is yours to judge");
+    expect(policy).toContain("take the one that is more specific to this work");
+    // Two equally specific marks is the normal case for the catalog's own
+    // near-synonyms — atom/orbit, list-checks/clipboard-list, users/handshake —
+    // and a prompt that leaves it open has the model resolving it silently and
+    // differently each time. The catalog's order is the tie-break because it is
+    // the one both sides can see.
+    expect(policy).toContain("take whichever of them the catalog lists first");
+    expect(policy).toContain(`take \`${DEFAULT_WORKSTREAM_ICON_KEY}\``);
+
+    // A description says what the mark draws and stops there. Guidance about
+    // when to reach for an icon narrows it to the cases whoever wrote the line
+    // thought of, and it is the model — which has the request — that should be
+    // matching. This catches a usage note creeping back in one description at a
+    // time, which is how it would happen.
+    for (const description of Object.values(WORKSTREAM_ICON_DESCRIPTIONS)) {
+      expect(description).not.toMatch(
+        /\b(fits|suits|represents|stands for|good for|use (it|this) for|for work|for tracking|choose (it|this) (for|when)|when the)\b/iu,
+      );
+    }
 
     // The opening message is dropped where it would only repeat the objective,
     // which is what it holds on the ordinary path — the objective is derived

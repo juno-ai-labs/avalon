@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { HonoAppEnv } from '../env';
 import { ApiError } from '../lib/api-error';
 import { zValidator } from '../middleware/validation';
-import { getTelemetryOperator, requireTelemetryOperator } from '../telemetry/operator-auth';
+import { getOperator, requireOperatorRole, requireTelemetryOperator } from '../telemetry/operator-auth';
 import { readTelemetryOperationalSnapshot } from '../telemetry/operations';
 import { replayTelemetryEvent } from '../telemetry/replay';
 import {
@@ -78,7 +78,9 @@ const EuCrashFreeResponseSchema = z.strictObject({
 });
 
 export const telemetryOperatorRoutes = new Hono<HonoAppEnv>();
-telemetryOperatorRoutes.use('*', requireTelemetryOperator);
+// The telemetry roles only: the `demos` role Ace holds is refused here at the
+// router, not per route, so a route added later is fenced by default.
+telemetryOperatorRoutes.use('*', requireTelemetryOperator, requireOperatorRole('support', 'security'));
 
 telemetryOperatorRoutes.get('/status', async (c) => {
   c.header('Cache-Control', 'no-store');
@@ -88,7 +90,7 @@ telemetryOperatorRoutes.get('/status', async (c) => {
 });
 
 telemetryOperatorRoutes.post('/replay', zValidator('json', ReplaySchema), async (c) => {
-  const principal = getTelemetryOperator(c);
+  const principal = getOperator(c);
   if (principal.role !== 'security') {
     throw new ApiError(403, 'operator_role_forbidden', 'This operator role cannot replay telemetry');
   }
@@ -105,7 +107,7 @@ telemetryOperatorRoutes.get(
     const object = await readRawCrashForSupport(c.env, {
       crashId: c.req.valid('param').crashId,
       reason: c.req.valid('query').reason,
-    }, getTelemetryOperator(c));
+    }, getOperator(c));
     if (!object) throw new ApiError(404, 'crash_report_not_found', 'The crash report is unavailable');
     const headers = new Headers({
       'Cache-Control': 'no-store',

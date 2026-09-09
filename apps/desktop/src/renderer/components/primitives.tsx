@@ -203,6 +203,7 @@ export function AvatarStack({
   presentUserIds = [],
   currentUserId = null,
   nameTooltip = true,
+  showTooltip = true,
 }: {
   members: WorkspaceMember[];
   limit?: number;
@@ -229,6 +230,8 @@ export function AvatarStack({
    * avoid.
    */
   nameTooltip?: boolean;
+  /** Disable all per-face tooltips when the containing control owns the tooltip. */
+  showTooltip?: boolean;
 }): React.JSX.Element {
   const visible = members.slice(0, limit);
   const overflow = extraCount ?? Math.max(0, members.length - visible.length);
@@ -261,7 +264,7 @@ export function AvatarStack({
             <Avatar member={member} size="small" title={null} />
           </span>
         );
-        if (!nameTooltip && !showingPresence) {
+        if (!showTooltip || (!nameTooltip && !showingPresence)) {
           return <Fragment key={member.id}>{item}</Fragment>;
         }
         return (

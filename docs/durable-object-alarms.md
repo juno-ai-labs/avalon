@@ -323,6 +323,17 @@ automation's sidebar row from reaching the workspace.
 - **A stored entry with no handler throws.** Silently settling an unknown kind
   would turn a caller's mistake into work that vanishes; the retry gate makes it
   visible in `_internal_durable_alarms` instead.
+- **Every invariant here is suspended on a *retired* object.** Retirement makes
+  the coordinator's mutators — `scheduleAlarm`, `armNextAlarm`, the two cancels,
+  `reconcileScheduledAlarms`, and the pre/post-work arms — inert rather than
+  throwing, so on such an object a mutation returns without arming and
+  `armNextAlarm` answers `null` whatever the schedule says. That is the
+  requirement stated exactly: a retired object must never wake again, and
+  clearing an alarm does not stop the code that re-derives it. Code that assumes
+  a mutation always leaves something armed is wrong there, and a caller reading
+  the return value of an arm must tolerate `null`. Retirement itself deletes
+  every row and the platform alarm in one transaction; see
+  [`workspace-retirement.md`](workspace-retirement.md).
 - **`_internal_durable_alarms` arrives through each object's own migration ledger.** The
   statements are shared from one constant, but each object applies them as a new
   version of its own append-only history; editing an existing version's SQL
@@ -531,6 +542,35 @@ remain separate from this effect-ordering fence.
 This records the review fixes because stale effects, overbroad revocation, and
 implicit compatibility assumptions can break otherwise valid delegated work.
 Future changes must retain the separate ownership and execution boundaries.
+
+### 2026-09-05 — A retired object arms nothing, and says so quietly
+
+**What changed:** The coordinator's mutators became no-ops on an object holding
+a retirement tombstone, and retirement clears `_internal_durable_alarms` and the
+platform alarm in one transaction. Nothing in this file's own code changed; the
+gate that does it lives in
+[`workspace-retirement.md`](workspace-retirement.md).
+
+**Why:** The spike behind workspace retirement cleared a retired object's
+alarm and watched it come back after the next traffic, because clearing an alarm
+does not stop the code that re-derives one. Refusing the mutators instead would
+have been worse in both directions: retirement's own pass calls through them to
+clear what is armed, and a continuation admitted a moment before the tombstone
+would turn its re-arm into an error rather than into the nothing it should
+become.
+
+**Considered and rejected:** Deleting the rows and leaving the derivation alone —
+that is exactly what the spike did, and the alarm returned. Throwing from the
+mutators — turns a late continuation's harmless re-arm into a stack trace, and
+breaks retirement's own clearing pass.
+
+**Consequences:** Two invariants above now hold only for a live object: a
+mutation no longer implies something is armed, and `armNextAlarm` can answer
+`null` with entries still in the table. A migration that seeds
+`_internal_durable_alarms` rows runs inside the construction window, where the
+gate is deliberately open, so a retired object taking such a migration re-arms a
+real platform alarm; the wake is then dropped, so it is inert residue rather
+than a live schedule.
 
 ### 2026-09-03: The automation object stores a run entry per occurrence
 

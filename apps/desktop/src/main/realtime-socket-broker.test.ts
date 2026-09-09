@@ -82,7 +82,7 @@ describe('realtimeSocketTargetAllowed', () => {
     expect(realtimeSocketTargetAllowed({
       ...openInput(),
       url: `${openInput().url}?ticket=leaked`,
-    }, apiBaseUrls)).toBe(false);
+    }, apiBaseUrls)).toBe(true);
     expect(realtimeSocketTargetAllowed({
       ...openInput('substream_feed'),
       kind: 'workstream_control',
@@ -91,6 +91,12 @@ describe('realtimeSocketTargetAllowed', () => {
       ...openInput(),
       protocols: ['not-rally', ticket],
     }, apiBaseUrls)).toBe(false);
+  });
+
+  it.each(['workstream_control', 'substream_feed'] as const)('ignores query configuration for %s', (kind) => {
+    for (const query of ['workstreamAppearance=1', 'futureFeature=1', 'ticket=legacy']) {
+      expect(realtimeSocketTargetAllowed({ ...openInput(kind), url: `${openInput(kind).url}?${query}` }, apiBaseUrls)).toBe(true);
+    }
   });
 
   it('admits a feed by its conversation, whichever parent it has, and nothing older', () => {
@@ -275,7 +281,7 @@ describe('RealtimeSocketBroker', () => {
     const createSocket = vi.fn<RealtimeSocketFactory>(() => sockets.shift()!);
     const broker = new RealtimeSocketBroker(createSocket);
 
-    broker.open(7, openInput(), vi.fn());
+    broker.open(7, { ...openInput(), url: `${openInput().url}?future=1&ticket=legacy` }, vi.fn());
     broker.open(7, { ...openInput('substream_feed'), socketId: crypto.randomUUID() }, vi.fn());
 
     expect(createSocket).toHaveBeenCalledTimes(2);

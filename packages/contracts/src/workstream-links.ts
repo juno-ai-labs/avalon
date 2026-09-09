@@ -42,12 +42,14 @@ const WORKSTREAM_ID_PATTERN =
 
 export interface WorkstreamLinkTarget extends WorkspaceTarget {
   workstreamId: string;
+  substreamId?: string;
 }
 
 export type ParsedWorkstreamLinkTarget = WorkstreamLinkTarget | {
   region: null;
   workspaceId: null;
   workstreamId: string;
+  substreamId?: string;
 };
 
 export function isWorkstreamId(value: string): boolean {
@@ -65,12 +67,13 @@ function assertWorkstreamLinkTarget(target: WorkstreamLinkTarget): void {
     throw new Error("A work-stream link requires a region and workspace UUID");
   }
   assertWorkstreamId(target.workstreamId);
+  if (target.substreamId) assertWorkstreamId(target.substreamId);
 }
 
 /** The workspace-addressed desktop deep link every new canonical link resolves to. */
 export function workstreamDeepLink(target: WorkstreamLinkTarget): string {
   assertWorkstreamLinkTarget(target);
-  const deepLink = new URL(`${DESKTOP_DEEP_LINK_PROTOCOL}//${DEEP_LINK_HOST}/${target.workstreamId}`);
+  const deepLink = new URL(`${DESKTOP_DEEP_LINK_PROTOCOL}//${DEEP_LINK_HOST}/${target.workstreamId}${target.substreamId ? `/substreams/${target.substreamId}` : ""}`);
   return addWorkspaceTarget(deepLink, target).toString();
 }
 
@@ -81,19 +84,25 @@ export function workstreamDeepLink(target: WorkstreamLinkTarget): string {
 export function workstreamDeepLinkFromParsedTarget(target: ParsedWorkstreamLinkTarget): string {
   if (target.region !== null) return workstreamDeepLink(target);
   assertWorkstreamId(target.workstreamId);
-  return `${DESKTOP_DEEP_LINK_PROTOCOL}//${DEEP_LINK_HOST}/${target.workstreamId}`;
+  if (target.substreamId) assertWorkstreamId(target.substreamId);
+  return `${DESKTOP_DEEP_LINK_PROTOCOL}//${DEEP_LINK_HOST}/${target.workstreamId}${target.substreamId ? `/substreams/${target.substreamId}` : ""}`;
 }
 
 /** The canonical shareable link emitted by every current surface. */
 export function workstreamCanonicalUrl(webBaseUrl: string, target: WorkstreamLinkTarget): string {
   assertWorkstreamLinkTarget(target);
-  const path = `${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${target.workspaceId}/workstreams/${target.workstreamId}`;
+  const path = `${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${target.workspaceId}/workstreams/${target.workstreamId}${target.substreamId ? `/substreams/${target.substreamId}` : ""}`;
   return new URL(path, webBaseUrl).toString();
 }
 
 /** Read a work-stream target out of either current or legacy canonical path. */
 export function parseWorkstreamLinkPathTarget(pathname: string): ParsedWorkstreamLinkTarget | null {
   const normalized = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+  const childPath = /^(.*)\/substreams\/([^/]+)$/u.exec(normalized);
+  if (childPath) {
+    const parent = parseWorkstreamLinkPathTarget(childPath[1]!);
+    return parent && !parent.substreamId && isWorkstreamId(childPath[2]!) ? { ...parent, substreamId: childPath[2]! } : null;
+  }
   const current = /^\/app\/workspaces\/(global|eu)\/([^/]+)\/workstreams\/([^/]+)$/u.exec(normalized);
   if (current) {
     const [, region, workspaceId, workstreamId] = current;
@@ -119,12 +128,13 @@ function parseDeepLink(url: URL): ParsedWorkstreamLinkTarget | null {
   const destination = addressed?.destination ?? url;
   if (destination.hostname !== DEEP_LINK_HOST) return null;
   if (destination.hash || destination.username || destination.password || destination.port) return null;
-  const workstreamId = destination.pathname.slice(1);
+  const [workstreamId = "", childSegment, substreamId, ...extra] = destination.pathname.slice(1).split("/");
+  if (childSegment !== undefined && (childSegment !== "substreams" || !substreamId || !isWorkstreamId(substreamId) || extra.length)) return null;
   if (!isWorkstreamId(workstreamId)) return null;
   if (destination.search) return null;
   return addressed
-    ? { ...addressed.target, workstreamId }
-    : { region: null, workspaceId: null, workstreamId };
+    ? { ...addressed.target, workstreamId, ...(substreamId ? { substreamId } : {}) }
+    : { region: null, workspaceId: null, workstreamId, ...(substreamId ? { substreamId } : {}) };
 }
 
 /** Parse any current or already-circulating Rally work-stream link. */

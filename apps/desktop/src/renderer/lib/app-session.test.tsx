@@ -1231,6 +1231,50 @@ describe('single-platform desktop identity routing', () => {
     expect(bridge.reselectActiveWorkspace).toHaveBeenCalledTimes(2);
   });
 
+  it('preserves a child destination after serialized workspace activation', async () => {
+    const workspaceId = '00000000-0000-7000-8000-000000000033';
+    const firstWorkstreamId = '00000000-0000-7000-8000-000000000034';
+    const secondWorkstreamId = '00000000-0000-7000-8000-000000000035';
+    const childId = '00000000-0000-7000-8000-000000000099';
+    const activations: Array<{ resolve: (session: DesktopSession) => void }> = [];
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockImplementation(() => new Promise<DesktopSession>((resolve) => {
+      activations.push({ resolve });
+    }));
+    const activated: DesktopSession = {
+      ...globalIdentitySession,
+      workspace: { id: workspaceId, name: 'Ordered Workspace', region: 'global', role: 'member' },
+    };
+    // Main answers a claim from whatever it has activated so far.
+    let mainActiveSession: DesktopSession | null = null;
+    bridge.reselectActiveWorkspace.mockImplementation(async (target) => (
+      mainActiveSession?.workspace?.id === target.workspaceId ? mainActiveSession : null
+    ));
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${workspaceId}/workstreams/${firstWorkstreamId}`,
+    );
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${workspaceId}/workstreams/${secondWorkstreamId}/substreams/${childId}`,
+    );
+
+    // The second link waits behind the first's activation rather than running
+    // against the workspace that was active before it.
+    await waitFor(() => expect(activations).toHaveLength(1));
+    expect(window.location.hash).not.toContain(secondWorkstreamId);
+    mainActiveSession = activated;
+    activations[0]!.resolve(activated);
+    await waitFor(() => expect(window.location.hash).toBe(`#/workstreams/${secondWorkstreamId}?substream=${childId}`));
+    // By the time the second link ran, its workspace was the active one, so
+    // main answered the claim and it opened without a second activation. Had
+    // the second link run before the first resolved, the claim would have
+    // found nothing active and a second activation would be pending here.
+    expect(activations).toHaveLength(1);
+    expect(bridge.reselectActiveWorkspace).toHaveBeenCalledTimes(2);
+  });
+
   it('continues serialized deep-link delivery after one action rejects', async () => {
     const workstreamId = '00000000-0000-7000-8000-000000000036';
     bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });

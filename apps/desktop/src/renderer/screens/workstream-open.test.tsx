@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
   addParticipant: vi.fn(),
+  addSubstreamParticipant: vi.fn(),
+  removeSubstreamParticipant: vi.fn(),
   clientFeatureFlags: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   removeParticipant: vi.fn(),
@@ -38,6 +40,9 @@ vi.mock('../lib/use-file-attachments', () => ({
     addFiles: vi.fn(),
     attachments: [],
     consume: vi.fn(),
+    leaseReady: vi.fn(async () => ({ leaseId: 'lease', attachments: [] })),
+    commitLease: vi.fn(),
+    restoreLease: vi.fn(),
     error: undefined,
     ready: [],
     removeAttachment: vi.fn(),
@@ -58,6 +63,7 @@ vi.mock('../lib/use-transcript-follow', () => ({
   }),
 }));
 
+import { patchCachedWorkstreamAppearance, setCachedWorkstreams } from '../lib/workstreams-cache';
 import { WorkstreamScreen } from './workstream';
 import type { WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 
@@ -335,7 +341,7 @@ describe('socket-first work-stream open', () => {
     expect(api.cancelSubstream).toHaveBeenCalledWith(workstreamId, api.prepareSubstream.mock.calls[0]![1].operationId);
   });
 
-  it('keeps sidebar membership and management at the parent while a child is selected', async () => {
+  it('keeps parent participants in the sidebar while the title bar manages the selected conversation', async () => {
     const childId = '00000000-0000-7000-8000-000000000660';
     const member = { id: '00000000-0000-7000-8000-000000000661', name: 'Parent member', email: 'parent@example.test', timezone: 'UTC' };
     const newcomer = { ...member, id: '00000000-0000-7000-8000-000000000662', name: 'New member' };
@@ -343,7 +349,7 @@ describe('socket-first work-stream open', () => {
       id: '00000000-0000-7000-8000-000000000663', title: 'Parent artifact', resourceType: 'document', currentVersion: 1,
       direction: 'artifact', relationshipType: 'generated', refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported',
     };
-    const parent = recoveryBoot({ participants: [member], resources: [artifact] });
+    const parent = recoveryBoot({ participants: [member], resources: [artifact], appearance: { icon: 'rocket', color: 'purple' } });
     const child = recoveryBoot({ title: 'Private child', participants: [], resources: [{ ...artifact, id: 'child-artifact', title: 'Child artifact' }] });
     api.getWorkspaceMembers.mockResolvedValue([member, newcomer]);
     api.addParticipant.mockResolvedValue({ ...parent, participants: [member, newcomer] });
@@ -353,16 +359,115 @@ describe('socket-first work-stream open', () => {
       cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
     }, childId);
 
-    expect(await screen.findByRole('button', { name: 'Manage work-stream participants' })).toHaveAccessibleDescription('Parent member');
+    expect(await screen.findByRole('button', { name: 'Manage substream participants' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toHaveAccessibleDescription('Parent member');
+    expect(screen.getByRole('heading', { name: 'Private child' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Private child' }).closest('header')!.querySelector('.lucide-rocket')).not.toBeNull();
+    act(() => client.setQueryData(['workstream', workstreamId], { ...parent, appearance: { icon: 'heart', color: 'blue' } }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Private child' }).closest('header')!.querySelector('.lucide-heart')).not.toBeNull());
     expect(screen.queryByRole('button', { name: 'Manage resources' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Open Parent artifact' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open Child artifact' })).not.toBeInTheDocument();
     expect(retainedSocket).toHaveBeenCalledWith(api, workstreamId, true, 'workstream', '0');
-    fireEvent.click(screen.getByRole('button', { name: 'Manage work-stream participants' }));
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
     fireEvent.click(await screen.findByRole('button', { name: 'Add New member to work stream' }));
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, newcomer.id));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toHaveAccessibleDescription('Parent member, New member'));
     expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId])?.participants).toEqual([]);
+  });
+
+  it('marks the rail with the parent appearance and follows the sidebar row a receipt just moved', async () => {
+    const childId = '00000000-0000-7000-8000-000000000664';
+    // The parent detail and the sidebar row disagree on purpose: this is the
+    // window after a receipt has patched the row and before the versioned
+    // projection reaches the detail. The rail is meant to be on the row.
+    const parent = recoveryBoot({ appearance: { icon: 'rocket', color: 'purple' } });
+    const child = recoveryBoot({ title: 'Private child' });
+    const client = renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      setCachedWorkstreams(cache, [{ ...parent, appearance: { icon: 'megaphone', color: 'teal' } }]);
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+    }, childId);
+
+    const rail = await screen.findByRole('complementary', { name: 'Work-stream sidebar' });
+    const mark = (): Element | null => rail.querySelector('.workstream-mark');
+    expect(mark()).toHaveClass('lucide-megaphone');
+    expect(mark()).toHaveStyle({ color: 'var(--av-sys-color-project-teal)' });
+    // The header stays on the detail, which the projection alone may move.
+    expect(screen.getByRole('heading', { name: 'Private child' }).closest('header')!.querySelector('.lucide-rocket')).not.toBeNull();
+
+    // The receipt-time writer itself, not a hand-rolled cache poke: it writes
+    // the row and deliberately leaves the detail alone.
+    act(() => patchCachedWorkstreamAppearance(client, workstreamId, { icon: 'heart', color: 'blue' }));
+    await waitFor(() => expect(mark()).toHaveClass('lucide-heart'));
+    expect(mark()).toHaveStyle({ color: 'var(--av-sys-color-project-blue)' });
+    expect(screen.getByRole('heading', { name: 'Private child' }).closest('header')!.querySelector('.lucide-rocket')).not.toBeNull();
+  });
+
+  it('manages the selected substream roster without changing parent participants', async () => {
+    const childId = '00000000-0000-7000-8000-000000000660';
+    const creator = { id: '00000000-0000-7000-8000-000000000661', name: 'Creator', email: 'creator@example.test', timezone: 'UTC' };
+    const newcomer = { ...creator, id: '00000000-0000-7000-8000-000000000662', name: 'New member' };
+    const parent = recoveryBoot({ participants: [creator, newcomer] });
+    const child = recoveryBoot({ title: 'Private child', participants: [creator] });
+    api.getWorkspaceMembers.mockResolvedValue([creator, newcomer]);
+    api.addSubstreamParticipant.mockResolvedValue(undefined);
+    api.removeSubstreamParticipant.mockResolvedValue(undefined);
+    const client = renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+    }, childId);
+    const manage = await screen.findByRole('button', { name: 'Manage substream participants' });
+    expect(manage).toHaveAccessibleDescription('Creator');
+    expect(manage.closest('header')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toHaveAccessibleDescription('Creator, New member');
+    fireEvent.click(manage);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add New member to substream' }));
+    await waitFor(() => expect(api.addSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id));
+    await waitFor(() => expect(manage).toHaveAccessibleDescription('Creator, New member'));
+    fireEvent.click(manage);
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'New member participant actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from substream' }));
+    await waitFor(() => expect(api.removeSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id));
+    await waitFor(() => expect(manage).toHaveAccessibleDescription('Creator'));
+    expect(client.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.participants).toEqual([creator, newcomer]);
+    expect(api.addParticipant).not.toHaveBeenCalled();
+    expect(api.removeParticipant).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('admits a mentioned person through child membership before sending (refused=%s)', async (refused) => {
+    const childId = '00000000-0000-7000-8000-000000000660';
+    const creator = { id: '00000000-0000-7000-8000-000000000661', name: 'Creator', email: 'creator@example.test', timezone: 'UTC' };
+    const newcomer = { ...creator, id: '00000000-0000-7000-8000-000000000662', name: 'New member' };
+    const parent = recoveryBoot({ participants: [creator, newcomer] });
+    const child = recoveryBoot({ title: 'Private child', participants: [creator] });
+    const createMessage = vi.fn(async () => {
+      expect(api.addSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id);
+      return { turnId: 'turn', clientMessageId: 'message', createdAt: new Date().toISOString(), deliveryState: 'queued' };
+    });
+    retainedSocket.mockReturnValue({ state: 'connected', workspaceSocketState: 'connected', sendReady: true, createMessage, requestSnapshot: vi.fn() });
+    api.getWorkspaceMembers.mockResolvedValue([creator, newcomer]);
+    if (refused) api.addSubstreamParticipant.mockRejectedValue(new Error('Parent access required'));
+    else api.addSubstreamParticipant.mockResolvedValue(undefined);
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+    }, childId);
+    const composer = await screen.findByRole('textbox', { name: 'Message the work stream' });
+    await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalled());
+    fireEvent.change(composer, { target: { value: 'Please ask @New member to review.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add and mention' }));
+    if (refused) {
+      expect(await screen.findByText('Parent access required')).toBeInTheDocument();
+      expect(createMessage).not.toHaveBeenCalled();
+      expect(composer).toHaveValue('Please ask @New member to review.');
+    } else {
+      await waitFor(() => expect(createMessage).toHaveBeenCalledWith(expect.objectContaining({ confirmedParticipantUserIds: [] })));
+    }
   });
 
   it('admits the feed while the snapshot is pending without starting REST boot readers', async () => {
@@ -456,7 +561,7 @@ describe('socket-first work-stream open', () => {
       queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
     });
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Manage work-stream participants' }));
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
     fireEvent.click(await screen.findByRole('button', { name: 'Add Jordan to work stream' }));
     expect(await screen.findByText('Adam cannot add Jordan')).toBeInTheDocument();
 

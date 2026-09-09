@@ -115,21 +115,28 @@ export class ConversationService {
     };
   }
 
-  /** The object client for the parent's main conversation, or a 503 on a stack that never opened the authority. */
-  async client(parentId: string, traced = false): Promise<WorkstreamObjectClient> {
+  /**
+   * The object client for one of the parent's conversations, or a 503 on a
+   * stack that never opened the authority.
+   *
+   * Defaults to the main conversation, which is what every work-stream-level
+   * route wants. A substream is named explicitly and authorized as itself:
+   * `authorizeViewer` checks that child's membership, not just the parent's.
+   */
+  async client(parentId: string, traced = false, substreamId = "0"): Promise<WorkstreamObjectClient> {
     await requireOpenWorkstreamAuthority(this.env);
-    await this.authorizeViewer(parentId);
-    return new WorkstreamObjectClient(this.env, this.auth, parentId, "0", traced);
+    await this.authorizeViewer(parentId, substreamId);
+    return new WorkstreamObjectClient(this.env, this.auth, parentId, substreamId, traced);
   }
 
-  /** A client for a write, refused outright when the parent is archived. */
-  async writableClient(parentId: string): Promise<WorkstreamObjectClient> {
+  /** A client for a write, refused outright when the conversation is archived. */
+  async writableClient(parentId: string, substreamId = "0"): Promise<WorkstreamObjectClient> {
     await requireOpenWorkstreamAuthority(this.env);
-    const parent = await this.authorizeViewer(parentId);
+    const parent = await this.authorizeViewer(parentId, substreamId);
     if (parent.archived) {
       throw new ApiError(409, "conversation_parent_archived", "This conversation belongs to something that is archived");
     }
-    return new WorkstreamObjectClient(this.env, this.auth, parentId, "0");
+    return new WorkstreamObjectClient(this.env, this.auth, parentId, substreamId);
   }
 
   /** Canonical child inventory; callers still authorize each returned child. */
@@ -200,7 +207,7 @@ export class ConversationService {
     const url = new URL(this.env.PUBLIC_API_BASE_URL);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = `/socket/conversations/${parentId}/${substreamId}`;
-    url.search = new URLSearchParams({ ticket }).toString();
+    url.search = "";
     return {
       url: url.toString(),
       ticket,

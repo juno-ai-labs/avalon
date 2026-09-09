@@ -13,17 +13,23 @@ import {
 import {
   ConversationParentListChildrenRequestSchema,
   ConversationParentListChildrenResultSchema,
+  ConversationParentRetirementChildrenResultSchema,
   type ConversationParentKind,
   type ConversationParentListChildrenRequest,
   type ConversationParentListChildrenResult,
+  type ConversationParentRetirementChildrenResult,
 } from "@rally/contracts/conversation-parent";
-import type { Region, WorkspaceId } from "@rally/contracts";
+import { asSubstreamId, type Region, type WorkspaceId } from "@rally/contracts";
 import { z } from "zod";
 
 import type { Env } from "../env";
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { ScheduledDurableObject } from "./scheduled-alarms";
+import {
+  applyRetirementGate,
+  droppedEnvelopeReceipts,
+} from "./object-retirement";
 
 /**
  * The half of a conversation parent that is the same for every kind of parent.
@@ -266,6 +272,22 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
     return true;
   }
 
+  /**
+   * A child published its own shared row; still inside the transaction, and
+   * called for every child whether or not this parent aggregates or forwards
+   * it. The registry a parent keeps beside the projections — a child's title,
+   * say — converges here rather than through a second write path.
+   */
+  protected onChildCommonProjection(
+    _substreamId: string,
+    _effect: DirectoryCommonEffect,
+    _now: number,
+  ): void {
+    void _substreamId;
+    void _effect;
+    void _now;
+  }
+
   /** Log fields naming this object, for the outbox drain's records. */
   protected abstract parentLogFields(): Record<string, unknown>;
 
@@ -327,6 +349,35 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
     const request = ConversationParentListChildrenRequestSchema.parse(input);
     this.assertParent(request.workspaceId, request.parentId);
     return ConversationParentListChildrenResultSchema.parse({ children: this.childRegistry() });
+  }
+
+  /**
+   * The children this parent knows about, for the caller that is about to close
+   * it.
+   *
+   * Separate from {@link listChildren} because retirement has to distinguish
+   * three outcomes and act differently on each, and two of them arrive as
+   * exceptions there. A parent a directory names but that never materialized is
+   * retired anyway — it has no children by construction, and the call fences an
+   * id a late create would otherwise take. A parent that disagrees about its own
+   * identity is left alone, because closing it would tombstone the wrong object.
+   */
+  async childrenForRetirement(
+    input: ConversationParentListChildrenRequest,
+  ): Promise<ConversationParentRetirementChildrenResult> {
+    await this.migrationsReady();
+    const request = ConversationParentListChildrenRequestSchema.parse(input);
+    const identity = this.parentIdentity();
+    if (!identity) {
+      return ConversationParentRetirementChildrenResultSchema.parse({ status: "missing" });
+    }
+    if (identity.workspaceId !== request.workspaceId || identity.parentId !== request.parentId) {
+      return ConversationParentRetirementChildrenResultSchema.parse({ status: "identity_mismatch" });
+    }
+    return ConversationParentRetirementChildrenResultSchema.parse({
+      status: "ok",
+      children: this.childRegistry(),
+    });
   }
 
   protected assertParent(workspaceId: string, parentId: string): ConversationParentIdentity {
@@ -391,7 +442,9 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
 
       const forwards = this.forwardsChildEffect(substreamId, envelope.effect);
       if (envelope.effect.kind === "directory_common") {
-        this.upsertChildProjection("common", substreamId, null, envelope, now);
+        if (this.upsertChildProjection("common", substreamId, null, envelope, now)) {
+          this.onChildCommonProjection(substreamId, envelope.effect, now);
+        }
         if (this.aggregatesChildProjection(substreamId)) {
           const aggregate = this.aggregateCommon();
           this.onChildCommonAggregate(substreamId, aggregate, envelope, now);
@@ -435,7 +488,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
     userId: string | null,
     envelope: ConversationEffectEnvelope,
     now: number,
-  ): void {
+  ): boolean {
     const table = kind === "common" ? "substream_directory" : "substream_user_directory";
     const where = kind === "common" ? "substream_id = ?" : "substream_id = ? AND user_id = ?";
     const params = kind === "common" ? [substreamId] : [substreamId, userId!];
@@ -443,9 +496,9 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
       `SELECT source_version, payload_hash FROM ${table} WHERE ${where}`,
       ...params,
     ));
-    if (existing && existing.source_version > envelope.sourceVersion) return;
+    if (existing && existing.source_version > envelope.sourceVersion) return false;
     if (existing?.source_version === envelope.sourceVersion) {
-      if (existing.payload_hash === envelope.payloadHash) return;
+      if (existing.payload_hash === envelope.payloadHash) return false;
       // Same version, different content. The child numbers these itself and
       // restarts its counter when a maintenance import rebuilds it, while this
       // projection survives, so a re-derived effect legitimately arrives under
@@ -487,6 +540,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
         now,
       );
     }
+    return true;
   }
 
   protected childCommonProjections(): DirectoryCommonEffect[] {
@@ -701,11 +755,19 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
     return eventId;
   }
 
+  protected prepareNotificationProjection(_userId: string, _now: number): void {
+    void _userId;
+    void _now;
+  }
+
   private enqueueImmutable(substreamId: string, source: ConversationEffectEnvelope, now: number): void {
     const identity = this.parentIdentity();
     if (!identity) throw new Error("conversation_parent_missing");
+    const effect = isPersonNotificationEffect(source.effect) && identity.parentKind === "workstream" && substreamId !== "0"
+      ? { ...source.effect, substreamId: asSubstreamId(substreamId) } : source.effect;
     let requiredProjectionVersion: number | null = null;
     if (isPersonNotificationEffect(source.effect)) {
+      if (substreamId !== "0") this.prepareNotificationProjection(source.effect.recipientUserId, now);
       const key = `user:${source.effect.recipientUserId}`;
       const projection = first(this.parentSql.exec<ProjectionKeyRow>(
         `SELECT next_version, last_payload_hash FROM projection_keys WHERE projection_key = ?`,
@@ -714,7 +776,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
       requiredProjectionVersion = (projection?.next_version ?? 1) - 1;
       if (requiredProjectionVersion <= 0) throw new Error("workstream_notification_projection_dependency_uncommitted");
     }
-    const payloadHash = conversationEffectHash(source.effect, requiredProjectionVersion);
+    const payloadHash = conversationEffectHash(effect, requiredProjectionVersion);
     this.insertOutbox(ParentEffectEnvelopeSchema.parse({
       kind: "parent_effect",
       contractVersion: 1,
@@ -728,7 +790,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
       sourceVersion: source.sourceVersion,
       requiredProjectionVersion,
       payloadHash,
-      effect: source.effect,
+      effect,
     }), now);
   }
 
@@ -874,3 +936,24 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
     ))?.due_at ?? null;
   }
 }
+
+applyRetirementGate(ConversationParentDurableObject, {
+  permit: [
+    // Retirement's own read, and the one that makes an interrupted pass
+    // resumable. The walk asks for a parent's children, retires them, retires
+    // the parent, and only then writes the receipt; a pass that dies between
+    // the last two steps leaves a tombstoned parent with no receipt, and the
+    // next pass has to be able to ask it again. Refusing here made every such
+    // node permanently unreceipted — "incomplete, retire again" forever.
+    "childrenForRetirement",
+  ],
+  drop: {
+    // The child's leg of the same Queue path WorkspaceDO's receivers end.
+    receiveChildEffects: ([input]) => ({ accepted: droppedEnvelopeReceipts(input) }),
+    // No `fetch` and no socket callbacks: this class serves neither, and the
+    // gate refuses a policy entry naming a method the class does not have.
+    // The platform retries an alarm that throws. A retired object answers the
+    // wake by doing nothing and arming nothing, which is what quiet means.
+    alarm: () => Promise.resolve(),
+  },
+});

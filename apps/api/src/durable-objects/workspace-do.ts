@@ -1,6 +1,10 @@
+import { safeParseSocketEvent, isUnknownSocketEvent, WorkspaceSocketClientEventTypeSchema } from "@rally/contracts";
+
+import { SEARCH_AUTHORIZATION_PUSH_MIGRATION, nextSearchAuthorizationPush, flushSearchAuthorizationPush } from './search-authorization-projection';
+import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey } from '../services/search-authorization';
 import { resolveWorkspaceEventResources } from "./workspace-event-resources";
 import { WorkstreamAppearanceSchema } from "@rally/contracts";
-import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
+import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
   resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch } from './resource-search-projection';
 import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
 import { UpdateOnboardingJourneySchema, type OnboardingJourney, type UpdateOnboardingJourney } from '@rally/contracts';
@@ -16,8 +20,6 @@ import {
   asAutomationId,
   asWorkspaceId,
   IdSchema,
-  PROJECT_COLOR_KEYS,
-  PROJECT_ICON_KEYS,
   UserIdSchema,
   SubstreamIdSchema,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
@@ -113,6 +115,13 @@ import {
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { evaluateExternalEventPredicate } from "../services/external-event-evaluator";
 import { automationDOName, workspaceDOName } from "./names";
+import {
+  OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
+  applyRetirementGate,
+  droppedEnvelopeReceipts,
+  readObjectRetirement,
+  retiredObjectResponse,
+} from "./object-retirement";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   WorkspaceDirectoryApplyRequestSchema,
@@ -825,6 +834,7 @@ import {
 
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   ...AUTHORIZATION_STORAGE_TABLES,
+  'search_authorization_push', 'search_authorization_keys', 'search_authorization_dependencies',
   "resource_search_versions",
   "onboarding_journeys",
   "workstream_notification_intents",
@@ -1011,6 +1021,63 @@ const SCHEDULE_BOOTSTRAP_ALARM_KIND = "schedule_bootstrap";
 function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTargetKind {
   return (WORKSPACE_SCHEDULE_ALARM_KINDS as readonly string[]).includes(kind);
 }
+
+/**
+ * Every table emptied when `projects` is dropped: four cascade from it
+ * directly, and two more cascade from `project_default_resources` beneath it.
+ * Ordered parents-first so the list can be replayed as inserts.
+ */
+const PROJECT_CASCADE_DEPENDENTS = [
+  "project_participants",
+  "workspace_project_order",
+  "project_workstream_memberships",
+  "project_default_resources",
+  "project_default_resource_targets",
+  "project_default_resource_publications",
+] as const;
+
+/**
+ * Palette snapshots, frozen per migration.
+ *
+ * A CHECK vocabulary is baked into the text of the statement that created the
+ * table, so interpolating a live constant here means editing already-shipped
+ * SQL every time the palette moves: objects created before the edit keep the
+ * old vocabulary, objects created after get the new one, and nothing records
+ * that they diverged. Each migration therefore pins the list as it stood when
+ * that migration shipped, and widening the vocabulary is a new migration.
+ *
+ * `workspace-project-palette.test.ts` asserts the newest snapshot still covers
+ * `PROJECT_COLOR_KEYS_STORABLE`, so adding a colour without a migration fails
+ * the build rather than the insert.
+ */
+const PROJECT_COLOR_KEYS_AT_V14 = [
+  "gray", "brown", "red", "orange", "yellow", "green",
+  "teal", "cyan", "blue", "indigo", "purple", "pink",
+] as const;
+
+/**
+ * Icons as they stood at v14, which is also how they stand at v45 — the set has
+ * never changed. Pinned for the same reason the colours are: a CHECK vocabulary
+ * lives in shipped SQL text and must stop moving when the live constant does.
+ */
+const PROJECT_ICON_KEYS_FROZEN = [
+  "briefcase", "target", "calendar-days", "list-checks", "clipboard-list",
+  "file-text", "folder", "lightbulb", "star", "flag",
+  "rocket", "chart-no-axes-combined", "calculator", "coins", "users",
+  "user-search", "handshake", "megaphone", "palette", "image",
+  "pen-tool", "package", "building-2", "globe-2", "heart",
+] as const;
+
+/**
+ * The v14 twelve, plus the hue ring that replaced them and the `black` the
+ * account accents took. This is what migration 45 builds its CHECK from; see
+ * the snapshot rationale on `PROJECT_COLOR_KEYS_AT_V14`.
+ */
+const PROJECT_COLOR_KEYS_AT_V45 = [
+  "black", "rose", "red", "orange", "amber", "lime", "green", "emerald",
+  "cyan", "blue", "indigo", "violet", "purple", "fuchsia", "pink",
+  "gray", "brown", "yellow", "teal",
+] as const;
 
 function projectRegistrySql(values: readonly string[]): string {
   return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(", ");
@@ -1686,8 +1753,8 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       project_id TEXT PRIMARY KEY,
       name TEXT NOT NULL CHECK (length(trim(name)) > 0),
       normalized_name TEXT NOT NULL CHECK (length(normalized_name) > 0),
-      icon_key TEXT NOT NULL CHECK (icon_key IN (${projectRegistrySql(PROJECT_ICON_KEYS)})),
-      icon_color_key TEXT NOT NULL CHECK (icon_color_key IN (${projectRegistrySql(PROJECT_COLOR_KEYS)})),
+      icon_key TEXT NOT NULL CHECK (icon_key IN (${projectRegistrySql(PROJECT_ICON_KEYS_FROZEN)})),
+      icon_color_key TEXT NOT NULL CHECK (icon_color_key IN (${projectRegistrySql(PROJECT_COLOR_KEYS_AT_V14)})),
       scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
       status TEXT NOT NULL CHECK (status IN (
         'active', 'archiving', 'archived', 'restoring', 'cancelling_restore'
@@ -2666,7 +2733,104 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   ],
 }, { version: 40, description: "project shared workstream appearance", statements: [
   `ALTER TABLE workspace_workstream_directory ADD COLUMN appearance_json TEXT CHECK (appearance_json IS NULL OR json_valid(appearance_json))`,
-] }];
+] }, {
+  version: 41,
+  description: "record a permanent retirement tombstone",
+  statements: [
+    // A retired workspace never reopens, and the fence in front of every
+    // method here reads this table. It lives in the object rather than D1
+    // because the gate answers during constructor recovery, before anything
+    // else this object could consult is admitted.
+    ...OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
+  ],
+}, {
+  version: 42,
+  description: "record the object graph retirement walks",
+  statements: [
+    // Captured before the tombstone and read after it. Once this workspace is
+    // retired its directories refuse, so a walk that re-derived its descendants
+    // from them would find nothing on the second pass and call itself finished.
+    // `retired_at` is the receipt: completion is the absence of NULLs here
+    // rather than a flag somebody sets, so a child that failed leaves the walk
+    // visibly incomplete and resumable.
+    `CREATE TABLE workspace_retirement_graph (
+      parent_kind TEXT NOT NULL CHECK (parent_kind IN ('workstream', 'automation')),
+      parent_id TEXT NOT NULL,
+      recorded_at INTEGER NOT NULL,
+      retired_at INTEGER,
+      PRIMARY KEY (parent_kind, parent_id)
+    ) STRICT`,
+  ],
+}, {
+  version: 43,
+  description: 'invalidate resource search only for content and category changes',
+  statements: RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION,
+}, {
+  version: 44,
+  description: 'push search authorization decisions after source permission mutations',
+  statements: SEARCH_AUTHORIZATION_PUSH_MIGRATION,
+}, {
+  version: 45,
+  description: "the project palette becomes the hue ring",
+  statements: [
+    // `icon_color_key` is a CHECK vocabulary and SQLite cannot widen one in
+    // place, so the table is replaced. Six tables cascade from `projects` —
+    // four directly, and two more beneath `project_default_resources` — which
+    // means the implicit delete inside `DROP TABLE` would take a workspace's
+    // project membership, ordering and pending default-resource work with it.
+    //
+    // The children are held rather than rebuilt, exactly as v31 does: each is
+    // copied wholesale, the parent is replaced, and the rows are put back
+    // parents-first. Foreign keys stay enforced throughout — `PRAGMA
+    // foreign_keys = OFF` is a silent no-op once the object event has touched
+    // SQLite — and no child's schema, index or column is restated here, which
+    // is the other way a rebuild quietly loses something.
+    //
+    // Nothing is remapped. `gray`, `brown`, `yellow` and `teal` left the picker
+    // but stay in the vocabulary, so every existing project keeps the colour
+    // its owner chose and this migration only ever widens what is accepted.
+    ...PROJECT_CASCADE_DEPENDENTS.map((table) => (
+      `CREATE TABLE ${table}_v45_hold AS SELECT * FROM ${table}`
+    )),
+    `CREATE TABLE projects_v45 (
+      project_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+      normalized_name TEXT NOT NULL CHECK (length(normalized_name) > 0),
+      icon_key TEXT NOT NULL CHECK (icon_key IN (${projectRegistrySql(PROJECT_ICON_KEYS_FROZEN)})),
+      icon_color_key TEXT NOT NULL CHECK (icon_color_key IN (${projectRegistrySql(PROJECT_COLOR_KEYS_AT_V45)})),
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
+      status TEXT NOT NULL CHECK (status IN (
+        'active', 'archiving', 'archived', 'restoring', 'cancelling_restore'
+      )),
+      creator_user_id TEXT NOT NULL,
+      archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0),
+      archived_by_user_id TEXT,
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      presentation_revision INTEGER NOT NULL DEFAULT 1 CHECK (presentation_revision > 0),
+      audience_generation INTEGER NOT NULL DEFAULT 1 CHECK (audience_generation > 0),
+      lifecycle_generation INTEGER NOT NULL DEFAULT 1 CHECK (lifecycle_generation > 0),
+      CHECK ((status = 'archived') = (archived_at IS NOT NULL)),
+      CHECK ((archived_at IS NULL) = (archived_by_user_id IS NULL))
+    ) STRICT`,
+    `INSERT INTO projects_v45
+       (project_id, name, normalized_name, icon_key, icon_color_key, scope, status,
+        creator_user_id, archived_at, archived_by_user_id, created_at, updated_at,
+        presentation_revision, audience_generation, lifecycle_generation)
+     SELECT project_id, name, normalized_name, icon_key, icon_color_key, scope, status,
+            creator_user_id, archived_at, archived_by_user_id, created_at, updated_at,
+            presentation_revision, audience_generation, lifecycle_generation
+       FROM projects`,
+    // Empties every dependent, which is why they are held above.
+    `DROP TABLE projects`,
+    `ALTER TABLE projects_v45 RENAME TO projects`,
+    // Parents before children, so each insert sees the rows its keys point at.
+    ...PROJECT_CASCADE_DEPENDENTS.flatMap((table) => [
+      `INSERT INTO ${table} SELECT * FROM ${table}_v45_hold`,
+      `DROP TABLE ${table}_v45_hold`,
+    ]),
+  ],
+}];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
   loadable: number | null;
@@ -3080,6 +3244,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
   /** This object's own `WORKSPACE_DOS` name; see {@link selfObjectName}. */
+  private readonly searchPublications = new Map<string, Promise<void>>();
   private objectName: string | null = null;
   /** Content-free phase timings for the alarm invocation currently running. */
   private workspaceAlarmInstrumentation: WorkspaceAlarmInstrumentation | null = null;
@@ -3194,6 +3359,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const request = WorkspaceRuntimeSqlRequestSchema.parse(input);
       this.assertWorkspace(request.workspaceId);
       const results = this.runWorkspaceSql(request);
+      if (nextSearchAuthorizationPush(this.state.storage.sql) !== null) this.state.waitUntil(this.armNextAlarm().catch((error: unknown) => {
+        logWarn(this.env, 'search_authorization_alarm_deferred', { workspace_id: request.workspaceId,
+          error_code: diagnosticErrorCode(error, 'alarm_arming_failed') });
+      }));
       const kinds = new Set<WorkspaceScheduleTargetKind>();
       for (const statement of request.statements) {
         const target = workspaceMutationTarget(statement.sql);
@@ -3251,7 +3420,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       });
       return;
     }
-    const parsed = WorkspaceSocketClientEventSchema.safeParse(decoded);
+    if (isUnknownSocketEvent(decoded, WorkspaceSocketClientEventTypeSchema)) return;
+    const parsed = safeParseSocketEvent(WorkspaceSocketClientEventSchema, decoded);
     if (!parsed.success) {
       this.closeSocket(socket, attachment, {
         code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
@@ -3535,12 +3705,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).one().created_at;
     const publication = this.projectStorage().nextDefaultPublicationDueAt();
     const search = nextResourceSearchDueAt(this.state.storage.sql, this.env);
+    const searchAuthorization = nextSearchAuthorizationPush(this.state.storage.sql);
     const authorization = this.state.storage.sql.exec<{ due: number | null }>('SELECT MIN(not_before) AS due FROM authorization_delivery').one().due;
     return [
       ...(oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS]),
       ...(publication === null ? [] : [publication]),
       ...(search === null ? [] : [search]),
       ...(authorization === null ? [] : [authorization]),
+      ...(searchAuthorization === null ? [] : [searchAuthorization]),
     ];
   }
 
@@ -3554,6 +3726,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   protected override async runDueAlarmWork(now: number): Promise<void> {
     const workspaceId = this.workspaceId();
     if (workspaceId) {
+      try { await flushSearchAuthorizationPush(this.state.storage.sql, this.env, workspaceId); }
+      catch { logWarn(this.env, 'search_authorization_push_deferred', { region: this.env.AVALON_REGION }); }
       try { await flushAuthorizationDeliveries(this.state.storage.sql, this.env.ACTIVITY_QUEUE, now); }
       catch { logWarn(this.env, 'authorization_backfill_dispatch_deferred', { region: this.env.AVALON_REGION }); }
       try { await publishResourceSearch(this.state.storage.sql, this.env, workspaceId); }
@@ -4212,6 +4386,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { applied: true };
     });
     if (result.applied) this.publishSidebarList("automations");
+    await this.armNextAlarm();
     return result;
   }
 
@@ -6053,6 +6228,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           : [...users].map((userId) => this.publishWorkstreamState(workstreamId, userId))
       )));
     }
+    await this.armNextAlarm();
     return WorkspaceDirectoryApplyResultSchema.parse({ accepted, directoryChanged });
   }
 
@@ -8462,6 +8638,124 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  async readSearchAuthorizationSnapshots(input: unknown) {
+    await this.initialized;
+    const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
+    this.assertWorkspace(request.subject.workspaceId);
+    return Promise.all(request.resources.map(async (resource) => {
+      this.assertWorkspace(resource.workspaceId);
+      const key = await searchAuthorizationKey(request.subject, resource);
+      const row = this.state.storage.sql.exec<{ snapshot_json: string }>(
+        'SELECT snapshot_json FROM authorization_snapshots WHERE cache_key = ?', key).toArray()[0];
+      return row ? SearchAuthorizationSnapshotSchema.parse(JSON.parse(row.snapshot_json)) : null;
+    }));
+  }
+
+  async registerSearchAuthorization(input: unknown) {
+    await this.initialized;
+    const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
+    this.assertWorkspace(request.subject.workspaceId);
+    const generations: number[] = [];
+    for (const resource of request.resources) {
+      this.assertWorkspace(resource.workspaceId);
+      const key = await searchAuthorizationKey(request.subject, resource);
+      // Allocate before owner reads. A later attempt supersedes an earlier one even in the same millisecond.
+      const generation = this.state.storage.sql.exec<{ generation: number }>(`INSERT INTO search_authorization_keys
+        (cache_key, generation, resource_id, parent_id) VALUES (?, 1, ?, ?)
+        ON CONFLICT(cache_key) DO UPDATE SET generation = generation + 1 RETURNING generation`, key,
+        resource.kind === 'resource' ? resource.resourceId : null,
+        resource.kind === 'conversation' ? resource.parentId : null).one().generation;
+      generations.push(generation);
+      const pending = { version: 1, generation, subject: request.subject, resource, observedAt: 0,
+        decision: { status: 'unavailable', reason: 'projection_incomplete', retryable: true } };
+      this.state.storage.sql.exec('INSERT INTO authorization_snapshots VALUES (?, ?, 0) ON CONFLICT(cache_key) DO NOTHING',
+        key, JSON.stringify(pending));
+      // Retain dependencies before owner reads, including an attachment removed while a first fill is in flight.
+      if (resource.kind === 'resource') this.state.storage.sql.exec(`INSERT OR IGNORE INTO search_authorization_dependencies
+        SELECT parent_id, ? FROM authorization_locations WHERE resource_id = ?`, key, resource.resourceId);
+      if (resource.kind === 'conversation') this.state.storage.sql.exec(`INSERT OR IGNORE INTO search_authorization_dependencies
+        SELECT owning_workstream_id, ? FROM automation_directory WHERE automation_id = ? AND owning_workstream_id IS NOT NULL`, key, resource.parentId);
+    }
+    return generations;
+  }
+
+  async listSearchAuthorizationSnapshots(input: { workspaceId: string; target?: z.infer<typeof SearchAuthorizationTargetSchema> }) {
+    await this.initialized;
+    this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
+    const target = input.target ? SearchAuthorizationTargetSchema.parse(input.target) : undefined;
+    let keys: string;
+    let bindings: string[];
+    if (!target) { keys = 'SELECT cache_key FROM search_authorization_keys'; bindings = []; }
+    else if (target.kind === 'resource') {
+      keys = 'SELECT cache_key FROM search_authorization_keys WHERE resource_id = ?'; bindings = [target.id];
+    } else if (target.kind === 'connection') {
+      keys = `SELECT k.cache_key FROM resources r JOIN search_authorization_keys k ON k.resource_id = r.id WHERE r.connection_id = ?`;
+      bindings = [target.id];
+    } else {
+      // Indexed prior owners reach removed grants; current locations reach newly attached resources.
+      keys = `SELECT cache_key FROM search_authorization_keys WHERE parent_id = ?
+        UNION SELECT cache_key FROM search_authorization_dependencies WHERE parent_id = ?
+        UNION SELECT k.cache_key FROM authorization_locations l JOIN search_authorization_keys k ON k.resource_id = l.resource_id WHERE l.parent_id = ?
+        UNION SELECT k.cache_key FROM automation_directory a JOIN search_authorization_keys k ON k.parent_id = a.automation_id WHERE a.owning_workstream_id = ?
+        UNION SELECT k.cache_key FROM automation_directory a JOIN authorization_locations l ON l.parent_id = a.automation_id
+          JOIN search_authorization_keys k ON k.resource_id = l.resource_id WHERE a.owning_workstream_id = ?`;
+      bindings = Array.from({ length: 5 }, () => target.id);
+    }
+    return this.state.storage.sql.exec<{ snapshot_json: string }>(
+      `SELECT snapshot_json FROM authorization_snapshots WHERE cache_key IN (${keys})`, ...bindings).toArray()
+      .map((row) => SearchAuthorizationSnapshotSchema.parse(JSON.parse(row.snapshot_json)));
+  }
+
+  async writeSearchAuthorizationSnapshots(input: unknown) {
+    await this.initialized;
+    const snapshots = z.array(SearchAuthorizationSnapshotSchema).parse(input);
+    const stats = { written: 0, superseded: 0, kvWriteMs: 0 };
+    const results = await Promise.allSettled(snapshots.map(async (snapshot) => {
+      this.assertWorkspace(snapshot.subject.workspaceId);
+      this.assertWorkspace(snapshot.resource.workspaceId);
+      const key = await searchAuthorizationKey(snapshot.subject, snapshot.resource);
+      const previous = this.searchPublications.get(key) ?? Promise.resolve();
+      // Serialize only this key's network writes; unrelated WorkspaceDO events stay runnable.
+      const publication = previous.catch(() => {}).then(async () => {
+        const current = this.state.storage.sql.exec<{ generation: number }>(
+          'SELECT generation FROM search_authorization_keys WHERE cache_key = ?', key).toArray()[0];
+        if (current?.generation !== snapshot.generation) { stats.superseded++; return; }
+        this.state.storage.transactionSync(() => {
+          this.state.storage.sql.exec(`INSERT INTO authorization_snapshots(cache_key, snapshot_json, validated_at) VALUES (?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET snapshot_json = excluded.snapshot_json, validated_at = excluded.validated_at`,
+            key, JSON.stringify(snapshot), snapshot.observedAt);
+          this.state.storage.sql.exec('DELETE FROM search_authorization_dependencies WHERE cache_key = ?', key);
+          if (snapshot.decision.status !== 'unavailable') for (const evidence of snapshot.decision.evidence) {
+            this.state.storage.sql.exec('INSERT OR IGNORE INTO search_authorization_dependencies VALUES (?, ?)', evidence.owner.split('/')[0]!, key);
+          }
+        });
+        if (this.env.AVALON_REGION === 'global' && this.env.AUTHORIZATION_CACHE) {
+          const startedAt = Date.now();
+          try { await this.env.AUTHORIZATION_CACHE.put(key, JSON.stringify(snapshot)); }
+          catch (error) {
+            this.state.storage.sql.exec(`INSERT INTO search_authorization_push VALUES (?, ?, 1, 0, ?, ?)
+              ON CONFLICT(kind, target_id) DO UPDATE SET revision = revision + 1,
+                timing_origin = CASE WHEN first_mutated_at IS NULL OR excluded.first_mutated_at < first_mutated_at THEN excluded.timing_origin ELSE timing_origin END,
+                first_mutated_at = CASE WHEN first_mutated_at IS NULL THEN excluded.first_mutated_at
+                  WHEN excluded.first_mutated_at IS NULL THEN first_mutated_at ELSE MIN(first_mutated_at, excluded.first_mutated_at) END`,
+              snapshot.resource.kind === 'resource' ? 'resource' : 'parent',
+              snapshot.resource.kind === 'resource' ? snapshot.resource.resourceId : snapshot.resource.kind === 'conversation' ? snapshot.resource.parentId : snapshot.resource.scopeId,
+              snapshot.timing?.mutationAt ?? null, snapshot.timing?.origin ?? (snapshot.timing ? 'workspace_mutation' : 'cache_fill'));
+            throw error;
+          } finally { stats.kvWriteMs += Date.now() - startedAt; }
+        }
+        stats.written++;
+      });
+      this.searchPublications.set(key, publication);
+      try { await publication; }
+      finally { if (this.searchPublications.get(key) === publication) this.searchPublications.delete(key); }
+    }));
+    if (nextSearchAuthorizationPush(this.state.storage.sql) !== null) await this.armNextAlarm();
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+    return stats;
+  }
+
   async readAuthorizationSnapshots(input: unknown) {
     await this.initialized;
     const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
@@ -8489,8 +8783,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     this.state.storage.transactionSync(() => {
       new AuthorizationStorage(this.state.storage).replaceLocations(request);
+      if (request.mutationAt !== undefined) this.state.storage.sql.exec(
+        "UPDATE search_authorization_push SET timing_origin = CASE WHEN first_mutated_at IS NULL OR ? <= first_mutated_at THEN 'source_mutation' ELSE timing_origin END, first_mutated_at = COALESCE(MIN(first_mutated_at, ?), ?) WHERE kind = 'parent' AND target_id = ?",
+        request.mutationAt, request.mutationAt, request.mutationAt, request.parentId);
       this.state.storage.sql.exec('UPDATE authorization_backfill_children SET completed = 1 WHERE parent_id = ? AND substream_id = ?', request.parentId, request.substreamId);
     });
+    await this.armNextAlarm();
   }
 
   /** Internal migration control; source permissions remain in their original objects. */
@@ -8518,13 +8816,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   private enqueueAuthorizationDiscovery(job: AuthorizationProjectionJob): void {
     this.state.storage.sql.exec(`INSERT INTO authorization_delivery(job_key, payload_json, not_before) VALUES (?, ?, 0)
-      ON CONFLICT(job_key) DO UPDATE SET payload_json = excluded.payload_json, revision = authorization_delivery.revision + 1`,
+      ON CONFLICT(job_key) DO UPDATE SET payload_json = CASE
+        WHEN json_extract(authorization_delivery.payload_json, '$.mutationAt') IS NULL THEN excluded.payload_json
+        WHEN json_extract(excluded.payload_json, '$.mutationAt') IS NULL THEN json_set(excluded.payload_json, '$.mutationAt', json_extract(authorization_delivery.payload_json, '$.mutationAt'))
+        ELSE json_set(excluded.payload_json, '$.mutationAt', MIN(json_extract(authorization_delivery.payload_json, '$.mutationAt'), json_extract(excluded.payload_json, '$.mutationAt'))) END,
+      revision = authorization_delivery.revision + 1`,
     JSON.stringify([job.parentId, job.substreamId ?? null]), JSON.stringify(job));
   }
 
-  async registerAuthorizationChildren(input: { workspaceId: string; parentId: string; substreamIds: string[]; refreshExisting?: boolean }) {
+  async registerAuthorizationChildren(input: { workspaceId: string; parentId: string; substreamIds: string[]; refreshExisting?: boolean; mutationAt?: number }) {
     await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamIds: z.array(SubstreamIdSchema), refreshExisting: z.boolean().optional() }).parse(input);
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamIds: z.array(SubstreamIdSchema), refreshExisting: z.boolean().optional(), mutationAt: z.number().int().nonnegative().optional() }).parse(input);
     this.assertWorkspace(request.workspaceId);
     this.state.storage.transactionSync(() => {
       // Reconcile the exact registry: deleted/failed children must not leave immortal pending receipts.
@@ -8546,9 +8848,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.state.storage.sql.exec(`INSERT INTO authorization_backfill_children(parent_id, substream_id) VALUES (?, ?)
           ON CONFLICT(parent_id, substream_id) DO UPDATE SET completed = 0`, request.parentId, substreamId);
         this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
-          workspaceId: request.workspaceId, parentId: request.parentId, substreamId });
+          workspaceId: request.workspaceId, parentId: request.parentId, substreamId,
+          ...(request.mutationAt === undefined ? {} : { mutationAt: request.mutationAt }) });
       }
       this.state.storage.sql.exec('UPDATE authorization_backfill SET completed = 1 WHERE parent_id = ?', request.parentId);
+      if (request.mutationAt !== undefined) this.state.storage.sql.exec(
+        "UPDATE search_authorization_push SET timing_origin = CASE WHEN first_mutated_at IS NULL OR ? <= first_mutated_at THEN 'source_mutation' ELSE timing_origin END, first_mutated_at = COALESCE(MIN(first_mutated_at, ?), ?) WHERE kind = 'parent' AND target_id = ?",
+        request.mutationAt, request.mutationAt, request.mutationAt, request.parentId);
     });
     await this.armNextAlarm();
   }
@@ -9550,4 +9856,181 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       analyticsWorkspaceId: role.analytics_workspace_id ?? null,
     } : null;
   }
+
+  /**
+   * Close this workspace and record what closing it has to reach.
+   *
+   * Order is the whole point. The enumeration happens first, while the
+   * directories still answer, and the tombstone lands in the same call — so
+   * there is no window in which a caller writes into a workspace that is half
+   * closed, and no second pass that reads an empty directory and concludes
+   * there was nothing to retire.
+   *
+   * Idempotent by the same table. A resumed operation re-enters here and gets
+   * the graph the first pass recorded, receipts included, rather than a fresh
+   * and emptier one.
+   */
+  async beginWorkspaceRetirement(input: {
+    retiredAt: number;
+    operationId: string;
+    actorUserId: string | null;
+    reason: string;
+  }): Promise<{ nodes: { parentKind: "workstream" | "automation"; parentId: string }[] }> {
+    await this.initialized;
+    const sql = this.state.storage.sql;
+    // `INSERT OR IGNORE` rather than a replace: a node already receipted keeps
+    // its receipt, so resuming never un-retires what the last pass finished.
+    this.state.storage.transactionSync(() => {
+      const now = Date.now();
+      for (const row of sql.exec<{ workstream_id: string }>(
+        "SELECT workstream_id FROM workspace_workstream_directory",
+      ).toArray()) {
+        sql.exec(
+          `INSERT OR IGNORE INTO workspace_retirement_graph
+             (parent_kind, parent_id, recorded_at, retired_at)
+           VALUES ('workstream', ?, ?, NULL)`,
+          row.workstream_id,
+          now,
+        );
+      }
+      for (const row of sql.exec<{ automation_id: string }>(
+        "SELECT automation_id FROM automation_directory",
+      ).toArray()) {
+        sql.exec(
+          `INSERT OR IGNORE INTO workspace_retirement_graph
+             (parent_kind, parent_id, recorded_at, retired_at)
+           VALUES ('automation', ?, ?, NULL)`,
+          row.automation_id,
+          now,
+        );
+      }
+    });
+    await this.retireObject(input);
+    return { nodes: this.retirementGraphNodes() };
+  }
+
+  /** One descendant confirmed retired. Terminal: a replay does not reopen it. */
+  async recordRetiredNode(input: {
+    parentKind: "workstream" | "automation";
+    parentId: string;
+  }): Promise<{ remaining: number; complete: boolean }> {
+    await this.initialized;
+    this.state.storage.sql.exec(
+      `UPDATE workspace_retirement_graph
+          SET retired_at = ?
+        WHERE parent_kind = ? AND parent_id = ? AND retired_at IS NULL`,
+      Date.now(),
+      input.parentKind,
+      input.parentId,
+    );
+    return this.retirementProgress();
+  }
+
+  /**
+   * What the walk has left.
+   *
+   * Read after the tombstone, which is why it is permitted: an operator asking
+   * why a retirement is stuck, and the walk itself deciding whether to keep
+   * going, both need an answer from an object that refuses everything else.
+   */
+  async workspaceRetirementProgress(): Promise<{
+    remaining: number;
+    complete: boolean;
+    nodes: { parentKind: "workstream" | "automation"; parentId: string; retired: boolean }[];
+  }> {
+    await this.initialized;
+    const progress = this.retirementProgress();
+    const nodes = this.state.storage.sql.exec<{
+      parent_kind: "workstream" | "automation";
+      parent_id: string;
+      retired_at: number | null;
+    }>(
+      `SELECT parent_kind, parent_id, retired_at FROM workspace_retirement_graph
+        ORDER BY parent_kind, parent_id`,
+    ).toArray();
+    return {
+      ...progress,
+      nodes: nodes.map((node) => ({
+        parentKind: node.parent_kind,
+        parentId: node.parent_id,
+        retired: node.retired_at !== null,
+      })),
+    };
+  }
+
+  private retirementGraphNodes(): { parentKind: "workstream" | "automation"; parentId: string }[] {
+    return this.state.storage.sql.exec<{
+      parent_kind: "workstream" | "automation";
+      parent_id: string;
+    }>(
+      `SELECT parent_kind, parent_id FROM workspace_retirement_graph
+        ORDER BY parent_kind, parent_id`,
+    ).toArray().map((row) => ({ parentKind: row.parent_kind, parentId: row.parent_id }));
+  }
+
+  private retirementProgress(): { remaining: number; complete: boolean } {
+    const rows = this.state.storage.sql.exec<{ remaining: number; total: number }>(
+      `SELECT COUNT(*) FILTER (WHERE retired_at IS NULL) AS remaining,
+              COUNT(*) AS total
+         FROM workspace_retirement_graph`,
+    ).toArray();
+    const remaining = rows[0]?.remaining ?? 0;
+    // Completeness is "this workspace was enumerated and nothing is left", and
+    // the tombstone is what says the enumeration happened —
+    // `beginWorkspaceRetirement` writes it in the same call that records the
+    // graph. Reading it from the row count instead confused "nothing recorded
+    // yet" with "nothing to record", so a demo with no work streams and no
+    // automations reported incomplete on the first pass and on every pass
+    // after it, and its register row could never be marked retired.
+    const enumerated = readObjectRetirement(this.state.storage.sql) !== null;
+    return { remaining, complete: enumerated && remaining === 0 };
+  }
+
 }
+
+applyRetirementGate(WorkspaceDO, {
+  permit: [
+    // Retirement's own walk. These read and write the recorded graph, which
+    // only exists to be usable once the tombstone has closed everything else,
+    // so refusing them would leave the walk unable to find its descendants or
+    // report that it had reached them.
+    // Only the entry points. A permit carries the whole call beneath it, so the
+    // private helpers these reach need no entry of their own.
+    "beginWorkspaceRetirement",
+    "recordRetiredNode",
+    "workspaceRetirementProgress",
+  ],
+  drop: {
+    // Already handed to the Queue before the tombstone landed. The consumer
+    // parses `accepted` to decide the message is done; anything else leaves it
+    // redelivering an effect no object will ever apply.
+    applyWorkstreamDirectoryEffects: ([input]) => ({
+      accepted: droppedEnvelopeReceipts(input),
+      directoryChanged: false,
+    }),
+    // `replayed` is this receiver's terminal answer — it already means "this
+    // changed nothing, do not send it again", which is exactly true here.
+    applyWorkstreamRegionalEffect: () => ({ replayed: true, notificationIntentId: null }),
+    // The third queue-driven receiver, and the one that was missed. The
+    // activity consumer calls all three side by side; this one refused, so its
+    // message retried with backoff until it dead-lettered — the exact loop the
+    // other two exist to avoid. `applied: false` is its ordinary "nothing
+    // changed" answer, which is true of a workspace that is closed.
+    applyAutomationDirectory: () => ({ applied: false }),
+    // A visibility question answered rather than refused, as on `WorkstreamDO`:
+    // nobody can read anything in a retired workspace, and a caller that asks
+    // can act on `false` where it cannot act on a throw.
+    canReadWorkstream: () => false,
+    // An HTTP door refuses in the protocol it speaks rather than by throwing,
+    // so a caller reads a status instead of a 500 it has to guess about.
+    fetch: () => retiredObjectResponse(),
+    // Hibernated socket callbacks. The socket is already dead to the product;
+    // throwing here would only turn a quiet close into an error nobody reads.
+    webSocketMessage: () => Promise.resolve(),
+    webSocketClose: () => Promise.resolve(),
+    webSocketError: () => Promise.resolve(),
+    // The platform retries an alarm that throws. A retired object answers the
+    // wake by doing nothing and arming nothing, which is what quiet means.
+    alarm: () => Promise.resolve(),
+  },
+});

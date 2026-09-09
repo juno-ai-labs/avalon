@@ -1,7 +1,7 @@
 import type { ButtonHTMLAttributes, HTMLAttributes, LabelHTMLAttributes, PropsWithChildren, ReactNode } from 'react';
 
 export function Button({ variant = 'secondary', ...props }: ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: 'primary' | 'secondary' | 'quiet';
+  variant?: 'primary' | 'secondary' | 'quiet' | 'danger';
 }): React.JSX.Element {
   return <button {...props} className={`ace-button ace-button-${variant}${props.className ? ` ${props.className}` : ''}`} />;
 }

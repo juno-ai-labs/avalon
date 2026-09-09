@@ -174,6 +174,21 @@ function nextMessage(socket: WebSocket): Promise<MessageEvent> {
   return new Promise((resolve) => socket.addEventListener("message", resolve, { once: true }));
 }
 
+function nextMessageWhileOpen(socket: WebSocket): Promise<MessageEvent> {
+  return new Promise((resolve, reject) => {
+    const onClose = (event: CloseEvent): void => {
+      socket.removeEventListener("message", onMessage);
+      reject(new Error(`Socket closed before its next event: ${event.code} ${event.reason}`));
+    };
+    const onMessage = (event: MessageEvent): void => {
+      socket.removeEventListener("close", onClose);
+      resolve(event);
+    };
+    socket.addEventListener("message", onMessage, { once: true });
+    socket.addEventListener("close", onClose, { once: true });
+  });
+}
+
 function nextMessageOfType(socket: WebSocket, type: string): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
     const onMessage = (event: MessageEvent) => {
@@ -1394,8 +1409,9 @@ describe("Durable Objects in the Workers runtime", () => {
       const pong = nextMessage(socket!);
       socket!.send("ping");
       expect((await pong).data).toBe("pong");
-      const snapshot = nextMessage(socket!);
-      socket!.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      const snapshot = nextMessageWhileOpen(socket!);
+      socket!.send(JSON.stringify({ type: "future_workspace_event" }));
+      socket!.send(JSON.stringify({ type: "subscribe", afterWaterline: 0, future: true }));
       expect(JSON.parse(String((await snapshot).data))).toMatchObject({
         type: "workspace_sync",
         waterline: 0,
@@ -1869,7 +1885,7 @@ describe("Durable Objects in the Workers runtime", () => {
     });
     try {
       const closed = nextClose(socket);
-      socket.send(JSON.stringify({ type: "create_message", text: "must not reach logs" }));
+      socket.send(JSON.stringify({ type: "subscribe", afterWaterline: "invalid", text: "must not reach logs" }));
       const event = await closed;
       expect(event.code).toBe(WORKSPACE_SOCKET_INVALID_MESSAGE_CODE);
       expect(event.code).not.toBe(1008);
@@ -2255,6 +2271,7 @@ describe("Durable Objects in the Workers runtime", () => {
       operation: "rename",
       args: [{
         title: "Avalon pricing conversation",
+        icon: "coins",
         from: "naming",
         to: "automatic",
         now: Date.now(),
@@ -2270,7 +2287,15 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(await push).toMatchObject({
       type: "workspace_workstream_state",
       workstreamId: WORKSTREAM_ID,
-      workstream: { title: "Avalon pricing conversation", titleStatus: "automatic" },
+      // The icon the pass chose rides the same legs as the name. This
+      // participant has no room socket, so the `workstream_renamed` event that
+      // carries the icon to an open header reaches nobody here — the directory
+      // projection is their only path to the glyph as well as to the name.
+      workstream: {
+        title: "Avalon pricing conversation",
+        titleStatus: "automatic",
+        appearance: { icon: "coins", color: null },
+      },
     });
   });
 
@@ -4010,7 +4035,7 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
-  it.each([false, true])("serves compatible WorkstreamDO metadata after hibernation (appearance support: %s)", async (supportsAppearance) => {
+  it("serves complete WorkstreamDO metadata without query configuration after hibernation", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
       workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
@@ -4058,7 +4083,7 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(initialized.accepted).toHaveLength(2);
 
     const ticketId = "00000000-0000-7000-8000-000000000108";
-    const response = await stub.fetch(`https://workstream.test/socket${supportsAppearance ? "?workstreamAppearance=1" : ""}`, {
+    const response = await stub.fetch("https://workstream.test/socket", {
       headers: {
         Upgrade: "websocket",
         "x-rally-workspace-id": WORKSPACE_ID,
@@ -4078,8 +4103,9 @@ describe("Durable Objects in the Workers runtime", () => {
     const pong = nextMessage(socket);
     socket.send("ping");
     expect((await pong).data).toBe("pong");
-    const snapshot = nextMessage(socket);
-    socket.send(JSON.stringify({ type: "subscribe" }));
+    const snapshot = nextMessageWhileOpen(socket);
+    socket.send(JSON.stringify({ type: "future_control_event" }));
+    socket.send(JSON.stringify({ type: "subscribe", future: true }));
     const initialMetadata = JSON.parse(String((await snapshot).data)) as {
       metadata: { appearance?: unknown; stateVersion: { commonEventId: string; viewerEventId: string | null } };
     };
@@ -4108,8 +4134,8 @@ describe("Durable Objects in the Workers runtime", () => {
         },
       },
     });
-    expect(initialMetadata.metadata.appearance).toEqual(supportsAppearance ? common.appearance : undefined);
-    expect(Object.hasOwn(initialMetadata.metadata, "appearance")).toBe(supportsAppearance);
+    expect(initialMetadata.metadata.appearance).toEqual(common.appearance);
+    expect(Object.hasOwn(initialMetadata.metadata, "appearance")).toBe(true);
     expect(initialMetadata.metadata.stateVersion.commonEventId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
     );
@@ -4125,8 +4151,8 @@ describe("Durable Objects in the Workers runtime", () => {
     });
     expect(update.accepted).toHaveLength(1);
     const pushedMetadata = JSON.parse(String((await pushed).data)) as typeof initialMetadata;
-    expect(pushedMetadata.metadata.appearance).toEqual(supportsAppearance ? common.appearance : undefined);
-    expect(Object.hasOwn(pushedMetadata.metadata, "appearance")).toBe(supportsAppearance);
+    expect(pushedMetadata.metadata.appearance).toEqual(common.appearance);
+    expect(Object.hasOwn(pushedMetadata.metadata, "appearance")).toBe(true);
     expect(pushedMetadata).toMatchObject({
       type: "workstream_metadata",
       metadata: { title: "Renamed from another client" },
@@ -4249,8 +4275,9 @@ describe("Durable Objects in the Workers runtime", () => {
       }
     });
 
-    const snapshot = nextMessage(socket);
-    socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+    const snapshot = nextMessageWhileOpen(socket);
+    socket.send(JSON.stringify({ type: "future_feed_event" }));
+    socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0, future: true }));
     const frame = JSON.parse(String((await snapshot).data)) as {
       type: string;
       code?: string;
@@ -6004,7 +6031,7 @@ describe("Durable Objects in the Workers runtime", () => {
     second.close(1000, "done");
   });
 
-  it("rejects retired message pages on the authenticated SubstreamAgent socket", async () => {
+  it("ignores retired message events and accepts the next authenticated subscription", async () => {
     await seedOpenAuthority();
     const id = env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
@@ -6045,16 +6072,16 @@ describe("Durable Objects in the Workers runtime", () => {
     const pong = nextMessage(socket!);
     socket!.send("ping");
     expect((await pong).data).toBe("pong");
-    const pageReceipt = nextMessage(socket!);
+    const pageReceipt = nextMessageWhileOpen(socket!);
     socket!.send(JSON.stringify({
       type: "load_message_page",
       requestId: "00000000-0000-7000-8000-000000000118",
       cursor: { direction: "before", value: "10" },
     }));
-    expect(JSON.parse(String((await pageReceipt).data))).toMatchObject({
-      type: "error",
-      code: "invalid_event",
-    });
+    socket!.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+    // This bootstrap-only room has no canonical snapshot yet; subscribe
+    // requests recovery rather than reporting an invalid unknown event.
+    expect(JSON.parse(String((await pageReceipt).data))).toMatchObject({ type: "resync_required" });
     socket!.close(1000, "done");
   });
   // The production stall in one assertion, against the real objects rather than

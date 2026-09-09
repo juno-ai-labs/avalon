@@ -369,7 +369,9 @@ function embedImages(node: EmbedRowNode, rendersCard: (resourceId: string) => bo
  * image on a line of its own — so a run of them renders as a column of tiles
  * between two sentences. This pass merges adjacent embed-only paragraphs (and
  * several embeds inside one paragraph) into a single `.citation-card-row`,
- * which the stylesheet lets scroll sideways. A lone embed keeps its paragraph:
+ * which the stylesheet wraps: file cards stack at full width so every delivered
+ * file is visible without scrolling, and image tiles sit side by side. A lone
+ * embed keeps its paragraph:
  * the row exists for runs, and rewriting the common case would change the DOM
  * every existing surface asserts on.
  *
@@ -379,8 +381,8 @@ function embedImages(node: EmbedRowNode, rendersCard: (resourceId: string) => bo
  * distinction is not academic: a `resource://` image on a surface with no
  * citation context, or one naming a resource this work stream does not carry,
  * renders as the label text the message already had. Grouping those would take
- * a run of ordinary sentences and lay them out side by side in a horizontal
- * scroller — which is exactly what happened on the five surfaces that render
+ * a run of ordinary sentences and lay them out as a row of flex items — which
+ * is exactly what happened on the five surfaces that render
  * `MarkdownBody` without citations, until review caught it.
  *
  * Intra-run whitespace text nodes are dropped rather than carried into the row:

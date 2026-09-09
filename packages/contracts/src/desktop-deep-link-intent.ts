@@ -17,7 +17,7 @@ const ERROR_PATTERN = /^[a-z0-9_-]{1,100}$/u;
 type Targeted = { target: WorkspaceTarget | null };
 
 export type DesktopDeepLinkIntent =
-  | ({ kind: "workstream"; workstreamId: string } & Targeted)
+  | ({ kind: "workstream"; workstreamId: string; substreamId?: string } & Targeted)
   | { kind: "new-workstream" }
   | ({ kind: "settings"; section: "workspace" | "connections" | "digest" } & Targeted)
   | ({ kind: "new-automation" } & Targeted)
@@ -165,9 +165,10 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
     return !target && !url.search ? { kind: "new-workstream" } : null;
   }
   if (url.hostname === "workstreams") {
-    const workstreamId = url.pathname.slice(1);
+    const [workstreamId = "", segment, substreamId, ...extra] = url.pathname.slice(1).split("/");
+    if (segment !== undefined && (segment !== "substreams" || !substreamId || !UUID_PATTERN.test(substreamId) || extra.length)) return null;
     return UUID_PATTERN.test(workstreamId) && !url.search
-      ? { kind: "workstream", workstreamId, target }
+      ? { kind: "workstream", workstreamId, target, ...(substreamId ? { substreamId } : {}) }
       : null;
   }
   if (url.hostname === "notes") {

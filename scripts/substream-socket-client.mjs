@@ -13,7 +13,7 @@ export function socketTicketProtocols(ticket) {
 
 export function socketUrlWithoutTicket(url) {
   const parsed = new URL(url);
-  parsed.searchParams.delete(SOCKET_TICKET_QUERY_PARAM);
+  parsed.search = "";
   return parsed.toString();
 }
 

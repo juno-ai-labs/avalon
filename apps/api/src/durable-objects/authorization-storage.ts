@@ -6,6 +6,7 @@ import { authorizationResourceKey,
 export const AuthorizationLocationSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamId: SubstreamIdSchema,
   parentKind: z.enum(['workstream', 'automation']),
+  mutationAt: z.number().int().nonnegative().optional(),
   revision: z.number().int().nonnegative(), validatedAt: z.number().int().nonnegative(),
   resourceIds: z.array(IdSchema),
 });

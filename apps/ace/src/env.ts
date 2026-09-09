@@ -20,6 +20,18 @@ export interface Env extends AccessEnvironment {
   FLAGSHIP_APP_ID: string;
   /** Historical name; the dedicated Ace token also holds Queues Edit. */
   CLOUDFLARE_FLAGSHIP_API_TOKEN: string;
+  /**
+   * The regional API Workers Ace's operator pages call, and the operator
+   * token presented to each. One token per region, held by that
+   * region's operator configuration in the `demos` role and by nobody else's:
+   * an operator credential never crosses regions, so a leak of one is
+   * destructive authority in one jurisdiction rather than both. The base URLs
+   * are configuration, never derived from a request. See `docs/ace.md`.
+   */
+  RALLY_API_BASE_URL: string;
+  RALLY_EU_API_BASE_URL: string;
+  RALLY_OPERATOR_TOKEN: string;
+  RALLY_EU_OPERATOR_TOKEN: string;
 }
 
 export function devAuthEnabled(env: Env): boolean {

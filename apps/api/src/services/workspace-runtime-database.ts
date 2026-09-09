@@ -52,6 +52,7 @@ const responseSchema = z.object({
 /** Tables whose only live authority is the WorkspaceDO SQLite database. */
 export const WORKSPACE_LOCAL_TABLES = [
   ...AUTHORIZATION_STORAGE_TABLES,
+  "search_authorization_push", "search_authorization_keys", "search_authorization_dependencies",
   "resource_search_versions",
   "connector_connections",
   "webhook_receipts",

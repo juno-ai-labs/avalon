@@ -32,7 +32,7 @@ import {
   Settings,
   Smartphone,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { CreateProjectRequest, ProjectSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
@@ -66,6 +66,8 @@ import {
   useUiStore,
 } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
+import { layoutRowAt } from '../lib/list-motion';
+import { useListMotion } from '../lib/use-list-motion';
 import { Avatar, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup } from './sidebar-skeleton';
@@ -419,7 +421,8 @@ interface PinnedRowDrag {
   dragging: boolean;
   /** `cancelled` is a drag backed out of rather than dropped on the list. */
   onDragEnd: (cancelled: boolean) => void;
-  onDragOver: (workstream: WorkstreamSummary) => void;
+  /** The pinned work stream whose slot the pointer is over. */
+  onDragOver: (workstreamId: string) => void;
   onDragStart: (workstream: WorkstreamSummary) => void;
   /** Keyboard equivalent of a drag: one step toward the top or the bottom. */
   onMove: (workstream: WorkstreamSummary, direction: -1 | 1) => void;
@@ -543,6 +546,12 @@ function WorkstreamRow({
           // How the sidebar finds this row again after pinning has moved it to
           // a different section — see the `reveal` effect.
           data-workstream-id={workstream.id}
+          // How the sidebar's motion follows this row when it changes place,
+          // in a section or between two. A row under the pointer mid-drag is
+          // placed rather than moved: it would otherwise leave and re-enter
+          // on every row the pointer crosses. See `useListMotion`.
+          data-motion-hold={drag?.dragging ? '' : undefined}
+          data-motion-key={`workstream:${workstream.id}`}
           draggable={drag !== undefined || projects.length > 0}
           onDragEnd={drag
             // A drag nothing accepted reports `none`. Treated as cancelled when
@@ -560,7 +569,18 @@ function WorkstreamRow({
               // jumping once at the end.
               event.preventDefault();
               event.dataTransfer.dropEffect = 'move';
-              drag.onDragOver(workstream);
+              // The slot under the pointer is the one laid out there, which
+              // mid-motion is not the row drawn there: a row gliding out of
+              // the slot the dragged row just took would otherwise be taken
+              // for the row that belongs to it, and the reorder would send it
+              // straight back. Where rows have no layout — jsdom — the row
+              // the event reached is the slot.
+              const section = event.currentTarget.closest('.pinned-section');
+              const slot = layoutRowAt(
+                section?.querySelectorAll<HTMLElement>('[data-workstream-id]') ?? [],
+                event.clientY,
+              );
+              drag.onDragOver(slot?.dataset.workstreamId ?? workstream.id);
             }
             : undefined}
           onDragStart={(event) => {
@@ -827,7 +847,7 @@ function NoteRow({
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
-        <div className="sidebar-context-target">
+        <div className="sidebar-context-target" data-motion-key={`note:${note.id}`}>
           <NavLink
             className={({ isActive }) => clsx('sidebar-row note-row', isActive && 'is-active')}
             onClick={() => markSurfaceEntrypoint('sidebar_note')}
@@ -971,7 +991,14 @@ export function Sidebar({
     await bridge.openExternal(new URL(path, `${webBaseUrl.replace(/\/$/u, '')}/`).toString());
   }, []);
   const [resizing, setResizing] = useState(false);
+  // Held arrow keys are the keyboard's drag: they write the width repeatedly,
+  // and animating each 16px step leaves the edge trailing the width the
+  // threshold is judged against, so the sidebar collapses at a width the
+  // reader cannot see. Not `resizing`, which also arms the window pointer
+  // listeners — a mouse moved during a keyboard resize would grab the edge.
+  const [keyResizing, setKeyResizing] = useState(false);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const panel = useRef<HTMLElement>(null);
   // The handle stands in the strip beside the sidebar rather than on its edge,
   // so the pointer's own position is not the sidebar's width. Holding the
   // difference from the moment of the grab keeps the edge from jumping out to
@@ -1368,12 +1395,12 @@ export function Sidebar({
       draggingWorkstreamId.current = target.id;
       setDragOrder(pinnedWorkstreams.map((pinned) => pinned.id));
     },
-    onDragOver: (target) => {
+    onDragOver: (targetId) => {
       const draggingId = draggingWorkstreamId.current;
-      if (draggingId === null || draggingId === target.id) return;
+      if (draggingId === null || draggingId === targetId) return;
       setDragOrder((current) => {
         const order = current ?? pinnedWorkstreams.map((pinned) => pinned.id);
-        const targetIndex = order.indexOf(target.id);
+        const targetIndex = order.indexOf(targetId);
         if (targetIndex < 0 || order.indexOf(draggingId) === targetIndex) return order;
         return moveWithin(order, draggingId, targetIndex);
       });
@@ -1526,7 +1553,12 @@ export function Sidebar({
     return () => clearTimeout(timer);
   }, [reveal]);
 
-  useEffect(() => {
+  // A layout effect, declared before `useListMotion` below, so that the scroll
+  // happens before the motion starts: the motion's first frame translates the
+  // row back to the slot it left, `scrollIntoView` scrolls to the box as
+  // transformed, and `nearest` would then find the row still on screen where
+  // it used to be and scroll to nothing.
+  useLayoutEffect(() => {
     if (reveal === null) return;
     const row = workstreams.find((workstream) => workstream.id === reveal.id);
     // A row the list does not carry at all is not one that is about to arrive:
@@ -1570,6 +1602,14 @@ export function Sidebar({
     }
   }, [reveal, workstreams]);
 
+  // A row that changes place — a message moving it up its group, a pin moving
+  // it between sections, a drag or an Alt+Arrow in the pinned list — travels
+  // there rather than reappearing: out to the left, the rows between closing
+  // the gap, then in from the left at its new slot. After the reveal above,
+  // and for the reason given there. The compact toggle relays out every row
+  // for a reason that is not a move, so it names the layout.
+  useListMotion(scrollRef, compact);
+
   const sidekickShortcuts = standaloneSidekicks.length > 0 && (
     <section className="sidebar-automation-strip" aria-label="Sidekick shortcuts" onClick={() => setSidebarOpen(false)}>
       {standaloneSidekicks.map((sidekick) => <SidekickTile key={sidekick.id} sidekick={sidekick} />)}
@@ -1584,8 +1624,9 @@ export function Sidebar({
       {sidebarOpen && <button aria-label="Close navigation" className="sidebar-scrim" onClick={() => setSidebarOpen(false)} type="button" />}
       <aside
         aria-label="Rally navigation"
-        className={clsx('sidebar', compact && 'is-compact', sidebarOpen && 'is-mobile-open', resizing && 'is-resizing')}
+        className={clsx('sidebar', compact && 'is-compact', sidebarOpen && 'is-mobile-open', (resizing || keyResizing) && 'is-resizing')}
         data-sidebar-collapsed={compact ? '' : undefined}
+        ref={panel}
       >
         <div className="sidebar-titlebar window-drag">
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
@@ -1688,7 +1729,9 @@ export function Sidebar({
               }}
               onDrop={(event) => event.preventDefault()}
             >
-              <div className="sidebar-section-heading">
+              {/* Held: a heading travels with the rows under it and is never
+                  the thing seen to leave. See `useListMotion`. */}
+              <div className="sidebar-section-heading" data-motion-hold="" data-motion-key="heading:pinned">
                 <h2 id="pinned-heading">Pinned</h2>
               </div>
               {/* Said once for the section rather than repeated on every row:
@@ -1750,7 +1793,7 @@ export function Sidebar({
             ) : (
               groups.map((group) => (
                 <div className="sidebar-group" key={group.label}>
-                  <div className="sidebar-group-heading">
+                  <div className="sidebar-group-heading" data-motion-hold="" data-motion-key={`heading:${group.label}`}>
                     <h3>{group.label}</h3>
                     <DropdownMenu.Root>
                       <DropdownMenu.Trigger asChild>
@@ -1936,7 +1979,10 @@ export function Sidebar({
           aria-valuenow={effectiveSidebarWidth}
           className={clsx('sidebar-resizer', pointerNearEdge && 'is-near')}
           onDoubleClick={() => { if (!forcedCompact) setSidebarCollapsed(!sidebarCollapsed); }}
+          onBlur={() => setKeyResizing(false)}
           onKeyDown={(event) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            setKeyResizing(true);
             if (event.key === 'ArrowLeft' && !compact) {
               resizeSidebar(sidebarWidth > MIN_SIDEBAR_WIDTH
                 ? sidebarWidth - 16
@@ -1944,12 +1990,20 @@ export function Sidebar({
             }
             if (event.key === 'ArrowRight') resizeSidebar(compact ? MIN_SIDEBAR_WIDTH : sidebarWidth + 16);
           }}
+          onKeyUp={() => setKeyResizing(false)}
           onPointerDown={(event) => {
             if (event.button !== 0) return;
             event.preventDefault();
             event.currentTarget.focus();
             event.currentTarget.setPointerCapture(event.pointerId);
-            grabOffset.current = event.clientX - effectiveSidebarWidth;
+            // Measure the panel rather than reading the width state. The handle
+            // is drawn at the sidebar's trailing edge, and while a collapse or
+            // expand is still travelling that edge is not yet the width the
+            // state holds — an offset taken from the state would be wrong by
+            // however far the animation had left to go, and stay wrong for the
+            // whole drag. The work-stream sidebar's handle already measures.
+            const edge = panel.current?.getBoundingClientRect().right;
+            grabOffset.current = event.clientX - (edge ?? effectiveSidebarWidth);
             setResizing(true);
           }}
           role="separator"

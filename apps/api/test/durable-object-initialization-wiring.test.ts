@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 // the one shared input gate. Keep the exact strings close to the call sites so
 // formatting-only changes fail visibly instead of silently weakening coverage.
 const migratableClasses = [
+  "sidekick-do.ts",
   "substream-agent.ts",
   "workspace-do.ts",
   "workstream-do.ts",
@@ -18,7 +19,13 @@ describe("Durable Object initialization instrumentation", () => {
       : "this.initialized = this.initializeDurableObject(async () => {";
     expect(source).toContain(timedGate);
     if (fileName === "substream-agent.ts") {
-      expect(source).toContain("this.runtimeRecoveryAttempt = () => this.storageReady.then(");
+      // A prototype method, not a constructor-bound closure. The retirement
+      // gate lifts itself for a permitted call by supplying the receiver, and a
+      // closure over the constructor's `this` is invisible to that — which left
+      // a retired agent refusing its own recovery, and so unreachable, after its
+      // first eviction (`docs/workspace-retirement.md`).
+      expect(source).toContain("private runtimeRecoveryAttempt(): Promise<void> {");
+      expect(source).not.toContain("this.runtimeRecoveryAttempt = () =>");
       expect(source).toContain("if (this.runtimeRecovery === attempt) this.runtimeRecovery = null;");
     }
     expect(source).not.toContain("this.initialized = state.blockConcurrencyWhile(async () => {");
