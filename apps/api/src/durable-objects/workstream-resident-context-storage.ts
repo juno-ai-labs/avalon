@@ -85,11 +85,16 @@ export class WorkstreamResidentContextStorage {
     return this.storage.sql;
   }
 
-  /** Every block of a kind that is currently in context, as `<id>@<sha>` keys. */
+  /**
+   * Every block of a kind that is in context at its current content, as
+   * `<id>@<sha>` keys. A superseded prompt block is still rendered but is no
+   * longer current, so it is not here: a source that reverts to that content
+   * is then reported again and `recordLoaded` reinstates it.
+   */
   residentBlocks(input: { kind: ResidentContextKind }): string[] {
     return this.sql.exec<BlockRow>(
       `SELECT ${BLOCK_COLUMNS} FROM resident_context_blocks
-        WHERE kind = ? AND residency IN ('transcript', 'system')
+        WHERE kind = ? AND residency IN ('transcript', 'system') AND superseded = 0
         ORDER BY block_id, sha256`,
       input.kind,
     ).toArray().map((row) => residentContextSourceId({ blockId: row.block_id, sha256: row.sha256 }));
@@ -101,6 +106,11 @@ export class WorkstreamResidentContextStorage {
    * the same id is retired (a transcript block to `none`, a prompt-resident one
    * flagged `superseded` so the prefix does not change mid-run) and the new
    * block is written in `transcript` residency with a pending delivery.
+   *
+   * A prompt block that was superseded and whose content is loaded again (the
+   * source reverted) stays in the prompt, is current again with a fresh
+   * lifetime, and is delivered once more as a message, because the successor's
+   * message may already say otherwise and a later message wins.
    */
   recordLoaded(input: {
     kind: ResidentContextKind;
@@ -119,7 +129,7 @@ export class WorkstreamResidentContextStorage {
           block.blockId,
           block.sha256,
         ).toArray()[0];
-        if (existing && existing.residency !== "none") {
+        if (existing && existing.residency !== "none" && existing.superseded === 0) {
           alreadyResident.push(block.blockId);
           continue;
         }
@@ -139,6 +149,24 @@ export class WorkstreamResidentContextStorage {
           block.blockId,
           block.sha256,
         );
+        if (existing && existing.residency === "system") {
+          const reinstated = this.sql.exec<{ block_id: string } & Record<string, SqlStorageValue>>(
+            `UPDATE resident_context_blocks
+                SET superseded = 0, compactions_remaining = ?, pending_delivery = 1,
+                    source_generation = ?, last_delivered_at = ?
+              WHERE kind = ? AND block_id = ? AND sha256 = ? AND residency = 'system'
+              RETURNING block_id`,
+            RESIDENT_CONTEXT_KIND_POLICIES[input.kind].lifetime,
+            input.sourceGeneration,
+            input.now,
+            input.kind,
+            block.blockId,
+            block.sha256,
+          ).toArray()[0];
+          if (reinstated?.block_id !== block.blockId) throw new Error("resident_context_record_failed");
+          recorded.push(block.blockId);
+          continue;
+        }
         const written = this.sql.exec<{ block_id: string } & Record<string, SqlStorageValue>>(
           `INSERT INTO resident_context_blocks
              (kind, block_id, sha256, source_generation, content, truncated, residency,
@@ -233,32 +261,62 @@ export class WorkstreamResidentContextStorage {
   }
 
   /**
-   * The prompt sections a compaction *would* leave behind, computed without
-   * writing anything. Called before the replacement transition is built so the
-   * compacted context's system message carries the blocks that were in the
-   * transcript; `applyCompactionInTransaction` commits the same transitions.
+   * The prompt sections a compaction *would* leave behind. Called before the
+   * replacement transition is built so the compacted context's system message
+   * carries the blocks that were in the transcript. Block rows are not touched;
+   * the event's row records exactly which blocks were rendered, so that
+   * `applyCompactionInTransaction` moves those and only those. A block recorded
+   * between the two (a background bootstrap, a concurrent tool) is absent from
+   * the compacted system message and stays where it is, to be delivered as a
+   * message and moved by the next compaction. Preparing the same event again
+   * before it is applied replaces the prepared set.
    */
-  prepareCompaction(): string | null {
-    return renderResidentContextSections(applyCompactionToBlocks(this.allBlocks()));
+  prepareCompaction(compactionEventId: string, now: number): string | null {
+    const blocks = this.allBlocks();
+    const keys = blocks
+      .filter((block) => block.residency !== "none")
+      .map((block) => [block.kind, block.blockId, block.sha256]);
+    this.sql.exec(
+      `INSERT INTO resident_context_compactions (compaction_event_id, prepared_keys, prepared_at, applied_at)
+       VALUES (?, ?, ?, NULL)
+       ON CONFLICT(compaction_event_id) DO UPDATE SET
+         prepared_keys = excluded.prepared_keys,
+         prepared_at = excluded.prepared_at
+       WHERE applied_at IS NULL`,
+      compactionEventId,
+      JSON.stringify(keys),
+      now,
+    );
+    return renderResidentContextSections(applyCompactionToBlocks(blocks));
   }
 
   /**
-   * Commit the compaction transitions, once per compaction event. Synchronous
+   * Commit the transitions prepared for a compaction event, once. Synchronous
    * so it rides the transaction that persists the checkpoint and the Bind
-   * replacement; a replayed commit finds its marker and changes nothing.
+   * replacement. An event that was never prepared moves nothing, because the
+   * compacted system message then carries no section and moving a block into
+   * `system` would change the prefix mid-run; a replayed commit finds the event
+   * applied and changes nothing.
    */
-  applyCompactionInTransaction(compactionEventId: string, now: number): { applied: boolean } {
-    const marker = this.sql.exec<{ compaction_event_id: string } & Record<string, SqlStorageValue>>(
-      `INSERT INTO resident_context_compactions (compaction_event_id, applied_at)
-       VALUES (?, ?)
-       ON CONFLICT(compaction_event_id) DO NOTHING
-       RETURNING compaction_event_id`,
+  applyCompactionInTransaction(
+    compactionEventId: string,
+    now: number,
+  ): { applied: boolean; reason?: "not_prepared" | "already_applied" } {
+    const prepared = this.sql.exec<{ prepared_keys: string; applied_at: number | null } & Record<string, SqlStorageValue>>(
+      `SELECT prepared_keys, applied_at FROM resident_context_compactions WHERE compaction_event_id = ?`,
       compactionEventId,
-      now,
     ).toArray()[0];
-    if (!marker) return { applied: false };
-    const before = this.allBlocks();
+    if (!prepared) return { applied: false, reason: "not_prepared" };
+    if (prepared.applied_at !== null) return { applied: false, reason: "already_applied" };
+    const keys = new Set((JSON.parse(prepared.prepared_keys) as [string, string, string][])
+      .map(([kind, blockId, sha256]) => `${kind}\u0000${blockId}\u0000${sha256}`));
+    const before = this.allBlocks().filter((block) => keys.has(`${block.kind}\u0000${block.blockId}\u0000${block.sha256}`));
     const after = applyCompactionToBlocks(before);
+    this.sql.exec(
+      `UPDATE resident_context_compactions SET applied_at = ? WHERE compaction_event_id = ?`,
+      now,
+      compactionEventId,
+    );
     for (let index = 0; index < before.length; index += 1) {
       const previous = before[index]!;
       const next = after[index]!;

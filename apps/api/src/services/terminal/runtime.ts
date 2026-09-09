@@ -344,10 +344,11 @@ export function createDaytonaTerminalRuntime(
     const recorded = await instructions.record({
       stdout: result.stdout,
       marker: probe.marker,
+      exitCode: result.exitCode,
       sourceGeneration: sandbox.generation,
     });
     if (result.exitCode === INSTRUCTIONS_PENDING_EXIT_CODE) {
-      throw instructionsPendingError(recorded.recordedPaths);
+      throw instructionsPendingError(recorded);
     }
     return recorded.stdout;
   }

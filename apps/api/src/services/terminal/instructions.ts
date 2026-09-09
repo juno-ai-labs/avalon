@@ -1,6 +1,7 @@
 import type { ResidentContextObjectPort } from "../../durable-objects/workstream-resident-context-protocol";
 import type { ResidentContextLoadedBlock } from "../../durable-objects/workstream-resident-context-storage";
 import {
+  INSTRUCTIONS_PENDING_EXIT_CODE,
   instructionFileCandidates,
   instructionProbeFragment,
   instructionProbeMarker,
@@ -19,6 +20,13 @@ import { sanitizeTerminalOutput, TerminalToolError } from "./tools";
  * Terminal byte projected to the model is sanitized, and records the blocks.
  * It never throws into a tool: a probe that fails leaves the tool's own outcome
  * alone and reports through `onFailure`, and the next touch retries discovery.
+ *
+ * One failure has a lasting effect. Once the ledger could not be read or
+ * written, an abort-mode probe would refuse a mutation for instructions that
+ * never arrive, and the retry would refuse again, for the rest of the run. So
+ * after the first ledger failure every probe runs in report mode: discovery
+ * and recording keep being attempted, the gate before a mutation is off, and
+ * the one refusal already issued tells the model its retry proceeds.
  */
 /** One probe invocation: the shell text a command carries and the marker its trailer starts with. */
 export interface TerminalInstructionProbe {
@@ -28,11 +36,14 @@ export interface TerminalInstructionProbe {
 
 export interface TerminalInstructionFiles {
   fragment(input: { mode: InstructionProbeMode; touched: readonly string[] }): Promise<TerminalInstructionProbe>;
-  record(input: { stdout: string; marker: string; sourceGeneration: number }): Promise<{
+  record(input: { stdout: string; marker: string; exitCode: number; sourceGeneration: number }): Promise<{
     stdout: string;
-    pending: boolean;
     /** Paths whose instructions were recorded with a pending delivery by this call. */
     recordedPaths: string[];
+    /** Paths the probe reported as new that the ledger already had in context. */
+    alreadyResidentPaths: string[];
+    /** The trailer was missing or the ledger failed; nothing this call found is recorded. */
+    failed: boolean;
   }>;
   /** A replaced work space: every block of the kind leaves context at once. */
   invalidate(): Promise<void>;
@@ -44,6 +55,11 @@ export function createTerminalInstructionFiles(
   port: ResidentContextObjectPort,
   onFailure: (error: unknown, stage: "resident" | "record" | "invalidate") => void,
 ): TerminalInstructionFiles {
+  let degraded = false;
+  const fail = (error: unknown, stage: "resident" | "record" | "invalidate") => {
+    degraded = true;
+    onFailure(error, stage);
+  };
   return {
     async fragment({ mode, touched }) {
       let knownResident: string[] = [];
@@ -53,23 +69,28 @@ export function createTerminalInstructionFiles(
         // Without the known set every candidate looks new: a resident block is
         // then recorded again as already resident and nothing is delivered
         // twice, so the cost of this failure is one probe that read more.
-        onFailure(error, "resident");
+        fail(error, "resident");
       }
       const marker = instructionProbeMarker();
       return {
         marker,
         text: instructionProbeFragment({
           root: TERMINAL_WORKSPACE_ROOT,
-          mode,
+          mode: degraded ? "report" : mode,
           candidates: instructionFileCandidates(touched),
           knownResident,
           marker,
         }),
       };
     },
-    async record({ stdout, marker, sourceGeneration }) {
+    async record({ stdout, marker, exitCode, sourceGeneration }) {
       const split = splitInstructionProbeTrailer(stdout, marker);
-      if (!split.probe) return { stdout: split.stdout, pending: false, recordedPaths: [] };
+      if (!split.probe) {
+        // A command the probe stopped must have printed its trailer; a stop
+        // without one is a probe that cannot be trusted to gate anything.
+        if (exitCode === INSTRUCTIONS_PENDING_EXIT_CODE) fail(new Error("instruction_probe_trailer_missing"), "record");
+        return { stdout: split.stdout, recordedPaths: [], alreadyResidentPaths: [], failed: exitCode === INSTRUCTIONS_PENDING_EXIT_CODE };
+      }
       const blocks: ResidentContextLoadedBlock[] = split.probe.entries
         .filter((entry) => !entry.resident)
         .map((entry) => ({
@@ -80,39 +101,66 @@ export function createTerminalInstructionFiles(
             : sanitizeTerminalOutput(entry.content ?? ""),
           truncated: entry.truncated,
         }));
-      if (blocks.length === 0) return { stdout: split.stdout, pending: false, recordedPaths: [] };
+      if (blocks.length === 0) return { stdout: split.stdout, recordedPaths: [], alreadyResidentPaths: [], failed: false };
       try {
         const outcome = await port.recordLoaded({ kind: KIND, sourceGeneration, blocks, now: Date.now() });
-        return { stdout: split.stdout, pending: outcome.recorded.length > 0, recordedPaths: outcome.recorded };
+        return { stdout: split.stdout, recordedPaths: outcome.recorded, alreadyResidentPaths: outcome.alreadyResident, failed: false };
       } catch (error) {
-        onFailure(error, "record");
-        return { stdout: split.stdout, pending: false, recordedPaths: [] };
+        fail(error, "record");
+        return { stdout: split.stdout, recordedPaths: [], alreadyResidentPaths: [], failed: true };
       }
     },
     async invalidate() {
       try {
         await port.invalidateKind({ kind: KIND });
       } catch (error) {
-        onFailure(error, "invalidate");
+        fail(error, "invalidate");
       }
     },
   };
 }
 
-/**
- * The refusal a mutating tool returns when a governing instruction file was
- * not yet in context. A normal domain outcome, not a transport failure: the
- * instructions are recorded and arrive with this batch, and the retry finds
- * them resident.
- */
-export function instructionsPendingError(recordedPaths: readonly string[]): TerminalToolError {
-  const directories = [...new Set(recordedPaths.map((path) => {
+function directoriesOf(paths: readonly string[]): string {
+  return [...new Set(paths.map((path) => {
     const slash = path.lastIndexOf("/");
     return slash === -1 ? "./" : `./${path.slice(0, slash)}/`;
   }))].map((directory) => `\`${directory}\``).join(", ");
+}
+
+/**
+ * The refusal a mutating tool returns when the probe stopped it for a
+ * governing instruction file that was not yet in context. A normal domain
+ * outcome, not a transport failure. Which message the model is told to expect
+ * depends on what the ledger did with the probe's findings:
+ *
+ * - recorded: the instructions arrive with this batch; read them, then retry;
+ * - already resident (the probe's known set was stale): nothing new arrives;
+ *   retry;
+ * - failed, or nothing found: the ledger is unavailable, the probe has stopped
+ *   gating for the rest of the run, and the retry proceeds without them.
+ */
+export function instructionsPendingError(outcome: {
+  recordedPaths: readonly string[];
+  alreadyResidentPaths: readonly string[];
+  failed: boolean;
+}): TerminalToolError {
+  if (outcome.recordedPaths.length > 0 && !outcome.failed) {
+    return new TerminalToolError(
+      "instructions_pending",
+      `Repository instructions for ${directoriesOf(outcome.recordedPaths)} were loaded with this call and nothing was changed. Read the \`Instructions added from\` message that follows, then retry the same call.`,
+      { reason: "Read the repository instructions message that follows this result, then retry the same call unchanged." },
+    );
+  }
+  if (outcome.alreadyResidentPaths.length > 0 && !outcome.failed) {
+    return new TerminalToolError(
+      "instructions_pending",
+      `Repository instructions for ${directoriesOf(outcome.alreadyResidentPaths)} are already in context and nothing was changed. Retry the same call.`,
+      { reason: "Retry the same call unchanged; the instructions it needs are already in context." },
+    );
+  }
   return new TerminalToolError(
-    "instructions_pending",
-    `Repository instructions for ${directories || "this work space"} were loaded with this call and nothing was changed. Read the \`Instructions added from\` message that follows, then retry the same call.`,
-    { reason: "Read the repository instructions message that follows this result, then retry the same call unchanged." },
+    "instructions_unavailable",
+    "The repository instructions governing this call could not be loaded and nothing was changed. Retry the same call; it proceeds without them.",
+    { reason: "Retry the same call unchanged; it will proceed without repository instructions." },
   );
 }
