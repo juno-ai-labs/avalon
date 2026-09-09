@@ -149,9 +149,11 @@ is the model's call, made with the request in front of it and the whole catalog
 to compare against; a usage note in the catalog is that call taken in advance by
 whoever last edited the file, and it narrows the icon to the subjects that person
 happened to list. The prompt says the same thing to the model in as many words,
-so it does not read the descriptions as a lookup table. A test asserts no
-description contains usage language, because this would come back one line at a
-time.
+so it does not read the descriptions as a lookup table. A test rejects a description
+containing usage language, because this would come back one line at a time — it
+is a denylist of the phrasings that would actually be reached for ("fits",
+"suits", "represents", "good for", "for tracking"), not a semantic check, so it
+is a tripwire rather than a proof.
 
 **Naming the thing is part of describing it, and geometry alone is not enough.**
 The line for `coins` says it is two coins before it says one is face on and one
@@ -161,10 +163,18 @@ shapes *were*, and it put `list-checks` on an invoice reconciliation. Say what a
 person would call the thing, then how it is drawn; that is a fact about the
 picture, not an opinion about its use.
 
-The only two opinions the product keeps about *choosing* are in the prompt, where
+The only opinions the product keeps about *choosing* are in the prompt, where
 [`writing-prompts.md`](writing-prompts.md) requires them: the tie-break when two
-marks suit, and one fallback, `sparkles`, for work none of them suits, so that
-case resolves deliberately instead of by stretching the nearest icon.
+marks suit (the more specific one, and the catalog's own order when neither is),
+and one fallback for work none of them suits, so that case resolves deliberately
+instead of by stretching the nearest icon.
+
+**The fallback is `circle-dot`, and deliberately not `sparkles`.** Sparkles is
+the obvious generic mark and the wrong one here: it is already Rally's own glyph
+in this product — the mention icon in the composer, and the account menu — so
+using it for "no icon suits this" would badge exactly the work streams Rally
+could not characterize as the ones the agent did something to. A plain dot in a
+ring says nothing, which is what this fallback should say.
 
 Descriptions are free to be reworded; the keys are stored values and cannot
 change without a migration, which is why the two sit in the same file but are
@@ -365,7 +375,8 @@ ordinary work-stream update and belongs to the object's product service.
   name arrives at the next event that touches the row, or the next reconnect that
   finds the row's version advanced.
 - **Limits.** One icon per work stream, written once and never over a stored
-  one. A generated title is capped at 30 characters, cut back to the last
+  one. The catalog costs about 5,500 bytes of system prompt on every naming
+  call, uncached. A generated title is capped at 30 characters, cut back to the last
   whole word — `title` holds 180, but a generated name is a label rather than a
   sentence, and the tail of a word cut mid-way reads as a typo. At this length
   the cut is a backstop: it fired on 4 of the 89 replayed work streams. The
@@ -393,9 +404,9 @@ ordinary work-stream update and belongs to the object's product service.
 - `packages/agent-harness/src/prompts.test.ts` asserts a description line for
   every key in the catalog, not a sample of them. A key added without one fails
   to compile first; this is what catches one described in a way the prompt never
-  renders. It also asserts that no description contains usage language — the
-  rule that a description is a drawing and not a lookup table is one nothing else
-  enforces, and it would erode one line at a time.
+  renders. It also rejects a description containing usage language — a denylist
+  of the phrasings someone would actually write, not a semantic check, guarding a
+  rule nothing else enforces and that would erode one line at a time.
 - `apps/api/test-workers/durable-object-runtime.test.ts` covers the other half on
   real workerd — *"pushes a generated name to a participant who never opened the
   work stream"* runs the naming statement through the runtime port and asserts the
@@ -427,85 +438,45 @@ ordinary work-stream update and belongs to the object's product service.
 
 ## Changelog
 
-### 2026-09-09 — The naming pass chooses an icon as well as a name
+### 2026-09-09 — The naming pass chooses an icon as well as a name (#619)
 
-**What changed:** Both passes now ask the model for a name *and* an icon in one
-call. The icon comes from the catalog the header picker already offers, every
-key in it carries a one-to-two-sentence description that the prompt renders, and
-`rename` writes the chosen icon in the same transaction as the title — but only
-where no icon is stored. `workstream_renamed` carries the icon that was actually
-written, and the client applies it to the sidebar row.
+**What changed:** Both passes ask the model for a name *and* an icon in one
+call, out of the catalog the header picker already offers. Every key in it
+carries a description of the mark it draws, which the prompt renders. `rename`
+writes the chosen icon in the same transaction as the title, only where no icon
+is stored, and `workstream_renamed` carries what was written.
 
-**Why:** A work stream's glyph was derived from a hash of its id, so a sidebar
-was a column of arbitrary marks. Nothing about the work was in them, and the one
-thing in the product that reads the request closely enough to choose better was
-already running a model call a second after creation. Doing it there costs one
-enum on a request that was being made anyway.
+**Why:** A work stream's glyph was an FNV hash of its id, so a sidebar was a
+column of arbitrary marks. The one thing in the product that already reads the
+request closely enough to choose better was running a second after creation;
+adding an enum to that request costs a field and the catalog.
 
-The descriptions are the part that makes it work rather than a nicety. The keys
-are drawings, not subjects — `spline`, `aperture`, `component`, `boxes` — and a
-model handed the bare list picks by word association with the request. Each
-description says what the mark draws and nothing more; `sparkles` is named in
-the prompt as the answer for work no mark suits, so the general case resolves
-deliberately instead of stretching whichever key sounds nearest.
-
-**The descriptions deliberately do not say what each icon is *for*.** A first
-draft paired every drawing with the kind of work it fits, which reads as helpful
-and is not: it hands the model a lookup table built by whoever last edited the
-file, so an icon is only ever chosen for the subjects that person thought to
-list, and a request outside them gets the nearest listed word rather than the
-best mark. The model has the request and the whole catalog, which is strictly
-more than the catalog's author had. Describing the drawing and leaving the
-matching to it is also what keeps the catalog cheap to extend: a new icon needs
-a sentence about its shape, not a survey of the work it might stand for. The
-only opinions kept are the two the prompt owes a medium model under
-[`writing-prompts.md`](writing-prompts.md) — the tie-break, and the fallback.
-
-Taking the usage half out was tried twice. Removing it *and* reducing each line
-to geometry made the picks worse — twelve varied requests replayed through the
-production model put a checklist on an invoice reconciliation and a bullseye on
-a 500-error investigation — because the model was being asked to identify the
-object as well as match it. Naming the object and keeping the geometry recovered
-it: the same twelve came back with a palette on a rebrand, a calendar on a board
-meeting, a handshake on a contract negotiation, a circuit board on a TLS audit,
-and `sparkles` on the 500-error investigation, which is the right answer because
-the catalog holds no mark for debugging. That is the shape to keep — name the
-thing, describe the drawing, say nothing about the work.
-
-**Considered and rejected:** A second model call for the icon, after the name.
-It is a second reading of the same request that agrees with the first only by
-luck, and the icon has to stand for whatever the name leads with. Also rejected:
-writing the icon through the appearance command the picker uses. That is a
-socket command with a receipt and an operation id, and it would land as a second
-commit and a second projection beside the rename — the naming pass's whole shape
-is one atomic advance that a person's rename can supersede, and the icon has to
-be inside it or it can be written for a pass that lost.
-
-Also rejected, and the one worth knowing about: **letting the second pass
-replace the first pass's icon.** `appearance_json` records no provenance, so an
-icon Rally chose and an icon a person chose are the same value — and a person
-who picks one settles no title, which means the row a second pass may still
-rename is exactly the row they may have just changed. Overwriting would silently
-undo their choice. Refusing to write over any stored icon is the safe half of
-that trade, and the cost it accepts is that the second pass improves only the
-name. If the second pass's icon ever matters more than the extra column, the
-change to make is provenance on the appearance — an icon source alongside the
-key, which is what `title_status` already is for the title.
+**Considered and rejected:** Pairing each description with the work it fits — a
+lookup table built by whoever last edited the file, so an icon only ever gets
+chosen for the subjects that person listed; the section above has the replay
+that settled it, including why pure geometry was worse still. `sparkles` as the
+fallback — it is already Rally's own glyph in this product, so it would badge
+the work streams Rally could not characterize as ones the agent acted on;
+`circle-dot` says nothing, which is the job. A second model call for the icon — a
+second reading of the same request, agreeing with the first only by luck. Writing through the
+picker's appearance command — a second commit and projection beside the rename,
+and one that could land for a pass whose rename had just been superseded.
+Letting the second pass replace the first pass's icon — `appearance_json` records
+no provenance, so a person's icon and Rally's are the same value, and a person
+who picks one settles no title; overwriting would silently undo them. Provenance
+on the appearance (an icon source beside the key, what `title_status` already is
+for the title) is the change to make if the second pass's icon ever matters more
+than the column.
 
 **Consequences:** A naming pass now writes a second column, so anything added to
 `rename` has to keep the rule that only the title may fail it. The catalog is
-now model-visible, so adding an icon means
-adding a description of its *drawing* in the same edit — the `Record` will not
-compile otherwise, and a test rejects a description that says what the icon is
-for — and the golden prompt hashes in `prompts.test.ts` move whenever either
-changes. **The replay that checked the picks is not in the repository**: it was
-a scratch script that rendered `renderWorkstreamNameMessages` from the tree and
-sent twelve varied requests to the production model, so the results quoted above
-are a record of a measurement rather than something a reader can re-run, and it
-belongs to the same family as the naming replay described further down. The naming request's system message grew by the catalog, which
-is fixed text on a prompt-cached call rather than per-call context. Nothing may
-assume a work stream Rally named has an icon: naming can fail, the model can
-answer off-catalog, and a person may have chosen one first.
+model-visible: adding an icon means adding a description of its drawing in the
+same edit, and moves the golden prompt hashes. It costs about 5,500 bytes of
+system prompt on every naming call, uncached. Nothing may assume a work stream
+Rally named has an icon.
+
+The reasoning behind describing rather than prescribing, and the replay that
+settled it, is in the section above rather than repeated here.
 
 ### 2026-09-05 — Sentence case, two to four words, thirty characters
 
