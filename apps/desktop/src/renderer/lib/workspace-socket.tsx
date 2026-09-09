@@ -1,3 +1,4 @@
+import { safeParseSocketEvent } from "@rally/contracts";
 import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
@@ -405,7 +406,7 @@ export function WorkspaceSocketProvider({
           } catch {
             return;
           }
-          const sync = WorkspaceSocketSyncEventSchema.safeParse(decoded);
+          const sync = safeParseSocketEvent(WorkspaceSocketSyncEventSchema, decoded);
           if (sync.success) {
             if (!subscribed) {
               subscribed = true;
@@ -443,7 +444,7 @@ export function WorkspaceSocketProvider({
             }
             return;
           }
-          const presence = WorkspacePresenceEventSchema.safeParse(decoded);
+          const presence = safeParseSocketEvent(WorkspacePresenceEventSchema, decoded);
           if (presence.success) {
             const workstreamId = presence.data.workstreamId;
             if (workstreamId !== null) {
@@ -454,13 +455,13 @@ export function WorkspaceSocketProvider({
             }
             return;
           }
-          const featureFlags = WorkspaceFeatureFlagsEventSchema.safeParse(decoded);
+          const featureFlags = safeParseSocketEvent(WorkspaceFeatureFlagsEventSchema, decoded);
           if (featureFlags.success) {
             queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, featureFlags.data.flags);
             void desktopBridge().observeClientFeatureFlags(featureFlags.data.flags).catch(() => undefined);
             return;
           }
-          const recency = WorkspaceWorkstreamRecencyEventSchema.safeParse(decoded);
+          const recency = safeParseSocketEvent(WorkspaceWorkstreamRecencyEventSchema, decoded);
           if (recency.success) {
             mergeCachedWorkstreamPage(queryClient, applyDirectoryPage(queryClient, {
               directoryWaterline: recency.data.directoryWaterline,
@@ -468,7 +469,7 @@ export function WorkspaceSocketProvider({
             }).items);
             return;
           }
-          const workstreamPage = WorkspaceWorkstreamPageEventSchema.safeParse(decoded);
+          const workstreamPage = safeParseSocketEvent(WorkspaceWorkstreamPageEventSchema, decoded);
           if (workstreamPage.success) {
             const entry = pendingDirectoryRequests.get(workstreamPage.data.requestId);
             if (!entry) return;
@@ -477,7 +478,7 @@ export function WorkspaceSocketProvider({
             entry.resolve(applyDirectoryPage(queryClient, workstreamPage.data));
             return;
           }
-          const workstreamState = WorkspaceWorkstreamStateEventSchema.safeParse(decoded);
+          const workstreamState = safeParseSocketEvent(WorkspaceWorkstreamStateEventSchema, decoded);
           if (workstreamState.success) {
             const workstream = workstreamState.data.workstream
               ? mapWorkstreamSummary(workstreamState.data.workstream)
@@ -500,7 +501,7 @@ export function WorkspaceSocketProvider({
             }
             return;
           }
-          const sidebarList = WorkspaceSidebarListEventSchema.safeParse(decoded);
+          const sidebarList = safeParseSocketEvent(WorkspaceSidebarListEventSchema, decoded);
           if (sidebarList.success) {
             // Through the shared receiver, not straight into the cache: the
             // opening batch writes the same two entries, and only a comparison
@@ -532,7 +533,7 @@ export function WorkspaceSocketProvider({
             }
             return;
           }
-          const projectSnapshot = WorkspaceProjectSnapshotEventSchema.safeParse(decoded);
+          const projectSnapshot = safeParseSocketEvent(WorkspaceProjectSnapshotEventSchema, decoded);
           if (projectSnapshot.success) {
             applyVersionedProjectSnapshot(queryClient, projectSnapshot.data.projects);
             return;

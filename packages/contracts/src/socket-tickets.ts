@@ -80,7 +80,9 @@ export function socketTicketFromProtocols(header: string | null | undefined): st
 }
 
 /**
- * Strip the deprecated query ticket from a URL an issuing endpoint returned.
+ * Strip all query data from a URL an issuing endpoint returned.
+ * Socket protocols are unconditional; older ticket and capability parameters
+ * must neither block a connection nor configure one.
  *
  * Total by design: this runs inside a schema transform, and throwing there
  * would surface a bare `TypeError` instead of the parse failure the caller
@@ -94,7 +96,7 @@ export function socketUrlWithoutTicket(url: string): string {
   } catch {
     return url;
   }
-  parsed.searchParams.delete(SOCKET_TICKET_QUERY_PARAM);
+  parsed.search = "";
   return parsed.toString();
 }
 

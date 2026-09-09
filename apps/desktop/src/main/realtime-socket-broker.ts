@@ -1,3 +1,4 @@
+import { socketUrlWithoutTicket } from "@rally/contracts/socket-tickets";
 import { IdSchema, WORKSTREAM_REALTIME_MAX_FRAME_BYTES } from '@rally/contracts';
 import { SOCKET_TICKET_SUBPROTOCOL } from '@rally/contracts/socket-tickets';
 import { connect as netConnect, isIP, type NetConnectOpts, type Socket } from 'node:net';
@@ -445,9 +446,6 @@ export function realtimeSocketTargetAllowed(
     return false;
   }
   if (url.username || url.password || url.hash) return false;
-  // The control endpoint negotiates appearance metadata with this exact flag.
-  // Tickets still travel exclusively in subprotocols; all other queries fail.
-  if (url.search && (input.kind !== 'workstream_control' || url.search !== '?workstreamAppearance=1')) return false;
   if (!apiBaseUrls.map(socketOrigin).includes(url.origin)) return false;
   if (input.protocols[0] !== SOCKET_TICKET_SUBPROTOCOL) return false;
   return validSocketPath(input, url);
@@ -481,7 +479,7 @@ export class RealtimeSocketBroker {
     };
     const owned: OwnedSocket = {
       active: true,
-      client: this.createSocket(input.url, input.protocols, (phase) => relayHandshakePhase(phase)),
+      client: this.createSocket(socketUrlWithoutTicket(input.url), input.protocols, (phase) => relayHandshakePhase(phase)),
     };
     this.sockets.set(key, owned);
     const emitWhileOwned = (event: DesktopRealtimeSocketEvent): void => {

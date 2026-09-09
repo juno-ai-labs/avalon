@@ -55,11 +55,10 @@ publishing nothing, so that receipt may describe a choice another client has
 since replaced and whose newer state this client already holds; the reconnect's
 snapshot carries the current value, so the patch is skipped rather than risked.
 
-New control clients request `workstreamAppearance=1` when issuing a socket ticket.
-The server includes it in the socket URL. The Worker forwards that capability, and WorkstreamDO stores it in the hibernating
-socket attachment. Subscribe snapshots and later broadcasts omit `appearance`
-for older clients, whose strict metadata schema would reject the whole frame.
-Missing capabilities on pre-deploy attachments also retain the original shape.
+
+Control snapshots and broadcasts always include appearance. There is no query
+capability or per-socket configuration. The common receive boundary ignores new
+fields and unknown event types so protocol additions cannot hide child discovery.
 
 The socket connection queues rapid clicks in order, retaining their original
 work-stream address even if the picker unmounts. A click changes only its own field, so
@@ -132,6 +131,12 @@ cover the common cache path. Inspect the actual Electron popup in light and dark
 including scrolling, and check another connected window and reopening.
 
 ## Changelog
+
+### 2026-09-08 — Remove appearance negotiation
+
+The URL capability broke the control connection in installed desktop builds.
+Appearance now travels unconditionally and receivers tolerate additive protocol
+changes. This supersedes the capability-based compatibility approach below.
 
 ### 2026-09-09 — Every unversioned appearance write is row-only, generated icons included (#619)
 

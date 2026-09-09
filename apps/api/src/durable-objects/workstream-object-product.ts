@@ -589,6 +589,23 @@ export class WorkstreamObjectProductService {
     );
   }
 
+  /** Parent-owned archive delivery; stop and archive share the local commit. */
+  async applyPrivateChildLifecycle(version: number, archivedAt: number | null): Promise<void> {
+    const now = Date.now();
+    await this.objectStore.commitWithRegionalEffects((sql) => {
+      const current = first(sql.exec<{ version: number; archived_at: number | null }>(
+        `SELECT version, archived_at FROM private_child_lifecycle_authority WHERE id = 1`));
+      if (current && current.version >= version) return false;
+      sql.exec(`INSERT INTO private_child_lifecycle_authority (id, version, archived_at) VALUES (1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET version = excluded.version, archived_at = excluded.archived_at`, version, archivedAt);
+      if (archivedAt !== null) this.requestArchiveStopInTransaction(sql, now);
+      sql.exec(`UPDATE workstream SET archived_at = ?,
+        exact_state = CASE WHEN ? IS NOT NULL THEN 'archived' WHEN exact_state = 'archived' THEN 'idle' ELSE exact_state END,
+        listing_epoch = listing_epoch + 1, updated_at = ? WHERE id = 1`, archivedAt, archivedAt, now);
+      return true;
+    }, (_sql, changed) => changed ? [{ partitionKey: "common", effect: this.commonEffect(this.root()) }] : []);
+  }
+
   private beginInputPreparation(inputId: string, now: number): void {
     const claim = this.activeInputPreparations.get(inputId);
     this.activeInputPreparations.set(inputId, {
@@ -2511,6 +2528,50 @@ export class WorkstreamObjectProductService {
     return ParticipantSchema.parse(participant);
   }
 
+  /** Commit the child's roster projection and participant-added notification together. */
+  privateChildMembershipEffects(input: {
+    substreamId: string;
+    userId: string;
+    actorUserId: string;
+    actorName: string;
+    recipientName: string;
+    active: boolean;
+    now: number;
+  }): RegionalEffectCommand[] {
+    const root = this.root();
+    const viewer = { partitionKey: `user:${input.userId}`, effect: this.userEffect(root, input.userId) };
+    if (!input.active || input.userId === input.actorUserId) return [viewer];
+    const epoch = first(this.storage.sql.exec<{ participant_epoch: number }>(
+      `SELECT participant_epoch FROM participants WHERE user_id = ?`,
+      input.userId,
+    ))?.participant_epoch ?? 0;
+    return [
+      viewer,
+      ...this.participantAddedEffects({
+        root,
+        userId: input.userId,
+        actorUserId: input.actorUserId,
+        actorName: input.actorName,
+        recipientName: input.recipientName,
+        epoch,
+        now: input.now,
+        substreamId: input.substreamId,
+      }),
+    ];
+  }
+
+  /** Names for an effect payload, read before a commit that cannot await. */
+  async participantEffectNames(actorUserId: string, userId: string): Promise<{
+    actorName: string;
+    recipientName: string;
+  }> {
+    const names = await this.messageUsers([actorUserId, userId]);
+    return {
+      actorName: names.get(actorUserId)?.name ?? "A workspace member",
+      recipientName: names.get(userId)?.name ?? "a workspace member",
+    };
+  }
+
   /**
    * The two effects that say "this person was put in this room", for one person.
    *
@@ -2547,9 +2608,16 @@ export class WorkstreamObjectProductService {
     recipientName: string;
     epoch: number;
     now: number;
+    // Child membership epochs share a parent ID, so scope notification identities
+    // by child while preserving already-delivered Main identities.
+    substreamId?: string;
   }): RegionalEffectCommand[] {
-    const sourceId = `participant:${input.root.workstream_key}:${input.userId}:${input.epoch}`;
-    const intentId = `participant_added:${input.root.workstream_key}:${input.userId}:${input.epoch}`;
+    const substreamId = input.substreamId ?? this.externalSubstreamId();
+    const scope = substreamId === "0"
+      ? input.root.workstream_key
+      : `${input.root.workstream_key}:${substreamId}`;
+    const sourceId = `participant:${scope}:${input.userId}:${input.epoch}`;
+    const intentId = `participant_added:${scope}:${input.userId}:${input.epoch}`;
     const occurredAt = new Date(input.now).toISOString();
     const title = truncateUtf16Safe(input.root.title, 500);
     return [
@@ -2573,7 +2641,9 @@ export class WorkstreamObjectProductService {
           actorLabel: truncateUtf16Safe(input.actorName, 300),
           title,
           body: truncateUtf16Safe(
-            `${input.actorName} added ${input.recipientName} to this work stream.`,
+            `${input.actorName} added ${input.recipientName} to this ${
+              substreamId === "0" ? "work stream" : "substream"
+            }.`,
             8_000,
           ),
           canonicalUrl: null,
