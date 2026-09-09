@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWorkstreamNameMessages } from "@rally/agent-harness";
+import { WORKSTREAM_ICON_KEYS } from "@rally/contracts";
 
 import type { Env } from "../src/env";
 import {
@@ -76,7 +77,15 @@ describe("work-stream naming", () => {
       type: "workstream_renamed",
       title: "Avalon download link email to",
       titleStatus: "automatic",
+      icon: "megaphone",
     }]);
+    // The icon lands on the same write as the name and reaches the header on
+    // the same event: the directory projection that also carries it is two
+    // Durable Object alarms and two Queue hops behind, and a glyph that changed
+    // seconds after the name it was chosen with is the lag the picker's own
+    // receipt already exists to close. The colour stays unchosen, which is what
+    // keeps the id-derived one in force.
+    expect(appearance(database)).toEqual({ icon: "megaphone", color: null });
   });
 
   it("asks the naming agent's own model for a name, with reasoning switched off", async () => {
@@ -109,9 +118,20 @@ describe("work-stream naming", () => {
     // at exactly that character — a name cut there arrives inside the target and
     // the whole-word cut cannot tell it was ever truncated.
     const schema = (request?.response_format as {
-      json_schema: { schema: { properties: { title: { maxLength: number } } } };
+      json_schema: {
+        schema: {
+          properties: { title: { maxLength: number }; icon: { enum: string[] } };
+          required: string[];
+        };
+      };
     }).json_schema.schema;
     expect(schema.properties.title.maxLength).toBe(80);
+    // The icon is advertised as the whole catalog and as a required property.
+    // `strict: true` is what turns the enum into a decoding constraint rather
+    // than a hint, and a `required` a provider honours is what stops it
+    // answering with a name and no icon at all.
+    expect(schema.properties.icon.enum).toEqual([...WORKSTREAM_ICON_KEYS]);
+    expect(schema.required).toEqual(["title", "icon"]);
     // The request is what is being named, and it is data: it reaches the model
     // as user-role content and never as part of the naming policy.
     const messages = request?.messages as Array<{ role: string; content: string }>;
@@ -175,6 +195,9 @@ describe("work-stream naming", () => {
       title: provisionalTitle,
       titleStatus: "automatic",
     }]);
+    // The event settles the skeleton and carries no icon, because none was
+    // written: a pass with no name to give has no icon to give either.
+    expect(appearance(database)).toBeNull();
   });
 
   it("leaves the provisional title standing when the answer is past the parse ceiling", async () => {
@@ -199,6 +222,70 @@ describe("work-stream naming", () => {
       title: provisionalTitle,
       title_status: "automatic",
     });
+  });
+
+  it("keeps an icon a person chose, and keeps naming past it", async () => {
+    const database = seededDatabase();
+    // The fence that protects the title cannot protect the icon: choosing one
+    // from the header settles nothing, so the row a naming pass is still
+    // entitled to rename is exactly the row whose icon a person may have just
+    // picked. What protects it is that a generated icon is only ever written
+    // where none is stored.
+    applyWorkstreamObjectRootFields(
+      objectStoreOf(database),
+      { appearance: { icon: "rocket", color: "teal" } },
+    );
+    const published: Array<Record<string, unknown>> = [];
+    stubOpenRouter([], "Avalon download link");
+    const env = environment(database, published);
+
+    await nameWorkstream(env, {
+      workspaceId,
+      workstreamId,
+      objective,
+      openingMessage: objective,
+      provisionalTitle,
+    });
+
+    expect(appearance(database)).toEqual({ icon: "rocket", color: "teal" });
+    // The name still lands, and the event says only what changed — publishing
+    // the refused icon would tell every open client to paint over the choice
+    // the object had just declined to overwrite.
+    expect(published).toEqual([{
+      type: "workstream_renamed",
+      title: "Avalon download link",
+      titleStatus: "automatic",
+    }]);
+  });
+
+  it("keeps the name when the model answers with an icon that is not one of ours", async () => {
+    const database = seededDatabase();
+    const published: Array<Record<string, unknown>> = [];
+    // A provider that ignored the enum, or a catalog key that has since been
+    // renamed. The name is the half a person is watching a skeleton for, so an
+    // unusable icon degrades to no icon rather than failing the parse and
+    // costing the work stream its name as well.
+    stubOpenRouter([], "Avalon download link", undefined, "unicorn");
+    const env = environment(database, published);
+
+    await nameWorkstream(env, {
+      workspaceId,
+      workstreamId,
+      objective,
+      openingMessage: objective,
+      provisionalTitle,
+    });
+
+    expect(workstreamRow(database)).toMatchObject({
+      title: "Avalon download link",
+      title_status: "automatic",
+    });
+    expect(appearance(database)).toBeNull();
+    expect(published).toEqual([{
+      type: "workstream_renamed",
+      title: "Avalon download link",
+      titleStatus: "automatic",
+    }]);
   });
 
   it("never names a work stream without an OpenRouter key", async () => {
@@ -255,7 +342,9 @@ describe("work-stream naming", () => {
       type: "workstream_renamed",
       title: "Mucker link Danny",
       titleStatus: "settled",
+      icon: "megaphone",
     }]);
+    expect(appearance(database)).toEqual({ icon: "megaphone", color: null });
   });
 
   it("repairs a work stream whose first naming pass never finished", async () => {
@@ -559,28 +648,44 @@ function seedMessages(database: DatabaseSync, count: number): void {
   }
 }
 
-function workstreamRow(database: DatabaseSync): { title: string; title_status: string } {
-  return workstreamObjectRootRow<{ title: string; title_status: string }>(
-    objectStoreOf(database),
-    "title, title_status",
-  );
+function workstreamRow(
+  database: DatabaseSync,
+): { title: string; title_status: string; appearance_json: string | null } {
+  return workstreamObjectRootRow<{
+    title: string;
+    title_status: string;
+    appearance_json: string | null;
+  }>(objectStoreOf(database), "title, title_status, appearance_json");
+}
+
+/** The stored appearance, or `null` where the work stream has none. */
+function appearance(database: DatabaseSync): unknown {
+  const stored = workstreamRow(database).appearance_json;
+  return stored === null ? null : JSON.parse(stored);
 }
 
 function title(database: DatabaseSync): string {
   return workstreamRow(database).title;
 }
 
-/** Answers one OpenRouter structured request, recording what was asked. */
+/**
+ * Answers one OpenRouter structured request, recording what was asked.
+ *
+ * The icon defaults to one the fixture never stores, so a test that does not
+ * care about the icon still proves the pass wrote whatever the model chose
+ * rather than a constant.
+ */
 function stubOpenRouter(
   requests: Array<Record<string, unknown>>,
   generatedTitle: string,
   beforeResponding?: () => void,
+  generatedIcon: unknown = "megaphone",
 ): void {
   vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
     requests.push(JSON.parse(String(init.body)) as Record<string, unknown>);
     beforeResponding?.();
     return new Response(JSON.stringify({
-      choices: [{ message: { content: JSON.stringify({ title: generatedTitle }) } }],
+      choices: [{ message: { content: JSON.stringify({ title: generatedTitle, icon: generatedIcon }) } }],
     }), { status: 200, headers: { "content-type": "application/json" } });
   }));
 }

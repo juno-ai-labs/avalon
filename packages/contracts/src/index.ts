@@ -1,4 +1,4 @@
-import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema } from "./workstream-appearance";
+import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, WorkstreamIconKeySchema } from "./workstream-appearance";
 export * from "./workstream-appearance";
 import { PersonalPresentationSchema } from './onboarding';
 export * from './onboarding';
@@ -2729,11 +2729,20 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     snapshotId: IdSchema,
     result: TranscriptRangeResultSchema,
   }),
-  /** The title changed — a person renamed the work stream, or Avalon named it. */
+  /**
+   * The title changed — a person renamed the work stream, or Avalon named it.
+   *
+   * `icon` rides along only when a naming pass chose one, which is the only
+   * writer of an icon nobody picked. It reaches the header in this event
+   * because the directory projection that also carries it is seconds behind:
+   * the glyph would otherwise change well after the name it was chosen with.
+   * Absent on a rename by a person, who changed no icon.
+   */
   ServerEventBaseSchema.extend({
     type: z.literal("workstream_renamed"),
     title: z.string().min(1).max(180),
-    titleStatus: z.enum(["automatic", "settled"])
+    titleStatus: z.enum(["automatic", "settled"]),
+    icon: WorkstreamIconKeySchema.optional(),
   }),
   /**
    * Who may read this work stream changed. Everyone still in the room learns
@@ -3095,11 +3104,19 @@ export const WORKSTREAM_NAMING_GRACE_MS = 60_000;
 export const WORKSTREAM_NAME_RESULT_MAX_LENGTH = 80;
 
 /**
- * One generated work-stream name, bounded well under the 180 characters a title
- * may hold.
+ * One generated work-stream name and the icon chosen with it, the name bounded
+ * well under the 180 characters a title may hold.
+ *
+ * The icon falls back rather than failing: an answer whose icon is missing or
+ * off the catalog parses as a name with no icon, and the work stream keeps the
+ * generated mark it already had. The two are asked for in one call because they
+ * describe the same thing, but the name is the load-bearing half — it is on
+ * screen behind a skeleton — and an icon a provider spelled wrong must not cost
+ * the work stream its name as well.
  */
 export const WorkstreamNameResultSchema = z.object({
-  title: z.string().trim().min(1).max(WORKSTREAM_NAME_RESULT_MAX_LENGTH)
+  title: z.string().trim().min(1).max(WORKSTREAM_NAME_RESULT_MAX_LENGTH),
+  icon: WorkstreamIconKeySchema.nullish().catch(null),
 });
 
 export const ToolDefinitionSchema = z.object({
