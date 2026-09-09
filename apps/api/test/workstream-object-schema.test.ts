@@ -99,6 +99,7 @@ const EXPECTED_TABLES = [
   "pending_loop_input_mailbox",
   "pending_loop_inputs",
   "plugin_activation_hints",
+  "private_child_lifecycle_authority",
   "private_child_membership_authority",
   "projection_keys",
   "realtime_state",

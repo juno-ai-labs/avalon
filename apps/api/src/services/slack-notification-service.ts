@@ -37,6 +37,7 @@ export interface WorkstreamSlackMention {
   workspaceId: string;
   workspaceName: string;
   workstreamId: string;
+  substreamId?: string;
   workstreamTitle: string;
   messageText: string;
 }
@@ -49,6 +50,7 @@ export interface WorkstreamSlackParticipantAdded {
   workspaceId: string;
   workspaceName: string;
   workstreamId: string;
+  substreamId?: string;
   workstreamTitle: string;
   workstreamObjective: string;
   /** The work stream has no settled name yet; do not quote the placeholder. */
@@ -68,6 +70,7 @@ export type SlackMentionDelivery = "sent" | "partial" | "skipped";
  */
 interface WorkstreamSlackDelivery {
   workspaceId: string;
+  substreamId?: string;
   recipientUserId: string;
   recipientEmail: string;
   /** Seeds the per-chunk `client_msg_id`, so a retry posts the same message. */
@@ -89,6 +92,7 @@ export async function sendWorkstreamMentionSlack(
 ): Promise<SlackMentionDelivery> {
   return deliverWorkstreamSlack(env, {
     workspaceId: input.workspaceId,
+    ...(input.substreamId ? { substreamId: input.substreamId } : {}),
     recipientUserId: input.recipientUserId,
     recipientEmail: input.recipientEmail,
     sourceId: input.messageId,
@@ -112,6 +116,7 @@ export async function sendWorkstreamParticipantAddedSlack(
 ): Promise<SlackMentionDelivery> {
   return deliverWorkstreamSlack(env, {
     workspaceId: input.workspaceId,
+    ...(input.substreamId ? { substreamId: input.substreamId } : {}),
     recipientUserId: input.recipientUserId,
     recipientEmail: input.recipientEmail,
     sourceId: input.sourceId,
@@ -302,6 +307,7 @@ async function deliverWorkstreamSlack(
     const target = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, {
       region: env.AVALON_REGION,
       workspaceId: input.workspaceId,
+    ...(input.substreamId ? { substreamId: input.substreamId } : {}),
       workstreamId,
     });
     const chunks = input.chunks(target, 40_000);

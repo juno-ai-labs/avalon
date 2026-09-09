@@ -207,7 +207,7 @@ describe('patchCachedWorkstream', () => {
     expect(queryClient.getQueryData<WorkstreamSummary>(['workstream', summary().id])?.title).toBe('Renamed');
   });
 
-  it('keeps the list row current while a private child is open, writing that child\'s detail entry', () => {
+  it('patches a private child without changing the parent list row or detail', () => {
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary()]);
     queryClient.setQueryData(['workstream', summary().id], summary());
@@ -215,7 +215,7 @@ describe('patchCachedWorkstream', () => {
 
     patchCachedWorkstream(queryClient, summary().id, { scope: 'personal' }, 'child');
 
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.scope).toBe('personal');
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.scope).toBe('workspace');
     expect(queryClient.getQueryData<WorkstreamSummary>(['substream-workstream', summary().id, 'child'])?.scope).toBe('personal');
     // The parent's own entry is not this write's to touch; the versioned
     // control snapshot owns it.

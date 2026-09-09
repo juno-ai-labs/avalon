@@ -31,6 +31,7 @@ import { searchDocumentId } from '../src/services/text-search';
  */
 
 import { env } from "cloudflare:workers";
+import { holdLoopExecuting } from "./helpers/substream-fixture";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -49,13 +50,14 @@ import { searchContentHash } from '../src/services/text-search';
 import { searchWorkspacePage, searchWorkspace } from '../src/services/workspace-search-service';
 import { seedParticipantMessage } from './helpers/substream-fixture';
 import { ConversationService } from "../src/services/conversation-service";
+import { SubstreamCreationService } from "../src/services/substream-creation-service";
 import { SocketService, verifySocketTicket } from "../src/services/socket-service";
 import {
   bootstrapConversationChildRuntime,
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
 } from "../src/services/workstream-runtime-database";
-import { deliverChildEffects, deliverEffectsToWorkspace, deliverParentEffects } from "./helpers/conversation-effects";
+import { consumeEffectBodies, pendingChildEffects, deliverChildEffects, deliverEffectsToWorkspace, deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -232,6 +234,53 @@ function observeParentReads(observe: () => Promise<void>): Env {
       return typeof value === 'function' ? value.bind(namespace) : value;
     },
   }) };
+}
+
+/**
+ * A ready private child of `roomId`, made the way creation makes one.
+ *
+ * Condensed from the long publication test above, which walks every state in
+ * between; the tests using this care about what a ready substream then does,
+ * not about how it got ready.
+ */
+async function seedPrivateChild(roomId: string, title: string, operationId: string): Promise<string> {
+  const parent = roomParent(roomId);
+  const recipe = {
+    policy: { revision: "test-empty-v1", strategy: { id: "empty", version: 1 }, config: {} },
+    capture: "none" as const,
+    parts: [],
+  };
+  const reserved = await parent.beginPrivateChildPreparation({
+    workspaceId: WORKSPACE_ID, parentId: roomId, operationId, creatorUserId: AUTHOR_ID, title,
+    sourceSubstreamId: "0" as const, sourceThroughTurnId: null, recipe,
+    membershipInitializer: { plugin: { id: "creator-only", version: 1 }, config: {}, memberUserIds: [AUTHOR_ID] },
+  });
+  const hash = "0".repeat(64);
+  await parent.savePreparedPrivateChildContext({
+    workspaceId: WORKSPACE_ID, parentId: roomId, operationId,
+    preparedContext: {
+      schemaVersion: 1, recipe, recipeHash: hash, capture: null, captureHash: null,
+      parts: [], contentHash: hash,
+    },
+  });
+  await parent.claimPrivateChildConfirmation({
+    workspaceId: WORKSPACE_ID, parentId: roomId, operationId, actorUserId: AUTHOR_ID,
+  });
+  await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, "workstream", roomId, reserved.substreamId);
+  await provisionWorkstreamObject(TEST_ENV, {
+    workspaceId: WORKSPACE_ID, workstreamId: roomId, substreamId: reserved.substreamId,
+    title, objective: "", scope: "personal", createdByUserId: AUTHOR_ID,
+    participantUserIds: [AUTHOR_ID], harnessStatus: "idle", titleStatus: "settled", emailAddress: null,
+    emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now(),
+  });
+  await conversation(roomId, reserved.substreamId).installPreparedSubstreamContext({
+    workspaceId: WORKSPACE_ID, workstreamId: roomId, substreamId: reserved.substreamId, operationId,
+  });
+  await parent.setPrivateChildTerminalStatus({
+    workspaceId: WORKSPACE_ID, parentId: roomId, operationId, status: "ready", errorCode: null,
+  });
+  await deliverChildEffects(TEST_ENV, conversation(roomId, reserved.substreamId));
+  return reserved.substreamId;
 }
 
 function viewer(parentId: string, userId: UserId) {
@@ -873,6 +922,146 @@ describe("conversation parent contract", () => {
         `SELECT active, version FROM private_child_membership_authority WHERE user_id = ?`, PARTICIPANT_ID,
       ).one());
     expect(mirror).toEqual({ active: 0, version: 2 });
+  });
+
+  it("archives a substream out of every member's sidebar, refuses its writes, and restores it whole", async () => {
+    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID, MEMBER_ID]);
+    const parent = roomParent(PERSONAL_ROOM_ID);
+    const substreamId = await seedPrivateChild(PERSONAL_ROOM_ID, "Private branch", "archive-child");
+    await parent.addPrivateChildParticipant({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: asSubstreamId(substreamId),
+      actorUserId: AUTHOR_ID, userId: PARTICIPANT_ID, operationId: "archive-child-add",
+    });
+    const address = {
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: asSubstreamId(substreamId),
+    };
+    const listed = async (userId: UserId): Promise<number> => (await parent.listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId,
+    })).children.length;
+    expect(await listed(AUTHOR_ID)).toBe(1);
+    expect(await listed(PARTICIPANT_ID)).toBe(1);
+
+    // Main access alone cannot archive somebody else's private child.
+    const refusal = await runInDurableObject(parent, async (instance) => {
+      try { await instance.setPrivateChildArchived({ ...address, actorUserId: MEMBER_ID, archived: true }); }
+      catch (error) { return String(error); }
+      return null;
+    });
+    expect(refusal).toContain("private_child_participant_required");
+    const child = conversation(PERSONAL_ROOM_ID, substreamId);
+    await runInDurableObject(child, (_instance, state) => { holdLoopExecuting(state, { loopId: state.storage.sql.exec<{ loop_id: string }>(`SELECT loop_id FROM substream_loops WHERE id = 1`).one().loop_id }); });
+    // Any participant may archive the shared child.
+    expect(await parent.setPrivateChildArchived({ ...address, actorUserId: PARTICIPANT_ID, archived: true }))
+      .toMatchObject({ outcome: "archived", archivedAt: expect.any(Number) });
+    await runInDurableObject(child, (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT archived_at FROM workstream WHERE id = 1`).one())
+        .toMatchObject({ archived_at: expect.any(Number) });
+      expect(state.storage.sql.exec(`SELECT stop_requested_at, stop_reason FROM substream_loops WHERE id = 1`).one())
+        .toMatchObject({ stop_requested_at: expect.any(Number), stop_reason: "workstream_archived" });
+    });
+    expect(await listed(AUTHOR_ID)).toBe(0);
+    expect(await listed(PARTICIPANT_ID)).toBe(0);
+    // Still admitted, and now reported archived — which is what refuses the
+    // writes and the socket ticket, through the same path a work stream's own
+    // archive already takes.
+    expect(await parent.authorizeViewer({
+      ...viewer(PERSONAL_ROOM_ID, AUTHOR_ID), substreamId: asSubstreamId(substreamId),
+    })).toMatchObject({ authorized: true, archived: true });
+    await expect(new ConversationService(TEST_ENV, AUTH).writableClient(PERSONAL_ROOM_ID, substreamId))
+      .rejects.toMatchObject({ code: "conversation_parent_archived" });
+    await expect(new ConversationService(socketEnv, AUTH).socketTicket(PERSONAL_ROOM_ID, substreamId))
+      .rejects.toMatchObject({ code: "conversation_not_found" });
+    // A roster cannot drift while the substream is out of sight. Called on the
+    // instance rather than through the stub so the refusal is caught here
+    // instead of surfacing as an unhandled RPC rejection.
+    const lateAdd = await runInDurableObject(parent, async (instance) => {
+      try {
+        await instance.addPrivateChildParticipant({
+          ...address, actorUserId: AUTHOR_ID, userId: MEMBER_ID, operationId: "archive-child-late-add",
+        });
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+    expect(lateAdd).toContain("private_child_archived");
+    expect(await parent.setPrivateChildArchived({ ...address, actorUserId: AUTHOR_ID, archived: true }))
+      .toMatchObject({ outcome: "unchanged" });
+
+    expect(await parent.setPrivateChildArchived({ ...address, actorUserId: AUTHOR_ID, archived: false }))
+      .toMatchObject({ outcome: "restored", archivedAt: null });
+    // An older retry must not re-archive a restored child.
+    await child.applyPrivateChildLifecycle({ ...address, version: 1, archivedAt: Date.now() });
+    await runInDurableObject(child, (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT archived_at FROM workstream WHERE id = 1`).one()).toEqual({ archived_at: null });
+    });
+    expect(await listed(AUTHOR_ID)).toBe(1);
+    expect(await listed(PARTICIPANT_ID)).toBe(1);
+    await expect(new ConversationService(TEST_ENV, AUTH).writableClient(PERSONAL_ROOM_ID, substreamId))
+      .resolves.toBeDefined();
+  });
+
+  it("refuses messages on a child socket opened before the child was archived", async () => {
+    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID]);
+    const substreamId = await seedPrivateChild(PERSONAL_ROOM_ID, "Live branch", "archive-open-child");
+    const issued = await new ConversationService(socketEnv, AUTH).socketTicket(PERSONAL_ROOM_ID, substreamId);
+    const response = await new SocketService(socketEnv).upgrade(PERSONAL_ROOM_ID, substreamId, issued.ticket, new Request(
+      `https://api.test/socket/conversations/${PERSONAL_ROOM_ID}/${substreamId}`,
+      { headers: { Upgrade: "websocket", Origin: "app://avalon" } },
+    ));
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    try {
+      await roomParent(PERSONAL_ROOM_ID).setPrivateChildArchived({ workspaceId: WORKSPACE_ID,
+        parentId: PERSONAL_ROOM_ID, substreamId: asSubstreamId(substreamId), actorUserId: AUTHOR_ID, archived: true });
+      const failed = nextFrameOfType(socket, "client_command_failed");
+      socket.send(JSON.stringify({ type: "create_message", operationId: "00000000-0000-7000-8000-00000000ad3f",
+        payload: { clientMessageId: "archived-child-write", text: "Still there?" } }));
+      expect(await failed).toMatchObject({ command: "create_message", clientMessageId: "archived-child-write",
+        error: { status: 409, code: "substream_archived" } });
+    } finally {
+      socket.close(1000, "done");
+    }
+  });
+
+  it("says what to do when somebody is not in the work stream the substream belongs to", async () => {
+    // The refusal a real add hits first, and the reason it is worth naming:
+    // unmapped, the parent's error reached the dialog as an anonymous 500, so
+    // the only way to learn that a substream member must already be in the
+    // work stream was to read the Worker's log.
+    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
+    const substreamId = await seedPrivateChild(PERSONAL_ROOM_ID, "Private branch", "refusal-child");
+    await expect(new SubstreamCreationService(TEST_ENV, AUTH).changeParticipant(
+      PERSONAL_ROOM_ID, substreamId,
+      { userId: MEMBER_ID, operationId: "refusal-child-add" }, true,
+    )).rejects.toMatchObject({
+      status: 409,
+      code: "substream_member_needs_workstream_access",
+      message: "Add this person to the work stream before adding them to a substream.",
+    });
+  });
+
+  it("renames a substream through the conversation that owns its title", async () => {
+    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
+    const parent = roomParent(PERSONAL_ROOM_ID);
+    const substreamId = await seedPrivateChild(PERSONAL_ROOM_ID, "Private branch", "rename-child");
+    const client = await new ConversationService(TEST_ENV, AUTH).writableClient(PERSONAL_ROOM_ID, substreamId);
+    await client.update({ title: "Intermediate branch" });
+    await client.update({ title: "Renamed branch" });
+    // Queue delivery can arrive out of order. An older title must not replace
+    // the latest child title, even when its receipt is new to the parent.
+    const effects = await pendingChildEffects(conversation(PERSONAL_ROOM_ID, substreamId));
+    for (const envelope of effects.sort((left, right) => right.sourceVersion - left.sourceVersion)) {
+      expect(await consumeEffectBodies(TEST_ENV, [envelope])).toMatchObject({ retried: 0 });
+    }
+    expect((await parent.listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: AUTHOR_ID,
+    })).children).toEqual([expect.objectContaining({ substreamId, title: "Renamed branch" })]);
+    // And the parent's own title is untouched by its child's rename.
+    expect(await runInDurableObject(parent, (_instance, state) =>
+      state.storage.sql.exec<{ title: string }>(`SELECT title FROM workstream_metadata WHERE id = 1`).one().title,
+    )).toBe("Private room");
   });
 
   it("WorkstreamDO admits the creator of a personal room before the child's first effect arrives", async () => {

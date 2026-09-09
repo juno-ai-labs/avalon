@@ -20,6 +20,7 @@ export interface WorkstreamMentionEmail {
   workspaceName: string;
   workspaceId: string;
   workstreamId: string;
+  substreamId?: string;
   workstreamTitle: string;
   workstreamEmailAddress: string | null;
   messageText: string;
@@ -44,6 +45,7 @@ export async function sendWorkstreamMentionEmail(
   const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, {
     region: input.region,
     workspaceId: input.workspaceId,
+    ...(input.substreamId ? { substreamId: input.substreamId } : {}),
     workstreamId: input.workstreamId,
   });
   const replyTo = input.workstreamEmailAddress?.trim() || null;

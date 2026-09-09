@@ -868,7 +868,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         const openWorkstream = (): void => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
-          window.location.hash = `/workstreams/${intent.workstreamId}`;
+          window.location.hash = `/workstreams/${intent.workstreamId}${intent.substreamId ? `?substream=${intent.substreamId}` : ""}`;
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openWorkstream);
         else if (requireActiveWorkspace('Sign in before opening this work-stream link.')) openWorkstream();

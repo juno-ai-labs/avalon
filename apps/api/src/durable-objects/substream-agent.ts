@@ -1,3 +1,4 @@
+import { safeParseSocketEvent, isUnknownSocketEvent, ClientSocketEventTypeSchema } from "@rally/contracts";
 import { SidekickSkillSnapshotSchema } from "@rally/contracts";
 import { sidekickSkillCatalog, sidekickSkillRef } from "../services/sidekick-skills";
 import { flushAuthorizationProjection, nextAuthorizationProjectionAt } from './authorization-projection';
@@ -1217,6 +1218,23 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     await this.storageReady;
   }
 
+  async applyPrivateChildLifecycle(input: {
+    workspaceId: string; parentId: string; substreamId: string; version: number; archivedAt: number | null;
+  }): Promise<void> {
+    await this.storageReady;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
+      substreamId: SubstreamIdSchema.refine((id) => id !== "0"),
+      version: z.number().int().positive(), archivedAt: z.number().int().nonnegative().nullable(),
+    }).parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity || identity.parentKind !== "workstream" || identity.workspaceId !== request.workspaceId
+      || identity.parentId !== request.parentId || this.externalSubstreamId() !== request.substreamId) {
+      throw new Error("private_child_lifecycle_identity_mismatch");
+    }
+    await this.product.applyPrivateChildLifecycle(request.version, request.archivedAt);
+    await this.armNextAlarm();
+  }
+
   /** Apply one versioned mirror of the parent-owned roster for a private child. */
   async applyPrivateChildMembership(input: {
     workspaceId: string;
@@ -1247,7 +1265,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       throw new Error("private_child_membership_identity_mismatch");
     }
     const now = Date.now();
-    const outcome = this.state.storage.transactionSync(() => {
+    // Read before the commit, because the effects that carry them are built
+    // inside it and an effect callback cannot await a regional round trip.
+    // This is the same preparation `addParticipant` does for the main
+    // conversation's add.
+    const names = await this.product.participantEffectNames(request.actorUserId, request.userId);
+    const { result: outcome } = await this.objectStore.commitWithRegionalEffects(() => {
       const current = this.state.storage.sql.exec<{ version: number; active: number }>(
         `SELECT version, active FROM private_child_membership_authority WHERE user_id = ?`,
         request.userId,
@@ -1286,7 +1309,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         );
       }
       return "applied" as const;
-    });
+    }, (_sql, applied) => applied !== "applied" ? [] : this.product.privateChildMembershipEffects({
+      substreamId: request.substreamId,
+      userId: request.userId,
+      actorUserId: request.actorUserId,
+      actorName: names.actorName,
+      recipientName: names.recipientName,
+      active: request.active,
+      now,
+    }));
     if (!request.active && outcome === "applied") this.evictReadersWhoLostLocalAccess();
     return { outcome };
   }
@@ -4725,7 +4756,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return;
     }
 
-    const parsed = ClientSocketEventSchema.safeParse(decoded);
+    if (isUnknownSocketEvent(decoded, ClientSocketEventTypeSchema)) return;
+    const parsed = safeParseSocketEvent(ClientSocketEventSchema, decoded);
     if (!parsed.success) {
       const recognizableMutation = recognizableSocketMutation(decoded);
       if (recognizableMutation) {
@@ -4830,6 +4862,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     await this.mutateSocketSubstream(socket, attachment, parsed.data);
   }
 
+  private assertPrivateChildNotArchived(): void {
+    if (this.objectStore.identity()?.parentKind !== "workstream" || this.externalSubstreamId() === "0") return;
+    if (this.identityRows.identity()?.archived_at != null) {
+      throw new ApiError(409, "substream_archived", "This substream is archived");
+    }
+  }
+
   private async mutateSocketSubstream(
     socket: WebSocket,
     attachment: SocketAttachment,
@@ -4864,6 +4903,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
       }
       assertParentWritable(attachment);
+      this.assertPrivateChildNotArchived();
       const auth = await this.socketViewerAuth(attachment);
       if (!auth) {
         disconnect(socket, 1012, "Reconnect for substream commands");
@@ -5046,6 +5086,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
         }
         assertParentWritable(attachment);
+        this.assertPrivateChildNotArchived();
         if (!attachment.sessionId || !attachment.role) {
           // A socket admitted before this command path existed has no role in
           // its hibernation attachment. A normal reconnect obtains a fresh

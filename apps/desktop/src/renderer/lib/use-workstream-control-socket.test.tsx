@@ -174,7 +174,15 @@ describe('useWorkstreamControlSocket', () => {
     const privateChildren = [{ substreamId: asSubstreamId('00000000-0000-7000-8000-000000000021'),
       title: 'Private child', createdByUserId: asUserId('00000000-0000-7000-8000-000000000013'),
       createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z' }];
-    act(() => { socket.open(); socket.message(metadata(4, { privateChildren, privateChildrenWaterline: 2 })); });
+    act(() => {
+      socket.open();
+      socket.event({ type: 'future_event', sequence: 999 });
+      socket.event({ type: 'workstream_metadata', occurredAt: '2026-09-04T00:00:00.000Z', extra: true,
+        metadata: { ...metadata(4, { privateChildren, privateChildrenWaterline: 2 }), future: true,
+          privateChildren: privateChildren.map((child) => ({ ...child, future: true })) } });
+    });
+    expect(queryClient.getQueryData<WorkstreamChildDirectory>(['workstream-children', workstreamId])?.privateChildren)
+      .toEqual(privateChildren);
     expect(queryClient.getQueryData(['workstream', workstreamId])).toBeUndefined();
     setCachedWorkstreams(queryClient, [summary()]);
     act(() => socket.message(metadata(5, { privateChildren: [], privateChildrenWaterline: 1 })));
@@ -395,6 +403,8 @@ describe('useWorkstreamControlSocket', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
+    act(() => socket.event({ type: 'future_event', privatePayload: 'do-not-log' }));
+    expect(warning).not.toHaveBeenCalled();
     act(() => socket.event({ privatePayload: 'do-not-log' }));
     act(() => socket.event({ another: 'malformed-frame' }));
 

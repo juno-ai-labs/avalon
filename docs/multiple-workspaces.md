@@ -205,6 +205,11 @@ Its distinct host makes a desktop build from before this contract reject the
 link; a query-addressed shape is forbidden because an older work-stream parser
 would ignore those coordinates and open relative to the active workspace.
 
+Work-stream destinations may append `/substreams/<child-id>` to select a private
+child. The canonical HTTPS link, website handoff and desktop intent preserve that
+suffix; after workspace activation the renderer opens the parent route with its
+`substream` selection. The normal child membership check still applies.
+
 When a person opens one, the desktop first asks main whether the target is the
 active workspace. If it is, main answers with the session already in use and
 takes a selection intent, and the destination applies at once with no request
@@ -426,6 +431,13 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-09-08 — Preserve substream destinations through external handoff
+
+Work-stream links can carry a child ID through the existing workspace-addressed
+handoff. Notification links previously opened Main, losing the place where the
+mention happened. The same workspace activation and membership path is reused;
+there is no new route authority or separate workspace-switch implementation.
 
 ### 2026-09-08 — Demo preparation creates a workspace without a session
 

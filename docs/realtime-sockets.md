@@ -45,7 +45,7 @@ connection lifecycle around that admission protocol.
 | `apps/desktop/src/renderer/lib/realtime-socket.ts` | Preserves the browser `WebSocket` event/readiness contract for the work-stream hooks while routing Electron transport through one socket-ID-multiplexed privileged-bridge listener; browser development keeps the native constructor. |
 | `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Share strict dependency-free event/channel validation and register the main-window-only IPC capability. |
 | `apps/desktop/src/main/realtime-socket-broker.ts` | Owns Electron's WorkstreamDO and SubstreamAgent TCP/TLS handshakes in Node, fixes the application Origin, follows the complete ordered PAC route, enforces the shared frame ceiling, and closes every owned connection when its renderer goes away. |
-| `apps/desktop/src/renderer/lib/api.ts` | Parses every ticket response, strips the deprecated query ticket, and attaches the handshake subprotocols. |
+| `apps/desktop/src/renderer/lib/api.ts` | Parses every ticket response, strips all query data, and attaches the handshake subprotocols. |
 
 ## How it works
 
@@ -515,12 +515,25 @@ payload-free `blocksOmitted` envelope rendered as a placeholder.
 
 ### The deprecated query transport
 
-The legacy workspace, work-stream, substream, and dictation issuers still return
-a URL containing `?ticket=` because a desktop build released before the
-subprotocol scheme reads exactly that field. The shared upgrade service still accepts the query on
-legacy-compatible routes; the header wins when both are present. The current
-renderer strips any legacy query at the point it parses a ticket, so no current
-client sends one.
+Workspace, work-stream, conversation, and dictation issuers return query-free
+URLs and a separate ticket. Current clients discard all query data from older
+responses, including capability flags, and present the ticket in subprotocols.
+The upgrade service still accepts deprecated inbound query tickets for clients
+that already have one; no current issuer produces them.
+
+### Forward-compatible event reception
+
+Every Rally stream ignores unknown incoming event types. Known events are parsed
+through `safeParseSocketEvent` in `packages/contracts/src/socket-events.ts`, which
+removes unrecognized object fields, including nested fields, and validates the
+remaining data against the same contract. Invalid known values still fail their
+existing checks; sender and durable-storage schemas remain strict. Unknown frames
+do not advance replay cursors or resolve pending commands. Dictation likewise
+ignores unknown provider events before they can bind a pending transcript item.
+
+Socket behavior is unconditional: URLs contain no capability configuration and
+WorkstreamDO always sends appearance with its metadata. Older stored socket
+attachments may contain obsolete capability fields; they are ignored on restore.
 
 ## Invariants
 
@@ -694,7 +707,39 @@ credential on this surface — a connector OAuth callback's `?code=` — is fixe
 the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
+Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
+
 ## Changelog
+
+### 2026-09-08 — Enforce pushed child archive locally
+
+**What changed:** The archive admission flag also covers private children; already-open commands consult their local lifecycle mirror.
+
+**Why:** Archive must stop the hidden agent without introducing a parent RPC for every socket command.
+
+**Considered and rejected:** Remote per-command authorization; versioned lifecycle delivery preserves the existing local-admission model.
+
+
+### 2026-09-08 — Keep child patches out of Main's shared cache
+
+The shared `patchCachedWorkstream` primitive now updates the sidebar list only
+for Main. Child rename and scope events still update their addressed detail,
+while Main REST rename responses use the same primitive with Main's address.
+This preserves the cache consolidation without reintroducing child titles in
+the parent's sidebar row.
+
+### 2026-09-08 — Make socket evolution independent of URL capabilities
+
+An appearance query flag caused installed desktop validation to block the entire
+control connection, hiding newly created children. Remove capability negotiation
+from ticket issuance, upgrades, and hibernating attachments. All receivers ignore
+unknown event types and additive fields through one receive-only parser; rejecting
+an entire metadata snapshot because of a new field recreates the same failure.
+Ticket URLs are query-free across workspace, control, conversation, and dictation.
+The Azure upstream transcription intent is provider-owned and remains required.
+Clients predating tolerant reception still require an update to understand an
+expanded known frame; this change cannot retroactively change installed parsers.
+
 
 ### 2026-09-09 — One write for unversioned facts on both caches
 
