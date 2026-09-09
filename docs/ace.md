@@ -89,12 +89,17 @@ read until the next read succeeds, and **Refresh** asks now. There is no
 per-operation read: the list is the read, and selecting a row selects from
 it. The template is read before the page judges it: "reading" first, then
 either the form, the regional API's own reason it could not be read, or — when
-the template has fewer members than the pack has roles — a sentence saying so
-rather than a form that cannot be submitted. **New demo** takes a company
-name, the presenter, and a cast member per pack role from the template's
-members, deals the default cast out in order, refuses to start while one
-member holds two roles, and mints one operation id per form so a second click
-resolves to the same preparation. A Ready demo names the workspace and where
+the template seats nobody to present — a sentence saying so rather than a form
+that cannot be submitted. **New demo** takes a company name, the presenter
+(the one real person, chosen from the template's members), and a name for
+every other pack role: text fields labelled **User 1** onwards, opening on the
+pack's own default names, so a demo is cast for the company being presented to
+rather than staffed by whoever is in the Google workspace
+([`demo-workspaces.md`](demo-workspaces.md#casting-a-demo)). It refuses to
+start while two of them are called the same thing or one is blank, and mints
+one operation id per form so a second click resolves to the same preparation.
+**Retry** is offered while a preparation is failed and disabled while it is
+running; a running one that has stopped moving is abandoned rather than raced. A Ready demo names the workspace and where
 the presenter finds it — the account menu at the foot of Rally's sidebar,
 which lists workspaces only while their `multiple-workspaces-enabled` flag is
 on, set from the Feature flags tab; the desktop's deep-link contract has no
@@ -426,6 +431,28 @@ When a save succeeds but clients do not change, inspect in order:
    response even if a live notification was lost.
 
 ## Changelog
+
+### 2026-09-09 — New demo names its cast
+
+**What changed:** The cast pickers are text fields — **User 1** onwards,
+defaulted from the pack — and the page sends names rather than user ids. The
+summary shows the cast of a preparation the form is no longer on screen for,
+and a gap names the person rather than the pack role. **Retry** is disabled
+while an operation is running.
+
+**Why:** Casting from the template's members put Rally's own staff, under
+their work addresses, in the demo shown to a customer, and capped the cast at
+the template's size; the regional API mints a persona per name now
+([`demo-workspaces.md`](demo-workspaces.md#casting-a-demo)). Retry on a
+running operation was offered for a driver that had died silently, which is
+rare, reads as "start again" to whoever is watching a preparation work, and
+costs a duplicated attempt when it is pressed; the API still allows it, so
+nothing is lost that a deliberate change could not restore.
+
+**Consequences:** The form needs one template member, not one per role. The
+page shows names it does not compute — `castNames` comes from the regional
+API, which reads the demo's own directory — so a renamed member is renamed on
+the page.
 
 ### 2026-09-08 — Review: the Demos page shows the attempt it is on
 
