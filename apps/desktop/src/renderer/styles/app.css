@@ -3155,7 +3155,7 @@ pre {
 .citation-card-title { font-size: 14px; font-weight: 540; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .citation-card-kind { color: var(--av-sys-color-text-muted); font-size: 12px; letter-spacing: 0; line-height: 16px; text-transform: none; }
 /* Embeds share the transcript's wrapping media and file grid. */
-.citation-card-row { align-items: flex-start; display: flex; flex-direction: column; gap: 8px; margin: var(--av-sys-space-prose-gap) 0; max-width: 560px; }
+.citation-card-row { margin: var(--av-sys-space-prose-gap) 0; }
 .citation-card-row .citation-card { margin: 0; }
 .citation-file-attachment { display: flex; flex-direction: column; max-width: 100%; }
 .citation-card-row .message-attachment-image-cell .citation-card.is-image { min-height: 0; }
@@ -3732,11 +3732,11 @@ pre {
 .workstream-composer.is-file-dragging,
 .transcript-scroll.is-file-dragging,
 .rail-surface.is-file-dragging { box-shadow: inset 0 0 0 2px var(--av-sys-color-brand-base); }
-.composer-attachments { align-items: center; display: flex; flex-wrap: nowrap; gap: 8px; min-width: 0; overflow-x: auto; padding: 11px 13px 8px; scrollbar-width: thin; }
+
 .composer-attachments > * { flex: 0 0 auto; }
 .composer-attachments .attachment-remove { right: 3px; top: 3px; }
 .composer-attachments .attachment-file-card .attachment-remove { top: 50%; transform: translateY(-50%); }
-.message-attachments { align-items: flex-start; display: flex; flex-direction: column; gap: 8px; margin: 4px 0 9px; max-width: min(100%, 560px); }
+.message-attachments { margin: 4px 0 9px; }
 .attachment-tile { background: var(--av-ref-color-neutral-4); border: .5px solid var(--av-ref-color-line-4); border-radius: 12px; height: 50px; overflow: visible; position: relative; width: 50px; }
 .attachment-tile-content { align-items: center; background: transparent; border: 0; border-radius: inherit; color: var(--av-ref-color-neutral-11); display: flex; height: 100%; justify-content: center; overflow: hidden; padding: 0; width: 100%; }
 .attachment-tile-content:not(:disabled) { cursor: zoom-in; }
@@ -3760,7 +3760,6 @@ pre {
 .human-message .message-attachments { align-items: flex-end; margin-left: auto; }
 
 .message-attachment-images { display: flex; gap: 6px; max-width: 100%; }
-.message-attachment-images.is-single { width: fit-content; }
 .message-attachment-image-cell { border-radius: 12px; display: block; flex: 1 1 0; min-width: 0; overflow: hidden; position: relative; }
 .message-attachment-image-cell:first-child,
 .message-attachment-image-cell:first-child .message-attachment-image { border-bottom-left-radius: 12px; border-top-left-radius: 12px; }
@@ -3782,9 +3781,7 @@ pre {
 
 .message-attachment-image:hover:not(:disabled) { filter: brightness(1.04); }
 .message-attachment-image img { display: block; height: 100%; object-fit: cover; width: 100%; }
-.message-attachment-images.is-single .message-attachment-image img { object-fit: contain; }
 .message-attachment-image-skeleton { align-items: center; color: var(--av-sys-color-text-muted); display: flex; height: 100%; inset: 0; justify-content: center; position: absolute; width: 100%; }
-.message-attachment-more { align-items: center; background: var(--av-sys-color-scrim-default); color: var(--av-sys-color-text-on-media); display: flex; font-size: 18px; font-weight: 560; inset: 0; justify-content: center; pointer-events: none; position: absolute; }
 
 .attachment-file-card {
   align-items: center;
@@ -3825,7 +3822,7 @@ pre {
 .attachment-inline-audio > button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; gap: 8px; padding: 6px 8px; }
 .attachment-inline-audio [role="alert"] { color: var(--av-sys-color-danger-base); display: block; font-size: 12px; }
 .attachment-file-icon.is-audio,
-.attachment-file-icon.is-pdf { background: var(--av-sys-color-danger-wash); color: var(--av-sys-color-danger-base); }
+.attachment-file-icon.is-pdf { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
 
 .attachment-lightbox-overlay { backdrop-filter: blur(1px); background: var(--av-sys-color-scrim-solid); inset: 0; position: fixed; z-index: 1000; }
 .attachment-lightbox { inset: 0; position: fixed; z-index: 1001; }
@@ -3847,7 +3844,7 @@ body:has(.resource-lightbox) .dialog-content { z-index: 1003; }
 body:has(.resource-lightbox) .menu-content { z-index: 1004; }
 .attachment-lightbox-content { min-height: 0; overflow: auto; }
 .attachment-lightbox-content.is-image,
-.attachment-lightbox-content.is-video { align-items: center; display: flex; height: 100%; justify-content: center; overflow: hidden; padding: 60px 72px 130px; }
+.attachment-lightbox-content.is-video { align-items: center; display: flex; height: 100%; justify-content: center; overflow: hidden; padding: 60px 72px; }
 .attachment-lightbox-content.is-image img { border-radius: 16px; box-shadow: var(--av-sys-elevation-shadow-lg); height: auto; max-height: 100%; max-width: min(86vw, 1400px); object-fit: contain; user-select: none; width: auto; }
 .attachment-lightbox-content.is-video video { border-radius: 16px; box-shadow: var(--av-sys-elevation-shadow-lg); max-height: 100%; max-width: min(86vw, 1400px); }
 .attachment-lightbox-content.is-image.is-expanded,
@@ -3866,7 +3863,7 @@ body:has(.resource-lightbox) .menu-content { z-index: 1004; }
 .attachment-lightbox-status.is-error { color: var(--av-sys-color-danger-soft); }
 .attachment-media-expand { align-items: center; background: transparent; border-radius: 8px; color: var(--av-sys-color-text-subtle); display: flex; height: 36px; justify-content: center; position: absolute; right: 64px; top: 22px; width: 36px; z-index: 3; }
 .attachment-media-expand:hover { background: var(--av-sys-color-scrim-subtle); color: var(--av-sys-color-text-default); }
-.attachment-gallery-arrow { align-items: center; background: var(--av-sys-color-scrim-default); border: .5px solid var(--av-sys-color-border-highlight); border-radius: 999px; color: var(--av-sys-color-text-on-media); display: flex; height: 44px; justify-content: center; position: absolute; top: 50%; transform: translateY(-50%); width: 44px; z-index: 3; }
+.attachment-gallery-arrow { align-items: center; background: var(--av-sys-color-scrim-default); border: .5px solid var(--av-sys-color-border-highlight); border-radius: 999px; color: var(--av-sys-color-text-default); display: flex; height: 44px; justify-content: center; position: absolute; top: 50%; transform: translateY(-50%); width: 44px; z-index: 3; }
 .attachment-gallery-arrow:hover { background: var(--av-sys-color-scrim-solid); }
 .attachment-gallery-arrow.is-previous { left: 20px; }
 .attachment-gallery-arrow.is-next { right: 20px; }
@@ -5979,16 +5976,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   border-color: var(--av-cmp-composer-border-color);
 }
 
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments {
-  flex-wrap: nowrap;
-  grid-column: 1 / -1;
-  grid-row: 1;
-  min-width: 0;
-  overflow: visible;
-  padding: 10px 12px 2px;
-  scrollbar-width: none;
-  width: 100%;
-}
 
 :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments::-webkit-scrollbar { display: none; }
 
@@ -6821,7 +6808,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .attachment-gallery-footer { align-items: center; bottom: 24px; display: flex; flex-direction: column; gap: 14px; left: 24px; position: absolute; right: 24px; }
 .attachment-gallery-caption { color: var(--av-sys-color-text-default); font-size: 12px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-gallery-thumbnails { display: flex; gap: 8px; max-width: 100%; overflow-x: auto; padding: 3px; }
-.attachment-gallery-thumbnail { align-items: center; background: var(--av-sys-color-scrim-default); border: 2px solid transparent; border-radius: 10px; color: var(--av-sys-color-text-on-media); display: flex; flex: 0 0 50px; height: 50px; justify-content: center; overflow: hidden; padding: 0; }
+.attachment-gallery-thumbnail { align-items: center; background: var(--av-sys-color-scrim-default); border: 2px solid transparent; border-radius: 10px; color: var(--av-sys-color-text-default); display: flex; flex: 0 0 50px; height: 50px; justify-content: center; overflow: hidden; padding: 0; }
 .attachment-gallery-thumbnail[aria-current="true"] { border-color: var(--av-sys-color-text-default); }
 .attachment-gallery-thumbnail img { height: 100%; object-fit: cover; width: 100%; }
 
@@ -6829,7 +6816,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 
 /* Media use square cover tiles; every delivered item remains in the wrapping grid. */
 .message-attachments, .citation-card-row {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr));
+  display: grid; grid-template-columns: repeat(auto-fit, var(--attachment-media-size));
   align-items: start; gap: 8px; width: 560px; max-width: 100%;
 }
 .message-attachment-images { display: contents; }
@@ -6844,16 +6831,16 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .attachment-media-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-media-open:has(video) .attachment-media-name { background: var(--av-sys-color-scrim-default); bottom: 8px; color: var(--av-sys-color-text-on-media); left: 8px; position: absolute; right: 8px; }
 .attachment-media-tile .attachment-inline-audio { max-width: 100%; padding: 8px; width: 100%; }
-.composer-attachments { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr)); overflow: visible; align-items: start; }
+
 .composer-attachments .attachment-tile { height: var(--attachment-media-size); aspect-ratio: 1; width: var(--attachment-media-size); }
 .composer-attachments .attachment-file-card { min-width: 0; width: 100%; }
 
-.attachment-media-tile .attachment-video-play { color: var(--av-sys-color-text-on-media); }
+.attachment-media-tile .attachment-video-play { color: var(--av-sys-color-text-default); }
+.attachment-media-tile:has(video) .attachment-video-play { color: var(--av-sys-color-text-on-media); }
 
 /* Drafts reuse feed tiles at card height; the feed retains double-height media. */
-.composer-attachments { --attachment-media-size: var(--attachment-file-card-height); }
-.composer-attachments { display: flex; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; align-items: center; }
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments { overflow-x: auto; overflow-y: hidden; }
+
+
 .pending-attachment { position: relative; flex: 0 0 auto; }
 .pending-attachment.is-file { width: 220px; }
 .pending-attachment .attachment-file-card { margin: 0; padding-right: 28px; }
@@ -6863,3 +6850,17 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .composer-attachments .attachment-media-name,
 .composer-attachments .attachment-inline-audio { display: none; }
 .composer-attachments .attachment-media-open { padding: 8px; }
+
+.composer-attachments { --attachment-media-size: var(--attachment-file-card-height); display: flex; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; align-items: center; gap: 8px; min-width: 0; padding: 11px 13px 8px; }
+.message-attachments > .attachment-file-with-player, .citation-card-row > .citation-file-attachment { grid-column: span 2; }
+.human-message .message-attachments { justify-content: end; align-items: start; }
+.attachment-media-tile .attachment-media-open { gap: 4px; padding: 6px; }
+.attachment-media-tile .attachment-media-open > svg { flex-shrink: 0; height: 22px; width: 22px; }
+.attachment-media-tile .attachment-media-name { font-size: 11px; }
+.attachment-media-tile .attachment-inline-audio { padding: 0 4px 4px; }
+.attachment-inline-audio audio { display: none; }
+.attachment-inline-audio > button { white-space: nowrap; }
+.attachment-media-download { position: absolute; right: 154px; top: 23px; z-index: 3; }
+.attachment-lightbox-content.has-gallery { padding-bottom: 130px; }
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments { grid-column: 1 / -1; grid-row: 1; width: 100%; padding: 10px 12px 2px; }

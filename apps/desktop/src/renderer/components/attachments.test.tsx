@@ -38,15 +38,40 @@ describe('attachment presentation', () => {
     vi.unstubAllGlobals();
   });
 
-  it('opens the selected gallery entry while loading navigation thumbnails', async () => {
+  it('opens only the selected gallery entry without downloading thumbnail originals', async () => {
     const first = { name: 'first.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['first'])) };
     const second = { name: 'second.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['second'])) };
     render(<AttachmentLightbox preview={{ ...second, gallery: [first, second], galleryIndex: 1 }} onClose={vi.fn()} />);
     await screen.findByRole('img', { name: 'second.png' });
     expect(screen.getByRole('dialog')).toHaveAccessibleName('Preview of second.png');
     expect(screen.getByRole('button', { name: 'View attachment 2: second.png' })).toHaveAttribute('aria-current', 'true');
-    expect(first.loadContent).toHaveBeenCalledOnce();
+    expect(first.loadContent).not.toHaveBeenCalled();
     expect(second.loadContent).toHaveBeenCalledOnce();
+  });
+
+  it('defers video bytes until preview and retains media download', async () => {
+    const loadContent = vi.fn(async () => new Blob(['video'], { type: 'video/mp4' }));
+    function Fixture(): React.JSX.Element {
+      const [preview, setPreview] = useState<AttachmentPreview | null>(null);
+      return <><MessageAttachments attachments={[{ id: 'video', fileName: 'clip.mp4', mimeType: 'video/mp4', sizeBytes: 5, contentAvailable: true, createdAt: '' }]} loadContent={loadContent} onOpen={setPreview} /><AttachmentLightbox preview={preview} onClose={() => setPreview(null)} /></>;
+    }
+    render(<Fixture />);
+    expect(loadContent).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Preview clip.mp4' }));
+    await screen.findByLabelText('Video: clip.mp4');
+    expect(loadContent).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'Download attachment' })).toBeVisible();
+  });
+
+  it('does not create audio URLs after an unmounted pending read settles', async () => {
+    let finish!: (blob: Blob) => void;
+    const loadContent = vi.fn(() => new Promise<Blob>((resolve) => { finish = resolve; }));
+    const view = render(<MessageAttachments attachments={[{ id: 'audio', fileName: 'sample.wav', mimeType: 'audio/wav', sizeBytes: 1, contentAvailable: true, createdAt: '' }]} loadContent={loadContent} onOpen={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Play sample.wav' }));
+    view.unmount();
+    finish(new Blob(['audio']));
+    await Promise.resolve();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
   });
 
   it.each(['mkv', 'ogv'])('previews generic-MIME %s files as video', async (extension) => {
@@ -207,7 +232,7 @@ describe('attachment presentation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Play sample.wav' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Audio unavailable');
     fireEvent.click(screen.getByRole('button', { name: 'Play sample.wav' }));
-    expect(await screen.findByLabelText('Audio: sample.wav')).toHaveAttribute('controls');
+    expect(await screen.findByLabelText('Audio: sample.wav')).toHaveAttribute('src');
     expect(loadContent).toHaveBeenCalledTimes(2);
   });
 
@@ -232,7 +257,7 @@ describe('attachment presentation', () => {
 
     const player = await screen.findByLabelText('Audio: launch-update.mp3');
     expect(player.tagName).toBe('AUDIO');
-    expect(player).toHaveAttribute('controls');
+    expect(player).toHaveAttribute('src');
     expect(player).toHaveAttribute('src', 'blob:remote-image');
     expect(loadContent).toHaveBeenCalledOnce();
   });

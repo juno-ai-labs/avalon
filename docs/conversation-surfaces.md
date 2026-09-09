@@ -188,38 +188,21 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
-### 2026-09-09 — Input media matches card height
+### 2026-09-09 — Shared media tiles with host-specific layouts
 
-The input overrides the shared media size to 54px, matching its file cards in
-one compact scrolling row. Feed media remains 108px square. The same components
-serve both contexts; only the container's size variable changes.
+Attachments and embeds share square media and horizontal file cards. Feed media
+is 108px square, twice the 54px file-card height; the input uses the same
+components at 54px in one scrolling row. Feed grids use media-sized tracks with
+file cards spanning two tracks, replacing full-width file rows to tile mixed
+content while keeping every delivered item visible. Image galleries retain all
+entries and keyboard navigation; still exports retain every title.
 
-### 2026-09-09 — Input reuses feed tiles in one scrolling row
-
-Pending attachments now compose the feed image, media, and file components,
-adding upload progress, retry, and remove actions. The input alone uses one
-horizontal scrolling row; delivered attachments and embeds retain their grid.
-This keeps card presentation shared without forcing feed wrapping on the input.
-
-### 2026-09-09 — Media size follows file-card height
-
-Square media tiles now measure twice the standard file-card height (108px
-from 54px), using shared CSS dimensions in composer, attachments, and embeds.
-This keeps media compact instead of growing to fill the grid column. Capsule
-composer overrides also allow wrapping and let file cards fit their grid tracks,
-so the input does not retain the former horizontal overflow behavior.
-
-### 2026-09-09 — Square media and wrapping attachment grids
-
-The product style supersedes Grok-inspired proportional rows: images, videos,
-and audio use square tiles; visual media fills its tile with centered cover
-scaling. Other files retain horizontal cards. CSS Grid wraps and tiles every
-attachment and embed, including composer drafts, without a folded image count.
-Full-screen previews remain available to inspect the complete source.
-
-### 2026-09-09 — Shared attachment and embed presentation
-
-The composer now keeps attachments in one horizontally scrollable strip. Sent images and resource embeds share proportional rows, three visible tiles and a folded-count gallery, while files stack below and audio can play inline. The lightbox adds thumbnails and a close button. Live Grok Bot checks established these distinctions; an always-horizontal sent-file row was rejected because it hides delivered files. Existing upload capacity and resource access checks remain authoritative.
+This follows the requested compact media style and fixes layout changes when
+consecutive embeds finish streaming. Fixed media dimensions supersede intrinsic
+ratios, and the input's compact row deliberately differs from feed wrapping.
+Video originals load only when opened; gallery placeholders do not fetch full
+originals for thumbnails. Audio uses compact playback controls with full preview
+available. Resource access remains checked against the current citation map.
 
 ### 2026-09-09 — A sidebar travels between its two widths
 
