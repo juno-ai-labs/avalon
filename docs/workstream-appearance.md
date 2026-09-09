@@ -2,20 +2,22 @@
 
 A work stream has one icon and color shared by everyone who can read it. Clicking
 its header icon opens a compact palette: fixed colors above a scrolling icon grid.
-Each choice saves immediately and keeps the palette open.
+Each choice saves immediately and keeps the palette open. A work stream nobody
+has chosen for gets its icon from the naming pass, out of this same catalog.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/contracts/src/workstream-appearance.ts` | Stable icon keys, color keys, and partial updates. |
+| `packages/contracts/src/workstream-appearance.ts` | Stable icon keys, one model-visible description per key, the default key, color keys, and partial updates. |
 | `apps/desktop/src/renderer/components/workstream-appearance-picker.tsx` | Palette, optimistic preview, ordered clicks, and failures. |
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | Shared rendering and deterministic defaults. |
-| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `patchCachedWorkstreamAppearance`, the receipt-time write that puts a committed choice on the sidebar row and the cached detail ahead of the directory projection; built on `patchCachedWorkstream`, the one write for any unversioned fact that both caches must agree on. |
+| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `patchCachedWorkstreamAppearance`, the receipt-time write that puts a committed choice on the sidebar row ahead of the directory projection, and `patchCachedGeneratedAppearance`, which writes the header too because a generated icon has no preview to retire. Both share one merge rule, and `patchCachedWorkstream` under it is the one write for any unversioned fact both caches must agree on. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Orders the picker's choices on the retained Main socket and applies each one to the caches when its receipt arrives. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Authoritative write, command receipt, and common-state publication. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Main conversation's nullable `workstream.appearance_json`. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Directory projection for all workspace surfaces. |
+| `apps/api/src/durable-objects/workstream-identity-storage.ts` | `rename`, the second writer: it offers the naming pass's icon and refuses it where one is stored. See [`workstream-naming.md`](workstream-naming.md). |
 
 ## How it works
 
@@ -59,7 +61,12 @@ Missing capabilities on pre-deploy attachments also retain the original shape.
 The socket connection queues rapid clicks in order, retaining their original
 work-stream address even if the picker unmounts. A click changes only its own field, so
 a color change does not overwrite another user's icon. The icon registry extends
-the original twelve deterministic symbols with the existing project icons.
+the original twelve deterministic symbols with the existing project icons. Each
+key also carries one or two sentences describing the icon, in the same file: the
+naming pass chooses an icon from this catalog and needs to know what each key
+draws. They are model-visible strings, so keep them in plain words — no icon
+library names — and add one with every key added, which the exhaustive `Record`
+enforces at compile time.
 Colors store semantic keys such as `blue` and `purple`, never hex or RGB values.
 Both the swatch and glyph resolve `sys.color.project.<key>` through the current
 appearance. Tune these keys independently in
@@ -72,6 +79,11 @@ when tuning its shade.
 
 - One authoritative appearance belongs to Main; a private child must not create
   an alternative identity for the parent.
+- **A person's choice outranks a generated one, and the rule is a condition on
+  the write.** The picker's command writes unconditionally; the naming pass's
+  write is refused wherever an icon is already stored. Neither writer can tell a
+  generated icon from a chosen one after the fact, so the ordering has to be
+  decided at the moment of writing.
 - Command receipts are committed with the write. Replaying an older operation
   cannot overwrite a later choice.
 - Omitted fields mean unchanged; null fields use the deterministic ID-based
@@ -83,7 +95,11 @@ when tuning its shade.
 
 This controls work-stream identity only. Project appearance and automation glyphs
 keep their existing behavior. The account's personal accent and device light/dark
-preference remain owned by [desktop appearance](theming.md).
+preference remain owned by [desktop appearance](theming.md). This document owns
+the catalog, the descriptions, the picker, the colour, the deterministic default
+and the projection; *which* icon Rally picks for an unnamed work stream, and when
+that pick may be written, belongs to
+[`workstream-naming.md`](workstream-naming.md).
 
 ## Failure modes and limits
 
@@ -97,8 +113,10 @@ The scroll viewport is a layout choice, not a cap on the catalog or server data.
 The picker component suite covers immediate selection, ordered rapid clicks,
 staying open, Escape focus restoration, and failed saves. The socket hook suite
 proves the caches hold the old appearance until the receipt and the merged value
-after it; the cache suite covers the merge over a stored and a generated
-appearance. The real-workerd
+after it, and that a naming pass's icon reaches the header and the row together;
+the cache suite covers the merge over a stored and a generated appearance. The
+refusal that protects a person's choice from a naming pass is proved in
+`apps/api/test/workstream-naming.test.ts`. The real-workerd
 `message-to-output-pipeline.test.ts` appearance case covers partial updates,
 idempotent replay, and persistence across object eviction. Its dropped-write
 mutation must fail the reopened snapshot assertion. Client control/state tests
@@ -106,6 +124,22 @@ cover the common cache path. Inspect the actual Electron popup in light and dark
 including scrolling, and check another connected window and reopening.
 
 ## Changelog
+
+### 2026-09-09 — Rally chooses the icon a work stream starts with
+
+Every icon key now carries a description in `workstream-appearance.ts`, and the
+work-stream naming pass renders that catalog into its prompt and chooses an icon
+alongside the name — so a sidebar shows marks that mean something instead of a
+column of id-derived glyphs. The write is in `rename`, in the same transaction as
+the title, and refuses any work stream that already has a stored icon: the
+picker's command is unconditional and a person choosing an icon settles no title,
+so the "already stored" condition is the only thing standing between a naming
+pass and someone's choice. Nothing about the picker, the colour, the projection,
+or the deterministic default changed. The catalog gaining a second audience is
+the thing to respect: an icon added here is now also an icon a model may choose,
+and it needs a description in the same edit. Why the second naming pass may not
+revisit the first one's icon, and what provenance on the appearance would buy, is
+in [`workstream-naming.md`](workstream-naming.md).
 
 ### 2026-09-09 — The receipt writes the row, not the detail
 

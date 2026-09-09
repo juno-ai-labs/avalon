@@ -1,4 +1,9 @@
 import type { SqlStorageCursor, SqlStorageValue } from "@cloudflare/workers-types";
+import {
+  WorkstreamAppearanceSchema,
+  WorkstreamIconKeySchema,
+  type WorkstreamIconKey,
+} from "@rally/contracts";
 
 /**
  * What a system-provisioned work stream is, on the object that owns it.
@@ -36,6 +41,7 @@ export interface IdentityRow extends Record<string, SqlStorageValue> {
   email_address: string | null;
   email_route_status: string;
   model_override: string | null;
+  appearance_json: string | null;
   archived_at: number | null;
   created_at: number;
   updated_at: number;
@@ -117,7 +123,7 @@ export class WorkstreamIdentityStorage {
               title_status, scope, exact_state, state_reason_code, origin_type, parent_kind, system_kind,
               created_by_user_id, automation_subscription_id, automation_run_id,
               created_from_opportunity_id, planned_for, email_address, email_route_status,
-              model_override, archived_at, created_at, updated_at
+              model_override, appearance_json, archived_at, created_at, updated_at
          FROM workstream WHERE id = 1`,
     ));
   }
@@ -222,34 +228,60 @@ export class WorkstreamIdentityStorage {
 
 
   /**
-   * Give the work stream the name a pass settled on, if that pass still holds.
+   * Give the work stream the name and icon a pass settled on, if that pass
+   * still holds.
    *
    * `from` is the naming pass's own fence: two passes can be in flight — the
    * first runs on the opening message and the second when a run ends — and the
    * later one must not overwrite a title the earlier one already settled. A
    * `null` title advances the status without touching the name, which is how a
    * pass records that the model was unreachable.
+   *
+   * The icon is written under a second condition, and a stricter one: **only
+   * where no icon is stored at all.** The fence above cannot protect it,
+   * because a person who picks an icon from the header changes no title and so
+   * settles nothing — the row a second pass is still eligible to rename is
+   * exactly the row whose icon they may have just chosen. Refusing to write
+   * over a stored icon is what makes the two safe together, and its cost is
+   * that a second pass improves the name without improving the icon the first
+   * pass chose from less. That is the trade recorded in
+   * `docs/workstream-naming.md`; telling a generated icon from a chosen one
+   * would take provenance this column does not carry.
+   *
+   * The written icon comes back so the caller can publish exactly what landed,
+   * rather than re-deriving it from a row that could move again.
    */
   rename(input: {
     title: string | null;
+    /** Absent and `null` mean the same thing: this pass chose no icon. */
+    icon?: WorkstreamIconKey | null;
     from: string;
     to: string;
     now: number;
-  }): { outcome: "renamed" | "superseded" } {
+  }): { outcome: "renamed" | "superseded"; icon: WorkstreamIconKey | null } {
     return this.storage.transactionSync(() => {
       const root = this.identity();
       if (!root || root.title_status !== input.from) {
-        return { outcome: "superseded" as const };
+        return { outcome: "superseded" as const, icon: null };
       }
+      const stored = root.appearance_json
+        ? WorkstreamAppearanceSchema.parse(JSON.parse(root.appearance_json))
+        : { icon: null, color: null };
+      const chosen = input.icon ?? null;
+      const icon = chosen !== null && stored.icon === null
+        ? WorkstreamIconKeySchema.parse(chosen)
+        : null;
       this.sql.exec(
         `UPDATE workstream
-            SET title = COALESCE(?, title), title_status = ?, updated_at = ?
+            SET title = COALESCE(?, title), title_status = ?,
+                appearance_json = COALESCE(?, appearance_json), updated_at = ?
           WHERE id = 1`,
         input.title,
         input.to,
+        icon === null ? null : JSON.stringify({ ...stored, icon }),
         input.now,
       );
-      return { outcome: "renamed" as const };
+      return { outcome: "renamed" as const, icon };
     });
   }
 
