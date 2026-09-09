@@ -2983,10 +2983,8 @@ describe("a member's message travels the whole pipeline", () => {
       const page = await workspace.listWorkstreams({ workspaceId: WORKSPACE_ID, userId: USER_ID, limit: 20, includeSystem: false });
       expect(page.items.find((item) => item.id === WORKSTREAM_ID)?.appearance).toEqual({ icon: "rocket", color: "purple" });
       const service = new WorkstreamService({ ...TEST_ENV, SESSION_SIGNING_KEY: "appearance-test-signing-key", PUBLIC_API_BASE_URL: "https://api.rally.test" }, AUTH);
-      const legacyTicket = await service.workstreamControlSocketTicket(WORKSTREAM_ID);
-      const currentTicket = await service.workstreamControlSocketTicket(WORKSTREAM_ID, true);
-      expect(new URL(legacyTicket.url).searchParams.has("workstreamAppearance")).toBe(false);
-      expect(new URL(currentTicket.url).searchParams.get("workstreamAppearance")).toBe("1");
+      const ticket = await service.workstreamControlSocketTicket(WORKSTREAM_ID);
+      expect(new URL(ticket.url).search).toBe("");
       socket.close(1000, "done");
       await evictDurableObject(stub);
       const reopened = await openSubscribedSocket(stub, "00000000-0000-7000-8000-0000000006c4");

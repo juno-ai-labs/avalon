@@ -39,11 +39,11 @@ describe("socket ticket subprotocols", () => {
     expect(socketTicketFromProtocols(`${SOCKET_TICKET_SUBPROTOCOL}, ${"a".repeat(4_001)}`)).toBeNull();
   });
 
-  it("strips the deprecated query ticket without disturbing the rest of the URL", () => {
+  it("strips all query configuration and deprecated tickets", () => {
     expect(socketUrlWithoutTicket(`wss://api.with-avalon.com/socket/workstreams/w1?ticket=${TICKET}`))
       .toBe("wss://api.with-avalon.com/socket/workstreams/w1");
     expect(socketUrlWithoutTicket(`wss://api.with-avalon.com/socket/transcription?ticket=${TICKET}&trace=1`))
-      .toBe("wss://api.with-avalon.com/socket/transcription?trace=1");
+      .toBe("wss://api.with-avalon.com/socket/transcription");
     expect(socketUrlWithoutTicket("wss://api.with-avalon.com/socket/workstreams/w1"))
       .toBe("wss://api.with-avalon.com/socket/workstreams/w1");
   });

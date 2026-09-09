@@ -1,3 +1,4 @@
+import { safeParseSocketEvent, isUnknownSocketEvent, WorkspaceSocketClientEventTypeSchema } from "@rally/contracts";
 import { resolveWorkspaceEventResources } from "./workspace-event-resources";
 import { WorkstreamAppearanceSchema } from "@rally/contracts";
 import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
@@ -3290,7 +3291,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       });
       return;
     }
-    const parsed = WorkspaceSocketClientEventSchema.safeParse(decoded);
+    if (isUnknownSocketEvent(decoded, WorkspaceSocketClientEventTypeSchema)) return;
+    const parsed = safeParseSocketEvent(WorkspaceSocketClientEventSchema, decoded);
     if (!parsed.success) {
       this.closeSocket(socket, attachment, {
         code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,

@@ -226,9 +226,8 @@ const runNowResponseSchema = z.object({
   runId: z.string(),
   reused: z.boolean(),
 });
-// The issuing endpoints still put the ticket in the URL for desktop builds
-// released before the subprotocol scheme. Strip it on the way in, so no call
-// site can open a socket whose URL carries the credential.
+// Older servers may return query tickets or capability flags. Discard all
+// query data; every stream uses the ticket subprotocol and an unconditional protocol.
 const socketTicketSchema = z.object({
   url: z.string(),
   ticket: z.string(),
@@ -1815,7 +1814,7 @@ export class RallyApi {
   }
 
   getWorkstreamControlSocketTicket(id: string, requestId?: string): Promise<SocketTicket> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/control-socket?workstreamAppearance=1`, {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/control-socket`, {
       schema: socketTicketSchema,
       ...(requestId ? { requestId } : {}),
     });

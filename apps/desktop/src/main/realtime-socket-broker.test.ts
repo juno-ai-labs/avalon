@@ -82,7 +82,7 @@ describe('realtimeSocketTargetAllowed', () => {
     expect(realtimeSocketTargetAllowed({
       ...openInput(),
       url: `${openInput().url}?ticket=leaked`,
-    }, apiBaseUrls)).toBe(false);
+    }, apiBaseUrls)).toBe(true);
     expect(realtimeSocketTargetAllowed({
       ...openInput('substream_feed'),
       kind: 'workstream_control',
@@ -93,12 +93,10 @@ describe('realtimeSocketTargetAllowed', () => {
     }, apiBaseUrls)).toBe(false);
   });
 
-  it('allows the control appearance capability without allowing arbitrary query data', () => {
-    expect(realtimeSocketTargetAllowed({ ...openInput(), url: `${openInput().url}?workstreamAppearance=1` }, apiBaseUrls)).toBe(true);
-    for (const query of ['ticket=leaked', 'workstreamAppearance=0', 'workstreamAppearance=1&ticket=leaked', 'workstreamAppearance=1&workstreamAppearance=1', 'other=1']) {
-      expect(realtimeSocketTargetAllowed({ ...openInput(), url: `${openInput().url}?${query}` }, apiBaseUrls)).toBe(false);
+  it.each(['workstream_control', 'substream_feed'] as const)('ignores query configuration for %s', (kind) => {
+    for (const query of ['workstreamAppearance=1', 'futureFeature=1', 'ticket=legacy']) {
+      expect(realtimeSocketTargetAllowed({ ...openInput(kind), url: `${openInput(kind).url}?${query}` }, apiBaseUrls)).toBe(true);
     }
-    expect(realtimeSocketTargetAllowed({ ...openInput('substream_feed'), url: `${openInput('substream_feed').url}?workstreamAppearance=1` }, apiBaseUrls)).toBe(false);
   });
 
   it('admits a feed by its conversation, whichever parent it has, and nothing older', () => {
@@ -283,7 +281,7 @@ describe('RealtimeSocketBroker', () => {
     const createSocket = vi.fn<RealtimeSocketFactory>(() => sockets.shift()!);
     const broker = new RealtimeSocketBroker(createSocket);
 
-    broker.open(7, openInput(), vi.fn());
+    broker.open(7, { ...openInput(), url: `${openInput().url}?future=1&ticket=legacy` }, vi.fn());
     broker.open(7, { ...openInput('substream_feed'), socketId: crypto.randomUUID() }, vi.fn());
 
     expect(createSocket).toHaveBeenCalledTimes(2);
