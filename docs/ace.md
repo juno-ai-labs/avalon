@@ -400,9 +400,9 @@ session, because the directory it searches does not know.
 ## Operations
 
 A merge to `main` starts `deploy-ace.yml` when it changes Ace runtime or
-configuration, the reused Access verifier, a shared runtime contract, dependency
+configuration, the reused Access verifier, shared runtime contracts or DB code, dependency
 resolution, the shared TypeScript configuration, or one of the deployment-time
-scripts. Test-only changes under Ace, shared contracts, or the Queue provisioner
+scripts. Test-only changes under Ace, shared contracts/DB, or the Queue provisioner
 remain CI-only and do not redeploy production. The workflow validates the
 repository, creates all declared Queues, clones the migration Access policy,
 ensures all Enabled-named flags and all eleven JSON model flags exist from their
@@ -442,12 +442,17 @@ When a save succeeds but clients do not change, inspect in order:
 5. A reconnect, which must receive current values on the private subscribe
    response even if a live notification was lost.
 
+Shared DB runtime sources and package exports are deployment inputs alongside
+contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only changes
+do not publish a new Ace bundle.
+
 ## Changelog
 
 ### 2026-09-09 — Add access intake review and download issuance
 
 **What changed:** Added Access request review and manual single-use/timed grant
-issuance through the shared issuer, with operator audit events.
+issuance through the shared issuer, with operator audit events. The deployment
+filter follows shared DB runtime changes so issuer fixes cannot leave Ace stale.
 
 **Why:** Operators need to track early-access interest and supply downloads
 without coupling the UI to a future invitation sender.

@@ -28,6 +28,15 @@ describe('early-access browser handlers', () => {
     expect(location.hash).toBe('');
   });
 
+  it('explains permanent acknowledgement rejection without asking for another send', async () => {
+    document.body.innerHTML = '<form id="access-request"><input id="access-email" type="email" required value="team@example.com"><button id="access-submit">Get early access</button></form><p id="access-status"></p>';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ error: { code: 'access_email_rejected' } }, { status: 502 }));
+    await import('../src/landing');
+    document.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }));
+    await vi.waitFor(() => expect(document.querySelector('#access-status')!.textContent).toBe(accessCopy.rejected));
+    expect(document.querySelector<HTMLFormElement>('form')!.hidden).toBe(false);
+  });
+
   it('keeps a saved-email failure retryable, then shows success after a new request', async () => {
     document.body.innerHTML = '<form id="access-request"><input id="access-email" type="email" required value="team@example.com"><button id="access-submit" disabled>Get early access</button></form><p id="access-status" tabindex="-1"></p>';
     const fetch = vi.spyOn(globalThis, 'fetch')

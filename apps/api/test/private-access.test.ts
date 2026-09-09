@@ -95,6 +95,17 @@ describe('private access against regional migrations', () => {
     expect(await listAccessRequests(env.DB)).toMatchObject([{ acknowledgementStatus: 'sent' }]);
   });
 
+  it('records permanent provider rejection and never resends it on duplicate intake', async () => {
+    provider.mockResolvedValueOnce(new Response('recipient rejected', { status: 422 }));
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await submit('rejected@example.com');
+      expect(response.status).toBe(502);
+      expect(await response.json()).toMatchObject({ error: { code: 'access_email_rejected' } });
+    }
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(await listAccessRequests(env.DB)).toMatchObject([{ acknowledgementStatus: 'rejected', acknowledgedAt: null }]);
+  });
+
   it('rejects invalid addresses and disallowed origins without storing or emailing', async () => {
     expect((await submit('not-an-email')).status).toBe(400);
     expect((await submit('person@example.com', 'https://untrusted.example')).status).toBe(403);

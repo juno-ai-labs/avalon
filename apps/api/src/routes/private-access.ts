@@ -41,7 +41,8 @@ export function createPrivateAccessRoutes(
       throw new ApiError(429, 'access_request_rate_limited', 'Too many access requests. Please try again later.');
     }
     await requestAccess(c.env, parsed.data.email);
-    // Never disclose whether this address was already in the list.
+    // Successful new and duplicate requests share one response. Delivery
+    // failures remain explicit so a saved-but-unacknowledged request can retry.
     return c.json({ accepted: true }, 202);
   });
 
