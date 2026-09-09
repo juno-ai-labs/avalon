@@ -79,8 +79,23 @@ Both the swatch and glyph resolve `sys.color.project.<key>` through the current
 appearance. Tune these keys independently in
 `config/design-tokens/themes/light.json` and `dark.json`, then run
 `pnpm tokens:build`. The shared palette also affects projects and personal accents.
-The legacy `orange` key is displayed as Neon yellow; preserve that stored key
-when tuning its shade.
+
+The picker offers `PROJECT_COLOR_KEYS` — the fourteen-hue ring — while the
+schema parses `PROJECT_COLOR_KEYS_STORABLE`, which is every colour the palette
+defines: the ring, the four retired keys, and `black`.
+
+The two lists are deliberately different sizes, and the wider one is what
+validates. `WorkstreamAppearanceSchema.parse` runs on every work-stream read, so
+narrowing the stored vocabulary to match the menu is not a product change but a
+read-path outage for whoever holds the colour being removed. Taking a colour off
+the menu is a one-line edit; taking it out of the vocabulary needs a migration
+and is almost never what is wanted.
+
+`black` is the worked example. It is reserved for account accents and never
+offered here, because an absence of colour is the wrong signal for an object
+that sits in a list beside thirteen others it must be told apart from. A work
+stream that already holds it keeps rendering and simply shows nothing selected
+until someone picks a hue.
 
 ## Invariants
 
@@ -131,6 +146,42 @@ cover the common cache path. Inspect the actual Electron popup in light and dark
 including scrolling, and check another connected window and reopening.
 
 ## Changelog
+
+### 2026-09-09 — The picker offers the ring; the schema accepts more than the picker offers
+
+**What changed:** The twelve-key palette became a fourteen-hue ring in wheel
+order. `gray`, `brown`, `yellow` and `teal` left the picker, and `black` — added
+to the palette in the same change — is never offered here at all, being reserved
+for account accents. `PROJECT_COLOR_KEYS` is the pickable list;
+`WorkstreamAppearanceSchema` validates against `PROJECT_COLOR_KEYS_STORABLE`,
+which is every colour the palette defines.
+
+**Why:** The schema had been pointed at the pickable list, which made retiring a
+colour a read-path outage rather than a product change — `parse` throws, and it
+runs on every work-stream read, so a stored `gray` would have taken the work
+stream down for its owner alone. Splitting pickable from storable is what makes
+the palette editable at all. Remapping the four retired keys onto near
+neighbours was the alternative; it was rejected because it recolours projects
+under their owners to save a list nobody sees, and it is not reversible once the
+old value is overwritten. The same reasoning is why `black` is withheld from the
+menu rather than from the vocabulary: hiding a colour costs a line, forbidding
+one costs a migration and breaks whoever holds it.
+
+**Consequences:** A retired key keeps its design token and keeps rendering.
+
+Every work stream that never had a colour chosen for it changes appearance once.
+`workstreamAppearance` seeds from the id and indexes the palette, so both the
+length and the order moved; `conversation-surfaces.md` already names this as a
+visible migration rather than a repaint, and it is the accepted cost of
+reordering. The derivation now runs over `PROJECT_COLOR_RING` — the ring without
+`black` — so a derived glyph is always a hue: the neutral is something a person
+picks, and handing it out by hash would leave roughly one work stream in fifteen
+looking deliberately unaccented when nobody had chosen anything.
+
+Adding or retiring a colour is a contracts edit plus a WorkspaceDO migration —
+the `icon_color_key` CHECK vocabulary is baked into shipped SQL — and
+`test/workspace-project-palette.test.ts` fails the build if the contract moves
+without one.
 
 ### 2026-09-08 — Remove appearance negotiation
 
