@@ -545,6 +545,7 @@ export class WorkspaceService {
       const abandoned = Number(abandonment[0]?.meta?.changes ?? 0) === 1;
       if (abandoned) {
         await this.publishOwnMembershipRevocation();
+        await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"]);
         return { outcome: "abandoned" };
       }
       throw new ApiError(

@@ -361,7 +361,7 @@ describe("conversation parent contract", () => {
     expect(scopes).toContain('00000000-0000-7000-8000-000000001099');
   });
 
-  it("prefilters search scopes and loads independent conversations concurrently while batching links", async () => {
+  it("loads independent conversations concurrently without directory prefiltering while batching links", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID]);
     await seedRoom(WORKSPACE_ROOM_ID, "workspace", [AUTHOR_ID]);
     const urls = ['https://example.com/one', 'https://example.com/two'];
@@ -403,7 +403,7 @@ describe("conversation parent contract", () => {
       expect(response.results.map((row) => row.id)).toEqual(rows.map((row) => row.id));
       expect(links).toHaveBeenCalledTimes(1);
       expect(links.mock.calls[0]?.[0]).toHaveLength(2);
-      expect(JSON.stringify(requests[0])).toContain(JSON.stringify(['scope_id', 'In', [PERSONAL_ROOM_ID, WORKSPACE_ROOM_ID]]));
+      expect(JSON.stringify(requests[0])).not.toContain(JSON.stringify(['scope_id', 'In', [PERSONAL_ROOM_ID, WORKSPACE_ROOM_ID]]));
       const visible = await workspaceStub().searchableWorkstreamIds({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID });
       expect(visible.items).toContain(WORKSPACE_ROOM_ID);
       expect(visible.items).not.toContain(PERSONAL_ROOM_ID);
@@ -789,6 +789,9 @@ describe("conversation parent contract", () => {
         .resolves.toMatchObject({ results: [], complete: false });
       expect(await workspaceStub().authorizationBackfillStatus({ workspaceId: WORKSPACE_ID })).toEqual(partial);
       await projectAuthorization(TEST_ENV, { ...initialProjection, substreamId: reserved.substreamId });
+      // The queue publishes completed discovery; the next search never performs that owner walk.
+      await pushSearchAuthorization(TEST_ENV, { type: 'search_authorization_push_v1', region: 'global',
+        workspaceId: WORKSPACE_ID, target: { kind: 'resource', id: searchResourceId } });
       resourceRevision = await workspaceStub().resourceSearchRevision({ workspaceId: WORKSPACE_ID, resourceId: searchResourceId });
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
         .toMatchObject([{ title: 'private search artifact' }]);

@@ -1,5 +1,4 @@
 import { createSearchAccessContext } from './search-authorization';
-import { WorkstreamDirectoryService } from './workstream-directory-service';
 import { logInfo } from '../observability/logger';
 import type { SearchRequest, SearchResult } from '@rally/contracts/search';
 import type { AuthContext, Env } from '../env';
@@ -43,8 +42,8 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
     });
   };
   const resources = new ResourceService(env, auth, undefined, access);
-  const scopes = request.pageSize && ['all', 'messages', 'links'].includes(request.category)
-    ? await new WorkstreamDirectoryService(env, auth).searchableIds() : null;
+  // Candidate admission uses projected decisions; directory discovery is not a retrieval prerequisite.
+  const scopes = null;
   const scopeMs = performance.now() - started;
   let retrievalMs = 0;
   let hydrationMs = 0;

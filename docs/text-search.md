@@ -478,6 +478,17 @@ budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
 
+### 2026-09-09 — Remove directory discovery from paginated retrieval
+
+Paginated search now uses the same unrestricted candidate retrieval as the first
+page path, then admits candidates with projected decisions. Reading the workspace
+directory before every query added a serial DO hop despite final admission already
+being available. Pages can be sparse when candidates are inaccessible; continuation
+still follows scanned candidates, not the number of returned results. KV negative
+lookups reuse durable snapshots before resolving owners. Memory authorization now
+uses the shared projected resolver without a post-retrieval authority check.
+
+
 ### 2026-09-08 — Remove canonical authorization from cache-hit hydration
 
 Trust the search authorization projection across requests to avoid serial owner

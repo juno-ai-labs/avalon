@@ -1,3 +1,5 @@
+import { WorkspaceService } from '../src/services/workspace-service';
+import { pushSearchAuthorization } from '../src/services/search-authorization';
 import { asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
@@ -311,7 +313,7 @@ function fixture(): {
     regionalDatabase: database,
     register: (created) => { openDatabases.push(created); },
   });
-  const memoryRpcs = workspaceObjectRpcs(workspaceObject.instance, MEMORY_OBJECT_METHODS);
+  const memoryRpcs = workspaceObjectRpcs(workspaceObject.instance, [...MEMORY_OBJECT_METHODS, 'publishSync', 'listSearchAuthorizationSnapshots']);
   const envWith = (rpcs: Record<string, unknown>): Env => createTestEnv({
     DB: sqliteD1(database),
     MEMORY_INDEX: createCloudflareTestBinding<VectorizeIndex>(vector),
@@ -612,6 +614,24 @@ describe("scoped agent memory", () => {
       invalidation_reason: "Preference is no longer valid",
       text: "Favorite color is azure",
     });
+  });
+
+  it('publishes membership removal to projected memory grants', async () => {
+    const { objectDatabase, env } = fixture();
+    const runInput = input('member');
+    await memoryTool(env, runInput, 'add').execute(
+      { scopeKind: 'user', text: 'Projected crimson memory', rationale: 'Recall fixture' },
+      toolContext(runInput, 'projected-add'));
+    expect((await memorySearch(env, runInput, 'crimson')).results).toHaveLength(1);
+    objectDatabase.exec('DELETE FROM search_authorization_push');
+    await new WorkspaceService(env, { sessionId: 'test', userId: OWNER_ID, workspaceId: WORKSPACE_ID,
+      region: 'global', role: 'owner' }).removeMember(MEMBER_ID);
+    expect((await memorySearch(env, runInput, 'crimson')).results).toHaveLength(1);
+    const jobs = objectDatabase.prepare('SELECT kind, target_id FROM search_authorization_push').all();
+    expect(jobs.length).toBeGreaterThan(0);
+    for (const job of jobs) await pushSearchAuthorization(env, { type: 'search_authorization_push_v1', region: 'global',
+      workspaceId: WORKSPACE_ID, target: { kind: 'resource', id: String(job.target_id) } });
+    expect((await memorySearch(env, runInput, 'crimson')).results).toEqual([]);
   });
 
   it.each(["qwen/qwen3-embedding-8b", "Qwen/Qwen3-Embedding-8B"])("uses one fixed embedding space for %s, rejects stale vectors, and degrades to FTS", async (model) => {
