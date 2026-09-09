@@ -63,6 +63,7 @@ vi.mock('../lib/use-transcript-follow', () => ({
   }),
 }));
 
+import { patchCachedWorkstreamAppearance, setCachedWorkstreams } from '../lib/workstreams-cache';
 import { WorkstreamScreen } from './workstream';
 import type { WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 
@@ -373,6 +374,35 @@ describe('socket-first work-stream open', () => {
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, newcomer.id));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toHaveAccessibleDescription('Parent member, New member'));
     expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId])?.participants).toEqual([]);
+  });
+
+  it('marks the rail with the parent appearance and follows the sidebar row a receipt just moved', async () => {
+    const childId = '00000000-0000-7000-8000-000000000664';
+    // The parent detail and the sidebar row disagree on purpose: this is the
+    // window after a receipt has patched the row and before the versioned
+    // projection reaches the detail. The rail is meant to be on the row.
+    const parent = recoveryBoot({ appearance: { icon: 'rocket', color: 'purple' } });
+    const child = recoveryBoot({ title: 'Private child' });
+    const client = renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      setCachedWorkstreams(cache, [{ ...parent, appearance: { icon: 'megaphone', color: 'teal' } }]);
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+    }, childId);
+
+    const rail = await screen.findByRole('complementary', { name: 'Work-stream sidebar' });
+    const mark = (): Element | null => rail.querySelector('.workstream-mark');
+    expect(mark()).toHaveClass('lucide-megaphone');
+    expect(mark()).toHaveStyle({ color: 'var(--av-sys-color-project-teal)' });
+    // The header stays on the detail, which the projection alone may move.
+    expect(screen.getByRole('heading', { name: 'Private child' }).closest('header')!.querySelector('.lucide-rocket')).not.toBeNull();
+
+    // The receipt-time writer itself, not a hand-rolled cache poke: it writes
+    // the row and deliberately leaves the detail alone.
+    act(() => patchCachedWorkstreamAppearance(client, workstreamId, { icon: 'heart', color: 'blue' }));
+    await waitFor(() => expect(mark()).toHaveClass('lucide-heart'));
+    expect(mark()).toHaveStyle({ color: 'var(--av-sys-color-project-blue)' });
+    expect(screen.getByRole('heading', { name: 'Private child' }).closest('header')!.querySelector('.lucide-rocket')).not.toBeNull();
   });
 
   it('manages the selected substream roster without changing parent participants', async () => {
