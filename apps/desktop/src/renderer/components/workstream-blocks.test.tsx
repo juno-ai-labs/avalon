@@ -517,7 +517,7 @@ describe('MessageBlock human identity', () => {
     expect(screen.queryByText('Rally')).not.toBeInTheDocument();
   });
 
-  it('renders sent attachments outside the rounded human text bubble', () => {
+  it('renders sent attachments below and outside the rounded human text bubble', () => {
     const message: Message = {
       ...baseMessage,
       attachments: [{
@@ -548,7 +548,7 @@ describe('MessageBlock human identity', () => {
     expect(attachments).toBeInTheDocument();
     expect(bubble).toHaveTextContent('Please investigate this.');
     expect(bubble).not.toContainElement(attachments);
-    expect(attachments?.nextElementSibling).toBe(bubble);
+    expect(bubble?.nextElementSibling).toBe(attachments);
   });
 });
 

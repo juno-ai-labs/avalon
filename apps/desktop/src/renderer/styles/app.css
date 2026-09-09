@@ -5155,6 +5155,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    a theme that aligns turns to the leading edge leaves the header flush there,
    which is the same relationship on the other side. */
 :is(.workstream-screen, .automation-chat-surface) .human-message > header {
+  width: 100%;
   gap: 5px;
   justify-content: flex-end;
   margin-bottom: 4px;
@@ -6864,3 +6865,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .attachment-lightbox-content.has-gallery { padding-bottom: 130px; }
 
 :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments { grid-column: 1 / -1; grid-row: 1; width: 100%; padding: 10px 12px 2px; }
+
+/* The author's trailing edge meets the bubble's straight top edge. */
+:is(.workstream-screen, .automation-chat-surface) .human-message > header .message-author-dot { order: 1; }
+:is(.workstream-screen, .automation-chat-surface) .human-message > header .message-author { order: 2; }

@@ -253,6 +253,12 @@ frames in larger transport batches while preserving their samples and sample rat
 **Consequences:** Local listening and remote readiness are separate facts.
 Commits must await the drain, and cancellation must release both buffered audio
 and late-arriving inputs. OS audio startup still bounds the first captured sample.
+### 2026-09-09 — Attachments follow the message, author ends at the corner
+
+Delivered attachments now follow message content, including human bubbles, so
+files read as the material attached to the preceding words. Human identity
+headers put the author last and use the bubble radius as their trailing inset;
+timestamps no longer occupy the author's alignment edge.
 
 ### 2026-09-09 — Shared media tiles with host-specific layouts
 
