@@ -1193,6 +1193,12 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
     const spans = group.sawActivity
       ? group.activitySpansKnown && group.activitySpans.length > 0 ? group.activitySpans : undefined
       : group.toolSpansKnown && group.toolSpans.length > 0 ? group.toolSpans : undefined;
+    // A tool contribution carries no aggregate accuracy — `pluginGroupContribution`
+    // builds one from a tool row and has none to give — so where this row's own
+    // number came from those calls' spans, the spans are also the only thing
+    // that can say a boundary was recovered rather than observed.
+    const upperBound = group.upperBound
+      || (spans?.some((span) => span.timingAccuracy === 'upper_bound') ?? false);
     rows[group.row] = {
       ...row,
       workSpans: spans,
@@ -1212,7 +1218,7 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
         ...(group.monotonicStartedAt.length === 0
           ? {}
           : { monotonicStartedAt: group.monotonicStartedAt }),
-        ...(group.upperBound ? { timingAccuracy: 'upper_bound' as const } : {}),
+        ...(upperBound ? { timingAccuracy: 'upper_bound' as const } : {}),
       },
     };
   }
