@@ -981,7 +981,15 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       );
     }
     const runtime = await createPluginRuntime(input);
-    const initialSystemPrompt = runtime.renderSystemPrompt();
+    // The host's resident context is read once here and again before every
+    // model call; between those reads it changes only through a compaction,
+    // which this runtime performs and so already knows about.
+    let residentSection: string | null = await requiredPort(
+      "run_state_persistence_failed",
+      "Resident context render failed",
+      async () => (await input.residentContext?.render()) ?? null,
+    );
+    const initialSystemPrompt = runtime.renderSystemPrompt(residentSection);
     if (resumeProjection) {
       // The message suffix is immutable and may be long. Share it in-isolate
       // instead of recursively serializing it through structuredClone; every
@@ -1096,6 +1104,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       const contextWindowTokens = selectedContextWindowTokens();
       compactionIndex += 1;
       const currentCompactionIndex = compactionIndex;
+      const compactionEventId = `${input.harnessRunId}:compaction:${currentCompactionIndex}`;
       await emit({
         type: "compaction_started",
         compactionIndex: currentCompactionIndex,
@@ -1113,6 +1122,30 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           "Compaction authorization preparation failed",
           () => input.compaction?.prepare?.(),
         );
+        if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
+        // Prepare before the summary turn: the host says which messages it owns
+        // (they leave the summariser's input, because the ledger itself carries
+        // them forward) and what the prefix looks like once the compaction has
+        // moved them there. Pure on the host side; the commit below applies it.
+        const projectionAtCompaction = bindLoopProjection;
+        const residency = input.residentContext
+          ? await requiredPort(
+              "run_state_persistence_failed",
+              "Resident context compaction preparation failed",
+              () => input.residentContext!.prepareCompaction({
+                compactionEventId,
+                generation: projectionAtCompaction.generation,
+                stateRevision: projectionAtCompaction.stateRevision,
+              }),
+            )
+          : null;
+        const excludedPositions = new Set(residency?.excludedMessagePositions ?? []);
+        const summaryInput = excludedPositions.size === 0
+          ? messages
+          : messages.filter((_message, position) => !excludedPositions.has(position));
+        const compactedSystemMessage: ProviderSystemMessage = residency
+          ? { role: "system", content: runtime.renderSystemPrompt(residency.section).content }
+          : { role: "system", content: typeof systemMessage.content === "string" ? systemMessage.content : "" };
         const compactionPrimaryModel = model ?? input.config.primaryModel;
         const fallbackModels = [
           input.config.primaryModel,
@@ -1124,7 +1157,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           routeProviderTurn({
             input,
             messages: [
-              ...messages,
+              ...summaryInput,
               { role: "user", content: instruction },
             ],
             tools: undefined,
@@ -1185,7 +1218,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           throw new HarnessLimitError("run_cost_limit_exceeded", "Run cost ceiling exceeded during compaction");
         }
         const persistedMessages: ProviderMessages = [
-          systemMessage,
+          compactedSystemMessage,
           compactionCheckpointMessage(summary),
         ];
         const renderAppendix = input.compaction?.renderAppendix;
@@ -1197,7 +1230,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             )
           : null;
         const compactedMessages: ProviderMessages = [
-          systemMessage,
+          compactedSystemMessage,
           compactionCheckpointMessage(summary, appendix),
         ];
         const checkpoint = {
@@ -1214,15 +1247,25 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           costCents: compactionCostCents,
         };
         if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
+        // The prefix may change here and only here: a compaction has already
+        // cost the provider's cached prefix, so the resident section's move
+        // into the system message rides that eviction. A changed system
+        // message takes the next projection revision, as a mid-run change
+        // would through `system_projection_changed`.
+        const systemChanged = await hashBindLoop(compactedSystemMessage)
+          !== await hashBindLoop(bindLoopProjection.systemProjection.message);
         const replacementTransition: Extract<BindLoopTransition, { kind: "state_replaced" }> = {
           kind: "state_replaced",
           loopId: input.loopId,
           generation: bindLoopProjection.generation,
           nextGeneration: bindLoopProjection.generation + 1,
           stateRevision: bindLoopProjection.stateRevision + 1,
-          systemProjection: await systemProjection(systemMessage, bindLoopProjection.systemProjection.revision),
+          systemProjection: await systemProjection(
+            compactedSystemMessage,
+            bindLoopProjection.systemProjection.revision + (systemChanged ? 1 : 0),
+          ),
           nonSystemMessages: compactedMessages.slice(1).map(toBindLoopMessage),
-          compactionEventId: `${input.harnessRunId}:compaction:${currentCompactionIndex}`,
+          compactionEventId,
         };
         await requiredPort(
           "run_state_persistence_failed",
@@ -1237,6 +1280,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           },
         );
         bindLoopProjection = applyBindLoopTransition(bindLoopProjection, replacementTransition);
+        if (residency) residentSection = residency.section;
         return {
           messages: compactedMessages,
           inputTokens,
@@ -1303,7 +1347,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       buildTools: runtime.buildWireTools,
       activatePlugins: (ids) => {
         runtime.activate(ids);
-        replaceSystemMessage(state.messages, runtime.renderSystemPrompt().content);
+        replaceSystemMessage(state.messages, runtime.renderSystemPrompt(residentSection).content);
       },
       activateSkills: async (refs) => {
         // Snapshot first and persist the difference. Testing membership after
@@ -1319,7 +1363,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           await requiredPort("run_state_persistence_failed", "Skill activation persistence failed", () =>
             input.persistSkillActivation?.(ref));
         }
-        replaceSystemMessage(state.messages, runtime.renderSystemPrompt().content);
+        replaceSystemMessage(state.messages, runtime.renderSystemPrompt(residentSection).content);
       },
       runsSerially: (toolCall) => toolCall.type === "function" && runtime.runsSerially(toolCall.function.name),
       isFatalToolError: (error) =>
@@ -1342,7 +1386,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       callModel: async (messages, _tools, onOutputProgress) => {
         deadline?.throwIfTimedOut();
         await runtime.reauthorizeActive();
-        const systemPrompt = runtime.renderSystemPrompt();
+        residentSection = await requiredPort(
+          "run_state_persistence_failed",
+          "Resident context render failed",
+          async () => (await input.residentContext?.render()) ?? null,
+        );
+        const systemPrompt = runtime.renderSystemPrompt(residentSection);
         replaceSystemMessage(messages, systemPrompt.content);
         // Bind assembles its tool list before entering callModel. Authorization
         // is deliberately revalidated at this later boundary, so rebuild the
@@ -2455,7 +2504,7 @@ async function createPluginRuntime(
   input: RunHarnessInput,
 ): Promise<{
   active: Set<string>;
-  renderSystemPrompt: () => RenderedSystemPrompt;
+  renderSystemPrompt: (residentSection?: string | null) => RenderedSystemPrompt;
   buildWireTools: () => ProviderTool[];
   activate: (ids: string[]) => void;
   reauthorizeActive: () => Promise<void>;
@@ -2833,7 +2882,7 @@ async function createPluginRuntime(
   return {
     active,
     skills,
-    renderSystemPrompt: () => renderStableSystemPrompt(input.systemPrompt, active, registry, input.config.maxCatalogTokens ?? DEFAULT_CATALOG_TOKENS, skills),
+    renderSystemPrompt: (residentSection = null) => renderStableSystemPrompt(input.systemPrompt, active, registry, input.config.maxCatalogTokens ?? DEFAULT_CATALOG_TOKENS, skills, residentSection),
     buildWireTools: () => {
       const definitions: ProviderTool[] = [];
       for (const id of [...active].sort()) {
@@ -2966,6 +3015,12 @@ function renderStableSystemPrompt(
   registry: ToolRegistry<BindPlugin>,
   catalogTokens: number,
   skills: SkillRuntime,
+  /**
+   * Host-rendered resident context, placed last. The host guarantees the
+   * bytes are a pure render of its ledger and change only at a compaction,
+   * where the cached prefix is already lost.
+   */
+  residentSection: string | null = null,
 ): RenderedSystemPrompt {
   const activeSections = [...active]
     .sort()
@@ -3015,7 +3070,7 @@ function renderStableSystemPrompt(
     ? `# Active Skill Instructions\n${skills.instructions.join("\n\n")}`
     : "";
   return {
-    content: [base, pluginSection, skillSection, activeInstructions, skillInstructions]
+    content: [base, pluginSection, skillSection, activeInstructions, skillInstructions, residentSection ?? ""]
       .filter(Boolean)
       .join("\n\n"),
   };

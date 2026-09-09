@@ -5,6 +5,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DurableObjectStorage } from "@cloudflare/workers-types";
+import { createTerminalInstructionFiles } from "../src/services/terminal/instructions";
+import { WorkstreamResidentContextStorage } from "../src/durable-objects/workstream-resident-context-storage";
+import { createResidentContextPortFactory } from "../src/runtime/resident-context-port";
+import { createTestSqlStorage } from "./helpers/sql-storage";
 
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import {
@@ -14,7 +19,7 @@ import {
   createTerminalRepositoryPublisher,
   type TerminalGitHubPublicationGateway,
 } from "../src/services/terminal/repository";
-import { createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import {
   seedWorkstreamObjectRoot,
   seedWorkstreamRun,
@@ -219,6 +224,51 @@ esac
 }
 
 describe("Terminal repository publication", () => {
+  it("probes the root instruction file inside the bootstrap command and records it for delivery", async () => {
+    const { objectStore, env, provider, context } = fixture();
+    const readGateway = {
+      mintRepositoryToken: vi.fn(async () => ({ accessToken: "write-token", expiresAt: "2026-08-13T13:00:00.000Z" })),
+      verifyRepositoryIdentity: vi.fn(async () => undefined),
+      resolveBaseRef: vi.fn(async () => BASE),
+    };
+    const ledger = new WorkstreamResidentContextStorage(createCloudflareTestBinding<DurableObjectStorage>({
+      getAlarm: async () => null,
+      setAlarm: async () => undefined,
+      transactionSync: (body: () => unknown) => body(),
+      sql: createTestSqlStorage(objectStore),
+    }));
+    const failures: string[] = [];
+    const instructions = createTerminalInstructionFiles(
+      createResidentContextPortFactory(createTestEnv({}), ledger)(W, S, "0"),
+      (_error, stage) => { failures.push(stage); },
+    );
+    // The simulated sandbox answers the bootstrap with the probe's trailer, as
+    // the real one would after the clone: the root file exists, at this content.
+    const sha = "d".repeat(64);
+    vi.mocked(provider.runUtilityCommand).mockImplementationOnce(async () => ({
+      exitCode: 0,
+      stdout: `__RALLY_INSTRUCTION_PROBE__${JSON.stringify({ entries: [{ path: "AGENTS.md", sha256: sha, bytes: 11, content: "root rules\n", truncated: false, resident: false }], pending: true })}\n`,
+      stderr: "",
+    }));
+
+    await expect(bootstrapTerminalRepository(
+      env,
+      context,
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 3, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
+      provider,
+      readGateway,
+      undefined,
+      instructions,
+    )).resolves.toMatchObject({ outcome: "cloned" });
+    const bootstrapCommand = vi.mocked(provider.runUtilityCommand).mock.calls.at(-1)?.[1].command ?? "";
+    // After the checkout, isolated from `set -e`, reporting only.
+    expect(bootstrapCommand.indexOf(".git/info/exclude")).toBeLessThan(bootstrapCommand.indexOf("( set +e; python3 -c '"));
+    expect(bootstrapCommand).toMatch(/'\/workspace' 'report' '0' '\[\]' 'AGENTS\.md' \) \|\| true$/u);
+    expect(ledger.pendingDeliveries().map((delivery) => [delivery.block.blockId, delivery.block.sourceGeneration, delivery.block.content]))
+      .toEqual([["AGENTS.md", 3, "root rules\n"]]);
+    expect(failures).toEqual([]);
+  });
+
   it("bootstraps full-access repositories with scoped secret placeholders and a prepared branch", async () => {
     const { objectStore, env, provider, context } = fixture();
     const readGateway = {

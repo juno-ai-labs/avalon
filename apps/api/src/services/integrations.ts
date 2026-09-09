@@ -2378,6 +2378,14 @@ export async function runWorkstreamHarness(
         commit: BindCompactionCommit;
         continuation: TranscriptCompactionContinuation;
       }): void | Promise<void>;
+      /** The context-residency ledger's prompt sections for the committed state. */
+      renderResidentContext(): string | null;
+      /** What the ledger would render after this compaction, and the positions it owns. */
+      prepareResidentContextCompaction(input: {
+        compactionEventId: string;
+        generation: number;
+        stateRevision: number;
+      }): { section: string | null; excludedMessagePositions: readonly number[] };
       reserveAssistantTurn(input: {
         loopId: string;
         executionId: string;
@@ -2990,6 +2998,10 @@ export async function runWorkstreamHarness(
           streamId,
         }),
         onStepSettled: (step) => runtime.persistentLoop!.settleStep(step),
+        residentContext: {
+          render: () => runtime.persistentLoop!.renderResidentContext(),
+          prepareCompaction: (compaction) => runtime.persistentLoop!.prepareResidentContextCompaction(compaction),
+        },
       } : {}),
       onBindLoopTransition: (transition) => runtime?.persistentLoop
         ? runtime.persistentLoop.commitBindTransition(transition)
