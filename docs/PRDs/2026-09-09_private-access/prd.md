@@ -4,9 +4,7 @@
 >
 > Request-only acquisition, operator invitations, and reusable download grants.
 > Standing contract: [Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
-> The companion implementation PR adds the durable `docs/private-access.md` reference.
-> Read [Current review scope](#current-review-scope) for the consolidated design
-> and [Launch copy](launch-copy.md) for supplied wording and launch checks.
+> Supplied wording and launch checks: [Launch copy](launch-copy.md).
 
 ## Summary
 
@@ -43,7 +41,7 @@ there is no durable acquisition list or operator invitation workflow.
 
 1. A CMS: copy lives in versioned content definitions initially; a live copy editor
    is deferred until requested.
-2. Preventing an authorized recipient from forwarding a bearer link or sharing an
+2. Rejected: preventing an authorized recipient from forwarding a bearer link or sharing an
    installed binary. Neither is promised by bearer download authorization.
 3. Charging for access, cohort scoring, and marketing campaigns are deferred.
 4. Approved-account lists and invitation-only account creation or sign-in are
@@ -90,23 +88,6 @@ invitation flows prefer repeatable onboarding links. Their time-only versus
 activation-retirement policy remains a decision before implementing dispatch;
 activation-based retirement requires the recovery path described below.
 
-## Impact on the product contract
-
-This changes acquisition and distribution, not workspace or work-stream
-semantics. Download authorization is not account authorization. There is no approved-account list or invitation-only account creation/sign-in.
-An already-obtained installer does not require an additional access approval.
-
-## Decision log
-
-None yet.
-
-## Current review scope
-
-This section consolidates recorded product decisions and the recommended
-invitation-management design for review. Bulk sending and activation-based link
-retirement are proposals from the discussion, not claims about implemented code.
-The companion implementation PR documents its implemented scope separately.
-
 ### Acquisition and copy
 
 - Replace the landing page on deployment, with no feature flag. Its primary flow
@@ -142,8 +123,8 @@ The companion implementation PR documents its implemented scope separately.
    provider results, link state and observed activation. Provider acceptance is
    not inbox delivery; only delivery events may label a message delivered.
    Download started is not proof of a file saved or an installation completed.
-7. Offer explicit resend, replacement-link, revoke-link and exclude-from-future-
-   sends actions. Resend retains a still-valid link. Replacement retires the old
+7. Offer explicit resend, replacement-link and revoke-link actions, plus exclusion
+   from future sends. Resend retains a still-valid link. Replacement retires the old
    link and clearly states that earlier emails will stop working. Link revocation
    never revokes a person's account or workspace membership.
 
@@ -198,41 +179,21 @@ mailbox. Existing public release paths must be coordinated with installer gating
 and desktop updates before claiming private distribution. None of these requires
 an approved-account list.
 
-### Remaining product decisions
+## Impact on the product contract
 
-- Choose whether invitation emails initially use operator-selected time expiry
-  alone or include activation-based retirement plus its recovery download page.
-  Time expiry uses the proposed grant primitive; activation
-  retirement depends on the additional identity/recovery work described above.
-- Supply the final personal invitation template and any direct phone/text contact
-  Adam wants included. The acknowledgement copy is already supplied.
-- Decide whether profile research stays manual in Ace or gains assisted lookup;
-  the source requests research but does not select a lookup provider or authorize
-  treating uncertain matches as confirmed people.
+This changes acquisition and distribution, not workspace or work-stream
+semantics. Download authorization is not account authorization. There is no approved-account list or invitation-only account creation/sign-in.
+An already-obtained installer does not require an additional access approval.
 
-### Additional acceptance for the proposed invitation workflow
+## Decision log
 
-- One-person, selected, all-filtered and everyone-waiting sends resolve the
-  intended recipient set and create one distinct link per recipient.
-- A repeated send action and overlapping operator actions do not create duplicate
-  initial invitations; closing Ace does not stop persisted sending.
-- Partial failure preserves successful results. Definite failures can recover
-  without changing frozen messages; ambiguous outcomes remain visible until
-  reconciled. Bounces and opt-outs are excluded from subsequent bulk sends.
-- Resend preserves a valid link; explicit replacement retires the prior grant.
-  Link revocation leaves account access and workspace membership unchanged.
-- Interrupted onboarding downloads can retry. Existing accounts and mismatched
-  sign-in emails do not prematurely retire a recipient's link. If activation
-  retirement is selected, reinstall/recovery works before retirement ships.
-- New requests arriving during a bulk send remain waiting for a later send.
-- Operator UI accurately distinguishes accepted, delivered, failed, download
-  started and activated; it never infers successful installation from a stream.
+None yet.
 
 ## Key design decisions
 
 1. **Use the supplied landing and acknowledgement copy.** The pasted
    [launch copy](launch-copy.md) is the source, including Adam @ Rally,
-   `hi@rally.ai`, and “We got your Rally request.” Freeze the sender, subject and
+   `hi@rally.ai`, and “We got your Rally request” Freeze the sender, subject and
    body with each request so changing copy does not change a retry's payload.
    Keep profile research and personal outreach separate from the automatic
    acknowledgement. Verify the sender and reply mailbox before launch.
@@ -301,6 +262,15 @@ records, including protection against a sender racing with erasure. Automatic
 age-based cleanup and a self-service privacy UI are deferred; the documented
 operator procedure handles requests in the meantime.
 
+## Regional impact
+
+Pre-workspace access requests and manual grants are Global acquisition data.
+The shared migration chain creates empty schema in both regions; it does not
+make Global intake available in EU. Workspace invitation grants and recipient
+information stay in the invitation's owning region. EU email addresses and
+research must not be copied to Global for operator convenience. Privacy lookup
+and erasure use the regional procedure above without changing workspace routing.
+
 ## Security and trust model
 
 Ace retains Cloudflare Access and same-origin mutation admission. Random tokens
@@ -357,3 +327,31 @@ site. PRD approval alone does not deploy the implementation.
   with a sender to recreate data. Opt-out suppresses future invitations across
   duplicate signup and bulk selection without retaining research/message content.
   Regional invitation erasure and provider-copy handling follow the lifecycle above.
+
+- One-person, selected, all-filtered and everyone-waiting sends resolve the
+  intended recipient set and create one distinct link per recipient.
+- A repeated send action and overlapping operator actions do not create duplicate
+  initial invitations; closing Ace does not stop persisted sending.
+- Partial failure preserves successful results. Definite failures can recover
+  without changing frozen messages; ambiguous outcomes remain visible until
+  reconciled. Bounces and opt-outs are excluded from subsequent bulk sends.
+- Resend preserves a valid link; explicit replacement retires the prior grant.
+  Link revocation leaves account access and workspace membership unchanged.
+- Interrupted onboarding downloads can retry. Existing accounts and mismatched
+  sign-in emails do not prematurely retire a recipient's link. If activation
+  retirement is selected, reinstall/recovery works before retirement ships.
+- New requests arriving during a bulk send remain waiting for a later send.
+- Operator UI accurately distinguishes accepted, delivered, failed, download
+  started and activated; it never infers successful installation from a stream.
+
+## Open questions
+
+- Choose whether invitation emails initially use operator-selected time expiry
+  alone or include activation-based retirement plus its recovery download page.
+  Time expiry uses the proposed grant primitive; activation
+  retirement depends on the additional identity/recovery work described above.
+- Supply the final personal invitation template and any direct phone/text contact
+  Adam wants included. The acknowledgement copy is already supplied.
+- Decide whether profile research stays manual in Ace or gains assisted lookup;
+  the source requests research but does not select a lookup provider or authorize
+  treating uncertain matches as confirmed people.
