@@ -92,7 +92,10 @@ export function patchCachedWorkstream(
  * icon-only choice keeps the color. This is a pushed fact and not a versioned
  * one: `applyVersionedWorkstreamState` replaces `appearance` whole whenever a
  * newer common waterline arrives, so a later authoritative push can always
- * correct it, and a delayed older push is at worst a brief flicker back.
+ * correct it, and a delayed older push is at worst a brief flicker back. The
+ * one receipt that must not reach here is a replay: the caller skips this
+ * write when the receipt crossed a reconnect, because the room publishes
+ * nothing for a replayed command and the newer state may already be cached.
  */
 export function patchCachedWorkstreamAppearance(
   queryClient: QueryClient,

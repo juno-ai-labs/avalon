@@ -1092,11 +1092,23 @@ export function useWorkstreamSocket(
       const command = { type: 'set_workstream_appearance' as const, operationId: uuidV7(), appearance };
       const result = appearanceQueue.then(async () => {
         if (closedByEffect) throw new ApiError('The work stream is no longer available.', 409, 'workstream_socket_unavailable');
-        const receipt = await submitSubstreamCommand(command);
+        const submitted = submitSubstreamCommand(command);
+        // Read after the submit, which starts a connection attempt when none is
+        // open and bumps the generation as it does.
+        const sentOnGeneration = connectGeneration;
+        const receipt = await submitted;
         if (receipt.command !== 'set_workstream_appearance') throw new Error('substream_command_receipt_mismatch');
         // The sidebar row has no preview of its own and the projection that
-        // would update it is several hops away. The receipt is the commit.
-        patchCachedWorkstreamAppearance(queryClient, parentId, appearance);
+        // would update it is several hops away. The receipt is the commit —
+        // on the connection that carried the command. A receipt that arrives
+        // after a reconnect answers a resend, and the room answers a resend of
+        // an already committed operation from its receipt without publishing
+        // anything, so it may describe a value another client has since
+        // replaced and whose newer state this client already holds. The
+        // reconnect's snapshot carries the current value, so the patch is
+        // simply not needed there, and applying it could put the older choice
+        // back with nothing left to correct it.
+        if (sentOnGeneration === connectGeneration) patchCachedWorkstreamAppearance(queryClient, parentId, appearance);
       });
       appearanceQueue = result.catch(() => undefined);
       return result;
