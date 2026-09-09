@@ -192,7 +192,9 @@ prove layout, focus, scroll position, or overlap.
 
 Square media tiles now measure twice the standard file-card height (108px
 from 54px), using shared CSS dimensions in composer, attachments, and embeds.
-This keeps media compact instead of growing to fill the grid column.
+This keeps media compact instead of growing to fill the grid column. Capsule
+composer overrides also allow wrapping and let file cards fit their grid tracks,
+so the input does not retain the former horizontal overflow behavior.
 
 ### 2026-09-09 — Square media and wrapping attachment grids
 

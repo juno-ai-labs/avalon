@@ -5984,8 +5984,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   grid-column: 1 / -1;
   grid-row: 1;
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: visible;
   padding: 10px 12px 2px;
   scrollbar-width: none;
   width: 100%;
@@ -6006,8 +6005,8 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   flex: 0 0 220px;
   height: var(--attachment-file-card-height);
   min-height: var(--attachment-file-card-height);
-  min-width: 220px;
-  width: 220px;
+  min-width: 0;
+  width: 100%;
 }
 
 :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-input-shell {
