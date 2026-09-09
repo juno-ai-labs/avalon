@@ -122,13 +122,13 @@ Generated artifacts has no **Manage resources** button or resource-list popup.
 File previews still offer individual **Resource details**; their lightbox retains
 refresh, watch, archive and version history, but no navigation to a resource list.
 Changing conversations closes both lightboxes and pending resource dialogs.
-Participant rows open the
+Participants are one facepile button onto the
 existing management dialog. Selecting a row switches the feed's substream; the
 rail itself stays at work-stream scope.
 
 Its device-local collapse preference is independent of the global sidebar.
 Expanded width defaults to 280px and is draggable between 240px and 400px;
-the icon rail is 88px, matching the existing Grok navigation. Its trailing-edge
+the icon rail is 96px (`COLLAPSED_SIDEBAR_WIDTH`), matching the existing Grok navigation. Its trailing-edge
 handle also accepts Left/Right keys. Width is persisted separately from global
 navigation. Dragging below 210px collapses it; expanding requires crossing
 220px, retaining the existing ten-pixel hysteresis. It temporarily collapses

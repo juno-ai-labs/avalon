@@ -55,9 +55,11 @@ describe('WorkstreamSidebar', () => {
   });
 
   it('marks the main conversation with the work stream\u2019s own icon and colour', () => {
-    setup({ ...workstream, appearance: { icon: 'atom', color: 'teal' } });
+    // 'rocket' is not what this id generates ('atom'), so the assertion fails
+    // if the saved icon stops being read rather than passing down either branch.
+    setup({ ...workstream, appearance: { icon: 'rocket', color: 'teal' } });
     const mark = screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }).querySelector('.workstream-mark');
-    expect(mark).toHaveClass('lucide-atom');
+    expect(mark).toHaveClass('lucide-rocket');
     expect(mark).toHaveStyle({ color: 'var(--av-sys-color-project-teal)' });
   });
 
@@ -144,6 +146,25 @@ describe('WorkstreamSidebar', () => {
     expect(onSelectSubstream).toHaveBeenLastCalledWith('00000000-0000-7000-8000-000000000099');
     fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }));
     expect(onSelectSubstream).toHaveBeenLastCalledWith('0');
+  });
+
+  it('keeps the branch line for a substream whose title has no first character', () => {
+    render(<Tooltip.Provider><WorkstreamSidebar
+      workstream={{ ...workstream, privateChildren: [{
+        substreamId: asSubstreamId('00000000-0000-7000-8000-000000000098'), title: '   ', createdByUserId: asUserId(person.id),
+        createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
+      }] }}
+      presentUserIds={[]}
+      onOpenArtifact={vi.fn()}
+      onParticipants={vi.fn()}
+      onFocusTranscript={vi.fn()}
+    /></Tooltip.Provider>);
+    const sidebar = screen.getByRole('complementary');
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
+    expect(sidebar).toHaveClass('is-compact');
+    // A lone space is wire-legal, and an empty mark square says nothing at all.
+    expect(sidebar.querySelector('.workstream-substream-initial')).toBeNull();
+    expect(sidebar.querySelector('.tabler-icon-border-corner-pill')).not.toBeNull();
   });
 
   it('collapses for available pane width without overwriting the manual preference', () => {
