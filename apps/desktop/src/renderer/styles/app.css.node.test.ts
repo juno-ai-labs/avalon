@@ -63,18 +63,32 @@ describe('sidebar collapse motion', () => {
     // width channels rather than whichever the rule helper reaches first.
     expect(stylesheet).toContain(
       'transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1),'
-      + ' --av-cmp-sidebar-width var(--sidebar-collapse-motion);',
+      + ' --av-cmp-sidebar-width var(--sidebar-collapse-motion),'
+      + ' --workstream-sidebar-width var(--sidebar-collapse-motion);',
     );
-    // The rail is restated rather than left out, so suppressing one channel
-    // during a drag does not silently take the other with it.
+    // Each drag drops only its own channel. The other two are restated rather
+    // than left out, so dragging one sidebar cannot silently stop the other, or
+    // a rail closing on its own, from moving.
     expect(rule('.workspace-shell:has(.sidebar.is-resizing)'))
-      .toBe(' transition-property: --rail-width; ');
+      .toBe(' transition-property: --rail-width, --workstream-sidebar-width; ');
+    expect(rule('.workspace-shell:has(.workstream-context-sidebar.is-resizing)'))
+      .toBe(' transition-property: --rail-width, --av-cmp-sidebar-width; ');
   });
 
   it('transitions the work-stream sidebar on the one property that sizes it', () => {
     expect(rule('.workstream-context-sidebar'))
       .toContain('transition: flex-basis var(--sidebar-collapse-motion)');
     expect(rule('.workstream-context-sidebar.is-resizing')).toContain('transition: none');
+  });
+
+  // `--rail-max-slot` spends the width this sidebar publishes, so the published
+  // copy has to travel on the same interval as the `flex-basis` that draws it.
+  // Registered as a length, or it reaches its final value in one frame and the
+  // inspector's width steps while the sidebar beside it is still moving.
+  it('moves the width the work-stream sidebar publishes with the width it draws', () => {
+    expect(stylesheet).toMatch(/@property --workstream-sidebar-width \{\n {2}syntax: '<length>';/u);
+    expect(rule('@property --workstream-sidebar-width')).toContain('initial-value: 0px;');
+    expect(stylesheet).toContain('var(--workstream-sidebar-width, 0px)');
   });
 
   it('spends one duration on both sidebars', () => {

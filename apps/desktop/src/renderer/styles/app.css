@@ -2716,11 +2716,23 @@ pre {
 .conversation-layout { display: flex; height: 100%; min-width: 0; }
 .conversation-layout > .workstream-screen { flex: 1; }
 /* This sidebar is a flex child of the conversation layout rather than a fixed
-   panel measured from a shell property, so `flex-basis` is the one channel its
-   width is written to and the one thing transitioned. The transcript beside it
-   takes the remaining space and so travels with it for free. Same duration as
-   the navigation's, from the same custom property: collapsing either edge is
-   one gesture with one answer. */
+   panel measured from a shell property, so `flex-basis` is what sizes it and is
+   what is transitioned. The transcript beside it takes the remaining space and
+   so travels with it for free. Same duration as the navigation's, from the same
+   custom property: collapsing either edge is one gesture with one answer.
+
+   It also *publishes* its width to the shell as `--workstream-sidebar-width`,
+   which `--rail-max-slot` spends. That is a second channel carrying the same
+   number, so it is registered and transitioned over the same interval below —
+   left as a plain custom property it would reach its final value in one frame
+   and step the inspector's width while this sidebar was still travelling, which
+   is the cut this section removes, moved to the other side of the window. The
+   `0px` initial value is what a route without this sidebar reserves. */
+@property --workstream-sidebar-width {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
 .workstream-context-sidebar { background: var(--av-cmp-sidebar-background); border-right: 1px solid var(--av-cmp-sidebar-border); display: flex; flex: 0 0 280px; flex-direction: column; min-height: 0; min-width: 0; position: relative; transition: flex-basis var(--sidebar-collapse-motion); }
 /* As above: a drag tracks the pointer, so the gesture opts its own width out. */
 .workstream-context-sidebar.is-resizing { transition: none; }
@@ -3991,15 +4003,22 @@ body:has(.resource-lightbox) .menu-content { z-index: 1004; }
    remembered width, so a handle or a header cannot part company with a panel the
    window has capped. Each breakpoint that changes the room available restates
    it. */
-.workspace-shell { --rail-max-slot: max(280px, calc(100vw - var(--av-cmp-sidebar-width) - var(--workstream-sidebar-width, 0px) - var(--conversation-min-width))); --rail-slot: min(var(--rail-width), var(--rail-max-slot)); transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1), --av-cmp-sidebar-width var(--sidebar-collapse-motion); }
+.workspace-shell {
+  --rail-max-slot: max(280px, calc(100vw - var(--av-cmp-sidebar-width) - var(--workstream-sidebar-width, 0px) - var(--conversation-min-width)));
+  --rail-slot: min(var(--rail-width), var(--rail-max-slot));
+  transition: --rail-width 240ms cubic-bezier(.22, 1, .36, 1), --av-cmp-sidebar-width var(--sidebar-collapse-motion), --workstream-sidebar-width var(--sidebar-collapse-motion);
+}
 /* A drag has to track the pointer exactly, so for the length of the gesture the
-   navigation's width channel leaves the transitioned set and the sidebar sits
-   where the pointer is. Only that channel: the rail is restated rather than
-   dropped with it, so a rail closing on its own keeps its own motion even if a
-   sidebar drag were somehow live at the same moment. The class is on the
+   dragged sidebar's own width channel leaves the transitioned set and the
+   sidebar sits where the pointer is. Only that one: the other two are restated
+   rather than dropped with it, so dragging one sidebar cannot silently stop the
+   other — or a rail closing on its own — from moving. Naming the survivors is
+   enough to re-pair them with their durations by position, because all three
+   entries above carry the same 240ms and the same curve. The class is on the
    sidebar, which is what knows it is being dragged, so the shell reads it back
    with `:has()` rather than the drag having to reach up and set a second flag. */
-.workspace-shell:has(.sidebar.is-resizing) { transition-property: --rail-width; }
+.workspace-shell:has(.sidebar.is-resizing) { transition-property: --rail-width, --workstream-sidebar-width; }
+.workspace-shell:has(.workstream-context-sidebar.is-resizing) { transition-property: --rail-width, --av-cmp-sidebar-width; }
 /* The column is named `minmax(0, 1fr)` rather than left implicit. An `auto`
    column's minimum is the items' min-content, and a markdown document's
    min-content is its longest unwrapped line — so the panel grew with the file
