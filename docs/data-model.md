@@ -32,6 +32,15 @@ relationally queried.
 Read it before adding a table, a column, or a migration, and before assuming that
 knowing an object's ID is enough to read it — it never is.
 
+Migration 0101 adds Global pre-workspace `access_requests` and hashed
+`download_grants`. Their lifecycle and regional boundaries are in
+[private access](private-access.md). The shared migration creates empty EU schema;
+public acquisition writes only in Global. Migration 0102 adds nullable
+`expires_at`: null retains single-use admission, while a UTC deadline permits
+repeat downloads until expiry. `used_at` remains the first-use timestamp. Migration 0103 adds nullable
+`acknowledgement_from` to freeze the authored sender for new requests; legacy
+rows preserve transactional sender resolution.
+
 ## Personal work-stream access history
 
 WorkspaceDO migration 37 adds `workspace_workstream_access`, keyed by user and
@@ -978,6 +987,33 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-09-09 — Freeze authored acknowledgement senders
+
+Migration 0103 adds `access_requests.acknowledgement_from` because the supplied
+launch email comes from Adam, and a retry must retain that sender with the
+original subject/body. A null value deliberately preserves existing requests'
+transactional sender resolution. See [private access](private-access.md).
+
+### 2026-09-09 — Add optional download expiry
+
+The shared download issuer now supports timed links alongside single-use links,
+following the product owner's request to expire access by time instead of count.
+Migration 0102 preserves existing links with a null deadline; operators choose
+the expiry in Ace rather than inheriting a guessed TTL. See
+[private access](private-access.md) for admission and rollout requirements.
+
+
+### 2026-09-09 — Private access foundation
+
+Migration 0101 adds Global pre-workspace `access_requests` and hashed
+`download_grants`. Their lifecycle and regional boundaries are in
+[private access](private-access.md). The shared migration creates empty EU schema;
+public acquisition writes only in Global.
+
+This separates request capture and one-use links from the still-public release
+channel, so acquisition can be reviewed without duplicating download authority.
+
 
 ### 2026-09-09 — The context-residency ledger
 

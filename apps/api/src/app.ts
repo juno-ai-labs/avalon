@@ -48,6 +48,8 @@ import {
   isSharedSlackIngress,
 } from "./services/slack-routing-service";
 
+import { privateAccessRoutes } from "./routes/private-access";
+
 export function createApp(): Hono<HonoAppEnv> {
   const app = new Hono<HonoAppEnv>();
   app.use("*", requestContext);
@@ -117,6 +119,7 @@ export function createApp(): Hono<HonoAppEnv> {
 
   app.get("/", (c) => c.json({ service: "avalon-api", region: c.env.AVALON_REGION }));
   app.route("/health", healthRoutes);
+  app.route("/access", privateAccessRoutes);
   app.route("/auth", authRoutes);
   // Development tooling; every handler re-checks the dev gate itself.
   app.route("/dev", devRoutes);
