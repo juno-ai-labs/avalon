@@ -3820,3 +3820,8 @@ export const SidekickAttachmentSchema = z.object({
 });
 export type SidekickAttachment = z.infer<typeof SidekickAttachmentSchema>;
 export const SidekickAttachmentsSchema = z.object({ items: z.array(SidekickAttachmentSchema) });
+
+export { safeParseSocketEvent, isUnknownSocketEvent } from "./socket-events";
+
+export const ClientSocketEventTypeSchema = z.union(ClientSocketEventSchema.options.map((event) => event.shape.type));
+export const WorkspaceSocketClientEventTypeSchema = z.union(WorkspaceSocketClientEventSchema.options.map((event) => event.shape.type));

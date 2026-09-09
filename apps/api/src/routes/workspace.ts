@@ -53,7 +53,7 @@ workspaceRoutes.get("/socket", async (c) => {
   const url = new URL(c.env.PUBLIC_API_BASE_URL);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = `/socket/workspaces/${auth.workspaceId}`;
-  url.search = new URLSearchParams({ ticket }).toString();
+  url.search = "";
   return c.json(SocketTicketSchema.parse({ url: url.toString(), ticket }));
 });
 workspaceRoutes.patch("/", zValidator("json", UpdateWorkspaceRequestSchema), async (c) =>

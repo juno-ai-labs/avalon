@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { isUnknownSocketEvent } from "@rally/contracts";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { logError } from "../observability/logger";
@@ -26,6 +28,10 @@ const MAX_CLIENT_FRAME_CHARACTERS = 256_000;
 const MAX_CLIENT_FRAMES_PER_SECOND = 30;
 const SESSION_LEASE_REFRESH_MS = 60 * 1_000;
 const RELEASE_RETRY_DELAYS_MS = [0, 50, 200] as const;
+
+const transcriptionClientEventTypes = z.enum([
+  "input_audio_buffer.append", "input_audio_buffer.commit", "input_audio_buffer.clear",
+]);
 
 type AllowedClientEvent =
   | { type: "input_audio_buffer.append"; audio: string }
@@ -226,7 +232,7 @@ export class RealtimeTranscriptionService {
     const url = new URL(this.env.PUBLIC_API_BASE_URL);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = "/socket/transcription";
-    url.search = new URLSearchParams({ ticket }).toString();
+    url.search = "";
     return { url: url.toString(), ticket };
   }
 
@@ -337,6 +343,9 @@ export class RealtimeTranscriptionService {
 
         const parsed = parseTranscriptionClientEvent(stringMessage(event.data));
         if (!parsed) {
+          try {
+            if (isUnknownSocketEvent(JSON.parse(stringMessage(event.data) ?? ""), transcriptionClientEventTypes)) return;
+          } catch { /* Malformed JSON keeps the existing error response. */ }
           sendJson(server, {
             type: "error",
             error: { code: "invalid_event", message: "Only realtime audio-buffer events are accepted." },

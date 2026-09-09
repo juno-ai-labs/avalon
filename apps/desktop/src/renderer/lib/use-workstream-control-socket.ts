@@ -1,3 +1,4 @@
+import { safeParseSocketEvent, isUnknownSocketEvent } from "@rally/contracts";
 import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamControlSocketEventSchema,
@@ -242,7 +243,9 @@ export function useWorkstreamControlSocket(
             return;
           }
           try {
-            const event = WorkstreamControlSocketEventSchema.safeParse(JSON.parse(String(messageEvent.data)));
+            const decoded: unknown = JSON.parse(String(messageEvent.data));
+            if (isUnknownSocketEvent(decoded, WorkstreamControlSocketEventSchema.shape.type)) return;
+            const event = safeParseSocketEvent(WorkstreamControlSocketEventSchema, decoded);
             if (!event.success) {
               if (!protocolWarningReported) {
                 protocolWarningReported = true;
