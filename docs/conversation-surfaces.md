@@ -151,7 +151,10 @@ local actions; **Speak** uses the regional authenticated stream documented in
 markdown even when the shared renderer has collapsed its sections. **New
 substream** closes that row, and a person's own settled turn carries the same
 control alone in a row beneath its bubble, inset by the bubble's corner so it
-ends on the same vertical as the identity line above it; both are described in
+ends on the same vertical as the identity line above it. A settled turn carrying
+attachments and no prose still shows the row, holding the cutoff alone: copy,
+speech and the exports each act on the response text and are withheld when there
+is none. Both placements are described in
 [`substream-creation.md`](substream-creation.md). The row owns the hover fade —
 a control inside it must not carry its own. The corner is
 `--turn-bubble-radius`, set on the human turn and read by the bubble, the header
@@ -170,6 +173,23 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-09 — Keep the cutoff on a turn that carries no prose
+
+**What changed:** The assistant action row renders for the substream cutoff
+alone, not only when the turn has text, and copy, speech and the exports are
+withheld from a turn whose text is empty.
+
+**Why:** Moving the cutoff out of the identity line moved it behind that row's
+"has text" condition, and a settled turn may legally carry attachments and an
+empty string — the contract's text block accepts one. Such a turn is still a
+place to branch from, and it silently stopped offering it. The text-bearing
+actions stay gated because each acts on the response text: an empty clipboard,
+silence, and a blank card are worse than an absent button.
+
+**Consequences:** The row's presence and its contents are two questions now. A
+control added to it declares which one it answers — whether it needs the text,
+or only the turn.
 
 ### 2026-09-09 — Align the human action row on the bubble's corner, through the token
 

@@ -1409,6 +1409,13 @@ function AssistantMessageActions({ citations, mentions, onStartSubstream, teleme
     }
   };
 
+  // A settled turn can carry attachments and no prose, and the cutoff it offers
+  // does not depend on there being words to take. Copy, speech and the exports
+  // do: each of them acts on the response text, and an empty one gives a person
+  // an empty clipboard, silence, or a blank card. So the row still appears for
+  // the branch alone, with nothing on it that has nothing to work on.
+  const hasText = text.length > 0;
+
   return (
     <footer
       className={clsx('agent-message-actions', speaking && 'is-speaking')}
@@ -1418,8 +1425,10 @@ function AssistantMessageActions({ citations, mentions, onStartSubstream, teleme
       // as one attempt that did not work.
       onPointerLeave={() => setFailed(null)}
     >
-      <button aria-label="Copy response" onClick={() => void copyResponse().catch(() => undefined)} type="button"><Clipboard size={12} /> Copy</button>
-      {speech && (
+      {hasText && (
+        <button aria-label="Copy response" onClick={() => void copyResponse().catch(() => undefined)} type="button"><Clipboard size={12} /> Copy</button>
+      )}
+      {hasText && speech && (
         <button
           aria-label={speaking ? 'Stop speaking' : 'Speak response with an AI-generated voice'}
           onClick={() => speaking ? speech.stop() : speech.speak(speechId, text)}
@@ -1430,7 +1439,7 @@ function AssistantMessageActions({ citations, mentions, onStartSubstream, teleme
           {speaking ? 'Stop speaking' : 'Speak'}
         </button>
       )}
-      {exportsAvailable && (
+      {hasText && exportsAvailable && (
         <>
           <button
             aria-busy={saving === 'image' || undefined}
@@ -1493,7 +1502,7 @@ export function AssistantMessageContent({
       {text ? (
         <MarkdownBody citations={citations} collapseHeadings={collapseHeadings} mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody>
       ) : null}
-      {showCopy && !streaming && text && (
+      {showCopy && !streaming && (text !== '' || onStartSubstream !== undefined) && (
         <AssistantMessageActions
           citations={citations}
           mentions={mentions}
