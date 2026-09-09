@@ -180,8 +180,11 @@ typed query topics; it never embeds the underlying row. Membership, invitations,
 user profiles, placement routes, and migration control remain D1 authorities.
 
 `WorkstreamDO.workstream_metadata` is different: it is the authoritative
-cross-substream aggregate. Its revision covers complete common metadata and its
-`substream_user_directory` inputs produce the viewer overlay. A WebSocket
+parent metadata projected from Main. Its revision covers complete common metadata;
+only Main entries in `substream_user_directory` produce the parent viewer overlay.
+Child title and lifecycle live in `conversation_children`, whose nullable
+`archived_at` is independent of creation readiness. Archive retains membership
+and transcript while excluding the child from the visible directory. A WebSocket
 snapshot includes nulls so a client can delete a former email,
 archive/system marker, or schedule rather than accidentally retain it.
 `SubstreamAgent` continues to own ordered parts, active output, and replay; token
@@ -204,7 +207,7 @@ SQL joins.
 - The main `SubstreamAgent`'s object-local `workstream` row is the product root;
   each provisioned child carries the bounded root facts needed to authorize and
   project its own context, while `WorkstreamDO.workstream_metadata` is the
-  aggregate cross-child view. `workstream_key` is the conversation parent id and
+  Main-derived parent view. `workstream_key` is the conversation parent id and
   `parent_kind` (v39) says whether that parent is a work stream or an
   automation; `origin_type`, `automation_subscription_id`, `automation_run_id`,
   and `planned_for` are dead columns, kept only because the released
@@ -939,6 +942,16 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-09-08: Keep child archive separate from creation readiness
+
+WorkstreamDO migration 9 adds nullable `conversation_children.archived_at`.
+An additive column preserves preparation and membership rows and allows restore;
+changing the creation-state CHECK would conflate readiness with archive and
+require a table rebuild. Main remains the sole source of parent attention and
+participation. Child notification delivery may install a neutral parent viewer
+row for its existing delivery barrier, but never merges child unread ordinals
+or membership into it.
 
 ### 2026-09-08 — Preserve search revisions across non-content updates
 

@@ -1,3 +1,4 @@
+import { parseDesktopDeepLinkIntent } from "./desktop-deep-link-intent";
 import { describe, expect, it } from "vitest";
 import {
   isWorkstreamId,
@@ -15,6 +16,13 @@ const LEGACY_WEB_BASE_URL = "https://with-avalon.com";
 const TARGET = { region: "eu" as const, workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID };
 
 describe("canonical work-stream links", () => {
+  it("preserves the private child through HTTPS and desktop handoff", () => {
+    const target = { ...TARGET, substreamId: "00000000-0000-7000-8000-000000000099" };
+    expect(parseWorkstreamLinkTarget(workstreamCanonicalUrl(WEB_BASE_URL, target), { webBaseUrl: WEB_BASE_URL })).toEqual(target);
+    expect(parseWorkstreamLinkTarget(workstreamDeepLink(target), { webBaseUrl: WEB_BASE_URL })).toEqual(target);
+    expect(parseDesktopDeepLinkIntent(workstreamDeepLink(target))).toMatchObject({ kind: "workstream", workstreamId: target.workstreamId, substreamId: target.substreamId });
+  });
+
   it("mints one workspace-addressed canonical and desktop shape", () => {
     expect(workstreamCanonicalUrl(WEB_BASE_URL, TARGET))
       .toBe(`${WEB_BASE_URL}/app/workspaces/eu/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`);

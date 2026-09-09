@@ -1320,8 +1320,13 @@ export function ConversationSurface({
   // The header renames in place, so both the open detail and the sidebar list
   // have to show the new title without a refetch round trip.
   const renameWorkstream = useMutation({
-    mutationFn: (title: string) => api!.renameWorkstream(id, title),
+    mutationFn: async (title: string) => {
+      if (substreamId === '0') return api!.renameWorkstream(id, title);
+      await api!.renameSubstream(id, substreamId, title);
+      return undefined;
+    },
     onSuccess: (updated) => {
+      if (!updated) return;
       queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
         current ? { ...current, title: updated.title } : current,
       );
