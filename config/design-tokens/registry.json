@@ -14,6 +14,7 @@
     "sys.color.success": "Positive state. `fill` and `fill-edge` are a filled control — a switch that is on, a selected preset — which is neither the vivid hue nor the wash.",
     "sys.color.warning": "Attention short of failure.",
     "sys.color.danger": "Failure and destructive action.",
+    "sys.color.palette-ink": "The two inks a palette fill can carry, absolute in both appearances. A fill does not change with the theme, so the ink over it must not either — the neutral ramp inverts and is the wrong source here. Which one a given fill takes is PALETTE_INK in @rally/contracts, not a judgement made in CSS.",
     "sys.color.project": "The semantic identity palette shared by projects, work streams, and personal accents. Stored color keys remain stable; each light/dark appearance defines its own values so shades can be tuned for contrast without changing saved choices.",
     "sys.color.workstream": "One colour per state a work stream can show a person in the sidebar and on the home screen. Every marker in the product draws from this group and nowhere else, so a state has one colour wherever it appears; which state wins when several are true at once is the client’s ordering, not the palette’s. Five of them are the run’s (`running`, `needs-input`, `completed`, `failed`, `stopped`) and three are the reader’s own (`unread`, `mentioned`, `unseen`), which is why they are one vocabulary: they compete for one dot.",
     "sys.color.scrim": "What sits between a layer and what it covers.",
@@ -307,6 +308,12 @@
       "$type": "color"
     },
     "sys.color.danger.on": {
+      "$type": "color"
+    },
+    "sys.color.palette-ink.light": {
+      "$type": "color"
+    },
+    "sys.color.palette-ink.dark": {
       "$type": "color"
     },
     "sys.color.project.edge": {

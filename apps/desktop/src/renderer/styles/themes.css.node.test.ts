@@ -251,6 +251,9 @@ describe('token references', () => {
   // three by libraries on their own elements. They cannot be checked from this
   // file, so they are listed to say they were considered.
   const RUNTIME = ['--rail-width', '--person-accent', '--person-dot',
+    // Set per glyph from PALETTE_INK, which is a decision about a fill rather
+    // than about the appearance, so it cannot be a theme token.
+    '--glyph-ink',
     '--markdown-table-columns', '--arrival-index',
     '--workstream-sidebar-width', '--conversation-min-width',
     '--citation-card-played',

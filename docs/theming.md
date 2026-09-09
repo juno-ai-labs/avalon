@@ -116,6 +116,30 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-09 — A fill's ink is absolute, and the glyph follows it
+
+**What changed:** `sys.color.palette-ink.light` and `sys.color.palette-ink.dark`
+join the token set, identical in both appearances. `WorkstreamGlyph` and
+`AutomationGlyph` set `--glyph-ink` per glyph from `PALETTE_INK` instead of
+painting every symbol in the one `text-on-inverse` near-white.
+
+**Why:** Review caught the symbol going illegible on the brighter half of the new
+ring — white on `lime` is 1.98:1 and on `emerald` 2.47:1, under the 3:1 WCAG asks
+of a meaningful graphical object. One fixed light foreground worked only because
+the previous ramp was uniformly dark, so this is a regression the palette change
+introduced rather than a pre-existing gap.
+
+The inks had to be new tokens rather than the neutral ramp. `ref.color.neutral.*`
+inverts between appearances, which is right for text on a themed surface and
+wrong here: a palette fill is the same colour in both themes, so its ink must be
+too. The first attempt reached for `neutral.14` and produced white-on-orange in
+dark mode, which `palette.css.node.test.ts` caught.
+
+**Consequences:** Anything drawing on a palette fill takes its ink from
+`PALETTE_INK` and these two tokens, never from `text-on-inverse`. The test walks
+every fill in both appearances and holds the 3:1 floor, so a future palette value
+that would go unreadable fails the build.
+
 ### 2026-09-09 — The identity palette becomes a hue ring, and accents step it in twos
 
 **What changed:** `sys.color.project.*` moved to fourteen hues in wheel order —
