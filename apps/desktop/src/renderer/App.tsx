@@ -9,6 +9,7 @@ import { logError } from '../common/logger';
 import { desktopWorkspaceIdentityKey } from '../common/desktop';
 import { AppShell } from './components/app-shell';
 import { WorkstreamLandingScreen } from './screens/workstream-landing';
+import { WORKSTREAM_LANDING_ROUTE } from './lib/workstream-landing';
 import { Button, EmptyState, LoadingState } from './components/primitives';
 import { SpeechPlaybackProvider } from './components/speech-playback';
 import { ApiError, isSessionRejection } from './lib/api';
@@ -120,7 +121,7 @@ function NotFoundScreen(): React.JSX.Element {
     <div className="screen-error-state screen-with-titlebar">
       <div className="screen-drag-strip window-drag" />
       <EmptyState
-        action={<Button onClick={() => { window.location.hash = '#/workstreams/new'; }}>Go to new work stream</Button>}
+        action={<Button onClick={() => { window.location.hash = `#${WORKSTREAM_LANDING_ROUTE}`; }}>Go to your work streams</Button>}
         description="This Rally view does not exist or is no longer available."
         title="Nothing here"
       />

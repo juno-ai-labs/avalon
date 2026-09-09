@@ -24,6 +24,8 @@ the different question of who a work stream is *for*.
 | `apps/desktop/src/renderer/components/sidebar.tsx` | The **Pinned** section, the right-click **Pin** / **Unpin** item, and the drag-and-keyboard reorder. `orderPinnedWorkstreams` decides what the section renders. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The flat-array cache key and the only typed write boundary for it. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | `applyPinnedWorkstreams` derives the new pin positions before handing the list update to the cache boundary. |
+| `apps/desktop/src/renderer/screens/workstream-landing.tsx` | The root route: resolves to the first pin, else the most recent row, else the composer. |
+| `apps/desktop/src/renderer/lib/workstream-landing.ts` | `useOpenFirstWorkstream`, the one way a screen leaves for that route, and the `skipWorkstreamIds` state it carries. |
 
 ## How it works
 
@@ -90,6 +92,37 @@ The recency headings use access time too. Their bulk commands select
 `recency: "access"`; existing activity-based API callers retain their original
 meaning. Notes retain activity-based grouping, and automations keep their own
 section ordering. Pins remain manually ordered.
+
+### Leaving for the first work stream
+
+The root route resolves to the same row the sidebar shows at the top — the
+first pin, else the most recent by the viewer's access — and it is where every
+screen goes when what it was showing is no longer there to show: an archived
+work stream, note, or project, a deleted automation or archived draft, a work
+stream the reader left, one they marked unread, the not-found screen's way out,
+the end of onboarding, and the main window's hand-off to the Sidekicks window.
+Only a workspace with nothing in it lands on the composer. The composer is
+otherwise reached by an explicit New action alone: the sidebar's New buttons,
+the menu bar item, a project's plus, and the `workstreams/new` and
+`automations/new` deep links, which are create intents even though the second
+no longer has a builder to open.
+
+`useOpenFirstWorkstream` is the one way a screen leaves. It always replaces the
+history entry, so Back cannot return to a screen the API refuses, and it names
+the rows the landing must pass over. The directory is authoritative and no
+leaving screen patches it: an archived row is removed by the WorkstreamDO
+tombstone the socket delivers, a batch by its refetch, and both land after the
+screen has had to go. Without the skip the landing would open the row that was
+just archived, because it was the most recent one precisely by having been
+open. A row marked unread stays in the list for good and is skipped for a
+different reason: opening it is what reads it. A batch names every cached row
+its filter took, not only the open one, since the response says only how many
+went.
+
+The one deliberate exception is the inert composer route a cross-workspace deep
+link parks on while its resource action resolves. Landing there would open and
+record a visit to an unrelated room in the new workspace a moment before the
+link's own destination arrives.
 
 ### In the sidebar
 
@@ -271,6 +304,8 @@ It deliberately does not:
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real SQLite-backed WorkspaceDO append/idempotency, per-person isolation, dense unpin, tolerant reorder, pinned-first listing, and hibernating page delivery. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | The section appearing only when something is pinned, rows leaving the recent list, stored order beating activity order, absence of retired Command-number hints and navigation, the menu toggle, live reorder during a drag, the keyboard move, both error dialogs, and the row's motion following it into the section and between recency groups. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` (`applyPinnedWorkstreams`) | That a pin response rewrites every row's position, including the ones it does not name. |
+| `apps/desktop/src/renderer/screens/workstream-landing.test.tsx` | Pin-then-recency resolution, the pending, empty, and failed states, and that named rows are passed over whatever their rank. |
+| `apps/desktop/src/renderer/lib/workstream-landing.test.tsx` | That leaving replaces the entry and carries the skip list, and that a malformed state reads as no skip. |
 
 Two traps in the desktop tests. jsdom implements no `DataTransfer`, so a drag
 event needs the small stub in that file rather than `new DataTransfer()`. And an
@@ -297,6 +332,30 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-09-09 — Every leaving screen opens the first work stream
+
+Archiving the open work stream, a batch archive that took it, marking it
+unread, leaving it, archiving the open note or project, deleting the open
+automation, finishing onboarding, the not-found screen, and the Sidekicks
+hand-off all landed on the new-work-stream composer. That made the composer
+the app's fallback home rather than a create action, and archiving the room
+someone was reading answered with an empty draft instead of the next room. Each
+now leaves through `useOpenFirstWorkstream` for the root route, which already
+resolved the top sidebar row on startup; the composer is reached only by an
+explicit New action or an empty workspace.
+
+The landing gained a `skipWorkstreamIds` state for the same reason the archive
+handler never patched the list: the tombstone or refetch that removes the row
+lands after the screen has to leave, and the row that was open is the most
+recent one. Patching the cache instead was rejected because the directory
+waterline is what orders that removal against everything else in flight for
+the row. Every leave now replaces rather than pushes — the note archive and
+mark-unread paths used to push — since Back returning to a refused note, or
+reopening and thereby reading a work stream just marked unread, was the wrong
+half of that inconsistency to keep. The cross-workspace deep link's inert
+composer route is unchanged; a landing there would visit an unrelated room
+before the link's destination arrives.
 
 ### 2026-09-08 — A moved row travels to its new section
 
