@@ -7,7 +7,7 @@ export const AuthorizationResourceSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('conversation'), workspaceId: WorkspaceIdSchema,
     parentId: IdSchema, substreamId: SubstreamIdSchema }),
   z.strictObject({ kind: z.literal('resource'), workspaceId: WorkspaceIdSchema, resourceId: IdSchema }),
-  z.strictObject({ kind: z.literal('memory'), workspaceId: WorkspaceIdSchema, scopeId: IdSchema }),
+  z.strictObject({ kind: z.literal('memory'), workspaceId: WorkspaceIdSchema, scopeId: IdSchema, parentId: IdSchema }),
 ]);
 export type AuthorizationResource = z.infer<typeof AuthorizationResourceSchema>;
 
@@ -91,7 +91,7 @@ export function authorizationResourceKey(resource: AuthorizationResource): strin
   switch (resource.kind) {
     case 'conversation': return JSON.stringify([resource.workspaceId, resource.kind, resource.parentId, resource.substreamId]);
     case 'resource': return JSON.stringify([resource.workspaceId, resource.kind, resource.resourceId]);
-    case 'memory': return JSON.stringify([resource.workspaceId, resource.kind, resource.scopeId]);
+    case 'memory': return JSON.stringify([resource.workspaceId, resource.kind, resource.scopeId, resource.parentId]);
   }
 }
 

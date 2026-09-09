@@ -324,7 +324,43 @@ consumer that needs a visibility bound, measure it with versioned reads from the
 regions where that consumer runs. Those probes should be an explicit experiment,
 not authorization rechecks on ordinary reads.
 
+### Explicit visibility experiment
+
+`scripts/fixtures/kv-visibility-probe.mjs` is a disposable Worker, separate from
+product traffic. Bind the Global authorization namespace as `AUTHORIZATION_CACHE`,
+set a temporary `PROBE_TOKEN`, and deploy copies with explicit `placement.region`
+hints (for example `gcp:us-west1` and `gcp:europe-west1`). It can only access synthetic
+`measurement:kv-visibility:` UUID keys. No user grants or EU product data enter the experiment.
+
+Run `PROBE_TOKEN=... node scripts/measure-kv-visibility.mjs --writer <url>
+--reader <url> --reader <url> --samples <n> --interval-ms <n> --observation-ms <n>`.
+The caller chooses the experimental sample count, polling resolution, and observation
+window; these are not authorization expiry limits. Each sample primes readers before
+creation and replacement, records write acknowledgement and first observed version,
+reports unfinished observations explicitly, and deletes its synthetic key afterward.
+`executionPlacement` records Cloudflare’s `cf-placement` header when present;
+`ingressColo` is request ingress, not proof of execution placement. Record the deployed
+placement hints with results. Visibility times include polling resolution and use
+Worker timestamps; they are not exact replication timestamps. Remove probe deployments
+after the experiment. Pair these results with mutation-to-write-ack queue events.
+
 ## Changelog
+
+### 2026-09-09 — Remove remaining search authority work
+
+KV misses now consult the existing durable projection before canonical resolution,
+because cached negative lookups otherwise repeat owner reads after publication.
+An unavailable first fill is retained as pending and retried through the durable
+outbox; later searches return partial results without repeating that owner walk.
+At rollout, enqueue existing unavailable registrations once through the operator
+WorkspaceDO outbox, using null mutation timing because this is initialization work.
+Paginated search no longer requires a directory read before retrieval: candidate
+admission already uses projected decisions. Memory search shares that resolver,
+with host-run scope selection and canonical resolution only on initial population
+or pushed updates; memory writes retain their canonical path. Memory keys register
+scope and parent dependencies for targeted retries. The separate visibility probe
+measures KV read visibility without adding probes or freshness checks to searches.
+
 
 ### 2026-09-08 — Verify publication and failure boundaries during review
 

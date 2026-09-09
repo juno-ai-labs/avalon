@@ -21,7 +21,7 @@ export const SearchAuthorizationPushJobSchema = z.strictObject({
 });
 
 export async function searchAuthorizationKey(subject: AuthorizationSubject, resource: AuthorizationResource) {
-  const bytes = new TextEncoder().encode(JSON.stringify([1, subject, resource]));
+  const bytes = new TextEncoder().encode(JSON.stringify([1, AuthorizationSubjectSchema.parse(subject), AuthorizationResourceSchema.parse(resource)]));
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   return `search-authz:v1:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
@@ -51,6 +51,8 @@ export class SearchAuthorizationResolver implements AuthorizationResolver {
 
   async checkMany(subject: AuthorizationSubject, resources: readonly AuthorizationResource[]) {
     if (!resources.length) return [];
+    subject = AuthorizationSubjectSchema.parse(subject);
+    resources = resources.map((resource) => AuthorizationResourceSchema.parse(resource));
     const unavailable = (): AuthorizationDecision => ({ status: 'unavailable', reason: 'authority_unavailable', retryable: true });
     let raw: PromiseSettledResult<unknown>[];
     if (this.env.AVALON_REGION === 'global' && this.env.AUTHORIZATION_CACHE) {
@@ -66,11 +68,30 @@ export class SearchAuthorizationResolver implements AuthorizationResolver {
       const parsed = SearchAuthorizationSnapshotSchema.safeParse(result.value);
       return parsed.success && JSON.stringify(parsed.data.subject) === JSON.stringify(subject)
         && JSON.stringify(parsed.data.resource) === JSON.stringify(resources[index])
-        && parsed.data.decision.status !== 'unavailable' ? parsed.data.decision : null;
+        ? parsed.data.decision : null;
     });
+    // KV caches negative lookups too. A miss is not evidence that the durable projection is absent.
+    const missedIndexes = resources.flatMap((_, index) => decisions[index] === null ? [index] : []);
+    if (missedIndexes.length && this.env.AVALON_REGION === 'global' && this.env.AUTHORIZATION_CACHE) {
+      try {
+        const stored = await (await authorizationWorkspace(this.env, subject.workspaceId)).readSearchAuthorizationSnapshots({
+          subject, resources: missedIndexes.map((index) => resources[index]!),
+        });
+        for (const [offset, snapshot] of stored.entries()) {
+          if (snapshot) decisions[missedIndexes[offset]!] = snapshot.decision;
+        }
+      } catch {
+        // An unavailable projection store must not trigger a more expensive authority walk.
+        for (const index of missedIndexes) decisions[index] = unavailable();
+      }
+    }
     const missing = resources.filter((_, index) => decisions[index] === null);
     let loaded: AuthorizationDecision[];
-    try { loaded = missing.length ? await this.project(subject, missing) : []; }
+    try {
+      loaded = missing.length ? await this.project(subject, missing) : [];
+      const pending = missing.filter((_, index) => loaded[index]?.status === 'unavailable');
+      if (pending.length) await (await authorizationWorkspace(this.env, subject.workspaceId)).queueSearchAuthorizationFill({ subject, resources: pending });
+    }
     catch { loaded = missing.map(unavailable); }
     let index = 0;
     return decisions.map((decision) => decision ?? loaded[index++]!);

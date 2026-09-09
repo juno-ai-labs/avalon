@@ -205,7 +205,7 @@ export function workspaceObjectRpcs<Name extends keyof WorkspaceDO>(
   names: readonly Name[],
 ): Record<string, unknown> {
   const rpcs: Record<string, unknown> = {};
-  for (const name of new Set<keyof WorkspaceDO>(['readAuthorizationSnapshots', 'writeAuthorizationSnapshots', 'authorizationResourceFacts', 'beginAuthorizationBackfill', ...names])) {
+  for (const name of new Set<keyof WorkspaceDO>(['queueSearchAuthorizationFill', 'readSearchAuthorizationSnapshots', 'registerSearchAuthorization', 'writeSearchAuthorizationSnapshots', 'readAuthorizationSnapshots', 'writeAuthorizationSnapshots', 'authorizationResourceFacts', 'beginAuthorizationBackfill', ...names])) {
     const method = instance[name];
     if (typeof method !== "function") throw new Error(`workspace_object_rpc_missing:${String(name)}`);
     rpcs[String(name)] = (...args: unknown[]) =>

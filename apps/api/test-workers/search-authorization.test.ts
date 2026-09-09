@@ -51,6 +51,30 @@ describe('projected search authorization', () => {
     expect(await resolver.checkMany(subject, [resource])).toEqual([denied]);
   });
 
+  it('reuses the durable projection when KV keeps returning a cached miss', async () => {
+    const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName('global', subject.workspaceId));
+    await workspace.initializeWorkspace(subject.workspaceId, 'wnam');
+    const resolver = new SearchAuthorizationResolver(env, { checkMany: async () => [allowed] });
+    await resolver.project(subject, [resource]);
+    await env.AUTHORIZATION_CACHE!.delete(await searchAuthorizationKey(subject, resource));
+    const authority = vi.fn(async (): Promise<AuthorizationDecision[]> => { throw new Error('owner read'); });
+    const cached = new SearchAuthorizationResolver(env, { checkMany: authority });
+    expect(await cached.checkMany(subject, [resource])).toEqual([allowed]);
+    expect(await cached.checkMany(subject, [resource])).toEqual([allowed]);
+    expect(authority).not.toHaveBeenCalled();
+  });
+
+  it('does not repeat unavailable first fills on later searches', async () => {
+    const pendingResource = { ...resource, resourceId: crypto.randomUUID() };
+    const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName('global', subject.workspaceId));
+    await workspace.initializeWorkspace(subject.workspaceId, 'wnam');
+    const authority = vi.fn(async (): Promise<AuthorizationDecision[]> => [{ status: 'unavailable', reason: 'authority_unavailable', retryable: true }]);
+    const resolver = new SearchAuthorizationResolver(env, { checkMany: authority });
+    expect(await resolver.checkMany(subject, [pendingResource])).toEqual([expect.objectContaining({ status: 'unavailable' })]);
+    expect(await resolver.checkMany(subject, [pendingResource])).toEqual([expect.objectContaining({ status: 'unavailable' })]);
+    expect(authority).toHaveBeenCalledTimes(1);
+  });
+
   it('persists regional snapshots independently of the legacy inert RPCs', async () => {
     const stub = env.WORKSPACE_DOS.getByName('search-authorization-regional-snapshots');
     await stub.initializeWorkspace(subject.workspaceId, 'wnam');

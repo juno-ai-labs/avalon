@@ -1,3 +1,4 @@
+import { SearchAuthorizationResolver, SearchAuthorizationSnapshotSchema } from '../src/services/search-authorization';
 import { asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
@@ -612,6 +613,23 @@ describe("scoped agent memory", () => {
       invalidation_reason: "Preference is no longer valid",
       text: "Favorite color is azure",
     });
+  });
+
+  it('keeps search on projected grants until a replacement is published', async () => {
+    const { database, objectDatabase, env } = fixture();
+    const runInput = input('owner');
+    await memoryTool(env, runInput, 'add').execute(
+      { scopeKind: 'user', text: 'Projected crimson memory', rationale: 'Recall fixture' },
+      toolContext(runInput, 'projected-add'));
+    expect((await memorySearch(routedEnv(env, runInput), runInput, 'crimson')).results).toHaveLength(1);
+    database.prepare("DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?").run(WORKSPACE_ID, OWNER_ID);
+    // Cold authority would reject membership. The stored projection remains the read contract.
+    expect((await memorySearch(routedEnv(env, runInput), runInput, 'crimson')).results).toHaveLength(1);
+    for (const row of objectDatabase.prepare('SELECT snapshot_json FROM authorization_snapshots').all()) {
+      const snapshot = SearchAuthorizationSnapshotSchema.parse(JSON.parse(String(row.snapshot_json)));
+      await new SearchAuthorizationResolver(routedEnv(env, runInput)).project(snapshot.subject, [snapshot.resource]);
+    }
+    expect((await memorySearch(routedEnv(env, runInput), runInput, 'crimson')).results).toEqual([]);
   });
 
   it.each(["qwen/qwen3-embedding-8b", "Qwen/Qwen3-Embedding-8B"])("uses one fixed embedding space for %s, rejects stale vectors, and degrades to FTS", async (model) => {

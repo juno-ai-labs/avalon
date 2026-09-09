@@ -1,3 +1,4 @@
+import { resolveMemorySearchAccess } from './memory-search-authorization';
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { asWorkspaceId, MEMORY_RECALL_QUERY_LIMIT } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
@@ -281,7 +282,7 @@ export async function ensureScope(
 /** Resolve the complete memory scope union from host-owned run authority. */
 export async function resolveMemoryAccess(
   env: Env,
-  input: WorkstreamWorkflowInput,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "parentKind" | "harnessRunId" | "executionPrincipal">,
 ): Promise<MemoryScope[]> {
   const [run, workstream] = await Promise.all([
     createHarnessRunObjectPort(env, input.workspaceId, input.parentId)
@@ -497,7 +498,7 @@ async function hybridMemorySearch(
   query: string,
   trackAccess = true,
 ): Promise<MemorySearchResult & { scopes: MemoryScope[] }> {
-  const scopes = await resolveMemoryAccess(env, input);
+  const scopes = await resolveMemorySearchAccess(env, input);
   if (scopes.length === 0) {
     return { query, retrievalMode: "none", results: [], scopes };
   }
@@ -512,11 +513,7 @@ async function hybridMemorySearch(
     ? vectorSettled.status === "fulfilled" ? "hybrid" : "fts_only"
     : vectorSettled.status === "fulfilled" ? "vector_only" : "none";
 
-  // Re-resolve after both retrieval legs so membership, principal, automation,
-  // and scope authorization cannot be revoked mid-search yet still leak rows.
-  const reauthorizedScopes = await resolveMemoryAccess(env, input);
-  const reauthorizedIds = new Set(reauthorizedScopes.map((scope) => scope.memoryScopeId));
-  const canonicalScopeIds = scopeIds.filter((scopeId) => reauthorizedIds.has(scopeId));
+  const canonicalScopeIds = scopeIds;
   const candidateIds = [...new Set([...fts, ...vector].map((candidate) => candidate.memoryItemId))];
   const canonicalRows = await loadCanonicalItems(
     env,
@@ -562,7 +559,7 @@ async function hybridMemorySearch(
     await recordAccess(env, input.workspaceId, ranked.map((item) => item.memoryItemId))
       .catch(() => undefined);
   }
-  return { query, retrievalMode, results: ranked, scopes: reauthorizedScopes };
+  return { query, retrievalMode, results: ranked, scopes };
 }
 
 export async function memorySearch(

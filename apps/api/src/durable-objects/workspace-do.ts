@@ -8650,6 +8650,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }));
   }
 
+  /** Failed first fills become durable queue work; searches never repeat the owner walk. */
+  async queueSearchAuthorizationFill(input: unknown) {
+    await this.initialized;
+    const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
+    this.assertWorkspace(request.subject.workspaceId);
+    for (const resource of request.resources) {
+      this.assertWorkspace(resource.workspaceId);
+      this.state.storage.sql.exec(`INSERT INTO search_authorization_push VALUES (?, ?, 1, 0, NULL, 'cache_fill')
+        ON CONFLICT(kind, target_id) DO UPDATE SET revision = revision + 1`,
+      resource.kind === 'conversation' ? 'parent' : 'resource',
+      resource.kind === 'conversation' ? resource.parentId : resource.kind === 'resource' ? resource.resourceId : resource.scopeId);
+    }
+    await this.armNextAlarm();
+  }
+
   async registerSearchAuthorization(input: unknown) {
     await this.initialized;
     const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
@@ -8662,8 +8677,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const generation = this.state.storage.sql.exec<{ generation: number }>(`INSERT INTO search_authorization_keys
         (cache_key, generation, resource_id, parent_id) VALUES (?, 1, ?, ?)
         ON CONFLICT(cache_key) DO UPDATE SET generation = generation + 1 RETURNING generation`, key,
-        resource.kind === 'resource' ? resource.resourceId : null,
-        resource.kind === 'conversation' ? resource.parentId : null).one().generation;
+        resource.kind === 'resource' ? resource.resourceId : resource.kind === 'memory' ? resource.scopeId : null,
+        resource.kind === 'conversation' || resource.kind === 'memory' ? resource.parentId : null).one().generation;
       generations.push(generation);
       const pending = { version: 1, generation, subject: request.subject, resource, observedAt: 0,
         decision: { status: 'unavailable', reason: 'projection_incomplete', retryable: true } };
@@ -8672,6 +8687,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // Retain dependencies before owner reads, including an attachment removed while a first fill is in flight.
       if (resource.kind === 'resource') this.state.storage.sql.exec(`INSERT OR IGNORE INTO search_authorization_dependencies
         SELECT parent_id, ? FROM authorization_locations WHERE resource_id = ?`, key, resource.resourceId);
+      if (resource.kind === 'memory') this.state.storage.sql.exec(`INSERT OR IGNORE INTO search_authorization_dependencies
+        SELECT owner_id, ? FROM memory_scopes WHERE memory_scope_id = ?`, key, resource.scopeId);
       if (resource.kind === 'conversation') this.state.storage.sql.exec(`INSERT OR IGNORE INTO search_authorization_dependencies
         SELECT owning_workstream_id, ? FROM automation_directory WHERE automation_id = ? AND owning_workstream_id IS NOT NULL`, key, resource.parentId);
     }
@@ -8737,7 +8754,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
                 timing_origin = CASE WHEN first_mutated_at IS NULL OR excluded.first_mutated_at < first_mutated_at THEN excluded.timing_origin ELSE timing_origin END,
                 first_mutated_at = CASE WHEN first_mutated_at IS NULL THEN excluded.first_mutated_at
                   WHEN excluded.first_mutated_at IS NULL THEN first_mutated_at ELSE MIN(first_mutated_at, excluded.first_mutated_at) END`,
-              snapshot.resource.kind === 'resource' ? 'resource' : 'parent',
+              snapshot.resource.kind === 'conversation' ? 'parent' : 'resource',
               snapshot.resource.kind === 'resource' ? snapshot.resource.resourceId : snapshot.resource.kind === 'conversation' ? snapshot.resource.parentId : snapshot.resource.scopeId,
               snapshot.timing?.mutationAt ?? null, snapshot.timing?.origin ?? (snapshot.timing ? 'workspace_mutation' : 'cache_fill'));
             throw error;
