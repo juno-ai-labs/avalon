@@ -27,7 +27,7 @@ function operation(overrides: Record<string, unknown> = {}): Record<string, unkn
     presenterName: 'Adam',
     packVersion: 'placeholder-2026-09',
     cast: { presenter: PRESENTER_ID, priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID },
-    castNames: { presenter: 'Adam', priya: 'Priya Raman', marcus: 'Marcus Hale', dana: 'Dana Okafor' },
+    castNames: { presenter: 'Adam', priya: 'Emma Shipman', marcus: 'Sam Burton', dana: 'Ben Diaz' },
     workspaceId: WORKSPACE_ID,
     workspaceName: 'Alto Capital-demo',
     status: 'running',
@@ -56,7 +56,7 @@ const template = {
     version: 'placeholder-2026-09',
     roles: ['presenter', 'priya', 'marcus', 'dana'],
     presenterRole: 'presenter',
-    castDefaults: { priya: 'Priya Raman', marcus: 'Marcus Hale', dana: 'Dana Okafor' },
+    castDefaults: { priya: 'Emma Shipman', marcus: 'Sam Burton', dana: 'Ben Diaz' },
   },
   members: [
     { userId: PRESENTER_ID, name: 'Adam', email: 'adam@example.com', role: 'owner' },
@@ -121,7 +121,7 @@ describe('the Demos page', () => {
     // demo carries, and the cast is on the page once the form is gone.
     expect(container.textContent).toContain('Adam: northgate-renewal');
     expect(container.textContent).toContain('the mention has not arrived');
-    expect(container.textContent).toContain('Priya Raman, Marcus Hale, Dana Okafor');
+    expect(container.textContent).toContain('Emma Shipman, Sam Burton, Ben Diaz');
     expect(container.textContent).toContain('9 of 9 actions confirmed');
     // Retry is for a preparation that has stopped, not one that is working.
     expect(buttonNamed('Retry').disabled).toBe(true);
@@ -183,15 +183,15 @@ describe('the Demos page', () => {
     expect(Array.from(container.querySelectorAll('select')).map((select) => select.value)).toEqual([PRESENTER_ID]);
     const names = Array.from(container.querySelectorAll<HTMLInputElement>('.demo-form-grid input'))
       .filter((input) => input !== company);
-    expect(names.map((input) => input.value)).toEqual(['Priya Raman', 'Marcus Hale', 'Dana Okafor']);
+    expect(names.map((input) => input.value)).toEqual(['Emma Shipman', 'Sam Burton', 'Ben Diaz']);
     expect(container.textContent).toContain('User 1');
     expect(container.textContent).toContain('User 3');
     expect(container.textContent).not.toContain('Cast: Priya');
 
     // Two people under one name blocks Start and says which name.
-    await act(async () => { type(names[1]!, 'Priya Raman'); });
+    await act(async () => { type(names[1]!, 'Emma Shipman'); });
     expect(buttonNamed('Start preparation').disabled).toBe(true);
-    expect(container.textContent).toContain('Two people are called Priya Raman');
+    expect(container.textContent).toContain('Two people are called Emma Shipman');
     // So does the presenter's own name, who is in the demo too.
     await act(async () => { type(names[1]!, 'Adam'); });
     expect(buttonNamed('Start preparation').disabled).toBe(true);
@@ -209,7 +209,7 @@ describe('the Demos page', () => {
     expect(body.companyName).toBe('Alto Capital');
     expect(body.presenterUserId).toBe(PRESENTER_ID);
     // Names, not ids, and the presenter is not among them.
-    expect(body.cast).toEqual({ priya: 'Priya Raman', marcus: 'Michael Holliway', dana: 'Dana Okafor' });
+    expect(body.cast).toEqual({ priya: 'Emma Shipman', marcus: 'Michael Holliway', dana: 'Ben Diaz' });
     expect(body.operationId).toMatch(/^[0-9a-f-]{36}$/u);
     expect(container.textContent).toContain('Alto Capital-demo');
   });
@@ -312,6 +312,6 @@ describe('what an operation says about itself', () => {
   });
 
   it('opens the form on the pack\'s own default names, and never on the presenter\'s role', () => {
-    expect(defaultCastNames(template as never)).toEqual({ priya: 'Priya Raman', marcus: 'Marcus Hale', dana: 'Dana Okafor' });
+    expect(defaultCastNames(template as never)).toEqual({ priya: 'Emma Shipman', marcus: 'Sam Burton', dana: 'Ben Diaz' });
   });
 });

@@ -73,7 +73,7 @@ describe('the Demos routes', () => {
   });
 
   it('starts a preparation same-origin only, and relays the regional refusal by its own code', async () => {
-    const body = JSON.stringify({ operationId: OPERATION_ID, companyName: 'Alto Capital', presenterUserId: PRESENTER_ID, cast: { priya: 'Priya Raman' } });
+    const body = JSON.stringify({ operationId: OPERATION_ID, companyName: 'Alto Capital', presenterUserId: PRESENTER_ID, cast: { priya: 'Emma Shipman' } });
     const crossOrigin = await worker.fetch!(new Request('https://ace.internal.rallywith.ai/api/demos', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
     }), env(), context);

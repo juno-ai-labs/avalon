@@ -544,10 +544,12 @@ const DECISION_MEMO_TITLE = "Insights pricing — decision memo";
 export const PLACEHOLDER_DEMO_PACK = {
   version: "placeholder-2026-09",
   roles: ["presenter", "priya", "marcus", "dana"],
-  // The names the pack was written around: product, sales and legal, in the
-  // order the operator meets them. They are what the form opens with, and the
-  // operator renames them for the company they are presenting to.
-  castDefaults: { priya: "Priya Raman", marcus: "Marcus Hale", dana: "Dana Okafor" },
+  // What the form opens with, in the order the operator meets them: product,
+  // sales and legal. Deliberately not the role keys the pack was written
+  // around — the cast is invented for whoever is being presented to, and a
+  // default that reads as a person is easier to type over than one that reads
+  // as this pack's own character.
+  castDefaults: { priya: "Emma Shipman", marcus: "Sam Burton", dana: "Ben Diaz" },
   steps: [
     {
       kind: "create_workstream",
