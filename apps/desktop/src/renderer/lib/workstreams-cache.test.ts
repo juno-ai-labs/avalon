@@ -5,9 +5,11 @@ import {
   evictCachedWorkstream,
   invalidateCachedWorkstreamDetails,
   mergeCachedWorkstreamPage,
+  patchCachedWorkstream,
   patchCachedWorkstreamAppearance,
   setCachedWorkstreams,
   WORKSTREAMS_QUERY_KEY,
+  workstreamDetailQueryKey,
 } from './workstreams-cache';
 import type { WorkstreamSummary } from './types';
 
@@ -185,5 +187,54 @@ describe('patchCachedWorkstreamAppearance', () => {
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance)
       .toEqual({ icon: 'rocket', color: null });
     expect(queryClient.getQueryData(['workstream', summary().id])).toBeUndefined();
+  });
+});
+
+describe('patchCachedWorkstream', () => {
+  it('writes the same patch to the list row and the main detail entry, and nothing else', () => {
+    const queryClient = new QueryClient();
+    const other = { ...summary(), id: '00000000-0000-7000-8000-000000000002' };
+    setCachedWorkstreams(queryClient, [summary(), other]);
+    queryClient.setQueryData(['workstream', summary().id], summary());
+
+    patchCachedWorkstream(queryClient, summary().id, { title: 'Renamed', titleStatus: 'settled' });
+
+    const list = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY);
+    expect(list?.[0]?.title).toBe('Renamed');
+    expect(list?.[1]).toBe(other);
+    expect(queryClient.getQueryData<WorkstreamSummary>(['workstream', summary().id])?.title).toBe('Renamed');
+  });
+
+  it('keeps the list row current while a private child is open, writing that child\'s detail entry', () => {
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [summary()]);
+    queryClient.setQueryData(['workstream', summary().id], summary());
+    queryClient.setQueryData(['substream-workstream', summary().id, 'child'], summary());
+
+    patchCachedWorkstream(queryClient, summary().id, { scope: 'personal' }, 'child');
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.scope).toBe('personal');
+    expect(queryClient.getQueryData<WorkstreamSummary>(['substream-workstream', summary().id, 'child'])?.scope).toBe('personal');
+    // The parent's own entry is not this write's to touch; the versioned
+    // control snapshot owns it.
+    expect(queryClient.getQueryData<WorkstreamSummary>(['workstream', summary().id])?.scope).toBe('workspace');
+  });
+
+  it('accepts a per-row updater and leaves an absent detail entry absent', () => {
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [summary()]);
+
+    patchCachedWorkstream(queryClient, summary().id, (row) => ({ ...row, title: `${row.title}!` }));
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.title).toBe('Typed cache boundary!');
+    expect(queryClient.getQueryData(['workstream', summary().id])).toBeUndefined();
+  });
+});
+
+describe('workstreamDetailQueryKey', () => {
+  it('addresses Main by the parent and a child by both ids', () => {
+    expect(workstreamDetailQueryKey('parent')).toEqual(['workstream', 'parent']);
+    expect(workstreamDetailQueryKey('parent', '0')).toEqual(['workstream', 'parent']);
+    expect(workstreamDetailQueryKey('parent', 'child')).toEqual(['substream-workstream', 'parent', 'child']);
   });
 });

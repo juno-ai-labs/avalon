@@ -72,7 +72,7 @@ import {
 } from './transcript';
 import type { HarnessStatus, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 import { withDerivedUnread } from './workstream-state-store';
-import { evictCachedSubstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { evictCachedSubstream, patchCachedWorkstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY, workstreamDetailQueryKey } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 
@@ -472,14 +472,6 @@ export function applyActiveStreamCheckpoints(
   return nextMessages;
 }
 
-export function workstreamDetailQueryKey(
-  workstreamId: string,
-  substreamId = '0',
-): readonly ['workstream', string] | readonly ['substream-workstream', string, string] {
-  return substreamId === '0'
-    ? ['workstream', workstreamId]
-    : ['substream-workstream', workstreamId, substreamId];
-}
 
 export function orderedTranscriptQueryKey(
   workstreamId: string,
@@ -1578,23 +1570,12 @@ export function useWorkstreamSocket(
         // `automatic` when a later pass may still improve on the name and
         // `settled` when nothing will change it again; the event says which,
         // and neither is a reason to keep waiting.
-        const renamed = { title: event.title, titleStatus: event.titleStatus };
-        queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
-          current ? { ...current, ...renamed } : current);
-        setCachedWorkstreams(queryClient, (current) =>
-          current?.map((workstream) => workstream.id === parentId
-            ? { ...workstream, ...renamed }
-            : workstream));
+        patchCachedWorkstream(queryClient, parentId, { title: event.title, titleStatus: event.titleStatus }, substreamId);
       } else if (event.type === 'workstream_scope_changed') {
         // Whoever this change excluded has already been disconnected by the
         // room, so everyone still here may read it and only needs the lock on
         // their sidebar row and the header they are reading to agree.
-        queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
-          current ? { ...current, scope: event.scope } : current);
-        setCachedWorkstreams(queryClient, (current) =>
-          current?.map((workstream) => workstream.id === parentId
-            ? { ...workstream, scope: event.scope }
-            : workstream));
+        patchCachedWorkstream(queryClient, parentId, { scope: event.scope }, substreamId);
       } else if (event.type === 'stream_completed') {
         const matchingCursors = new Map([...streamCursors].filter(([, cursor]) =>
           cursor.streamId === event.streamId));
