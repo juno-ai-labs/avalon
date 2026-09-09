@@ -246,3 +246,38 @@ it('repairs a terminal deadline on exact directory replay after a post-commit fa
     expect(alarm!).toBeLessThanOrEqual(Date.parse(dueAt));
   });
 });
+
+
+it('seeks activity cursor windows without rereading earlier history', async () => {
+  const userId = asUserId('00000000-0000-7000-8000-000000009d11');
+  await env.DB.prepare(`CREATE TABLE workspace_members (
+    workspace_id TEXT, user_id TEXT, status TEXT, PRIMARY KEY(workspace_id, user_id))`).run();
+  await env.DB.prepare("INSERT INTO workspace_members VALUES (?, ?, 'active')")
+    .bind(workspaceId, userId).run();
+  const stub = env.WORKSPACE_DOS.getByName(workspaceDOName('global', workspaceId));
+  await runInDurableObject(stub, async (instance, state) => {
+    const sql = state.storage.sql;
+    sql.exec(`INSERT INTO workspace_identity VALUES (1, ?, 'global', 'wnam', 0, 0)`, workspaceId);
+    sql.exec(`WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 2000)
+      INSERT INTO workspace_activity_events(event_id, event_type, subject_type, actor_type,
+        actor_label, title, body, audience_kind, digestible, occurred_at, created_at,
+        source_kind, dedupe_key, metadata_json)
+      SELECT printf('00000000-0000-7000-8000-%012d', n), 'test', 'test', 'system',
+        'Fixture', 'Fixture', '', 'workspace', 1, 0, 0, 'test', 'event-' || n, '{}' FROM numbers`);
+    const spy = vi.spyOn(sql, 'exec');
+    try {
+      const request = { workspaceId, userId, through: 2000, notBefore: null,
+        digestibleOnly: true, limit: 2 };
+      expect((await instance.listActivityEvents({ ...request, from: null })).items.map(row => row.sequence))
+        .toEqual([1, 2]);
+      expect((await instance.listActivityEvents({ ...request, from: 1998 })).items.map(row => row.sequence))
+        .toEqual([1999, 2000]);
+      expect((await instance.listActivityEvents({ ...request, from: 2000 })).items).toEqual([]);
+      const reads = spy.mock.calls.flatMap(([query], index) => query.includes('FROM workspace_activity_events event')
+        ? [(spy.mock.results[index]!.value as ReturnType<SqlStorage["exec"]>).rowsRead] : []);
+      expect(reads).toHaveLength(3);
+      // A two-row page and an empty page must not read the 2,000-row history.
+      for (const count of reads) expect(count).toBeLessThan(20);
+    } finally { spy.mockRestore(); }
+  });
+});
