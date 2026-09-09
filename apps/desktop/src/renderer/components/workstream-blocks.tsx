@@ -1894,10 +1894,11 @@ function WorkAccordionRow({ message }: { message: Message }): React.JSX.Element 
 /**
  * One finished stretch of a run's work, closed behind the answer it produced.
  *
- * "Worked for 41m 17s" where the stretch is the whole response, a plain
- * "Worked" where the run narrated itself into several and no one of them is
- * what the response timer measured — with the plugin and thinking rows behind a
- * chevron either way. While a stretch is running those rows are the progress a
+ * "Worked for 41m 17s" where the stretch is the whole response, its own union
+ * of when the rows inside worked where the run narrated itself into several and
+ * no one of them is what the response timer measured — with the plugin and
+ * thinking rows behind a chevron either way. A plain "Worked" is what is left
+ * when neither can be established. While a stretch is running those rows are the progress a
  * reader is watching and the feed shows them; once an answer reports on them
  * they are a receipt for a sentence the reader has now read, and a reader who
  * wants the breakdown asks for it. See `collapseSettledWorkIntoAccordion` for
