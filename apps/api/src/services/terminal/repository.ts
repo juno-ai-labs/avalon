@@ -15,6 +15,7 @@ import { executionPrincipalKey } from "../workstream-resource-visibility";
 import { terminalGitCaSetupCommands, type TerminalSandboxProvider } from "./provider-contract";
 import type { AcquiredTerminalSandbox } from "./coordinator";
 import type { TerminalRepositoryPublisher } from "./runtime";
+import type { TerminalInstructionFiles } from "./instructions";
 import { requireTerminalEffectIntent, TerminalToolError, type TerminalPublishedBranchAndPrOutput } from "./tools";
 import { createIdentityObjectPort } from "../../runtime/identity-port";
 
@@ -180,6 +181,13 @@ export async function bootstrapTerminalRepository(
   provider: TerminalSandboxProvider,
   gateway: TerminalGitHubReadGateway,
   terminalPortFactory: TerminalPortFactory = createTerminalPortFactory(env),
+  /**
+   * The checkout's own instruction files. The clone is the moment a checkout
+   * exists, so the root `AGENTS.md` is probed by this same command, for a
+   * fresh clone and a restored one alike; the probe is isolated from this
+   * script's `set -e` and only the clone's exit code decides the outcome.
+   */
+  instructions?: TerminalInstructionFiles,
 ): Promise<{
   repositoryFullName: string;
   baseRef: string;
@@ -226,6 +234,9 @@ export async function bootstrapTerminalRepository(
   }
   const repositoryUrl = `https://github.com/${selection.repositoryFullName}.git`;
   const canonicalHeader = `http.${repositoryUrl}.extraheader`;
+  const instructionProbe = instructions
+    ? await instructions.fragment({ mode: "report", touched: [] })
+    : null;
   const sessionExports = [
     `export GH_REPO=${selection.repositoryFullName}`,
     `export AVALON_GIT_BRANCH=${selection.headRef}`,
@@ -273,6 +284,7 @@ export async function bootstrapTerminalRepository(
     `  git branch --set-upstream-to=${shellQuote(`origin/${selection.headRef}`)} ${shellQuote(selection.headRef)}`,
     "fi",
     "grep -qxF '.rally/' .git/info/exclude || printf '.rally/\\n' >> .git/info/exclude",
+    ...(instructionProbe ? [instructionProbe.text] : []),
   ].join("\n");
   const result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
     operation: "repository.bootstrap",
@@ -280,6 +292,12 @@ export async function bootstrapTerminalRepository(
     cwd: "/workspace",
     timeoutMs: 180_000,
   });
+  if (result.exitCode === 0 && instructions && instructionProbe) {
+    // Best-effort by contract: a failure here is reported through the
+    // instruction files' own observer and the root is rediscovered by the
+    // first touch, which begins every chain at the root.
+    await instructions.record({ stdout: result.stdout, marker: instructionProbe.marker, exitCode: result.exitCode, sourceGeneration: sandbox.generation });
+  }
   if (result.exitCode !== 0) {
     await provider.clearGitHubReadAccess(sandbox.providerSandboxId).catch(() => undefined);
     throw new TerminalToolError(

@@ -1,7 +1,7 @@
 import { SITE_MANIFEST_MIME_TYPE, asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +22,12 @@ import {
   type TerminalRepositoryPublisher,
   type TerminalResourceBridge,
 } from "../src/services/terminal/runtime";
+import { createTerminalInstructionFiles, type TerminalInstructionFiles } from "../src/services/terminal/instructions";
+import { WorkstreamResidentContextStorage } from "../src/durable-objects/workstream-resident-context-storage";
+import { createResidentContextPortFactory } from "../src/runtime/resident-context-port";
+import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
+import { createTestSqlStorage } from "./helpers/sql-storage";
+import type { DurableObjectStorage } from "@cloudflare/workers-types";
 import {
   TerminalToolError,
   type TerminalImportResourceOutput,
@@ -57,15 +63,36 @@ const I = "00000000-0000-4000-8000-000000000015";
 
 const openDatabases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
 const objectDatabases: DatabaseSync[] = [];
+const probeRoots: string[] = [];
 afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
   for (const database of objectDatabases.splice(0)) database.close();
+  for (const root of probeRoots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
+
+/**
+ * The instruction probe a runtime command carries, and the command without it.
+ * The simulated shell below runs the probe for real against a temp directory
+ * standing in for `/workspace`, so what these tests exercise is the runtime's
+ * glue over the actual script and the actual ledger.
+ */
+function splitProbe(command: string): { rest: string; fragment: string | null } {
+  const start = command.indexOf("( set +e; python3 -c '");
+  if (start === -1) return { rest: command, fragment: null };
+  const endings = [") || true", ") || exit $?"]
+    .map((ending) => ({ ending, index: command.indexOf(ending, start) }))
+    .filter((candidate) => candidate.index !== -1)
+    .sort((left, right) => left.index - right.index);
+  const end = endings[0]!;
+  const stop = end.index + end.ending.length;
+  return { rest: command.slice(0, start) + command.slice(stop), fragment: command.slice(start, stop) };
+}
 
 function fixture(
   clock: { now(): Date } = { now: () => new Date("2026-08-13T12:00:00.000Z") },
   acquisitionObserved?: ConstructorParameters<typeof TerminalSandboxCoordinator>[7],
   prepareSandbox?: NonNullable<Parameters<typeof createDaytonaTerminalRuntime>[6]>,
+  options: { withInstructions?: boolean } = {},
 ) {
   const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
@@ -100,6 +127,21 @@ function fixture(
   });
   const files = new Map<string, Uint8Array>();
   files.set("/workspace/src/file.txt", new TextEncoder().encode("hello\n"));
+  const probeRoot = mkdtempSync(join(tmpdir(), "rally-terminal-probe-"));
+  probeRoots.push(probeRoot);
+  const ledger = new WorkstreamResidentContextStorage(createCloudflareTestBinding<DurableObjectStorage>({
+    getAlarm: async () => null,
+    setAlarm: async () => undefined,
+    transactionSync: (body: () => unknown) => body(),
+    sql: createTestSqlStorage(objectStore),
+  }));
+  const probeFailures: string[] = [];
+  const instructions: TerminalInstructionFiles | undefined = options.withInstructions
+    ? createTerminalInstructionFiles(
+        createResidentContextPortFactory(createTestEnv({}), ledger)(W, S, "0"),
+        (_error, stage) => { probeFailures.push(stage); },
+      )
+    : undefined;
   const provider: TerminalSandboxProvider = {
     createSandbox: vi.fn(async (input) => ({ id: "sandbox-runtime", name: input.stableName, state: "running" as const, domainAllowList: input.domainAllowList })),
     getSandbox: vi.fn(async (name) => ({ id: "sandbox-runtime", name, state: "running" as const, domainAllowList: [] })),
@@ -112,7 +154,7 @@ function fixture(
     runUtilityCommand: vi.fn(),
     runCommand: vi.fn(async (_id, input) => {
       if (input.taskName === "terminal-read-page") {
-        const argumentsMatch = / (\d+) (\d+) \d+ \d+$/u.exec(input.command);
+        const argumentsMatch = / (\d+) (\d+) \d+ \d+(?:;|$)/u.exec(input.command);
         const path = input.command.includes("/workspace/src/file.txt") ? "/workspace/src/file.txt" : "";
         const offset = Number(argumentsMatch?.[1] ?? 1);
         const limit = Number(argumentsMatch?.[2] ?? 200);
@@ -167,6 +209,17 @@ function fixture(
   };
   const runCommandImplementation = vi.mocked(provider.runCommand).getMockImplementation()!;
   provider.runUtilityCommand = vi.fn(async (id, input) => {
+    // A command carrying the instruction probe runs the probe for real, against
+    // the temp root, and the rest of the command against the simulated shell.
+    // In abort mode a pending candidate stops the command exactly as the
+    // sandbox would: nothing after the probe runs.
+    const { rest, fragment } = splitProbe(input.command);
+    if (fragment) {
+      const executed = spawnSync("bash", ["-c", fragment.split("'/workspace'").join(`'${probeRoot}'`)], { encoding: "utf8" });
+      if (executed.status === 52) return { exitCode: 52, stdout: executed.stdout, stderr: "" };
+      const result = await provider.runUtilityCommand(id, { ...input, command: rest });
+      return { ...result, stdout: `${result.stdout}${executed.stdout}` };
+    }
     // The publish path now asks what a path *is* before reading it, and the
     // answer decides whether it publishes as a document, a site, or an
     // archive. The simulated shell answers from the same `files` map every
@@ -249,9 +302,9 @@ function fixture(
     false,
     acquisitionObserved,
   );
-  return { database, objectStore, files, provider, resources, publisher, coordinator, runtime: createDaytonaTerminalRuntime(
+  return { database, objectStore, files, provider, resources, publisher, coordinator, ledger, probeRoot, probeFailures, instructions, runtime: createDaytonaTerminalRuntime(
     testTerminalPortFactory(objectStore), coordinator, provider, resources, publisher, null, prepareSandbox,
-    () => clock.now().getTime()) };
+    () => clock.now().getTime(), instructions) };
 }
 
 const context: HarnessToolContext = {
@@ -1199,5 +1252,103 @@ describe("Daytona Terminal runtime", () => {
     await expect(checkingOut).resolves.toMatchObject({ repository: "o/r" });
     expect(checkout).toHaveBeenCalledOnce();
     await expect(activation).resolves.toMatchObject({ code: "repository_access_revoked" });
+  });
+  describe("repository instruction files", () => {
+    function checkout() {
+      const built = fixture(undefined, undefined, undefined, { withInstructions: true });
+      writeFileSync(join(built.probeRoot, "AGENTS.md"), "root rules\n");
+      mkdirSync(join(built.probeRoot, "src"), { recursive: true });
+      return built;
+    }
+
+    it("delivers the root file with a read, records it once, and hands the page back intact", async () => {
+      const { runtime, ledger, provider, probeFailures } = checkout();
+      await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).resolves.toEqual({
+        content: "hello", startLine: 1, endLine: 1, totalLines: 1, truncated: false,
+      });
+      const pending = ledger.pendingDeliveries();
+      expect(pending.map((delivery) => [delivery.block.blockId, delivery.block.content, delivery.block.residency]))
+        .toEqual([["AGENTS.md", "root rules\n", "transcript"]]);
+      expect(pending[0]!.sourceId).toBe(`AGENTS.md@${await sha256Hex(new TextEncoder().encode("root rules\n"))}`);
+      // The probe ran after the read, in its own group, without touching the read's exit status.
+      const command = vi.mocked(provider.runUtilityCommand).mock.calls[0]![1].command;
+      expect(command).toMatch(/^python3 .*; s=\$\?\n\( set \+e; python3 .*\) \|\| true\nexit \$s$/su);
+      await runtime.readFilePage(context, "src/file.txt", 1, 200);
+      expect(ledger.allBlocks()).toHaveLength(1);
+      expect(probeFailures).toEqual([]);
+    });
+
+    it("refuses the first mutation beneath an unread instruction file, records it, and lets the retry through", async () => {
+      const { runtime, ledger, files, probeRoot } = checkout();
+      writeFileSync(join(probeRoot, "src", "AGENTS.md"), "never write generated files\n");
+      const bytes = new TextEncoder().encode("new\n");
+      await expect(runtime.writeFile(context, "src/new.txt", bytes)).rejects.toMatchObject({
+        code: "instructions_pending",
+        message: "Repository instructions for `./`, `./src/` were loaded with this call and nothing was changed. Read the `Instructions added from` message that follows, then retry the same call.",
+      });
+      expect(files.has("/workspace/src/new.txt")).toBe(false);
+      expect(ledger.pendingDeliveries().map((delivery) => delivery.block.blockId)).toEqual(["AGENTS.md", "src/AGENTS.md"]);
+      // Recorded is not yet seen: a second mutation in the same batch is refused
+      // the same way, and nothing is recorded twice.
+      await expect(runtime.writeFile(context, "src/new.txt", bytes)).rejects.toMatchObject({ code: "instructions_pending" });
+      expect(ledger.allBlocks()).toHaveLength(2);
+      // The settled step delivers; the retry after it proceeds.
+      ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), Date.now());
+      await expect(runtime.writeFile(context, "src/new.txt", bytes)).resolves.toMatchObject({ created: true });
+      expect(files.has("/workspace/src/new.txt")).toBe(true);
+      // An edit's read and a patch check the same way; both are resident now.
+      await expect(runtime.readFile(context, "src/file.txt")).resolves.toEqual(new TextEncoder().encode("hello\n"));
+      await expect(runtime.applyPatch(context, "--- a/src/file.txt\n+++ b/src/file.txt\n@@ -1 +1 @@\n-hello\n+bye\n"))
+        .resolves.toMatchObject({ files: [{ path: "src/file.txt", operation: "edited" }] });
+      // Editing the instruction file itself delivers the new content once more.
+      writeFileSync(join(probeRoot, "src", "AGENTS.md"), "revised\n");
+      await expect(runtime.readFile(context, "src/file.txt")).rejects.toMatchObject({ code: "instructions_pending" });
+      expect(ledger.allBlocks().filter((block) => block.blockId === "src/AGENTS.md").map((block) => [block.content, block.residency]).sort())
+        .toEqual([["never write generated files\n", "none"], ["revised\n", "transcript"]]);
+    });
+
+    it("refuses once with instructions_unavailable when the ledger fails, then stops gating for the run", async () => {
+      const { runtime, ledger, files, probeFailures } = checkout();
+      const bytes = new TextEncoder().encode("new\n");
+      vi.spyOn(ledger, "recordLoaded").mockImplementationOnce(() => { throw new Error("ledger unavailable"); });
+      // The probe stopped the write; the ledger could not record what it found,
+      // so no instructions message will follow and the refusal says so.
+      await expect(runtime.writeFile(context, "src/new.txt", bytes)).rejects.toMatchObject({
+        code: "instructions_unavailable",
+        message: "The repository instructions governing this call could not be loaded and nothing was changed. Retry the same call; it proceeds without them.",
+      });
+      expect(files.has("/workspace/src/new.txt")).toBe(false);
+      expect(probeFailures).toEqual(["record"]);
+      // The retry is not refused again: the probe reports without gating, and
+      // recording is attempted as before.
+      await expect(runtime.writeFile(context, "src/new.txt", bytes)).resolves.toMatchObject({ created: true });
+      expect(files.has("/workspace/src/new.txt")).toBe(true);
+      expect(ledger.pendingDeliveries().map((delivery) => delivery.block.blockId)).toEqual(["AGENTS.md"]);
+      expect(probeFailures).toEqual(["record"]);
+    });
+
+    it("probes before admitting a command's durable task and retires every block when the checkout is replaced", async () => {
+      const { runtime, ledger, objectStore, provider, resources, publisher, coordinator, instructions } = checkout();
+      await expect(runtime.runCommand(context, { command: "echo hi", timeoutMs: 1_000 }))
+        .rejects.toMatchObject({ code: "instructions_pending" });
+      expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_tasks")).toEqual({ count: 0 });
+      expect(ledger.pendingDeliveries()).toHaveLength(1);
+      ledger.markDeliveredInTransaction(ledger.pendingDeliveries(), Date.now());
+      expect(ledger.residentBlocks({ kind: "repository_instructions" })).toHaveLength(1);
+      await expect(runtime.runCommand(context, { command: "echo hi", timeoutMs: 1_000 })).resolves.toMatchObject({ state: "completed" });
+
+      const checkedOut: TerminalCheckoutRepositoryOutput = {
+        repository: "o/r", repositoryId: 1, connectionId: "connection-1", connectionName: "GitHub",
+        baseRef: "main", baseSha: "a".repeat(40), headRef: "rally/workstream", remoteAccess: "read_only",
+        localEditsAllowed: true, remoteWritesAllowed: false, outcome: "selected", backup: null,
+      };
+      const selector: TerminalRepositorySelector = { checkout: vi.fn(async () => checkedOut) };
+      const replacing = createDaytonaTerminalRuntime(
+        testTerminalPortFactory(objectStore), coordinator, provider, resources, publisher, selector, undefined, () => 0, instructions,
+      );
+      await replacing.checkoutRepository(context, { repositoryFullName: "o/r", requiredRemoteAccess: "read_only" });
+      expect(ledger.residentBlocks({ kind: "repository_instructions" })).toEqual([]);
+      expect(ledger.allBlocks().map((block) => block.residency)).toEqual(["none"]);
+    });
   });
 });

@@ -472,6 +472,19 @@ remote boundary and does not prevent the untrusted sandbox from changing its
 own local checkout.
 
 Commands, repository contents, package output, and imported files are untrusted.
+A checkout's own `AGENTS.md` files are read without being asked and are
+untrusted like the rest: delivered as user-role messages, and after a
+compaction rendered into a system-prompt section under a heading that names them
+as repository content subordinate to Rally's instructions and to any
+participant, for a bounded number of compactions
+([`resident-context.md`](resident-context.md)). That section is the one place
+repository content reaches the prefix, and neither the heading nor output
+sanitization is a role-isolation boundary; what a block can do is governed by
+the standing sentence in the plugin's system message and by the tool loop, which
+no block can widen. Each candidate file is checked for symlink and root
+containment in its own right before it is read, so a planted
+`AGENTS.md -> .git/config` cannot carry the checkout's Git credential header to
+the model.
 The model receives no PTY, inbound port, background daemon, provider lifecycle,
 network-policy, credential, or raw-Daytona tool. Paths stay at or below `/workspace`,
 output is stripped of terminal controls and recognizable token forms, and logs
@@ -814,6 +827,20 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-09 — Repository instruction files reach the model, and after a compaction the prefix
+
+**What changed:** The Terminal plugin reads a checkout's `AGENTS.md` files
+automatically and the context-residency ledger moves them into a system-prompt
+section at a compaction. The Terminal boundary above records both, and the
+per-candidate symlink and containment refusal the probe applies.
+
+**Why:** The product decision is the
+[repository-instruction-files PRD](PRDs/2026-09-08_repository-instruction-files/prd.md).
+This document owns the boundary it moves: repository content in the prefix,
+bounded in time, under a demotion heading, with no claim of role isolation.
+[`writing-prompts.md`](writing-prompts.md#12-layer-authority-explicitly) carries
+the matching exception to its content rule.
 
 ### 2026-09-08 — The demo seeder acts as a cast member without a session
 

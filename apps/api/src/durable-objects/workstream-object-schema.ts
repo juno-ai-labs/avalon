@@ -22,7 +22,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 50;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 51;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2933,6 +2933,44 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       archived_at INTEGER
     ) STRICT`,
   ] },
+  {
+    version: 51,
+    description: "context-residency ledger for resident context blocks",
+    statements: [
+      // Which resident context blocks (a checkout's AGENTS.md today) this
+      // conversation has loaded, at which content, and where each lives:
+      // in the transcript, in the system prompt, or nowhere. Rows are never
+      // deleted; `none` is the bookkeeping of what was loaded previously.
+      // `content` carries no byte CHECK yet: the bound is an open placeholder
+      // in TypeScript until the team sets it, and a CHECK is not an inert site.
+      `CREATE TABLE resident_context_blocks (
+         kind TEXT NOT NULL,
+         block_id TEXT NOT NULL,
+         sha256 TEXT NOT NULL,
+         source_generation INTEGER,
+         content TEXT NOT NULL,
+         truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
+         residency TEXT NOT NULL CHECK (residency IN ('transcript', 'system', 'none')),
+         superseded INTEGER NOT NULL DEFAULT 0 CHECK (superseded IN (0, 1)),
+         compactions_remaining INTEGER NOT NULL DEFAULT 0 CHECK (compactions_remaining >= 0),
+         pending_delivery INTEGER NOT NULL DEFAULT 0 CHECK (pending_delivery IN (0, 1)),
+         first_delivered_at INTEGER NOT NULL,
+         last_delivered_at INTEGER NOT NULL,
+         PRIMARY KEY (kind, block_id, sha256)
+       ) STRICT`,
+      // One row per compaction event: written when the harness prepares the
+      // compaction, naming exactly the blocks whose transitions were rendered
+      // into the compacted system message, and stamped when the commit applies
+      // them, so a block recorded in between is left alone and a replayed
+      // commit changes the ledger exactly once.
+      `CREATE TABLE resident_context_compactions (
+         compaction_event_id TEXT PRIMARY KEY,
+         prepared_keys TEXT NOT NULL,
+         prepared_at INTEGER NOT NULL,
+         applied_at INTEGER
+       ) STRICT`,
+    ],
+  },
 ];
 
 /**

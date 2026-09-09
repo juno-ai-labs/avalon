@@ -258,8 +258,24 @@ export interface PendingSteerSettlementOutcome {
   turns: TranscriptTurn[];
   removedInputIds: string[];
   deliveryEffects: PendingInputDeliveryEffectInput[];
+  /** The derived inputs this settlement delivered or found already projected. */
+  deliveredDerivedInputKeys: string[];
   stop: boolean;
   loop: SubstreamLoopRow;
+}
+
+/**
+ * A model-only user message a host authority wrote during the batch and wants
+ * appended at the next settled step: a resident context block, for example.
+ * It is not a participant turn, so it is never promoted into the shared
+ * transcript; it is appended to the Bind loop with its provenance and nothing
+ * else, the way an activation input is. `key` is the host's own identity for
+ * the delivery, handed back so the host can close it in the same commit.
+ */
+export interface PendingDerivedInput {
+  key: string;
+  message: BindLoopMessage;
+  provenance: BindLoopMessageOrigin;
 }
 
 export interface PendingInputActivationReceipt {
@@ -1032,6 +1048,13 @@ export class WorkstreamTranscriptStorage {
     commit: BindCompactionCommit;
     continuation: TranscriptCompactionContinuation;
     now?: number;
+    /**
+     * Host state that must move with the checkpoint, in the same commit: the
+     * context-residency ledger's compaction transitions. Synchronous, keyed by
+     * the compaction event on the host side, and not run on a replayed commit
+     * because the first commit already carried it.
+     */
+    applyInTransaction?: () => void;
   }, executionFence?: TranscriptExecutionFence): Promise<void> {
     const { commit, continuation } = input;
     const now = input.now ?? Date.now();
@@ -1105,6 +1128,13 @@ export class WorkstreamTranscriptStorage {
       }
       for (const fact of [...facts.materials, checkpointFact, statusFact]) this.insertFact(fact, now);
       this.writeBindState(transition, next, facts, now);
+      if (input.applyInTransaction) {
+        const returned = input.applyInTransaction() as unknown;
+        if (returned && (typeof returned === "object" || typeof returned === "function")
+          && "then" in returned) {
+          throw new Error("compaction_host_state_must_be_synchronous");
+        }
+      }
       this.sql.exec(
         `INSERT INTO transcript_compaction_checkpoints
            (checkpoint_fact_id, execution_principal_key, resource_visibility_fingerprint,
@@ -1325,6 +1355,14 @@ export class WorkstreamTranscriptStorage {
     enqueueRegionalEffectsInTransaction: (
       deliveries: readonly PendingInputDeliveryEffectInput[],
     ) => void;
+    /**
+     * Model-only inputs a host authority wants appended at this boundary,
+     * ahead of any participant steer. Delivered inside the same commit;
+     * `markDerivedInputsDeliveredInTransaction` runs synchronously in that
+     * commit with every key that was appended or found already projected.
+     */
+    derivedInputs?: readonly PendingDerivedInput[];
+    markDerivedInputsDeliveredInTransaction?: (keys: readonly string[]) => void;
     now?: number;
   }): Promise<PendingSteerSettlementOutcome> {
     const now = input.now ?? Date.now();
@@ -1339,10 +1377,13 @@ export class WorkstreamTranscriptStorage {
       || previous.stateRevision !== input.expectedBindStateRevision) {
       throw new Error("bind_loop_head_conflict");
     }
+    const derived = beforeLoop.stop_requested_at === null
+      ? await this.prepareDerivedBindAppends(previous, input.derivedInputs ?? [])
+      : { steps: [], next: previous, keys: [] };
     const pending = beforeLoop.stop_requested_at === null
       ? this.pendingSteersForCommit()
       : [];
-    const prepared = await this.preparePendingBindAppends(previous, pending);
+    const prepared = await this.preparePendingBindAppends(derived.next, pending);
 
     const result = this.storage.transactionSync(() => {
       const loop = this.assertStepSettlementFence(input, now);
@@ -1373,6 +1414,22 @@ export class WorkstreamTranscriptStorage {
       const turns: TranscriptTurn[] = [];
       const deliveryEffects: PendingInputDeliveryEffectInput[] = [];
       let projectedThrough = 0;
+      // Derived inputs first: they belong to the batch that just ran, and a
+      // participant steer admitted meanwhile reads after them, the order the
+      // room would give if the tool had spoken and then the person had.
+      const committedDerived = stop ? { steps: [], next: previous, keys: [] } : derived;
+      for (const step of committedDerived.steps) {
+        this.assertExpectedHead(step.previous, step.transition);
+        for (const fact of step.facts.materials) this.insertFact(fact, now);
+        this.writeBindState(step.transition, step.next, step.facts, now);
+      }
+      if (committedDerived.keys.length > 0 && input.markDerivedInputsDeliveredInTransaction) {
+        const returned = input.markDerivedInputsDeliveredInTransaction(committedDerived.keys) as unknown;
+        if (returned && (typeof returned === "object" || typeof returned === "function")
+          && "then" in returned) {
+          throw new Error("derived_input_delivery_mark_must_be_synchronous");
+        }
+      }
       for (let index = 0; index < committedPrepared.length; index += 1) {
         const append = committedPrepared[index]!;
         const delivered = this.promotePendingInputInTransaction(
@@ -1404,7 +1461,7 @@ export class WorkstreamTranscriptStorage {
         deliveryEffects.push(delivered.deliveryEffect);
       }
       const nextBindStateRevision = committedPrepared.at(-1)?.next.stateRevision
-        ?? input.expectedBindStateRevision;
+        ?? committedDerived.next.stateRevision;
       // A safe step ends Bind's current model/tool iteration, not the durable
       // execution receipt. Keep ownership until terminal receipt publication
       // atomically closes the singleton; otherwise an isolate death between
@@ -1442,20 +1499,78 @@ export class WorkstreamTranscriptStorage {
       const committedLoop = loopStorage.loop();
       if (!committedLoop) throw new Error("substream_loop_not_found");
       return {
-        transitions: committedPrepared.flatMap((append) =>
-          append.steps.map((step) => step.transition)),
+        transitions: [
+          ...committedDerived.steps.map((step) => step.transition),
+          ...committedPrepared.flatMap((append) =>
+            append.steps.map((step) => step.transition)),
+        ],
         turns,
         removedInputIds: committedPrepared.map((append) => append.pending.input_id),
         deliveryEffects,
+        deliveredDerivedInputKeys: committedDerived.keys,
         stop,
         loop: committedLoop,
       };
     });
-    const committedProjection = prepared.at(-1)?.next;
+    const committedProjection = prepared.at(-1)?.next
+      ?? (derived.steps.length > 0 ? derived.next : undefined);
     if (committedProjection && !result.stop) {
       this.bindProjectionCache.set(input.loopId, committedProjection);
     }
     return result;
+  }
+
+  /**
+   * Prepare the Bind appends for a host authority's derived inputs.
+   *
+   * One `protocol_user_appended` per input whose provenance the loop has not
+   * already projected; an input whose provenance is already there is a replay
+   * and is reported delivered without a second message. Hashing happens here,
+   * before the settlement transaction, like every other prepared append.
+   */
+  private async prepareDerivedBindAppends(
+    previous: BindLoopProjectionState,
+    inputs: readonly PendingDerivedInput[],
+  ): Promise<{ steps: PreparedPendingBindStep[]; next: BindLoopProjectionState; keys: string[] }> {
+    const steps: PreparedPendingBindStep[] = [];
+    const keys: string[] = [];
+    if (inputs.length === 0) return { steps, next: previous, keys };
+    const alreadyProjected = new Set(this.currentBindProvenanceKeys(
+      previous.loopId,
+      inputs.map((entry) => entry.provenance),
+    ));
+    let projection = previous;
+    for (const entry of inputs) {
+      if (entry.message.role !== "user") throw new Error("derived_input_role_invalid");
+      if (entry.provenance.originKind !== "derived"
+        || !entry.provenance.sourceKind?.trim()
+        || !entry.provenance.sourceId?.trim()) {
+        throw new Error("derived_input_provenance_required");
+      }
+      keys.push(entry.key);
+      const provenanceKey = bindProvenanceKey(entry.provenance);
+      if (alreadyProjected.has(provenanceKey)) continue;
+      alreadyProjected.add(provenanceKey);
+      const transition: ProtocolUserTransition = {
+        kind: "protocol_user_appended",
+        loopId: previous.loopId,
+        generation: projection.generation,
+        stateRevision: projection.stateRevision + 1,
+        message: entry.message,
+        provenance: entry.provenance,
+        activationInputId: null,
+      };
+      const next = applyBindLoopTransition(projection, transition);
+      const facts = await this.materializeProjectionFacts(transition, projection, next);
+      const appended = facts.messageFacts[0];
+      if (!appended
+        || appended.position !== bindLoopNonSystemMessageCount(projection) + 1) {
+        throw new Error("bind_loop_projection_delta_invalid");
+      }
+      steps.push({ previous: projection, transition, next, facts });
+      projection = next;
+    }
+    return { steps, next: projection, keys };
   }
 
   /**
@@ -3444,6 +3559,27 @@ export class WorkstreamTranscriptStorage {
           sourceRevision: row.source_revision,
         }),
       }));
+  }
+
+  /**
+   * The projected positions (0 = system) of every message in the loop's
+   * current state whose provenance names one of `sourceKinds`. The compaction
+   * summariser is given the transcript without them: the ledger that owns
+   * them carries them forward itself.
+   */
+  bindMessagePositionsBySourceKind(loopId: string, sourceKinds: readonly string[]): number[] {
+    if (sourceKinds.length === 0) return [];
+    const placeholders = sourceKinds.map(() => "?").join(", ");
+    return this.sql.exec<{ message_position: number } & Record<string, SqlStorageValue>>(
+      `SELECT projected.message_position
+         FROM bind_loop_state_messages AS projected
+         JOIN transcript_facts AS fact ON fact.fact_id = projected.fact_id
+        WHERE projected.loop_id = ? AND fact.origin_kind = 'derived'
+          AND fact.source_kind IN (${placeholders})
+        ORDER BY projected.message_position`,
+      loopId,
+      ...sourceKinds,
+    ).toArray().map((row) => Number(row.message_position));
   }
 
   private currentBindProvenanceKeys(

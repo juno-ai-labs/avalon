@@ -16,6 +16,7 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/services/terminal/daytona-provider.ts` | The only Daytona SDK adapter: private sandbox, process, file, network, lifecycle, and host-scoped secret primitives. |
 | `apps/api/src/services/terminal/tools.ts`, `runtime.ts` | Model-facing behavior, safe paths, bounded file/patch/command execution, durable command tasks, and self-healing failures. |
 | `apps/api/src/services/terminal/resource-bridge.ts` | Authorized regional R2 import and generated-resource publication. |
+| `apps/api/src/services/terminal/instruction-files.ts`, `instructions.ts` | Discovery of a checkout's own `AGENTS.md` files: the candidate chain, the probe a sandbox command carries, and the glue that records what it found in the context-residency ledger ([`resident-context.md`](resident-context.md)). |
 | `apps/api/src/services/terminal/repository.ts`, `repository-selection.ts`, `workstream-state.ts` | Model-driven GitHub App repository selection, recovery backup, scoped credential bootstrap, prepared work-stream branch, optional typed publisher, and work-stream state API. |
 | `apps/api/src/services/terminal/network-policy.ts`, `settings.ts` | Trusted-only policy compiler and preview/confirm workspace settings transition. |
 | `apps/api/src/services/terminal/lifecycle.ts`, `apps/api/src/services/workspace-schedule-execution.ts` | Stop, archive, expiry, final-diff preservation, claims, retries, and the `terminal` alarm target WorkspaceDO drains. |
@@ -283,7 +284,21 @@ personless; it is not duplicated into these product events.
   succeeded would make Trusted only a UI label rather than an enforced state.
 - **No model-facing revisions, lifecycle, directory-listing, polling, PTY,
   network, credential, or raw-Daytona tools exist.** These duplicate trained CLI
-  behavior or expose control-plane authority that the task does not need.
+  behavior or expose control-plane authority that the task does not need. The
+  instruction-file probe is not a tool: it rides the command a tool already
+  runs, looks only at the ancestors of the path that tool addressed, and the
+  model neither calls it nor sees its raw output.
+- **The probe never decides a tool's outcome, and a mutation waits for the
+  instructions that govern it.** The fragment runs in an isolated subshell and
+  only exit 52 escapes, in abort mode before a mutation, as the recoverable
+  `instructions_pending` refusal (or `instructions_unavailable` when the ledger
+  could not record what the probe found, after which the probe stops gating
+  for the rest of the run); every other probe failure leaves the tool's
+  or the bootstrap's own exit code alone. Each candidate is checked in its own
+  right for symlink and root containment before it is read, because a
+  repository controls what `AGENTS.md` points at. The trailer the probe prints
+  starts with a marker minted for that invocation, so output the repository
+  controls cannot end a tool's result early or pass itself off as the probe's.
 
 ## Boundary
 
@@ -336,6 +351,11 @@ network proxy, or a general GitHub administration surface.
   mismatch leaves verification failed rather than claiming the new policy.
 - Files are UTF-8 regular files and at most 10 MiB. Reads return at most 1,000
   lines and 256 KiB. A patch is at most 2 MiB and 100 files.
+- An instruction file's delivered content and a kind's prompt section are
+  bounded by two limits that are open placeholders until the team sets them;
+  [`resident-context.md`](resident-context.md#failure-modes-and-limits) owns
+  them. `run_command` and `import_resource` pay one probe command before the
+  mutation; every other tool's probe rides its own command.
 - A command is at most 32 KiB, defaults to 120 seconds, and is capped at 900
   seconds. Inline stdout and stderr are each head/tail bounded to 128 KiB; the
   complete generated log is capped at 5 MB and then the command reports
@@ -604,8 +624,8 @@ utility additionally supplies one fixed `operation_detail`: `path.resolve`,
 `file.inspect`, `file.read_page`, `file.replace`, `file.apply_patch`,
 `file.temp_cleanup`, `resource.publish.inspect_before`,
 `resource.publish.inspect_after`, `resource.import.inspect`,
-`resource.import.finalize`, `repository.bootstrap`, one of the six
-`repository.publish.*` inspection phases, `lifecycle.final_diff`,
+`resource.import.finalize`, `repository.bootstrap`, `instructions.probe`, one
+of the six `repository.publish.*` inspection phases, `lifecycle.final_diff`,
 `lifecycle.backup`, or `lifecycle.backup_cleanup`.
 
 Each `terminal_provider_request_finished` record carries
@@ -654,6 +674,44 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-09 — A checkout's own instructions are read without being asked
+
+**What changed:** Every Terminal tool that takes a path probes the `AGENTS.md`
+chain from the work-space root down to that path inside its own sandbox
+command: after a read, and before a mutation in abort mode, where a file not yet
+in context stops the command with exit 52 and the tool returns
+`instructions_pending` having changed nothing. `run_command` (its `cwd` chain)
+and `import_resource` (its destination) probe in one command of their own first.
+`bootstrapTerminalRepository` probes the root after the checkout, for `cloned`
+and `refreshed` alike, isolated from its `set -euo pipefail`. What the probe
+finds is recorded in the conversation's context-residency ledger through the
+new `residentContext` object-port authority, and `terminal_checkout_repository`
+retires every block when it replaces the work space. The plugin system message
+gained one byte-stable sentence saying what an `Instructions added from` message
+is and how far it reaches.
+
+**Why:** A repository that carries an `AGENTS.md` expects it to be read, and
+Rally read it only when the model happened to. The probe rides the tool's own
+command because a second round trip per touch would have been paid on every
+read; the exceptions are the two tools whose commands cannot carry it. A
+mutation waits because a rule that forbids an edit is worthless if the edit
+that discovers it has already run. Delivery, residency, and compaction are the
+ledger's, in [`resident-context.md`](resident-context.md).
+
+**Considered and rejected:** A `terminal_read_instructions` tool (turns
+automatic back into "if the model remembers"); delivering the content inside the
+tool result (the same file would have two shapes and less salience than every
+other derived input); making `terminal_checkout_repository` clone before it
+returns so its result could carry the root (holds the model for the clone,
+which non-blocking activation exists to avoid).
+
+**Consequences:** Anything that adds a path parameter to a Terminal tool decides
+whether that path feeds the chain and whether the tool mutates. The bootstrap
+command's tail is now load-bearing for the probe's isolation; a change that
+moves the fragment inside `set -e` fails every checkout without an `AGENTS.md`.
+The two limits in `blocks.ts` are open and the PRD says the change does not
+ship until they are set.
 
 ### 2026-09-08 — The workspace root is a legal working directory, and the tools say where the root is
 

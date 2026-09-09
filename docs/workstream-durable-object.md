@@ -34,6 +34,17 @@ external delivery attempts. Regional D1 retains identity/membership, opaque
 ingress and object routing, migration controls, and bounded audit/telemetry; it
 does not serve workspace product state or transcripts after cutover.
 
+## Context-residency ledger
+
+Substream migration 51 adds `resident_context_blocks` and
+`resident_context_compactions`, the conversation-owned record of which resident
+context blocks (a checkout's `AGENTS.md` files first) have been delivered, where
+each lives, and which compaction events have moved them. The persistent loop
+drains pending blocks into the settled step ahead of participant steers and
+applies the compaction transitions inside the checkpoint's commit; producers
+reach the ledger through the `residentContext` object-port authority.
+[`resident-context.md`](resident-context.md) owns it.
+
 ## Sidekick durable boundaries
 
 Substream migration 46 adds `sidekick_skill_names`, a conversation-owned map from
@@ -1538,6 +1549,7 @@ onto `runs.state` forward only.
 | `workstream_wakeups`, `due_work` | Agent-created timers and other child-local alarm jobs. |
 | `workstream_resource_links`, `resource_inventory_revision` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `inbound_email`, or `context`) and the authorization revision every relationship change advances. `generated` derives artifact direction; every other value derives source direction. |
 | `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Rally state for the Daytona-backed Terminal plugin. |
+| `resident_context_blocks`, `resident_context_compactions` | The context-residency ledger: blocks delivered to this conversation, their residency and remaining prompt lifetime, pending deliveries, and the compaction events already applied. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent `conversation_effect` envelopes awaiting the alarm's `sendBatch` (deleted once the Queue accepts them), and inbound dedupe such as feed tickets. |
 
 `participant_transcript_turns.transcript_sequence` is canonical transcript
@@ -1658,6 +1670,27 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-09 — Derived inputs at the settled step, and a ledger that rides the compaction commit
+
+**What changed:** Substream migration 51 adds the context-residency ledger.
+`settlePendingSteersAtStep` accepts host derived inputs and closes them in the
+settlement commit; `commitBindCompaction` runs a synchronous host hook inside the
+checkpoint transaction; `bindMessagePositionsBySourceKind` answers which
+projected positions a source kind owns. A new `residentContext` local authority
+and RPC entry (`executeResidentContextOperation`, `/internal/resident-context`)
+serve producers.
+
+**Why:** A tool that discovers a checkout's `AGENTS.md` during a batch needs a
+model-only user message at the next safe boundary, appended with the same fences
+a participant steer gets and without minting a participant turn, and the ledger
+that says the block is now in the prompt must become true in the same commit
+that makes the compacted projection durable. [`resident-context.md`](resident-context.md)
+owns the design.
+
+**Considered and rejected:** Inserting derived inputs as `pending_loop_inputs`
+(they are participant-shaped: they promote into the shared transcript); a
+post-commit hook for the compaction (the projection is durable before it runs).
 
 ### 2026-09-08 — Deliver child archive to the executing object
 

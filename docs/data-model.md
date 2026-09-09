@@ -566,6 +566,13 @@ column catalog; what follows is only what WorkspaceDO still holds.
   receipt tables. Provider IDs and
   repository names are facts, never authorization. See
   [`terminal-workspaces.md`](terminal-workspaces.md).
+- `resident_context_blocks` and `resident_context_compactions` are the
+  conversation's context-residency ledger (substream migration 51): per
+  `(kind, block_id, sha256)` the bounded content a checkout's `AGENTS.md`
+  delivered, where it lives (`transcript`, `system`, `none`), its remaining
+  prompt lifetime, and whether a delivery is pending; and one row per
+  compaction event whose transitions were applied. Rows are never deleted.
+  See [`resident-context.md`](resident-context.md).
 
 ### Activity log and digests
 
@@ -971,6 +978,18 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-09-09 — The context-residency ledger
+
+**What changed:** Substream migration 51 adds `resident_context_blocks` and
+`resident_context_compactions` to the conversation object.
+
+**Why:** A checkout's instruction files need a durable record of what was
+delivered and where it currently lives, per conversation, so a compaction can
+move them into the prompt and later retire them without re-reading a sandbox
+that may be gone. `content` carries no byte `CHECK` yet: its bound is an open
+placeholder in TypeScript until the team sets it, and a `CHECK` is not an inert
+site. [`resident-context.md`](resident-context.md) owns the rows.
 
 ### 2026-09-08: Keep child archive separate from creation readiness
 
