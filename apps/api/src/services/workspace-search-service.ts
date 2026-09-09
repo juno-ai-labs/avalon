@@ -1,4 +1,4 @@
-import { createAccessContext } from './authorization-service';
+import { createSearchAccessContext } from './search-authorization';
 import { WorkstreamDirectoryService } from './workstream-directory-service';
 import { logInfo } from '../observability/logger';
 import type { SearchRequest, SearchResult } from '@rally/contracts/search';
@@ -6,7 +6,6 @@ import type { AuthContext, Env } from '../env';
 import { ApiError } from '../lib/api-error';
 import { IdSchema, SubstreamIdSchema, asSubstreamId } from '@rally/contracts';
 import { WorkstreamObjectClient } from './workstream-object-client';
-import { ConversationService } from './conversation-service';
 import { ResourceService } from './resource-service';
 import { resourceSearchCategory } from './resource-search-text';
 import { workspaceSearchIndex, searchContentHash, type TextSearchCandidate, type AuthorizedSearchSource } from './text-search';
@@ -33,16 +32,7 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
     if (error instanceof ApiError && error.code === 'authorization_unavailable') { complete = false; return; }
     if (!denied(error)) throw error;
   };
-  const access = createAccessContext(env, auth);
-  const conversations = new ConversationService(env, auth);
-  const parents = new Map<string, ReturnType<ConversationService['resolveParent']>>();
-  const prepareConversationReader = async (parentId: string, substreamId: string) => {
-    let parent = parents.get(parentId);
-    if (!parent) { parent = conversations.resolveParent(parentId); parents.set(parentId, parent); }
-    // Retain the existing automation conversation seating required by its product reader.
-    // Policy evaluation itself remains read-only and runs before this compatibility action.
-    if ((await parent).kind === 'automation') await conversations.authorizeViewer(parentId, substreamId);
-  };
+  const access = createSearchAccessContext(env, auth);
   const readableGroups = async <T extends { parentId: string; substreamId: string }>(groups: T[]) => {
     const decisions = await access.checkMany(groups.map((group) => ({ kind: 'conversation' as const,
       workspaceId: auth.workspaceId, parentId: IdSchema.parse(group.parentId), substreamId: asSubstreamId(group.substreamId) })));
@@ -77,9 +67,8 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
       await Promise.all((await readableGroups([...groups.values()])).map(async (group) => {
         signal?.throwIfAborted();
         try {
-          await prepareConversationReader(group.parentId, group.substreamId);
           const record = await new WorkstreamObjectClient(env, auth, group.parentId, group.substreamId)
-            .searchTurns(group.candidates.map((candidate) => candidate.turnId));
+            .admittedSearchTurns(group.candidates.map((candidate) => candidate.turnId));
           const validated = new Map<string, SearchResult>();
           for (const candidate of group.candidates) {
             const turn = record.turns.find((value) => value.turnId === candidate.turnId);
@@ -117,9 +106,8 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
       await Promise.all((await readableGroups([...groups.values()])).map(async (group) => {
         signal?.throwIfAborted();
         try {
-          await prepareConversationReader(group.parentId, group.substreamId);
           const record = await new WorkstreamObjectClient(env, auth, group.parentId, group.substreamId)
-            .searchLinks(group.candidates.map(({ turnId, linkId }) => ({ turnId, linkId })));
+            .admittedSearchLinks(group.candidates.map(({ turnId, linkId }) => ({ turnId, linkId })));
           const validated = new Map<string, SearchResult>();
           for (const { candidate, linkId } of group.candidates) {
             const link = record.links.find((value) => value.linkId === linkId)?.link;
