@@ -36,8 +36,9 @@ of its title. It retains the existing sidebar colors, row sizing, drag width and
 icon-only collapse. A completed
 main-feed message also offers **New substream** with that message as the cutoff:
 last in the assistant turn's action row, after Copy, Speak, Image and PDF, and in
-a row of its own under a person's own bubble. Both placements appear on hover,
-alongside the other things a settled turn can be asked to do.
+a row of its own under a person's own bubble, ending on the same vertical as the
+identity line above it. Both placements appear on hover, alongside the other
+things a settled turn can be asked to do.
 Both enter the same creation flow; there is no context-strategy picker.
 
 Every section of the center sidebar belongs to the parent work stream. Switching

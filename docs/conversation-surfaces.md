@@ -150,9 +150,13 @@ local actions; **Speak** uses the regional authenticated stream documented in
 [`message-speech.md`](message-speech.md) and receives the complete stored
 markdown even when the shared renderer has collapsed its sections. **New
 substream** closes that row, and a person's own settled turn carries the same
-control alone in a row beneath its bubble; both are described in
+control alone in a row beneath its bubble, inset by the bubble's corner so it
+ends on the same vertical as the identity line above it; both are described in
 [`substream-creation.md`](substream-creation.md). The row owns the hover fade —
-a control inside it must not carry its own.
+a control inside it must not carry its own. The corner is
+`--turn-bubble-radius`, set on the human turn and read by the bubble, the header
+and the action row: a theme that wants a different corner restates the token, not
+the corner.
 
 Assistant H2 sections use the shared inline Markdown renderer. There is no
 heading-generated card deck or paged document reader.
@@ -166,6 +170,29 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-09 — Align the human action row on the bubble's corner, through the token
+
+**What changed:** The action row under a person's own turn takes
+`padding-inline-end: var(--turn-bubble-radius)`, so it ends where the bubble's
+straight edge ends and the curve takes over — the same vertical the identity line
+above it stops on. The work-stream theme, which rounds that bubble harder than
+the shared default, now restates the corner by setting `--turn-bubble-radius`
+rather than writing `18px` onto `border-radius` and onto the header's
+`padding-right`.
+
+**Why:** The row was flush with the bubble's widest point, so it read as hung off
+the corner rather than as part of the turn. Fixing that exposed the drift the
+token was introduced to prevent: two literals in the theme agreed with each other
+but not with the token, so a third rule reading the token came out inset by the
+shared 14px against an 18px corner.
+
+**Consequences:** The corner is one number in one place. Read it with
+`var(--turn-bubble-radius)`; to change it for a surface, set the token on that
+surface's `.human-message`. A CSS invariant test in `app.css.node.test.ts` holds
+both halves — that the bubble, the header and the action row all read the token,
+and that the work-stream theme moves it by the token rather than by a literal.
+
 
 ### 2026-09-09 — The per-message substream cutoff joins the action row
 

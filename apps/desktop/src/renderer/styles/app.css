@@ -4938,11 +4938,11 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    side: do not add an exception that moves a turn based on its author, or the
    same transcript renders differently for each person reading it. */
 :is(.workstream-screen, .automation-chat-surface) .human-message {
-  /* The bubble's corner, named once and read twice: the bubble draws it, and
-     the identity line above stops where it begins. Two rules that each wrote
-     the number out would drift the first time either was tuned, and the drift
-     is a few pixels on one line — the kind of thing a screenshot pass looks
-     straight past. */
+  /* The bubble's corner, named once and read three times: the bubble draws it,
+     and the identity line above and the action row below both stop where it
+     begins. Rules that each wrote the number out would drift the first time any
+     of them was tuned, and the drift is a few pixels on one line — the kind of
+     thing a screenshot pass looks straight past. */
   --turn-bubble-radius: calc(var(--av-sys-size-radius-xl) + 6px);
   margin-left: auto;
   max-width: min(88%, 640px, calc(100% - 82px));
@@ -5088,6 +5088,20 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   justify-content: flex-end;
   margin-bottom: 4px;
   padding-inline-end: var(--turn-bubble-radius);
+}
+
+/* The action row under the bubble takes the same inset, so the turn reads as one
+   column between two aligned edges rather than as a bubble with something hung
+   off its corner. The control gives up its own trailing padding here because the
+   header's last child has none: it is the label that has to land on that edge,
+   not the button box around it. */
+:is(.workstream-screen, .automation-chat-surface) .human-message .human-message-actions {
+  justify-content: flex-end;
+  padding-inline-end: var(--turn-bubble-radius);
+}
+
+:is(.workstream-screen, .automation-chat-surface) .human-message .human-message-actions .message-start-substream {
+  padding-inline-end: 0;
 }
 
 :is(.workstream-screen, .automation-chat-surface) .human-message .message-author-dot {
@@ -5500,10 +5514,16 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 }
 .grokbot-shell .sidebar.is-compact .account-copy { display: none; }
 
+/* The work-stream theme rounds the bubble harder than the shared default. It
+   restates the corner on the token rather than on the bubble, so the identity
+   line and the action row move with it; writing the number on `border-radius`
+   here left both of them inset by the shared 14px against an 18px corner. */
+.workstream-screen .human-message { --turn-bubble-radius: 18px; }
+
 .workstream-screen .human-message-bubble {
   background: var(--av-cmp-bubble-human-background);
   border: 0;
-  border-radius: 18px;
+  border-radius: var(--turn-bubble-radius);
   box-shadow: none;
   color: var(--av-cmp-bubble-human-foreground);
   padding: 8px 12px;
@@ -5511,7 +5531,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 
 .workstream-screen .human-message-bubble .markdown-body,
 .workstream-screen .human-message-bubble .markdown-body :is(p, strong, em, code, a) { color: var(--av-cmp-bubble-human-foreground); }
-.workstream-screen .human-message > header { margin-bottom: 5px; padding-right: 18px; }
+.workstream-screen .human-message > header { margin-bottom: 5px; }
 .workstream-screen .human-message .message-author { color: var(--av-sys-color-text-subtle); font-size: 12px; }
 .workstream-screen .human-message time { color: var(--av-sys-color-text-muted); }
 .workstream-screen .agent-message { padding-left: 2px; }
