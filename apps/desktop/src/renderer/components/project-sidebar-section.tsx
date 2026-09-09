@@ -290,7 +290,10 @@ export function ProjectSidebarSection({
                     const missing = project.workstreamIds.length - members.length;
                     return project.workstreamIds.length === 0
                       ? <p className="project-sidebar-empty">No work streams</p>
-                      : <div className="project-sidebar-workstreams">{members.map((workstream) => (
+                      // Its own motion scope: a member is the same row the recent
+                      // list shows, and the sidebar's motion would otherwise take
+                      // the two for one row in two places.
+                      : <div className="project-sidebar-workstreams" data-motion-scope={`project:${project.id}`}>{members.map((workstream) => (
                         <Fragment key={workstream.id}>{renderWorkstream(workstream)}</Fragment>
                       ))}{missing > 0 && <p className="project-sidebar-empty">{project.workstreamIds.length} work streams; load more to see all</p>}</div>;
                   })()}

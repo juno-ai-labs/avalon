@@ -66,6 +66,7 @@ import {
   useUiStore,
 } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
+import { useListMotion } from '../lib/use-list-motion';
 import { Avatar, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup } from './sidebar-skeleton';
@@ -543,6 +544,12 @@ function WorkstreamRow({
           // How the sidebar finds this row again after pinning has moved it to
           // a different section — see the `reveal` effect.
           data-workstream-id={workstream.id}
+          // How the sidebar's motion follows this row when it changes place,
+          // in a section or between two. A row under the pointer mid-drag is
+          // placed rather than moved: it would otherwise leave and re-enter
+          // on every row the pointer crosses. See `useListMotion`.
+          data-motion-hold={drag?.dragging ? '' : undefined}
+          data-motion-key={`workstream:${workstream.id}`}
           draggable={drag !== undefined || projects.length > 0}
           onDragEnd={drag
             // A drag nothing accepted reports `none`. Treated as cancelled when
@@ -827,7 +834,7 @@ function NoteRow({
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
-        <div className="sidebar-context-target">
+        <div className="sidebar-context-target" data-motion-key={`note:${note.id}`}>
           <NavLink
             className={({ isActive }) => clsx('sidebar-row note-row', isActive && 'is-active')}
             onClick={() => markSurfaceEntrypoint('sidebar_note')}
@@ -995,6 +1002,11 @@ export function Sidebar({
   // reason does not scroll the reader again.
   const [reveal, setReveal] = useState<{ id: string; pinned: boolean } | null>(null);
   const scrollRef = useRef<HTMLElement | null>(null);
+  // A row that changes place — a message moving it up its group, a pin moving
+  // it between sections, a drag or an Alt+Arrow in the pinned list — travels
+  // there rather than reappearing: out to the left, the rows between closing
+  // the gap, then in from the left at its new slot.
+  useListMotion(scrollRef);
   /**
    * Ask for the next page as the scroll approaches the end of the list.
    *
@@ -1688,7 +1700,9 @@ export function Sidebar({
               }}
               onDrop={(event) => event.preventDefault()}
             >
-              <div className="sidebar-section-heading">
+              {/* Held: a heading travels with the rows under it and is never
+                  the thing seen to leave. See `useListMotion`. */}
+              <div className="sidebar-section-heading" data-motion-hold="" data-motion-key="heading:pinned">
                 <h2 id="pinned-heading">Pinned</h2>
               </div>
               {/* Said once for the section rather than repeated on every row:
@@ -1750,7 +1764,7 @@ export function Sidebar({
             ) : (
               groups.map((group) => (
                 <div className="sidebar-group" key={group.label}>
-                  <div className="sidebar-group-heading">
+                  <div className="sidebar-group-heading" data-motion-hold="" data-motion-key={`heading:${group.label}`}>
                     <h3>{group.label}</h3>
                     <DropdownMenu.Root>
                       <DropdownMenu.Trigger asChild>

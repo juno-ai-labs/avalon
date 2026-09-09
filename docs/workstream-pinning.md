@@ -152,6 +152,16 @@ held when the row leaves the list entirely, and in any case expires after
 `REVEAL_DEADLINE_MS`, so an intent the list never honours cannot sit armed
 against a later socket invalidation and fire whenever the state happens to match.
 
+**The row travels rather than reappears.** Whichever section it moves to, the
+row slides out of its old slot to the left, the rows between close the gap, and
+it slides in from the left at its new slot — the same motion a message lifting
+a row to the top of its group plays, and the one a drag or an `Alt`+`Arrow`
+move in the pinned list plays, with the row under the pointer placed rather
+than made to leave on every step. [`list-motion.md`](list-motion.md) owns that
+motion; the sidebar only marks its rows and holds the dragged one. The reveal
+and the motion compose: the scroll follows the row to its new section, and the
+row is on its way in as the viewport arrives.
+
 **Focus moves with the row, not just the viewport.** The two sections are
 separate subtrees, so a row moving between them is unmounted and remounted, and
 the focus Radix restores when the context menu closes has nothing left to
@@ -252,7 +262,7 @@ It deliberately does not:
 | Suite | What it covers |
 | --- | --- |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real SQLite-backed WorkspaceDO append/idempotency, per-person isolation, dense unpin, tolerant reorder, pinned-first listing, and hibernating page delivery. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | The section appearing only when something is pinned, rows leaving the recent list, stored order beating activity order, absence of retired Command-number hints and navigation, the menu toggle, live reorder during a drag, the keyboard move, and both error dialogs. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | The section appearing only when something is pinned, rows leaving the recent list, stored order beating activity order, absence of retired Command-number hints and navigation, the menu toggle, live reorder during a drag, the keyboard move, both error dialogs, and the row's motion following it into the section and between recency groups. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` (`applyPinnedWorkstreams`) | That a pin response rewrites every row's position, including the ones it does not name. |
 
 Two traps in the desktop tests. jsdom implements no `DataTransfer`, so a drag
@@ -280,6 +290,34 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-09-08 — A moved row travels to its new section
+
+**What changed:** A pin, an unpin, a drag, and an `Alt`+`Arrow` move now play
+the sidebar's list motion: the row slides out to the left, the rows between
+close the gap, and it slides in at its new slot. The sidebar marks every
+work-stream and note row with `data-motion-key`, marks the **Pinned** heading
+and every recency-group heading as held rows so they travel with the column,
+marks the row being dragged with `data-motion-hold`, and attaches
+`useListMotion` to its scroll box; project member lists carry their own
+`data-motion-scope`.
+
+**Why:** The reveal scrolls the viewport to a pinned row, but the row itself
+still vanished from one section and appeared in another. The motion is the
+other half of following it, and it covers the moves the reader did not cause.
+
+**Considered and rejected:** Building the motion into this section. Rows move
+for many reasons besides pinning, and a sidebar-wide primitive that classifies
+every row by what actually changed place is what makes one message and one pin
+look like the same kind of event. [`list-motion.md`](list-motion.md) records
+the design.
+
+**Consequences:** The dragged row must keep `data-motion-hold` while
+`dragOrder` is live, or every `dragover` makes it leave and re-enter. The
+project section's scope is what keeps a member row from being taken for the
+recent list's copy of the same work stream; a new place that renders the same
+row twice needs one of its own.
+
 
 ### 2026-09-08 — Preserve visit authority across response paths
 
