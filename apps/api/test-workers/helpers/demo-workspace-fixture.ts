@@ -17,10 +17,11 @@
 import { env } from "cloudflare:workers";
 import { runDurableObjectAlarm } from "cloudflare:test";
 
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
 
 import type { Env } from "../../src/env";
-import { conversationObjectName, workspaceDOName } from "../../src/durable-objects/names";
+import { automationDOName, conversationObjectName, workspaceDOName } from "../../src/durable-objects/names";
+import type { SidekickDO } from "../../src/durable-objects/sidekick-do";
 import type { SubstreamAgent } from "../../src/durable-objects/substream-agent";
 import { DemoPackSchema } from "../../src/services/demo-pack";
 import {
@@ -116,6 +117,38 @@ export const DEMO_TEST_PACK = DemoPackSchema.parse({
   }],
 });
 
+export const DEMO_SIDEKICK_NAME = "Morning briefing";
+export const DEMO_BRIEFING_PROSE = "Two decisions have a date on them. Northgate is the near one.";
+
+/**
+ * The test pack with a Sidekick after its rooms: published, on a schedule, and
+ * with one briefing already behind it. Separate from `DEMO_TEST_PACK` so the
+ * room assertions there stay about rooms, and so a suite that does not need a
+ * Sidekick does not pay for publishing one.
+ */
+export const DEMO_SIDEKICK_PACK = DemoPackSchema.parse({
+  ...DEMO_TEST_PACK,
+  steps: [
+    ...DEMO_TEST_PACK.steps,
+    {
+      kind: "sidekick",
+      id: "morning-briefing",
+      as: "priya",
+      scope: "workspace",
+      name: DEMO_SIDEKICK_NAME,
+      description: "Posts a short briefing each weekday morning.",
+      overview: "Every weekday at 9am Pacific it writes one briefing on what needs a decision.",
+      instructions: "Each weekday morning, write one briefing for the workspace. Keep it under 200 words.",
+      schedule: {
+        rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0;BYSECOND=0",
+        timezone: "America/Los_Angeles",
+        summary: "Every weekday at 9:00am Pacific",
+      },
+      firstRun: { kind: "say", text: DEMO_BRIEFING_PROSE },
+    },
+  ],
+});
+
 /**
  * The test pack with one more room in front of it: a workspace-scoped room the
  * presenter is not in, so the barrier's expectation for a room somebody can
@@ -164,6 +197,19 @@ export function demoRoomStub(workstreamId: string): DurableObjectStub<SubstreamA
  * derive one from; the creation service's address allocator needs one, and it
  * is configuration, not behaviour under test.
  */
+/** One Sidekick run's own conversation: a child substream under the Sidekick. */
+export function demoRunStub(sidekickId: string, runId: string): DurableObjectStub<SubstreamAgent> {
+  return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+    conversationObjectName("global", DEMO_WORKSPACE_ID, sidekickId, asSubstreamId(runId)),
+  )) as DurableObjectStub<SubstreamAgent>;
+}
+
+export function demoSidekickStub(sidekickId: string): DurableObjectStub<SidekickDO> {
+  return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(
+    automationDOName("global", DEMO_WORKSPACE_ID, asAutomationId(sidekickId)),
+  )) as DurableObjectStub<SidekickDO>;
+}
+
 export function demoSeedEnv(): Env {
   return new Proxy(env, {
     get: (current, property, receiver) => property === "WORKSTREAM_EMAIL_ADDRESS_KEY"
@@ -223,9 +269,16 @@ export async function seedDemoWorkspaceControlPlane(): Promise<void> {
       .bind(DEMO_OPERATION_ID, DEMO_PRESENTER_ID, DEMO_WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE demo_seed_receipts (
       operation_id TEXT NOT NULL, action_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
-      kind TEXT NOT NULL, room TEXT NOT NULL, workstream_id TEXT NOT NULL, turn_id TEXT,
+      kind TEXT NOT NULL, room TEXT, workstream_id TEXT, sidekick_id TEXT, sidekick_run_id TEXT,
+      turn_id TEXT,
       harness_run_id TEXT, run_outcome TEXT, elicitation_id TEXT, resource_id TEXT,
-      completed_at TEXT NOT NULL, PRIMARY KEY (operation_id, action_id)
+      completed_at TEXT NOT NULL, PRIMARY KEY (operation_id, action_id),
+      CHECK (
+        CASE kind
+          WHEN 'sidekick' THEN room IS NULL AND workstream_id IS NULL AND sidekick_id IS NOT NULL
+          ELSE room IS NOT NULL AND workstream_id IS NOT NULL AND sidekick_id IS NULL
+        END
+      )
     )`),
   ]);
   await demoWorkspaceStub().initializeWorkspace(DEMO_WORKSPACE_ID, "wnam");
@@ -252,6 +305,14 @@ export async function playDemoAction(
 ): Promise<DemoSeedReceipt> {
   const progress = await applyDemoSeedAction(demoSeedEnv(), session, action);
   if (progress.state === "run_pending") await runDurableObjectAlarm(demoRoomStub(progress.workstreamId));
+  if (progress.state === "sidekick_run_pending") {
+    // Two alarms, in order: the Sidekick's, which provisions the run and hands
+    // it to its own conversation, and then that conversation's, which executes
+    // it. Same reason as the room's above — a contended shard starves the
+    // auto-fired alarm under the seeder's polling reads.
+    await runDurableObjectAlarm(demoSidekickStub(progress.sidekickId));
+    await runDurableObjectAlarm(demoRunStub(progress.sidekickId, progress.sidekickRunId));
+  }
   return settleDemoSeedAction(demoSeedEnv(), session, progress, {
     deadlineAt: Date.now() + DEMO_RUN_SETTLE_TIMEOUT_MS,
   });

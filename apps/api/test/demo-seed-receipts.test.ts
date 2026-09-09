@@ -5,6 +5,7 @@ import {
   demoSeedReceipts,
   recordDemoSeedReceipt,
   demoSeedResourceId,
+  demoSeedSidekickId,
   type DemoSeedReceipt,
 } from "../src/services/demo-seeder";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -56,6 +57,8 @@ function receipt(overrides: Partial<DemoSeedReceipt> = {}): DemoSeedReceipt {
     kind: "create_workstream",
     room: "decision-memo",
     workstreamId: "00000000-0000-7000-8000-0000000000f1",
+    sidekickId: null,
+    sidekickRunId: null,
     turnId: "00000000-0000-7000-8000-0000000000f2",
     harnessRunId: "00000000-0000-7000-8000-0000000000f3",
     runOutcome: "completed",
@@ -101,6 +104,38 @@ describe("demo seed receipts", () => {
     const db = await claimed();
     await expect(recordDemoSeedReceipt(db, receipt({
       runOutcome: "failed" as DemoSeedReceipt["runOutcome"],
+    }))).rejects.toThrow(/CHECK/u);
+  });
+
+  it("records a Sidekick, which has no room, and refuses one that claims a room anyway", async () => {
+    const db = await claimed();
+    const sidekick = await recordDemoSeedReceipt(db, receipt({
+      actionId: "morning-briefing",
+      kind: "sidekick",
+      room: null,
+      workstreamId: null,
+      sidekickId: await demoSeedSidekickId(OPERATION_ID, "morning-briefing"),
+      sidekickRunId: "00000000-0000-7000-8000-0000000000fa",
+      turnId: null,
+      harnessRunId: null,
+      runOutcome: "completed",
+    }));
+    expect(sidekick.sidekickId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+
+    // A Sidekick belongs to no room, and a row that names one is a receipt the
+    // barrier would go looking for a work stream behind.
+    await expect(recordDemoSeedReceipt(db, receipt({
+      actionId: "misfiled-briefing",
+      kind: "sidekick",
+      room: "decision-memo",
+      sidekickId: "00000000-0000-7000-8000-0000000000fb",
+    }))).rejects.toThrow(/CHECK/u);
+
+    // And the other way: a room action that names no work stream.
+    await expect(recordDemoSeedReceipt(db, receipt({
+      actionId: "roomless-message",
+      kind: "message",
+      workstreamId: null,
     }))).rejects.toThrow(/CHECK/u);
   });
 });
