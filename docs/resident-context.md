@@ -158,11 +158,11 @@ including the exception this subsystem introduces
   blocks are dropped from the leaf end until it fits, and the ones left out
   are named one per line, or counted on one line when naming them would not
   fit). The heading, preamble, and counting line are the section's floor: a
-  bound below it admits nothing and still emits the floor. The PRD says the
-  implementing change does not ship until
-  both are finite, because this change introduces the allocation and the
-  `content` column's eventual `CHECK` is not an inert site; the numbers are the
-  team's and are asked for in the pull request.
+  bound below it admits nothing and still emits the floor. The PRD's rule was
+  that the implementing change does not ship until both are finite; the product
+  owner decided to merge with both open (PRD decision log, 2026-09-09), so the
+  numbers are still to be set, and the `content` column's `CHECK` lands with
+  them in a follow-up object migration.
 - Chain depth needs no cap: the candidates are the ancestors of a touched path.
 
 ## Testing
