@@ -247,8 +247,9 @@ Still exports retain every image as a titled file card, including every gallery 
 An image embed reads its source bytes and renders in a square with centered
 cover scaling, matching message attachment tiles. It shows
 a shimmering media skeleton while those bytes load. Other resource kinds do
-not fetch a derivative for feed decoration: sites, audio, documents, and other
-files render as compact 340-by-54-pixel icon, filename, and kind rows. Clicking
+not fetch original bytes for feed decoration: audio and video use square tiles,
+while sites, documents, and other files use 54px-high icon, filename, and kind
+cards that fit two grid tracks. Clicking
 either presentation opens the host's attachment preview when bytes are
 available. A true `generated_site` keeps its live-artifact inspector because its
 runtime is not an attachment blob. This avoids both binary-as-text failures and
@@ -711,36 +712,21 @@ The traps, both of which have bitten:
 
 ## Changelog
 
-### 2026-09-09 — Input media matches card height
+### 2026-09-09 — Shared media tiles with host-specific layouts
 
-The input overrides the shared media size to 54px, matching its file cards in
-one compact scrolling row. Feed media remains 108px square. The same components
-serve both contexts; only the container's size variable changes.
+Attachments and embeds share square media and horizontal file cards. Feed media
+is 108px square, twice the 54px file-card height; the input uses the same
+components at 54px in one scrolling row. Feed grids use media-sized tracks with
+file cards spanning two tracks, replacing full-width file rows to tile mixed
+content while keeping every delivered item visible. Image galleries retain all
+entries and keyboard navigation; still exports retain every title.
 
-### 2026-09-09 — Input reuses feed tiles in one scrolling row
-
-Pending attachments now compose the feed image, media, and file components,
-adding upload progress, retry, and remove actions. The input alone uses one
-horizontal scrolling row; delivered attachments and embeds retain their grid.
-This keeps card presentation shared without forcing feed wrapping on the input.
-
-### 2026-09-09 — Media size follows file-card height
-
-Square media tiles now measure twice the standard file-card height (108px
-from 54px), using shared CSS dimensions in composer, attachments, and embeds.
-This keeps media compact instead of growing to fill the grid column.
-
-### 2026-09-09 — Square media and wrapping attachment grids
-
-The product style supersedes Grok-inspired proportional rows: images, videos,
-and audio use square tiles; visual media fills its tile with centered cover
-scaling. Other files retain horizontal cards. CSS Grid wraps and tiles every
-attachment and embed, including composer drafts, without a folded image count.
-Full-screen previews remain available to inspect the complete source.
-
-### 2026-09-09 — Attachment-compatible embed groups
-
-Resource embed runs now use the shared proportional image group and compact file stack, with gallery navigation and inline audio. Consecutive resource embeds remain together during streaming so completion does not rearrange them. Still exports keep all titles instead of hiding folded images. This replaces the full-width file-row patch with the behavior verified in Grok Bot; grouping must still respect prose and unresolved resources.
+This follows the requested compact media style and fixes layout changes when
+consecutive embeds finish streaming. Fixed media dimensions supersede intrinsic
+ratios, and the input's compact row deliberately differs from feed wrapping.
+Video originals load only when opened; gallery placeholders do not fetch full
+originals for thumbnails. Audio uses compact playback controls with full preview
+available. Resource access remains checked against the current citation map.
 
 ### 2026-09-08 — A run of embed cards wraps instead of scrolling sideways
 

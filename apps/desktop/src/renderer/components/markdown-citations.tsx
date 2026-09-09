@@ -14,7 +14,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { File, FileText, Image as ImageIcon, Link2, Volume2 } from 'lucide-react';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
-import { AttachmentMediaTile, AttachmentImageGroup } from './attachments';
+import { AttachmentMediaTile } from './attachments';
 import { isVideoAttachment } from '../lib/attachment-media';
 
 /**
@@ -71,7 +71,7 @@ export interface CitationContext {
   /** Where an opened citation goes. The host owns the route; this owns the click. */
   open: (target: CitationTarget) => void;
   /** Open a block resource embed in the host's preview surface. */
-  openPreview?: (resourceId: string, returnFocus: HTMLElement, gallery?: readonly string[]) => void;
+  openPreview?: (resourceId: string, returnFocus: HTMLElement, gallery?: readonly string[], selectedIndex?: number) => void;
   /** Authorized binary preview loader, used only after an audio Play action. */
   loadContent?: (resourceId: string, signal?: AbortSignal) => Promise<Blob>;
   /**
@@ -223,20 +223,18 @@ function ResourceChip({ label, resource, onOpen }: {
  * compact icon, filename, and kind row used for attached files; a generated site
  * or audio file must not fall back to a tall card with an empty middle.
  */
-export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview, grouped = false, remaining = 0, onAspectRatio, still = false }: {
+export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview, grouped = false, still = false }: {
   label: React.ReactNode;
   resource: CitationResource;
   onOpen: () => void;
   onPreview?: (returnFocus: HTMLElement) => void;
   preview?: ((resourceId: string) => Promise<CitationPreview> | undefined) | undefined;
   grouped?: boolean;
-  remaining?: number;
-  onAspectRatio?: (ratio: number) => void;
   still?: boolean;
 }): React.JSX.Element {
   const kind = resourceIconType(resource);
   const isImage = kind === 'image' && !still;
-  const [excerpt, setExcerpt] = useState<{ for: string; src?: string; aspectRatio?: number; open?: boolean }>({ for: '' });
+  const [excerpt, setExcerpt] = useState<{ for: string; src?: string; open?: boolean }>({ for: '' });
   useEffect(() => {
     const request = isImage ? preview?.(resource.id) : undefined;
     if (!request) {
@@ -258,7 +256,7 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview,
         if (cancelled) return;
         if (result.kind === 'image') {
           objectUrl = URL.createObjectURL(result.blob);
-          setExcerpt({ for: resource.id, src: objectUrl, aspectRatio: 4 / 3 });
+          setExcerpt({ for: resource.id, src: objectUrl });
           return;
         }
         setExcerpt({ for: resource.id });
@@ -279,7 +277,7 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview,
   const settled = excerpt.for === resource.id ? excerpt : { for: resource.id };
   return (
     <button
-      aria-label={remaining ? `Open the remaining ${remaining} images full screen` : `Open ${resource.title}`}
+      aria-label={`Open ${resource.title}`}
       className={`citation-card ${isImage ? 'is-image' : 'is-file'}`}
       data-resource-type={resource.resourceType}
       onClick={(event) => onPreview ? onPreview(event.currentTarget) : onOpen()}
@@ -304,14 +302,6 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview,
               ? { for: resource.id }
               : current);
           }}
-          onLoad={(event) => {
-            const { naturalHeight, naturalWidth } = event.currentTarget;
-            if (naturalHeight <= 0 || naturalWidth <= 0) return;
-            onAspectRatio?.(naturalWidth / naturalHeight);
-            setExcerpt((current) => current.for === resource.id && current.src === settled.src
-              ? { ...current, aspectRatio: naturalWidth / naturalHeight }
-              : current);
-          }}
           src={settled.src}
         />
       )}
@@ -332,7 +322,6 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview,
  * is checked again here because context may change without a markdown reparse. */
 export function CitationEmbedRow({ node, children }: { node: EmbedRowNode; children: React.ReactNode }): React.JSX.Element {
   const { citations, still } = useCitationRender();
-  const [ratios, setRatios] = useState<Record<string, number>>({});
   const entries = (node.children ?? []).flatMap((child, index) => {
     const target = parseCitationHref(String(child.properties?.src ?? ''));
     if (target.scheme !== 'resource') return [];
@@ -341,23 +330,19 @@ export function CitationEmbedRow({ node, children }: { node: EmbedRowNode; child
   });
   if (!citations || still || entries.length !== node.children?.length) return <div className="citation-card-row">{children}</div>;
   const images = entries.filter(({ resource }) => resourceIconType(resource) === 'image');
-  const files = entries.filter(({ resource }) => resourceIconType(resource) !== 'image');
   const gallery = images.map(({ resource }) => resource.id);
-  const card = (entry: typeof entries[number], grouped = false, remaining = 0): React.JSX.Element => (
+  const card = (entry: typeof entries[number], grouped = false, imageIndex?: number): React.JSX.Element => (
     <ResourceEmbedCard key={entry.key} label={entry.label} resource={entry.resource} preview={citations.preview}
-      grouped={grouped} remaining={remaining}
-      onAspectRatio={(ratio) => setRatios((current) => current[entry.key] === ratio ? current : { ...current, [entry.key]: ratio })}
+      grouped={grouped}
       onOpen={() => citations.open({ scheme: 'resource', resourceId: entry.resource.id })}
-      onPreview={citations.openPreview ? (focus) => citations.openPreview!(entry.resource.id, focus, gallery) : undefined}
+      onPreview={citations.openPreview ? (focus) => citations.openPreview!(entry.resource.id, focus, gallery, imageIndex) : undefined}
     />
   );
   return (
     <div className="citation-card-row">
-      {images.length > 0 && <AttachmentImageGroup
-        images={images.map((entry) => ({ key: entry.key, aspectRatio: ratios[entry.key] ?? 4 / 3 }))}
-        renderImage={(index, remaining) => card(images[index]!, true, remaining)}
-      />}
-      {files.map((entry) => <CitationFileEmbed key={entry.key} resource={entry.resource}>{card(entry)}</CitationFileEmbed>)}
+      {entries.map((entry) => resourceIconType(entry.resource) === 'image'
+        ? <span className="message-attachment-image-cell" key={entry.key}>{card(entry, true, images.indexOf(entry))}</span>
+        : <CitationFileEmbed key={entry.key} resource={entry.resource}>{card(entry)}</CitationFileEmbed>)}
     </div>
   );
 }

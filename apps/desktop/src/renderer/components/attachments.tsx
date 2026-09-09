@@ -1,7 +1,7 @@
 import { classifyAttachmentKind } from '@rally/contracts';
 import clsx from 'clsx';
-import { Download, File, FileText, Film, Music2, Play, RefreshCcw, Table2, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { Download, File, FileText, Film, Music2, Pause, Play, RefreshCcw, Table2, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { MessageAttachment } from '../lib/types';
 import { isImageAttachment, isVideoAttachment } from '../lib/attachment-media';
@@ -32,7 +32,6 @@ export interface AttachmentPreview {
 interface LoadedImage {
   attachment: MessageAttachment;
   src?: string;
-  aspectRatio: number;
 }
 
 function splitFileName(fileName: string): { base: string; suffix: string } {
@@ -109,8 +108,8 @@ export function PendingAttachmentTile({ actionsDisabled = false, attachment, onO
     ...(attachment.previewUrl ? { src: attachment.previewUrl } : {}), loadContent: content };
   return (
     <div className={clsx('pending-attachment', media && 'attachment-tile', video && 'is-video', !media && 'is-file', attachment.status === 'failed' && 'is-failed')}>
-      {image ? <RemoteImageAttachment image={{ attachment: record, src: attachment.previewUrl, aspectRatio: 1 }}
-        gallery={[preview]} index={0} remaining={0} onOpen={onOpen} />
+      {image ? <RemoteImageAttachment image={{ attachment: record, src: attachment.previewUrl }}
+        gallery={[preview]} index={0} onOpen={onOpen} />
         : media ? <AttachmentMediaTile name={record.fileName} mimeType={record.mimeType} src={attachment.previewUrl}
           loadContent={content} onOpen={(returnFocus) => onOpen({ ...preview, returnFocus })} />
         : <RemoteFileAttachment attachment={record} loadContent={content} onOpen={onOpen} showDownload={false} />}
@@ -125,11 +124,11 @@ export function PendingAttachmentTile({ actionsDisabled = false, attachment, onO
 
 /** All media stay visible; the parent grid owns wrapping and tile sizing. */
 export function AttachmentImageGroup({ images, renderImage }: {
-  images: readonly { key: string; aspectRatio: number }[];
-  renderImage: (index: number, remaining: number) => React.ReactNode;
+  images: readonly { key: string }[];
+  renderImage: (index: number) => React.ReactNode;
 }): React.JSX.Element {
   return <span className="message-attachment-images">{images.map((image, index) => (
-    <span className="message-attachment-image-cell" key={image.key}>{renderImage(index, 0)}</span>
+    <span className="message-attachment-image-cell" key={image.key}>{renderImage(index)}</span>
   ))}</span>;
 }
 
@@ -142,19 +141,7 @@ export function AttachmentMediaTile({ name, mimeType, loadContent, onOpen, disab
   disabled?: boolean;
 }): React.JSX.Element {
   const video = isVideoAttachment(mimeType ?? '', name);
-  const [loaded, setLoaded] = useState<{ loader: typeof loadContent; src: string } | null>(null);
-  useEffect(() => {
-    if (!video || !loadContent || disabled || suppliedSrc) return;
-    const controller = new AbortController();
-    let src: string | undefined;
-    void loadContent(controller.signal).then((blob) => {
-      if (controller.signal.aborted) return;
-      src = URL.createObjectURL(blob);
-      setLoaded({ loader: loadContent, src });
-    }).catch(() => undefined);
-    return () => { controller.abort(); if (src) URL.revokeObjectURL(src); };
-  }, [disabled, loadContent, video, suppliedSrc]);
-  const src = suppliedSrc ?? (loaded?.loader === loadContent ? loaded?.src : undefined);
+  const src = suppliedSrc;
   return <span className="attachment-media-tile">
     <button aria-label={`Preview ${name}`} className="attachment-media-open" disabled={disabled} onClick={(event) => onOpen(event.currentTarget)} type="button">
       {video && src ? <video aria-hidden="true" muted playsInline preload="metadata" src={src} /> : video ? <Film aria-hidden="true" size={32} /> : <Music2 aria-hidden="true" size={32} />}
@@ -171,6 +158,8 @@ export function AttachmentAudio({ name, loadContent }: {
   name: string;
   loadContent: (signal?: AbortSignal) => Promise<Blob>;
 }): React.JSX.Element {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
   const [requested, setRequested] = useState(false);
   const [loaded, setLoaded] = useState<{ loader: typeof loadContent; src: string } | null>(null);
   const [error, setError] = useState(false);
@@ -191,7 +180,11 @@ export function AttachmentAudio({ name, loadContent }: {
   }, [loadContent, requested]);
   return (
     <span className="attachment-inline-audio">
-      {src ? <audio aria-label={`Audio: ${name}`} autoPlay controls src={src} /> : (
+      {src ? <><audio ref={audioRef} aria-label={`Audio: ${name}`} autoPlay src={src} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
+        <button aria-label={`${playing ? 'Pause' : 'Play'} ${name}`} onClick={() => {
+          if (playing) audioRef.current?.pause();
+          else void audioRef.current?.play().catch(() => setError(true));
+        }} type="button">{playing ? <Pause size={16} /> : <Play size={16} />}{playing ? 'Pause' : 'Play'}</button></> : (
         <button aria-label={`Play ${name}`} disabled={requested} onClick={() => setRequested(true)} type="button">
           <Play aria-hidden="true" size={16} /> {requested ? 'Loading audio…' : 'Play audio'}
         </button>
@@ -201,11 +194,10 @@ export function AttachmentAudio({ name, loadContent }: {
   );
 }
 
-function RemoteImageAttachment({ image, gallery, index, remaining, onOpen }: {
+function RemoteImageAttachment({ image, gallery, index, onOpen }: {
   image: LoadedImage;
   gallery: AttachmentPreview[];
   index: number;
-  remaining: number;
   onOpen: (preview: AttachmentPreview) => void;
 }): React.JSX.Element {
   const { attachment, src } = image;
@@ -216,7 +208,7 @@ function RemoteImageAttachment({ image, gallery, index, remaining, onOpen }: {
   };
   return (
     <button
-      aria-label={remaining ? `Open the remaining ${remaining} images full screen` : `Preview ${attachment.fileName}`}
+      aria-label={`Preview ${attachment.fileName}`}
       className="message-attachment-image"
       title={attachment.fileName}
       disabled={!attachment.contentAvailable}
@@ -280,7 +272,7 @@ function RemoteFileAttachment({ attachment, loadContent, onOpen, showDownload = 
 }
 
 function useLoadedImages(attachments: MessageAttachment[], loadContent: (id: string, signal?: AbortSignal) => Promise<Blob>): LoadedImage[] {
-  const [sources, setSources] = useState<Record<string, { src: string; aspectRatio: number }>>({});
+  const [sources, setSources] = useState<Record<string, { src: string }>>({});
   // `MessageAttachments` separates images from files with `filter`, so this
   // hook receives a freshly allocated array whenever its parent renders. The
   // attachment records themselves come from durable transcript data and have
@@ -309,14 +301,8 @@ function useLoadedImages(attachments: MessageAttachment[], loadContent: (id: str
         if (controller.signal.aborted) return;
         const src = URL.createObjectURL(blob);
         urls.push(src);
-        setSources((current) => ({ ...current, [attachment.id]: { src, aspectRatio: 4 / 3 } }));
-        const probe = new Image();
-        probe.onload = () => {
-          if (controller.signal.aborted) return;
-          const aspectRatio = probe.naturalWidth > 0 && probe.naturalHeight > 0 ? probe.naturalWidth / probe.naturalHeight : 4 / 3;
-          setSources((current) => ({ ...current, [attachment.id]: { src, aspectRatio } }));
-        };
-        probe.src = src;
+        setSources((current) => ({ ...current, [attachment.id]: { src } }));
+
       }).catch(() => undefined);
     }
     return () => {
@@ -324,7 +310,7 @@ function useLoadedImages(attachments: MessageAttachment[], loadContent: (id: str
       for (const url of urls) URL.revokeObjectURL(url);
     };
   }, [loadContent, stableAttachments]);
-  return stableAttachments.map((attachment) => ({ attachment, src: sources[attachment.id]?.src, aspectRatio: sources[attachment.id]?.aspectRatio ?? 4 / 3 }));
+  return stableAttachments.map((attachment) => ({ attachment, src: sources[attachment.id]?.src }));
 }
 
 function RemoteImageGroup({ attachments, loadContent, onOpen }: {
@@ -340,8 +326,8 @@ function RemoteImageGroup({ attachments, loadContent, onOpen }: {
     loadContent: (signal) => loadContent(attachment.id, signal),
   })), [images, loadContent]);
   return <AttachmentImageGroup
-    images={images.map((image) => ({ key: image.attachment.id, aspectRatio: image.aspectRatio }))}
-    renderImage={(index, remaining) => <RemoteImageAttachment gallery={gallery} image={images[index]!} index={index} remaining={remaining} onOpen={onOpen} />}
+    images={images.map((image) => ({ key: image.attachment.id }))}
+    renderImage={(index) => <RemoteImageAttachment gallery={gallery} image={images[index]!} index={index} onOpen={onOpen} />}
   />;
 }
 
