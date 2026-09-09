@@ -1937,6 +1937,110 @@ describe("canonical ordered work-stream transcript", () => {
     expect(settled.loop.bind_state_revision).toBe(5);
   });
 
+  it("appends a host authority's derived inputs at the settled step, closes them in the same commit, and replays without a second message", async () => {
+    const { transcript, sql, storage } = open();
+    seedPendingInputRoot(sql);
+    const first = await admitPendingInput({ storage });
+    await transcript.commitBindTransition(initializePersistentLoop(), NOW + 2);
+    sql.exec(`UPDATE substream_loops SET bind_state_revision = 1 WHERE id = 1`);
+    const activated = await transcript.activatePendingInput({
+      loopId: "persistent-loop",
+      expectedInputId: first.inputId,
+      expectedLoopRevision: first.loop.loop()!.revision,
+      expectedBindGeneration: 1,
+      expectedBindStateRevision: 1,
+      receipt: {
+        substreamId: "0",
+        runId: "00000000-0000-7000-8000-000000000181",
+        executionEpoch: 1,
+        leaseOwner: "lease-derived",
+        leaseExpiresAt: NOW + 100_000,
+        executionContextJson: JSON.stringify({ kind: "test_execution", loopId: "persistent-loop" }),
+        executionPrincipalJson: JSON.stringify({ type: "user", userId: "user-1" }),
+        origin: "human_message",
+        model: "test/model",
+      },
+      enqueueRegionalEffectsInTransaction: () => undefined,
+      now: NOW + 3,
+    });
+    if (activated.outcome !== "activated") throw new Error("test_activation_failed");
+    const assistantTurnId = "persistent-loop:turn:1";
+    const reservation = first.loop.reserveAssistantTurn({
+      executionId: activated.receiptRunId,
+      executionEpoch: 1,
+      leaseOwner: "lease-derived",
+      expectedLoopRevision: first.loop.loop()!.revision,
+      receiptRunId: activated.receiptRunId,
+      turnId: assistantTurnId,
+      modelTurnIndex: 1,
+      streamId: "stream-derived",
+      now: NOW + 4,
+    });
+    if (reservation.outcome !== "reserved") throw new Error("test_reservation_failed");
+    const fence = { executionId: activated.receiptRunId, executionEpoch: 1, leaseOwner: "lease-derived" };
+    await transcript.commitBindTransition({
+      kind: "assistant_reserved", loopId: "persistent-loop", generation: 1, stateRevision: 3,
+      turnId: assistantTurnId, modelTurnIndex: 1, transcriptSequence: reservation.reservation.transcript_sequence,
+    }, NOW + 5, { ...fence, expectedBindStateRevision: 2 });
+    await transcript.commitBindTransition({
+      kind: "assistant_accepted", loopId: "persistent-loop", generation: 1, stateRevision: 4,
+      turnId: assistantTurnId, modelTurnIndex: 1, transcriptSequence: reservation.reservation.transcript_sequence,
+      message: { role: "assistant", content: "Reading the repository" },
+    }, NOW + 6, { ...fence, expectedBindStateRevision: 3 });
+
+    const derived = {
+      key: "AGENTS.md@abc",
+      message: { role: "user", content: "Instructions added from ./AGENTS.md:\nroot rules" },
+      provenance: { originKind: "derived" as const, sourceKind: "repository_instructions", sourceId: "AGENTS.md@abc", sourceRevision: null },
+    };
+    const marked: string[][] = [];
+    const settle = (expectedBindStateRevision: number, expectedStepOrdinal: number) => transcript.settlePendingSteersAtStep({
+      loopId: "persistent-loop",
+      ...fence,
+      expectedLoopRevision: first.loop.loop()!.revision,
+      expectedStepOrdinal,
+      expectedBindGeneration: 1,
+      expectedBindStateRevision,
+      assistantTurnId,
+      modelTurnIndex: 1,
+      enqueueRegionalEffectsInTransaction: () => undefined,
+      derivedInputs: [derived],
+      markDerivedInputsDeliveredInTransaction: (keys) => { marked.push([...keys]); },
+      now: NOW + 9,
+    });
+
+    const settled = await settle(4, 0);
+    expect(settled.transitions).toEqual([expect.objectContaining({
+      kind: "protocol_user_appended",
+      stateRevision: 5,
+      message: derived.message,
+      provenance: derived.provenance,
+      activationInputId: null,
+    })]);
+    expect(settled.deliveredDerivedInputKeys).toEqual(["AGENTS.md@abc"]);
+    expect(marked).toEqual([["AGENTS.md@abc"]]);
+    expect(settled.loop).toMatchObject({ step_ordinal: 1, bind_state_revision: 5 });
+    const projected = bindLoopNonSystemMessages(transcript.readBindProjection("persistent-loop")!);
+    expect(projected.at(-1)).toEqual(derived.message);
+    // The position the summariser is told to skip is the message's own, with the
+    // system message at zero, and only for the kinds the ledger owns.
+    expect(transcript.bindMessagePositionsBySourceKind("persistent-loop", ["repository_instructions"])).toEqual([projected.length]);
+    expect(transcript.bindMessagePositionsBySourceKind("persistent-loop", ["other_kind"])).toEqual([]);
+    // Model-only: no participant turn was minted for it.
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE message_type = 'text' AND actor = 'human'`).one())
+      .toEqual({ count: 1 });
+    expect(sql.exec(
+      `SELECT origin_kind, source_kind, source_id FROM transcript_facts WHERE fact_kind = 'model_message' ORDER BY rowid DESC LIMIT 1`,
+    ).one()).toEqual({ origin_kind: "derived", source_kind: "repository_instructions", source_id: "AGENTS.md@abc" });
+
+    // The same delivery offered again is a replay: closed, not appended twice.
+    const replayed = await settle(5, 1);
+    expect(replayed.transitions).toEqual([]);
+    expect(replayed.deliveredDerivedInputKeys).toEqual(["AGENTS.md@abc"]);
+    expect(bindLoopNonSystemMessages(transcript.readBindProjection("persistent-loop")!).filter((message) => message.content === derived.message.content))
+      .toHaveLength(1);
+  });
+
   it("rolls activation back when its synchronous regional-effect enqueue fails", async () => {
     const { transcript, sql, storage } = open();
     seedPendingInputRoot(sql);

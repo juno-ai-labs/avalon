@@ -33,6 +33,8 @@ import type { TerminalTaskRecord } from "../../durable-objects/workstream-termin
 import type { TerminalRepositorySelector } from "./repository-selection";
 import { TERMINAL_OUTPUT_DIRECTORY, TERMINAL_OUTPUT_ROOT, TERMINAL_WORKSPACE_ROOT } from "./contract";
 import { recordTerminalAcquisition } from "./tracing";
+import { INSTRUCTIONS_PENDING_EXIT_CODE } from "./instruction-files";
+import { instructionsPendingError, type TerminalInstructionFiles, type TerminalInstructionProbe } from "./instructions";
 
 const ROOT = TERMINAL_WORKSPACE_ROOT;
 const RESOURCE_ROOT = ".rally/resources";
@@ -308,8 +310,70 @@ export function createDaytonaTerminalRuntime(
   selector: TerminalRepositorySelector | null = null,
   prepareSandbox?: TerminalSandboxPreparation,
   cacheNow: () => number = Date.now,
+  /**
+   * Discovery of a checkout's own instruction files. Optional so a runtime
+   * without a ledger (a test, a caller with no conversation) probes nothing.
+   */
+  instructions?: TerminalInstructionFiles,
 ): DaytonaTerminalRuntime {
   const acquiredByRun = new Map<string, Promise<AcquiredTerminalSandbox>>();
+
+  /**
+   * The probe rides the tool's own sandbox command: appended after a read,
+   * prepended in `abort` mode before a mutation so a governing instruction file
+   * that is not yet in context stops the command before it changes anything.
+   */
+  async function probeFragment(
+    mode: "report" | "abort",
+    touched: readonly string[],
+  ): Promise<TerminalInstructionProbe | null> {
+    return instructions ? instructions.fragment({ mode, touched }) : null;
+  }
+
+  /**
+   * Record what the probe found and hand back the tool's own stdout. Exit code
+   * 52 is the probe stopping a mutation; the instructions it recorded are
+   * delivered with this batch, so the refusal names them and asks for a retry.
+   */
+  async function settleProbe(
+    sandbox: AcquiredTerminalSandbox,
+    result: { exitCode: number; stdout: string },
+    probe: TerminalInstructionProbe | null,
+  ): Promise<string> {
+    if (!instructions || !probe) return result.stdout;
+    const recorded = await instructions.record({
+      stdout: result.stdout,
+      marker: probe.marker,
+      exitCode: result.exitCode,
+      sourceGeneration: sandbox.generation,
+    });
+    if (result.exitCode === INSTRUCTIONS_PENDING_EXIT_CODE) {
+      throw instructionsPendingError(recorded);
+    }
+    return recorded.stdout;
+  }
+
+  /**
+   * A mutation whose command cannot carry the probe (`run_command` runs the
+   * model's own text; an import lands through the resource bridge) probes in
+   * a command of its own, before anything changes.
+   */
+  async function probeBeforeMutation(
+    context: HarnessToolContext,
+    sandbox: AcquiredTerminalSandbox,
+    touched: readonly string[],
+  ): Promise<void> {
+    const probe = await probeFragment("abort", touched);
+    if (!probe) return;
+    const result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
+      operation: "instructions.probe",
+      command: probe.text,
+      cwd: ROOT,
+      timeoutMs: 30_000,
+      signal: context.signal,
+    });
+    await settleProbe(sandbox, result, probe);
+  }
 
   async function acquire(
     context: HarnessToolContext,
@@ -638,16 +702,24 @@ export function createDaytonaTerminalRuntime(
       acquiredByRun.delete(context.harnessRunId);
       const selected = await selector.checkout(context, input);
       acquiredByRun.delete(context.harnessRunId);
+      // The old checkout's instructions have no successor message to supersede
+      // them, so they leave context now rather than at the next compaction.
+      await instructions?.invalidate();
       return selected;
     },
     async readFile(context, filePath) {
       const sandbox = await acquire(context);
       const path = absolutePath(filePath);
+      // The read that precedes an edit: the instructions governing the file
+      // have to be in context before the edit, so the probe runs first and
+      // in abort mode.
+      const probe = await probeFragment("abort", [filePath]);
       const metadata = await provider.runUtilityCommand(sandbox.providerSandboxId, {
         operation: "file.inspect",
         command: [
           `target=${shellQuote(path)}`,
           ...containmentCommands(),
+          ...(probe ? [probe.text] : []),
           'if [ ! -e "$target" ]; then exit 44; fi',
           'if [ -L "$target" ] || [ ! -f "$target" ]; then exit 45; fi',
           'stat -c %s -- "$target"',
@@ -657,11 +729,12 @@ export function createDaytonaTerminalRuntime(
         signal: context.signal,
       });
       if (metadata.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
+      const metadataStdout = await settleProbe(sandbox, metadata, probe);
       if (metadata.exitCode === FILE_NOT_FOUND_EXIT_CODE) return null;
       if (metadata.exitCode === FILE_NOT_REGULAR_EXIT_CODE) {
         throw new TerminalToolError("file_read_failed", "The path is not a regular file. Use terminal_run_command with `ls -l` or `file` to inspect it.", { filePath });
       }
-      const size = Number(metadata.stdout.trim());
+      const size = Number(metadataStdout.trim());
       if (metadata.exitCode !== 0 || !Number.isSafeInteger(size) || size < 0) {
         throw new TerminalToolError("file_read_failed", "The file size could not be verified. Inspect it with terminal_run_command and retry.", { reason: "Inspect the path with ls -l or file, then retry the read." });
       }
@@ -683,13 +756,18 @@ export function createDaytonaTerminalRuntime(
     async readFilePage(context, filePath, offset, limit) {
       const sandbox = await acquire(context);
       const path = absolutePath(filePath);
-      const result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
+      const probe = await probeFragment("report", [filePath]);
+      const read = `python3 -c ${shellQuote(TERMINAL_READ_TEXT_PAGE_PYTHON)} ${shellQuote(ROOT)} ${shellQuote(path)} ${offset} ${limit} ${256 * 1_024} ${10 * 1_048_576}`;
+      const raw = await provider.runUtilityCommand(sandbox.providerSandboxId, {
         operation: "file.read_page",
-        command: `python3 -c ${shellQuote(TERMINAL_READ_TEXT_PAGE_PYTHON)} ${shellQuote(ROOT)} ${shellQuote(path)} ${offset} ${limit} ${256 * 1_024} ${10 * 1_048_576}`,
+        // The read's exit status is the command's: the probe runs after it in
+        // its own isolated group and reports without touching that status.
+        command: probe ? `${read}; s=$?\n${probe.text}\nexit $s` : read,
         cwd: ROOT,
         timeoutMs: 30_000,
         signal: context.signal,
       });
+      const result = { ...raw, stdout: await settleProbe(sandbox, raw, probe) };
       if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
       if (result.exitCode === FILE_NOT_FOUND_EXIT_CODE) return null;
       if (result.exitCode === FILE_NOT_REGULAR_EXIT_CODE) {
@@ -729,6 +807,9 @@ export function createDaytonaTerminalRuntime(
       const sandbox = await acquire(context);
       const target = absolutePath(filePath);
       const temporary = `${ROOT}/.rally/tmp/${newId()}`;
+      // An edit already probed when it read the file; a whole-file write is
+      // the first touch and probes here, before the temporary moves into place.
+      const probe = options ? null : await probeFragment("abort", [filePath]);
       await provider.writeFile(sandbox.providerSandboxId, temporary, bytes, context.signal);
       let result: Awaited<ReturnType<TerminalSandboxProvider["runUtilityCommand"]>>;
       try {
@@ -743,6 +824,7 @@ export function createDaytonaTerminalRuntime(
               `previous_lines=${lineCount(options.previousText)}`,
             ] : [
               ...containmentCommands(),
+              ...(probe ? [probe.text] : []),
               "created=1",
               "previous_lines=0",
               'if [ -e "$target" ]; then',
@@ -766,6 +848,7 @@ export function createDaytonaTerminalRuntime(
         throw error;
       }
       if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
+      result = { ...result, stdout: await settleProbe(sandbox, result, probe) };
       if (result.exitCode === FILE_NOT_REGULAR_EXIT_CODE) {
         throw new TerminalToolError("file_write_failed", "The path is not a regular file. Inspect it with terminal_run_command before replacing it.", { filePath });
       }
@@ -787,12 +870,22 @@ export function createDaytonaTerminalRuntime(
       const parsed = parsePatch(patch);
       const sandbox = await acquire(context);
       const temporary = `${ROOT}/.rally/tmp/${newId()}.patch`;
+      const probe = await probeFragment("abort", parsed.files.flatMap((file) =>
+        file.previousPath ? [file.path, file.previousPath] : [file.path]));
       await provider.writeFile(sandbox.providerSandboxId, temporary, new TextEncoder().encode(patch), context.signal);
       let result: Awaited<ReturnType<TerminalSandboxProvider["runUtilityCommand"]>>;
       try {
         result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
           operation: "file.apply_patch",
-          command: `git apply --check -- ${shellQuote(temporary)} && git apply -- ${shellQuote(temporary)}; status=$?; rm -f -- ${shellQuote(temporary)}; exit $status`,
+          // Check, then probe, then apply: the probe sits between the dry run
+          // and the real one so a patch that would not apply is reported as
+          // such, and one that would is held until its instructions are read.
+          command: [
+            `trap 'rm -f -- ${shellQuote(temporary)}' EXIT`,
+            `git apply --check -- ${shellQuote(temporary)} || exit $?`,
+            ...(probe ? [probe.text] : []),
+            `git apply -- ${shellQuote(temporary)}`,
+          ].join("\n"),
           cwd: ROOT,
           timeoutMs: 60_000,
           signal: context.signal,
@@ -801,6 +894,7 @@ export function createDaytonaTerminalRuntime(
         await cleanupTemporaryFile(sandbox.providerSandboxId, temporary);
         throw error;
       }
+      await settleProbe(sandbox, result, probe);
       if (result.exitCode !== 0) {
         throw new TerminalToolError(
           "patch_does_not_apply",
@@ -846,6 +940,11 @@ export function createDaytonaTerminalRuntime(
           "The earlier command may have run, but Rally cannot prove that the current sandbox and input match it. Stop and report the ambiguity; do not repeat the command.",
         );
       }
+
+      // A command runs the model's own text, which the probe cannot ride, so
+      // discovery is its own command first: the working directory's chain, and
+      // nothing durable admitted until the instructions are in context.
+      if (!existing) await probeBeforeMutation(context, sandbox, input.cwd ? [input.cwd] : []);
 
       const startedAt = existing?.startedAt ?? Date.now();
       const deadlineAt = existing?.commandDeadlineAt
@@ -1024,6 +1123,9 @@ export function createDaytonaTerminalRuntime(
         ? input.destinationPath
         : `${RESOURCE_ROOT}/${input.resourceId}/resource`;
       await resolveInsideRoot(context, sandbox, destination);
+      // The default placement lands under Rally-owned `.rally/`, whose chain
+      // the candidate builder reduces to the root.
+      await probeBeforeMutation(context, sandbox, [destination]);
       return resources.importResource(
         context,
         input,

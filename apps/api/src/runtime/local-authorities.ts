@@ -71,6 +71,7 @@ export interface LocalWorkstreamAuthorities {
   // shape and its port keeps reading it.
   terminal?: TerminalOperationExecutor;
   toolReceipt?: LocalAuthorityExecutor;
+  residentContext?: LocalAuthorityExecutor;
 }
 
 export type WorkstreamAuthority = keyof LocalWorkstreamAuthorities;

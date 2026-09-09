@@ -35,6 +35,8 @@ import {
 } from "./object-port";
 import { createTerminalResourceBridge } from "./resource-bridge";
 import { createDaytonaTerminalRuntime } from "./runtime";
+import { createTerminalInstructionFiles } from "./instructions";
+import { createResidentContextPortFactory } from "../../runtime/resident-context-port";
 import { createTerminalRepositorySelector } from "./repository-selection";
 import { createGitHubTerminalCatalogGateway } from "./workstream-state";
 import { createTerminalToolExecutors, TerminalToolError } from "./tools";
@@ -73,6 +75,20 @@ export async function createAvalonTerminalPlugin(
   // local inside that object and a stub anywhere else, without either caller
   // knowing which. See `runtime/local-authorities.ts`.
   const terminalPort = createTerminalPortFactory(env);
+  // The conversation's context-residency ledger, addressed by the substream
+  // this run is: residency is a fact about one transcript. Resolves in-object
+  // the same way the Terminal port does.
+  const instructions = createTerminalInstructionFiles(
+    createResidentContextPortFactory(env)(input.workspaceId, input.parentId, input.substreamId ?? "0"),
+    (error, stage) => logStructuredEvent(env, "warn", "terminal_instruction_probe_failed", {
+      workspace_id: input.workspaceId,
+      workstream_id: input.parentId,
+      harness_run_id: input.harnessRunId,
+      stage,
+      error_name: error instanceof Error ? error.name : "unknown",
+      error_message: error instanceof Error ? error.message : String(error),
+    }),
+  );
 
   await admitTerminalPublicationGrant(env, {
     workspaceId: input.workspaceId,
@@ -149,6 +165,7 @@ export async function createAvalonTerminalPlugin(
         sandboxProvider,
         readGateway,
         terminalPort,
+        instructions,
       );
     } catch (error) {
       if (error instanceof TerminalToolError && error.code === "repository_not_configured") return;
@@ -176,6 +193,7 @@ export async function createAvalonTerminalPlugin(
         provider,
         readGateway,
         terminalPort,
+        instructions,
       );
       return null;
     } catch (error) {
@@ -215,6 +233,8 @@ export async function createAvalonTerminalPlugin(
       inObjectResourceAttacher,
     ),
     prepareRepository,
+    undefined,
+    instructions,
   );
   const executors = createTerminalToolExecutors(runtime);
   const observedExecutors = Object.fromEntries(TERMINAL_TOOL_NAMES.map((name) => [

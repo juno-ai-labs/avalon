@@ -9,7 +9,9 @@
 > user-role message at the tail of the transcript; a durable ledger records
 > what was loaded; after a compaction the loaded files move into the system
 > prompt for a bounded number of further compactions, then drop out until a
-> file beneath them is touched again. Companion: [state](state.md).
+> file beneath them is touched again. Companions: [state](state.md),
+> [plan](plan.md). Subsystem document once built:
+> [`resident-context.md`](../../resident-context.md).
 > Subsystem references: [Terminal work spaces](../../terminal-workspaces.md),
 > [agent harness](../../agent-harness.md),
 > [writing prompts](../../writing-prompts.md),
@@ -240,7 +242,155 @@ the file contents it reads today.
 
 ## Decision log
 
-None yet.
+### 2026-09-09 — The gate counts delivered blocks only
+
+**Decided:** The known-resident set the Terminal probe is given holds only
+blocks the model has seen: recorded, delivered at a settled step, and current.
+A block recorded by an earlier call in the same batch and not yet delivered is
+not in it, so every mutation beneath an unread file in that batch is refused
+with `instructions_pending`, and the retry after the settled step proceeds.
+
+**Why:** Review of the implementing pull request found that a recorded but
+undelivered block counted as resident, so a second mutation issued in the same
+tool-call batch as the refused one went through before the model could have
+read the instructions. The gate exists to put the reading before the mutation;
+counting a message the model has not received defeated it.
+
+**Changes:** The **Agent behavior** sentence "a second refusal for the same
+directory in one residency cycle cannot occur" is superseded: it cannot occur
+across batches, and does occur within one. Decision 2's "the retry finds them
+resident" holds for the retry after the settled step, which is the only retry
+the model can make.
+
+### 2026-09-09 — The implementing change merges with both limits still open
+
+**Decided:** The product owner directed that the implementing pull request
+(#627) merge with `MAX_RESIDENT_CONTEXT_BLOCK_BYTES` and
+`MAX_RESIDENT_CONTEXT_SECTION_BYTES` still open. Open question 4 stays open,
+the `LIMIT UNSET` placeholders stay where they are, and the `content` column's
+`CHECK` waits for the numbers. This supersedes the earlier entry's "does not
+ship until they are set".
+
+**Why:** The reasoning beyond "keep all open for now" was not recorded. What is
+known: the numbers are the team's to set, not the change's to guess, and the
+enforcement already sits where an open value is inert, so setting them later is
+a one-constant change plus a follow-up object migration.
+
+**Changes:** The rollout ships without the bound the security section describes
+as bounding the prefix in size. Until the numbers land, the only bound on a
+delivered block is the sandbox's own file limits (`terminal_read_file` reads at
+most 10 MiB) and the compaction checkpoint's `messages_json` cap on the
+transcript side; the prompt section has no bound.
+
+### 2026-09-09 — The commit moves what the prepare rendered, a ledger failure turns the gate off, and a revert reinstates
+
+**Decided:** The prepare step records, per compaction event, exactly the blocks
+it rendered into the compacted system message, and the commit moves those and
+no others; an event never prepared moves nothing. A superseded prompt block is
+not counted as resident, so a source that reverts to that content is reported
+again and reinstated in place (current, fresh lifetime, delivered once more).
+After the first ledger failure in a run the Terminal probe runs in report mode
+only; a mutation it had already stopped is refused once with
+`instructions_unavailable`, whose message says the retry proceeds.
+
+**Why:** Review of the implementing pull request found three gaps in the
+agreed design. Decision 3's "prepare, then commit inside the transaction"
+recomputed the transitions at commit from the live ledger, so a block recorded
+in between (the background bootstrap of decision 8) was moved into the prompt
+without being in the compacted system message. The `superseded` flag of the
+2026-09-09 review round was sticky: an edit followed by a revert retired the
+current content and promoted the stale one. And `instructions_pending` treated
+the probe's exit 52 as authoritative even when nothing was recorded, so one
+ledger failure refused every later mutation for a message that never came.
+
+**Changes:** Decision 3 gains the prepared-set rule; the residency table gains
+the reinstatement row; the failure-and-self-healing rule under **Agent
+behavior** gains the degraded mode and the second refusal code. The system
+message's standing sentence is unchanged: the new refusal's own text carries the
+instruction to retry.
+
+### 2026-09-09 — The section bound measures the emitted section, and the probe trailer is keyed by a nonce
+
+**Decided:** `MAX_RESIDENT_CONTEXT_SECTION_BYTES` bounds the whole section a
+kind emits (heading, preamble, separators, admitted blocks, and the omission
+notice), not the sum of the admitted block bodies. Blocks are dropped from the
+leaf end until the section fits; the omitted ones are named one per line when
+that fits and counted on one line otherwise. The heading, preamble, and
+counting line are the floor the bound has to sit above. Separately, the probe's
+trailer starts with a marker minted per invocation rather than the fixed string
+decision 1 implied, and the parser matches only the value it was handed.
+
+**Why:** Review of the implementing pull request found that decision 9's
+wording, admitting blocks "until the next one would exceed the bound" with a
+fixed line per omission, left the fixed text and every omission line outside
+the count, so the emitted section could exceed the bound without limit. It also
+found that a fixed marker searched for anywhere in stdout let repository
+content, which precedes the trailer, truncate a tool's output or plant a
+trailer of its own.
+
+**Changes:** Decision 9's admission sentence is superseded by the rule above;
+the "marked line" of decision 1 is a nonce-marked line. Nothing else moves.
+
+### 2026-09-09 — The implementing change is built with both limits open, and does not ship until they are set
+
+**Decided:** `MAX_RESIDENT_CONTEXT_BLOCK_BYTES` and
+`MAX_RESIDENT_CONTEXT_SECTION_BYTES` are open placeholders in `blocks.ts`, the
+probe is given the block bound only when it is finite, truncation is applied in
+TypeScript after the read, and the `content` column carries no `CHECK`. The
+pull request that carries this change names both numbers as the blocker.
+
+**Why:** Decision 9 requires finite numbers before the change ships, not before
+it is written; the mechanism had to exist for the numbers to be tested against,
+and everything else in the PRD could be built and proved without them. Placing
+the enforcement where an open value is inert is what lets the code be complete
+while the numbers are the product owner's.
+
+**Changes:** Nothing in the agreed scope. Open question 4 stays open and blocks
+the merge, not the build.
+
+### 2026-09-09 — Two tools probe in a command of their own
+
+**Decided:** `run_command` and `import_resource` run the probe as a separate
+`instructions.probe` utility command before the mutation. Every other tool's
+probe rides its own sandbox command as the PRD describes.
+
+**Why:** `run_command` executes the model's own text, which the probe cannot be
+folded into without altering the command the durable task records and hashes;
+`import_resource` lands through the resource bridge's own commands. One extra
+round trip on the two heaviest mutations was judged cheaper than either
+rewriting a recorded command or threading the probe through the bridge.
+
+**Changes:** Decision 7's claim that the probe adds no provider round trip
+holds for `read_file`, `edit_file`, `write_file`, `apply_patch`, and the
+bootstrap, and not for these two. The Terminal document's limits section says so.
+
+### 2026-09-09 — The summariser's exclusions come from the object, not the harness
+
+**Decided:** `prepareCompaction` answers with the projected positions of every
+message a resident-context kind owns, read from `bind_loop_state_messages`
+joined to `transcript_facts`, and the harness filters the summary input by
+position.
+
+**Why:** Decision 3 described excluding messages by their provenance in the
+harness. The harness keeps no provenance per message once a transition is
+applied; the object's durable projection does, exactly. Positions are the seam
+that already exists between the two.
+
+**Changes:** Nothing in behavior. Decision 3's mechanism sentence is superseded
+by this one.
+
+### 2026-09-09 — The ledger has its own object-port authority
+
+**Decided:** Producers reach the ledger through a `residentContext` authority
+(`createResidentContextPortFactory`), not through the Terminal port, and the
+Terminal plugin is its first caller.
+
+**Why:** Decision 5 says a second kind must not need Terminal; a ledger operation
+on the Terminal protocol would have made every future producer a Terminal
+dependant. The generic object-port shape already existed for exactly this.
+
+**Changes:** Nothing in the agreed scope; the data model and rollout sections
+name the port.
 
 ## Key design decisions
 

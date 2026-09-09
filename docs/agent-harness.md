@@ -243,7 +243,7 @@ Context is assembled for the execution principal from the work-stream title and 
 
 Attached resources are exposed as an authorized index and hydrated lazily through tools. Their manifests and contents remain untrusted evidence. A partial read is not represented as the whole resource: the prompt requires exact cursor continuation when more coverage is needed and requires the answer to disclose any remaining `charactersBefore` or `charactersAfter` boundary. Full workspace history, unrelated resources, and another participant's private connector data are excluded.
 
-All base prompts are rendered by typed, dependency-free functions in `@rally/agent-harness`, and the prompt version is frozen with the run. Per-run time, reason, IDs, and trigger evidence are user-role messages rather than mutations of the system prefix, so retries and route fallbacks see stable policy. Bind validates the transcript before inference and heals dangling or orphaned tool-protocol rows; Rally records diagnostics without adding provider-controlled text to the system prompt.
+All base prompts are rendered by typed, dependency-free functions in `@rally/agent-harness`, and the prompt version is frozen with the run. Per-run time, reason, IDs, and trigger evidence are user-role messages rather than mutations of the system prefix, so retries and route fallbacks see stable policy. One host-rendered section follows the active skill instructions: the resident context the `residentContext` port renders from the conversation's context-residency ledger ([`resident-context.md`](resident-context.md)). It is a pure render of committed ledger state and changes only through a compaction, where the cached prefix is already lost, or a source invalidation; during an uncompacted run a block is a tail message, appended at the settled step as a derived input ahead of any participant steer. Bind validates the transcript before inference and heals dangling or orphaned tool-protocol rows; Rally records diagnostics without adding provider-controlled text to the system prompt.
 
 Prompt authority is layered as platform policy, authorized work-stream and automation configuration, current human instructions, then explicitly untrusted provider/resource/tool data. Every run receives a compact, stable-ID-sorted catalog derived only from its already-authorized plugin registry and partitioned into `Currently active` and `Available to load`. Loading a plugin adds its static code-authored guidance under `Active Plugin Instructions` and exposes its exact typed tools on the next model turn. The catalog is stated as capability rather than as a suggestion, because the tools visible on any given turn are only the ones already loaded: an available plugin can answer a question, so consulting the catalog is part of searching, and asking a person for something a listed plugin could look up is a claim that it is unavailable rather than a request for missing input. An agent drafting an automation may use those real connector tools to inspect live provider context; it prefers reads and never performs a provider write merely to test a proposed automation. Remote account labels, resources, and provider content never become trusted plugin prose. User-authored automation draft state remains user-role context.
 
@@ -1072,7 +1072,12 @@ participants remain deferred product work.
 - **Prompt sections are a pure render of run state.** Bodies are rebuilt from the
   active set on every turn in Bind's total order rather than spliced into the
   previous prompt, so a resumed attempt produces the same bytes as a fresh one and
-  the provider's cached prefix survives.
+  the provider's cached prefix survives. The resident-context section is a pure
+  render of the host's committed ledger, with one deliberate exception: at a
+  compaction the harness renders the compacted system message from the state
+  `prepareCompaction` proposes, and the host commits exactly those transitions in
+  the checkpoint's transaction, so the projection and the ledger agree the moment
+  the replacement is durable.
 - **The harness package imports no database, connector, API, or Node-only
   implementation and never reads `process`.** Host capabilities arrive through
   explicit ports, and ESLint enforces it.
@@ -1255,6 +1260,36 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-09 — A host port for context that lives in the prefix after a compaction
+
+**What changed:** `RunHarnessInput.residentContext` carries two host operations.
+`render()` returns sections `renderStableSystemPrompt` places last, read before
+every model call. `prepareCompaction({ compactionEventId, generation, stateRevision })`
+runs inside `compact()` before the summary turn; its `section` becomes the
+compacted context's system message (bumping the system projection revision when
+the bytes change) and its `excludedMessagePositions` are removed from the
+summariser's input. `settlePendingSteersAtStep` accepts `derivedInputs` and a
+synchronous `markDerivedInputsDeliveredInTransaction`, appended ahead of
+participant steers and closed in the same commit; `commitBindCompaction` accepts
+a synchronous `applyInTransaction` hook. The host is the substream agent, whose
+ledger is in [`resident-context.md`](resident-context.md).
+
+**Why:** The first resident content is a checkout's `AGENTS.md`. It has to
+survive compaction, and the harness's own rule is that the prefix is stable
+mid-run; a compaction is the one moment the prefix can change for free, so the
+port is shaped around that moment. The harness learns one seam and no concept,
+the same division the skill and plugin catalogs use.
+
+**What a future change has to respect:** `prepareCompaction` must move no block
+on the host side (it may record what it proposed) and the transitions it
+proposes must be applied only inside the checkpoint commit, and only to the
+blocks it proposed, or a crash or a concurrent load between the two leaves a
+projection and a ledger that disagree. Positions are projected indices with the
+system message at zero; a host must answer against the head the harness named
+or refuse, and the harness refuses a position that is not a user message. The
+compacted system message is always `renderSystemPrompt(section)`, never a copy
+of the running system message, so the two branches cannot drift.
 
 ### 2026-09-09 — A seeded run is routed where its seam is
 

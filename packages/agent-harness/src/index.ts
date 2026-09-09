@@ -3172,6 +3172,36 @@ export interface BindCompactionCommit {
 }
 
 /**
+ * Host-owned context that lives in the system prompt after a compaction.
+ *
+ * The harness knows nothing about what the blocks are. It places the sections
+ * the host renders after the active skill instructions, and around a
+ * compaction it asks the host what the ledger *would* look like afterwards so
+ * the compacted context's system message carries the blocks that were in the
+ * transcript. The host commits the same transitions inside its compaction
+ * transaction, keyed by the compaction event id, so a replay is a no-op.
+ */
+export interface HarnessResidentContext {
+  /** The sections for the committed ledger state, or null for none. Byte-stable for unchanged state. */
+  render(): string | null | Promise<string | null>;
+  /**
+   * The sections a compaction would leave behind, computed without writing,
+   * plus the positions (0 = system) of every message in the current
+   * projection that this ledger owns and the summariser must not see.
+   */
+  prepareCompaction(input: {
+    compactionEventId: string;
+    generation: number;
+    stateRevision: number;
+  }): HarnessResidentContextCompaction | Promise<HarnessResidentContextCompaction>;
+}
+
+export interface HarnessResidentContextCompaction {
+  section: string | null;
+  excludedMessagePositions: readonly number[];
+}
+
+/**
  * The outcome of revalidating one plugin's authorization.
  *
  * `denied` is a decision about authority: the credential was revoked, the
@@ -3283,6 +3313,8 @@ export interface RunHarnessInput {
    * model's advertised context window; it never estimates the prompt locally.
    */
   compaction?: HarnessCompactionConfig;
+  /** Host-rendered context resident in the system prompt after a compaction. */
+  residentContext?: HarnessResidentContext;
   /** Stable always-active plugin bundles registered for this runtime. */
   corePlugins?: HarnessPlugin[];
   plugins?: HarnessPlugin[];
