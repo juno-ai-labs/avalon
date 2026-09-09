@@ -31,6 +31,7 @@ import {
   type HarnessEvent,
   type HarnessPlugin,
   type HarnessPluginActivationContext,
+  type HarnessResidentContext,
   type HarnessTool,
   type HarnessToolContext,
   type InferenceAttemptEvent,
@@ -3247,6 +3248,106 @@ describe("agent harness", () => {
         outcome: "completed",
       },
     ]);
+  });
+
+  it("moves host-resident context into the compacted system prompt and keeps the messages it owns out of the summary", async () => {
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { tool_calls: [toolDelta(0, "provider-read", "read_once")] }, finish_reason: "tool_calls" }],
+        usage: { prompt_tokens: 81, completion_tokens: 1 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "The record was read; return the result." }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 82, completion_tokens: 8 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "done" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 24, completion_tokens: 2 },
+      }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const section = "# Repository instructions\n\nRepository-provided working instructions.\n\nInstructions added from ./AGENTS.md:\nroot rules";
+    // The host's ledger: nothing prompt-resident until the compaction commits,
+    // at which point `render` answers with the section `prepareCompaction`
+    // proposed. `persist` stands in for that commit here.
+    let committed: string | null = null;
+    const render = vi.fn(() => committed);
+    const prepareCompaction = vi.fn<HarnessResidentContext["prepareCompaction"]>(() =>
+      ({ section, excludedMessagePositions: [1] }));
+    const persist = vi.fn<(checkpoint: unknown) => void>(() => { committed = section; });
+    const baseInput = runInput(fetcher);
+    const outcome = await runHarness({
+      ...baseInput,
+      corePlugins: [testCorePlugin([harnessTool("read_once", "read", [])])],
+      compaction: { contextWindowTokensByModel: { "test/model": 100 }, persist },
+      residentContext: { render, prepareCompaction },
+    });
+
+    expect(outcome.status).toBe("completed");
+    expect(prepareCompaction).toHaveBeenCalledOnce();
+    expect(prepareCompaction.mock.calls[0]?.[0]).toEqual({
+      compactionEventId: `${baseInput.harnessRunId}:compaction:1`,
+      generation: 1,
+      stateRevision: expect.any(Number),
+    });
+    // Before the compaction the prefix carried no section; the summary request
+    // omitted position 1 (the first user message) and kept everything else.
+    expect(String(requestBodies[0]?.messages[0]?.content)).not.toContain("# Repository instructions");
+    const summaryRequest = requestBodies[1]?.messages ?? [];
+    // Compaction ran on the turn that crossed the threshold, before its reply
+    // was appended, so the summary saw the tool exchange and the instruction.
+    expect(summaryRequest.map((message) => message.role)).toEqual(["system", "assistant", "tool", "user"]);
+    expect(JSON.stringify(summaryRequest)).not.toContain("Do the work");
+    // The summariser still saw the pre-compaction prefix; the compacted context
+    // carries the section, and the checkpoint the host persisted does not.
+    expect(String(summaryRequest[0]?.content)).not.toContain("# Repository instructions");
+    expect(String(requestBodies[2]?.messages[0]?.content)).toContain(section);
+    expect(requestBodies[2]?.messages.map((message) => message.role)).toEqual(["system", "user"]);
+    expect(JSON.stringify(persist.mock.calls[0]?.[0])).not.toContain("# Repository instructions");
+    expect(render.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("fails the compaction when the host names a position that is not a user message", async () => {
+    const responses = [
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { tool_calls: [toolDelta(0, "provider-read", "read_once")] }, finish_reason: "tool_calls" }],
+        usage: { prompt_tokens: 81, completion_tokens: 1 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "never reached" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 82, completion_tokens: 8 },
+      }]),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    const events: HarnessEvent[] = [];
+    const baseInput = runInput(fetcher);
+    // Position 2 is the assistant's tool call, not a message the ledger owns:
+    // the host and the harness disagree about the projection, and the summary
+    // must not be built on that disagreement.
+    const outcome = await runHarness({
+      ...baseInput,
+      onEvent: (event) => { events.push(event); },
+      corePlugins: [testCorePlugin([harnessTool("read_once", "read", [])])],
+      compaction: { contextWindowTokensByModel: { "test/model": 100 }, persist: vi.fn() },
+      residentContext: {
+        render: () => null,
+        prepareCompaction: () => ({ section: null, excludedMessagePositions: [2] }),
+      },
+    });
+    expect(outcome.status).not.toBe("completed");
+    expect(events.filter((event) => event.type === "compaction_finished")).toEqual([
+      { type: "compaction_finished", compactionIndex: 1, trigger: "auto", outcome: "failed" },
+    ]);
+    expect(responses).toHaveLength(1);
   });
 
   it("replaces the previous checkpoint instead of accumulating one per compaction", async () => {
