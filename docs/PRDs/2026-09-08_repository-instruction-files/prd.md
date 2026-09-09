@@ -302,17 +302,49 @@ None yet.
 
    This puts repository content into the prefix, which
    [writing prompts](../../writing-prompts.md) principle 12 reserves for
-   policy and provenance. The decision is taken with that read: the content
-   is already in the model's context as a user message before the
-   compaction, the participant chose the repository, and the alternative,
-   losing the instructions at every compaction, is the failure a user would
-   notice. The mitigations are the section heading, which names the content
-   as repository guidance subordinate to the instructions above it, the same
-   `sanitizeTerminalOutput` scrub as any Terminal output, and the bounded
-   residency in decision 4. The persisted compaction checkpoint still never
-   includes the system message; the section is re-rendered from the ledger,
-   so a later run renders current ledger state rather than replaying stale
-   prompt bytes.
+   policy and provenance: outside content is a user-role message, and only
+   derived provenance may cross into the prefix. This PRD is a deliberate,
+   product-owner-directed exception to that contract, not an oversight, and
+   it is taken with the following read: the content is already in the
+   model's context as a user message before the compaction, the participant
+   chose the repository, and the alternative, losing the instructions at
+   every compaction, is the failure a user would notice. Two consequences
+   follow and both belong to the implementing change:
+
+   - **The owning contract is amended, not bypassed.** Principle 12 in
+     `writing-prompts.md` gains the exception in its own words: a resident
+     context block may enter the prefix only at a compaction, only under a
+     demotion heading that names it as untrusted content subordinate to
+     everything above it, only for a bounded residency, and never during an
+     uncompacted run. `agent-harness.md` records the same in its changelog.
+   - **The injection test grows a compacted-run case.** Today it asserts a
+     hostile string reaches the user message and never the system message.
+     For a compacted context it will assert that the hostile string appears
+     in the system message only beneath the `# Repository instructions`
+     heading, verbatim and inert, after the fixed preamble, and nowhere
+     else; and that the standing policy above it is byte-identical to the
+     uncompacted render.
+
+   Neither the heading nor `sanitizeTerminalOutput` is a role-isolation
+   boundary, and the PRD does not claim one: the scrub removes control
+   sequences and token-shaped strings, and the heading is what the
+   standing policy already relies on for the `# Authorized task context`
+   section. What bounds the exposure is that the same content was in the
+   user role a turn earlier, that residency expires, and that the two byte
+   limits in decision 9 are finite.
+
+   Rejected: carrying the blocks forward as a second user-role message
+   after the compaction checkpoint. It keeps the role boundary intact and
+   the harness already knows how to append derived user inputs, so it is
+   the smaller change; the product owner chose the prefix so the
+   instructions sit with the policy the model reads first rather than in
+   the conversation it summarises, and so a later compaction does not have
+   to carry them again through the summary. If the compacted-run injection
+   test cannot be made to hold, this alternative is the fallback, and it
+   needs no ledger or port change. The persisted compaction checkpoint
+   still never includes the system message; the section is re-rendered from
+   the ledger, so a later run renders current ledger state rather than
+   replaying stale prompt bytes.
 
 4. **Residency counts down from a per-kind lifetime; for instruction files
    it is two.** The transitions are the same for every kind of block. A
@@ -326,9 +358,18 @@ None yet.
    | Event | Entry in `transcript` | Entry in `system` | Entry in `none` |
    | --- | --- | --- | --- |
    | Load, same sha | nothing | nothing | deliver message; `transcript` |
-   | Load, new sha | deliver message for new sha; old entry `none` | same | same |
+   | Load, new sha | old entry `none`; new entry `transcript`; deliver one message | old entry `none`, leaving the prompt at the next render; new entry `transcript`; deliver one message | new entry `transcript`; deliver one message |
    | Compaction | move to `system`, `remaining = N` | if `remaining > 0`: `remaining -= 1`, stay; else `none` | nothing |
    | Source invalidated | `none` | `none` | nothing |
+
+   A load with a new sha behaves the same whatever the old entry's
+   residency: the old block is retired, the new block is delivered once as
+   a message, and at most one block per `(kind, id)` is ever in `transcript`
+   or `system`. When the old block was in the prompt, its retirement changes
+   the prefix at the next render; that is the one prefix change during an
+   uncompacted run, accepted because the alternative is the model working
+   from instructions the repository no longer has. A test covers the edit
+   of a file whose earlier sha is `system`-resident.
 
    So a file moved into the prompt at compaction one is present through
    compactions two and three and absent from compaction four onward, which
@@ -713,8 +754,13 @@ recording.
    transitions in decision 4, and the settled-step dedup on replay, each
    broken once in production code per
    [testing](../../testing.md#prove-the-test-can-fail). The golden-hash
-   test covers the section renderer and the injection test asserts hostile
-   content stays in the user message during an uncompacted run.
+   test covers the section renderer, and the injection test has two cases:
+   hostile content stays in the user message during an uncompacted run, and
+   after a compaction it appears in the system message only beneath the
+   `# Repository instructions` heading, with the policy above it
+   byte-identical to the uncompacted render. A transition test edits a
+   file whose earlier sha is `system`-resident and asserts the old block
+   leaves the prompt and the new one is delivered once.
 
 ## Open questions
 
