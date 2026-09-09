@@ -310,9 +310,8 @@ the `WebSocket` constructor's `protocols` argument — as the sentinel
 `rally.ticket.v1` followed by the ticket. Current clients never place it in the
 query string: Cloudflare records whole request URLs into the invocation log, the
 Logpush export, and trace spans, and no redaction in this repository can reach
-them. Legacy workspace/work-stream/substream/dictation issuers retain a query
-field only for old desktop compatibility, and the current renderer strips any
-legacy field before opening. The
+them. All issuers return query-free URLs; the renderer and main broker discard any
+query data returned by older servers before opening. The
 server echoes only the sentinel, never the ticket, because a selected subprotocol
 is a response header. [`realtime-sockets.md`](realtime-sockets.md) owns the
 admission path.
@@ -323,8 +322,8 @@ production constructor. Electron's WorkstreamDO and SubstreamAgent connections
 instead cross a typed preload bridge to the main-process broker. Main accepts
 that capability only from the primary application window, validates the URL
 against configured regional `ws`/`wss` origins and the declared control/feed
-route shape, rejects credentials and fragments, allows only the exact
-`workstreamAppearance=1` query on control sockets, requires the public
+route shape, rejects credentials and fragments, discards query configuration,
+requires the public
 ticket sentinel, and supplies the exact `app://rallywithai` Origin itself. The
 renderer chooses only the validated ticket subprotocol offer that becomes
 `Sec-WebSocket-Protocol`; it cannot choose arbitrary headers or turn the broker
@@ -877,6 +876,14 @@ without a per-member fan-out; the desktop's wording is the remaining gap
 confirmation on retirement is a client-side ceremony; the server-side
 comparison of the confirmation with the path is a consistency check, not a
 second factor.
+### 2026-09-08 — Remove socket URL capabilities
+
+The broker discards query data instead of rejecting connections carrying an
+unknown configuration flag. Regional origin, target identity, ticket subprotocol,
+and renderer ownership checks remain. All socket receivers ignore unknown types
+and extra fields while validating known data; stored and outgoing contracts are
+unchanged. This supersedes the query allowlist described below.
+
 ### 2026-09-08 — Match the control socket capability contract
 
 The main-process socket guard accepts the exact appearance capability query

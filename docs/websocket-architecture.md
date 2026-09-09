@@ -405,8 +405,8 @@ socket operations only from the primary Rally window, parses every operation,
 and keys authority to that window's `webContents` ID. An open URL must use
 `ws`/`wss`, match a configured regional origin exactly, contain no username,
 password or fragment, and match the path declared for its kind — one of
-the WorkstreamDO or SubstreamAgent shapes. Only control sockets may carry the
-exact `workstreamAppearance=1` capability query. The first protocol
+the WorkstreamDO or SubstreamAgent shapes. Query data is discarded before the
+connection opens; it never selects a protocol capability. The first protocol
 must be the public ticket sentinel;
 main supplies `app://rallywithai` as Origin and accepts no renderer-selected
 headers.
@@ -456,6 +456,15 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-08 — Ignore protocol additions at every receive boundary
+
+Unknown event types are no-ops on workspace, control, conversation, and dictation
+streams. The shared receive parser strips additive fields while preserving known
+field validation; outgoing and stored schemas remain strict. Ticket URLs and
+broker handshakes discard query configuration, so a new metadata capability can
+no longer prevent the entire connection from opening. Appearance is unconditional.
+
 
 ### 2026-09-08 — Admit the control socket's appearance capability
 

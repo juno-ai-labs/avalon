@@ -240,5 +240,5 @@ workstreamRoutes.delete("/:id/participants/:userId", zValidator("param", partici
 // object: listing, pins, participants, its metadata, and its control socket.
 workstreamRoutes.get("/:id/control-socket", zValidator("param", idParam), async (c) =>
   c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c))
-    .workstreamControlSocketTicket(c.req.valid("param").id, c.req.query("workstreamAppearance") === "1"))),
+    .workstreamControlSocketTicket(c.req.valid("param").id))),
 );

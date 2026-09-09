@@ -144,6 +144,24 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-08 — Rename Main and children directly in the title bar
+
+Both header layouts use the same inline name editor. Single-clicking a title
+opens a selected text field; its tooltip explains that Enter saves. Escape
+cancels, and failed saves retain the draft. The editor resets when the selected
+conversation changes, including between Main and a child sharing the parent ID.
+The compact header previously rendered inert text while the older header required
+a double click, so neither matched the requested direct editing interaction.
+
+### 2026-09-08 — Keep child rename and archive scoped to the selected conversation
+
+Child rows offer rename and archive using the parent-addressed child API. A
+child rename changes its detail cache and child directory; only Main rename or
+scope events update the workspace work-stream list. The old unconditional cache
+write visibly renamed the parent. Archive returns the selected child to Main;
+late action responses cannot navigate a different work stream. Main participants
+remain in the sidebar and Main title bar; child facepiles manage their own roster.
+
 ### 2026-09-08 — Separate Sidekick management from its conversation
 
 SidekickDetailLayout owns a scrollable profile beside the shared conversation,

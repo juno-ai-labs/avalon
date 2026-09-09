@@ -159,7 +159,9 @@ describe('WorkspaceSocketProvider', () => {
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
     expect(socket.send).not.toHaveBeenCalledWith(expect.stringContaining('set_presence'));
+    act(() => socket.message({ type: 'future_workspace_event', waterline: 999 }));
     act(() => socket.message({
+      future: true,
       type: 'workspace_sync',
       eventId: '00000000-0000-7000-8000-000000000008',
       waterline: 0,

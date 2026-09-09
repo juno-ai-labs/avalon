@@ -59,12 +59,9 @@ export function setCachedWorkstreams(
  * conversation renders. Writing one and not the other is how the header and
  * the sidebar come to disagree about the same work stream.
  *
- * `substreamId` chooses the detail entry only. The list row is always the
- * parent's and is always written, so this is for parent-owned facts: a fact a
- * child owns, such as its harness status, has its own writer that never
- * touches the list. Pass `substreamId` only when the fact must land in the
- * child's entry too, as the read acknowledgement must for the entry its own
- * loop reads back.
+ * Main updates reach both its sidebar row and detail entry. A nonzero
+ * `substreamId` addresses only that child's detail: a child title, scope, or
+ * viewer fact must never replace its parent's value in the sidebar.
  *
  * This is for unversioned facts: a REST response the caller just received, a
  * pushed event with no waterline of its own, a command receipt. Versioned
@@ -84,7 +81,7 @@ export function patchCachedWorkstream(
 ): void {
   const apply = <T extends WorkstreamSummary>(row: T): T =>
     typeof update === 'function' ? update(row) : { ...row, ...update };
-  setCachedWorkstreams(queryClient, (current) =>
+  if (substreamId === '0') setCachedWorkstreams(queryClient, (current) =>
     current?.map((workstream) => workstream.id === workstreamId ? apply(workstream) : workstream));
   queryClient.setQueryData<WorkstreamDetail>(workstreamDetailQueryKey(workstreamId, substreamId), (detail) =>
     detail ? apply(detail) : detail);

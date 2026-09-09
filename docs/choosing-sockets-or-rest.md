@@ -420,12 +420,12 @@ hook and the workspace-socket provider both call
 `applyVersionedWorkstreamState`; neither writes the work-stream caches directly
 for versioned state. The one class of direct write is a pushed or acknowledged
 fact with no version of its own: a rename or scope event, a REST response the
-caller just received, the appearance receipt, the icon a naming pass chose.
-Those go through `patchCachedWorkstream` in `workstreams-cache.ts`, which writes
-the list row and a detail entry together so the header and the sidebar cannot
-disagree, and each write carries only the fields that are the fact's own news, so
-the next newer versioned payload replaces them whole and the receiver still has
-the last word.
+caller just received, the appearance receipt. Those go through
+`patchCachedWorkstream` in `workstreams-cache.ts`, which writes Main's list row and
+detail together. A child address updates only that child's detail, so its name or
+scope cannot overwrite Main in the sidebar. Each
+write carries only the fields that are the fact's own news, so the next newer
+versioned payload replaces them whole and the receiver still has the last word.
 
 **Appearance is the exception, and both of its writers are row-only.** The
 cached detail is what the appearance picker reads to decide its own optimistic
@@ -822,6 +822,13 @@ read survives, and it is not a precedent.
   the caller is made to wait for.
 
 ## Changelog
+
+### 2026-09-08 — Scope the shared cache patch to its conversation
+
+The shared unversioned patch now updates the list only for Main. Private child
+rename and scope events use the same primitive but only change their addressed
+detail; applying them to the list reintroduced the parent-title bug during cache
+consolidation. Parent responses retain the default Main address.
 
 ### 2026-09-09 — Appearance is the unversioned write that may not touch the detail (#619)
 

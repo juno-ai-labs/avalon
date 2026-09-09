@@ -509,6 +509,30 @@ describe('useWorkstreamSocket', () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
   });
 
+  it('ignores future feed events and added fields before applying the next snapshot', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-00000000073b';
+    const queryClient = new QueryClient();
+    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+    })) });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: ({ children }: PropsWithChildren) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>,
+    });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => {
+      socket.open();
+      socket.message({ type: 'future_feed_event', sequence: 999 });
+      socket.message({ ...snapshotFrame({ sequence: 1,
+        workstream: { id: workstreamId, title: 'Current snapshot', future: true },
+      }), future: true });
+    });
+    expect(queryClient.getQueryData(['workstream', workstreamId])).toMatchObject({ title: 'Current snapshot' });
+    expect(result.current.state).toBe('connected');
+  });
+
   it('starts cacheless retained opens from sequence zero and ignores replay-only frames', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -3289,6 +3313,52 @@ describe('useWorkstreamSocket', () => {
         titleStatus: 'automatic',
         appearance: { icon: 'megaphone', color: null },
       },
+      { id: '00000000-0000-7000-8000-000000000402', title: 'August planning', titleStatus: 'settled' },
+    ]);
+  });
+
+  it('keeps a child rename out of the parent sidebar row', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000401';
+    const provisional = 'Create an email draft to Danny from Mucker that shares the rally download link';
+    queryClient.setQueryData(['substream-workstream', workstreamId, 'child'], {
+      id: workstreamId,
+      title: provisional,
+      titleStatus: 'naming',
+      harnessStatus: 'running',
+    } as WorkstreamDetail);
+    setCachedWorkstreams(queryClient, [
+      { id: workstreamId, title: provisional, titleStatus: 'naming' },
+      { id: '00000000-0000-7000-8000-000000000402', title: 'August planning', titleStatus: 'settled' },
+    ] as WorkstreamSummary[]);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true, true, 'active_workstream', undefined, true, 'child'), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'workstream_renamed',
+      sequence: 1,
+      occurredAt: '2026-08-11T09:00:01.000Z',
+      title: 'Rally download link email to Danny',
+      titleStatus: 'automatic',
+      icon: 'megaphone',
+    }));
+
+    // The event settles the skeleton as well as the text: `automatic` is a
+    // name, just one a later pass may still improve on.
+    expect(queryClient.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, 'child']))
+      .toMatchObject({ title: 'Rally download link email to Danny', titleStatus: 'automatic' });
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
+      { id: workstreamId, title: provisional, titleStatus: 'naming' },
       { id: '00000000-0000-7000-8000-000000000402', title: 'August planning', titleStatus: 'settled' },
     ]);
   });

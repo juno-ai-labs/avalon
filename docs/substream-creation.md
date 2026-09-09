@@ -16,12 +16,12 @@ platform policies, not controls offered to the user.
 | `packages/contracts/src/substream-creation.ts` | Versioned recipes, frozen captures, context parts and preview contracts. |
 | `apps/api/src/services/substream-context.ts` | Static strategy, selector, transform and membership registries; platform policies; validation and hashes. |
 | `apps/api/src/services/substream-context-summary.ts` | Structured Gemini summary through the shared inference gateway. |
-| `apps/api/src/services/substream-creation-service.ts` | Authenticated prepare, confirm, cancel and participant coordination. |
+| `apps/api/src/services/substream-creation-service.ts` | Authenticated prepare, confirm, cancel, archive and participant coordination. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Creation receipts, ready-child directory and authoritative private membership. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Frozen source export and immutable inert child seed. |
 | `apps/api/src/durable-objects/substream-context-transfer.ts` | Frame-sized initial-context snapshot transfer. |
 | `apps/api/src/services/substream-initial-context.ts` | Inert seed to model-context conversion. |
-| `apps/desktop/src/renderer/screens/workstream.tsx` | Main/child navigation and prepare-preview-confirm dialog. |
+| `apps/desktop/src/renderer/screens/workstream.tsx` | Main/child navigation, creation flow, rename and archive dialogs. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Authoritative baseline, initial-context assembly and readiness. |
 
 ## How it works
@@ -62,6 +62,37 @@ or replace the child's creator-only conversation membership.
 7. The parent's existing control socket publishes viewer-filtered ready
    children. The child's socket supplies its own transcript and initial context.
    The child is idle until the creator sends a new instruction.
+
+### Membership, rename, archive and notifications
+
+The child title-bar facepile opens its participant dialog. Adding grants explicit
+child membership after checking parent access; removal and self-removal use the
+same authority, and the final participant cannot leave. Confirming a mention of
+somebody outside the child adds them through that API before sending.
+
+A child row's context menu offers **Rename** and **Archive substream**.
+`PATCH /conversations/:parentId/substreams/:substreamId` changes either `title`
+or `archived` per request. Rename writes the child's own title; its common
+projection updates the parent-owned child registry. The desktop applies child
+rename events only to the child detail, never the workspace's parent row.
+Archive stores `conversation_children.archived_at`, removes the row from every
+member's child directory, and refuses messages, membership changes and new
+socket tickets. A durable, versioned delivery mirrors archive state into the child; it commits the agent stop request with the local archive. Already-open sockets check that local state without a parent RPC.
+Membership and transcript are retained; the same API accepts `archived: false`
+to restore them. Restoration is API-only; the app has no restore control and its confirmation says so. The UI returns an archived conversation's viewer to Main, including when another member archives it.
+
+Mentions and participant-added notifications leave the parent with their child
+address. Delivery uses the existing Slack/email pipeline, rechecks current
+membership and archive state, and links to that child. Child activity stays out
+of the shared activity feed and digests. Parent unread counts, mention markers,
+and participant permissions still come only from Main; there are no child unread
+dots. The existing notification dependency uses the unchanged Main viewer
+projection, or a neutral nonparticipant row if Main has never reported that
+viewer, so a child notification can settle without merging two attention clocks.
+
+Notification links include `/substreams/<child-id>` through the website handoff
+and desktop workspace activation. This does not create a child email address or
+change inbound email reply routing.
 
 ### Extending initial context
 
@@ -174,7 +205,7 @@ human review interval. Instrumented targets are not asserted achievements.
   completed-prefix capture, frozen retry, excluded execution blocks and idle
   immutable installation. Mutation proof removes the cutoff turn.
 - `apps/api/test-workers/substream-creation-runtime.test.ts`: real workerd
-  parent/source/child prepare-confirm with only provider HTTP doubled;
+  parent/source/child prepare-confirm with provider HTTP doubled;
   duplicate confirmation, creator-only access, cancellation and no initial run.
   Mutation proof skips target seed installation. The first-instruction test
   reaches a provider double through the real loop, checks the frozen seed and
@@ -192,6 +223,29 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-08 — Review fixes for lifecycle and command boundaries
+
+**What changed:** Child archive now stops the local agent through durable versioned delivery; title validation uses the 180-character contract. Nonparticipants and final-participant removal have distinct errors (`substream_participant_required` and `substream_last_participant`). Other refusals are `substream_member_needs_workstream_access`, `substream_archived`, and `substream_not_found`.
+
+**Why:** Hiding an executing conversation left its agent running, and remote checks added latency to every command. Dialog failures and stale rename completions also needed explicit handling.
+
+**Considered and rejected:** Per-command parent RPCs and a new restore-management screen. Restoration remains available through the existing API, with explicit UI copy. [Work-stream links](workstream-links.md) owns child-addressed links.
+
+
+### 2026-09-08 — Make child lifecycle and notifications reachable
+
+Added child rename/archive controls and forwarded recipient-addressed child
+notifications. Previously membership could succeed while every child notification
+was dropped, and no archive control existed. Child rename now updates its own
+registry and cache instead of overwriting Main. Parent attention aggregation was
+rejected: child and Main counters have independent ordinals, and combining them
+would also broaden parent participation. The notification delivery barrier keeps
+Main state unchanged. Existing membership rules remain; email reply routing is
+outside this change. Runtime tests cover delivery, delayed removal/archive,
+archive/restore, open-socket writes and rename; desktop tests cover cache isolation. Real Electron QA confirmed
+rename updates the child row and title while preserving Main, and archive removes
+the child and returns to Main with both Main participant facepiles retained.
 
 ### 2026-09-08 — Expose conversation membership in title-bar facepiles
 

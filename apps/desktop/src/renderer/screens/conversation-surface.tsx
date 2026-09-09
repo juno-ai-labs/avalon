@@ -1322,10 +1322,13 @@ export function ConversationSurface({
   // The header renames in place, so both the open detail and the sidebar list
   // have to show the new title without a refetch round trip.
   const renameWorkstream = useMutation({
-    mutationFn: (title: string) => api!.renameWorkstream(id, title),
+    mutationFn: async (title: string) => {
+      if (substreamId === '0') return api!.renameWorkstream(id, title);
+      await api!.renameSubstream(id, substreamId, title);
+      return undefined;
+    },
     onSuccess: (updated) => {
-      // The rename addresses the parent, and the header renders the parent's
-      // entry over a child's, so the parent's entry is the one to move.
+      if (!updated) return;
       patchCachedWorkstream(queryClient, updated.id, { title: updated.title, titleStatus: updated.titleStatus, updatedAt: updated.updatedAt });
     },
   });
@@ -1752,6 +1755,8 @@ export function ConversationSurface({
   }, [id, routedDetail, transcript, transcriptVirtualizer]);
 
   const acknowledgeVisibleMessages = useCallback((): void => {
+    // This endpoint owns Main attention; child ordinals are a separate sequence.
+    if (substreamId !== '0') return;
     const detail = queryClient.getQueryData<WorkstreamDetail>(detailQueryKey);
     const element = transcriptRef.current;
     if (!conversationVisibleRef.current || !api || !detail || !element || document.visibilityState !== 'visible' || !document.hasFocus()) return;

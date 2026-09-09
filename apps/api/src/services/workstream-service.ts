@@ -760,14 +760,13 @@ export class WorkstreamService {
     return (await this.authoritativeClient(id)).answerElicitation(elicitationId, input);
   }
 
-  async workstreamControlSocketTicket(id: string, supportsAppearance = false) {
+  async workstreamControlSocketTicket(id: string) {
     await this.requireVisibleWorkstream(id);
     const ticket = await issueWorkstreamControlSocketTicket(this.env, this.auth, id);
     const url = new URL(this.env.PUBLIC_API_BASE_URL);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = `/socket/workstreams/${id}`;
-    url.search = new URLSearchParams({ ticket }).toString();
-    if (supportsAppearance) url.searchParams.set("workstreamAppearance", "1");
+    url.search = "";
     return { url: url.toString(), ticket };
   }
 
