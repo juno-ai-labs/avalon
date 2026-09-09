@@ -97,9 +97,9 @@ context.
    regardless of how it was populated. Nothing in the mechanism reads the
    `terminal_repository` row or knows about GitHub.
 4. Delivery is prompt-cache-safe: while a run is uncompacted, nothing
-   per-repository or per-file is added to the system prompt, the one
-   permitted change being the retirement of a prompt-resident block whose
-   file was edited, and an instruction file already in context is never
+   per-repository or per-file is added to or removed from the system prompt,
+   with one accepted exception, a replaced work space retiring the old
+   checkout's blocks, and an instruction file already in context is never
    re-sent while it is there.
 5. Instruction files are presented as repository guidance that ranks below
    Rally policy and participant instructions, and they cannot widen what the
@@ -198,11 +198,17 @@ State by state:
   system prompt with a residency of two further compactions. The compacted
   context's next turn renders a `# Repository instructions` section holding
   those files, in the same `Instructions added from ./<path>:` shape.
-- **Second and third compaction** after the move. The section persists;
-  the residency counts down.
-- **Fourth compaction** after the move. The entries leave the prompt and are
-  marked as no longer in context. The next touch beneath them delivers them
-  as a user-role message again, and the cycle restarts.
+- **Later compactions.** Counting the compaction that moved them as the
+  first, the second and third keep the section and count the residency
+  down; the fourth retires the entries from the prompt and marks them as no
+  longer in context. The next touch beneath them delivers them as a
+  user-role message again, and the cycle restarts. Every other statement of
+  this count in the PRD means exactly this.
+- **Edit of a file whose earlier version is in the system prompt.** The new
+  content is delivered as a message at once; the old block stays in the
+  prompt until the next compaction, where it is retired, so the prefix does
+  not change mid-run. The standing sentence tells the model the later
+  message wins.
 - **Touch beneath a file that is currently in the system prompt.** Nothing is
   delivered; it is already in context.
 - **File too large, unreadable, or not UTF-8.** The message is still
@@ -238,7 +244,10 @@ None yet.
       root to leaf. No I/O, no knowledge of sandboxes; unit-tested in the
       Node suite.
    2. **Instruction-file probe.** One shell fragment appended to the sandbox
-      command a Terminal tool already runs, which for each candidate reports
+      command a Terminal tool already runs, isolated from that command's
+      exit status (an `if [ -f … ]` guard per candidate inside a subshell
+      that resets `set +e`, since the bootstrap runs under
+      `set -euo pipefail`), which for each candidate reports
       existence, byte length, SHA-256, and bounded content in a single JSON
       block. It runs inside the same containment checks the tool's own path
       already passes, so a symlink out of the root is refused the same way.
@@ -360,22 +369,30 @@ None yet.
    | Event | Entry in `transcript` | Entry in `system` | Entry in `none` |
    | --- | --- | --- | --- |
    | Load, same sha | nothing | nothing | deliver message; `transcript` |
-   | Load, new sha | old entry `none`; new entry `transcript`; deliver one message | old entry `none`, leaving the prompt at the next render; new entry `transcript`; deliver one message | new entry `transcript`; deliver one message |
-   | Compaction | move to `system`, `remaining = N` | if `remaining > 0`: `remaining -= 1`, stay; else `none` | nothing |
-   | Source invalidated | `none` | `none` | nothing |
+   | Load, new sha | old entry `none`; new entry `transcript`; deliver one message | old entry marked `superseded`, stays in the prompt; new entry `transcript`; deliver one message | new entry `transcript`; deliver one message |
+   | Compaction | move to `system`, `remaining = N` | if `superseded`: `none`; else if `remaining > 0`: `remaining -= 1`, stay; else `none` | nothing |
+   | Source invalidated | `none` | `none`, leaving the prompt at the next render | nothing |
 
-   A load with a new sha behaves the same whatever the old entry's
-   residency: the old block is retired, the new block is delivered once as
-   a message, and at most one block per `(kind, id)` is ever in `transcript`
-   or `system`. When the old block was in the prompt, its retirement changes
-   the prefix at the next render; that is the one prefix change during an
-   uncompacted run, accepted because the alternative is the model working
-   from instructions the repository no longer has. A test covers the edit
-   of a file whose earlier sha is `system`-resident.
+   Written out per column because the table is the feature's central
+   mechanic. A load with a new sha always delivers the new block once as a
+   message and never leaves two blocks for one `(kind, id)` in
+   `transcript`. What happens to the old block depends on where it was: in
+   the transcript it is simply retired; in the prompt it is kept, flagged
+   `superseded`, until the next compaction retires it. Retiring it at once
+   would rewrite the prefix mid-run, which is the eviction decision 3 exists
+   to avoid, and the standing sentence already tells the model that the
+   later message for a path replaces the earlier one. Source invalidation
+   is the one transition that does change the prefix mid-run: when a
+   checkout is replaced, the old repository's instructions have no
+   successor message to supersede them, and leaving them in the prompt
+   would be wrong rather than stale. That eviction is accepted and named in
+   goal 4. A test covers the edit of a file whose earlier sha is
+   `system`-resident.
 
    So a file moved into the prompt at compaction one is present through
    compactions two and three and absent from compaction four onward, which
-   is "surviving two future compactions". An entry that has left the prompt
+   is "surviving two future compactions"; every count in this PRD, in goal
+   8, in **Product behavior**, and in acceptance 4, means that sequence. An entry that has left the prompt
    is not forgotten: the ledger keeps its row, which is the bookkeeping of
    what was loaded previously, and re-delivery on the next load is a change
    of residency rather than a new discovery.
@@ -483,7 +500,14 @@ None yet.
    probe does neither: a fragment that errors logs, leaves the checkout
    usable, and leaves the root file to be discovered by the first touch,
    which is the path every non-bootstrap tree already takes. Only the
-   clone's own exit code decides the bootstrap's outcome. Recording a
+   clone's own exit code decides the bootstrap's outcome, and that has to be
+   built rather than assumed: the bootstrap command opens with
+   `set -euo pipefail` and its result is judged by exit code, so a bare
+   `stat` of a missing `AGENTS.md` would fail the whole checkout. The
+   fragment therefore runs each candidate behind an `if [ -f … ]` guard
+   inside a subshell that resets `set +e`, writes its JSON trailer on a
+   marked line, and cannot alter the enclosing command's exit status. The
+   same isolation applies to the per-tool probe in decision 1. Recording a
    successful probe follows the one rule in **Agent behavior**, failure and
    self-healing: the ledger row and its pending derived input are written
    in one transaction, so either both exist or neither does. When that
@@ -514,20 +538,38 @@ None yet.
    cycle; an edited file is delivered once more; a replaced sandbox retires
    the generation's entries. Goals 4, 6, 7, and 8 hold with one mechanism.
 
-9. **Two limits, both finite before the first line of implementation.**
+9. **Two limits, both finite before the implementing pull request ships.**
    [Adding limits](../../adding-security-defensive-and-other-limits.md)
-   allows a guard to ship at the open value only over a path that was
-   already unbounded. This change introduces the path: it stores untrusted
-   repository content in Durable Object SQLite and renders it into every
-   compacted request, sized by what the repository contains, and an
-   `apply_patch` call can put up to 101 chains through it at once. So the
-   two numbers are not handed back after the build; they are asked for
-   before it, in open question 4, which blocks the implementing pull
-   request. The two bounds and the arithmetic that frames each:
+   says two things that both apply here, and three reviewers read them
+   differently, so they are settled in this decision. First, whether the
+   guards exist is not up for debate: anything sized by untrusted input and
+   held in memory gets the guard without litigation. Second, whether they
+   may ship open is decided by the site: an open value is inert only in a
+   comparison, `Math.min`, `slice`, or a Zod `.max()`, and "an open limit
+   must never reach a D1 row, a queue message, a contract payload, a
+   Wrangler variable, or a client"; and separately, when the change is the
+   one that introduces the allocation sized by caller input, the author
+   asks for the number rather than shipping the regression open. Both
+   tests fail open here. This change introduces the path: it stores
+   untrusted repository content in Durable Object SQLite and renders it
+   into every compacted request, and an `apply_patch` call can put up to
+   101 chains through it at once. And the sites are not inert: the stored
+   `content` column takes the repository's SQL `CHECK` on its byte length,
+   the shape `messages_json` and `summary` already use, and a `CHECK` is a
+   SQL site. So the two numbers are asked for in open question 4, which
+   blocks the implementing pull request, and the enforcement is placed so
+   that an open placeholder in TypeScript stays inert while the numbers are
+   pending: the probe reads the file unbounded, the sandbox reports its
+   byte length, and TypeScript truncates after the read; no bound crosses
+   the wire as a shell literal. A bound chosen or tightened later applies
+   to blocks delivered after it, not to rows already stored.
 
-   - **Bytes of one block's content**, applied when the probe reads the
-     file and therefore the same in the message and in the prompt section.
-     A block over the bound is truncated to it with the visible marker line
+   - **Content of one block**, bounded in bytes for the SQL `CHECK` but cut
+     on code-point boundaries at or below that byte count, per
+     [writing prompts](../../writing-prompts.md) principle 13, so the same
+     stored text is valid UTF-8 whether it renders as a message or in the
+     prefix, and never varies with where a multi-byte sequence fell. A
+     block over the bound is truncated with the visible marker line
      described under **Agent behavior**, never dropped. Frame: the
      existing `terminal_read_file` page is 1,000 lines and 256 KiB; the
      compaction checkpoint's own `messages_json` column is capped at
@@ -558,9 +600,11 @@ None yet.
 
 ## Data model
 
-One object-local table in the substream agent's SQLite, alongside
-`compaction_checkpoints` and `run_steering`, holding resident context blocks
-of any kind. This PRD writes one kind, `repository_instructions`:
+One object-local table in the substream agent's SQLite, declared in
+`workstream-object-schema.ts` beside its run-scoped neighbours
+`run_plugin_activations`, `run_memory_contexts`, and
+`active_agent_compaction`, holding resident context blocks of any kind. This
+PRD writes one kind, `repository_instructions`:
 
 | Column | Meaning |
 | --- | --- |
@@ -568,9 +612,10 @@ of any kind. This PRD writes one kind, `repository_instructions`:
 | `block_id` | The kind's locator. For instruction files the path relative to the work-space root, stored without a prefix and rendered as `./<path>`; part of the key |
 | `sha256` | Of the block's source bytes at delivery; part of the key |
 | `source_generation` | Kind-specific invalidation token; for instruction files the Terminal work-space generation the bytes were read from; null for a kind without one |
-| `content` | The bounded, sanitized text that was delivered |
+| `content` | The bounded, sanitized text that was delivered; carries a SQL `CHECK` on its byte length once the number in open question 4 is known, in the shape `transcript_compaction_checkpoints` uses for `messages_json` and `summary` |
 | `truncated` | Whether `content` is a prefix of the source |
 | `residency` | `transcript`, `system`, or `none` |
+| `superseded` | Set on a `system` block whose file was edited; retired at the next compaction |
 | `compactions_remaining` | Meaningful only while `residency = 'system'` |
 | `first_delivered_at`, `last_delivered_at` | For the bookkeeping question "what has this substream loaded" |
 
@@ -578,8 +623,22 @@ No backfill: existing substreams start with an empty ledger, which is the
 correct state because none of them has been delivered a block of any kind.
 The authoritative record is the migration and
 [`data-model.md`](../../data-model.md), updated in the implementing change;
-the ordered-transcript schema under `durable-objects/ordered-transcript-sqlite/`
-is not touched, since this table is object-local state rather than transcript.
+the byte-frozen ordered-transcript schema under
+`durable-objects/ordered-transcript-sqlite/`, which holds
+`transcript_compaction_checkpoints`, is not touched: its statements sit inside
+released migration hashes, and this table is bookkeeping about the transcript
+rather than part of it, which is the same reason the run-scoped tables it sits
+beside live in the object schema.
+
+## Regional impact
+
+None crosses a region. The ledger persists repository file content at rest,
+which is new, but it lives in the substream agent's own Durable Object in the
+work stream's region beside the transcript that already holds the same bytes
+as delivered messages, and nothing reads it from the other region. EU and
+Global behave identically. The question is asked here because
+[PRDs](../../prds.md) requires it in spirit for anything that changes where
+data comes to rest.
 
 ## Security and trust model
 
@@ -642,8 +701,9 @@ Instructions added from ./apps/api/AGENTS.md:
 <sanitized UTF-8 content, bounded>
 ```
 
-A truncated file ends with one line: `[Truncated after N bytes. Read the
-rest with terminal_read_file.]` An unreadable file has, instead of content,
+A truncated file ends with one line: `[Truncated at the instruction budget;
+read the rest with terminal_read_file.]`, the cut falling on a code-point
+boundary at or below the byte bound. An unreadable file has, instead of content,
 one line naming the reason (`not a regular file`, `not valid UTF-8`,
 `unreadable`) so the model knows the file exists and can decide whether to
 inspect it.
@@ -678,8 +738,12 @@ whether that bootstrap ran in the background at plugin activation or on the
 first acquisition after `checkout_repository`. The tools whose paths feed
 ancestor discovery are `read_file`, `edit_file`, `write_file`, `apply_patch`
 (each file), `run_command` (its `cwd`), and `import_resource` (its
-destination); every chain begins at the root, so a tree that arrived without
-a bootstrap has its root file delivered by the first touch.
+`destinationPath` when given; the deterministic-placement form lands under
+Rally-owned `.rally/resources/`, which never carries an instruction file, so
+its chain is the root alone). `publish_resource` is deliberately excluded:
+its `filePath` is relative to `/workspace/.rally-output`, not the work-space
+root. Every chain begins at the root, so a tree that arrived without a
+bootstrap has its root file delivered by the first touch.
 
 **Failure and self-healing.** Two rules, one for reading and one for
 recording.
@@ -712,16 +776,20 @@ recording.
   that is asserted verbatim.
 - **Suggested sequencing**, for the `plan.md` written after approval:
   1. Chain primitive, probe fragment, ledger table and migration, derived
-     pending-input delivery at the settled-step boundary, standing sentence,
-     contract test, Terminal and harness document changelogs. This alone
-     meets goals 1 through 7 for uncompacted runs.
+     pending-input delivery at the settled-step boundary (which means
+     generalising `settlePendingSteersAtStep` and its fence, today
+     steer-specific, to a second pending-input source), standing sentence,
+     contract test, Terminal and harness document changelogs, and the
+     `security.md` entry for the moved boundary. This alone meets goals 1
+     through 7 for uncompacted runs.
   2. `residentContext` host port, kind-policy registration with
      `repository_instructions` as the only kind, the per-kind prefix
      renderer producing `# Repository instructions`, the compaction
      prepare/commit protocol and
      residency transitions, golden-hash and injection tests for the new
-     section, agent-harness and context-compaction document changelogs.
-     This meets goal 8.
+     section, the principle 12 amendment in `writing-prompts.md`, and the
+     agent-harness and context-compaction document changelogs. This meets
+     goal 8.
 - **Rollback.** Revert the deploy. Delivered messages already in a live
   transcript stay there as ordinary derived inputs; ledger rows are inert
   without the code that reads them.
@@ -761,8 +829,9 @@ recording.
    after a compaction it appears in the system message only beneath the
    `# Repository instructions` heading, with the policy above it
    byte-identical to the uncompacted render. A transition test edits a
-   file whose earlier sha is `system`-resident and asserts the old block
-   leaves the prompt and the new one is delivered once.
+   file whose earlier sha is `system`-resident and asserts the new block is
+   delivered once, the old block stays in the prompt flagged `superseded`,
+   and the next compaction retires it.
 
 ## Open questions
 
