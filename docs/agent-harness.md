@@ -816,6 +816,14 @@ surfaces.
 
 ### Scoped durable memory
 
+Query-based memory search uses the same pushed authorization projections as
+workspace search. Host-owned run context selects candidate scope addresses;
+initial population and queued updates resolve canonical run authority. Subsequent
+searches trust projected grants and do not reauthorize after retrieval. Canonical
+item revision and expiry checks still determine which content is current. Exact
+memory reads and writes retain their existing canonical access path. See
+[authorization](authorization.md) for publication and retry behavior.
+
 Root work-stream runs receive the stable `rally_memory` plugin. `memory_search`
 accepts exactly one of a content query or `memoryItemId`; the exact-ID form is the
 conflict-recovery read for a mutation and still reauthorizes the item against the
@@ -1290,6 +1298,14 @@ system message at zero; a host must answer against the head the harness named
 or refuse, and the harness refuses a position that is not a user message. The
 compacted system message is always `renderSystemPrompt(section)`, never a copy
 of the running system message, so the two branches cannot drift.
+### 2026-09-09 — Project memory search access
+
+Memory queries no longer repeat run and membership resolution around retrieval.
+The shared projected-decision primitive owns search access, while canonical scope
+selection at population and canonical writes preserve the existing memory union.
+This removes owner availability from repeated search authorization without adding
+an expiry timer or read-time refresh.
+
 
 ### 2026-09-09 — A seeded run is routed where its seam is
 
