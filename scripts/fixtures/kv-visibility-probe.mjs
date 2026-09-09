@@ -3,7 +3,7 @@
  */
 export default {
   async fetch(request, env) {
-    if (request.headers.get('authorization') !== `Bearer ${env.PROBE_TOKEN}`) return new Response(null, { status: 401 });
+    if (typeof env.PROBE_TOKEN !== 'string' || !env.PROBE_TOKEN || request.headers.get('authorization') !== `Bearer ${env.PROBE_TOKEN}`) return new Response(null, { status: 401 });
     const id = new URL(request.url).pathname.slice(1);
     if (!/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/u.test(id)) return new Response(null, { status: 400 });
     const key = `measurement:kv-visibility:${id}`;
@@ -18,7 +18,8 @@ export default {
     } else if (request.method === 'GET') {
       value = await env.AUTHORIZATION_CACHE.get(key, 'json');
     } else return new Response(null, { status: 405 });
-    return Response.json({ value, completedAt: Date.now(), kvMs: Date.now() - startedAt,
+    const completedAt = Date.now();
+    return Response.json({ value, completedAt, kvMs: completedAt - startedAt,
       executionPlacement: request.headers.get('cf-placement'), ingressColo: request.cf?.colo ?? null, placement: env.PROBE_PLACEMENT ?? 'default' },
     { headers: { 'cache-control': 'no-store' } });
   },

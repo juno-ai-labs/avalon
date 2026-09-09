@@ -35,6 +35,7 @@ export async function measureVisibility({ writer, readers, samples, intervalMs, 
         }));
         results.push(...observed);
         for (const result of observed) process.stdout.write(`${JSON.stringify(result)}\n`);
+        if (observed.some((result) => !result.observed)) break;
       }
     } finally { await call(writer, id, 'DELETE'); }
   }

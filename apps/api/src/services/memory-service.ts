@@ -555,7 +555,7 @@ async function hybridMemorySearch(
     });
   if (trackAccess) {
     // Retrieval remains available when non-authoritative access counters cannot
-    // be updated; the canonical authorization/read above has already succeeded.
+    // be updated; projected scope admission and the canonical item read above have already succeeded.
     await recordAccess(env, input.workspaceId, ranked.map((item) => item.memoryItemId))
       .catch(() => undefined);
   }

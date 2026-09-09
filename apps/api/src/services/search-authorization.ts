@@ -89,8 +89,6 @@ export class SearchAuthorizationResolver implements AuthorizationResolver {
     let loaded: AuthorizationDecision[];
     try {
       loaded = missing.length ? await this.project(subject, missing) : [];
-      const pending = missing.filter((_, index) => loaded[index]?.status === 'unavailable');
-      if (pending.length) await (await authorizationWorkspace(this.env, subject.workspaceId)).queueSearchAuthorizationFill({ subject, resources: pending });
     }
     catch { loaded = missing.map(unavailable); }
     let index = 0;
