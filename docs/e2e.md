@@ -650,7 +650,9 @@ Both collapsed navigation sidebars are 96 CSS pixels wide, allowing symmetric
 space around the macOS traffic lights. Their navigation controls, including
 Search and New substream, are 54-pixel squares with 9-pixel padding. Collapse
 controls sit at the bottom; the account avatar and navigation toggle remain
-side by side. The main conversation row uses the work-stream title.
+side by side. The main conversation row uses the work-stream title, and carries
+the work stream's own icon in its colour; a substream row carries the branch
+line, which compact replaces with the first character of the substream's title.
 
 Check each bottom toggle and double-click each right edge to collapse and
 expand. Drag short of the expansion/collapse threshold and confirm a faint

@@ -14,8 +14,9 @@ still shows.
 | --- | --- |
 | `packages/contracts/src/workstream-appearance.ts` | Stable icon keys, one model-visible description per key, the default key, color keys, and partial updates. |
 | `apps/desktop/src/renderer/components/workstream-appearance-picker.tsx` | Palette, optimistic preview, ordered clicks, and failures. |
-| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | Shared rendering and deterministic defaults. |
+| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `resolveWorkstreamAppearance`, the one resolver from a stored appearance to an icon component and a colour, and the two treatments over it: the filled `WorkstreamGlyph` for navigation, and `WorkstreamMark` — the bare tinted symbol — for a surface already inside the work stream, such as the center rail's main conversation row. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `patchCachedWorkstreamAppearance`, the receipt-time write that puts a committed choice on the sidebar row ahead of the directory projection, and `patchCachedGeneratedIcon`, the naming pass's, which additionally declines a row that already has an icon. Neither touches the cached detail. Built on `patchCachedWorkstream`, the write for any unversioned fact both caches must agree on. |
+| `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | `useCachedWorkstreamAppearance`, the read side: one work stream's appearance off the sidebar row, for a surface that must move with that row rather than with the detail. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Orders the picker's choices on the retained Main socket and applies each one to the caches when its receipt arrives. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Authoritative write, command receipt, and common-state publication. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Main conversation's nullable `workstream.appearance_json`. |
@@ -146,6 +147,46 @@ cover the common cache path. Inspect the actual Electron popup in light and dark
 including scrolling, and check another connected window and reopening.
 
 ## Changelog
+
+### 2026-09-09 — A bare tinted mark beside the filled glyph, read off the row
+
+The work-stream sidebar's main conversation row asked for this identity, and the
+filled glyph was the wrong weight for it: a rail that only ever shows one work
+stream does not need the badge that tells one stream from another in a list of
+them. `WorkstreamMark` renders the same chosen icon in the same chosen colour
+without the gradient shape, so both components resolve one appearance and only
+the treatment differs. A future surface wanting a third treatment should add it
+here rather than reading `workstreamAppearance` and picking colours itself.
+
+Which cache it reads was the harder half. The rail first read the parent's
+cached detail, the way the header does, and review pointed out what the two
+receipt-time entries below had already decided: every unversioned write lands on the row and
+none of them touches the detail, so a person's own icon change moved the
+navigation sidebar on the receipt and left this rail on the old mark until the
+projection — the two rails disagreeing about one work stream, which is the
+opposite of what putting the mark there was for. `useCachedWorkstreamAppearance`
+reads the row instead. That is sound in one direction only, and the direction is
+the point: the row takes the projection **and** the unversioned writes, so it is
+never behind the detail. Writing the detail to close the gap is what those entries
+reject, and reading the row is the other half of that rule finally being
+used — a surface that needs the fast value reads where the fast value is written.
+The header is deliberately left on the detail: that entry is what retires the
+picker's preview, and moving the header onto the row would reintroduce the
+flicker.
+
+A second treatment also made the resolution worth naming. Both components read
+the same map and the same seed, but by two copies of one expression kept in step
+by hand, and a third treatment would have been a third copy.
+`resolveWorkstreamAppearance` is that expression once. Extracting it fixed a
+defect the duplication had hidden in both: the icon fallback was written
+`saved?.icon ? MAP[saved.icon] : ICONS[i] ?? Sparkles`, where the ternary binds
+first, so the fallback only ever guarded the *generated* branch. A stored key
+the map lacks — a client shipped before a key was added, meeting a work stream
+that already carries it — resolved to `undefined`, and React renders an
+undefined component by throwing, blanking the window rather than dropping one
+glyph. Anything added to the icon catalog now has one place to be resolved and
+one fallback, and the catalog is a thing a model chooses from, so keys will keep
+arriving.
 
 ### 2026-09-09 — The picker offers the ring; the schema accepts more than the picker offers
 

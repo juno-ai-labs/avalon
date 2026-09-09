@@ -37,6 +37,7 @@ import { AvatarStack, Badge, Button, IconButton, InlineError, Modal, SocketStatu
 import { WorkstreamGlyph } from '../components/workstream-glyph';
 import { WorkstreamAppearancePicker } from '../components/workstream-appearance-picker';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
+import { useCachedWorkstreamAppearance } from '../lib/use-workstreams-query';
 import { WorkstreamSidebar, type SubstreamRowTarget } from '../components/workstream-sidebar';
 import { SubstreamContext } from '../components/substream-context';
 import { ConversationSurface } from './conversation-surface';
@@ -439,6 +440,11 @@ export function WorkstreamScreen(): React.JSX.Element {
   const parent = useQuery<WorkstreamDetail | undefined>({
     queryKey: ['workstream', id], queryFn: async () => undefined, enabled: false,
   });
+  // The rail's mark follows the sidebar row rather than this detail, so one
+  // appearance change moves both rails together instead of moving the sidebar
+  // now and this rail when the projection lands. The header keeps the detail:
+  // that entry is what retires the picker's own preview.
+  const rowAppearance = useCachedWorkstreamAppearance(id);
   const children = useQuery<WorkstreamChildDirectory | undefined>({
     queryKey: ['workstream-children', id], queryFn: async () => undefined, enabled: false,
   });
@@ -609,7 +615,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           attachedSidekicks={context.attachedSidekicks}
           attachedSidekicksError={context.attachedSidekicksError}
           onRemoveSidekick={context.removeSidekick}
-          workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, privateChildren: children.data?.privateChildren }}
+          workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, appearance: rowAppearance ?? parent.data?.appearance, privateChildren: children.data?.privateChildren }}
           presentUserIds={context.presentUserIds}
           onParticipants={context.openParticipantDialog}
           selectedSubstreamId={selectedSubstreamId}
