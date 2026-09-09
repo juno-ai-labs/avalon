@@ -39,7 +39,12 @@ versioned receiver replaces `appearance` whole on the next newer common
 waterline, so the authoritative push always wins; a delayed older push can at
 worst flicker the row back until the one carrying the choice lands. Nothing is
 written on send: the row shows a committed value or the previous one, never a
-choice the room may still refuse.
+choice the room may still refuse. Nor is anything written for a receipt that
+crossed a reconnect. The feed resends an unanswered command on the next
+connection and Main answers an already committed operation from its receipt,
+publishing nothing, so that receipt may describe a choice another client has
+since replaced and whose newer state this client already holds; the reconnect's
+snapshot carries the current value, so the patch is skipped rather than risked.
 
 New control clients request `workstreamAppearance=1` when issuing a socket ticket.
 The server includes it in the socket URL. The Worker forwards that capability, and WorkstreamDO stores it in the hibernating
@@ -97,6 +102,20 @@ cover the common cache path. Inspect the actual Electron popup in light and dark
 including scrolling, and check another connected window and reopening.
 
 ## Changelog
+
+### 2026-09-09 — A replayed receipt does not touch the caches
+
+Review found an ordering the receipt-time patch got wrong: a choice commits,
+its receipt is lost with the connection, another client's newer appearance
+arrives through versioned state, then the reconnect resends the command and
+the idempotent replay receipt wrote the older choice over the newer cached one.
+Main publishes nothing for a replay, so nothing would have corrected it. The
+socket hook now applies the patch only when the receipt arrives on the
+connection that sent the command; a receipt after a reconnect is left to the
+snapshot that reconnect already delivered. Carrying the committed value and a
+version in the receipt was the alternative, and remains the right shape if the
+receipt ever needs to be authoritative on its own; it was not taken here because
+it changes the socket contract for a case the existing snapshot already covers.
 
 ### 2026-09-08 — Sidebar row follows the receipt, not the projection
 
