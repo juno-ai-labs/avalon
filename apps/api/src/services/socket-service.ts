@@ -420,21 +420,12 @@ export function withNegotiatedSubprotocol(request: Request, response: Response):
 }
 
 /**
- * What an accepted upgrade cost outside the room's own code.
- *
- * `roomUpgradeMs` is the edge's wait for the room's answer. The room reports
- * how long its accept ran and how old its instance was in two internal headers
- * on the 101; the difference between the wait and the accept is the platform
- * activating a cold object — routing to it, then waking it before its
- * constructor runs — which no span in the room can see, because the room did
- * not exist yet. Production showed that gap at 8–12 seconds on opens whose
- * accept ran under 220 ms, with the edge's `room_upgrade` step naming the room
- * as the slowest step the whole time.
- *
- * Both headers are stripped here: they are object-to-Worker diagnostics, and a
- * client handshake carries nothing it did not ask for. Only a real 101 is
- * rebuilt, for the reason `withNegotiatedSubprotocol` gives; the room sets the
- * headers on nothing else.
+ * Separate the edge's total wait from the room's accept handler duration.
+ * The remainder includes routing, activation, constructor/storage readiness,
+ * and queueing; it cannot identify platform activation alone. Instance age is
+ * context, not a duration to subtract (another call may have woken the room).
+ * Internal headers are stripped independently of whether their values parse.
+ * Rejections remain untouched, as in `withNegotiatedSubprotocol`.
  */
 export function roomUpgradeDiagnostics(
   response: Response,
@@ -447,21 +438,22 @@ export function roomUpgradeDiagnostics(
   const attributes: Record<string, number> = {};
   if (acceptMs !== undefined) {
     attributes["rally.socket.room_accept_ms"] = acceptMs;
-    attributes["rally.socket.room_activation_ms"] = Math.max(0, roomUpgradeMs - acceptMs);
+    attributes["rally.socket.room_outside_accept_ms"] = Math.max(0, roomUpgradeMs - acceptMs);
   }
   if (instanceAgeMs !== undefined) attributes["rally.socket.room_instance_age_ms"] = instanceAgeMs;
+  const diagnosticNames = [
+    ...rallyHeaderAliases(RALLY_HEADERS.ROOM_ACCEPT_MS),
+    ...rallyHeaderAliases(RALLY_HEADERS.ROOM_INSTANCE_AGE_MS),
+  ];
   if (
-    (acceptMs === undefined && instanceAgeMs === undefined)
+    !diagnosticNames.some((name) => response.headers.has(name))
     || response.status !== 101
     || !response.webSocket
   ) {
     return { attributes, response };
   }
   const headers = new Headers(response.headers);
-  for (const name of [
-    ...rallyHeaderAliases(RALLY_HEADERS.ROOM_ACCEPT_MS),
-    ...rallyHeaderAliases(RALLY_HEADERS.ROOM_INSTANCE_AGE_MS),
-  ]) headers.delete(name);
+  for (const name of diagnosticNames) headers.delete(name);
   return {
     attributes,
     response: new Response(null, { status: 101, webSocket: response.webSocket, headers }),
@@ -585,7 +577,7 @@ export class SocketService {
       // everything inside it runs in this span's async context.
       // Timed on the same pinned clock the step uses, so the two agree to the
       // millisecond: this wait, less what the room says its accept took, is
-      // the platform's activation of the room — see `roomUpgradeDiagnostics`.
+      // time outside the accept handler — see `roomUpgradeDiagnostics`.
       const roomUpgradeStartedAt = Date.now();
       const roomResponse = await span.step("workstream.socket.room_upgrade", () => stub
         .fetch(new Request("https://room.internal/socket", { method: "GET", headers })));
