@@ -1,4 +1,5 @@
 import type { Env } from '../env';
+import { ApiError } from '../lib/api-error';
 import { accessAcknowledgementContent } from './access-request-content';
 import { markdownToEmailHtml, markdownToEmailText } from './email-markdown';
 import { sendResendEmail } from './resend';
@@ -8,8 +9,11 @@ interface RequestRow {
   acknowledgement_subject: string;
   acknowledgement_markdown: string;
   acknowledgement_from: string;
-  acknowledgement_status: 'pending' | 'sent' | 'failed' | 'skipped';
+  acknowledgement_status: 'pending' | 'sent' | 'failed' | 'rejected' | 'skipped';
 }
+
+const rejectedEmail = () => new ApiError(502, 'access_email_rejected',
+  'Your request was saved, but we could not deliver your confirmation email. Check that you entered the right address.');
 
 /** Persist before contacting Resend, retaining identical content/key across retries. */
 export async function requestAccess(env: Env, email: string): Promise<void> {
@@ -23,6 +27,7 @@ export async function requestAccess(env: Env, email: string): Promise<void> {
     .bind(email).first<RequestRow>();
   if (!row) throw new Error('Access request was not persisted');
   if (row.acknowledgement_status === 'sent' || row.acknowledgement_status === 'skipped') return;
+  if (row.acknowledgement_status === 'rejected') throw rejectedEmail();
   try {
     const status = await sendResendEmail(env, {
       recipientEmail: email,
@@ -41,8 +46,10 @@ export async function requestAccess(env: Env, email: string): Promise<void> {
       .bind(status, status === 'sent' ? new Date().toISOString() : null, row.id).run();
   } catch (error) {
     // A concurrent successful attempt must not be overwritten by a failed one.
-    await env.DB.prepare(`UPDATE access_requests SET acknowledgement_status = 'failed'
-      WHERE id = ? AND acknowledgement_status NOT IN ('sent', 'skipped')`).bind(row.id).run();
-    throw error;
+    const rejected = error instanceof ApiError && error.details?.retryable === false;
+    await env.DB.prepare(`UPDATE access_requests SET acknowledgement_status = ?
+      WHERE id = ? AND acknowledgement_status NOT IN ('sent', 'skipped', 'rejected')`)
+      .bind(rejected ? 'rejected' : 'failed', row.id).run();
+    throw rejected ? rejectedEmail() : error;
   }
 }

@@ -183,6 +183,14 @@ wording and launch checklist. The content modules in the path table are the
 editable landing/email definitions. Personal outreach, profile research and
 onboarding demos remain separate launch work.
 
+The existing Worker-wide maintenance gate also covers intake and downloads.
+During planned product maintenance or a failed authority read these routes return
+the same maintenance response as other API traffic; no new bypass is introduced.
+Successful intake responses do not distinguish duplicates, but explicit email
+failures can reveal acknowledgement state during a provider outage. A future
+durable acknowledgement dispatcher can remove that distinction without silently
+losing retries.
+
 ## Operations
 
 Apply migration 0101 before deploying the Global API and then Ace/site. The Global
@@ -190,6 +198,11 @@ Worker binds the existing `avalon-desktop-releases` bucket as `DESKTOP_RELEASES`
 no new bucket or Cloudflare admin credential is needed. Acknowledgements use the
 existing production Resend key. New acknowledgements use the supplied
 `Adam @ Rally <hello@example.com>` From address, frozen alongside the subject/body.
+Permanent provider rejection is recorded as `rejected` in Ace and suppresses
+subsequent acknowledgement sends for that request. After resolving a provider
+configuration problem, an operator may reset the affected row to `pending`
+through Global D1; its frozen sender/content must still be valid before retry.
+
 Before launch, verify `rally.ai` in Resend and confirm Adam can receive replies
 at `hello@example.com`; the code does not provision DNS or mailboxes. Other transactional
 mail retains its existing sender. Landing copy is compiled
@@ -255,7 +268,8 @@ privacy operations stay in the owning region; the current slice creates none.
 **What changed:** Added the authored request form and frozen acknowledgement,
 Global intake, Ace tracking/issuance/audit events, shared hashed grants and R2
 streaming. One founding migration defines the complete undeployed schema. Added
-operator erasure, explicit timed mode, retryable error pages and open intake guards.
+operator erasure, explicit timed mode, retryable error pages, terminal provider
+rejection handling and open intake guards.
 
 **Why:** Rally needs gradual team intake and reusable download issuance. Timed
 links allow interrupted downloads to restart. Review found that no-referrer native
@@ -270,4 +284,4 @@ policy without an owner. Additional account approval was explicitly rejected.
 **Consequences:** Apply migration 0101 before the API and publish the form afterward.
 Verify the supplied sender separately. Invitation dispatch, suppression, workspace
 integration and closing legacy public artifact paths remain future work. The two
-open guards below do not constrain abuse or memory until the team sets values.
+open guards do not constrain abuse or memory until the team sets values.
