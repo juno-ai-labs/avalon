@@ -88,6 +88,25 @@ describe('planListMotion', () => {
     expect(passed.shifters.map((shifter) => shifter.key)).toEqual(['heading', 'a']);
   });
 
+  it('ranks each scope on its own, so a block moving past another shifts as one', () => {
+    // Two projects with two members each, the second project dragged above
+    // the first: nothing changed place within either, so nothing leaves.
+    const before = new Map([['p1', { top: 0 }], ['m1', { top: 48 }], ['m2', { top: 96 }], ['p2', { top: 144 }], ['n1', { top: 192 }]]);
+    const after = [
+      { key: 'p2', top: 0, hold: true }, { key: 'n1', top: 48, scope: 'project:2' },
+      { key: 'p1', top: 96, hold: true }, { key: 'm1', top: 144, scope: 'project:1' }, { key: 'm2', top: 192, scope: 'project:1' },
+    ];
+    const plan = planListMotion(before, after);
+    expect(plan.movers).toEqual([]);
+    expect(plan.shifters.map((shifter) => [shifter.key, shifter.fromY])).toEqual([
+      ['p2', 144], ['n1', 144], ['p1', -96], ['m1', -96], ['m2', -96],
+    ]);
+    // Ranked together instead, the members of one project would read as
+    // having passed the other's and be sent out and back.
+    const flat = planListMotion(before, after.map((row) => ({ ...row, scope: undefined })));
+    expect(flat.movers).not.toEqual([]);
+  });
+
   it('places a held row like a neighbour instead of moving it', () => {
     const plan = planListMotion(seen(['a', 'b', 'c']), laidOut(['c', 'a', 'b'], ['c']));
     expect(plan.movers).toEqual([]);

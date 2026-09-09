@@ -24,8 +24,10 @@ interface Running {
  * between two sections is unmounted and remounted, and it is still one row.
  * `data-motion-scope` on any ancestor separates rows that would otherwise
  * share a key, such as a work stream listed both under its project and in the
- * recent list; `data-motion-hold` on a row asks for it to be shifted into
- * place like a neighbour rather than leave and re-enter.
+ * recent list, and ranks the rows inside it only against one another, so a
+ * scope moving as a block shifts as a block; `data-motion-hold` on a row asks
+ * for it to be shifted into place like a neighbour rather than leave and
+ * re-enter.
  *
  * The container is the scroll box the rows live in: positions are measured
  * relative to its content, so scrolling between two renders is not read as
@@ -96,6 +98,7 @@ export function useListMotion(containerRef: RefObject<HTMLElement | null>): void
       const scope = element.closest<HTMLElement>('[data-motion-scope]')?.dataset.motionScope ?? '';
       const row: ListMotionRow = {
         key: `${scope}\n${element.dataset.motionKey ?? ''}`,
+        scope,
         top: rect.top - offset.y - containerRect.top + scrollTop,
         hold: element.hasAttribute('data-motion-hold'),
       };

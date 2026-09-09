@@ -22,7 +22,7 @@ choreography takes, or before adding motion to another list.
 | [`apps/desktop/src/renderer/lib/list-motion.ts`](../apps/desktop/src/renderer/lib/list-motion.ts) | The arithmetic, pure over measured positions: `planListMotion` decides which rows moved and which were displaced, `moverKeyframes` and `shifterKeyframes` say what each plays, and `LIST_MOTION` holds every duration, delay, and easing. Owns no DOM and no timer. |
 | [`apps/desktop/src/renderer/lib/use-list-motion.ts`](../apps/desktop/src/renderer/lib/use-list-motion.ts) | `useListMotion(containerRef)`: measures the rows after every commit, plans against the positions it last saw, and plays the plan through the Web Animations API. Owns the interruption handling and the pointer-events guard. |
 | [`apps/desktop/src/renderer/components/sidebar.tsx`](../apps/desktop/src/renderer/components/sidebar.tsx) | The one caller today. Marks each work-stream and note row with `data-motion-key`, marks every section and group heading as a held row so it travels with the column, holds the row being dragged, and attaches the hook to the scroll box. |
-| [`apps/desktop/src/renderer/components/project-sidebar-section.tsx`](../apps/desktop/src/renderer/components/project-sidebar-section.tsx) | Gives each project's member list its own `data-motion-scope`, since a member is the same row the recent list shows. |
+| [`apps/desktop/src/renderer/components/project-sidebar-section.tsx`](../apps/desktop/src/renderer/components/project-sidebar-section.tsx) | Gives each project's member list its own `data-motion-scope`, since a member is the same row the recent list shows, and marks each project row as held so a reordered project glides with its members. |
 
 ## How it works
 
@@ -37,7 +37,14 @@ is what lets the hook follow it. Any container under the scroll box is the same
 to the hook — a section, a recency group, a project's member list — so a row
 moving between two of them is one row moving. Two rows that would share a key are told apart by
 `data-motion-scope` on any ancestor — a work stream listed under its project and
-again in the recent list is two rows, and each moves within its own list. A row
+again in the recent list is two rows, and each moves within its own list. A
+scope is also the list its rows are ranked within: two projects trading places
+carry their expanded members past each other, and the members, whose order
+among themselves is unchanged, shift with their project rather than leaving
+the frame as if each had been moved on its own. The project row itself is a
+held row for the same reason, on the row rather than the item that contains
+the members, because the members animate themselves and a moving container
+would carry them a second time. A row
 with `data-motion-hold` is *placed* rather than moved: it is shifted into its
 slot like a neighbour instead of leaving and re-entering, and it takes no part
 in deciding which rows moved. The sidebar holds the row under the pointer
@@ -60,9 +67,9 @@ compares it with the positions it recorded the last time. Rows it has never
 seen are left alone: a page of rows arriving at once is not a move, and there is
 no old slot to leave from. Rows that are gone cannot be animated.
 
-`planListMotion` sorts the rest into two kinds. Among the rows that are not
-held, the largest set that kept their relative order is found as the longest
-increasing run of old ranks read in the new order; everything outside that set
+`planListMotion` sorts the rest into two kinds. Within each scope, among the
+rows that are not held, the largest set that kept their relative order is found
+as the longest increasing run of old ranks read in the new order; everything outside that set
 is a **mover**, everything inside it that nonetheless sits at a different
 position is a **shifter**, and a held row is a shifter whatever moved past it. This
 is the smallest set of moves that explains the change: one message lifting a
@@ -152,6 +159,10 @@ whenever the cancelled animation's event arrives.
 
 ## Invariants
 
+- **Rows are ranked within their scope, never across scopes.** A scope that
+  moves as a block must shift as a block; ranking its rows against the rows
+  outside it would read every member as having passed them and send each out
+  of frame on its own, while the unkeyed container jumped.
 - **A key names one row for as long as it is the same row to the reader.** A
   key that changes across a move — an index, say, or a key that includes the
   section — makes the hook see one row disappear and a stranger appear, and the
@@ -223,7 +234,7 @@ step.
 
 | Suite | What it covers |
 | --- | --- |
-| `apps/desktop/src/renderer/lib/list-motion.test.ts` | The planner's classification — one mover, two movers together, a held row, a row that moved between containers, an interrupted offset — and the exact keyframes and options each kind plays. |
+| `apps/desktop/src/renderer/lib/list-motion.test.ts` | The planner's classification — one mover, two movers together, a held row, a heading never being the mover, scopes ranked apart so a block shifts as one, a row that moved between containers, an interrupted offset — and the exact keyframes and options each kind plays. |
 | `apps/desktop/src/renderer/lib/use-list-motion.test.tsx` | The hook under jsdom: the exit distance measured against the container, shifters starting on the first frame, a row followed across a remount, a held row shifted instead of moved, a render that moved nothing leaving every animation alone, interruption touching only the rows that moved and reading a pending animation's own start, the pointer-events guard surviving a late cancel and released at once on an interruption, reduced motion, and scopes keeping shared keys apart. |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams`) | That the sidebar wires it: a pin moves the row's animation with it into the **Pinned** section, and a touch moves it with the row from one recency group into another. |
 

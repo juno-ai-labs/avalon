@@ -47,6 +47,13 @@ export const LIST_MOTION_TOTAL_MS = LIST_MOTION.exitMs + LIST_MOTION.enterStagge
 /** A row as measured after the list changed. */
 export interface ListMotionRow {
   key: string;
+  /**
+   * The list this row is ranked within. Rows in different scopes never pass
+   * one another: a project's members keep their order among themselves while
+   * the whole project moves past another, and shift with it rather than
+   * leaving as if each had been moved on its own.
+   */
+  scope?: string;
   /** Its layout position, in a frame the caller keeps stable across renders. */
   top: number;
   /**
@@ -122,7 +129,8 @@ export function longestIncreasingRun(sequence: readonly number[]): number[] {
  * Held rows are shifters whatever happened around them, and are left out of
  * the ranking: a row leaving the pinned section for the top of the recent list
  * passes that list's heading, and the heading must not be the thing that is
- * seen to leave.
+ * seen to leave. The ranking is per scope, so a block of rows moving as one —
+ * a project and its members, reordered past another project — shifts as one.
  *
  * Rows that were not there before are left alone: they have no old position to
  * leave from, and a page of them arriving at once is not a move. Rows that are
@@ -136,16 +144,23 @@ export function planListMotion(
     const from = before.get(row.key);
     return from === undefined ? [] : [{ row, from }];
   });
-  const ranked = shared.filter((entry) => !entry.row.hold);
-  const oldRank = new Map(
-    [...ranked]
-      .sort((left, right) => left.from.top - right.from.top)
-      .map((entry, rank) => [entry.row.key, rank] as const),
-  );
-  const kept = new Set(
-    longestIncreasingRun(ranked.map((entry) => oldRank.get(entry.row.key)!))
-      .map((index) => ranked[index]!.row.key),
-  );
+  const kept = new Set<string>();
+  const scopes = new Map<string, typeof shared>();
+  for (const entry of shared) {
+    if (entry.row.hold) continue;
+    const scope = entry.row.scope ?? '';
+    scopes.set(scope, [...(scopes.get(scope) ?? []), entry]);
+  }
+  for (const ranked of scopes.values()) {
+    const oldRank = new Map(
+      [...ranked]
+        .sort((left, right) => left.from.top - right.from.top)
+        .map((entry, rank) => [entry.row.key, rank] as const),
+    );
+    for (const index of longestIncreasingRun(ranked.map((entry) => oldRank.get(entry.row.key)!))) {
+      kept.add(ranked[index]!.row.key);
+    }
+  }
   const plan: ListMotionPlan = { movers: [], shifters: [] };
   for (const { row, from } of shared) {
     const fromX = from.x ?? 0;

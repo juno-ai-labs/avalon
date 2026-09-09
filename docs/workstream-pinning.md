@@ -299,8 +299,10 @@ close the gap, and it slides in at its new slot. The sidebar marks every
 work-stream and note row with `data-motion-key`, marks the **Pinned** heading
 and every recency-group heading as held rows so they travel with the column,
 marks the row being dragged with `data-motion-hold`, and attaches
-`useListMotion` to its scroll box; project member lists carry their own
-`data-motion-scope`.
+`useListMotion` to its scroll box; project rows are held too, and project
+member lists carry their own `data-motion-scope`, which is also the list their
+rows are ranked within, so a project reordered past another glides with its
+members.
 
 **Why:** The reveal scrolls the viewport to a pinned row, but the row itself
 still vanished from one section and appeared in another. The motion is the
