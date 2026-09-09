@@ -2022,6 +2022,10 @@ describe("canonical ordered work-stream transcript", () => {
     expect(settled.loop).toMatchObject({ step_ordinal: 1, bind_state_revision: 5 });
     const projected = bindLoopNonSystemMessages(transcript.readBindProjection("persistent-loop")!);
     expect(projected.at(-1)).toEqual(derived.message);
+    // The position the summariser is told to skip is the message's own, with the
+    // system message at zero, and only for the kinds the ledger owns.
+    expect(transcript.bindMessagePositionsBySourceKind("persistent-loop", ["repository_instructions"])).toEqual([projected.length]);
+    expect(transcript.bindMessagePositionsBySourceKind("persistent-loop", ["other_kind"])).toEqual([]);
     // Model-only: no participant turn was minted for it.
     expect(sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE message_type = 'text' AND actor = 'human'`).one())
       .toEqual({ count: 1 });

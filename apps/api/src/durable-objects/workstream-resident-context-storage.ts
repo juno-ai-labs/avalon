@@ -86,15 +86,18 @@ export class WorkstreamResidentContextStorage {
   }
 
   /**
-   * Every block of a kind that is in context at its current content, as
-   * `<id>@<sha>` keys. A superseded prompt block is still rendered but is no
-   * longer current, so it is not here: a source that reverts to that content
-   * is then reported again and `recordLoaded` reinstates it.
+   * Every block of a kind the model has seen at its current content, as
+   * `<id>@<sha>` keys: the set a producer's gate checks against. A block
+   * recorded but not yet delivered is not here, so a second mutation in the
+   * same batch is refused like the first and only the retry after the settled
+   * step proceeds. A superseded prompt block is still rendered but no longer
+   * current, so it is not here either: a source that reverts to that content
+   * is reported again and `recordLoaded` reinstates it.
    */
   residentBlocks(input: { kind: ResidentContextKind }): string[] {
     return this.sql.exec<BlockRow>(
       `SELECT ${BLOCK_COLUMNS} FROM resident_context_blocks
-        WHERE kind = ? AND residency IN ('transcript', 'system') AND superseded = 0
+        WHERE kind = ? AND residency IN ('transcript', 'system') AND superseded = 0 AND pending_delivery = 0
         ORDER BY block_id, sha256`,
       input.kind,
     ).toArray().map((row) => residentContextSourceId({ blockId: row.block_id, sha256: row.sha256 }));
@@ -249,15 +252,28 @@ export class WorkstreamResidentContextStorage {
     return closed;
   }
 
+  /**
+   * Every row of a registered kind. A row whose kind this build does not know
+   * (left by a deploy that registered a kind and was rolled back) is skipped
+   * rather than thrown on, because this read sits ahead of every model call.
+   */
   allBlocks(): ResidentContextBlock[] {
     return this.sql.exec<BlockRow>(
       `SELECT ${BLOCK_COLUMNS} FROM resident_context_blocks ORDER BY kind, block_id, sha256`,
-    ).toArray().map(toBlock);
+    ).toArray().filter((row) => isResidentContextKind(row.kind)).map(toBlock);
+  }
+
+  /** The prompt-resident rows only: what the render before every model call needs. */
+  private systemBlocks(): ResidentContextBlock[] {
+    return this.sql.exec<BlockRow>(
+      `SELECT ${BLOCK_COLUMNS} FROM resident_context_blocks
+        WHERE residency = 'system' ORDER BY kind, block_id, sha256`,
+    ).toArray().filter((row) => isResidentContextKind(row.kind)).map(toBlock);
   }
 
   /** The prompt sections for the committed ledger state, or null when nothing is prompt-resident. */
   renderSections(): string | null {
-    return renderResidentContextSections(this.allBlocks());
+    return renderResidentContextSections(this.systemBlocks());
   }
 
   /**
@@ -269,9 +285,16 @@ export class WorkstreamResidentContextStorage {
    * between the two (a background bootstrap, a concurrent tool) is absent from
    * the compacted system message and stays where it is, to be delivered as a
    * message and moved by the next compaction. Preparing the same event again
-   * before it is applied replaces the prepared set.
+   * before it is applied replaces the prepared set; preparing an event already
+   * applied (a replayed compaction) answers with the committed render, which is
+   * what that compaction produced.
    */
   prepareCompaction(compactionEventId: string, now: number): string | null {
+    const applied = this.sql.exec<{ applied_at: number | null } & Record<string, SqlStorageValue>>(
+      `SELECT applied_at FROM resident_context_compactions WHERE compaction_event_id = ?`,
+      compactionEventId,
+    ).toArray()[0];
+    if (applied && applied.applied_at !== null) return this.renderSections();
     const blocks = this.allBlocks();
     const keys = blocks
       .filter((block) => block.residency !== "none")
@@ -323,23 +346,24 @@ export class WorkstreamResidentContextStorage {
       if (previous.residency === next.residency
         && previous.superseded === next.superseded
         && previous.compactionsRemaining === next.compactionsRemaining) continue;
+      // A block promoted into the prompt is in context by that fact: a delivery
+      // still pending for it would only say the same thing twice. A reinstated
+      // block staying in the prompt keeps its re-delivery.
+      const closePending = previous.residency === "transcript" || next.residency === "none";
       this.sql.exec(
         `UPDATE resident_context_blocks
-            SET residency = ?, superseded = ?, compactions_remaining = ?
+            SET residency = ?, superseded = ?, compactions_remaining = ?,
+                pending_delivery = CASE WHEN ? = 1 THEN 0 ELSE pending_delivery END
           WHERE kind = ? AND block_id = ? AND sha256 = ?`,
         next.residency,
         next.superseded ? 1 : 0,
         next.compactionsRemaining,
+        closePending ? 1 : 0,
         next.kind,
         next.blockId,
         next.sha256,
       );
     }
     return { applied: true };
-  }
-
-  /** The kind lifetimes this ledger applies, for tests and operators. */
-  static lifetimeOf(kind: ResidentContextKind): number {
-    return RESIDENT_CONTEXT_KIND_POLICIES[kind].lifetime;
   }
 }

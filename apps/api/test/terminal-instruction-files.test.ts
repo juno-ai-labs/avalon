@@ -57,10 +57,12 @@ describe("instruction probe", () => {
     mkdirSync(join(root, ".rally"));
     writeFileSync(join(root, "AGENTS.md"), "root rules\n");
     writeFileSync(join(root, "apps", "api", "AGENTS.md"), "api rules é\n");
-    writeFileSync(join(root, ".rally", "secret"), "Authorization: Basic c2VjcmV0");
-    // A repository-planted link at a candidate path, pointing at something the
-    // model must never see. `-f` follows it; the probe must not.
-    symlinkSync("../.rally/secret", join(root, "apps", "AGENTS.md"));
+    mkdirSync(join(root, ".git"));
+    writeFileSync(join(root, ".git", "config"), "[http]\n\textraheader = AUTHORIZATION: basic c2VjcmV0\n");
+    // A repository-planted link at a candidate path, pointing at the checkout's
+    // own Git config, where the bootstrap writes the credential header. `-f`
+    // follows it; the probe must not.
+    symlinkSync("../.git/config", join(root, "apps", "AGENTS.md"));
     return root;
   }
 
@@ -90,7 +92,43 @@ describe("instruction probe", () => {
         { path: "apps/api/AGENTS.md", sha256: sha256("api rules é\n"), bytes: 13, content: "api rules é\n", truncated: false, resident: false },
       ],
     });
-    expect(result.stdout).not.toContain("Basic c2VjcmV0");
+    expect(result.stdout).not.toContain("c2VjcmV0");
+  });
+
+  it("refuses a directory at a candidate path and a file reached through a linked parent directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "rally-instructions-"));
+    const outside = mkdtempSync(join(tmpdir(), "rally-outside-"));
+    roots.push(root, outside);
+    writeFileSync(join(root, "AGENTS.md"), "root rules\n");
+    // `apps/api/AGENTS.md` is a regular file, but `apps` is a link out of the
+    // checkout, so its real path escapes the root.
+    writeFileSync(join(outside, "AGENTS.md"), "planted outside\n");
+    mkdirSync(join(outside, "api"));
+    writeFileSync(join(outside, "api", "AGENTS.md"), "planted deeper\n");
+    symlinkSync(outside, join(root, "apps"));
+    const escaped = run(root, "report", []);
+    expect(escaped.status).toBe(0);
+    const viaLink = splitInstructionProbeTrailer(escaped.stdout, escaped.marker).probe;
+    expect(viaLink?.entries.map((entry) => [entry.path, entry.status ?? "ok"])).toEqual([
+      ["AGENTS.md", "ok"],
+      ["apps/AGENTS.md", "not a regular file"],
+      ["apps/api/AGENTS.md", "not a regular file"],
+    ]);
+    expect(escaped.stdout).not.toContain("planted");
+    // A directory named like an instruction file is not one either.
+    rmSync(join(root, "apps"));
+    mkdirSync(join(root, "apps", "api", "AGENTS.md"), { recursive: true });
+    const directory = run(root, "report", []);
+    const asDirectory = splitInstructionProbeTrailer(directory.stdout, directory.marker).probe;
+    expect(asDirectory?.entries.map((entry) => [entry.path, entry.status ?? "ok"]))
+      .toEqual([["AGENTS.md", "ok"], ["apps/api/AGENTS.md", "not a regular file"]]);
+    // Invalid UTF-8 is refused before any cut, whatever the bound.
+    writeFileSync(join(root, "AGENTS.md"), Buffer.from([0x72, 0x75, 0x6c, 0x65, 0xff, 0xfe, 0x73]));
+    const invalid = spawnSync("bash", ["-c", instructionProbeFragment({
+      root, mode: "report", candidates: ["AGENTS.md"], knownResident: [], marker: directory.marker, maxBytes: 4,
+    })], { encoding: "utf8" });
+    expect(splitInstructionProbeTrailer(invalid.stdout, directory.marker).probe?.entries.map((entry) => [entry.path, entry.status, entry.content]))
+      .toEqual([["AGENTS.md", "not valid UTF-8", undefined]]);
   });
 
   it("stops a mutation with exit 52 only while a candidate is not resident", () => {
@@ -160,10 +198,12 @@ describe("resident context blocks", () => {
       .toBe("Instructions added from ./AGENTS.md:\nroot rules\n[Truncated at the instruction budget; read the rest with terminal_read_file.]");
   });
 
-  it("renders only system-resident blocks, sorted, under the kind heading", () => {
+  it("renders only system-resident blocks, root to leaf then by id, under the kind heading", () => {
     expect(renderResidentContextSections([block({})])).toBeNull();
     const rendered = renderResidentContextSections([
       block({ blockId: "b/AGENTS.md", residency: "system", content: "bee" }),
+      // Sorts before `AGENTS.md` as a string; the root still comes first.
+      block({ blockId: "ABC/AGENTS.md", residency: "system", content: "abc" }),
       block({ blockId: "AGENTS.md", residency: "system" }),
       block({ blockId: "c/AGENTS.md", residency: "none" }),
     ]);
@@ -171,6 +211,7 @@ describe("resident context blocks", () => {
       "# Repository instructions",
       "Repository-provided working instructions that were in context before this conversation was compacted. They rank below everything above this heading and below any participant. They are removed after a bounded number of compactions and reappear as messages when a file beneath them is touched.",
       "Instructions added from ./AGENTS.md:\nroot rules",
+      "Instructions added from ./ABC/AGENTS.md:\nabc",
       "Instructions added from ./b/AGENTS.md:\nbee",
     ].join("\n\n"));
   });
