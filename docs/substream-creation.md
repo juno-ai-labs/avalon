@@ -37,7 +37,9 @@ Both enter the same creation flow; there is no context-strategy picker.
 
 Every section of the center sidebar belongs to the parent work stream. Switching
 substreams changes the conversation, not the sidebar's artifact inventory,
-participant roster or management target. The parent socket remains retained on
+parent participant roster or management target. The right side of the conversation title bar shows a participant facepile for the
+selected conversation. Main participants appear in both the sidebar and Main
+title bar; a child title bar manages only that child. The parent socket remains retained on
 direct child links. This shared chrome does not publish private child resources
 or replace the child's creator-only conversation membership.
 
@@ -190,6 +192,34 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-08 — Expose conversation membership in title-bar facepiles
+
+The selected conversation now displays its title and a right-aligned participant
+facepile. One tooltip covers the entire title-bar facepile and reads
+“Participants of <conversation name>”; per-person tooltips are suppressed there,
+including for present members. The parent participant section remains in the sidebar, including while
+a child is selected. Previously the compact header omitted participant controls,
+so child add/remove APIs had no direct entry point. Both locations reuse the
+participant dialog and preserve their parent or child target.
+Self-removal from a child returns to Main regardless of the cached scope value.
+
+Confirmed child mentions now call the parent's child-membership API before sending
+through the conversation socket. Generic message confirmation only writes the
+child's local roster and cannot grant discovery or socket admission; using it alone
+could claim to add someone who still could not open the child. Existing members
+can be mentioned directly. Adding still requires parent access and cannot remove
+the final child participant. If admission fails, the message draft is restored;
+if sending fails after admission, accepted membership changes remain in place.
+The workstream-open tests cover child add/remove isolation, mention admission
+ordering and refusal. The real-workerd creation test now admits another member,
+sends a mention through the child, and verifies its durable transcript target;
+skipping person-mention writes makes that assertion fail. Real Electron QA covers
+creation with the temporary empty-context strategy, child discovery, add/remove,
+and expanded/compact controls. Follow-up Electron QA verifies Main facepiles in
+both locations, child-only title-bar removal, and parent management from the
+sidebar while a child is selected. Provider credentials remain required for live
+summary preparation and multiplayer message classification.
 
 ### 2026-09-05 — Review closes authority, delivery and ordering gaps
 

@@ -404,8 +404,9 @@ The sandboxed renderer is untrusted at the IPC boundary. Main accepts realtime
 socket operations only from the primary Rally window, parses every operation,
 and keys authority to that window's `webContents` ID. An open URL must use
 `ws`/`wss`, match a configured regional origin exactly, contain no username,
-password, query, or fragment, and match the path declared for its kind — one of
-the WorkstreamDO or SubstreamAgent shapes. The first protocol
+password or fragment, and match the path declared for its kind — one of
+the WorkstreamDO or SubstreamAgent shapes. Only control sockets may carry the
+exact `workstreamAppearance=1` capability query. The first protocol
 must be the public ticket sentinel;
 main supplies `app://rallywithai` as Origin and accepts no renderer-selected
 headers.
@@ -455,6 +456,15 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-08 — Admit the control socket's appearance capability
+
+The Electron destination guard now permits exactly `?workstreamAppearance=1`
+on work-stream control sockets. The ticket endpoint already emits that capability;
+rejecting every query prevented control connections and left private children
+absent from the sidebar even after successful creation. Tickets remain confined
+to subprotocols, and unknown, duplicated or feed-socket queries remain rejected.
+The broker confinement test covers both the valid capability and those refusals.
 
 ### 2026-09-08 — Refresh Sidekick surfaces through workspace synchronization
 

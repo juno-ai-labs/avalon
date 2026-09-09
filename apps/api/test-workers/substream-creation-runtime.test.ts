@@ -2,7 +2,7 @@
 
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { AuthContext, Env } from "../src/env";
@@ -25,6 +25,12 @@ let WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-00000000ce13");
 let fixtureOrdinal = 0;
 const SESSION_ID = "00000000-0000-7000-8000-00000000ce14";
 const TEST_ENV: Env = env;
+const classifierEnv: { OPENROUTER_CLASSIFIER_MODEL?: string } = env;
+const originalClassifierModel = classifierEnv.OPENROUTER_CLASSIFIER_MODEL;
+afterEach(() => {
+  if (originalClassifierModel === undefined) delete classifierEnv.OPENROUTER_CLASSIFIER_MODEL;
+  else classifierEnv.OPENROUTER_CLASSIFIER_MODEL = originalClassifierModel;
+});
 
 const creatorAuth: AuthContext = {
   sessionId: SESSION_ID,
@@ -38,7 +44,9 @@ const otherAuth: AuthContext = { ...creatorAuth, userId: OTHER_ID, sessionId: "o
 useHeldEffectQueue();
 const provider = useOpenRouterDouble((call) => ({ say: call.stream
   ? "The child used its frozen context."
-  : JSON.stringify({ summary: "A frozen source summary." }) }));
+  : JSON.stringify(call.body.response_format ?? {}).includes('message_addressing')
+    ? JSON.stringify({ classification: "both", confidence: 1, rationaleCode: "imperative" })
+    : JSON.stringify({ summary: "A frozen source summary." }) }));
 
 function parent() {
   return env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
@@ -157,11 +165,13 @@ describe("substream preparation on workerd", () => {
     }))).rejects.toThrow("private_child_preparation_forbidden");
   });
 
-  it("executes the first child instruction against its frozen seed without reading later Main messages", async () => {
+  it("persists a member mention in the first child instruction and uses its frozen seed", async () => {
     const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
     const operationId = "00000000-0000-7000-8000-00000000ce22";
     await service.prepare(WORKSTREAM_ID, { operationId, title: "Executing child", throughTurnId: "source-turn-1" });
-    const child = conversation((await service.confirm(WORKSTREAM_ID, operationId)).substreamId);
+    const { substreamId } = await service.confirm(WORKSTREAM_ID, operationId);
+    await service.changeParticipant(WORKSTREAM_ID, substreamId, { userId: OTHER_ID, operationId: "mention-admission" }, true);
+    const child = conversation(substreamId);
     await runInDurableObject(child, (instance, state) => {
       const target = instance as unknown as { env: Env };
       target.env = new Proxy(target.env, { get: (env, key) => key === "OPENROUTER_PRIMARY_MODEL"
@@ -172,14 +182,16 @@ describe("substream preparation on workerd", () => {
       id: "later-main-turn", sequence: 2, text: "MAIN_ONLY_AFTER_FORK", authorUserId: CREATOR_ID,
       attentionOrdinal: 2, now: Date.now(),
     }));
+    TEST_ENV.OPENROUTER_CLASSIFIER_MODEL = "double/classifier";
     const response = await child.fetch("https://object.test/internal/product", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ operation: "create_message", auth: creatorAuth, input: {
-        text: "CHILD_ONLY_INSTRUCTION", clientMessageId: "first-child-instruction",
-        mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
+        text: "@Other CHILD_ONLY_INSTRUCTION", clientMessageId: "first-child-instruction",
+        mentions: [{ type: "person", userId: OTHER_ID, connectorType: null, startOffset: 0, endOffset: 6 }], confirmedParticipantUserIds: [], attachmentIds: [],
       } }),
     });
-    expect(response.status).toBe(200);
+    const responseBody = await response.json();
+    expect(response.status, JSON.stringify(responseBody)).toBe(200);
     await runDurableObjectAlarm(child);
     await expect.poll(async () => {
       if (provider.calls.some((call) => call.stream)) return "inference";
@@ -196,6 +208,9 @@ describe("substream preparation on workerd", () => {
         `SELECT COUNT(*) AS count FROM substream_loops WHERE status = 'executing'`,
       ).one().count), { timeout: 10_000 }).toBe(0);
     await runInDurableObject(child, (_instance, state) => {
+      expect(state.storage.sql.exec<{ target_user_id: string }>(
+        `SELECT target_user_id FROM participant_transcript_mentions WHERE mention_kind = 'person'`,
+      ).toArray()).toEqual([{ target_user_id: OTHER_ID }]);
       expect(state.storage.sql.exec<{ substream_id: string }>(`SELECT substream_id FROM runs`).one().substream_id).toBe("0");
       const context = state.storage.sql.exec<{ execution_context_json: string }>(
         `SELECT execution_context_json FROM runs`,
