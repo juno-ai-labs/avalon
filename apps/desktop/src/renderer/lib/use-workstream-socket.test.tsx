@@ -1066,8 +1066,12 @@ describe('useWorkstreamSocket', () => {
       url: `wss://api.rally.test/workstreams/${workstreamId}`,
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     })) });
+    const queryClient = new QueryClient();
+    const appearance = { icon: 'atom', color: 'gray' } as const;
+    setCachedWorkstreams(queryClient, [workstreamSummary({ id: workstreamId, appearance })]);
+    queryClient.setQueryData(['workstream', workstreamId], workstreamDetail({ id: workstreamId, appearance }));
     const { result, rerender } = renderHook(({ id }) => useWorkstreamSocket(api, id, true), {
-      initialProps: { id: workstreamId }, wrapper: createWrapper(),
+      initialProps: { id: workstreamId }, wrapper: createWrapper(queryClient),
     });
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
@@ -1077,10 +1081,21 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const commands = sentFrames(socket).filter((frame) => frame.type === 'set_workstream_appearance');
     expect(commands).toHaveLength(1);
+    // Nothing moves on a sent command: the sidebar shows a committed value or
+    // the old one, never a choice the room may still refuse.
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance).toEqual(appearance);
     const first = commands[0]!;
     act(() => socket.message({ type: 'client_command_succeeded', command: 'set_workstream_appearance', operationId: first.operationId }));
     await color;
     await flushPromises();
+    // The receipt is the commit, and the sidebar row takes it without waiting
+    // for the directory projection. The patch merges over the current value,
+    // so the color choice keeps the icon. The detail entry is left to the
+    // versioned push: the header shows the picker's own preview until then,
+    // and moving the detail here would retire that preview early.
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance)
+      .toEqual({ icon: 'atom', color: 'purple' });
+    expect(queryDetail(queryClient, workstreamId)?.appearance).toEqual(appearance);
     expect(sentFrames(socket).filter((frame) => frame.type === 'set_workstream_appearance')).toHaveLength(2);
     const queued = result.current.setAppearance({ color: 'blue' });
     const rejectedIcon = expect(icon).rejects.toMatchObject({ code: 'workstream_socket_unavailable' });
@@ -1092,6 +1107,43 @@ describe('useWorkstreamSocket', () => {
     const next = FakeWebSocket.instances.at(-1)!;
     act(() => next.open());
     expect(sentFrames(next).filter((frame) => frame.type === 'set_workstream_appearance')).toEqual([]);
+  });
+
+  it('does not apply an appearance receipt that crossed a reconnect over newer cached state', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000633';
+    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+    })) });
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [workstreamSummary({ id: workstreamId, appearance: { icon: 'atom', color: 'gray' } })]);
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const choice = result.current.setAppearance({ color: 'purple' });
+    await flushPromises();
+    const sent = sentFrames(socket).find((frame) => frame.type === 'set_workstream_appearance');
+    expect(sent).toBeDefined();
+    // The room committed the choice but the receipt was lost with the connection.
+    act(() => socket.close(1006));
+    act(() => vi.advanceTimersByTime(750));
+    await flushPromises();
+    const reconnected = FakeWebSocket.instances[1]!;
+    act(() => reconnected.open());
+    await flushPromises();
+    expect(sentFrames(reconnected).find((frame) => frame.type === 'set_workstream_appearance')).toEqual(sent);
+    // Meanwhile another client chose blue and its newer versioned state arrived.
+    setCachedWorkstreams(queryClient, [workstreamSummary({ id: workstreamId, appearance: { icon: 'atom', color: 'blue' } })]);
+    act(() => reconnected.message({ type: 'client_command_succeeded', command: 'set_workstream_appearance', operationId: sent!.operationId }));
+    await expect(choice).resolves.toBeUndefined();
+    await flushPromises();
+    // The replayed receipt answers the resend; it says nothing about which
+    // choice the room holds now, so the newer cached value stands.
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance).toEqual({ icon: 'atom', color: 'blue' });
   });
 
   it('sends child-local commands to the addressed substream and resends them until receipt', async () => {
