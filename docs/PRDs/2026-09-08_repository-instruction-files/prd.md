@@ -351,22 +351,44 @@ None yet.
      the model learns one format.
    - **A kind policy**, registered by whoever owns the kind: the prefix
      lifetime `N`, the source-invalidation rule, the bound on one block's
-     bytes and on the kind's total bytes in the prefix (defined open per
+     bytes and on the kind's total bytes in the prefix (finite, per
      decision 9), and the fixed heading and preamble the prefix renderer
      prints above that kind's blocks. Blocks of different kinds render as
      separate sections, kinds in a fixed order, blocks sorted by `id`, so
      the prefix is byte-stable for unchanged ledger state.
    - **Two host ports on `RunHarnessInput`**, under one `residentContext`
-     name: `render()`, which returns the already-formatted sections (or
-     nothing) for `renderStableSystemPrompt` to place after the active skill
-     instructions, and `onCompactionApplied(compactionIndex)`, which the
-     compaction path calls once the checkpoint is durable so the host runs
-     the transitions in decision 4. Tail delivery needs no harness change:
-     the host writes a pending derived input with `sourceKind = kind` and
-     `sourceId = <id>@<sha256>` and the settled-step boundary already
-     carries it. This is the same division the skill and plugin catalogs
-     use today: the harness renders what the host hands it, in a stable
-     order.
+     name, and a prepare/commit protocol around compaction. `render()`
+     returns the already-formatted sections (or nothing) from the ledger's
+     *committed* state, for `renderStableSystemPrompt` to place after the
+     active skill instructions. `prepareCompaction(compactionEventId)` is
+     pure: it computes the ledger state that decision 4's compaction row
+     *would* produce, without writing it, and returns the sections rendered
+     from that proposed state. The harness calls it inside `compact()`
+     after the summary turn and before it builds the replacement
+     `state_replaced` transition, and renders the compacted context's
+     system message from the result, so the checkpointed projection and the
+     first compacted request both carry the blocks that were in the
+     pre-compaction transcript. The transitions themselves are applied by
+     the host inside `commitBindCompaction`, in the same SQLite transaction
+     as the checkpoint and the Bind replacement, keyed by the transition's
+     `compactionEventId` so a replayed commit is a no-op. A compaction that
+     fails after prepare and before commit leaves the ledger untouched,
+     which is what makes prepare safe to call again on the retry.
+
+     A post-commit hook was the first shape of this port and is rejected:
+     `compact()` reads `systemMessage` from the pre-compaction messages,
+     uses it for both `compactedMessages` and the replacement projection,
+     and commits them in one `onBindCompaction` call. A hook that runs after
+     that commit can move ledger rows but cannot put them into the
+     projection already made durable, and re-rendering only in memory would
+     diverge from the durable Bind projection that a resumed attempt
+     replays.
+
+     Tail delivery needs no harness change: the host writes a pending
+     derived input with `sourceKind = kind` and `sourceId = <id>@<sha256>`
+     and the settled-step boundary already carries it. This is the same
+     division the skill and plugin catalogs use today: the harness renders
+     what the host hands it, in a stable order.
 
    **How skills would adopt it, and what it would buy.** Today `load_skill`
    returns a `loadedSkillRef` control signal and the host's `activateSkills`
@@ -394,9 +416,9 @@ None yet.
    with a change to how tools are advertised, which is out of scope here.
 
    Rejected: a Terminal-owned `terminal_instruction_files` table with its
-   own compaction hook. It would have shipped the same rows and the same
+   own compaction protocol. It would have shipped the same rows and the same
    transitions under a name that a second consumer could not reuse, and the
-   compaction hook is one port either way.
+   prepare/commit protocol is one port either way.
 
 6. **The root auto-load is attached to the clone, not to a tool.**
    `terminal_checkout_repository` does not clone; it records the selection
@@ -412,13 +434,21 @@ None yet.
    with an existing checkout also gets the root file, deduplicated by the
    ledger if that content is still in context.
 
-   The probe is best-effort inside the bootstrap. The Terminal activation
-   invariant says anything added to the activation path must fail the
-   shared acquisition rather than clean up after it; a failed probe or
-   ledger write does neither. It logs, leaves the checkout usable, and
-   leaves the root file to be discovered by the first touch, which is the
-   path every non-bootstrap tree already takes. Only the clone's own exit
-   code decides the bootstrap's outcome.
+   The probe is best-effort inside the bootstrap; recording is not. The
+   Terminal activation invariant says anything added to the activation path
+   must fail the shared acquisition rather than clean up after it, and the
+   probe does neither: a fragment that errors logs, leaves the checkout
+   usable, and leaves the root file to be discovered by the first touch,
+   which is the path every non-bootstrap tree already takes. Only the
+   clone's own exit code decides the bootstrap's outcome. Recording a
+   successful probe follows the one rule in **Agent behavior**, failure and
+   self-healing: the ledger row and its pending derived input are written
+   in one transaction, so either both exist or neither does. When that
+   transaction fails inside the bootstrap there is no model step to fail
+   and nothing inconsistent to repair; it logs, and the retry is guaranteed
+   because the root is the first candidate of every chain the run's first
+   Terminal tool will probe, and because the bootstrap runs again, as
+   `refreshed`, on the next run's acquisition.
 
    Rejected: making `terminal_checkout_repository` acquire the new sandbox
    and clone before returning so its own result could carry the root file.
@@ -441,16 +471,47 @@ None yet.
    cycle; an edited file is delivered once more; a replaced sandbox retires
    the generation's entries. Goals 4, 6, 7, and 8 hold with one mechanism.
 
-9. **Limits are defined open.** Per
-   [adding limits](../../adding-security-defensive-and-other-limits.md),
-   the change defines and wires two bounds and hands their numbers back:
-   the maximum bytes of one delivered instruction file's content, and the
-   maximum total instruction-file bytes rendered into the system prompt
-   section. Both ship at the open value. The reference point for the team is
-   the existing `terminal_read_file` page bound of 1,000 lines and 256 KiB,
-   and the ledger's stored content is the same bounded text that was
-   delivered, so a bound chosen later applies to both renderers. Chain depth
-   needs no cap because the path bounds it.
+9. **Two limits, both finite before the first line of implementation.**
+   [Adding limits](../../adding-security-defensive-and-other-limits.md)
+   allows a guard to ship at the open value only over a path that was
+   already unbounded. This change introduces the path: it stores untrusted
+   repository content in Durable Object SQLite and renders it into every
+   compacted request, sized by what the repository contains, and an
+   `apply_patch` call can put up to 101 chains through it at once. So the
+   two numbers are not handed back after the build; they are asked for
+   before it, in open question 4, which blocks the implementing pull
+   request. The two bounds and the arithmetic that frames each:
+
+   - **Bytes of one block's content**, applied when the probe reads the
+     file and therefore the same in the message and in the prompt section.
+     A block over the bound is truncated to it with the visible marker line
+     described under **Agent behavior**, never dropped. Frame: the
+     existing `terminal_read_file` page is 1,000 lines and 256 KiB; the
+     compaction checkpoint's own `messages_json` column is capped at
+     262,144 bytes; an `AGENTS.md` in the repositories this team works in
+     is a few kilobytes to a few tens of kilobytes.
+   - **Total bytes of one kind's blocks in the prompt section**, applied at
+     render. Admission is deterministic so the section is byte-stable
+     across retries: blocks are admitted root to leaf, sorted by `id`,
+     until the next one would exceed the bound; each omitted block is
+     rendered as one fixed line naming its `id` and the tool that reads it
+     (`Omitted: ./apps/api/AGENTS.md exceeds the instruction budget; read it
+     with terminal_read_file`), so the model knows what it is not seeing.
+     Omission is a render decision, not a ledger transition: the row keeps
+     `system` residency and counts down like the rest. Frame: the base
+     prompt is asserted under 8,500 bytes; the default context window is
+     200,000 tokens with compaction at 80% of it; at roughly four bytes a
+     token, every kilobyte in this section costs about 250 tokens on every
+     turn until the residency expires; skill bodies already have a token
+     bound in `maxActiveSkillBodyTokens` that this section sits beside.
+
+   Both bounds fail closed: a probe that cannot determine a file's size
+   records nothing for it, and a renderer whose bound is unset refuses to
+   render rather than rendering unbounded. Both have a Node test that trips
+   them. Chain depth needs no cap because the path bounds it, and the
+   ledger's row count is bounded by the blocks the two limits admit times
+   the distinct paths the run touches, which the per-block bound already
+   prices.
 
 ## Data model
 
@@ -494,8 +555,11 @@ is not touched, since this table is object-local state rather than transcript.
   the participant win; they never grant a permission.
 - **The prefix now carries repository content after a compaction.** This is
   the one boundary the design moves, taken knowingly in decision 3. It is
-  bounded in size by decision 9 and in time by decision 4, and it carries
-  only content the model had already been shown as a user message.
+  bounded in time by decision 4, and in size by the two finite bounds of
+  decision 9, which must be set before implementation because this change
+  is the one that introduces storage and prompt bytes sized by untrusted
+  repository content. It carries only content the model had already been
+  shown as a user message.
 - **Path containment is unchanged.** Candidates are built from paths that
   already passed `safeRelativePath`, and the probe runs after the same
   containment commands inside the same sandbox command, so an `AGENTS.md`
@@ -574,19 +638,29 @@ ancestor discovery are `read_file`, `edit_file`, `write_file`, `apply_patch`
 destination); every chain begins at the root, so a tree that arrived without
 a bootstrap has its root file delivered by the first touch.
 
-**Failure and self-healing.** Probe failure is never a tool or bootstrap
-failure: if the probe fragment errors, the tool's own result or the clone's
-own outcome stands unchanged and no ledger row is written, so the next touch
-retries discovery. A probe that
-cannot complete within the tool's timeout is abandoned with the tool. A
-ledger write that fails is a run-state persistence failure and fails the
-step the way a lost steer would, rather than telling the model it has
-instructions it will not see on resume.
+**Failure and self-healing.** Two rules, one for reading and one for
+recording.
+
+- *Probe failure is never a tool or bootstrap failure.* If the probe
+  fragment errors, the tool's own result or the clone's own outcome stands
+  unchanged and no ledger row is written, so the next touch retries
+  discovery. A probe that cannot complete within the tool's timeout is
+  abandoned with the tool.
+- *Recording is atomic and fails closed.* The ledger row and its pending
+  derived input are written in one transaction: either the model will see
+  the message and the ledger says so, or neither exists. What a failed
+  transaction means depends on where it ran. Inside a tool step it is a
+  run-state persistence failure and fails the step the way a lost steer
+  would, rather than telling the model it has instructions it will not see
+  on resume. Inside the background repository bootstrap there is no step to
+  fail; it logs, and retry is guaranteed by the first touch (every chain
+  starts at the root) and by the next run's `refreshed` bootstrap.
 
 ## Rollout
 
 - **Server-side only.** Terminal plugin, one harness host port, one
-  object-local table with its migration, the compaction hook, and the
+  object-local table with its migration, the compaction prepare/commit
+  protocol, and the
   contract and prompt tests. No desktop release.
 - **Flag.** To be answered by the product owner before the implementing pull
   request (open question 2). Recommendation: no flag. There is no
@@ -600,7 +674,8 @@ instructions it will not see on resume.
      meets goals 1 through 7 for uncompacted runs.
   2. `residentContext` host port, kind-policy registration with
      `repository_instructions` as the only kind, the per-kind prefix
-     renderer producing `# Repository instructions`, compaction hook and
+     renderer producing `# Repository instructions`, the compaction
+     prepare/commit protocol and
      residency transitions, golden-hash and injection tests for the new
      section, agent-harness and context-compaction document changelogs.
      This meets goal 8.
@@ -658,5 +733,10 @@ instructions it will not see on resume.
    purposes, or accept the gap because the cap is reached only in
    transcripts that compaction would have handled first. Blocks phase 2
    only.
-4. **The two limit numbers** (per file, per section), per key design
-   decision 9. Blocks nothing; the change ships them open.
+4. **The two limit numbers** (bytes per block, bytes per kind's prompt
+   section), with the arithmetic in key design decision 9. **Blocks the
+   implementing pull request**: this change introduces a path sized by
+   untrusted repository content, and
+   [adding limits](../../adding-security-defensive-and-other-limits.md)
+   says such a path is never shipped open. The numbers are set to what the
+   product owner gives, and recorded in the decision log when they are.
