@@ -2730,13 +2730,13 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     result: TranscriptRangeResultSchema,
   }),
   /**
-   * The title changed — a person renamed the work stream, or Avalon named it.
+   * The title changed — a person renamed the work stream, or Rally named it.
    *
    * `icon` rides along only when a naming pass chose one, which is the only
-   * writer of an icon nobody picked. It reaches the header in this event
-   * because the directory projection that also carries it is seconds behind:
-   * the glyph would otherwise change well after the name it was chosen with.
-   * Absent on a rename by a person, who changed no icon.
+   * writer of an icon nobody picked; it is absent on a rename by a person, who
+   * changed no icon. A client applies it to the sidebar row and leaves the
+   * header to the versioned projection, because the cached detail behind the
+   * header is what retires the appearance picker's pending preview.
    */
   ServerEventBaseSchema.extend({
     type: z.literal("workstream_renamed"),

@@ -3268,15 +3268,20 @@ describe('useWorkstreamSocket', () => {
 
     // The event settles the skeleton as well as the text: `automatic` is a
     // name, just one a later pass may still improve on. The icon a naming pass
-    // chose rides with it to the header and the row together — the projection
-    // that also carries it is seconds behind, and a glyph that changes after
-    // the name it was chosen with is the lag this write exists to close.
+    // chose goes to the sidebar row with it.
+    //
+    // It must NOT go to the cached detail, which is the entry the appearance
+    // picker reads to decide its own preview is done: `settled()` retires a
+    // pending choice as soon as the detail's icon moves off the baseline it was
+    // taken against, to any value at all, because another person changing the
+    // icon has to retire it too. Writing a generated icon there while somebody's
+    // own choice is still in flight would retire theirs to this one and hold the
+    // header on it until the projection lands. Only the versioned projection may
+    // move the detail.
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId]))
-      .toMatchObject({
-        title: 'Rally download link email to Danny',
-        titleStatus: 'automatic',
-        appearance: { icon: 'megaphone', color: null },
-      });
+      .toMatchObject({ title: 'Rally download link email to Danny', titleStatus: 'automatic' });
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId]))
+      .not.toHaveProperty('appearance');
     expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
       {
         id: workstreamId,
