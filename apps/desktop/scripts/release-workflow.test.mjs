@@ -59,7 +59,9 @@ test('the macOS runner is only claimed after the frozen release commit passes Ub
   assert.match(verifyJob, /^ {4}needs: plan$/mu);
   assert.match(verifyJob, /^ {4}if: needs\.plan\.outputs\.should_release == 'true'$/mu);
   assert.match(verifyJob, /^ {4}runs-on: ubuntu-latest$/mu);
-  assert.match(verifyJob, /^ {4}timeout-minutes: 30$/mu);
+  assert.match(verifyJob, /^ {4}timeout-minutes: 60$/mu);
+  assert.match(verifyJob, /^ {8}run: pnpm --filter @rally\/desktop test$/mu);
+  assert.doesNotMatch(verifyJob, /^ {8}run: pnpm test$/mu);
   assert.match(releaseJob, /^ {4}needs: \[plan, verify\]$/mu);
   assert.match(releaseJob, /^ {4}runs-on: macos-26$/mu);
   assert.match(releaseJob, /ref: \$\{\{ needs\.verify\.outputs\.release_commit \}\}/u);
