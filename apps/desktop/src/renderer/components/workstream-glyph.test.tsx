@@ -37,6 +37,22 @@ describe('workstreamAppearance', () => {
       .toContain('var(--av-sys-color-project-blue)');
   });
 
+  it('inks a glyph from the colour it is actually painted, not the one the id generates', () => {
+    // Every ring hue takes black ink and only the neutral and two retired keys
+    // take white, so a saved `black` is the case that tells the two apart. The
+    // glyph resolves one appearance now, and inking off the wrong half of it
+    // would put white on a light fill.
+    const saved = { icon: null, color: 'black' } satisfies WorkstreamAppearance;
+    const generated = render(<WorkstreamGlyph id="launch-room" />).container;
+    const stored = render(<WorkstreamGlyph appearance={saved} id="launch-room" />).container;
+
+    expect(resolveWorkstreamAppearance('launch-room').colorKey).not.toBe('black');
+    expect(generated.querySelector<HTMLElement>('.workstream-glyph')?.style.getPropertyValue('--glyph-ink'))
+      .toBe('var(--av-sys-color-palette-ink-dark)');
+    expect(stored.querySelector<HTMLElement>('.workstream-glyph')?.style.getPropertyValue('--glyph-ink'))
+      .toBe('var(--av-sys-color-palette-ink-light)');
+  });
+
   it('falls back to a drawable icon rather than blanking the window on a key it does not know', () => {
     // A client shipped before a key was added, opening a work stream that
     // already carries it. Rendering `undefined` as a component throws.
