@@ -3,7 +3,10 @@
 A work stream has one icon and color shared by everyone who can read it. Clicking
 its header icon opens a compact palette: fixed colors above a scrolling icon grid.
 Each choice saves immediately and keeps the palette open. A work stream nobody
-has chosen for gets its icon from the naming pass, out of this same catalog.
+has chosen for usually gets its icon from the naming pass, out of this same
+catalog; where that pass produced none it keeps the deterministic icon derived
+from its id, which is also what every work stream created before this existed
+still shows.
 
 ## Where the code lives
 
@@ -130,7 +133,7 @@ including scrolling, and check another connected window and reopening.
 
 ## Changelog
 
-### 2026-09-09 — Every unversioned appearance write is row-only, generated icons included
+### 2026-09-09 — Every unversioned appearance write is row-only, generated icons included (#619)
 
 Review on #619 caught the naming pass's generated icon being written to the
 cached detail as well as the sidebar row, on the reasoning that a generated icon
@@ -168,7 +171,7 @@ below already names — a receipt or event carrying the committed appearance and
 version, so the write is authoritative rather than optimistic — not a second
 unversioned writer with its own exception.
 
-### 2026-09-09 — Rally chooses the icon a work stream starts with
+### 2026-09-09 — Rally chooses the icon a work stream starts with (#619)
 
 Every icon key now carries a description of the mark it draws in
 `workstream-appearance.ts` — the drawing only, never what the icon is for, so

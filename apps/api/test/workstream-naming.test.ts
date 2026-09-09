@@ -166,6 +166,11 @@ describe("work-stream naming", () => {
 
     expect(title(database)).toBe("Mucker intro thread");
     expect(published).toEqual([]);
+    // The fence has to run before the icon is computed, not beside it. A
+    // `rename` that worked out the icon first and only then checked
+    // `title_status` would leave this work stream carrying a mark from a pass
+    // whose name it refused, and every assertion above would still hold.
+    expect(appearance(database)).toBeNull();
   });
 
   it("leaves the provisional title standing when the model cannot be reached", async () => {
@@ -223,6 +228,59 @@ describe("work-stream naming", () => {
       title: provisionalTitle,
       title_status: "automatic",
     });
+  });
+
+  it("spends no icon on a pass whose name normalized away to nothing", async () => {
+    const database = seededDatabase();
+    const published: Array<Record<string, unknown>> = [];
+    // A bare Markdown heading reduces to an empty title, so this pass produced
+    // nothing usable however confidently it answered. The icon is tied to the
+    // name rather than written on its own: the one icon a work stream gets must
+    // not be spent by the pass that failed to name it.
+    stubOpenRouter([], "###", undefined, "coins");
+    const env = environment(database, published);
+
+    await nameWorkstream(env, {
+      workspaceId,
+      workstreamId,
+      objective,
+      openingMessage: objective,
+      provisionalTitle,
+    });
+
+    expect(appearance(database)).toBeNull();
+    expect(workstreamRow(database)).toMatchObject({
+      title: provisionalTitle,
+      title_status: "automatic",
+    });
+    expect(published).toEqual([{
+      type: "workstream_renamed",
+      title: provisionalTitle,
+      titleStatus: "automatic",
+    }]);
+  });
+
+  it("writes the icon into a colour somebody already chose without disturbing it", async () => {
+    const database = seededDatabase();
+    // The half of the appearance a naming pass never chooses. Every other test
+    // reaches the write from an empty appearance, so a regression that replaced
+    // the row instead of merging into it would ship green.
+    applyWorkstreamObjectRootFields(
+      objectStoreOf(database),
+      { appearance: { icon: null, color: "teal" } },
+    );
+    stubOpenRouter([], "Avalon download link");
+    const env = environment(database, []);
+
+    await nameWorkstream(env, {
+      workspaceId,
+      workstreamId,
+      objective,
+      openingMessage: objective,
+      provisionalTitle,
+    });
+
+    expect(appearance(database)).toEqual({ icon: "megaphone", color: "teal" });
   });
 
   it("keeps an icon a person chose, and keeps naming past it", async () => {

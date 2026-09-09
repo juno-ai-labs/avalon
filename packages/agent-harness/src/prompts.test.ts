@@ -118,7 +118,7 @@ describe("prompt renderers", () => {
           objective: "Draft an email to Danny sharing the Rally download link.",
           openingMessage: "Draft an email to Danny sharing the Rally download link, and ask him to add Alex to the Tuesday call.",
         }),
-        hash: "4283251f6ac7cf69559472fe23a602802dfde1def36349287b302e80fe11e710",
+        hash: "53a2c550d0b62face82c3bc7e117714744525f3839aa41530373c5cc36198cfe",
       },
       workstreamNameFromConversation: {
         actual: renderWorkstreamNameMessages({
@@ -129,7 +129,7 @@ describe("prompt renderers", () => {
             { author: "person", text: "Use danny@mucker.com and mention the Tuesday call." },
           ],
         }),
-        hash: "60c3c85b33d6f69db0c880b5d3aa042a3302e143eda92d10322f27aa7b6df576",
+        hash: "5f5a0cdb5391684e5603096838d93cca88a78049b903515bcafb19eb98b172ee",
       },
       workstreamDescription: {
         actual: renderWorkstreamDescriptionMessages({
@@ -559,6 +559,12 @@ describe("prompt renderers", () => {
     expect(policy).toContain("Choose an icon as well, by its exact key from the catalog below");
     expect(policy).toContain("what suits this work is yours to judge");
     expect(policy).toContain("take the one that is more specific to this work");
+    // Two equally specific marks is the normal case for the catalog's own
+    // near-synonyms — atom/orbit, list-checks/clipboard-list, users/handshake —
+    // and a prompt that leaves it open has the model resolving it silently and
+    // differently each time. The catalog's order is the tie-break because it is
+    // the one both sides can see.
+    expect(policy).toContain("take whichever of them the catalog lists first");
     expect(policy).toContain(`take \`${DEFAULT_WORKSTREAM_ICON_KEY}\``);
 
     // A description says what the mark draws and stops there. Guidance about
@@ -567,7 +573,9 @@ describe("prompt renderers", () => {
     // matching. This catches a usage note creeping back in one description at a
     // time, which is how it would happen.
     for (const description of Object.values(WORKSTREAM_ICON_DESCRIPTIONS)) {
-      expect(description).not.toMatch(/\b(fits|use (it|this) for|suits|for work|choose (it|this) (for|when)|when the)\b/iu);
+      expect(description).not.toMatch(
+        /\b(fits|suits|represents|stands for|good for|use (it|this) for|for work|for tracking|choose (it|this) (for|when)|when the)\b/iu,
+      );
     }
 
     // The opening message is dropped where it would only repeat the objective,
