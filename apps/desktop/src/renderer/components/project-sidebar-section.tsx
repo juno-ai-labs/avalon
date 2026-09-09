@@ -228,6 +228,11 @@ export function ProjectSidebarSection({
                     event.dataTransfer.setData('application/x-rally-project-id', project.id);
                   }}
                 >
+                  {/* Held: a project reordered past another glides with its
+                      expanded members rather than jumping while they slide.
+                      The row rather than the item carries it, because the
+                      members animate themselves and a moving item would carry
+                      them a second time. See `useListMotion`. */}
                   <div
                     className={clsx(
                       'sidebar-row project-sidebar-row',
@@ -235,6 +240,8 @@ export function ProjectSidebarSection({
                         || location.pathname.startsWith(`/projects/${project.id}/`))
                         && 'is-active',
                     )}
+                    data-motion-hold=""
+                    data-motion-key={`project:${project.id}`}
                   >
                     <button
                       aria-expanded={isExpanded}

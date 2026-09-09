@@ -2207,32 +2207,58 @@ describe('pinned work streams', () => {
 
   // The other half of following it: the row travels to the section rather than
   // reappearing there. The motion itself is `useListMotion`'s and is covered
-  // in its own file; this proves the sidebar marks its rows so that a pin,
-  // which replaces the row's element, is still seen as one row moving.
-  it('moves the row\'s motion with it into the Pinned section', async () => {
+  // in its own file; these prove the sidebar marks its rows so that a row
+  // whose element is replaced — by a pin, or by crossing into another recency
+  // group — is still seen as one row moving.
+  describe('list motion', () => {
     const animate = vi.fn((element: Element, keyframes: Keyframe[], options: KeyframeAnimationOptions) => {
       void element; void keyframes; void options;
       return { cancel: vi.fn(), onfinish: null, oncancel: null };
     });
     const measure = Element.prototype.getBoundingClientRect;
-    Element.prototype.animate = function animateStub(
-      this: Element,
-      keyframes: Keyframe[] | PropertyIndexedKeyframes | null,
-      options?: number | KeyframeAnimationOptions,
-    ): Animation {
-      return animate(this, keyframes as Keyframe[], options as KeyframeAnimationOptions) as unknown as Animation;
-    };
-    // jsdom lays nothing out: rows sit one slot apart in document order under
-    // the scroll box, which is what the sidebar's grid lists give.
-    Element.prototype.getBoundingClientRect = function getBoundingClientRect(this: Element): DOMRect {
-      const scroll = this.closest('.sidebar-scroll');
-      const index = scroll === null || scroll === this
-        ? 0
-        : [...scroll.querySelectorAll('[data-motion-key]')].indexOf(this);
-      const top = index * 48;
-      return { top, left: 12, right: 292, bottom: top + 48, width: 280, height: 48, x: 12, y: top, toJSON: () => ({}) };
-    };
-    try {
+
+    // Installed and restored here rather than in the bodies: a failing
+    // assertion throws past a restore at the end of a case, and the test it
+    // leaks into is the one that gets blamed. `animate` is deleted rather
+    // than restored because jsdom never defined it, and a stub left behind
+    // would hide that gap from every test after these; jsdom does define the
+    // measurement, which goes back as it was.
+    beforeEach(() => {
+      animate.mockClear();
+      vi.useFakeTimers({ now: new Date('2026-08-01T12:00:00.000Z'), toFake: ['Date'] });
+      Element.prototype.animate = function animateStub(
+        this: Element,
+        keyframes: Keyframe[] | PropertyIndexedKeyframes | null,
+        options?: number | KeyframeAnimationOptions,
+      ): Animation {
+        return animate(this, keyframes as Keyframe[], options as KeyframeAnimationOptions) as unknown as Animation;
+      };
+      // jsdom lays nothing out: rows and headings sit one slot apart in
+      // document order under the scroll box, which is what the sidebar's grid
+      // lists give.
+      Element.prototype.getBoundingClientRect = function getBoundingClientRect(this: Element): DOMRect {
+        const scroll = this.closest('.sidebar-scroll');
+        const index = scroll === null || scroll === this
+          ? 0
+          : [...scroll.querySelectorAll('[data-motion-key]')].indexOf(this);
+        const top = index * 48;
+        return { top, left: 12, right: 292, bottom: top + 48, width: 280, height: 48, x: 12, y: top, toJSON: () => ({}) };
+      };
+    });
+
+    afterEach(() => {
+      delete (Element.prototype as Partial<Element>).animate;
+      Element.prototype.getBoundingClientRect = measure;
+      vi.useRealTimers();
+    });
+
+    /** The animation started on the element carrying `key`, if any. */
+    function playedOn(key: string): { element: HTMLElement; keyframes: Keyframe[] } | undefined {
+      const call = animate.mock.calls.find(([element]) => (element as HTMLElement).dataset.motionKey === key);
+      return call ? { element: call[0] as HTMLElement, keyframes: call[1] } : undefined;
+    }
+
+    it('moves the row\'s motion with it into the Pinned section', async () => {
       renderPinnable([
         workstream('ws-first', 'Roadmap review', 'completed', '2026-07-31T21:00:00.000Z'),
         workstream('ws-recent', 'Quarterly planning', 'completed'),
@@ -2246,52 +2272,21 @@ describe('pinned work streams', () => {
       // starts from the slot the recent list showed it in — one slot further
       // down, the headings counting as slots here: the list went from
       // [heading, first, recent] to [Pinned, recent, heading, first].
-      const moved = animate.mock.calls.find((call) => (call[0] as HTMLElement).dataset.motionKey === 'workstream:ws-recent');
+      const moved = playedOn('workstream:ws-recent');
       expect(moved).toBeDefined();
-      expect(screen.getByRole('region', { name: 'Pinned' })).toContainElement(moved![0] as HTMLElement);
-      expect((moved![1] as Keyframe[])[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 48px)' }));
+      expect(screen.getByRole('region', { name: 'Pinned' })).toContainElement(moved!.element);
+      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 48px)' }));
       // The row it passed, and that row's heading, shift down rather than
       // being moved: the column travels together.
-      const passed = animate.mock.calls.find((call) => (call[0] as HTMLElement).dataset.motionKey === 'workstream:ws-first');
-      expect(passed![1]).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
-      const heading = animate.mock.calls.find((call) => (call[0] as HTMLElement).dataset.motionKey?.startsWith('heading:') === true);
-      expect(heading![1]).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
-    } finally {
-      // `animate` is deleted rather than restored: jsdom never defined it, and
-      // a stub left behind would hide that gap from every test after this one.
-      // jsdom does define the measurement, and the tests after this need it.
-      delete (Element.prototype as Partial<Element>).animate;
-      Element.prototype.getBoundingClientRect = measure;
-    }
-  });
-
-  // A row leaves one recency group for another whenever it is touched — its
-  // heading changes from Yesterday to Today — and the two groups are separate
-  // subtrees, so the row is remounted. It is still one row to the reader, and
-  // it has to travel between the groups the way it travels between sections.
-  it('moves a row\'s motion with it from one recency group to another', () => {
-    vi.useFakeTimers({ now: new Date('2026-08-01T12:00:00.000Z'), toFake: ['Date'] });
-    const animate = vi.fn((element: Element, keyframes: Keyframe[], options: KeyframeAnimationOptions) => {
-      void element; void keyframes; void options;
-      return { cancel: vi.fn(), onfinish: null, oncancel: null };
+      expect(playedOn('workstream:ws-first')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
+      expect(playedOn('heading:Yesterday')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
     });
-    const measure = Element.prototype.getBoundingClientRect;
-    Element.prototype.animate = function animateStub(
-      this: Element,
-      keyframes: Keyframe[] | PropertyIndexedKeyframes | null,
-      options?: number | KeyframeAnimationOptions,
-    ): Animation {
-      return animate(this, keyframes as Keyframe[], options as KeyframeAnimationOptions) as unknown as Animation;
-    };
-    Element.prototype.getBoundingClientRect = function getBoundingClientRect(this: Element): DOMRect {
-      const scroll = this.closest('.sidebar-scroll');
-      const index = scroll === null || scroll === this
-        ? 0
-        : [...scroll.querySelectorAll('[data-motion-key]')].indexOf(this);
-      const top = index * 48;
-      return { top, left: 12, right: 292, bottom: top + 48, width: 280, height: 48, x: 12, y: top, toJSON: () => ({}) };
-    };
-    try {
+
+    // A row leaves one recency group for another whenever it is touched — its
+    // heading changes from Yesterday to Today — and the two groups are separate
+    // subtrees, so the row is remounted. It is still one row to the reader, and
+    // it has to travel between the groups the way it travels between sections.
+    it('moves a row\'s motion with it from one recency group to another', () => {
       const today = workstream('ws-today', 'Roadmap review', 'completed', '2026-08-01T09:00:00.000Z');
       const yesterday = workstream('ws-yesterday', 'Quarterly planning', 'completed', '2026-07-31T09:00:00.000Z');
       const { rerender } = render(
@@ -2311,17 +2306,10 @@ describe('pinned work streams', () => {
       // is the one that moved — from two slots down, headings counting as
       // slots, up to the top — while the other row and its heading shift down.
       expect(screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(['Last hour', 'Today']);
-      const crossed = animate.mock.calls.find((call) => (call[0] as HTMLElement).dataset.motionKey === 'workstream:ws-yesterday');
-      expect((crossed?.[1] as Keyframe[])[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
-      const passed = animate.mock.calls.find((call) => (call[0] as HTMLElement).dataset.motionKey === 'workstream:ws-today');
-      expect(passed?.[1]).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
-      const heading = animate.mock.calls.find((call) => (call[0] as HTMLElement).dataset.motionKey === 'heading:Today');
-      expect(heading?.[1]).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
-    } finally {
-      delete (Element.prototype as Partial<Element>).animate;
-      Element.prototype.getBoundingClientRect = measure;
-      vi.useRealTimers();
-    }
+      expect(playedOn('workstream:ws-yesterday')?.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
+      expect(playedOn('workstream:ws-today')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
+      expect(playedOn('heading:Today')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
+    });
   });
 
   // Pinning moves the row to a section the reader is very likely scrolled away
