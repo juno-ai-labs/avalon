@@ -132,6 +132,17 @@ Real external OAuth requires configured provider credentials; onboarding no long
 
 ## Changelog
 
+### 2026-09-09 — Keep workspace access stable through identity retries
+
+The account gate now retains its authenticated-workspace fallback while a failed
+identity lookup retries. React Query clears the current error during a refetch;
+using that error alone switched back to Opening Rally, unmounted the workspace,
+and caused its next initial socket sync to retry the account query again. The
+query's recorded error timestamp preserves the fallback within its account cache
+scope without disabling profile refreshes or exempting unaffiliated identities.
+The desktop gate regression holds a retry pending and verifies that the original
+workspace element remains mounted, then rejects the retry and checks it again.
+
 ### 2026-09-09 — Finishing lands on the first work stream
 
 Finishing used to set the hash to `/workstreams/new`. It now leaves through
