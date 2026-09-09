@@ -119,6 +119,13 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 
 ## How it works
 
+Accepted feed upgrades report accept duration and instance age at handler entry.
+`MigratableDurableObject.instanceAgeMs()` measures time since construction on
+workerd's clock; it does not identify which caller woke an instance. The edge
+strips these internal headers and records time outside acceptance, including
+constructor/readiness and queueing. See [socket timing](performance-tracing.md#what-room_upgrade-contains).
+
+
 ### Durable search delivery
 
 Transcript writes commit a coalesced search intent through SQLite triggers. SubstreamAgent alarms publish references to the regional activity Queue; its internal preparation RPC reloads canonical text and captures links. The Queue Worker alone performs lexical indexing, shared chunking, embedding, and generation cleanup. WorkspaceDO uses retained resource revision watermarks and the same Queue. Captured link Markdown stays in the originating substream and canonical search reads enforce current parent and child access. See [text search](text-search.md) for migration and failure behavior.

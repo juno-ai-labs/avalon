@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import { socketTicketProtocols, SOCKET_TICKET_SUBPROTOCOL } from "@rally/contracts/socket-tickets";
-import { withNegotiatedSubprotocol } from "../src/services/socket-service";
+import { roomUpgradeDiagnostics, withNegotiatedSubprotocol } from "../src/services/socket-service";
 
 // Shaped like the compact JWS a ticket really is — dot-separated base64url —
 // but without the `eyJ` header that makes a secret scanner read a fixture as a
@@ -53,6 +53,42 @@ describe("subprotocol negotiation in workerd", () => {
     expect(accepted.status).toBe(101);
     expect(accepted.webSocket).toBe(client);
     expect(accepted.headers.get("sec-websocket-protocol")).toBe(SOCKET_TICKET_SUBPROTOCOL);
+  });
+
+  it.each([true, false])("strips diagnostics through the real handshake (subprotocol: %s)", (offerProtocol) => {
+    for (const value of ["214", "0", "", "invalid", "3.5", "1".repeat(16), "1, 2"]) {
+      const [client, server] = Object.values(new WebSocketPair());
+      if (!client || !server) throw new Error("WebSocketPair is incomplete");
+      server.accept();
+      const request = handshake();
+      if (!offerProtocol) request.headers.delete("sec-websocket-protocol");
+      const diagnostic = roomUpgradeDiagnostics(new Response(null, {
+        status: 101,
+        webSocket: client,
+        headers: {
+          "x-rally-room-accept-ms": value,
+          "x-avalon-room-accept-ms": value,
+          "x-rally-room-instance-age-ms": value,
+          "x-avalon-room-instance-age-ms": value,
+          "x-test-preserved": "yes",
+        },
+      }), 500);
+      const accepted = withNegotiatedSubprotocol(request, diagnostic.response);
+      expect(accepted.status).toBe(101);
+      expect(accepted.webSocket).toBe(client);
+      expect(accepted.headers.get("x-test-preserved")).toBe("yes");
+      expect([...accepted.headers.keys()].filter((name) => name.includes("room-"))).toEqual([]);
+      expect(accepted.headers.get("sec-websocket-protocol"))
+        .toBe(offerProtocol ? SOCKET_TICKET_SUBPROTOCOL : null);
+      expect(diagnostic.attributes).toEqual(value === "214" || value === "0" ? {
+        "rally.socket.room_accept_ms": Number(value),
+        "rally.socket.room_outside_accept_ms": 500 - Number(value),
+        "rally.socket.room_instance_age_ms": Number(value),
+      } : {});
+      client.accept();
+      client.close(1000, "test complete");
+      server.close(1000, "test complete");
+    }
   });
 
   it("would throw if a rejection were rebuilt, which is why the guard exists", () => {

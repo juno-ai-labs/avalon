@@ -223,19 +223,15 @@ disableable with `observability.logs.invocation_logs = false`. Rally leaves it
 on; it is what carries the request and response metadata the `http_request` row
 does not.
 
-*Observed 8 September 2026, on the Global Worker's invocation logs.* For a
-Durable Object, the invocation log's `$workers.wallTimeMs` starts when the
-platform accepts the invocation for the object, **not** when the object's
-handler runs: a call that has to wake a cold object spends the activation —
-routing, storage, and the constructor — inside its wall time, at
-`cpuTimeMs` near zero, and every invocation that arrives during that activation
-ends together once the constructor's own rows appear. An RPC session opened
-before the instance existed is logged as `jsrpc` with
-`$workers.event.rpcCallCount: 0` even though its method ran, so a zero-call
-session of several seconds is the signature of a caller that waited for
-activation rather than one that called nothing. Read
-[`performance-tracing.md`](performance-tracing.md#what-room_upgrade-contains)
-for what that does to a step that wraps a Durable Object call.
+*Observed 8 September 2026, on the Global Worker's invocation logs.* The
+investigation behind #607 found long, low-CPU Durable Object invocations ending
+around initialization, including `jsrpc` sessions with
+`$workers.event.rpcCallCount: 0`. This supported a cold-activation hypothesis
+for those opens; it is not a documented guarantee that zero-call RPC sessions
+always mean activation. A caller's wait can also include constructor/readiness
+and queueing. Correlate the phases using
+[the investigation procedure](production-error-investigation.md#a-slow-call-into-a-durable-object)
+and [socket timing](performance-tracing.md#what-room_upgrade-contains).
 
 Limits worth knowing: **7 days retention** (3 on the Free plan); **256 KB per
 log**, with anything larger truncated and `$cloudflare.truncated` set — which is
@@ -327,6 +323,14 @@ depending on real nesting or export belongs in `apps/api/test-workers/` — see
 [`testing.md`](testing.md).
 
 ## Changelog
+
+### 2026-09-09 — Separate observations from platform guarantees
+
+Qualified the #607 invocation pattern as incident evidence, because zero-call
+RPC logs alone do not prove activation and constructor time belongs to the
+caller's wait too. The investigation guide owns the correlation procedure.
+
+PR #607.
 
 ### 2026-09-08 — A Durable Object invocation's wall time includes its activation
 

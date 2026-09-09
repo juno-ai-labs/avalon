@@ -716,6 +716,15 @@ Child archive admission uses the same `parent_archived` ticket field as parent a
 
 ## Changelog
 
+### 2026-09-09 — Strip diagnostics even when malformed
+
+Header presence now controls stripping, independently of numeric parsing, to
+keep malformed values off both subprotocol and legacy query-ticket handshakes.
+Real workerd verifies both paths. The proposed activation attribute is now
+`room_outside_accept_ms` because constructor work and queueing also contribute.
+
+PR #607.
+
 ### 2026-09-08 — Enforce pushed child archive locally
 
 **What changed:** The archive admission flag also covers private children; already-open commands consult their local lifecycle mirror.

@@ -5944,11 +5944,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   private async acceptSocketInSpan(request: Request, url: URL, span: FlowSpan): Promise<Response> {
-    // Read first, before anything here can yield: the edge subtracts this
-    // accept's own duration from the time it waited for the room, and the
-    // difference is the platform activating a cold object — work that happened
-    // before this constructor ran and that no span in this object can cover.
-    // The instance age says whether this upgrade is the call that woke it.
+    // Read before the accept yields. The edge records the remainder of its
+    // wait separately; it includes constructor/readiness work before this point.
+    // Instance age is context for interpreting that remainder, not attribution
+    // of which concurrent call woke the object.
     const acceptStartedAt = Date.now();
     const instanceAgeMs = this.instanceAgeMs();
     span.setAttributes({ "rally.room.instance_age_ms": instanceAgeMs });
@@ -6164,8 +6163,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     });
     // Only the accepted upgrade carries these: a rejection is already a
     // readable JSON status, and the edge strips both before the 101 reaches a
-    // client. `withNegotiatedSubprotocol` in `socket-service.ts` rebuilds the
-    // response anyway, so the headers cost no second construction there.
+    // client through `roomUpgradeDiagnostics` in `socket-service.ts`.
     return new Response(null, {
       status: 101,
       webSocket: client,

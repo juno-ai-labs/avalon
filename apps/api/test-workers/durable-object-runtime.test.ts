@@ -4201,11 +4201,9 @@ describe("Durable Objects in the Workers runtime", () => {
   });
 
   it("reports its own accept time and instance age on the 101, and on nothing else", async () => {
-    // The edge subtracts the accept from its wait for the room to name the
-    // platform's activation of a cold object — the part of a slow upgrade no
-    // span in the room can cover, because the room did not exist yet. Only an
-    // accepted upgrade carries the two values; a refusal is already a readable
-    // status and gets neither.
+    // The room reports only accepted upgrades. Clock arithmetic is covered by
+    // durable-object-instance-age.test.ts; this test proves real header emission
+    // and that replay admission remains enforced.
     await seedOpenAuthority();
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),

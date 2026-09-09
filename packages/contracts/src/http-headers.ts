@@ -57,10 +57,9 @@ export const RALLY_HEADERS = Object.freeze({
   /**
    * What a conversation object reports on the 101 it answers a feed upgrade
    * with: how long its own accept ran, and how old the object instance that
-   * ran it was. The edge subtracts the first from the time it waited for the
-   * room, which names the part of a slow upgrade the room never saw — the
-   * platform waking a cold object before its constructor ran — and strips both
-   * before the handshake reaches a client. Internal, object-to-Worker only;
+   * ran it was. The edge records the wait outside the accept separately;
+   * it includes routing, activation, constructor work, and queueing. Both
+   * headers are internal, stripped before the client handshake.
    * `docs/performance-tracing.md` owns the attributes they become.
    */
   ROOM_ACCEPT_MS: "x-rally-room-accept-ms",

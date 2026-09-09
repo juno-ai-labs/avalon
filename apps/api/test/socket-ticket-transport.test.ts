@@ -189,13 +189,9 @@ describe("socket ticket transport", () => {
     expect(roomFetch).toHaveBeenCalledOnce();
   });
 
-  it("names the platform's activation of the room beside the room's own accept, and keeps both off the handshake", async () => {
-    // The edge's wait for the room is the whole `room_upgrade` step. What the
-    // room reports of its own accept is the part Rally code ran; the rest is
-    // the platform waking a cold object before its constructor — 8–12 s in
-    // production on opens whose accept ran under 220 ms. Fake timers stand in
-    // for workerd's pinned clock: `Date.now()` moves only where the room's
-    // fetch advances it, however many times the flow reads it.
+  it("records time outside the room's accept beside its own duration, and keeps both off the handshake", async () => {
+    // A controlled binding wait proves the edge's subtraction and trace wiring.
+    // The remainder does not distinguish constructor work from platform delay.
     vi.useFakeTimers({ now: 1_757_000_000_000 });
     vi.stubGlobal("Response", FakeResponse);
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
@@ -248,7 +244,7 @@ describe("socket ticket transport", () => {
     expect(recordedSpans().find((span) => span.name === "workstream.socket.upgrade")?.attributes)
       .toMatchObject({
         "rally.socket.room_accept_ms": 214,
-        "rally.socket.room_activation_ms": 11_294,
+        "rally.socket.room_outside_accept_ms": 11_294,
         "rally.socket.room_instance_age_ms": 0,
       });
     // The same three land on the flow row, beside the step that used to be the
@@ -260,7 +256,7 @@ describe("socket ticket transport", () => {
       slowest_step: "workstream.socket.room_upgrade",
       slowest_step_ms: 11_508,
       "rally.socket.room_accept_ms": 214,
-      "rally.socket.room_activation_ms": 11_294,
+      "rally.socket.room_outside_accept_ms": 11_294,
       "rally.socket.room_instance_age_ms": 0,
     });
   });
