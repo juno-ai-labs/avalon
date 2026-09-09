@@ -285,6 +285,9 @@
     { "name": "avalon-eu-connector-poll", "binding": "CONNECTOR_POLL_WORKFLOW", "class_name": "ConnectorPollWorkflow" },
     { "name": "avalon-eu-connector-event", "binding": "CONNECTOR_EVENT_WORKFLOW", "class_name": "ConnectorEventWorkflow" },
     { "name": "avalon-eu-work-opportunity", "binding": "WORK_OPPORTUNITY_WORKFLOW", "class_name": "WorkOpportunityWorkflow" }
+    // No demo preparation Workflow here: demos are prepared in Global, and
+    // the EU deployment refuses every demo write, so a binding would be a
+    // Workflow resource that nothing can ever instantiate.
   ],
   // `enabled`/`head_sampling_rate` cover Workers Logs only; automatic tracing
   // has to be asked for separately.

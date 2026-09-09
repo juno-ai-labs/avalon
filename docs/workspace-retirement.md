@@ -237,6 +237,13 @@ stops the D1 reads that never reach an object. The column is the one the
 last-member-leaves path writes ([`multiple-workspaces.md`](multiple-workspaces.md));
 this module writes it and does not own its other readers.
 
+The walk makes one write into another module's table. When the graph reports
+closed it calls `markDemoWorkspaceRetired`, which sets `retired_at` on the
+demo operation that made the workspace, so the Demos page can answer "is there
+a demo" without waking a retired object to ask. It is a shadow written after
+the fact, owned by [`demo-workspaces.md`](demo-workspaces.md); retirement never
+reads it, and a workspace no demo made has no row for it to touch.
+
 Two workspace-scoped Durable Object classes are **not** gated and not walked:
 `ArtifactHostDO`, which serves a work stream's published artifacts and asks
 `WorkstreamDO.canReadWorkstream` before serving — that answer is `false` on a
@@ -368,8 +375,11 @@ tables arrive through each of the four object classes' own append-only migration
 ledger, from one shared constant, as `_internal_durable_alarms` does. There is
 no D1 table for a retirement; the door sets `workspaces.abandoned_at`, the
 column every D1 authority read already fences on, and a caller that needs more
-than "closed" asks the object. A feature that needs a regional shadow of the
-receipt writes its own.
+than "closed" asks the object. The one regional shadow of the receipt is the demo
+feature's: once the graph reports closed, the walk stamps `retired_at` on the
+`demo_operations` row that made the workspace — a no-op for a workspace no demo
+made — and nothing here reads it back
+([`demo-workspaces.md`](demo-workspaces.md#data-model)).
 
 ## Regional impact
 
@@ -420,6 +430,29 @@ telemetry roles.
   workspaces it was built for.
 
 ## Changelog
+
+### 2026-09-08 — The walk stamps the demo register
+
+**What changed:** After the graph reports closed, `retireWorkspaceGraph`
+calls `markDemoWorkspaceRetired`, which sets `retired_at` on the
+`demo_operations` row whose workspace this was. The write is a no-op for any
+other workspace. This arrives with the demo feature
+([#594](https://github.com/juno-ai-labs/avalon/pull/594)), which the
+2026-09-08 split entry below said would restore it.
+
+**Why:** The Demos page has to say whether a demo is closed, and the only
+other way to know is to wake the retired object and ask it, which is what
+the gate exists to stop. The write is made by the walk rather than by the
+Demos page reading `workspaces.abandoned_at` because the walk is the one
+place that knows the graph is closed rather than merely fenced.
+
+**Considered and rejected:** Having the demo feature observe retirement
+through a Queue or a poll of `abandoned_at` — a second mechanism to carry one
+timestamp, and `abandoned_at` is written before the walk, so it would have
+said "closed" while objects were still open.
+
+**Consequences:** Retirement writes one row it does not own, and never reads
+it. A demo-side change to that row's meaning is the demo document's to make.
 
 ### 2026-09-08 — The `demos` credential has a secret of its own
 

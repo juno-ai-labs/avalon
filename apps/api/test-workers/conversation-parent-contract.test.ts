@@ -1,3 +1,4 @@
+import { pushSearchAuthorization } from '../src/services/search-authorization';
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { WorkstreamObjectClient } from '../src/services/workstream-object-client';
 import { WorkstreamDirectoryService } from '../src/services/workstream-directory-service';
@@ -385,12 +386,12 @@ describe("conversation parent contract", () => {
     let release = () => {};
     const gate = new Promise<void>((resolve) => { release = resolve; });
     let entered = 0;
-    const original = WorkstreamObjectClient.prototype.searchTurns;
-    vi.spyOn(WorkstreamObjectClient.prototype, 'searchTurns').mockImplementation(async function (this: WorkstreamObjectClient, ids) {
+    const original = WorkstreamObjectClient.prototype.admittedSearchTurns;
+    vi.spyOn(WorkstreamObjectClient.prototype, 'admittedSearchTurns').mockImplementation(async function (this: WorkstreamObjectClient, ids) {
       if (++entered === 1) await gate;
       return original.call(this, ids);
     });
-    const links = vi.spyOn(WorkstreamObjectClient.prototype, 'searchLinks');
+    const links = vi.spyOn(WorkstreamObjectClient.prototype, 'admittedSearchLinks');
     const pending = searchWorkspacePage({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
       { query: 'needle', category: 'all', pageSize: 7 });
     try {
@@ -411,6 +412,10 @@ describe("conversation parent contract", () => {
       const restricted = await searchWorkspacePage({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' },
         { ...AUTH, userId: MEMBER_ID, sessionId: memberSession }, { query: 'needle', category: 'all', pageSize: 7 });
       expect(restricted.results.map((row) => row.id)).toEqual(['message-1']);
+      await archiveRoom(WORKSPACE_ROOM_ID);
+      const archived = await searchWorkspacePage({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
+        { query: 'needle', category: 'all', pageSize: 7 });
+      expect(archived.results.map((row) => row.id)).not.toContain('message-1');
     } finally { release(); await pending.catch(() => {}); }
   });
 
@@ -586,7 +591,7 @@ describe("conversation parent contract", () => {
     expect(identities).toHaveBeenCalledTimes(2);
   });
 
-  it("returns an admitted result when access is revoked mid-request and denies the next request", async () => {
+  it("trusts projected search admission until the mutation push publishes revocation", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
     const text = 'needle revocation boundary';
     await runInDurableObject(conversation(PERSONAL_ROOM_ID), async (_instance, state) => {
@@ -599,7 +604,7 @@ describe("conversation parent contract", () => {
     let revoked = false;
     vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (algorithm, data) => {
       const hashed = await digest(algorithm, data);
-      if (new TextDecoder().decode(data) === JSON.stringify(text)) {
+      if (!revoked && new TextDecoder().decode(data) === JSON.stringify(text)) {
         const removal = await post(conversation(PERSONAL_ROOM_ID), '/internal/product', {
           operation: 'remove_participant', auth: AUTH, userId: AUTHOR_ID,
         });
@@ -612,6 +617,18 @@ describe("conversation parent contract", () => {
     expect(await searchWorkspace({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
       { query: 'needle', category: 'messages' })).toMatchObject([{ id: 'hash-candidate' }]);
     expect(revoked).toBe(true);
+    expect(await searchWorkspace({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
+      { query: 'needle', category: 'messages' })).toMatchObject([{ id: 'hash-candidate' }]);
+    const timingLog = vi.spyOn(console, 'info');
+    const mutationAt = Date.now() - 10_000;
+    await pushSearchAuthorization({ ...TEST_ENV, LOG_LEVEL: 'info' }, { type: 'search_authorization_push_v1', region: 'global', workspaceId: WORKSPACE_ID,
+      target: { kind: 'parent', id: PERSONAL_ROOM_ID }, timing: { mutationAt, enqueuedAt: mutationAt + 2_000 } });
+    expect(timingLog).toHaveBeenCalledWith(expect.objectContaining({ event: 'authz_push_timing', outcome: 'completed',
+      mutation_at: mutationAt, outbox_ms: 2_000, written_keys: expect.any(Number), store: 'kv' }));
+    const timing = timingLog.mock.calls.map(([entry]) => entry).find((entry) => entry.event === 'authz_push_timing');
+    expect(timing.mutation_to_write_ack_ms).toBeGreaterThanOrEqual(10_000);
+    expect(timing.written_keys).toBeGreaterThan(0);
+    timingLog.mockRestore();
     expect(await searchWorkspace({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
       { query: 'needle', category: 'messages' })).toEqual([]);
   });
