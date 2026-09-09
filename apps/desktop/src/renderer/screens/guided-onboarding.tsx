@@ -54,9 +54,9 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
     return () => { delete root.dataset['personalColor']; };
   }, [account.data?.presentation, profileState, session, updateCurrentUserName]);
   if (!session) return previewed ? <>{children}</> : <OnboardingIntroduction busy={false} error={null} onComplete={() => setPreviewed(true)} />;
-  // Refetch clears `error` while keeping errorUpdatedAt. Once a failed lookup
-  // admitted this workspace, its initial socket sync must not unmount it by
-  // retrying the account query and restarting the same connect/refetch loop.
+  // Refetch clears `error`, but errorUpdatedAt records a prior failure across
+  // retries. Keep workspace access through its socket's initial profile sync;
+  // successful data exits this fallback even though the timestamp remains set.
   if (account.errorUpdatedAt > 0 && !account.data && session.workspace) return <>{children}</>;
   if (account.error && !account.data) return <OnboardingPage title="Let's pick up where you left off" footer={<><Button onClick={() => void account.refetch()}>Retry</Button><Button onClick={() => void signOut()}>Sign out</Button></>}><InlineError>{account.error.message}</InlineError></OnboardingPage>;
   if (!account.data) return <OnboardingPage title="Opening Rally"><RallyMark /></OnboardingPage>;
