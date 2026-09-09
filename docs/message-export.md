@@ -282,6 +282,10 @@ Two traps:
 
 ## Changelog
 
+### 2026-09-09 — Preserve folded image embeds in exports
+
+Still rendering presents image embeds as titled file cards and styles the file wrapper. Interactive galleries can fold additional images, but an exported message must retain every delivered resource without fetching live previews.
+
 ### 2026-09-07 — Use the current brand accent
 
 Replaced the decorative orange export accent with Rally neon yellow (#ccff00),
