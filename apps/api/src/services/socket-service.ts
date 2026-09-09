@@ -624,9 +624,6 @@ export class WorkstreamControlSocketService {
     headers.set(RALLY_HEADERS.SOCKET_TICKET_ID, claims.ticketId);
     headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
     const internalUrl = new URL("https://workstream.internal/socket");
-    if (new URL(request.url).searchParams.get("workstreamAppearance") === "1") {
-      internalUrl.searchParams.set("workstreamAppearance", "1");
-    }
     const response = await stub.fetch(
       new Request(internalUrl, { method: "GET", headers }),
     );

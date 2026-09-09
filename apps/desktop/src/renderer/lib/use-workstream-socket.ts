@@ -1,3 +1,4 @@
+import { safeParseSocketEvent } from "@rally/contracts";
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import {
   ServerSocketEventSchema,
@@ -1208,7 +1209,9 @@ export function useWorkstreamSocket(
             { length: assembly.chunkCount },
             (_, index) => assembly.chunks.get(index)!,
           ).join('');
-          const context = SubstreamInitialContextSchema.parse(JSON.parse(json));
+          const parsedContext = safeParseSocketEvent(SubstreamInitialContextSchema, JSON.parse(json));
+          if (!parsedContext.success) throw parsedContext.error;
+          const context = parsedContext.data;
           if (context.source.workstreamId !== parentId || context.source.substreamId !== '0') {
             throw new Error('substream_initial_context_identity_mismatch');
           }
@@ -2037,7 +2040,7 @@ export function useWorkstreamSocket(
           }
           try {
             const parsed: unknown = JSON.parse(String(messageEvent.data));
-            const commandResult = WorkstreamSocketCommandResultSchema.safeParse(parsed);
+            const commandResult = safeParseSocketEvent(WorkstreamSocketCommandResultSchema, parsed);
             if (commandResult.success) {
               const pending = pendingSubstreamCommands.get(commandResult.data.operationId);
               if (!pending) return;
@@ -2062,7 +2065,7 @@ export function useWorkstreamSocket(
               }
               return;
             }
-            const event = ServerSocketEventSchema.safeParse(parsed);
+            const event = safeParseSocketEvent(ServerSocketEventSchema, parsed);
             if (event.success) {
               if (event.data.type === 'error'
                 && ['workspace_socket_required', 'invalid_event'].includes(event.data.code)

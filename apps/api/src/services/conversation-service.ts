@@ -207,7 +207,7 @@ export class ConversationService {
     const url = new URL(this.env.PUBLIC_API_BASE_URL);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = `/socket/conversations/${parentId}/${substreamId}`;
-    url.search = new URLSearchParams({ ticket }).toString();
+    url.search = "";
     return {
       url: url.toString(),
       ticket,

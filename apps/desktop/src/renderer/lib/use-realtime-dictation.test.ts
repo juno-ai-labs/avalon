@@ -435,9 +435,13 @@ describe('realtime dictation transcript', () => {
     act(() => audioGraph.emitAudio(audioWhileCommitIsPending));
     expect(FakeWebSocket.instances[0]!.send).toHaveBeenCalledWith(expect.stringContaining('input_audio_buffer.append'));
     act(() => FakeWebSocket.instances[0]!.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'future_provider_event', item_id: 'unrelated-item' }),
+    })));
+    act(() => FakeWebSocket.instances[0]!.dispatchEvent(new MessageEvent('message', {
       data: JSON.stringify({
         type: 'conversation.item.input_audio_transcription.completed',
         transcript: 'Finalized first segment.',
+        item_id: 'correct-item',
       }),
     })));
     await expect(commit).resolves.toBe('Finalized first segment.');

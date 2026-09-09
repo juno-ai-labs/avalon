@@ -1,3 +1,4 @@
+import { safeParseSocketEvent, isUnknownSocketEvent, ClientSocketEventTypeSchema } from "@rally/contracts";
 import { SidekickSkillSnapshotSchema } from "@rally/contracts";
 import { sidekickSkillCatalog, sidekickSkillRef } from "../services/sidekick-skills";
 import { flushAuthorizationProjection, nextAuthorizationProjectionAt } from './authorization-projection';
@@ -4706,7 +4707,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return;
     }
 
-    const parsed = ClientSocketEventSchema.safeParse(decoded);
+    if (isUnknownSocketEvent(decoded, ClientSocketEventTypeSchema)) return;
+    const parsed = safeParseSocketEvent(ClientSocketEventSchema, decoded);
     if (!parsed.success) {
       const recognizableMutation = recognizableSocketMutation(decoded);
       if (recognizableMutation) {

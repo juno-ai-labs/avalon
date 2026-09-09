@@ -509,6 +509,30 @@ describe('useWorkstreamSocket', () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
   });
 
+  it('ignores future feed events and added fields before applying the next snapshot', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-00000000073b';
+    const queryClient = new QueryClient();
+    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+    })) });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: ({ children }: PropsWithChildren) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>,
+    });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => {
+      socket.open();
+      socket.message({ type: 'future_feed_event', sequence: 999 });
+      socket.message({ ...snapshotFrame({ sequence: 1,
+        workstream: { id: workstreamId, title: 'Current snapshot', future: true },
+      }), future: true });
+    });
+    expect(queryClient.getQueryData(['workstream', workstreamId])).toMatchObject({ title: 'Current snapshot' });
+    expect(result.current.state).toBe('connected');
+  });
+
   it('starts cacheless retained opens from sequence zero and ignores replay-only frames', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);

@@ -1,3 +1,4 @@
+import { safeParseSocketEvent, isUnknownSocketEvent } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from '../services/authorization-policy';
 import { createIdentityObjectPort } from '../runtime/identity-port';
@@ -115,9 +116,7 @@ import {
 const realtimeTextEncoder = new TextEncoder();
 const PRIVATE_CHILD_EFFECT_RETRY_MS = 5_000;
 
-function workstreamControlPayload(event: WorkstreamControlSocketEvent, supportsAppearance = false): string {
-  // Installed clients reject unknown fields in this strict metadata schema.
-  if (!supportsAppearance) event = { ...event, metadata: { ...event.metadata, appearance: undefined } };
+function workstreamControlPayload(event: WorkstreamControlSocketEvent): string {
   const payload = JSON.stringify(WorkstreamControlSocketEventSchema.parse(event));
   if (realtimeTextEncoder.encode(payload).byteLength > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
     throw new Error("Work-stream control event exceeds the bounded frame size");
@@ -140,7 +139,6 @@ interface WorkstreamSocketAttachment extends WorkstreamSocketIdentity {
   connectionId: string;
   connectedAt: string;
   subscribed: boolean;
-  supportsAppearance?: boolean | undefined;
 }
 
 interface WorkstreamMetadataRow extends Record<string, SqlStorageValue> {
@@ -586,7 +584,6 @@ function readSocketAttachment(socket: WebSocket): WorkstreamSocketAttachment | n
       connectionId: z.string().uuid(),
       connectedAt: z.string().datetime({ offset: true }),
       subscribed: z.boolean(),
-      supportsAppearance: z.boolean().optional(),
     }).safeParse(socket.deserializeAttachment());
     return parsed.success ? parsed.data : null;
   } catch {
@@ -1735,7 +1732,8 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       socket.close(1008, "Work-stream control events must be JSON");
       return;
     }
-    const parsed = WorkstreamControlSocketClientEventSchema.safeParse(decoded);
+    if (isUnknownSocketEvent(decoded, WorkstreamControlSocketClientEventSchema.shape.type)) return;
+    const parsed = safeParseSocketEvent(WorkstreamControlSocketClientEventSchema, decoded);
     if (!parsed.success) {
       socket.close(1008, "Invalid work-stream control event");
       return;
@@ -1755,7 +1753,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       type: "workstream_metadata",
       occurredAt: new Date().toISOString(),
       metadata,
-    }, attachment.supportsAppearance));
+    }));
   }
 
   override webSocketClose(): void {
@@ -1808,7 +1806,6 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       connectionId: uuidV7(),
       connectedAt: new Date().toISOString(),
       subscribed: false,
-      supportsAppearance: new URL(request.url).searchParams.get("workstreamAppearance") === "1",
     };
     this.state.acceptWebSocket(server, [
       attachment.workspaceId,
@@ -2179,7 +2176,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         type: "workstream_metadata",
         occurredAt,
         metadata,
-      }, attachment.supportsAppearance));
+      }));
     }
   }
 
