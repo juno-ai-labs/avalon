@@ -148,7 +148,20 @@ local optimistic rows are reconciled by stable client turn IDs.
 Finished assistant turns also share the action row. Copy and export remain
 local actions; **Speak** uses the regional authenticated stream documented in
 [`message-speech.md`](message-speech.md) and receives the complete stored
-markdown even when the shared renderer has collapsed its sections.
+markdown even when the shared renderer has collapsed its sections. **New
+substream** closes that row, and every settled human turn — the reader's own and
+a colleague's alike — carries the same control alone in a row beneath its bubble,
+inset by the bubble's corner so it ends on the same vertical as the identity line
+above it. A settled turn carrying
+attachments and no prose still shows the row, holding the cutoff alone: copy,
+speech and the exports each act on the response text and are withheld when there
+is none. Both placements are described in
+[`substream-creation.md`](substream-creation.md). The row owns the hover fade —
+a control inside it must not carry its own — and both rows share one set of
+button metrics, because the same control appears in each. The corner is
+`--turn-bubble-radius`, set on the human turn and read by the bubble, the header
+and the action row: a theme that wants a different corner restates the token, not
+the corner.
 
 Assistant H2 sections use the shared inline Markdown renderer. There is no
 heading-generated card deck or paged document reader.
@@ -162,6 +175,112 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-09 — Review fixes on the action-row move
+
+**What changed:** The cutoff control's accessible name became "New substream from
+this message", so it contains its visible words. The human row stops hit-testing
+while it is faded out. Both rows share one `prefers-reduced-motion` override. The
+conditional-spread the two new props were passed through became plain assignment.
+
+**Why:** A name that shares no words with the label leaves a person driving by
+voice unable to say what they can see — WCAG 2.5.3, and the one button in the row
+that failed it. The row is inside the article that reveals it, so it can only be
+clicked once revealed *except* during the 120ms fade, and this control creates a
+conversation rather than copying a line; the agent's row is deliberately left
+hit-testable, because it is also visible while speech plays and would otherwise
+take away its own Stop speaking. The spread was justified by
+`exactOptionalPropertyTypes`, which this package sets to `false` — the adjacent
+caller in `conversation-surface.tsx` already passed the same prop plainly.
+
+**Consequences:** A control added to either row states an accessible name that
+contains its visible label. Tests hold the fade's ownership and the source order
+the theme's corner override depends on — both invariants that were previously
+described in prose and provable only by reading pixels.
+
+
+### 2026-09-09 — Both action rows share one set of button metrics
+
+**What changed:** The agent and human action rows take their button metrics from
+one `:is(.agent-message-actions, .human-message-actions) button` rule; the
+substream control declares only `white-space: nowrap` of its own. The human row
+also dropped an inert `justify-content`.
+
+**Why:** The control's own class restated the row's metrics, and inside the agent
+row `.agent-message-actions button` outranks it — so that copy won on Rally's
+turn and lost under a person's bubble. The values agreed, so nothing looked
+wrong; tuning either row would have moved the control in one place and not the
+other, silently. This is the same failure the corner-radius token exists to
+prevent. The `justify-content` was inert because the row is shrink-to-fit inside
+a column that already aligns it, and it read as if it were doing the work the
+padding does.
+
+**Consequences:** Button metrics for either row go in the shared rule. A CSS
+invariant test holds it, and asserts no `.agent-message-actions button` rule
+comes back to shadow it.
+
+### 2026-09-09 — Keep the cutoff on a turn that carries no prose
+
+**What changed:** The assistant action row renders for the substream cutoff
+alone, not only when the turn has text, and copy, speech and the exports are
+withheld from a turn whose text is empty.
+
+**Why:** Moving the cutoff out of the identity line moved it behind that row's
+"has text" condition, and a settled turn may legally carry attachments and an
+empty string — the contract's text block accepts one. Such a turn is still a
+place to branch from, and it silently stopped offering it. The text-bearing
+actions stay gated because each acts on the response text: an empty clipboard,
+silence, and a blank card are worse than an absent button.
+
+**Consequences:** The row's presence and its contents are two questions now. A
+control added to it declares which one it answers — whether it needs the text,
+or only the turn.
+
+### 2026-09-09 — Align the human action row on the bubble's corner, through the token
+
+**What changed:** The action row under a human turn takes
+`padding-inline-end: var(--turn-bubble-radius)`, so it ends where the bubble's
+straight edge ends and the curve takes over — the same vertical the identity line
+above it stops on. The work-stream theme, which rounds that bubble harder than
+the shared default, now restates the corner by setting `--turn-bubble-radius`
+rather than writing `18px` onto `border-radius` and onto the header's
+`padding-right`.
+
+**Why:** The row was flush with the bubble's widest point, so it read as hung off
+the corner rather than as part of the turn. Fixing that exposed the drift the
+token was introduced to prevent: two literals in the theme agreed with each other
+but not with the token, so a third rule reading the token came out inset by the
+shared 14px against an 18px corner.
+
+**Consequences:** The corner is one number in one place. Read it with
+`var(--turn-bubble-radius)`; to change it for a surface, set the token on that
+surface's `.human-message`. A CSS invariant test in `app.css.node.test.ts` holds
+both halves — that the bubble, the header and the action row all read the token,
+and that the work-stream theme moves it by the token rather than by a literal.
+
+
+### 2026-09-09 — The per-message substream cutoff joins the action row
+
+**What changed:** The **New substream** control moved out of the message identity
+line into the turn's action row, last after Copy, Speak, Image and PDF, with a
+one-control row under a human turn's bubble for the same action.
+
+**Considered and rejected:** Moving it only on assistant turns, which would have
+left the same action in two places depending on who spoke.
+
+**Consequences:** The two placements keep identical metrics — the control takes
+the row's font size and padding rather than restating them — and the label stays
+unbroken (`white-space: nowrap`), because its two words wrap mid-control in a
+narrow row. Its accessible name contains its visible words, so voice control can
+reach it by what it says; the row's other buttons already read that way.
+
+**Why:** The identity line answers who spoke and when; an action wedged between
+the author, the timestamp and the turn's labels competed with that. Everything
+else a settled turn can be asked to do already lives in the action row.
+
+**Consequences:** A control added to either row inherits the row's hover fade and
+must not declare its own opacity — nesting the two multiplies them and renders
+the inner control paler than its neighbours.
 
 ### 2026-09-09 — A substream's initial identifies it in the collapsed rail
 

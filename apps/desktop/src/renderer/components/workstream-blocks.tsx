@@ -1323,7 +1323,8 @@ export function MarkdownBody({
 }
 
 /**
- * What a person can do with a finished turn: copy it, or keep it as a file.
+ * What a person can do with a finished turn: copy it, keep it as a file, or
+ * carry it into a substream.
  *
  * Both exports render the same `MarkdownBody` the turn above is made of, so the
  * saved card cannot drift from what was on screen —
@@ -1339,9 +1340,33 @@ function exportStatusMessage(saving: MessageExportFormat | null, failed: Message
   return '';
 }
 
-function AssistantMessageActions({ citations, mentions, telemetry, text }: {
+/**
+ * Branch a private conversation off the turn this sits under, with that turn as
+ * the cutoff. It reads as one of the turn's actions rather than as part of its
+ * identity line, so it is rendered in the same row as copy and the exports —
+ * both the agent's row and the shorter one a person's own message gets.
+ */
+function StartSubstreamButton({ onStart }: { onStart: () => void }): React.JSX.Element {
+  return (
+    <button
+      // The visible words have to appear in the accessible name, or a person
+      // driving by voice cannot say what they can see ("click New substream")
+      // and reach it. The name extends the label rather than replacing it,
+      // which is what every button beside it does — Copy is "Copy response",
+      // PDF is "Save response as a PDF" — and the arrow is decorative, so it
+      // stays out of both the name and the announcement.
+      aria-label="New substream from this message"
+      className="message-start-substream"
+      onClick={onStart}
+      type="button"
+    ><span aria-hidden="true">↳</span> New substream</button>
+  );
+}
+
+function AssistantMessageActions({ citations, mentions, onStartSubstream, telemetry, text }: {
   citations?: CitationContext;
   mentions: MessageMention[];
+  onStartSubstream?: () => void;
   telemetry?: MessageCopyTelemetry;
   text: string;
 }): React.JSX.Element {
@@ -1389,6 +1414,13 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
     }
   };
 
+  // A settled turn can carry attachments and no prose, and the cutoff it offers
+  // does not depend on there being words to take. Copy, speech and the exports
+  // do: each of them acts on the response text, and an empty one gives a person
+  // an empty clipboard, silence, or a blank card. So the row still appears for
+  // the branch alone, with nothing on it that has nothing to work on.
+  const hasText = text.length > 0;
+
   return (
     <footer
       className={clsx('agent-message-actions', speaking && 'is-speaking')}
@@ -1398,8 +1430,10 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
       // as one attempt that did not work.
       onPointerLeave={() => setFailed(null)}
     >
-      <button aria-label="Copy response" onClick={() => void copyResponse().catch(() => undefined)} type="button"><Clipboard size={12} /> Copy</button>
-      {speech && (
+      {hasText && (
+        <button aria-label="Copy response" onClick={() => void copyResponse().catch(() => undefined)} type="button"><Clipboard size={12} /> Copy</button>
+      )}
+      {hasText && speech && (
         <button
           aria-label={speaking ? 'Stop speaking' : 'Speak response with an AI-generated voice'}
           onClick={() => speaking ? speech.stop() : speech.speak(speechId, text)}
@@ -1410,7 +1444,7 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
           {speaking ? 'Stop speaking' : 'Speak'}
         </button>
       )}
-      {exportsAvailable && (
+      {hasText && exportsAvailable && (
         <>
           <button
             aria-busy={saving === 'image' || undefined}
@@ -1442,6 +1476,7 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
           <span className="sr-only" role="status">{exportStatusMessage(saving, failed)}</span>
         </>
       )}
+      {onStartSubstream && <StartSubstreamButton onStart={onStartSubstream} />}
     </footer>
   );
 }
@@ -1452,6 +1487,7 @@ export function AssistantMessageContent({
   // The hoisted constant, not `= []`: a per-render array here would feed
   // MarkdownBody an always-new `mentions` and defeat its streaming memo.
   mentions = NO_MENTIONS,
+  onStartSubstream,
   showCopy = true,
   streaming = false,
   text,
@@ -1460,6 +1496,7 @@ export function AssistantMessageContent({
   citations?: CitationContext;
   collapseHeadings?: boolean;
   mentions?: MessageMention[];
+  onStartSubstream?: () => void;
   showCopy?: boolean;
   streaming?: boolean;
   text: string;
@@ -1470,8 +1507,14 @@ export function AssistantMessageContent({
       {text ? (
         <MarkdownBody citations={citations} collapseHeadings={collapseHeadings} mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody>
       ) : null}
-      {showCopy && !streaming && text && (
-        <AssistantMessageActions citations={citations} mentions={mentions} telemetry={telemetry} text={text} />
+      {showCopy && !streaming && (text !== '' || onStartSubstream !== undefined) && (
+        <AssistantMessageActions
+          citations={citations}
+          mentions={mentions}
+          onStartSubstream={onStartSubstream}
+          telemetry={telemetry}
+          text={text}
+        />
       )}
       {streaming && <span className="streaming-caret" aria-hidden="true" />}
     </>
@@ -2381,6 +2424,14 @@ export function MessageBlock({
     : message.deliveryState === 'queue_pending'
       ? 'Queued for the next loop'
       : null;
+  // Only a settled text turn can be a cutoff — a streaming or undelivered one
+  // has no fixed end to freeze. The id is read into a local so the callback
+  // closes over the value the condition checked rather than re-asserting it.
+  const cutoffTurnId = message.transcriptTurnId;
+  const startSubstream = onStartSubstream && cutoffTurnId !== undefined
+    && message.messageType === 'text' && !message.streaming && !message.deliveryState
+    ? () => onStartSubstream(cutoffTurnId)
+    : undefined;
   const article = (
     <article
       aria-label={sending ? 'Sending message' : pending && pendingLabel
@@ -2415,16 +2466,6 @@ export function MessageBlock({
         <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
         {message.workSummary && <span className="message-work-summary">{workSummaryLabel(message.workSummary)}</span>}
         {!human && collapseHeadings && <MarkdownCollapseAllButton />}
-        {onStartSubstream && message.transcriptTurnId && message.messageType === 'text'
-          && !message.streaming && !message.deliveryState && (
-          <button
-            className="message-start-substream"
-            title="Start substream from this message"
-            aria-label="Start substream from this message"
-            onClick={() => onStartSubstream(message.transcriptTurnId!)}
-            type="button"
-          >↳ New substream</button>
-        )}
       </header>
       {human ? (
         <div className="human-message-content">
@@ -2445,6 +2486,11 @@ export function MessageBlock({
             </HumanMessageBubble>
           ) : null}
           {pendingLabel && <span className="message-delivery-pill">{pendingLabel}</span>}
+          {startSubstream && (
+            <footer className="human-message-actions">
+              <StartSubstreamButton onStart={startSubstream} />
+            </footer>
+          )}
         </div>
       ) : (
         <>
@@ -2459,6 +2505,7 @@ export function MessageBlock({
             citations={citations}
             collapseHeadings={collapseHeadings}
             mentions={message.mentions}
+            onStartSubstream={startSubstream}
             streaming={message.streaming}
             text={message.text ?? ''}
             telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}

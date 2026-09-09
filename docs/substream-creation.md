@@ -34,8 +34,16 @@ apart: the work stream's own tinted icon for the main conversation, a Tabler
 Compact hides the titles and swaps a child's branch line for the first character
 of its title. It retains the existing sidebar colors, row sizing, drag width and
 icon-only collapse. A completed
-main-feed message also offers **New substream** with that message as the cutoff.
-Both enter the same creation flow; there is no context-strategy picker.
+main-feed message also offers **New substream** with that message as the cutoff:
+last in the assistant turn's action row, after Copy, Speak, Image and PDF, and in
+a row of its own under any person's bubble — the reader's own turn and a
+colleague's alike — ending on the same vertical as the identity line above it.
+Both placements appear on hover, alongside the other things a settled turn can be
+asked to do. [Conversation surfaces](conversation-surfaces.md) owns the rows
+themselves.
+
+The sidebar row and the message control enter the same creation flow; there is no
+context-strategy picker.
 
 Every section of the center sidebar belongs to the parent work stream. Switching
 substreams changes the conversation, not the sidebar's artifact inventory,
@@ -225,6 +233,18 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-09 — Move the message cutoff into the turn's action row
+
+**What changed:** The per-message entry point left the identity line for the
+turn's action row. Nothing about how a substream is created changed — only where
+the control that starts one is drawn.
+
+**Why and how:** The row is shared rendering, which
+[conversation surfaces](conversation-surfaces.md) owns per this document's
+**Boundary**; its entry there carries the reasoning and the constraints a future
+change has to respect.
+
 
 ### 2026-09-08 — Review fixes for lifecycle and command boundaries
 
