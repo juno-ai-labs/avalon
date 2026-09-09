@@ -12,7 +12,10 @@ import {
 } from '@rally/contracts/citations';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { File, FileText, Image as ImageIcon, Link2, Volume2 } from 'lucide-react';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+
+import { AttachmentMediaTile } from './attachments';
+import { isVideoAttachment } from '../lib/attachment-media';
 
 /**
  * Citations, as the desktop draws them.
@@ -68,7 +71,9 @@ export interface CitationContext {
   /** Where an opened citation goes. The host owns the route; this owns the click. */
   open: (target: CitationTarget) => void;
   /** Open a block resource embed in the host's preview surface. */
-  openPreview?: (resourceId: string, returnFocus: HTMLElement) => void;
+  openPreview?: (resourceId: string, returnFocus: HTMLElement, gallery?: readonly string[], selectedIndex?: number) => void;
+  /** Authorized binary preview loader, used only after an audio Play action. */
+  loadContent?: (resourceId: string, signal?: AbortSignal) => Promise<Blob>;
   /**
    * The resource content for the embed card's preview, or `undefined` for a
    * resource this context cannot resolve. Image bytes become the feed preview;
@@ -218,16 +223,18 @@ function ResourceChip({ label, resource, onOpen }: {
  * compact icon, filename, and kind row used for attached files; a generated site
  * or audio file must not fall back to a tall card with an empty middle.
  */
-export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview }: {
+export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview, grouped = false, still = false }: {
   label: React.ReactNode;
   resource: CitationResource;
   onOpen: () => void;
   onPreview?: (returnFocus: HTMLElement) => void;
   preview?: ((resourceId: string) => Promise<CitationPreview> | undefined) | undefined;
+  grouped?: boolean;
+  still?: boolean;
 }): React.JSX.Element {
   const kind = resourceIconType(resource);
-  const isImage = kind === 'image';
-  const [excerpt, setExcerpt] = useState<{ for: string; src?: string; aspectRatio?: number; open?: boolean }>({ for: '' });
+  const isImage = kind === 'image' && !still;
+  const [excerpt, setExcerpt] = useState<{ for: string; src?: string; open?: boolean }>({ for: '' });
   useEffect(() => {
     const request = isImage ? preview?.(resource.id) : undefined;
     if (!request) {
@@ -249,7 +256,7 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview 
         if (cancelled) return;
         if (result.kind === 'image') {
           objectUrl = URL.createObjectURL(result.blob);
-          setExcerpt({ for: resource.id, src: objectUrl, aspectRatio: 4 / 3 });
+          setExcerpt({ for: resource.id, src: objectUrl });
           return;
         }
         setExcerpt({ for: resource.id });
@@ -275,8 +282,8 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview 
       data-resource-type={resource.resourceType}
       onClick={(event) => onPreview ? onPreview(event.currentTarget) : onOpen()}
       style={isImage ? {
-        aspectRatio: String(settled.aspectRatio ?? 4 / 3),
-        width: Math.min(560, Math.max(64, (settled.aspectRatio ?? 4 / 3) * 200)),
+        aspectRatio: '1',
+        width: grouped ? '100%' : 'var(--attachment-media-size)',
       } : undefined}
       type="button"
     >
@@ -295,13 +302,6 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview 
               ? { for: resource.id }
               : current);
           }}
-          onLoad={(event) => {
-            const { naturalHeight, naturalWidth } = event.currentTarget;
-            if (naturalHeight <= 0 || naturalWidth <= 0) return;
-            setExcerpt((current) => current.for === resource.id && current.src === settled.src
-              ? { ...current, aspectRatio: naturalWidth / naturalHeight }
-              : current);
-          }}
           src={settled.src}
         />
       )}
@@ -318,12 +318,52 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview 
   );
 }
 
+/** A parsed run uses the same gallery layout as sent attachments. Resolution
+ * is checked again here because context may change without a markdown reparse. */
+export function CitationEmbedRow({ node, children }: { node: EmbedRowNode; children: React.ReactNode }): React.JSX.Element {
+  const { citations, still } = useCitationRender();
+  const entries = (node.children ?? []).flatMap((child, index) => {
+    const target = parseCitationHref(String(child.properties?.src ?? ''));
+    if (target.scheme !== 'resource') return [];
+    const resource = citations?.resolve(target.resourceId);
+    return resource ? [{ resource, label: String(child.properties?.alt ?? resource.title), key: `${resource.id}:${index}` }] : [];
+  });
+  if (!citations || still || entries.length !== node.children?.length) return <div className="citation-card-row">{children}</div>;
+  const images = entries.filter(({ resource }) => resourceIconType(resource) === 'image');
+  const gallery = images.map(({ resource }) => resource.id);
+  const card = (entry: typeof entries[number], grouped = false, imageIndex?: number): React.JSX.Element => (
+    <ResourceEmbedCard key={entry.key} label={entry.label} resource={entry.resource} preview={citations.preview}
+      grouped={grouped}
+      onOpen={() => citations.open({ scheme: 'resource', resourceId: entry.resource.id })}
+      onPreview={citations.openPreview ? (focus) => citations.openPreview!(entry.resource.id, focus, gallery, imageIndex) : undefined}
+    />
+  );
+  return (
+    <div className="citation-card-row">
+      {entries.map((entry) => resourceIconType(entry.resource) === 'image'
+        ? <span className="message-attachment-image-cell" key={entry.key}>{card(entry, true, images.indexOf(entry))}</span>
+        : <CitationFileEmbed key={entry.key} resource={entry.resource}>{card(entry)}</CitationFileEmbed>)}
+    </div>
+  );
+}
+
+function CitationFileEmbed({ resource, children }: { resource: CitationResource; children: React.ReactNode }): React.JSX.Element {
+  const { citations, still } = useCitationRender();
+  const loader = citations?.loadContent;
+  const loadContent = useMemo(() => loader ? (signal?: AbortSignal) => loader(resource.id, signal) : undefined, [loader, resource.id]);
+  if (!still && (resourceIconType(resource) === 'audio' || isVideoAttachment(resource.mimeType ?? '', resource.title))) {
+    return <AttachmentMediaTile name={resource.title} mimeType={resource.mimeType} loadContent={loadContent}
+      onOpen={(focus) => citations?.openPreview ? citations.openPreview(resource.id, focus) : citations?.open({ scheme: 'resource', resourceId: resource.id })} />;
+  }
+  return <span className="citation-file-attachment">{children}</span>;
+}
+
 /**
  * The slice of a hast node the embed-row pass reads and rewrites. Structural
  * rather than imported: the renderer depends on `hast` only transitively
  * through react-markdown, and four optional fields are the whole contract.
  */
-interface EmbedRowNode {
+export interface EmbedRowNode {
   type: string;
   tagName?: string;
   value?: string;
@@ -369,8 +409,8 @@ function embedImages(node: EmbedRowNode, rendersCard: (resourceId: string) => bo
  * image on a line of its own — so a run of them renders as a column of tiles
  * between two sentences. This pass merges adjacent embed-only paragraphs (and
  * several embeds inside one paragraph) into a single `.citation-card-row`,
- * which the stylesheet wraps: file cards stack at full width so every delivered
- * file is visible without scrolling, and image tiles sit side by side. A lone
+ * which CitationEmbedRow presents as a proportional image gallery followed by
+ * compact file cards. A lone
  * embed keeps its paragraph:
  * the row exists for runs, and rewriting the common case would change the DOM
  * every existing surface asserts on.
@@ -564,8 +604,9 @@ const IMAGE_CELLS: Matrix<ImageArgs> = {
     // would be printed into the picture forever.
     const preview = args.render.still ? undefined : args.render.citations?.preview;
     const openPreview = args.render.still ? undefined : args.render.citations?.openPreview;
-    return (
+    const card = (
       <ResourceEmbedCard
+        still={args.render.still}
         label={args.label}
         onOpen={onOpen}
         onPreview={openPreview ? (returnFocus) => openPreview(resource.id, returnFocus) : undefined}
@@ -573,6 +614,7 @@ const IMAGE_CELLS: Matrix<ImageArgs> = {
         resource={resource}
       />
     );
+    return resourceIconType(resource) === 'audio' || isVideoAttachment(resource.mimeType ?? '', resource.title) ? <CitationFileEmbed resource={resource}>{card}</CitationFileEmbed> : card;
   },
   // Deliberately *not* a citation. The renderer's CSP permits external images
   // and markdown images render today, so this syntax is live and means what it

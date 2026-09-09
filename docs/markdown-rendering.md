@@ -228,9 +228,10 @@ models place an image on its own line by training, so the card lands between
 sentences with no renderer heuristic guessing where a block belongs. A run of
 consecutive embeds — adjacent embed-only paragraphs, or several in one
 paragraph — is merged by `rehypeCitationEmbedRows` into a single
-`.citation-card-row` that wraps — file cards stack at full width so every
-delivered file is visible without scrolling, image tiles sit side by side — and
-a lone embed keeps its paragraph.
+`.citation-card-row`. Images, videos, and audio use square tiles with centered cover previews.
+Other files retain horizontal cards. Standard CSS grid wraps and tiles all items
+without hiding additional media. A lone embed keeps its paragraph. Audio includes
+an on-demand inline player.
 **The pass groups only what this render will actually draw as a card**: it is
 given a predicate over the citation context's own resolver, so a surface with no
 context, or a target this work stream does not carry, keeps the paragraphs it
@@ -239,15 +240,16 @@ also rewrites the root's children alone, so embeds inside a blockquote or a list
 item stay a column — deliberately, because the placement bet is that models put
 an image on a line of its own, and a pass that walked the whole tree would start
 grouping across prose that happens to sit between them.
-While a message streams, embeds in different settled segments stay separate
-cards, and the whole-body re-render at completion merges them — the same
-healing every other cross-segment construct gets.
+While a message streams, consecutive standalone resource embeds stay in one
+Markdown segment, so settling the message preserves the image/file grouping.
+Still exports retain every image as a titled file card, including every gallery entry.
 
-An image embed reads its source bytes and renders at its intrinsic aspect ratio
-inside the same 560-by-200-pixel envelope used by message attachments. It shows
+An image embed reads its source bytes and renders in a square with centered
+cover scaling, matching message attachment tiles. It shows
 a shimmering media skeleton while those bytes load. Other resource kinds do
-not fetch a derivative for feed decoration: sites, audio, documents, and other
-files render as compact 340-by-54-pixel icon, filename, and kind rows. Clicking
+not fetch original bytes for feed decoration: audio and video use square tiles,
+while sites, documents, and other files use 54px-high icon, filename, and kind
+cards that fit two grid tracks. Clicking
 either presentation opens the host's attachment preview when bytes are
 available. A true `generated_site` keeps its live-artifact inspector because its
 runtime is not an attachment blob. This avoids both binary-as-text failures and
@@ -709,6 +711,22 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-09-09 — Shared media tiles with host-specific layouts
+
+Attachments and embeds share square media and horizontal file cards. Feed media
+is 108px square, twice the 54px file-card height; the input uses the same
+components at 54px in one scrolling row. Feed grids use media-sized tracks with
+file cards spanning two tracks, replacing full-width file rows to tile mixed
+content while keeping every delivered item visible. Image galleries retain all
+entries and keyboard navigation; still exports retain every title.
+
+This follows the requested compact media style and fixes layout changes when
+consecutive embeds finish streaming. Fixed media dimensions supersede intrinsic
+ratios, and the input's compact row deliberately differs from feed wrapping.
+Video originals load only when opened; gallery placeholders do not fetch full
+originals for thumbnails. Audio uses compact playback controls with full preview
+available. Resource access remains checked against the current citation map.
 
 ### 2026-09-08 — A run of embed cards wraps instead of scrolling sideways
 

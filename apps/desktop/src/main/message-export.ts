@@ -376,6 +376,7 @@ ${syntax}
      preflight — so without an explicit inherit they render in the UA's default
      face: Arial beside Inter, invisible on a host where the two resolve alike
      and obvious on a Mac. */
+  .citation-file-attachment { display: block; max-width: 100%; }
   .citation-chip, .citation-card, .citation-pill { font: inherit; line-height: inherit; }
   .citation-chip {
     align-items: center;

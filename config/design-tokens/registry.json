@@ -175,6 +175,9 @@
     "sys.color.surface.inverse-hover": {
       "$type": "color"
     },
+    "sys.color.text.on-media": {
+      "$type": "color"
+    },
     "sys.color.text.on-inverse": {
       "$type": "color"
     },

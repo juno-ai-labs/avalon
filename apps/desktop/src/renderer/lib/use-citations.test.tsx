@@ -34,6 +34,44 @@ beforeEach(() => {
 });
 
 describe('useCitations', () => {
+  it('keeps media readers stable across unrelated resource updates and checks current access', async () => {
+    const audio = { ...DECK, id: 'audio', mimeType: 'audio/wav', contentAvailable: true };
+    const loadResourceContent = vi.fn(async () => new Blob(['audio']));
+    const { result, rerender } = renderHook(({ resources }) => useCitations({ resources, loadResourceContent }), { initialProps: { resources: [audio] as WorkstreamResource[] } });
+    const read = result.current.loadContent!;
+    rerender({ resources: [audio, DECK] });
+    expect(result.current.loadContent).toBe(read);
+    await read('audio');
+    expect(loadResourceContent).toHaveBeenCalledOnce();
+    rerender({ resources: [DECK] });
+    await expect(read('audio')).rejects.toThrow('no preview');
+  });
+
+  it('retains the selected occurrence of a repeated gallery resource', () => {
+    const image = { ...DECK, mimeType: 'image/png', contentAvailable: true };
+    const onOpenPreview = vi.fn<(preview: AttachmentPreview) => void>();
+    const { result } = renderHook(() => useCitations({ resources: [image], onOpenPreview }));
+    result.current.openPreview!(image.id, document.body, [image.id, image.id], 1);
+    expect(onOpenPreview.mock.calls[0]![0].galleryIndex).toBe(1);
+  });
+
+  it('builds a selected gallery only from resources carried by the current work stream', async () => {
+    const first = { ...DECK, id: 'first', title: 'First image', mimeType: 'image/png', contentAvailable: true };
+    const second = { ...first, id: 'second', title: 'Second image' };
+    const onOpenPreview = vi.fn<(preview: AttachmentPreview) => void>();
+    const loadResourceContent = vi.fn(async () => new Blob(['image']));
+    const { result } = renderHook(() => useCitations({ resources: [first, second], onOpenPreview, loadResourceContent }));
+    act(() => result.current.openPreview('second', document.body, ['first', 'missing', 'second']));
+    const preview = onOpenPreview.mock.calls[0]![0];
+    expect(preview.galleryIndex).toBe(1);
+    expect(preview.gallery?.map((member) => member.name)).toEqual(['First image', 'Second image']);
+    const signal = new AbortController().signal;
+    await preview.gallery![1]!.loadContent!(signal);
+    expect(loadResourceContent).toHaveBeenCalledWith('second', signal);
+    await expect(result.current.loadContent!('missing')).rejects.toThrow('no preview');
+    expect(loadResourceContent).toHaveBeenCalledTimes(1);
+  });
+
   it('resolves a resource the loaded work stream carries', () => {
     const { result } = renderHook(() => useCitations({ resources: [DECK] }));
 
