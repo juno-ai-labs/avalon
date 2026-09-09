@@ -4200,6 +4200,71 @@ describe("Durable Objects in the Workers runtime", () => {
     await expect(evictDurableObject(substreamStub)).resolves.toBeUndefined();
   });
 
+  it("reports its own accept time and instance age on the 101, and on nothing else", async () => {
+    // The room reports only accepted upgrades. Clock arithmetic is covered by
+    // durable-object-instance-age.test.ts; this test proves real header emission
+    // and that replay admission remains enforced.
+    await seedOpenAuthority();
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      parentKind: "workstream",
+      parentId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
+    const upgrade = (ticketId: string) => stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": ticketId,
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    // Presence first, then the number: `Number(null)` is 0, and a room that
+    // stopped reporting would otherwise pass as one that reported zero.
+    const reported = (response: Response) => {
+      const read = (name: string): number => {
+        const value = response.headers.get(name);
+        expect(value, `${name} on the 101`).not.toBeNull();
+        expect(value).toMatch(/^\d+$/);
+        return Number(value);
+      };
+      return {
+        acceptMs: read("x-rally-room-accept-ms"),
+        instanceAgeMs: read("x-rally-room-instance-age-ms"),
+      };
+    };
+
+    const first = await upgrade("00000000-0000-7000-8000-000000000901");
+    expect(first.status).toBe(101);
+    const firstReport = reported(first);
+    expect(firstReport.acceptMs).toBeGreaterThanOrEqual(0);
+    expect(firstReport.instanceAgeMs).toBeGreaterThanOrEqual(0);
+    first.webSocket!.accept();
+
+    // The same instance served both, so its age cannot have gone backwards.
+    const second = await upgrade("00000000-0000-7000-8000-000000000902");
+    expect(second.status).toBe(101);
+    expect(reported(second).instanceAgeMs).toBeGreaterThanOrEqual(firstReport.instanceAgeMs);
+    second.webSocket!.accept();
+
+    const replayed = await upgrade("00000000-0000-7000-8000-000000000901");
+    expect(replayed.status).toBe(401);
+    expect(await replayed.json()).toEqual({ error: "socket_ticket_replayed" });
+    expect(replayed.headers.get("x-rally-room-accept-ms")).toBeNull();
+    expect(replayed.headers.get("x-rally-room-instance-age-ms")).toBeNull();
+
+    first.webSocket!.close(1000, "test complete");
+    second.webSocket!.close(1000, "test complete");
+  });
+
   // These three tests deliberately hash and persist enough payload to cross the
   // platform's 1 MB socket boundary in real workerd. Fixture construction is
   // not a product latency assertion, so each gets an integration-test timeout.

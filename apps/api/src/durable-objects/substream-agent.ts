@@ -5944,6 +5944,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   private async acceptSocketInSpan(request: Request, url: URL, span: FlowSpan): Promise<Response> {
+    // Read before the accept yields. The edge records the remainder of its
+    // wait separately; it includes constructor/readiness work before this point.
+    // Instance age is context for interpreting that remainder, not attribution
+    // of which concurrent call woke the object.
+    const acceptStartedAt = Date.now();
+    const instanceAgeMs = this.instanceAgeMs();
+    span.setAttributes({ "rally.room.instance_age_ms": instanceAgeMs });
     // The authority control is read once, below, after the identity is parsed.
     // It used to be read here as well, to refuse a socket during maintenance
     // before parsing anything — but the read is an uncached D1 round trip and
@@ -6154,7 +6161,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       "rally.socket.outcome": "accepted",
       "rally.socket.connection_id": attachment.connectionId,
     });
-    return new Response(null, { status: 101, webSocket: client });
+    // Only the accepted upgrade carries these: a rejection is already a
+    // readable JSON status, and the edge strips both before the 101 reaches a
+    // client through `roomUpgradeDiagnostics` in `socket-service.ts`.
+    return new Response(null, {
+      status: 101,
+      webSocket: client,
+      headers: {
+        [RALLY_HEADERS.ROOM_ACCEPT_MS]: String(Math.max(0, Date.now() - acceptStartedAt)),
+        [RALLY_HEADERS.ROOM_INSTANCE_AGE_MS]: String(instanceAgeMs),
+      },
+    });
   }
 
   private async acceptEvent(request: Request): Promise<Response> {
