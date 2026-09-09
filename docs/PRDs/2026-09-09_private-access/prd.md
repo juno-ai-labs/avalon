@@ -113,8 +113,11 @@ activation-based retirement requires the recovery path described below.
    to a send already underway. Each recipient receives a separate email and a
    unique grant from the same issuer used by manual Ace generation.
 4. Persist the send operation and each recipient's state before provider calls.
-   Sending runs server-side and continues after Ace closes. Handle provider rate
-   limits and quotas without losing recipients or re-sending completed work.
+   Dispatch uses a Cloudflare Queue with per-recipient state in D1 as authority;
+   an isolate-local loop or `waitUntil` alone is insufficient. Sending continues
+   after Ace closes. Handle provider rate limits and quotas without losing
+   recipients or re-sending completed work. Queue bindings and retry policy
+   belong to the later invitation implementation, not the initial intake slice.
 5. Prevent duplicate invitations from double clicks or concurrent operators.
    Retry definite failures with the same frozen message and grant. Reconcile
    uncertain delivery before retrying; provider idempotency alone is not a
@@ -165,8 +168,9 @@ cohort scoring or a general marketing-campaign engine.
 
 The supplied process calls for researching a requester's name/profile and a
 personal invitation from Adam explaining why they are being brought in early.
-Record the source, uncertain matches and proposed personal note in Ace; a name
-must not be treated as known just because it was guessed from an email. The
+Record the source, uncertain matches and proposed personal note in Global D1,
+with Ace as its operator view; Ace adds no independent persistence. A name must
+not be treated as known just because it was guessed from an email. The
 personal message is separate from the automatic acknowledgement. Use Adam's
 actual reviewed reason and supplied contact details, without inventing a phone
 number or implying a personal review that did not occur.
@@ -270,6 +274,15 @@ make Global intake available in EU. Workspace invitation grants and recipient
 information stay in the invitation's owning region. EU email addresses and
 research must not be copied to Global for operator convenience. Privacy lookup
 and erasure use the regional procedure above without changing workspace routing.
+
+The first Ace issuer writes only Global manual/acquisition grants. Workspace
+invitation grants are issued by the existing authenticated invitation service in
+the workspace's region; this PRD grants Ace no new direct EU D1 write authority.
+A workspace download URL carries a non-secret owning-region locator so the
+shared download page redeems through that region's API. The locator grants no
+access: the selected regional API must validate the bearer token against its own
+grant record, with no cross-region fallback on failure. The invitation phase adds
+that regional handoff; the initial manual-download page targets Global only.
 
 ## Security and trust model
 
