@@ -1,3 +1,4 @@
+import { renderAccessCopy } from './src/access-copy';
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
@@ -22,6 +23,7 @@ export default defineConfig(async () => {
       __RALLY_SITE_BUILD__: JSON.stringify(process.env.CF_PAGES_COMMIT_SHA?.slice(0, 40) ?? rootPackage.version),
     },
     plugins: [
+      { name: 'rally-access-copy', transformIndexHtml: renderAccessCopy },
       {
         name: 'rally-desktop-release',
         transformIndexHtml(html: string) {
@@ -50,6 +52,7 @@ export default defineConfig(async () => {
           concepts: `${projectRoot}concepts/index.html`,
           horizonConcepts: `${projectRoot}concepts/horizon/index.html`,
           heroConcepts: `${projectRoot}concepts/hero/index.html`,
+          download: `${projectRoot}download/index.html`,
           invite: `${projectRoot}invite/index.html`,
           slackLink: `${projectRoot}slack/link/index.html`,
           desktopOpen: `${projectRoot}open/index.html`,

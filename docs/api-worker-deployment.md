@@ -20,6 +20,11 @@ the [WorkerEntrypoint RPC model](https://developers.cloudflare.com/workers/runti
 [RPC lifecycle and disposal](https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/),
 and [Versions and gradual deployments](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/).
 
+Global additionally binds the existing `avalon-desktop-releases` R2 bucket as
+`DESKTOP_RELEASES` for [private downloads](private-access.md). Apply
+regional migrations 0101–0103 before releasing the Global API, then Ace and the site.
+EU has no installer binding or public intake route in this first slice.
+
 ## Sidekick staged deployment
 
 PR #583 deploys both class exports while retaining `AutomationDO` at v9. After
@@ -303,6 +308,33 @@ catalog reads plus sixteen small KV writes; inference performs only the KV reads
 for Azure-bound models in its route plan.
 
 ## Changelog
+
+### 2026-09-09 — Require the acknowledgement sender migration
+
+Private-access rollout now includes migration 0103 before the Global API.
+New acknowledgements store Adam's supplied sender with their frozen content so
+retries retain the same payload. Verify `rally.ai` in Resend and the `hello@example.com`
+reply mailbox before launch; this change does not provision either.
+
+### 2026-09-09 — Add optional download expiry
+
+The shared download issuer now supports timed links alongside single-use links,
+following the product owner's request to expire access by time instead of count.
+Migration 0102 preserves existing links with a null deadline; operators choose
+the expiry in Ace rather than inheriting a guessed TTL. See
+[private access](private-access.md) for admission and rollout requirements.
+
+
+### 2026-09-09 — Private access foundation
+
+Global additionally binds the existing `avalon-desktop-releases` R2 bucket as
+`DESKTOP_RELEASES` for [single-use private downloads](private-access.md). Apply
+regional migration 0101 before releasing the Global API, then Ace and the site.
+EU has no installer binding or public intake route in this first slice.
+
+This separates request capture and one-use links from the still-public release
+channel, so acquisition can be reviewed without duplicating download authority.
+
 
 ### 2026-09-08 — Retire the temporary Worker class export after the rename
 

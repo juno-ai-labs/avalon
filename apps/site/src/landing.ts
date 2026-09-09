@@ -1,38 +1,44 @@
-import { reportSiteAction } from './telemetry';
+import { accessCopy } from './access-copy';
 
-const revealItems = document.querySelectorAll<HTMLElement>('.reveal');
+const form = document.querySelector<HTMLFormElement>('#access-request');
+const email = document.querySelector<HTMLInputElement>('#access-email');
+const button = document.querySelector<HTMLButtonElement>('#access-submit');
+const status = document.querySelector<HTMLElement>('#access-status');
+const apiOrigin = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+  ? 'http://127.0.0.1:8787' : 'https://api.rallywith.ai';
 
-if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-  revealItems.forEach((item) => item.classList.add('is-visible'));
-} else {
-  const revealObserver = new IntersectionObserver((entries, observer) => {
-    entries.forEach((entry) => {
-      if (!entry.isIntersecting) return;
-      entry.target.classList.add('is-visible');
-      observer.unobserve(entry.target);
-    });
-  }, { rootMargin: '0px 0px -7%', threshold: 0.1 });
-  revealItems.forEach((item) => revealObserver.observe(item));
+if (form && email && button && status) {
+  // The button starts disabled so no-JavaScript browsers never submit an email
+  // into a URL or a static host that cannot process it.
+  button.disabled = false;
+  let pending = false;
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (pending || !form.reportValidity()) return;
+    pending = true; button.disabled = true; email.readOnly = true;
+    button.textContent = accessCopy.pending; status.textContent = '';
+    void (async () => {
+      let failure = accessCopy.failure;
+      try {
+        const response = await fetch(`${apiOrigin}/access/requests`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email.value.trim() }),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => null) as { error?: { code?: string } } | null;
+          const saved = body?.error?.code === 'access_email_unavailable' || body?.error?.code === 'access_email_failed';
+          failure = saved ? accessCopy.savedFailure : accessCopy.failure;
+          throw new Error('Request failed');
+        }
+        form.hidden = true;
+        status.textContent = accessCopy.success;
+        status.focus();
+      } catch {
+        status.textContent = failure;
+      } finally {
+        pending = false; button.disabled = false; email.readOnly = false;
+        button.textContent = accessCopy.button;
+      }
+    })();
+  });
 }
-
-function actionPlacement(element: Element): 'header' | 'hero' | 'body' | 'footer' | 'unknown' {
-  if (element.closest('.rally-header')) return 'header';
-  if (element.closest('.rally-hero')) return 'hero';
-  if (element.closest('footer')) return 'footer';
-  if (element.closest('main')) return 'body';
-  return 'unknown';
-}
-
-document.addEventListener('click', (event) => {
-  const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a[href]') : null;
-  if (!link) return;
-  const href = link.getAttribute('href') ?? '';
-  const placement = actionPlacement(link);
-  if (href === '#download' || /\.dmg(?:$|[?#])/iu.test(href)) {
-    reportSiteAction('download', placement);
-  } else if (href.startsWith('/support')) {
-    reportSiteAction('support_contact', placement);
-  } else if (link.classList.contains('button-primary')) {
-    reportSiteAction('primary_cta', placement);
-  }
-});

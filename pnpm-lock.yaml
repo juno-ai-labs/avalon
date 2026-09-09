@@ -66,6 +66,9 @@ importers:
       '@rally/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@rally/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       hono:
         specifier: 4.13.2
         version: 4.13.2

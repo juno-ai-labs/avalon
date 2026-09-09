@@ -7,73 +7,46 @@
     <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
     <link rel="manifest" href="/site.webmanifest" />
-    <meta name="description" content="Rally is the multiplayer AI workspace where your team shares the context, sees the work, and moves outcomes forward together." />
+    <meta name="description" content="{{access.description}}" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Rally" />
-    <meta property="og:title" content="Rally — AI is multiplayer now" />
-    <meta property="og:description" content="Bring your team, context, and AI into one shared workstream. No screenshots. No prompt handoffs. No starting over." />
+    <meta property="og:title" content="{{access.title}}" />
+    <meta property="og:description" content="{{access.description}}" />
     <meta property="og:url" content="https://rallywith.ai/" />
     <meta property="og:image" content="https://rallywith.ai/rally-social.jpg" />
     <meta property="og:image:secure_url" content="https://rallywith.ai/rally-social.jpg" />
     <meta property="og:image:type" content="image/jpeg" />
-    <meta property="og:image:alt" content="Rally — AI is multiplayer now." />
+    <meta property="og:image:alt" content="{{access.title}}." />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Rally — AI is multiplayer now" />
-    <meta name="twitter:description" content="Bring your team, context, and AI into one shared workstream." />
+    <meta name="twitter:title" content="{{access.title}}" />
+    <meta name="twitter:description" content="{{access.description}}" />
     <meta name="twitter:image" content="https://rallywith.ai/rally-social.jpg" />
-    <meta name="twitter:image:alt" content="Rally — AI is multiplayer now." />
+    <meta name="twitter:image:alt" content="{{access.title}}." />
     <link rel="canonical" href="https://rallywith.ai/" />
-    <script src="/landing-init.js"></script>
     <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="stylesheet" href="/src/access.css" />
     <script type="module" src="/src/landing.ts"></script>
-    <title>Rally — AI is multiplayer now</title>
+    <title>{{access.title}}</title>
   </head>
-  <body class="rally-home">
+  <body class="rally-home access-home">
     <a class="skip-link" href="#content">Skip to content</a>
-
-    <header class="rally-header">
-      <a class="rally-wordmark" href="/" aria-label="Rally home">
-        <img class="rally-symbol" src="/brand/rally-mark.svg" width="30" height="30" alt="" />
-        <span>rally</span>
-      </a>
-      <a class="rally-header-cta" href="#download">Get Rally <span>↘</span></a>
-    </header>
-
-    <main id="content">
-      <section class="rally-hero" aria-labelledby="hero-title">
-        <div class="rally-hero-copy reveal">
-          <p class="rally-index">01 / The next frontier</p>
-          <h1 id="hero-title">Docs went multiplayer.<br />Design went multiplayer.<br /><em>AI is next.</em></h1>
-          <p class="rally-lede">Every private chat tab is context your team loses. Rally pulls the people, the files, and the AI into one shared workstream—so the asking, the working, and the deciding happen where everyone can see.</p>
-          <!-- rally-desktop-release:start -->
-          <div class="rally-actions" id="download"><span class="rally-button rally-button-volt button-disabled" aria-disabled="true"><img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Downloads opening soon</span></div>
-          <p class="rally-availability release-note"><i></i> Live private preview · macOS · Apple silicon</p>
-          <!-- rally-desktop-release:end -->
-        </div>
-
-        <div class="rally-merge reveal" aria-label="Four isolated chats and scattered files merging into one shared Rally workstream">
-          <div class="merge-sources">
-            <div class="merge-source"><b>maya — private chat</b><span>Context only she can see</span></div>
-            <div class="merge-source"><b>sam — private chat</b><span>Same question, asked again</span></div>
-            <div class="merge-source"><b>#launch — slack</b><span>Decision, 214 messages up</span></div>
-            <div class="merge-source"><b>files — everywhere</b><span>final_v3 (which one?)</span></div>
-          </div>
-          <div class="merge-mid" aria-hidden="true"><i class="merge-pulse"></i></div>
-          <div class="merge-out">
-            <p>One workstream</p>
-            <b>launch-narrative — shared</b>
-            <div class="merge-people" aria-hidden="true"><span>MK</span><span>SR</span><span>AT</span><i><img src="/brand/rally-mark-small.svg" width="13" height="13" alt="" /></i></div>
-            <span class="merge-note">4 people + Rally · full context</span>
-          </div>
-        </div>
-
-        <div class="rally-hero-foot" aria-hidden="true"><span>Isolated rooms → one shared room</span><span>People · files · context · AI</span></div>
-      </section>
-
-    </main>
-
-    <footer class="rally-footer"><a class="rally-wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark.svg" width="30" height="30" alt="" /><span>rally</span></a><p>AI is multiplayer now.</p><nav aria-label="Trust Center and company links"><a href="/trust/">Trust Center</a><a href="/trust/security/">Security</a><a href="/trust/privacy/">Privacy</a><a href="/trust/terms/">Terms</a><a href="/trust/dpa/">DPA</a><a href="/trust/subprocessors/">Sub-processors</a><a href="/trust/cookies/">Cookies</a><a href="/trust/acceptable-use/">Acceptable Use</a><a href="/support/">Support</a></nav><small>© 2026 Juno AI Labs · Rally</small></footer>
+    <header class="rally-header"><a class="rally-wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark.svg" width="30" height="30" alt="" /><span>rally</span></a></header>
+    <main id="content"><section class="access-intro" aria-labelledby="hero-title">
+      <h1 id="hero-title">{{access.headline}}</h1>
+      <p class="access-description">{{access.description}}</p>
+      <p class="access-capabilities">{{access.capabilities}}</p>
+      <form id="access-request" class="access-form">
+        <label class="sr-only" for="access-email">{{access.emailLabel}}</label>
+        <input id="access-email" type="email" autocomplete="email" placeholder="{{access.emailLabel}}" required />
+        <button id="access-submit" type="submit" disabled>{{access.button}}</button>
+      </form>
+      <p id="access-status" class="access-status" role="status" aria-live="polite" tabindex="-1"></p>
+      <p class="access-availability"><em>{{access.availability}}</em></p>
+      <p class="access-note">We’ll only email you about your access to Rally. <a href="/trust/privacy/">Privacy</a></p>
+      <noscript>Enable JavaScript to request access.</noscript>
+    </section></main>
+    <footer class="rally-footer"><a class="rally-wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark.svg" width="30" height="30" alt="" /><span>rally</span></a><nav aria-label="Trust Center and company links"><a href="/trust/">Trust Center</a><a href="/trust/security/">Security</a><a href="/trust/privacy/">Privacy</a><a href="/trust/terms/">Terms</a><a href="/trust/dpa/">DPA</a><a href="/trust/subprocessors/">Sub-processors</a><a href="/trust/cookies/">Cookies</a><a href="/trust/acceptable-use/">Acceptable Use</a><a href="/support/">Support</a></nav><small>© 2026 Juno AI Labs · Rally</small></footer>
   </body>
 </html>

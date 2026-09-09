@@ -82,6 +82,7 @@
   // receipt; without this binding every completed tool call dies in the
   // suite's one place production would have persisted it.
   "r2_buckets": [
+    { "binding": "DESKTOP_RELEASES", "bucket_name": "private-access-test-releases" },
     { "binding": "PAYLOADS", "bucket_name": "avalon-do-runtime-test-payloads" }
   ],
   "kv_namespaces": [
