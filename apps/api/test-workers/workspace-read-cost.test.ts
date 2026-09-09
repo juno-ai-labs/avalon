@@ -6,6 +6,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from '../src/durable-objects/workspace-do';
 import { applyDurableObjectSqliteMigrations } from '../src/durable-objects/sqlite-migrations';
 import { nextResourceSearchDueAt, publishResourceSearch } from '../src/durable-objects/resource-search-projection';
+import { WorkspaceActivityEventListResultSchema } from "../src/durable-objects/workspace-activity-event-protocol";
 import { workspaceDOName } from '../src/durable-objects/names';
 
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-000000009d01');
@@ -252,10 +253,12 @@ it('seeks activity cursor windows without rereading earlier history', async () =
   const userId = asUserId('00000000-0000-7000-8000-000000009d11');
   await env.DB.prepare(`CREATE TABLE workspace_members (
     workspace_id TEXT, user_id TEXT, status TEXT, PRIMARY KEY(workspace_id, user_id))`).run();
-  await env.DB.prepare("INSERT INTO workspace_members VALUES (?, ?, 'active')")
+  await env.DB.prepare("INSERT INTO workspace_members(workspace_id, user_id, status) VALUES (?, ?, 'active')")
     .bind(workspaceId, userId).run();
   const stub = env.WORKSPACE_DOS.getByName(workspaceDOName('global', workspaceId));
-  await runInDurableObject(stub, async (instance, state) => {
+  let restore = () => {};
+  let measuredReads = (): number[] => [];
+  await runInDurableObject(stub, (_instance, state) => {
     const sql = state.storage.sql;
     sql.exec(`INSERT INTO workspace_identity VALUES (1, ?, 'global', 'wnam', 0, 0)`, workspaceId);
     sql.exec(`WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 2000)
@@ -263,21 +266,37 @@ it('seeks activity cursor windows without rereading earlier history', async () =
         actor_label, title, body, audience_kind, digestible, occurred_at, created_at,
         source_kind, dedupe_key, metadata_json)
       SELECT printf('00000000-0000-7000-8000-%012d', n), 'test', 'test', 'system',
-        'Fixture', 'Fixture', '', 'workspace', 1, 0, 0, 'test', 'event-' || n, '{}' FROM numbers`);
+        'Fixture', 'Fixture', '', 'workspace', 1, 4000000000000, 4000000000000, 'test', 'event-' || n, '{}' FROM numbers`);
     const spy = vi.spyOn(sql, 'exec');
-    try {
-      const request = { workspaceId, userId, through: 2000, notBefore: null,
-        digestibleOnly: true, limit: 2 };
-      expect((await instance.listActivityEvents({ ...request, from: null })).items.map(row => row.sequence))
-        .toEqual([1, 2]);
-      expect((await instance.listActivityEvents({ ...request, from: 1998 })).items.map(row => row.sequence))
-        .toEqual([1999, 2000]);
-      expect((await instance.listActivityEvents({ ...request, from: 2000 })).items).toEqual([]);
-      const reads = spy.mock.calls.flatMap(([query], index) => query.includes('FROM workspace_activity_events event')
-        ? [(spy.mock.results[index]!.value as ReturnType<SqlStorage["exec"]>).rowsRead] : []);
-      expect(reads).toHaveLength(3);
-      // A two-row page and an empty page must not read the 2,000-row history.
-      for (const count of reads) expect(count).toBeLessThan(20);
-    } finally { spy.mockRestore(); }
+    restore = () => spy.mockRestore();
+    measuredReads = () => spy.mock.calls.flatMap(([query], index) => query.includes('FROM workspace_activity_events event')
+      ? [(spy.mock.results[index]!.value as ReturnType<SqlStorage["exec"]>).rowsRead] : []);
   });
+  try {
+    const request = { workspaceId, userId, through: 2000, notBefore: null,
+      digestibleOnly: true, limit: 2 };
+    const page = async (input: Parameters<typeof stub.listActivityEvents>[0]) =>
+      WorkspaceActivityEventListResultSchema.parse(await stub.listActivityEvents(input));
+    expect((await page({ ...request, from: null })).items.map(row => row.sequence)).toEqual([1, 2]);
+    expect((await page({ ...request, from: 0 })).items.map(row => row.sequence)).toEqual([1, 2]);
+    expect((await page({ ...request, from: 1998 })).items.map(row => row.sequence)).toEqual([1999, 2000]);
+    expect((await page({ ...request, from: 2000 })).items).toEqual([]);
+    await runInDurableObject(stub, () => {
+      const reads = measuredReads();
+      expect(reads).toHaveLength(4);
+      for (const count of reads) expect(count).toBeLessThan(20);
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE workspace_activity_events SET digestible = 0 WHERE event_sequence = 1996");
+      state.storage.sql.exec("UPDATE workspace_activity_events SET audience_kind = 'user', audience_user_id = 'other' WHERE event_sequence = 1997");
+      state.storage.sql.exec("UPDATE workspace_activity_events SET created_at = 4000000001000 WHERE event_sequence = 1998");
+      state.storage.sql.exec("UPDATE workspace_activity_events SET created_at = 4000000002000 WHERE event_sequence = 1999");
+    });
+    const notBefore = new Date(4000000002000).toISOString();
+    expect((await page({ ...request, from: 1995, notBefore })).items.map(row => row.sequence)).toEqual([1999]);
+    // The first digest supplies a time floor. Correctness is covered here, but
+    // its sequence-ordered scan is outside the resumed-cursor cost guarantee.
+    expect((await page({ ...request, from: null, notBefore })).items.map(row => row.sequence)).toEqual([1999]);
+    expect((await page({ ...request, from: 1995 })).items.map(row => row.sequence)).toEqual([1998, 1999]);
+  } finally { await runInDurableObject(stub, () => restore()); }
 });

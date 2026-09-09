@@ -696,14 +696,25 @@ preview does *not* reproduce on its own.
 
 ### 2026-09-09 — Seek directly to the activity cursor
 
-Activity reads now add a direct sequence lower bound only when a cursor exists.
-The optional-cursor OR caused SQLite to scan earlier history even for an empty
-window: production inspection measured 108,665 reads versus 1 for the direct
-range. The no-cursor path and audience, digestibility, time, and upper-bound
-filters remain unchanged. No new index or migration is needed. The real-workerd
-`workspace-read-cost.test.ts` covers first, resumed, and empty pages and checks
-physical rows read so the scan cannot silently return.
+**What changed:** Activity reads add a direct sequence lower bound when a cursor
+exists. The RPC regression test covers zero, resumed, and empty cursors, mixed
+filters, and the first digest's non-null time floor.
 
+**Why:** The optional-cursor OR prevented SQLite from seeking past history.
+Production inspection measured 108,665 reads versus 1 for an empty direct range.
+
+**Considered and rejected:** Adding an index or migration: the primary key
+already supports the range. Retained the explicit no-cursor branch instead of
+substituting zero, preserving its unbounded semantics. Fixed SQL fragments and
+their conditional binding must change together.
+
+**Consequences:** Keep the supplied cursor as a direct range, guarded by workerd
+rows-read assertions. This guarantee concerns the main-table resumed seek only:
+the first digest's time-filtered, sequence-ordered path can still scan history,
+and target aggregation can read targets outside the cursor window. Neither cost
+is claimed fixed here. Audience and other filters retain their existing behavior.
+
+Shipped in [#628](https://github.com/juno-ai-labs/avalon/pull/628).
 
 ### 2026-09-08 — Deliver substream notifications without publishing child activity
 
