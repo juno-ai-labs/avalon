@@ -60,7 +60,7 @@ afterEach(() => {
 
 /** The cast as the operator gives it: a name per role, never an account. */
 function cast(): Record<string, string> {
-  return { priya: "Priya Raman", marcus: "Marcus Hale", dana: "Dana Okafor" };
+  return { priya: "Emma Shipman", marcus: "Sam Burton", dana: "Ben Diaz" };
 }
 
 function request(): { operationId: string; companyName: string; presenterUserId: string; cast: Record<string, string> } {
@@ -156,7 +156,7 @@ describe("a demo preparation operation", () => {
     const short = Object.fromEntries(Object.entries(cast()).filter(([role]) => role !== "dana"));
     await expect(startDemoOperation(env, { ...request(), cast: short })).rejects.toMatchObject({ code: "demo_pack_role_unbound" });
     await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), sam: "Sam Sample" } })).rejects.toMatchObject({ code: "demo_pack_role_unknown" });
-    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), dana: "priya raman" } })).rejects.toMatchObject({ code: "demo_cast_duplicate" });
+    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), dana: "emma shipman" } })).rejects.toMatchObject({ code: "demo_cast_duplicate" });
     // The presenter is in the demo under their own name, so the cast may not
     // reuse it; and the presenter is chosen, never named.
     await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), dana: "Adam" } })).rejects.toMatchObject({ code: "demo_cast_duplicate" });
@@ -181,13 +181,13 @@ describe("a demo preparation operation", () => {
     // The row stores user ids, the way every phase after this reads it, and
     // the status answers the names the operator typed.
     expect(started.castNames).toEqual({
-      presenter: "Adam", priya: "Priya Raman", marcus: "Marcus Hale", dana: "Dana Okafor",
+      presenter: "Adam", priya: "Emma Shipman", marcus: "Sam Burton", dana: "Ben Diaz",
     });
     expect(started.cast.presenter).toBe(PRESENTER_ID);
     const personas = await env.DB.prepare(
       "SELECT id, google_subject, email, name, platform_user_id FROM users WHERE google_subject LIKE 'demo-persona:%' ORDER BY name",
     ).all<{ id: string; google_subject: string; email: string; name: string; platform_user_id: string | null }>();
-    expect(personas.results.map((persona) => persona.name)).toEqual(["Dana Okafor", "Marcus Hale", "Priya Raman"]);
+    expect(personas.results.map((persona) => persona.name)).toEqual(["Ben Diaz", "Emma Shipman", "Sam Burton"]);
     // Nobody can sign in as one, and nothing can be delivered to one.
     expect(personas.results.every((persona) => persona.platform_user_id === null)).toBe(true);
     expect(personas.results.every((persona) => persona.email.endsWith(".demo.invalid"))).toBe(true);
@@ -443,7 +443,7 @@ describe("the operator routes", () => {
     // The form is built from these: one name per role the operator types over,
     // and no default for the role a real person plays.
     expect(body.pack.presenterRole).toBe("presenter");
-    expect(body.pack.castDefaults).toEqual({ priya: "Priya Raman", marcus: "Marcus Hale", dana: "Dana Okafor" });
+    expect(body.pack.castDefaults).toEqual({ priya: "Emma Shipman", marcus: "Sam Burton", dana: "Ben Diaz" });
     // The outsider is not a candidate: only the template's active members are.
     expect(body.members.map((member) => member.userId)).toEqual([PRESENTER_ID]);
 
