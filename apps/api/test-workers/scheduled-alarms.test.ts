@@ -779,29 +779,34 @@ describe("a workspace's schedule", () => {
     // Driven through the real entry point, not the private helper: the failure
     // this guards against is the reconcile not being wired to the only writer
     // of `next_terminal_action_at`, which a direct helper call cannot see.
-    await stub.applyWorkstreamDirectoryEffects({
-      workspaceId: WORKSPACE_ID,
-      envelopes: [{
-        kind: "parent_effect" as const,
-        contractVersion: 1 as const,
-        region: "global" as const,
+    // Inspect in the same event, before an immediate mutation-push alarm can fire.
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      await instance.applyWorkstreamDirectoryEffects({
         workspaceId: WORKSPACE_ID,
-        parentKind: "workstream" as const, parentId: WORKSTREAM_ID,
-        generation: 1,
-        messageId: "00000000-0000-7000-8000-0000000000e9",
-        partitionKey: "common",
-        sourceVersion: 1,
-        requiredProjectionVersion: null,
-        payloadHash: conversationEffectHash(effect),
-        effect,
-      }],
-    });
+        envelopes: [{
+          kind: "parent_effect" as const,
+          contractVersion: 1 as const,
+          region: "global" as const,
+          workspaceId: WORKSPACE_ID,
+          parentKind: "workstream" as const, parentId: WORKSTREAM_ID,
+          generation: 1,
+          messageId: "00000000-0000-7000-8000-0000000000e9",
+          partitionKey: "common",
+          sourceVersion: 1,
+          requiredProjectionVersion: null,
+          payloadHash: conversationEffectHash(effect),
+          effect,
+        }],
+      });
 
-    await runInDurableObject(stub, async (_instance: WorkspaceDO, state) => {
       const entries = new ScheduledAlarmStore(state.storage.sql).list("terminal");
       expect(entries.map((entry) => entry.key)).toEqual([WORKSTREAM_ID]);
       expect(entries[0]!.dueAt).toBe(dueAt);
-      expect(await state.storage.getAlarm()).toBe(dueAt);
+      // The directory mutation may also have an earlier authorization push.
+      // Its shared alarm must still wake in time for the registered deadline.
+      const alarm = await state.storage.getAlarm();
+      expect(alarm).not.toBeNull();
+      expect(alarm!).toBeLessThanOrEqual(dueAt);
     });
   });
 

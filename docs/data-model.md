@@ -704,12 +704,40 @@ column catalog; what follows is only what WorkspaceDO still holds.
 - `audit_events` records security- and side-effect-relevant actions without copying
   sensitive bodies.
 
-### Object retirement
+### Demo workspaces and object retirement
 
-Two tables belong to closing a workspace permanently, and they sit in the
-objects rather than D1 on purpose. [`workspace-retirement.md`](workspace-retirement.md)
-owns what they mean; this entry exists so somebody adding a table finds them.
+Five tables belong to the demo-workspace lifecycle, and they sit at three
+different authorities on purpose. [`demo-workspaces.md`](demo-workspaces.md)
+owns the three in D1 and [`workspace-retirement.md`](workspace-retirement.md)
+the two in the objects; this entry exists so somebody adding a table finds them.
 
+- **Regional D1 `demo_operations`** is the preparation and the register in one
+  row per operation the operator started — company, presenter, pack version,
+  cast, the workspace once allocated, status, attempt, failed phase and
+  reason, and the instants the workspace was published (`ready_at`) and closed
+  (`retired_at`). The operation is the identity the PRD requires — repeated
+  submission resolves to the same row — and it exists before a workspace does.
+  `workspace_id` is nullable, unique, written before the workspace is created
+  so a retry reuses it, and deliberately carries no foreign key to
+  `workspaces`: D1 enforces one on the write, and the write precedes the row it
+  would reference. Discovery withholds a row with no `ready_at`, and the Demos
+  page lists every row. It is not an authorization input for retirement — that
+  gate was built and dropped; retirement is an operator action on any
+  workspace behind Ace's Access policy. It carries no `region` column for the
+  same reason `workspace_members` does not: it derives region from which
+  regional D1 it lives in.
+- **Regional D1 `demo_operation_phases`** holds one row per phase per
+  operation with its status, attempt, a small detail object the page renders
+  and its error. The phase names are the contract's, not a `CHECK`: they are a
+  product decision that will move, and SQLite cannot widen a `CHECK` in place.
+- **Regional D1 `demo_seed_receipts`** records what the seeder confirmed, one row
+  per pack action of one operation: its kind and room, the work stream and human
+  turn it wrote, the run and how it settled, the elicitation a question opened,
+  the resource an upload attached. It references `demo_operations` by
+  `operation_id`, so a receipt cannot describe a demo no operation started, and
+  it is written only after the action's outcome is confirmed — preparation
+  resumes from it and the readiness barrier generates its expected manifest
+  from it, both of which need rows that mean "done" rather than "attempted".
 - **`object_retirement`, in every gated object's own SQLite**, is one permanent
   row: the tombstone. It is not in D1 because the gate has to answer during
   constructor recovery, before anything cross-authority could be consulted.
@@ -724,6 +752,7 @@ In D1, retirement writes no table of its own: the operator door sets
 `workspaces.abandoned_at`, the column the last member leaving already writes and
 every authority read already fences on, before any object is closed.
 
+All three D1 tables arrive in one migration, `0100_demo_workspaces.sql`.
 Retirement is not deletion. Every other row stays exactly where it is; the
 tombstone is what stops anything reading or draining them.
 
@@ -1005,6 +1034,64 @@ Migration 0099 stores the revisioned account presentation in identity D1;
 WorkspaceDO migrations 34–35 store the per-member journey and connector choices.
 Existing accounts are exempted. A second execution store was rejected: first
 work uses ordinary workstream creation and the existing durable agent loop.
+
+### 2026-09-07 — One migration, and the operation row is the register
+
+**What changed:** The three demo migrations written on the combined branch —
+the register (`0099`), the seeder's receipts (`0100`) and the operation
+(`0101`) — are folded into one file before any of them ships — `0099` as
+written, `0100_demo_workspaces.sql` once `main` took `0099` for account
+onboarding while this branch was open. `demo_workspaces` is gone: `demo_operations` carries `ready_at` and
+`retired_at`, `workspace_id` is unique with no foreign key to `workspaces`,
+`demo_seed_receipts` references `demo_operations`, and the phase name has no
+`CHECK`. The entries below describe the shape as it was written and are kept
+as the record of why each table exists.
+
+**Why:** Review found the register duplicating the operation row with two
+extra columns and a reader nothing called, two children of one operation id
+referencing different parents, and a foreign key that refused the very write
+the column was designed for — the creating phase allocates the id before the
+workspace row exists, and D1 enforces the constraint on the write, so
+preparation could not pass its second phase. One table is one identity, and
+one migration is what the repository asks of one coherent change.
+
+**Considered and rejected:** Keeping the register and dropping only the
+foreign key — the duplicate would still have to be kept in step on every field
+a demo gains. A `CHECK` on the phase name — a product decision that will move,
+and SQLite cannot widen one in place.
+
+**Consequences:** Anything that asks which workspaces the demo feature made,
+or whether one is published, reads `demo_operations`. The migration is one
+unshipped file and is the place a further schema change goes until it ships.
+
+### 2026-09-07 — The preparation operation's rows
+
+**What changed:** `demo_operations` and `demo_operation_phases` in regional D1
+(`0101` as written; folded into `0100_demo_workspaces.sql` before release, see
+above), one migration because they are one thing: the operation and its phases.
+
+**Why:** The Demos page shows an operation's current phase, its completed
+items and its failure from real receipts, and resumes it by id. Those receipts
+have to outlive a Workflow instance and be readable without one, and the
+operation has to exist before the workspace it makes. Owned by
+[`demo-workspaces.md`](demo-workspaces.md).
+
+### 2026-09-07 — The seeder's receipts
+
+**What changed:** `demo_seed_receipts` in regional D1 (`0100` as written;
+folded into `0100_demo_workspaces.sql` before release, see above), keyed by
+operation and action,
+referencing the register's `operation_id` and `workspaces(id)`, with `run_outcome` closed to the two outcomes a seeded run
+may settle in. `runs.execution_context_json` in a seeded room's object gains an
+optional `seed`.
+
+**Why:** The seeder plays a pack through write paths that do not know they are
+seeding, so nothing in those paths can say which pack action produced which
+row. A receipt written after confirmation is what preparation resumes from and
+what the barrier will compare the workspace against; a receipt written at
+admission would let a run that failed count as seeded. The first row wins on
+conflict because its ids are the ones already handed onward. Owned by
+[`demo-workspaces.md`](demo-workspaces.md).
 
 ### 2026-09-05 — Two tables for closing a workspace permanently
 

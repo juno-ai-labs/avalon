@@ -21,6 +21,8 @@ library instead of creating another operator site or visual language.
 | `apps/ace/src/openrouter.ts` | Exact model-id and live-route validation against OpenRouter's public endpoints API. |
 | `apps/ace/src/directory.ts` | Read-only user and workspace search across both regional D1 databases. |
 | `apps/ace/src/regional-api.ts` | The client for the regional API's operator routes, over the operator credential; every answer parsed with the shared contract. |
+| `apps/ace/src/demos.ts` | The demo preparation routes on that client: list, template, start, read, retry, abandon. |
+| `apps/ace/src/client/demos.tsx` | The Demos page: every preparation and its phases from real receipts, **New demo**, retry and abandon. |
 | `apps/ace/src/client/workspaces.tsx` | The workspaces tab: find any workspace and retire it behind a typed-id confirmation. |
 | `apps/ace/src/flagship.ts` | Flagship reads and writes plus the post-write change notification. |
 | `apps/ace/src/cloudflare-queue-admin.ts` | Active dead-letter discovery, realtime backlog metrics, and non-consuming message peeks through Cloudflare's REST API. |
@@ -61,6 +63,45 @@ consumer RPCs to that workspace's `WorkspaceDO`. The object evaluates the
 complete client flag contract per connected user and privately sends the values
 to that user's sockets. A subscribe response performs the same evaluation, so
 reconnect is the reconciliation path.
+
+**Demos.** `GET /api/demos` and `GET /api/demos/template` relay the Global
+regional API's `/internal/demos` routes over the operator credential, and
+`POST /api/demos`, `/api/demos/:id/retry` and `/api/demos/:id/abandon` relay
+the writes, same-origin. Ace holds no demo state and reads no demo table: the
+page shows each operation's phase from the receipts the regional API returns —
+Checking template, Creating workspace, Copying connections, Seeding
+conversations with confirmed-of-total, Waiting for workspace with the readiness
+gaps by name — and a failed operation with its phase, reason and operation id
+beside **Retry** and **Abandon**. There is no estimated time and no percentage;
+a running phase shows when it started, and a wait that failed keeps the gaps
+its last round named. **Retry** is offered for a failed preparation and for a
+running one that has stopped moving — the regional API starts the next
+attempt either way — and a retried operation is read by its current attempt:
+an earlier attempt's phase rows are shown as that attempt's receipts, never
+as the new driver's state. **Abandon** retires the candidate workspace, so it
+asks for the operation id to be typed, sends what was typed, and the regional
+API refuses without it; an abandoned operation says whether its candidate was
+closed, was never created, or was never allocated. Every gap the readiness
+check reports names the viewer it was read as. While anything is running, and
+for as long as the page is offline, it re-reads every five seconds; when a
+read fails, the last known state stays on screen dated by its last successful
+read until the next read succeeds, and **Refresh** asks now. There is no
+per-operation read: the list is the read, and selecting a row selects from
+it. The template is read before the page judges it: "reading" first, then
+either the form, the regional API's own reason it could not be read, or — when
+the template has fewer members than the pack has roles — a sentence saying so
+rather than a form that cannot be submitted. **New demo** takes a company
+name, the presenter, and a cast member per pack role from the template's
+members, deals the default cast out in order, refuses to start while one
+member holds two roles, and mints one operation id per form so a second click
+resolves to the same preparation. A Ready demo names the workspace and where
+the presenter finds it — the account menu at the foot of Rally's sidebar,
+which lists workspaces only while their `multiple-workspaces-enabled` flag is
+on, set from the Feature flags tab; the desktop's deep-link contract has no
+home-screen destination, so there is no link to fabricate
+([`demo-workspaces.md`](demo-workspaces.md#open-questions)). A regional refusal
+reaches the page as the API's own code and message, and a response the shared
+contract cannot parse is named as a contract mismatch rather than an outage.
 
 **Workspaces.** The tab searches both regions' directories and retires the
 selected workspace in the region that owns it, through
@@ -197,14 +238,16 @@ variations. Those retain their existing operational paths in
 default variation while preserving those advanced configurations.
 Adding a new Ace page does not automatically grant it a new Cloudflare API
 capability; its route, environment type, credential, and component reuse must be
-reviewed as a new boundary. The workspaces tab was: its route relays to the
-regional API and reads no D1; its environment adds `RALLY_API_BASE_URL`,
-`RALLY_EU_API_BASE_URL` and the `RALLY_OPERATOR_TOKEN` and
-`RALLY_EU_OPERATOR_TOKEN` secrets; its credential is a Rally operator token in
-the `demos` role, one per region, rather than a Cloudflare token; and it reuses
-the queue page's list-and-detail layout and the shared controls. Retirement
-itself is owned by [`workspace-retirement.md`](workspace-retirement.md); Ace is
-its operator surface only.
+reviewed as a new boundary. The Demos page and the workspaces tab were: their
+routes relay to the regional API and read no D1; their environment adds
+`RALLY_API_BASE_URL`, `RALLY_EU_API_BASE_URL` and the `RALLY_OPERATOR_TOKEN`
+and `RALLY_EU_OPERATOR_TOKEN` secrets; their credential is a Rally operator
+token in the `demos` role, one per region, rather than a Cloudflare token; and
+they reuse the queue page's list-and-detail layout and the shared controls. The
+demo lifecycle itself — the operation, the seeder, the barrier — is owned by
+[`demo-workspaces.md`](demo-workspaces.md) and retirement by
+[`workspace-retirement.md`](workspace-retirement.md); Ace is their operator
+surface only.
 
 ## Failure modes and limits
 
@@ -242,7 +285,16 @@ active DLQ discovery, metrics, non-consuming peek, the exact
 Flagship-and-Queue write contract, the safe attribute vocabulary, operators,
 nested targeting, regional fan-out, the ranked model-role catalog, live exact-match
 OpenRouter validation, invalid free-text rejection, ordered fallbacks, and
-preservation of staged model variations and rules.
+preservation of staged model variations and rules. The operator pages have a
+Worker suite and a page suite each: `demos.test.ts` and `workspaces.test.ts`
+prove the relay — the operator credential presented, a regional refusal
+relayed by its own code, an outage answered as unavailable rather than as an
+empty page, the typed confirmation forwarded — and `demos-client.test.tsx` and
+`workspaces-client.test.tsx` prove the pages against a fetch double: phases
+from receipts, a retried operation read by its current attempt, the offline
+banner and the polling that keeps it honest, a template too small to cast,
+the typed-id ceremony, an incomplete retirement kept armed. `directory.test.ts`
+proves the two-region search against real SQLite, one region down included.
 `pnpm --filter @rally/ace typecheck`
 checks both browser and Worker programs; `pnpm --filter @rally/ace build`
 builds the Vite client and performs a Wrangler dry run. API workerd tests cover
@@ -274,6 +326,7 @@ values do not cross through Ace. The separately approved Flagship attributes do
 cross to the one global evaluation service as documented in
 [`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
 
+Demos are prepared in Global, and the Demos page talks to the Global API only.
 The workspaces tab retires in the region that owns the workspace, through that
 region's API, so no retirement crosses a region; the directory search that
 finds the workspace is the existing cross-regional lookup described above.
@@ -309,14 +362,16 @@ deploy Workers, change Access policy, read D1, or administer other account
 products. No token is compiled into the Vite bundle or stored as a plain Worker
 variable.
 
-The workspaces tab presents `RALLY_OPERATOR_TOKEN` to the Global regional API
-and `RALLY_EU_OPERATOR_TOKEN` to the EU one — two encrypted secrets, each
-mapped to the `demos` operator role by that region's own
-`DEMO_OPERATORS_JSON` and known to no other region, so one leaked token is
-destructive authority in one jurisdiction rather than both. That role can
-retire a workspace and nothing else — every regional operator router names the
-roles it admits, so the telemetry router refuses `demos` and the retirement
-router refuses the telemetry roles. Retirement is irreversible and takes any
+The Demos page and the workspaces tab present `RALLY_OPERATOR_TOKEN` to the
+Global regional API and `RALLY_EU_OPERATOR_TOKEN` to the EU one — two
+encrypted secrets, each mapped to the `demos` operator role by that region's
+own `DEMO_OPERATORS_JSON` and known to no other region, so one leaked
+token is destructive authority in one jurisdiction rather than both. That role
+can prepare and retire demo workspaces and read the template's members, and
+nothing else — every regional operator router names the roles it admits, so
+the telemetry router refuses `demos` and the demo routers refuse the telemetry
+roles. Abandoning a preparation retires its candidate the same way as the tab
+does and takes a typed operation id. Retirement is irreversible and takes any
 workspace, so the typed workspace-id confirmation is the whole of the
 protection between an operator and the close, and it is enforced twice: in
 Ace, and again by the regional API, which also refuses an id its region does
@@ -347,8 +402,8 @@ There is no per-release manual command or dashboard step.
 The `api-production` GitHub environment must hold the existing
 `CLOUDFLARE_ACCOUNT_ID` variable, deployment `CLOUDFLARE_API_TOKEN`, Ace
 runtime `ACE_FLAGSHIP_API_TOKEN`, and `ACE_RALLY_OPERATOR_TOKEN` and
-`ACE_RALLY_EU_OPERATOR_TOKEN` — the Rally operator tokens the workspaces tab
-presents to Global and to EU, installed as the `RALLY_OPERATOR_TOKEN` and
+`ACE_RALLY_EU_OPERATOR_TOKEN` — the Rally operator tokens the Demos page and
+the workspaces tab present to Global and to EU, installed as the `RALLY_OPERATOR_TOKEN` and
 `RALLY_EU_OPERATOR_TOKEN` secrets. Each value must be present in that region's
 `DEMO_OPERATORS_JSON` under the `demos` role, which is a regional API
 secret ([`runbook.md`](runbook.md)), and in no other region's; otherwise the
@@ -371,6 +426,34 @@ When a save succeeds but clients do not change, inspect in order:
    response even if a live notification was lost.
 
 ## Changelog
+
+### 2026-09-08 — Review: the Demos page shows the attempt it is on
+
+**What changed:** The Demos page reads a retried operation by its current
+attempt and marks an earlier attempt's rows as that attempt's; keeps polling
+while offline even when nothing is running; shows an abandoned operation's
+outcome and any last failure beside it; says why a template is too small to
+cast instead of rendering a form that cannot be submitted; names the viewer
+beside each readiness gap, parsed with the shared contract; points the
+presenter at the account menu and the `multiple-workspaces-enabled` flag;
+forwards the typed confirmation on abandon rather than re-deriving it from the
+path; sequences a poll behind an action; and lost `GET /api/demos/:id`, which
+nothing called. `responseBody` is one helper shared by both pages.
+
+**Why:** A review swarm. A retried operation showed attempt one's stale
+"running" wait as attempt two's state; an offline page with nothing running
+stopped polling and its banner promised otherwise; a template short of members
+produced a nameless duplicate error; "the workspace switcher" named a control
+Rally does not have, and a presenter without the flag would have seen no
+workspaces at all; and the abandon confirmation was checked in Ace and then
+re-minted from the path, so the regional API never saw what the operator
+typed.
+
+**Considered and rejected:** Keeping the per-operation read for a future
+detail page — a route nothing calls is a route nobody tests.
+
+**Consequences:** `abandonDemoOperation` in `demos.ts` takes the confirmation.
+A phase row's attempt is part of what the page reads, not decoration.
 
 ### 2026-09-08 — Review: the Workspaces tab tells the truth about its own state
 
@@ -398,6 +481,36 @@ authority and a session-long mark is what the page can honestly promise.
 **Consequences:** `WorkspacesView` takes `retired` and `onRetired` from the
 app. `/api/directory/workspaces` answers `{ results, unavailableRegions }`. A
 new Ace form uses `.ace-form`.
+
+### 2026-09-07 — Demos
+
+**What changed:** A Demos page, which lists every preparation with its
+phases from the regional API's receipts, starts one with **New demo**, and
+retries or abandons a failed one behind a typed operation id. `demos.ts` puts
+the `/internal/demos` routes on the relay the Workspaces tab already uses.
+
+**Why:** The demo workspace PRD puts the operator surface in Ace, behind the
+Access policy that already admits operators. Relaying rather than reading D1
+keeps the operation's rules in one place — the regional service that owns the
+Workflow. The states are the PRD's table; nothing is estimated. There is no
+**Open in Rally** link because the desktop's deep-link contract has no
+home-screen destination; the page says which workspace to switch to instead of
+fabricating a link the desktop would reject. From review of the finished page:
+the default cast was shifted by one and every default was wrong; the first
+paint claimed the template was missing while it was still on its way; a slow
+read could overwrite a newer one. So the page reads the template before
+judging it, dates the offline banner by the first failure and the last
+successful read, shows when a running phase started, keeps a failed wait's
+gaps, offers Refresh, deals the default cast out in order, refuses a member in
+two roles, labels roles as names, parses every response with the shared
+contract, and sequences polls.
+
+**Considered and rejected:** A native confirm dialog for Abandon — the one
+irreversible action a tab over uses a typed id, and the regional API requires
+one.
+
+**Consequences:** Ace holds no demo state. The typed confirmation is the
+pattern for anything irreversible on these pages.
 
 ### 2026-09-07 — Workspaces
 

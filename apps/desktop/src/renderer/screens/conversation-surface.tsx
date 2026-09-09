@@ -81,12 +81,13 @@ import {
   substreamInitialContextQueryKey,
   type SocketState,
   type WorkstreamMessageDeliveryMode,
-  workstreamDetailQueryKey,
 } from '../lib/use-workstream-socket';
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
-import { evictCachedWorkstream, setCachedWorkstreams } from '../lib/workstreams-cache';
+import { evictCachedWorkstream, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
+import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
+import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
@@ -607,6 +608,7 @@ export function ConversationSurface({
   const readSocketOpenContext = useWorkstreamSocketOpenContext(id);
   const parentNoun = parentKind === 'automation' ? 'automation' : 'work stream';
   const navigate = useNavigate();
+  const openFirstWorkstream = useOpenFirstWorkstream();
   const [searchParams, setSearchParams] = useSearchParams();
   const searchSequence = Number(searchParams.get('sequence'));
   const searchTurnId = Number.isSafeInteger(searchSequence) && searchSequence > 0 ? searchParams.get('turn') : null;
@@ -1312,7 +1314,7 @@ export function ConversationSurface({
           return;
         }
         evictCachedWorkstream(queryClient, id);
-        void navigate('/workstreams/new', { replace: true });
+        openFirstWorkstream([id]);
       }
     },
   });
@@ -1327,12 +1329,7 @@ export function ConversationSurface({
     },
     onSuccess: (updated) => {
       if (!updated) return;
-      queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
-        current ? { ...current, title: updated.title } : current,
-      );
-      setCachedWorkstreams(queryClient, (current) =>
-        current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
-      );
+      patchCachedWorkstream(queryClient, updated.id, { title: updated.title, titleStatus: updated.titleStatus, updatedAt: updated.updatedAt });
     },
   });
 
@@ -1787,16 +1784,15 @@ export function ConversationSurface({
       currentSurfaceEntrypoint(),
     ).then((updated) => {
       if (activeConversationAddressRef.current !== conversationAddress) return;
-      queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
-        current ? { ...current, ...updated } : current);
-      setCachedWorkstreams(queryClient, (current) =>
-        current?.map((item) => item.id === id ? { ...item, ...updated } : item));
+      // The entry this loop reads back is the addressed one, so it is the one
+      // that has to carry the new read waterline or the next scroll re-sends.
+      patchCachedWorkstreamViewerState(queryClient, id, updated, substreamId);
     }).catch(() => {
       requestSocketSnapshot();
     }).finally(() => {
       if (readAckInFlightRef.current === ackKey) readAckInFlightRef.current = null;
     });
-  }, [api, id, queryClient, requestSocketSnapshot, transcript, transcriptVirtualizer]);
+  }, [api, conversationAddress, detailQueryKey, id, queryClient, requestSocketSnapshot, substreamId, transcript, transcriptVirtualizer]);
 
   const scheduleReadAcknowledgement = useVisibleReadAcknowledgement(acknowledgeVisibleMessages);
 

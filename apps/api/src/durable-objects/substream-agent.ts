@@ -45,6 +45,7 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamSocketCommandResultSchema,
   WorkstreamWorkflowInputSchema,
+  DemoSeedSchema,
   type ServerSocketEvent,
   type TranscriptRangeResult,
   type TranscriptTurn,
@@ -378,8 +379,10 @@ const ProductAuthSchema = z.strictObject({
   // `"connector"`: a connector ingress already verified the link that binds
   // this member on the message being delivered, `sessionId` is correlation
   // only, and the object verifies current membership instead — see
-  // `connectorPrincipalAuth`.
-  principal: z.literal("connector").optional(),
+  // `connectorPrincipalAuth`. `"demo_seed"`: the demo seeder acting as a cast
+  // member who never signs in, verified the same way. Both are constructed
+  // only by server code; `IdentityAuthContext.principal` says why.
+  principal: z.enum(["connector", "demo_seed"]).optional(),
 });
 const ProductRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({ operation: z.literal("initialize"), auth: ProductAuthSchema,
@@ -2078,6 +2081,28 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return { installed: true };
   }
 
+  /** Internal content-only RPC. The Worker has already admitted these candidates through search authz. */
+  async readAdmittedSearchContent(input: unknown) {
+    await this.storageReady;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
+      substreamId: SubstreamIdSchema, turnIds: z.array(TranscriptTurnIdSchema),
+      links: z.array(z.strictObject({ turnId: TranscriptTurnIdSchema, linkId: z.string() })),
+    }).parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.parentId
+      || this.externalSubstreamId() !== request.substreamId) throw new Error('search_content_identity_mismatch');
+    if (this.identityRows.identity()?.archived_at != null) return responseToRpcResult(jsonResponse({ title: '', turns: [], links: [] }));
+    return responseToRpcResult(jsonResponse({ title: this.identityRows.identity()?.title ?? '',
+      turns: request.turnIds.flatMap((turnId) => {
+        const turn = this.transcript.participantTurn(turnId);
+        return turn?.entryKind === 'conversation' ? [turn] : [];
+      }),
+      links: request.links.map(({ turnId, linkId }) => ({ linkId,
+        link: readConversationSearchLink(this.state.storage.sql, linkId, this.transcript.participantTurn(turnId)),
+      })),
+    }));
+  }
+
   async executeIdentityOperation(input: IdentityOperationRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return objectPortRpcResult(await this.identityOperationOutcome(input));
@@ -2873,8 +2898,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // this region. Before this branch existed, connector ingress synthesized a
     // session id that no `sessions` row could ever match, and every linked
     // member's Slack message died here as `session_revoked` (2026-08-22).
-    const connectorPrincipal = request.auth.principal === "connector";
-    const current = connectorPrincipal
+    // Any non-session principal — `connector`, `demo_seed` — is verified by
+    // membership rather than by a session row. The enum on `principal` is the
+    // gate: a value added to it inherits this branch.
+    const nonSessionPrincipal = request.auth.principal !== undefined;
+    const current = nonSessionPrincipal
       ? await span.step("workstream.room.connector_auth", () => this.connectorPrincipalAuth(request.auth))
       : await span.step("workstream.room.session_auth", () => this.socketAuth({
         workspaceId: request.auth.workspaceId,
@@ -2882,13 +2910,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         sessionId: request.auth.sessionId,
       }));
     if (!current || current.role !== request.auth.role || current.region !== request.auth.region) {
-      const refusal = connectorPrincipal ? "connector_member_revoked" : "session_revoked";
+      const refusal = nonSessionPrincipal ? "connector_member_revoked" : "session_revoked";
       span.setError(refusal);
       // The message rides to `WorkstreamObjectClient.decode`, whose fallback
       // ("The work stream could not be loaded") misdescribes a refused send.
       return jsonResponse({
         error: refusal,
-        message: connectorPrincipal
+        message: nonSessionPrincipal
           ? "You are no longer an active member of this workspace"
           : "Sign in again to continue",
       }, 401);
@@ -3273,6 +3301,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         telemetryOperationId: z.string().nullable().optional(),
         slackOrigin: z.unknown().nullable().optional(),
         slackSearchAuthorization: z.unknown().nullable().optional(),
+        seed: DemoSeedSchema.nullable().optional(),
       }).parse(JSON.parse(pending.authorization_json));
       const runId = asHarnessRunId(uuidV7(now));
       const input = WorkstreamWorkflowInputSchema.parse({
@@ -3303,6 +3332,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ...(authorization.slackSearchAuthorization
           ? { slackSearchAuthorization: authorization.slackSearchAuthorization }
           : {}),
+        // Carries the seed from the message that started this run onto the
+        // run's own execution receipt, which is what the harness reads.
+        ...(authorization.seed ? { seed: authorization.seed } : {}),
         reason: authorization.reason,
       });
       const leaseOwner = uuidV7(now + 1);

@@ -228,6 +228,11 @@ export function ProjectSidebarSection({
                     event.dataTransfer.setData('application/x-rally-project-id', project.id);
                   }}
                 >
+                  {/* Held: a project reordered past another glides with its
+                      expanded members rather than jumping while they slide.
+                      The row rather than the item carries it, because the
+                      members animate themselves and a moving item would carry
+                      them a second time. See `useListMotion`. */}
                   <div
                     className={clsx(
                       'sidebar-row project-sidebar-row',
@@ -235,6 +240,8 @@ export function ProjectSidebarSection({
                         || location.pathname.startsWith(`/projects/${project.id}/`))
                         && 'is-active',
                     )}
+                    data-motion-hold=""
+                    data-motion-key={`project:${project.id}`}
                   >
                     <button
                       aria-expanded={isExpanded}
@@ -290,7 +297,10 @@ export function ProjectSidebarSection({
                     const missing = project.workstreamIds.length - members.length;
                     return project.workstreamIds.length === 0
                       ? <p className="project-sidebar-empty">No work streams</p>
-                      : <div className="project-sidebar-workstreams">{members.map((workstream) => (
+                      // Its own motion scope: a member is the same row the recent
+                      // list shows, and the sidebar's motion would otherwise take
+                      // the two for one row in two places.
+                      : <div className="project-sidebar-workstreams" data-motion-scope={`project:${project.id}`}>{members.map((workstream) => (
                         <Fragment key={workstream.id}>{renderWorkstream(workstream)}</Fragment>
                       ))}{missing > 0 && <p className="project-sidebar-empty">{project.workstreamIds.length} work streams; load more to see all</p>}</div>;
                   })()}

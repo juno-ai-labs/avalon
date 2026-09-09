@@ -38,6 +38,7 @@ connection lifecycle around that admission protocol.
 | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | Pages the work-stream directory beyond the first, which the connect payload delivers; it does not fetch page one and widens the list only when Debug enabled asks for system rows. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete waterlined WorkstreamDO metadata snapshots to detail and sidebar caches. |
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
+| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The typed write boundary for the shared work-stream list, the detail query key for Main and for a private child, and `patchCachedWorkstream`, the one write for an unversioned fact (a rename or scope event, a REST response, a command receipt) that the list row and the open detail entry must take together. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps a pooled, substream-addressed SubstreamAgent feed, resends idempotent child commands after reconnect until their private operation receipts arrive, explicitly disables legacy feed-derived presence, and invokes the separate WorkstreamDO control lifecycle. |
 | `packages/contracts/src/workstream-transcript.ts` | Ordered turn/block, snapshot-fenced range, gap coverage, and nested UTC activity contracts used by the SubstreamAgent feed. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns the work-stream sockets above the route, gives each mounted owner one opaque lease ID shared by its control/feed starts, warms one presence-free control/feed pair after a one-second sidebar hover, and retains recently viewed pairs without remounting their connection hooks. |
@@ -708,6 +709,14 @@ what that leaves exposed.
 
 ## Changelog
 
+### 2026-09-08 — Keep child patches out of Main's shared cache
+
+The shared `patchCachedWorkstream` primitive now updates the sidebar list only
+for Main. Child rename and scope events still update their addressed detail,
+while Main REST rename responses use the same primitive with Main's address.
+This preserves the cache consolidation without reintroducing child titles in
+the parent's sidebar row.
+
 ### 2026-09-08 — Make socket evolution independent of URL capabilities
 
 An appearance query flag caused installed desktop validation to block the entire
@@ -720,6 +729,32 @@ The Azure upstream transcription intent is provider-owned and remains required.
 Clients predating tolerant reception still require an update to understand an
 expanded known frame; this change cannot retroactively change installed parsers.
 
+
+### 2026-09-09 — One write for unversioned facts on both caches
+
+**What changed:** Seven places wrote a rename, scope change, unread mark, or
+read acknowledgement to the sidebar list and the open detail entry by hand, and
+three of them disagreed about which fields the detail should take. They now
+call `patchCachedWorkstream` in `workstreams-cache.ts`, which takes the fields
+and the detail entry to address and writes the list row with it; the new
+appearance receipt joined them rather than becoming an eighth copy. The detail
+query key moved there from the feed hook so the cache module does not import
+the hook that imports it.
+
+**Why:** Adding one more hand-rolled copy would have left the header and the
+sidebar one forgotten `setQueryData` away from disagreeing again. Every REST
+response was narrowed to the fields that are its own news. A rename or scope
+change carries the title, scope, and `updatedAt` it moved. A read
+acknowledgement or unread mark carries only its viewer fields, through
+`patchCachedWorkstreamViewerState` in `workstream-state-store.ts`, which also
+rederives the unread pair; spreading the whole summary had written its common
+fields (appearance, harness status, scope) through an unversioned path, where
+a response computed before a later change and delivered after it puts the
+older value back. A rename issued while a private child is open now writes the
+parent's entry, which is the one the header renders, rather than the child's.
+The harness status and attention advances were deliberately left on their own
+writers, because they are substream-owned and a child's value must not reach
+the parent's list row.
 
 ### 2026-09-08 — Document personal access frames and cursor recovery
 

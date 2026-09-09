@@ -7,7 +7,13 @@ import { WorkstreamLandingScreen } from './workstream-landing';
 const socket = vi.hoisted(() => ({ state: 'connecting' }));
 vi.mock('../lib/workspace-socket', () => ({ useWorkspaceSocket: () => socket }));
 
-const directory = vi.hoisted(() => ({ data: undefined as WorkstreamSummary[] | undefined, error: null as Error | null }));
+const directory = vi.hoisted(() => ({
+  data: undefined as WorkstreamSummary[] | undefined,
+  error: null as Error | null,
+  hasMore: false,
+  isFetchingMore: false,
+  fetchMore: vi.fn(),
+}));
 vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => directory }));
 
 function stream(id: string, pinPosition: number | null, lastActivityAt: string): WorkstreamSummary {
@@ -23,7 +29,7 @@ function Destination(): React.JSX.Element {
   return <div data-testid="destination">{useLocation().pathname}</div>;
 }
 
-function Router({ initial = '/' }: { initial?: string }): React.JSX.Element {
+function Router({ initial = '/' }: { initial?: string | { pathname: string; state: unknown } }): React.JSX.Element {
   return <MemoryRouter initialEntries={[initial]}><Routes>
     <Route element={<WorkstreamLandingScreen />} path="/" />
     <Route element={<Destination />} path="*" />
@@ -31,7 +37,13 @@ function Router({ initial = '/' }: { initial?: string }): React.JSX.Element {
 }
 
 describe('default work-stream landing', () => {
-  beforeEach(() => { directory.data = undefined; directory.error = null; socket.state = 'connecting'; });
+  beforeEach(() => {
+    directory.data = undefined;
+    directory.error = null;
+    directory.hasMore = false;
+    directory.fetchMore = vi.fn();
+    socket.state = 'connecting';
+  });
 
   it('waits for the directory and opens the first pin, not the newest arrival', async () => {
     const view = render(<Router />);
@@ -64,6 +76,46 @@ describe('default work-stream landing', () => {
     directory.data = [];
     render(<Router />);
     expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/new');
+  });
+
+  it('passes over the rows a leaving screen names, whatever their rank', async () => {
+    // The row that was just archived or marked unread is still in the
+    // directory — the tombstone or refetch has not landed — and it is the
+    // first pin or the most recent row precisely because it was just open.
+    directory.data = [stream('archived-pin', 0, '2026-09-06'), stream('unread', null, '2026-09-05'), stream('next', null, '2026-08-01')];
+    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: ['archived-pin', 'unread'] } }} />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/next');
+  });
+
+  it('opens the composer when every listed row is one to pass over', async () => {
+    directory.data = [stream('only', null, '2026-09-05')];
+    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: ['only'] } }} />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/new');
+  });
+
+  it('asks for the next page when every loaded row is passed over and more exist', async () => {
+    // A batch archive can take a whole loaded page while older, unmatched rows
+    // sit beyond the cursor. That is not an empty workspace.
+    directory.data = [stream('taken', null, '2026-09-05')];
+    directory.hasMore = true;
+    const initial = { pathname: '/', state: { skipWorkstreamIds: ['taken'] } };
+    const view = render(<Router initial={initial} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Opening work streams');
+    expect(screen.queryByTestId('destination')).toBeNull();
+    expect(directory.fetchMore).toHaveBeenCalledTimes(1);
+    // A page that settled without changing the list — it failed — is not
+    // asked for again on its own; only a changed list requests the next one.
+    view.rerender(<Router initial={initial} />);
+    expect(directory.fetchMore).toHaveBeenCalledTimes(1);
+    directory.data = [stream('taken', null, '2026-09-05'), stream('older', null, '2026-08-01')];
+    view.rerender(<Router initial={initial} />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/older');
+  });
+
+  it('ignores state that is not a skip list', async () => {
+    directory.data = [stream('only', null, '2026-09-05')];
+    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: 'only' } }} />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/only');
   });
 
   it('surfaces a failed opening socket before the directory query is enabled', () => {
