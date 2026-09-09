@@ -1099,7 +1099,8 @@ export function useWorkstreamSocket(
         const receipt = await submitted;
         if (receipt.command !== 'set_workstream_appearance') throw new Error('substream_command_receipt_mismatch');
         // The sidebar row has no preview of its own and the projection that
-        // would update it is several hops away. The receipt is the commit —
+        // would update it is several hops away; the header keeps the picker's
+        // preview, so only the row is written. The receipt is the commit —
         // on the connection that carried the command. A receipt that arrives
         // after a reconnect answers a resend, and the room answers a resend of
         // an already committed operation from its receipt without publishing

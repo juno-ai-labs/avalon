@@ -81,31 +81,45 @@ export function patchCachedWorkstream(
 }
 
 /**
- * Show a person's own appearance choice everywhere the moment Main has
+ * Show a person's own appearance choice on the sidebar row the moment Main has
  * acknowledged it.
  *
  * The receipt means the value is committed; what has not happened yet is the
  * projection that carries it to the sidebar — the child outbox, a Queue hop to
  * WorkstreamDO, a second Queue hop to WorkspaceDO, and only then a state push
- * — which is seconds, not the round trip the picker just completed. Each row
- * merges the patch over its own current appearance, the way Main does, so an
- * icon-only choice keeps the color. This is a pushed fact and not a versioned
- * one: `applyVersionedWorkstreamState` replaces `appearance` whole whenever a
- * newer common waterline arrives, so a later authoritative push can always
- * correct it, and a delayed older push is at worst a brief flicker back. The
- * one receipt that must not reach here is a replay: the caller skips this
- * write when the receipt crossed a reconnect, because the room publishes
- * nothing for a replayed command and the newer state may already be cached.
+ * — which is seconds, not the round trip the picker just completed. This is a
+ * pushed fact and not a versioned one: `applyVersionedWorkstreamState`
+ * replaces `appearance` whole whenever a newer common waterline arrives, so a
+ * later authoritative push can always correct it, and a delayed older push is
+ * at worst a brief flicker back. The one receipt that must not reach here is a
+ * replay: the caller skips this write when the receipt crossed a reconnect,
+ * because the room publishes nothing for a replayed command and the newer
+ * state may already be cached.
+ *
+ * Deliberately the list row only, not the detail entry the header renders.
+ * The picker draws its own preview over the header and retires it once the
+ * cached detail carries the choice; writing the detail here would retire that
+ * preview on the receipt, and an older projection already in flight at a
+ * newer waterline could then paint the pre-choice value over the header for
+ * the rest of the projection window. Left alone, the preview covers the header
+ * until the authoritative value lands, and only the row can flicker.
+ *
+ * The merge over the row's current appearance mirrors Main's merge over its
+ * own row (`setAppearanceForAdmittedSocket`), because the receipt carries no
+ * payload. The two bases can differ by the projection lag this write exists to
+ * hide: an icon-only choice here paints over a color another client may just
+ * have changed, until that projection lands. Returning the committed
+ * appearance in the receipt would make this the authoritative value and leave
+ * one merge rule; that is a socket-contract change and has not been made.
  */
 export function patchCachedWorkstreamAppearance(
   queryClient: QueryClient,
   workstreamId: string,
   patch: WorkstreamAppearancePatch,
 ): void {
-  patchCachedWorkstream(queryClient, workstreamId, (row) => ({
-    ...row,
-    appearance: { icon: null, color: null, ...row.appearance, ...patch },
-  }));
+  setCachedWorkstreams(queryClient, (current) => current?.map((row) => row.id === workstreamId
+    ? { ...row, appearance: { icon: null, color: null, ...row.appearance, ...patch } }
+    : row));
 }
 
 /**

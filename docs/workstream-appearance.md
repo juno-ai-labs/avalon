@@ -33,13 +33,17 @@ alarm, a second Queue hop to WorkspaceDO, and only then a state push: seconds,
 while the receipt comes back in one socket round trip. The picker previews its
 own trigger locally, so the header moved at once and the sidebar row did not. The
 client now closes that gap on the receipt: when Main acknowledges a choice, the
-socket hook merges the patch over the current appearance on the sidebar row and
-the cached detail, the way Main merges it. The write is unversioned and the
-versioned receiver replaces `appearance` whole on the next newer common
-waterline, so the authoritative push always wins; a delayed older push can at
-worst flicker the row back until the one carrying the choice lands. Nothing is
-written on send: the row shows a committed value or the previous one, never a
-choice the room may still refuse. Nor is anything written for a receipt that
+socket hook merges the patch over the current appearance on the sidebar row, the
+way Main merges it over its own row. The write is unversioned and the versioned
+receiver replaces `appearance` whole on the next newer common waterline, so the
+authoritative push always wins; a delayed older push can at worst flicker the
+row back until the one carrying the choice lands. The cached detail is not
+written: the header renders it under the picker's own preview, which the picker
+retires only once the detail carries the choice, so writing the detail on the
+receipt would retire that preview early and expose the header to the same
+flicker. Nothing is written on send: the row shows a committed value or the
+previous one, never a choice the room may still refuse. Nor is anything written
+for a receipt that
 crossed a reconnect. The feed resends an unanswered command on the next
 connection and Main answers an already committed operation from its receipt,
 publishing nothing, so that receipt may describe a choice another client has
@@ -102,6 +106,22 @@ cover the common cache path. Inspect the actual Electron popup in light and dark
 including scrolling, and check another connected window and reopening.
 
 ## Changelog
+
+### 2026-09-09 — The receipt writes the row, not the detail
+
+Review traced a header flicker the receipt-time write had introduced: writing
+the cached detail retired the picker's preview at once, and an unrelated common
+projection already in flight at a newer waterline could then paint the pre-choice
+value over the header until the appearance projection landed. Before the write
+the preview covered that window. The receipt now patches the sidebar row only,
+which has no preview of its own, and the header stays on the picker's preview
+until the versioned detail carries the choice. The same review noted that the
+client merges the patch over its own cached base while Main merges over its row,
+so an icon-only choice can briefly pair with a color another client just
+changed; that is inherent to a receipt with no payload and is recorded on the
+helper. Returning the committed appearance in the receipt would give the client
+the authoritative value and a single merge rule, and is the change to make if
+either transient ever matters.
 
 ### 2026-09-09 — A replayed receipt does not touch the caches
 
