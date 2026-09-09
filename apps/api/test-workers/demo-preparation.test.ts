@@ -160,14 +160,16 @@ async function seedControlPlane(): Promise<void> {
     )`),
     env.DB.prepare(`CREATE TABLE demo_seed_receipts (
       operation_id TEXT NOT NULL, action_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
-      kind TEXT NOT NULL, room TEXT, workstream_id TEXT, sidekick_id TEXT, sidekick_run_id TEXT,
-      turn_id TEXT,
+      kind TEXT NOT NULL, room TEXT, workstream_id TEXT, substream TEXT, substream_id TEXT,
+      sidekick_id TEXT, sidekick_run_id TEXT, turn_id TEXT,
       harness_run_id TEXT, run_outcome TEXT, elicitation_id TEXT, resource_id TEXT,
       completed_at TEXT NOT NULL, PRIMARY KEY (operation_id, action_id),
       CHECK (
         CASE kind
-          WHEN 'sidekick' THEN room IS NULL AND workstream_id IS NULL AND sidekick_id IS NOT NULL
-          ELSE room IS NOT NULL AND workstream_id IS NOT NULL AND sidekick_id IS NULL
+          WHEN 'sidekick' THEN room IS NULL AND workstream_id IS NULL
+            AND substream IS NULL AND substream_id IS NULL AND sidekick_id IS NOT NULL
+          ELSE room IS NOT NULL AND workstream_id IS NOT NULL
+            AND substream_id IS NOT NULL AND sidekick_id IS NULL
         END
       )
     )`),
