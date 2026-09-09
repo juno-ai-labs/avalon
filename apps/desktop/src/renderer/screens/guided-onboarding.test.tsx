@@ -8,13 +8,14 @@ import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 
 const state = vi.hoisted(() => ({
   signedIn: true,
+  hasWorkspace: true,
   account: { eligible: true, introduced: true, presentation: null, revision: 0 },
   getAccount: vi.fn(), saveAccount: vi.fn(), journey: vi.fn(), updateJourney: vi.fn(),
   invitations: vi.fn(), invite: vi.fn(), members: vi.fn(), connections: vi.fn(), connectors: vi.fn(),
 }));
 vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ getAccountOnboarding: state.getAccount, updateAccountOnboarding: state.saveAccount }) }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
-  session: state.signedIn ? { user: { id: 'user-1', email: 'person@example.com', name: 'Person' }, workspace: { id: 'workspace-1' } } : null,
+  session: state.signedIn ? { user: { id: 'user-1', email: 'person@example.com', name: 'Person' }, workspace: state.hasWorkspace ? { id: 'workspace-1' } : null } : null,
   api: { getWorkspaceInvitations: state.invitations, createWorkspaceInvitation: state.invite, getWorkspaceMembers: state.members, getOnboardingJourney: state.journey,
     updateOnboardingJourney: state.updateJourney, getConnections: state.connections, getAvailableConnectorTypes: state.connectors },
   signOut: vi.fn(), setPendingConnectorOAuth: vi.fn(),
@@ -34,6 +35,7 @@ function show() {
 beforeEach(() => {
   vi.clearAllMocks();
   state.signedIn = true;
+  state.hasWorkspace = true;
   vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
   state.getAccount.mockResolvedValue(state.account);
   state.invitations.mockResolvedValue([]);
@@ -83,10 +85,55 @@ describe('new-account learning paths', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
     await waitFor(() => expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'profile' }));
   });
+  it('waits for the first account lookup before admitting an authenticated workspace', async () => {
+    let rejectLookup!: (error: Error) => void;
+    state.getAccount.mockImplementation(() => new Promise((_resolve, reject) => { rejectLookup = reject; }));
+    show();
+    expect(screen.getByRole('heading', { name: 'Opening Rally' })).toBeInTheDocument();
+    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
+    expect(state.getAccount).toHaveBeenCalledTimes(1);
+    await act(async () => { rejectLookup(new Error('Identity unavailable')); });
+    expect(await screen.findByText('Ordinary workspace')).toBeInTheDocument();
+  });
+  it('keeps an identity without a workspace gated after a failed lookup and during retry', async () => {
+    state.hasWorkspace = false;
+    state.getAccount.mockRejectedValue(new Error('Identity unavailable'));
+    show();
+    expect(await screen.findByRole('heading', { name: "Let's pick up where you left off" })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
+    let rejectLookup!: (error: Error) => void;
+    state.getAccount.mockImplementation(() => new Promise((_resolve, reject) => { rejectLookup = reject; }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('heading', { name: 'Opening Rally' })).toBeInTheDocument();
+    expect(state.getAccount).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
+    await act(async () => { rejectLookup(new Error('Identity still unavailable')); });
+    expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
+  });
   it('keeps an authenticated workspace available when the identity service is unavailable', async () => {
     state.getAccount.mockRejectedValue(new Error('Identity unavailable'));
     show();
     expect(await screen.findByText('Ordinary workspace')).toBeInTheDocument();
+  });
+  it('keeps the workspace mounted while retrying a failed account lookup', async () => {
+    state.getAccount.mockRejectedValue(new Error('Identity unavailable'));
+    const client = show();
+    const workspaceElement = await screen.findByText('Ordinary workspace');
+    let rejectLookup!: (error: Error) => void;
+    state.getAccount.mockImplementation(() => new Promise((_resolve, reject) => { rejectLookup = reject; }));
+    await act(async () => {
+      void client.invalidateQueries({ queryKey: ['account-onboarding'] });
+      // Flush React Query's batched observer notification while the lookup stays pending.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(state.getAccount).toHaveBeenCalledTimes(2);
+    expect(workspaceElement).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Opening Rally' })).not.toBeInTheDocument();
+    await act(async () => { rejectLookup(new Error('Identity still unavailable')); });
+    expect(screen.getByText('Ordinary workspace')).toBe(workspaceElement);
   });
   it('refreshes an open appearance draft when a newer account revision arrives', async () => {
     const client = show();
