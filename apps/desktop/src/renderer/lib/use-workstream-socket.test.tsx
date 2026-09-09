@@ -3287,14 +3287,32 @@ describe('useWorkstreamSocket', () => {
       occurredAt: '2026-08-11T09:00:01.000Z',
       title: 'Rally download link email to Danny',
       titleStatus: 'automatic',
+      icon: 'megaphone',
     }));
 
     // The event settles the skeleton as well as the text: `automatic` is a
-    // name, just one a later pass may still improve on.
+    // name, just one a later pass may still improve on. The icon a naming pass
+    // chose goes to the sidebar row with it.
+    //
+    // It must NOT go to the cached detail, which is the entry the appearance
+    // picker reads to decide its own preview is done: `settled()` retires a
+    // pending choice as soon as the detail's icon moves off the baseline it was
+    // taken against, to any value at all, because another person changing the
+    // icon has to retire it too. Writing a generated icon there while somebody's
+    // own choice is still in flight would retire theirs to this one and hold the
+    // header on it until the projection lands. Only the versioned projection may
+    // move the detail.
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId]))
       .toMatchObject({ title: 'Rally download link email to Danny', titleStatus: 'automatic' });
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId]))
+      .not.toHaveProperty('appearance');
     expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
-      { id: workstreamId, title: 'Rally download link email to Danny', titleStatus: 'automatic' },
+      {
+        id: workstreamId,
+        title: 'Rally download link email to Danny',
+        titleStatus: 'automatic',
+        appearance: { icon: 'megaphone', color: null },
+      },
       { id: '00000000-0000-7000-8000-000000000402', title: 'August planning', titleStatus: 'settled' },
     ]);
   });
@@ -3341,6 +3359,57 @@ describe('useWorkstreamSocket', () => {
     expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
       { id: workstreamId, title: provisional, titleStatus: 'naming' },
       { id: '00000000-0000-7000-8000-000000000402', title: 'August planning', titleStatus: 'settled' },
+    ]);
+  });
+
+  it('leaves an icon a person already chose alone when a naming event arrives after it', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000409';
+    queryClient.setQueryData(['workstream', workstreamId], {
+      id: workstreamId,
+      title: 'Mucker invoices',
+      titleStatus: 'naming',
+      harnessStatus: 'running',
+    } as WorkstreamDetail);
+    // Their own choice, already acknowledged and written to the row by the
+    // receipt handler. The naming event was published before that command
+    // committed, so the icon it carries is older than what is here.
+    setCachedWorkstreams(queryClient, [
+      { id: workstreamId, title: 'Mucker invoices', titleStatus: 'naming', appearance: { icon: 'rocket', color: 'teal' } },
+    ] as WorkstreamSummary[]);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'workstream_renamed',
+      sequence: 1,
+      occurredAt: '2026-08-11T09:00:01.000Z',
+      title: 'Reconcile Mucker invoices',
+      titleStatus: 'automatic',
+      icon: 'megaphone',
+    }));
+
+    // The name lands; the icon does not. The event carries an icon only when
+    // the object had none when it renamed, so a row that has one holds
+    // something newer — and the two travel different paths, so the event can
+    // arrive after the receipt that put it there.
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
+      {
+        id: workstreamId,
+        title: 'Reconcile Mucker invoices',
+        titleStatus: 'automatic',
+        appearance: { icon: 'rocket', color: 'teal' },
+      },
     ]);
   });
 

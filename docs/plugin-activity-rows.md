@@ -10,8 +10,8 @@ reasoning segment and reads as one "thought for …" per run.
 
 Once an answer reports on a stretch of that work, the stretch folds behind one
 closed accordion sitting directly above the answer — "Worked for 41m 17s" where
-the stretch is the whole response, a plain "Worked" where the response narrated
-itself into several.
+the stretch is the whole response, and the union of when its own rows worked
+where the response narrated itself into several.
 
 Read this before changing what a tool call or a thinking segment looks like in
 the feed, adding a first-party plugin, changing a plugin's canonical id or
@@ -30,7 +30,7 @@ them.
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Settings' provider cards and installed-connection rows, both reaching a mark from the connector's own type. |
 | `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks, thinking blocks, and plugin activities out of the canonical snapshot, and marks the seam where its coverage is not contiguous; `groupPluginToolMessages` collapses the composed feed, `groupThinkingMessages` collapses the thinking left in it, and `collapseSettledWorkIntoAccordion` folds each finished stretch of a run behind the answer that reported on it, carrying the total `foldSettledWorkIntoMessages` resolved where that stretch is the whole response. `thoughtVerb` and `isThinkingEvent` are the one place the two thought rows are told apart. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | Applies the four passes in order, and is the only caller of any of them. |
-| `apps/desktop/src/renderer/lib/types.ts` | `WorkTotal` — the one shape a settled total has, carried by `workSummary` in a message header and by `workAccordion` on the row over the run, so the total can move between them without the two drifting apart. |
+| `apps/desktop/src/renderer/lib/types.ts` | `WorkTotal` — the one shape a settled total has, carried by `workSummary` in a message header and by `workAccordion` on the row over the run, so the total can move between them without the two drifting apart. `WorkSpan` — when a row's work happened, carried by `workSpans`, which is what a stretch of several rows is added up by. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `PluginGlyph` draws a mark; `PluginActivityBlock` renders one grouped row; `ThinkingGlyph` draws the thinking row's brain and `ThoughtBlock` decides which of the two thought rows gets it; `WorkAccordionBlock` is the closed row a reported-on stretch becomes, and `WorkAccordionRow` draws what is inside it through those same two blocks. |
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | The shared elapsed-time row; its `icon` slot is what lets a plugin's mark, or the thinking row's brain, stand in for the orb. |
 | `apps/desktop/src/renderer/styles/app.css` | `.plugin-face` and `.plugin-face-active` — the transcript's bare mark box and its pulse, shared by the plugin rows and the thinking row; `.work-accordion` and its toggle. |
@@ -57,8 +57,12 @@ row's material in one field:
 A plugin activity (`scope: 'plugin'`) still hangs off the assistant turn and is
 what `pluginRuns` is computed from. Its elapsed time covers the whole stretch
 the plugin was in play, including the gaps between its calls, which no sum of
-individual call durations can reproduce. The client no longer reads it directly
-except as the legacy fallback below.
+individual call durations can reproduce. The client no longer reads its
+*duration* directly except as the legacy fallback below — but it does read its
+**intervals** on the main path, because they are the only place the transcript
+says *when* a run worked, and a folded stretch adds its rows up by that. A run
+whose activity did not reach the snapshot therefore has an authoritative
+duration and no spans, which is a state the accordion is built to expect.
 
 ### The five steps
 
@@ -297,14 +301,17 @@ Three things about it are decisions rather than details:
   of rows. It stays in the final answer's header instead. **Both renderings
   stay**, and a turn that reached for nothing has no accordion to move the total
   to either; its header keeps the line, as before.
-- **The total is not a sum over the rows inside.** A run's thinking overlaps its
-  plugin work — the model reasons between calls, and a plugin's activity covers
-  the gaps between its own — so adding the rows up would overstate the stretch by
-  however much of it ran concurrently. The response activity measured the whole
-  stretch once, and it is the only honest answer available. A stretch with no
-  total of its own therefore reads a plain "Worked" rather than a computed
-  number — the same sentence an unknown duration already produces, from the same
-  function.
+- **The total is never a sum over the rows inside — it is the union of when they
+  worked.** A run's thinking overlaps its plugin work — the model reasons between
+  calls, and a plugin's activity covers the gaps between its own — so adding the
+  rows' durations up would overstate the stretch by however much of it ran
+  concurrently. Adding up *when* they worked does not: every machinery row
+  carries the `workSpans` of the activity that measured it, and
+  `foldedStretchTotal` unions them, counting a second two rows shared once. A
+  stretch whose rows cannot all say when they worked still reads a plain
+  "Worked" — the same sentence an unknown duration produces, from the same
+  function — because a union over the rest would print a number quietly missing
+  the row that could not answer.
 - **The rows are nested inside the accordion row, not hidden in place.** The
   transcript is virtualized. A collapse that left its rows in the list would
   still cost one measured item each, and opening one would grow N items whose
@@ -436,10 +443,17 @@ is the one that might have been partly unloaded, and what follows it is loaded.
   A row a person read is not one — a steer is its own canonical turn inside a
   single response — so nothing else resets the accordion count or the coverage
   mark.
-- **The accordion's total is the response's, never a sum of the rows in it.**
+- **The accordion's total is the response's where the drawer is the response,
+  and otherwise the union of its rows' spans — never a sum of their durations.**
   Thinking overlaps plugin work and a plugin activity covers the gaps between
-  its own calls, so a sum overstates the stretch by whatever ran concurrently. A
-  stretch with no total of its own says "Worked" and no number.
+  its own calls, so a sum overstates the stretch by whatever ran concurrently; a
+  union of the wall-clock stretches those rows occupied does not. A stretch of
+  several rows, one of whose spans never reached this client, says "Worked" and
+  no number; a stretch of exactly *one* row reports that row's own duration,
+  because there is nothing for it to be overlapping with. One holding a
+  recovered boundary reads "Worked for at most …" —
+  that accuracy rides on the span itself, because a plugin group assembled from
+  tool rows alone has no aggregate accuracy to read it from.
 - **A response the client has only part of never labels a drawer.** Counting
   accordions is a proxy for "this drawer is the whole response", and the proxy
   fails across a seam: a response whose earlier stretches were never loaded shows
@@ -537,20 +551,38 @@ It deliberately does **not** cover:
   projects thinking per attempt or per segment has to key the sum on the
   activity instead.
 - **A response the client holds only part of** collapses each stretch it can see,
-  and every one of those drawers reads a plain "Worked" — the total stays in the
+  and none of those drawers takes the response's total — the total stays in the
   header until the gap is filled, at which point the drawers are recounted and
-  one may take it. That is the safe direction: a number is never printed over a
-  drawer that cannot account for it.
+  one may take it. That is the safe direction: a number covering the whole
+  response is never printed over a drawer that cannot account for it. Each
+  drawer still reports its own stretch, which is a fact about the rows inside it
+  and stays true however much of the response was never loaded.
 - **A response whose settled total never found a host answer** never resets the
   count, so every later response in that window keeps its total in the header
   rather than on its drawer. Nothing is wrong on screen — the header is where a
   total is always correct — but the drawers stop taking one until a total lands
   on an answer again. Scoping the count to a real response identity, if the
   projection ever carries one into this pass, would fix it.
-- **A stretch whose response total never arrived** still collapses, and its
-  drawer reads a plain "Worked". The rows are behind the answer that reported on
-  them either way; what is missing is only the number, and summing the rows to
-  invent one would report a figure the transcript never established.
+- **A stretch whose response total never arrived** still collapses, and reports
+  the union of its own rows' spans. Where those rows cannot say when they worked
+  the drawer reads a plain "Worked": the rows are behind the answer that
+  reported on them either way, and summing durations to invent a number would
+  report a figure the transcript never established.
+- **A stretch's own total is the union of its rows, not of the turns they came
+  from**, so work that produced no row at all — a plugin whose id resolves to no
+  group, a turn whose activity never reached this client — is missing from it.
+  The drawer is then honest about the rows it can show and quiet about the rest,
+  which is the direction that never claims time a reader cannot open and see.
+  An interval the authority closed without recording a duration is unmeasurable
+  for the same reason, timestamps or not: `activityDuration` already counts it
+  as nothing, so a span read off its boundaries would put time in the drawer
+  that no row inside can account for.
+  Spans reach the client through the activity tree, whose joins are the nullable
+  ones [`pluginRuns`](#where-the-code-lives) exists to stop depending on; a run
+  the tree never reached has a duration but no spans, and one such row in a
+  stretch is what makes the whole drawer read "Worked". Resolving spans
+  server-side, on `TranscriptPluginRun` beside the duration, is the fix if that
+  turns out to be common.
 - **Work that trails an answer with no answer of its own after it** stays in the
   feed as it was. Nothing has reported on it, so there is nothing to fold it
   behind — which is also what keeps a live run's rows on screen.
@@ -571,7 +603,7 @@ It deliberately does **not** cover:
 | --- | --- | --- |
 | `lib/plugin-groups.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/plugin-groups.test.ts` | The map: the two virtual groups, the unnamed-first-party fallback, name keying across the two id families, every glyph, and that no shipped connector still draws the plug. |
 | `lib/plugin-marks.test.ts` | same, `src/renderer/lib/plugin-marks.test.ts` | The marks: the monochrome variant asked for wherever a brand ships one, and one distinct mark per brand. |
-| `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. Collapsing thinking: the summed run, the run boundary, the response total left out of it, the unknown segment, and the concurrent starts. Closing a reported-on stretch: what goes in the drawer, every stretch of a self-narrating run folding rather than only the last, the total moving out of the header and staying there when the response produced several drawers, the settled-total response boundary and a steer not being one, the two seam checks, a partially loaded response withholding its total until the next settled total, a stretch held open by a live timer or by a plugin run still marked active and closing once it settles, a final answer that folds nothing keeping its total in the header, and the derived id. |
+| `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. Collapsing thinking: the summed run, the run boundary, the response total left out of it, the unknown segment, and the concurrent starts. Closing a reported-on stretch: what goes in the drawer, every stretch of a self-narrating run folding rather than only the last, the total moving out of the header and staying there when the response produced several drawers, the settled-total response boundary and a steer not being one, the two seam checks, a partially loaded response withholding its total until the next settled total, a stretch held open by a live timer or by a plugin run still marked active and closing once it settles, a final answer that folds nothing keeping its total in the header, and the derived id. A stretch's own total: the union of its rows' spans rather than the sum of their durations, the response total still winning where the drawer is the whole response, an upper-bound row making the stretch one, a row that cannot say when it worked making the drawer say nothing, and the spans surviving both grouping passes. |
 | `components/workstream-blocks.test.tsx` | same, `src/renderer/components/workstream-blocks.test.tsx` | The row: its wording in both tenses, its stable accessible name while the number ticks, the pulsing mark, the absent orb, and the thinking row's brain. The accordion: closed and open, the unknown and recovered totals, and the open flag taken from the feed. |
 | `screens/workspace-settings.test.tsx` | same, `src/renderer/screens/workspace-settings.test.tsx` | Settings: an installed row and the provider card it came from carrying the same mark, and a webhook carrying none. |
 
@@ -586,6 +618,60 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-09-09 — A drawer reports its own stretch, from when its rows worked
+
+**What changed:** every machinery row now carries `workSpans` — the wall-clock
+stretches the activity that measured it occupied — through both grouping passes,
+and `collapseSettledWorkIntoAccordion` labels a drawer that does not take the
+response's total with `foldedStretchTotal`: the union of the spans of the rows
+inside it. A self-narrating response's drawers therefore read "Worked for 15s"
+and "Worked for 9s" instead of two identical "Worked"s, while the response's own
+"Worked for 1m 24s" stays in the final answer's header.
+
+**Why:** the drawers said nothing about what was behind them. A reader deciding
+whether to open one had the chevron and the word "Worked", which is the same
+thing every other drawer said, so the only way to find the stretch that took a
+minute was to open all of them. The rule that produced that — a stretch not known
+to be the whole response has no total — was right about durations and was read as
+a rule about time in general: rows overlap, so a *sum* of them overstates the
+stretch, and the response total was the only number anyone had.
+
+Spans are what breaks the tie. The transcript already records when every activity
+started and stopped; a union over those counts a second two rows shared exactly
+once, so it can never overstate the drawer the way a sum does, and it needs no
+authority beyond the intervals the snapshot already carries. The response total
+still wins where the drawer is the whole response — it is the authority's own
+measurement of that run, and the union is only as complete as the rows this
+client happens to hold.
+
+What a future change has to respect: **a drawer never prints a number it cannot
+account for with the rows inside it.** One row that cannot say when it worked
+makes the whole drawer read "Worked", for the same reason a thinking run with one
+unmeasured segment reports no total rather than a shorter one — a union over the
+rest is a number with a piece silently missing, presented as certain. Resist
+filling that hole by falling back to a sum, to the response total, or to the
+longest row.
+
+Rejected: crediting each drawer with the assistant turns its rows came from,
+which is authoritative and non-overlapping across turns but does not line up with
+the drawers — a turn's thinking row sits above the answer it narrates while the
+plugin row for the same turn sits below it, so the turn's duration would be
+claimed by two drawers at once. Also rejected: adding the spans to
+`TranscriptPluginRun` server-side in this change. It is the more robust source
+and the reason `pluginRuns` exists at all — the activity tree reaches a snapshot
+through the nullable joins that contract was written to stop depending on, and
+this module's own `brokenJoinSnapshot` fixture is the shape where it does not
+arrive. What makes the client-side read worth starting with is the cost of being
+wrong: a run with no spans keeps its authoritative duration and its drawer says
+what it said before, so the failure is the status quo rather than a wrong
+number. Move it server-side when a drawer is seen reading "Worked" in the field.
+
+Also rejected: two scalars per row and `max(end) − min(start)`, which would
+delete `unionDurationMs` and about half of what this added. It is the same
+number for the common shape and wrong for the one this feature exists to serve:
+a stretch of a self-narrating response holds a thought and a call that ran after
+it, and a start-to-end measure would count the handoff between them as work.
 
 ### 2026-09-03 — Every stretch of a run collapses, not just the last one
 

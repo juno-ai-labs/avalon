@@ -414,12 +414,42 @@ export interface ExternalActor {
  * exists to prevent.
  *
  * `durationMs` is null where there is no honest total: one the transcript could
- * not establish, or a stretch not known to be the whole response and so with
- * none of its own — the rows inside overlap, and summing them would overstate
- * it. Both read as a plain "Worked".
+ * not establish, or a stretch holding a row that cannot say *when* it worked,
+ * which is what a stretch's own total is unioned from — the rows inside
+ * overlap, so summing their durations would overstate it. Both read as a plain
+ * "Worked".
  */
 export interface WorkTotal {
   durationMs: number | null;
+  timingAccuracy?: 'observed' | 'upper_bound';
+}
+
+/**
+ * One settled stretch of wall clock a row's work occupied.
+ *
+ * A duration says how long a row worked; this says *when*, which is the one
+ * thing a set of rows can be added up by without counting the same second
+ * twice. Two plugins in a batch run at the same time, and a plugin row covers
+ * the gaps between its own calls that the thinking row beside it is filling —
+ * so a drawer holding both of them is worth the union of these, never the sum
+ * of their durations. `workSpans` on a row is what that union is taken over.
+ *
+ * Milliseconds since the epoch, on the authority's clock rather than this
+ * machine's: only the difference between two of them is ever read, and both
+ * come from the same transcript.
+ */
+export interface WorkSpan {
+  startedAtMs: number;
+  endedAtMs: number;
+  /**
+   * Set where the interval's boundary was recovered rather than observed.
+   *
+   * It rides on the span because a span can outlive the row's own aggregate:
+   * a plugin group assembled from tool rows alone — the fallback for a run
+   * whose plugin activity never arrived — has no aggregate accuracy to read,
+   * and a stretch holding it would otherwise print a recovered duration as an
+   * exact one.
+   */
   timingAccuracy?: 'observed' | 'upper_bound';
 }
 
@@ -534,6 +564,23 @@ export interface Message {
    * header carries nothing.
    */
   workSummary?: WorkTotal;
+  /**
+   * When this row's work happened, where the transcript can prove it.
+   *
+   * Set on the machinery rows — thinking, plugin activity, and the tool rows a
+   * plugin group is built from — and carried through the grouping passes, so a
+   * grouped row holds every span it swallowed. Absent means the timing of this
+   * row could not be established, not that it took no time: the activity it
+   * would come from never reached this snapshot, or is still running. A folded
+   * stretch holding one such row therefore reports no total at all rather than
+   * a number missing however long that row took.
+   *
+   * The response's own timer deliberately has none. Its span covers the whole
+   * response, so a drawer that swallowed it would union to the entire run and
+   * claim it for one stretch of it — the same overstatement `workAccordion`
+   * exists to avoid, arrived at from the other direction.
+   */
+  workSpans?: readonly WorkSpan[];
   /**
    * The finished run's machinery, and the total that stands for it.
    *
