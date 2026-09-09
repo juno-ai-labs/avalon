@@ -125,7 +125,7 @@ its deadline. Range/resume requests are not implemented.
 
 The request list is intentionally unpaginated for the seed-stage intake volume.
 No arbitrary retention, TTL, cooldown or request cap has been selected. General
-public-intake anti-abuse controls and retention policy remain rollout decisions;
+public-intake anti-abuse controls and age-based retention remain rollout decisions;
 this first slice should not be represented as a fully hardened campaign system.
 
 ## Testing
@@ -206,7 +206,73 @@ The independent deployment workflows do not yet enforce this ordering; coordinat
 the rollout before merging/deploying the first release. Invitation dispatch and
 closing legacy distribution remain the next implementation phases in the PRD.
 
+### Handling an acquisition erasure request
+
+Use the existing privacy-contact and identity-verification process, not an
+account-login requirement. This initial slice uses an operator procedure through
+existing Global D1 administration; it has no deletion UI, background invitation
+sender, research store or invitation-suppression implementation.
+
+1. Normalize the verified email exactly as intake does (trim and lowercase).
+   Look up `access_requests` by that email in Global D1 and note the request ID
+   only in the authorized support record. Avoid exporting the frozen message or
+   putting the address in command output, shell history or a pull request.
+2. Coordinate with operators to stop generating request-linked grants while
+   erasure runs. Reconcile any in-flight acknowledgement first; a provider call
+   already submitted cannot be recalled by deleting its D1 row. Do not retry the
+   acknowledgement as part of erasure.
+3. Find `download_grants` with `source` equal to `manual` or `access_invitation`
+   and `source_id` equal to the request ID. Set `revoked_at` before removing the
+   request, so a failed/partial cleanup leaves related downloads denied.
+4. Delete those request-linked grant records, then the `access_requests` row.
+   This removes its email, frozen sender/subject/body and acknowledgement state.
+   Re-query both the email and captured source ID to verify nothing remains;
+   repeat cleanup if an already-running operator issuance completed during the
+   procedure. The existing redemption predicate rejects deleted or revoked rows.
+5. A standalone manual grant has no recipient email association. If one is part
+   of the verified request, identify it by the grant ID retained by the operator;
+   revoke/delete that grant separately. Do not claim an email lookup found every
+   anonymously shared link, and never put a bearer URL in logs to find one.
+6. Handle any provider-side message copy using Resend's supported privacy process.
+   Local deletion cannot retract already delivered mail or guarantee deletion of
+   provider backups; record any unresolved external handling separately.
+7. Confirm the outcome without copying deleted content into a new record. These
+   actions do not delete a Rally account or affect workspace membership. A later
+   explicit signup creates a new request; it does not restore the deleted row or
+   its frozen content.
+
+Retain waiting requests while serving that acquisition purpose. Verified
+withdrawal/erasure or closure of the early-access programme triggers the procedure
+above. An unused single-use grant has no hidden time expiry; revoke it explicitly
+when its associated purpose ends. Delete expired/used/revoked grants after their
+related delivery/support investigation is complete. No automatic age-based sweep
+or numerical retention period is configured.
+
+Future invitation sending must implement the PRD's durable suppression,
+cancellation and sender/erasure race handling before it is enabled. This manual
+procedure is not a substitute for those controls. Future EU workspace-grant
+privacy operations stay in the owning region; the current slice creates none.
+
 ## Changelog
+
+### 2026-09-09 — Document pre-account erasure operations
+
+**What changed:** Added the operator procedure for locating a verified request,
+revoking and deleting associated grants, removing frozen acknowledgement data,
+and handling provider copies. Kept the approved PRD changes in the implementation
+branch and recorded the first slice in its decision log.
+
+**Why:** Acquisition data exists before workspace deletion can cover it. Review
+identified that privacy requests need a concrete operator path in this first
+slice even though bulk sending and research remain future work.
+
+**Considered and rejected:** Inventing a numerical retention deadline or building
+a new privacy UI was unnecessary for this intake slice. Treating local deletion
+as erasure of provider copies would promise an outcome the database cannot prove.
+
+**Consequences:** Operators coordinate active issuance and reconcile provider
+calls before cleanup; future durable sending still requires suppression and
+cancellation controls. No production data was erased by this documentation change.
 
 ### 2026-09-09 — Apply supplied early-access copy and Adam's sender
 
