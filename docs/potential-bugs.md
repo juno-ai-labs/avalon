@@ -222,9 +222,16 @@ than to widen the window.
 
 ---
 
-## WorkspaceDO's activity read filter, target marking and dedupe are untested
+## WorkspaceDO activity coverage still needs a full visibility matrix
 
 **Severity:** coverage-gap
+
+**2026-09-09 update:** #628 adds RPC coverage for cursor boundaries, physical
+read cost, digestibility, a time floor, and exclusion of another user's event.
+`durable-object-runtime.test.ts` also covers target marking and dedupe. The
+historical gap below is therefore partially closed; workstream audience and
+system-workstream suppression still need a complete visibility matrix.
+
 
 **Observed.** Two suites appeared to cover this and did not.
 `test/activity-event-projection.test.ts` and the "activity event visibility"
