@@ -707,7 +707,18 @@ credential on this surface — a connector OAuth callback's `?code=` — is fixe
 the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
+Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
+
 ## Changelog
+
+### 2026-09-08 — Enforce pushed child archive locally
+
+**What changed:** The archive admission flag also covers private children; already-open commands consult their local lifecycle mirror.
+
+**Why:** Archive must stop the hidden agent without introducing a parent RPC for every socket command.
+
+**Considered and rejected:** Remote per-command authorization; versioned lifecycle delivery preserves the existing local-admission model.
+
 
 ### 2026-09-08 — Keep child patches out of Main's shared cache
 

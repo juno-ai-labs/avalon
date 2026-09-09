@@ -262,14 +262,14 @@ describe('patchCachedWorkstreamViewerState', () => {
     }
   });
 
-  it('writes the addressed child entry as well as the list row', () => {
+  it('writes the addressed child entry without changing Main in the list', () => {
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary({ readThroughSequenceNumber: 1 })]);
     queryClient.setQueryData(['substream-workstream', id, 'child'], summary({ readThroughSequenceNumber: 1 }));
 
     patchCachedWorkstreamViewerState(queryClient, id, summary({ readThroughSequenceNumber: 5 }), 'child');
 
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.readThroughSequenceNumber).toBe(5);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.readThroughSequenceNumber).toBe(1);
     expect(queryClient.getQueryData<WorkstreamSummary>(['substream-workstream', id, 'child'])?.readThroughSequenceNumber).toBe(5);
     expect(queryClient.getQueryData(['workstream', id])).toBeUndefined();
   });

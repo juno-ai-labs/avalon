@@ -22,7 +22,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 49;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 50;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2927,6 +2927,12 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
   },
   { version: 49, description: 'retain source mutation time through authorization projection delivery',
     statements: AUTHORIZATION_PROJECTION_TIMING_MIGRATION },
+  { version: 50, description: 'mirror private child lifecycle versions', statements: [
+    `CREATE TABLE private_child_lifecycle_authority (
+      id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL,
+      archived_at INTEGER
+    ) STRICT`,
+  ] },
 ];
 
 /**

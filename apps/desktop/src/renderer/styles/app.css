@@ -2745,10 +2745,7 @@ pre {
    transcript below it steps down and back on every double click. */
 .workstream-title-line { align-items: center; display: flex; gap: 8px; min-height: 22px; min-width: 0; }
 .workstream-title-line h1 { font-size: var(--av-sys-font-size-title); margin: 0; min-width: 0; }
-/* A single click does nothing here — the editor opens on a double click — so
-   the pointer cursor would promise an action the button does not perform.
-   `:not(:disabled)` matches the weight of the global `button` cursor rule,
-   which outranks a bare class and would otherwise win. */
+/* Single-click editing uses a text cursor and the existing hover affordance. */
 /* One length does three jobs here, so it is named rather than repeated: the
    hover pill's horizontal padding, the overhang that cancels it, and the cap
    that adds the overhang back. The pill hangs back into the header's padding so
@@ -2764,7 +2761,7 @@ pre {
    constraint — a block box left at `width: auto` fills its parent and never
    grows to a wider max-width. */
 .workstream-title-button { --pill-overhang: 4px; background: transparent; border-radius: var(--av-sys-size-radius-sm); display: block; margin-left: calc(-1 * var(--pill-overhang)); max-width: calc(100% + var(--pill-overhang)); overflow: hidden; padding: 1px var(--pill-overhang); text-align: left; text-overflow: ellipsis; white-space: nowrap; width: max-content; }
-.workstream-title-button:not(:disabled) { cursor: default; }
+.workstream-title-button:not(:disabled) { cursor: text; }
 .workstream-title-button:hover { background: var(--av-sys-color-surface-raised-hover); }
 .workstream-title-edit { align-items: center; display: flex; gap: 3px; margin-left: -5px; min-width: 0; }
 .workstream-title-input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-default); font-size: 13px; font-weight: 600; min-width: 90px; outline: 0; padding: 0 6px; width: 340px; }
@@ -5325,6 +5322,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .grokbot-header-actions { align-items: center; display: flex; gap: 8px; justify-self: end; }
 .grokbot-workstream-header > h1 { display: flex; justify-content: flex-start; min-width: 0; }
 .grokbot-conversation-title {
+  position: relative;
   align-items: center;
   background: transparent;
   border: 0;
@@ -5342,6 +5340,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   padding: 4px 6px;
 }
 .grokbot-conversation-title > h1 { font: inherit; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grokbot-conversation-title .inline-error { position: absolute; top: 100%; left: 0; max-width: 100%; padding: 6px; margin: 0; background: var(--av-sys-color-surface-raised); z-index: 1; }
 .grokbot-conversation-title .workstream-title-input { max-width: 100%; width: min(340px, 35vw); }
 button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface-elevated-hover); color: var(--av-sys-color-text-default); }
 .grokbot-computer-button.icon-button {
