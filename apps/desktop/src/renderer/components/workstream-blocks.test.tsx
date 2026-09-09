@@ -2215,6 +2215,27 @@ describe('MessageBlock substream cutoff', () => {
     expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-4');
   });
 
+  it('keeps the cutoff on a settled turn that carries no prose, without the actions that need it', () => {
+    // An attachment-only turn is still a place to branch from, but there is
+    // nothing to copy, read aloud, or render to a card.
+    const { container } = render(
+      <MessageBlock
+        {...actions}
+        message={{ ...settledAgentTurn, text: '' }}
+        onStartSubstream={onStartSubstream}
+      />,
+    );
+
+    const row = container.querySelector('.agent-message-actions');
+    expect(row).not.toBeNull();
+    expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
+      .toEqual(['↳ New substream']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start substream from this message' }));
+
+    expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-9');
+  });
+
   it('offers no cutoff on a turn that has not settled', () => {
     // A streaming turn has no fixed end to freeze, and an undelivered one is
     // not in the transcript the capture reads.
