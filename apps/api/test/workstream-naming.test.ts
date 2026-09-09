@@ -15,6 +15,7 @@ import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   seedCanonicalConversationTurn,
   seedWorkstreamObjectRoot,
+  testIdentityOperationStub,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   applyWorkstreamObjectRootFields,
@@ -281,6 +282,75 @@ describe("work-stream naming", () => {
       title_status: "automatic",
     });
     expect(appearance(database)).toBeNull();
+    expect(published).toEqual([{
+      type: "workstream_renamed",
+      title: "Avalon download link",
+      titleStatus: "automatic",
+    }]);
+  });
+
+  it("still renames when the icon is a catalog key this object cannot read", async () => {
+    const database = seededDatabase();
+    // Dispatched at the storage operation rather than through the service,
+    // because that is the only place this value exists: the service's own parse
+    // degrades an off-catalog icon to `null` long before the write. The args
+    // cross the object's RPC boundary as JSON, so during a rollout a Worker one
+    // deploy ahead sends a key the resident object's enum does not know.
+    //
+    // The icon is the soft half. A throw here rolls back the title and the
+    // status advance in the same transaction and leaves a skeleton that only
+    // the second pass can clear, and only past five said messages — the exact
+    // failure the module's "advance the status even when it produced no name"
+    // invariant exists to prevent.
+    const answer = testIdentityOperationStub(objectStoreOf(database))({
+      operation: "rename",
+      args: [{
+        title: "Avalon download link",
+        icon: "telescope",
+        from: "naming",
+        to: "automatic",
+        now: Date.now(),
+      }],
+    });
+
+    expect(JSON.parse(answer.bodyJson)).toEqual({
+      ok: true,
+      value: { outcome: "renamed", icon: null },
+    });
+    expect(workstreamRow(database)).toMatchObject({
+      title: "Avalon download link",
+      title_status: "automatic",
+    });
+    expect(appearance(database)).toBeNull();
+  });
+
+  it("names the work stream past an appearance it cannot read, and leaves it alone", async () => {
+    const database = seededDatabase();
+    // `json_valid` accepts this and the appearance schema does not, so it is
+    // durable state the object can read from the column and not into a value.
+    objectStoreOf(database)
+      .prepare("UPDATE workstream SET appearance_json = 'null' WHERE id = 1").run();
+    const published: Array<Record<string, unknown>> = [];
+    stubOpenRouter([], "Avalon download link");
+    const env = environment(database, published);
+
+    await nameWorkstream(env, {
+      workspaceId,
+      workstreamId,
+      objective,
+      openingMessage: objective,
+      provisionalTitle,
+    });
+
+    // The name lands. The appearance is left exactly as it was rather than
+    // replaced with a generated icon: malformed shared identity fails visibly
+    // rather than quietly becoming something else, and a naming pass is the
+    // last writer that should overrule that.
+    expect(workstreamRow(database)).toMatchObject({
+      title: "Avalon download link",
+      title_status: "automatic",
+    });
+    expect(workstreamRow(database).appearance_json).toBe("null");
     expect(published).toEqual([{
       type: "workstream_renamed",
       title: "Avalon download link",
