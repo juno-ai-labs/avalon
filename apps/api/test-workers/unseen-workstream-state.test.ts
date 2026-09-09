@@ -17,6 +17,7 @@ import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  asUserId,
   asWorkspaceId,
   asWorkstreamId,
   ConversationEffectSchema,
@@ -26,11 +27,14 @@ import {
 
 import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
 import type { Env } from "../src/env";
+import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { deliverChildEffects } from "./helpers/conversation-effects";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000007b1");
-const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000007b2");
-const CREATOR_ID = "00000000-0000-7000-8000-0000000007b3";
+// An earlier object may still finish an alarm while reset is in flight. Each
+// case owns a fresh child and parent so that work cannot replay its fixture.
+let WORKSTREAM_ID = asWorkstreamId(crypto.randomUUID());
+const CREATOR_ID = asUserId("00000000-0000-7000-8000-0000000007b3");
 const CREATOR_SESSION_ID = "00000000-0000-7000-8000-0000000007b4";
 const INVITEE_ID = "00000000-0000-7000-8000-0000000007b5";
 const INVITEE_SESSION_ID = "00000000-0000-7000-8000-0000000007b6";
@@ -60,6 +64,7 @@ const INVITEE_AUTH = {
 
 beforeEach(async () => {
   await reset();
+  WORKSTREAM_ID = asWorkstreamId(crypto.randomUUID());
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
@@ -156,10 +161,12 @@ async function product(stub: DurableObjectStub, body: unknown): Promise<{
 
 async function startWorkstream(stub: DurableObjectStub, participantUserIds: string[]): Promise<void> {
   await parkEffectQueue(stub);
-  const opened = await product(stub, {
-    operation: "initialize",
-    auth: AUTH,
-    input: {
+  // Creation commits the participant state under test before execution wakes.
+  // Keep the unrelated opening model run inert so its alarm cannot cross reset
+  // and replay a previous fixture (the same boundary as participant-notification).
+  await runInDurableObject(stub, async (instance) => {
+    const productService = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+    return productService.initialize(AUTH, {
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       generation: 1,
@@ -176,9 +183,8 @@ async function startWorkstream(stub: DurableObjectStub, participantUserIds: stri
       modelOverride: null,
       executionPrincipal: { type: "user", userId: CREATOR_ID },
       reason: "user_message",
-    },
+    });
   });
-  expect(opened.status).toBe(200);
 }
 
 async function connectParticipant(

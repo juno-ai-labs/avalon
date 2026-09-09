@@ -684,6 +684,15 @@ one parent receipt was absent, and an elicitation precondition stayed
 `executing:1`. Isolating selected object ids reduced the frequency but could not
 remove a run the tests had no reason to start.
 
+`unseen-workstream-state.test.ts` hit the same failure in PR #630: a speculative
+open case inherited the previous case's first-open timestamp before connecting
+its socket. The original fixture failed its first shuffled repetition. Its
+creation now calls the real product service before endpoint execution activation,
+and each case has a fresh workstream identity; removing activation alone still
+left a projection failure on the second shuffled repetition. The combined
+fixture passed twenty shuffled repetitions, preserving real storage, effects,
+and socket assertions rather than hiding the race with retries.
+
 Once the endpoint *does* activate the run, it still does not drain it in the
 same request: product `initialize` commits the admitted run, then the endpoint
 writes the execution receipt and arms a +1ms alarm
