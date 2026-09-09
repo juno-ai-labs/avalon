@@ -3293,6 +3293,57 @@ describe('useWorkstreamSocket', () => {
     ]);
   });
 
+  it('leaves an icon a person already chose alone when a naming event arrives after it', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000409';
+    queryClient.setQueryData(['workstream', workstreamId], {
+      id: workstreamId,
+      title: 'Mucker invoices',
+      titleStatus: 'naming',
+      harnessStatus: 'running',
+    } as WorkstreamDetail);
+    // Their own choice, already acknowledged and written to the row by the
+    // receipt handler. The naming event was published before that command
+    // committed, so the icon it carries is older than what is here.
+    setCachedWorkstreams(queryClient, [
+      { id: workstreamId, title: 'Mucker invoices', titleStatus: 'naming', appearance: { icon: 'rocket', color: 'teal' } },
+    ] as WorkstreamSummary[]);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'workstream_renamed',
+      sequence: 1,
+      occurredAt: '2026-08-11T09:00:01.000Z',
+      title: 'Reconcile Mucker invoices',
+      titleStatus: 'automatic',
+      icon: 'megaphone',
+    }));
+
+    // The name lands; the icon does not. The event carries an icon only when
+    // the object had none when it renamed, so a row that has one holds
+    // something newer — and the two travel different paths, so the event can
+    // arrive after the receipt that put it there.
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
+      {
+        id: workstreamId,
+        title: 'Reconcile Mucker invoices',
+        titleStatus: 'automatic',
+        appearance: { icon: 'rocket', color: 'teal' },
+      },
+    ]);
+  });
+
   it('carries a visibility change to the header and the sidebar row', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();

@@ -206,15 +206,23 @@ Two paths, and both matter because they serve different readers:
   written* — the object reports which, so a refused icon is never published and
   no open client paints over the choice it was refused for. The event reaches
   anyone with that work stream open, in practice the person who just created it.
-  The client puts the icon on the **sidebar row only** and leaves the header to
-  the projection below, which is the rule for every unversioned appearance
-  write: the cached detail behind the header is what the appearance picker reads
-  to decide its own pending preview is finished, and `settled()` retires that
-  preview as soon as the detail's icon moves off the baseline it was taken
-  against — to any value, since another person changing the icon has to retire
-  it too. An icon written there that nobody in this window picked would retire
-  somebody's in-flight choice to the generated glyph and hold the header on it
-  until the projection lands.
+  The client puts the icon on the **sidebar row only, and only where that row
+  has no icon**; the header waits for the projection below. Two conditions, two
+  reasons.
+
+  *Row only*, because the cached detail behind the header is what the appearance
+  picker reads to decide its own pending preview is finished, and `settled()`
+  retires that preview as soon as the detail's icon moves off the baseline it
+  was taken against — to any value, since another person changing the icon has
+  to retire it too. An icon written there that nobody in this window picked
+  would retire somebody's in-flight choice to the generated glyph and hold the
+  header on it until the projection lands.
+
+  *Only where the row has none*, because the event carries an icon exactly when
+  the object had none at the moment it renamed, so a row that has one now holds
+  something newer — a choice whose receipt already landed. The two travel
+  different paths, the room socket and the Main command channel, so the event
+  can arrive after that receipt.
 - **The workspace directory.** The `UPDATE` names `workstreams`, so the
   work-stream object commits a `directory_common` effect beside it, which flows
   `SubstreamAgent -> WorkstreamDO -> WorkspaceDO` and is pushed to every
@@ -265,6 +273,12 @@ text under another's header.
   above does not cover it — a person picking an icon settles no title — so this
   condition is the whole of what protects their choice, and it lives in the same
   transaction as the title write rather than in the caller.
+- **Nothing about the icon may throw inside `rename`.** Both parses there are
+  non-throwing on purpose: the title write and the status advance share that
+  transaction, so an unreadable icon or appearance would roll back the name and
+  leave the permanent skeleton this module's first invariant forbids. The icon
+  is the soft half everywhere — at the model parse, at the write, and on the
+  client.
 - **What is published is what was written.** The object returns the icon it
   actually stored; publishing the icon the pass *asked* for would tell every open
   client to show an icon the object had just declined to write.
@@ -321,6 +335,16 @@ ordinary work-stream update and belongs to the object's product service.
   under `strict: true`, so a provider that honours it cannot produce this; the
   leniency is for the one that does not, and for a key renamed out from under a
   request already in flight.
+- **A key the *object* does not know, or a stored appearance it cannot read.**
+  Same outcome, enforced a second time and for a harder reason: `rename` parses
+  both without throwing, because the title write and the `title_status` advance
+  are in that transaction and a throw rolls them back — which is the permanent
+  skeleton this whole module exists to prevent. The key case is a rollout, where
+  a Worker one deploy ahead sends a catalog key the resident object's enum does
+  not have; the appearance case is any value the column's `json_valid` CHECK
+  admits that the schema does not, `'null'` among them. An unreadable stored
+  appearance is left exactly as it is rather than replaced with a generated
+  icon, per [`workstream-appearance.md`](workstream-appearance.md).
 - **A person picked an icon first.** The write is refused, nothing about the icon
   is published, and the name lands as usual. This is also the outcome when they
   pick one between the two passes.
@@ -360,7 +384,12 @@ ordinary work-stream update and belongs to the object's product service.
   icon assertions fail), by removing the `stored.icon === null` condition beside
   it (*"keeps an icon a person chose"* fails, with the person's `rocket` replaced),
   or by dropping `.catch(null)` from `WorkstreamNameResultSchema` (the
-  off-catalog case loses the name along with the icon).
+  off-catalog case loses the name along with the icon). The two non-throwing
+  parses have a case each — *"still renames when the icon is a catalog key this
+  object cannot read"*, dispatched at the storage operation because the service's
+  own parse degrades that value long before the write, and *"names the work
+  stream past an appearance it cannot read"*. Restore either `.parse` and both
+  fail with the row stuck in `naming`.
 - `packages/agent-harness/src/prompts.test.ts` asserts a description line for
   every key in the catalog, not a sample of them. A key added without one fails
   to compile first; this is what catches one described in a way the prompt never
@@ -384,7 +413,9 @@ ordinary work-stream update and belongs to the object's product service.
   that the cached detail is left without an appearance**, which is the guard on
   the picker-preview rule above. Break it by writing the detail as well, through
   `patchCachedWorkstream`, and the `not.toHaveProperty('appearance')` assertion
-  fails.
+  fails. *"leaves an icon a person already chose alone when a naming event
+  arrives after it"* covers the other condition; break it by dropping
+  `!row.appearance?.icon` from `patchCachedGeneratedIcon`.
 - `apps/desktop/src/renderer/components/sidebar.test.tsx` and
   `screens/workstream.test.tsx` cover the two surfaces of `useNamingSkeleton`,
   each with a row inside the grace and one past it. The rule is a function of
@@ -461,7 +492,9 @@ name. If the second pass's icon ever matters more than the extra column, the
 change to make is provenance on the appearance — an icon source alongside the
 key, which is what `title_status` already is for the title.
 
-**Consequences:** The catalog is now model-visible, so adding an icon means
+**Consequences:** A naming pass now writes a second column, so anything added to
+`rename` has to keep the rule that only the title may fail it. The catalog is
+now model-visible, so adding an icon means
 adding a description of its *drawing* in the same edit — the `Record` will not
 compile otherwise, and a test rejects a description that says what the icon is
 for — and the golden prompt hashes in `prompts.test.ts` move whenever either
