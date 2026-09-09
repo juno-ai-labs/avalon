@@ -109,15 +109,38 @@ no longer has a builder to open.
 
 `useOpenFirstWorkstream` is the one way a screen leaves. It always replaces the
 history entry, so Back cannot return to a screen the API refuses, and it names
-the rows the landing must pass over. The directory is authoritative and no
-leaving screen patches it: an archived row is removed by the WorkstreamDO
-tombstone the socket delivers, a batch by its refetch, and both land after the
-screen has had to go. Without the skip the landing would open the row that was
-just archived, because it was the most recent one precisely by having been
-open. A row marked unread stays in the list for good and is skipped for a
-different reason: opening it is what reads it. A batch names every cached row
-its filter took, not only the open one, since the response says only how many
-went.
+the rows the landing must pass over for that one landing. No leaving screen
+patches the directory: the WorkstreamDO tombstone the socket delivers is what
+removes an archived row, under the directory waterline that orders the removal
+against everything else in flight for it. What a leaving screen does do is
+evict the archived or left work stream's own cache entries, and that eviction
+also drops its row from the list the landing reads. So the skip is doing three
+different jobs. For a single archive or a left personal stream it is a belt
+over that eviction, covering the frame in which a directory page re-delivers
+the row ahead of the tombstone, where it would be the most recent one. For a
+batch archive it is load-bearing: only the open row is evicted, the others the
+batch took stay until their tombstones arrive, and the landing would open the
+next most recent of them. And a row marked unread stays in the list for good
+and is skipped because opening it is what reads it.
+
+The batch's skip list is a reconstruction, `batchArchiveSkipIds`, run over the
+cached rows against the filter the server also evaluated. The response says how
+many went and never which, so a row whose recency crossed the filter's edge
+between the client's snapshot and the server's evaluation lands on the wrong
+side. The two errors are not symmetric: skipping a row that survived costs a
+landing on an older row or a page fetch, while opening a row that went costs
+an error screen. The reconstruction is therefore allowed to be wide, and it
+applies to one landing only, so a live row it wrongly names is passed over
+once rather than for the session.
+
+**Landing opens a work stream, and opening it reads it.** That is true of the
+row the landing chooses after an archive, which is what a mail client does, and
+it is true after mark-as-unread too: leaving the row for later spends the
+unread state of the row landed on instead. That is a deliberate choice and not
+an oversight. The alternative of staying put would re-read the row that was
+just marked, which is the one outcome the action exists to prevent, and the
+composer this used to fall back to was inert only by being nowhere. A reader
+who wants neither can mark the next row unread in turn.
 
 A skip list that empties every loaded page is not an empty workspace: a batch
 can take the whole first page — the day's work streams, say — while older ones
@@ -127,7 +150,15 @@ out. It requests a page once per change to the list rather than once per
 settled fetch, because `fetchMore` leaves its cursor in place after a failed
 page; re-requesting on settle would retry that page forever. A failed page
 therefore waits, and the socket's own delivery of the archive's tombstones is
-what changes the list and asks again.
+what changes the list and asks again. If the socket is what is down, nothing
+changes the list and the landing keeps its opening state; the sidebar is
+rendered around it and stays usable, which is the way out.
+
+Telemetry still names `/workstreams/new` the `workspace_home` surface. The
+name dates from when the composer was the home; after this change it is the
+New action, and a funnel keyed on that surface reads the leaves above as
+`workstream` views instead. The mapping is left alone rather than migrated,
+but the reading changes meaning at this change.
 
 The one deliberate exception is the inert composer route a cross-workspace deep
 link parks on while its resource action resolves. Landing there would open and
@@ -258,6 +289,16 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
 - **Pinning is gated on readability; unpinning is not.** Removing a pin is never
   a question about the work stream, and a pin that has gone dark can only be
   reached by a caller that already knows the id.
+- **`useOpenFirstWorkstream` is the one way a screen leaves for the root
+  route, and every leave replaces.** A screen that navigates to `/` or sets
+  the hash itself pushes an entry the API will refuse on Back, and cannot name
+  the rows the landing must pass over.
+- **No leaving screen patches the directory.** It may evict the work stream it
+  is leaving; which rows the list holds is the socket's, under the directory
+  waterline. A landing that needs a row gone tells the landing, it does not
+  remove the row.
+- **The composer is a create action.** It is reached by an explicit New
+  action or by an empty workspace, never as the place a screen falls back to.
 
 ## Boundary
 
@@ -373,6 +414,18 @@ leaves through the same hook. And a skip list covering every loaded page read
 as an empty workspace while more pages existed, so the landing now pages past
 skipped rows before opening the composer, requesting once per list change so
 a failed page cannot loop.
+
+A second round corrected the record more than the code. The rationale above
+had said the skip exists because the archived row sits in the list until its
+tombstone; `evictCachedWorkstream` in fact drops the row from the list as it
+clears the work stream's other entries, so at the single-archive and leave
+sites the skip covers only a re-delivered page, and the chained-archive race a
+reviewer raised does not reach the landing for the same reason. The batch is
+where the skip is load-bearing, so its derivation became `batchArchiveSkipIds`,
+exported and tested, with its best-effort nature and the direction it is
+allowed to err in written down. Onboarding's finish, the last leave still
+setting the hash, moved to the hook. And the mark-as-unread landing reading
+the next row was recorded as the decision it is rather than left implicit.
 
 ### 2026-09-08 — A moved row travels to its new section
 

@@ -148,6 +148,29 @@ export function workstreamMatchesBatchFilter(
 }
 
 /**
+ * The rows the landing must pass over after a batch archive took the open one.
+ *
+ * Every cached row the filter matches, not only the open one. The eviction
+ * drops the open row from the list, but the others the batch took stay until
+ * their tombstones arrive, and the landing would otherwise open the next most
+ * recent of them. This is a reconstruction, not the answer: the response says
+ * how many went, never which, and a row whose recency crossed the filter's
+ * edge between this snapshot and the server's own evaluation lands on the
+ * wrong side. The two errors are not symmetric. Skipping a row that survived
+ * costs a landing on an older row, or a page fetch; opening a row that went
+ * costs an error screen. So the reconstruction is allowed to be wide and the
+ * skip applies to this one landing only.
+ */
+export function batchArchiveSkipIds(
+  workstreams: readonly WorkstreamSummary[],
+  filter: WorkstreamBatchFilter,
+): string[] {
+  return workstreams
+    .filter((workstream) => workstreamMatchesBatchFilter(workstream, filter))
+    .map((workstream) => workstream.id);
+}
+
+/**
  * Apply a pin response — the caller's whole pinned list, in order — to the
  * cached work-stream list.
  *
@@ -618,9 +641,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           //
           // Leaving the screen is this handler's, though. The socket removes the
           // query but not the route, so the reader would be left on a work stream
-          // the API no longer serves. The landing is told which row went: the
-          // directory still lists it until the tombstone lands, and it is the
-          // most recent row by construction.
+          // the API no longer serves. The eviction below has already dropped the
+          // row from the list the landing reads, so naming it to the landing as
+          // well covers only the frame in which a directory page re-delivers it
+          // ahead of the tombstone; the row would be the most recent one there.
           // The one thing that cannot wait for the tombstone. With the socket
           // down the PATCH still succeeds, so the row stays until reconnect and
           // clicking it would serve this cached transcript for a work stream the
@@ -640,12 +664,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             : workstreams.data?.find((workstream) => workstream.id === activeWorkstreamId);
           if (update.kind === 'archive' && selected && workstreamMatchesBatchFilter(selected, filter)) {
             evictCachedWorkstream(queryClient, selected.id);
-            // Every cached row the filter took, not only the open one: the
-            // batch is told how many went, and the landing would otherwise pick
-            // the next most recent of them before the refetch removes it.
-            openFirstWorkstream((workstreams.data ?? [])
-              .filter((workstream) => workstreamMatchesBatchFilter(workstream, filter))
-              .map((workstream) => workstream.id));
+            openFirstWorkstream(batchArchiveSkipIds(workstreams.data ?? [], filter));
           }
           if (accepted.archivedNoteCount > 0) {
             // The same caches a single note's archive shakes loose, for the same
