@@ -1,3 +1,4 @@
+import { projectMemorySearchAccess } from './memory-search-authorization';
 import { asAutomationId, asWorkspaceId, asWorkstreamId, asSubstreamId } from '@rally/contracts';
 import type { AuthContext, Env } from '../env';
 import { durableObjectStubForWorkspace } from '../lib/durable-object-namespace';
@@ -62,6 +63,11 @@ export class AuthorizationService {
 
   async checkMany(subject: AuthorizationSubject, resources: readonly AuthorizationResource[]): Promise<AuthorizationDecision[]> {
     if (resources.length === 0) return [];
+    if (resources.every((resource) => resource.kind === 'memory')) {
+      try {
+        return await projectMemorySearchAccess(this.env, subject, resources);
+      } catch { return resources.map(unavailable); }
+    }
     const unique = [...new Map(resources.map((resource) => [authorizationSnapshotKey(subject, resource), resource])).values()];
     // One observation batch per call: a later check must never join an earlier read.
     const decisions = await new AuthorizationBatch(this.env).checkMany(subject, unique);
