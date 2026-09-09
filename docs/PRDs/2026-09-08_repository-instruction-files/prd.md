@@ -48,10 +48,12 @@ A substream keeps a durable ledger of which files it has loaded, at which
 content. When the transcript is compacted, the files the ledger says were in
 context move into a section of the system prompt, where they survive the
 next two compactions; after that they leave the prompt, and come back only
-when a Terminal tool touches a file beneath them again. The change ships
-server-side: the Terminal plugin, one host port in the harness, one
-object-local table, and one byte-stable sentence in the plugin's system
-message.
+when a Terminal tool touches a file beneath them again. That ledger is a
+generic context-residency primitive keyed by kind; instruction files are
+its first kind, and a skill body could be its second without changing it.
+The change ships server-side: the Terminal plugin, one host port in the
+harness, one object-local table, and one byte-stable sentence in the
+plugin's system message.
 
 ## Motivation
 
@@ -144,6 +146,12 @@ context.
 8. **Following instruction files in the code reviewers under
    `.github/workflows/`.** Out of scope; that runtime is not the Terminal
    plugin and its opt-out stands.
+9. **Moving skills or plugin instructions onto the residency ledger.**
+   Deferred to its own PRD. This change builds the ledger so that a skill
+   body can become a block without changing the table, the transitions, or
+   the harness ports, and key design decision 5 records how and what it
+   would buy; it does not change how `load_skill` or plugin activation
+   work today.
 
 ## Product behavior
 
@@ -232,11 +240,14 @@ None yet.
       existence, byte length, SHA-256, and bounded content in a single JSON
       block. It runs inside the same containment checks the tool's own path
       already passes, so a symlink out of the root is refused the same way.
-   3. **Instruction ledger.** An object-local table in the substream's
-      SQLite recording, per `(path, sha256)`: the bounded content, the
-      sandbox generation it was read from, where it currently lives
-      (`transcript`, `system`, `none`), and how many compactions its
-      system-prompt residency has left. Decision 4 gives the transitions.
+   3. **Context-residency ledger.** An object-local table in the substream's
+      SQLite recording, per resident context block `(kind, id, sha256)`: the
+      bounded content, the source generation it came from, where it
+      currently lives (`transcript`, `system`, `none`), and how many
+      compactions its system-prompt residency has left. Repository
+      instruction files are its first kind, keyed by path; nothing in the
+      table or its transitions knows what a file is. Decision 4 gives the
+      transitions and decision 5 the generic contract.
    4. **Delivery.** Two renderers over the same ledger, one for the user-role
       message and one for the system-prompt section, producing the same
       `Instructions added from ./<path>:` shape so the model sees one format
@@ -303,33 +314,89 @@ None yet.
    so a later run renders current ledger state rather than replaying stale
    prompt bytes.
 
-4. **Residency counts down from two.** The lifetime is the one the person
-   asking for the work named, and the transitions are:
+4. **Residency counts down from a per-kind lifetime; for instruction files
+   it is two.** The transitions are the same for every kind of block. A
+   kind supplies three things: what counts as a *load* (for instruction
+   files, a Terminal tool touching a path beneath the file, or the
+   repository bootstrap for the root), what counts as *source invalidation*
+   (for instruction files, the sandbox generation being replaced), and its
+   prefix lifetime `N` (for instruction files, two, the number the person
+   asking for the work named):
 
    | Event | Entry in `transcript` | Entry in `system` | Entry in `none` |
    | --- | --- | --- | --- |
-   | Tool touches beneath the file, same sha | nothing | nothing | deliver message; `transcript` |
-   | Tool touches beneath the file, new sha | deliver message for new sha; old entry `none` | same | same |
-   | Compaction | move to `system`, `remaining = 2` | if `remaining > 0`: `remaining -= 1`, stay; else `none` | nothing |
-   | Sandbox generation replaced | `none` | `none` | nothing |
+   | Load, same sha | nothing | nothing | deliver message; `transcript` |
+   | Load, new sha | deliver message for new sha; old entry `none` | same | same |
+   | Compaction | move to `system`, `remaining = N` | if `remaining > 0`: `remaining -= 1`, stay; else `none` | nothing |
+   | Source invalidated | `none` | `none` | nothing |
 
    So a file moved into the prompt at compaction one is present through
    compactions two and three and absent from compaction four onward, which
    is "surviving two future compactions". An entry that has left the prompt
    is not forgotten: the ledger keeps its row, which is the bookkeeping of
-   what was loaded previously, and re-delivery on the next touch is a
-   change of residency rather than a new discovery.
+   what was loaded previously, and re-delivery on the next load is a change
+   of residency rather than a new discovery.
 
-5. **The harness learns one host port, not the concept.** Bind and the
-   harness must not know what an `AGENTS.md` is. The `RunHarnessInput`
-   gains a `residentInstructions` port with two operations: `render()`,
-   which returns the already-formatted section text (or nothing) for
-   `renderStableSystemPrompt` to place after the active skill instructions,
-   and `onCompactionApplied(compactionIndex)`, which the compaction path
-   calls once the checkpoint is durable so the host can run the residency
-   transitions in decision 4. Content and wording stay on the host side.
-   This is the same division the skill and plugin catalogs use: the harness
-   renders what the host hands it, in a stable order.
+5. **The bookkeeping is a generic context-residency primitive; instruction
+   files are its first kind.** Bind and the harness must not know what an
+   `AGENTS.md` is, and equally the ledger must not know it is holding one.
+   The primitive has three parts, and each is written so that a skill body
+   or a plugin's instructions could be a block tomorrow:
+
+   - **A block.** `{ kind, id, sha256, content, residency, remaining }`.
+     `kind` names the policy; `id` is the kind's own locator (`./<path>`
+     for instruction files, a skill name for a skill); `sha256` is of the
+     content, so an edited source is a new block. Both renderers produce the
+     same `Instructions added from <locator>:` shape regardless of kind, so
+     the model learns one format.
+   - **A kind policy**, registered by whoever owns the kind: the prefix
+     lifetime `N`, the source-invalidation rule, the bound on one block's
+     bytes and on the kind's total bytes in the prefix (defined open per
+     decision 9), and the fixed heading and preamble the prefix renderer
+     prints above that kind's blocks. Blocks of different kinds render as
+     separate sections, kinds in a fixed order, blocks sorted by `id`, so
+     the prefix is byte-stable for unchanged ledger state.
+   - **Two host ports on `RunHarnessInput`**, under one `residentContext`
+     name: `render()`, which returns the already-formatted sections (or
+     nothing) for `renderStableSystemPrompt` to place after the active skill
+     instructions, and `onCompactionApplied(compactionIndex)`, which the
+     compaction path calls once the checkpoint is durable so the host runs
+     the transitions in decision 4. Tail delivery needs no harness change:
+     the host writes a pending derived input with `sourceKind = kind` and
+     `sourceId = <id>@<sha256>` and the settled-step boundary already
+     carries it. This is the same division the skill and plugin catalogs
+     use today: the harness renders what the host hands it, in a stable
+     order.
+
+   **How skills would adopt it, and what it would buy.** Today `load_skill`
+   returns a `loadedSkillRef` control signal and the host's `activateSkills`
+   closure rewrites `# Active Skill Instructions` in the system prompt at
+   once, which evicts the provider's cached prefix for the whole transcript
+   on every skill load. With the ledger, `activateSkills` would instead
+   write a block of kind `skill` and enqueue its body as a tail message,
+   `Instructions added from skill:<name>:`, at the settled step; the prefix
+   would not change until the next compaction, where the change is free,
+   and the skill would then live in the prefix for its kind's `N`
+   compactions before returning to the catalog's loadable list for the
+   model to load again. The `# Skills` catalog partition becomes a render of
+   the ledger (`active` = residency not `none`), so it too only moves at
+   compaction or at load. Bind's `maxActiveSkills` and
+   `maxActiveSkillBodyTokens` admission checks become the `skill` kind's
+   bounds. That migration is a later PRD (non-goal 9); this one leaves the
+   skill path untouched and only requires that nothing in the primitive
+   would have to change to admit it.
+
+   **What it would not buy.** A plugin's `systemMessage` looks like the same
+   case but is not: loading a plugin also changes the tool definitions sent
+   with every request, and those are part of the cached prefix on every
+   provider Rally uses, so the eviction happens whether or not the
+   instructions move. Plugin instructions are worth moving only together
+   with a change to how tools are advertised, which is out of scope here.
+
+   Rejected: a Terminal-owned `terminal_instruction_files` table with its
+   own compaction hook. It would have shipped the same rows and the same
+   transitions under a name that a second consumer could not reuse, and the
+   compaction hook is one port either way.
 
 6. **The root auto-load is attached to the clone, not to a tool.**
    `terminal_checkout_repository` does not clone; it records the selection
@@ -388,21 +455,23 @@ None yet.
 ## Data model
 
 One object-local table in the substream agent's SQLite, alongside
-`compaction_checkpoints` and `run_steering`:
+`compaction_checkpoints` and `run_steering`, holding resident context blocks
+of any kind. This PRD writes one kind, `repository_instructions`:
 
 | Column | Meaning |
 | --- | --- |
-| `path` | Relative to the work-space root, stored without a prefix; rendered as `./<path>` in both message shapes; part of the key |
-| `sha256` | Of the file's bytes at delivery; part of the key |
-| `sandbox_generation` | The Terminal work-space generation the bytes were read from |
+| `kind` | The policy that owns the block; `repository_instructions` here; part of the key |
+| `block_id` | The kind's locator. For instruction files the path relative to the work-space root, stored without a prefix and rendered as `./<path>`; part of the key |
+| `sha256` | Of the block's source bytes at delivery; part of the key |
+| `source_generation` | Kind-specific invalidation token; for instruction files the Terminal work-space generation the bytes were read from; null for a kind without one |
 | `content` | The bounded, sanitized text that was delivered |
-| `truncated` | Whether `content` is a prefix |
+| `truncated` | Whether `content` is a prefix of the source |
 | `residency` | `transcript`, `system`, or `none` |
 | `compactions_remaining` | Meaningful only while `residency = 'system'` |
 | `first_delivered_at`, `last_delivered_at` | For the bookkeeping question "what has this substream loaded" |
 
 No backfill: existing substreams start with an empty ledger, which is the
-correct state because none of them has been delivered an instruction file.
+correct state because none of them has been delivered a block of any kind.
 The authoritative record is the migration and
 [`data-model.md`](../../data-model.md), updated in the implementing change;
 the ordered-transcript schema under `durable-objects/ordered-transcript-sqlite/`
@@ -473,8 +542,10 @@ one line naming the reason (`not a regular file`, `not valid UTF-8`,
 inspect it.
 
 **The system-prompt section.** Present only for a compacted context whose
-ledger has entries in `system` residency, placed after `# Active Skill
-Instructions`:
+ledger has blocks in `system` residency, placed after `# Active Skill
+Instructions`. The renderer prints one section per kind with that kind's
+fixed heading and preamble; with `repository_instructions` as the only kind
+it reads:
 
 ```
 # Repository instructions
@@ -527,10 +598,12 @@ instructions it will not see on resume.
      pending-input delivery at the settled-step boundary, standing sentence,
      contract test, Terminal and harness document changelogs. This alone
      meets goals 1 through 7 for uncompacted runs.
-  2. `residentInstructions` host port, `# Repository instructions`
-     renderer, compaction hook and residency transitions, golden-hash and
-     injection tests for the new section, context-compaction document
-     changelog. This meets goal 8.
+  2. `residentContext` host port, kind-policy registration with
+     `repository_instructions` as the only kind, the per-kind prefix
+     renderer producing `# Repository instructions`, compaction hook and
+     residency transitions, golden-hash and injection tests for the new
+     section, agent-harness and context-compaction document changelogs.
+     This meets goal 8.
 - **Rollback.** Revert the deploy. Delivered messages already in a live
   transcript stay there as ordinary derived inputs; ledger rows are inert
   without the code that reads them.
