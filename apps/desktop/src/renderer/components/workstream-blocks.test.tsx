@@ -2181,7 +2181,11 @@ describe('MessageBlock substream cutoff', () => {
       <MessageBlock {...actions} message={settledAgentTurn} onStartSubstream={onStartSubstream} />,
     );
 
-    const control = screen.getByRole('button', { name: 'Start substream from this message' });
+    const control = screen.getByRole('button', { name: 'New substream from this message' });
+    // The visible words are inside the accessible name, so voice control can
+    // reach the control by what it says.
+    expect(control).toHaveAccessibleName(expect.stringContaining('New substream'));
+    expect(control.textContent?.trim()).toBe('↳ New substream');
     const row = container.querySelector('.agent-message-actions');
     expect(row).toContainElement(control);
     expect(container.querySelector('header')).not.toContainElement(control);
@@ -2204,7 +2208,7 @@ describe('MessageBlock substream cutoff', () => {
       />,
     );
 
-    const control = screen.getByRole('button', { name: 'Start substream from this message' });
+    const control = screen.getByRole('button', { name: 'New substream from this message' });
     expect(container.querySelector('.human-message-actions')).toContainElement(control);
     expect(container.querySelector('header')).not.toContainElement(control);
     expect(container.querySelector('.human-message-bubble')?.compareDocumentPosition(control))
@@ -2231,7 +2235,7 @@ describe('MessageBlock substream cutoff', () => {
     expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
       .toEqual(['↳ New substream']);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Start substream from this message' }));
+    fireEvent.click(screen.getByRole('button', { name: 'New substream from this message' }));
 
     expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-9');
   });
@@ -2239,10 +2243,17 @@ describe('MessageBlock substream cutoff', () => {
   it('offers no cutoff on a turn that has not settled', () => {
     // A streaming turn has no fixed end to freeze, and an undelivered one is
     // not in the transcript the capture reads.
+    // A human turn for the streaming arm on purpose: the assistant row refuses
+    // to render at all while `streaming`, so an agent turn here would assert on
+    // that gate and pass with the predicate's own `!message.streaming` deleted.
     const { rerender } = render(
-      <MessageBlock {...actions} message={{ ...settledAgentTurn, streaming: true }} onStartSubstream={onStartSubstream} />,
+      <MessageBlock
+        {...actions}
+        message={{ ...baseMessage, transcriptTurnId: 'turn-4', streaming: true }}
+        onStartSubstream={onStartSubstream}
+      />,
     );
-    expect(screen.queryByRole('button', { name: 'Start substream from this message' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New substream from this message' })).toBeNull();
 
     rerender(
       <MessageBlock
@@ -2251,7 +2262,7 @@ describe('MessageBlock substream cutoff', () => {
         onStartSubstream={onStartSubstream}
       />,
     );
-    expect(screen.queryByRole('button', { name: 'Start substream from this message' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New substream from this message' })).toBeNull();
 
     // The other two arms of the same predicate: a turn the transcript has no id
     // for cannot be named as the cutoff, and a row that is not an authored
@@ -2261,12 +2272,12 @@ describe('MessageBlock substream cutoff', () => {
     rerender(
       <MessageBlock {...actions} message={{ ...settledAgentTurn, transcriptTurnId: undefined }} onStartSubstream={onStartSubstream} />,
     );
-    expect(screen.queryByRole('button', { name: 'Start substream from this message' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New substream from this message' })).toBeNull();
 
     rerender(
       <MessageBlock {...actions} message={{ ...settledAgentTurn, messageType: 'automation_activation' }} onStartSubstream={onStartSubstream} />,
     );
     expect(screen.getByText('Automation')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Start substream from this message' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New substream from this message' })).toBeNull();
   });
 });

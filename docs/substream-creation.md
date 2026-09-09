@@ -36,10 +36,14 @@ of its title. It retains the existing sidebar colors, row sizing, drag width and
 icon-only collapse. A completed
 main-feed message also offers **New substream** with that message as the cutoff:
 last in the assistant turn's action row, after Copy, Speak, Image and PDF, and in
-a row of its own under a person's own bubble, ending on the same vertical as the
-identity line above it. Both placements appear on hover, alongside the other
-things a settled turn can be asked to do.
-Both enter the same creation flow; there is no context-strategy picker.
+a row of its own under any person's bubble — the reader's own turn and a
+colleague's alike — ending on the same vertical as the identity line above it.
+Both placements appear on hover, alongside the other things a settled turn can be
+asked to do. [Conversation surfaces](conversation-surfaces.md) owns the rows
+themselves.
+
+The sidebar row and the message control enter the same creation flow; there is no
+context-strategy picker.
 
 Every section of the center sidebar belongs to the parent work stream. Switching
 substreams changes the conversation, not the sidebar's artifact inventory,
@@ -232,24 +236,14 @@ substitute for real-provider latency or window-level acceptance.
 
 ### 2026-09-09 — Move the message cutoff into the turn's action row
 
-**What changed:** The per-message **New substream** control left the identity
-line and joined the turn's action row — last after Copy, Speak, Image and PDF on
-an assistant turn, and alone in a row under a person's own bubble. Its hover fade
-now belongs to whichever row holds it.
+**What changed:** The per-message entry point left the identity line for the
+turn's action row. Nothing about how a substream is created changed — only where
+the control that starts one is drawn.
 
-**Why:** In the identity line it sat between the author, the time and the turn's
-labels, where a reader looking for who spoke and when had to read past an action;
-the action row is already where a settled turn's verbs live, and starting a
-substream is one of them. The fade moved because the button kept its own hover
-opacity inside a row that already fades: the two multiplied and rendered this one
-button visibly paler than the four beside it.
-
-**Considered and rejected:** Moving it only on assistant turns, which would have
-left the same action in two different places depending on who spoke. A future
-change should keep the two placements' metrics identical — the control takes the
-action row's font size and padding so it reads as one of that row's buttons — and
-must keep the label unbroken (`white-space: nowrap`), because its two words wrap
-mid-control in a narrow row.
+**Why and how:** The row is shared rendering, which
+[conversation surfaces](conversation-surfaces.md) owns per this document's
+**Boundary**; its entry there carries the reasoning and the constraints a future
+change has to respect.
 
 
 ### 2026-09-08 — Review fixes for lifecycle and command boundaries

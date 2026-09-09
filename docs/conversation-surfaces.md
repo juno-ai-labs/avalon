@@ -149,9 +149,10 @@ Finished assistant turns also share the action row. Copy and export remain
 local actions; **Speak** uses the regional authenticated stream documented in
 [`message-speech.md`](message-speech.md) and receives the complete stored
 markdown even when the shared renderer has collapsed its sections. **New
-substream** closes that row, and a person's own settled turn carries the same
-control alone in a row beneath its bubble, inset by the bubble's corner so it
-ends on the same vertical as the identity line above it. A settled turn carrying
+substream** closes that row, and every settled human turn — the reader's own and
+a colleague's alike — carries the same control alone in a row beneath its bubble,
+inset by the bubble's corner so it ends on the same vertical as the identity line
+above it. A settled turn carrying
 attachments and no prose still shows the row, holding the cutoff alone: copy,
 speech and the exports each act on the response text and are withheld when there
 is none. Both placements are described in
@@ -174,6 +175,29 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-09 — Review fixes on the action-row move
+
+**What changed:** The cutoff control's accessible name became "New substream from
+this message", so it contains its visible words. The human row stops hit-testing
+while it is faded out. Both rows share one `prefers-reduced-motion` override. The
+conditional-spread the two new props were passed through became plain assignment.
+
+**Why:** A name that shares no words with the label leaves a person driving by
+voice unable to say what they can see — WCAG 2.5.3, and the one button in the row
+that failed it. The row is inside the article that reveals it, so it can only be
+clicked once revealed *except* during the 120ms fade, and this control creates a
+conversation rather than copying a line; the agent's row is deliberately left
+hit-testable, because it is also visible while speech plays and would otherwise
+take away its own Stop speaking. The spread was justified by
+`exactOptionalPropertyTypes`, which this package sets to `false` — the adjacent
+caller in `conversation-surface.tsx` already passed the same prop plainly.
+
+**Consequences:** A control added to either row states an accessible name that
+contains its visible label. Tests hold the fade's ownership and the source order
+the theme's corner override depends on — both invariants that were previously
+described in prose and provable only by reading pixels.
+
 
 ### 2026-09-09 — Both action rows share one set of button metrics
 
@@ -214,7 +238,7 @@ or only the turn.
 
 ### 2026-09-09 — Align the human action row on the bubble's corner, through the token
 
-**What changed:** The action row under a person's own turn takes
+**What changed:** The action row under a human turn takes
 `padding-inline-end: var(--turn-bubble-radius)`, so it ends where the bubble's
 straight edge ends and the curve takes over — the same vertical the identity line
 above it stops on. The work-stream theme, which rounds that bubble harder than
@@ -239,7 +263,16 @@ and that the work-stream theme moves it by the token rather than by a literal.
 
 **What changed:** The **New substream** control moved out of the message identity
 line into the turn's action row, last after Copy, Speak, Image and PDF, with a
-one-control row under a person's own bubble for the same action.
+one-control row under a human turn's bubble for the same action.
+
+**Considered and rejected:** Moving it only on assistant turns, which would have
+left the same action in two places depending on who spoke.
+
+**Consequences:** The two placements keep identical metrics — the control takes
+the row's font size and padding rather than restating them — and the label stays
+unbroken (`white-space: nowrap`), because its two words wrap mid-control in a
+narrow row. Its accessible name contains its visible words, so voice control can
+reach it by what it says; the row's other buttons already read that way.
 
 **Why:** The identity line answers who spoke and when; an action wedged between
 the author, the timestamp and the turn's labels competed with that. Everything
