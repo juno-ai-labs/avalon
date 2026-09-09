@@ -711,6 +711,12 @@ The traps, both of which have bitten:
 
 ## Changelog
 
+### 2026-09-09 — Input media matches card height
+
+The input overrides the shared media size to 54px, matching its file cards in
+one compact scrolling row. Feed media remains 108px square. The same components
+serve both contexts; only the container's size variable changes.
+
 ### 2026-09-09 — Input reuses feed tiles in one scrolling row
 
 Pending attachments now compose the feed image, media, and file components,
