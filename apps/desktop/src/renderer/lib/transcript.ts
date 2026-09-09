@@ -1612,13 +1612,26 @@ function activityWorkSpans(activity: TranscriptActivity | undefined): readonly W
   if (!activity || activity.intervals.length === 0) return undefined;
   const spans: WorkSpan[] = [];
   for (const interval of activity.intervals) {
-    if (interval.stoppedAtUtc === null) return undefined;
+    // A closed interval that recorded no duration is one the authority calls
+    // unmeasurable, and its timestamps do not overrule that: `activityDuration`
+    // already counts it as nothing, so deriving a span from them would make a
+    // drawer report time the rows inside it do not have.
+    if (interval.stoppedAtUtc === null || interval.durationMs === null) return undefined;
     const startedAtMs = Date.parse(interval.startedAtUtc);
     const endedAtMs = Date.parse(interval.stoppedAtUtc);
     if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs) || endedAtMs < startedAtMs) {
       return undefined;
     }
-    spans.push({ startedAtMs, endedAtMs });
+    spans.push({
+      startedAtMs,
+      endedAtMs,
+      // Carried on the span rather than read back off the row: a group built
+      // from tool rows alone has no aggregate to read it from, and a recovered
+      // boundary is a property of the interval either way.
+      ...(interval.timingAccuracy === 'upper_bound'
+        ? { timingAccuracy: 'upper_bound' as const }
+        : {}),
+    });
   }
   return spans;
 }
@@ -1917,6 +1930,87 @@ function isStillRunningWorkRow(message: Message): boolean {
 }
 
 /**
+ * How long a set of spans covers, counting a shared second once.
+ *
+ * The union is the only way to add work rows up. Bind runs a batch's tool
+ * calls concurrently, and a plugin row covers the gaps between its own calls
+ * that the thinking row beside it is filling — so a sum overstates a stretch
+ * by however much of it ran at the same time, which is why the accordion never
+ * had a total of its own before these spans existed.
+ */
+function unionDurationMs(spans: readonly WorkSpan[]): number {
+  const ordered = [...spans].sort((left, right) => left.startedAtMs - right.startedAtMs);
+  let total = 0;
+  let openedAt: number | null = null;
+  let closesAt = 0;
+  for (const span of ordered) {
+    if (openedAt === null) {
+      openedAt = span.startedAtMs;
+      closesAt = span.endedAtMs;
+      continue;
+    }
+    if (span.startedAtMs > closesAt) {
+      total += closesAt - openedAt;
+      openedAt = span.startedAtMs;
+      closesAt = span.endedAtMs;
+      continue;
+    }
+    closesAt = Math.max(closesAt, span.endedAtMs);
+  }
+  return openedAt === null ? 0 : total + (closesAt - openedAt);
+}
+
+/**
+ * What a folded stretch says it worked for, from the rows it holds.
+ *
+ * The response's own total is the better answer where it applies, and
+ * {@link collapseSettledWorkIntoAccordion} prefers it: it is the authority's
+ * measurement of the whole run, and where the drawer *is* the whole run it
+ * moves onto it unchanged. This is what the other drawers get. A stretch of a
+ * self-narrating response has no total of its own reported anywhere, and the
+ * alternative to computing one here is the bare "Worked" every such drawer
+ * used to read — a row asking to be opened while saying nothing about whether
+ * that is worth doing.
+ *
+ * Every work row it holds has to be able to say when it worked, or the stretch
+ * reports nothing. A row whose spans never reached this client took an unknown
+ * amount of time, and a union over the rest would print a number quietly
+ * missing it — the same reason a thinking run with one unmeasured segment
+ * reports no total rather than a shorter one.
+ *
+ * The accuracy comes from the rows themselves: a stretch holding a row whose
+ * own timing is an upper bound is a stretch whose total is one too, and it
+ * reads "Worked for at most …" exactly as that row does.
+ */
+function foldedStretchTotal(rows: readonly Message[]): WorkTotal {
+  const spans: WorkSpan[] = [];
+  let upperBound = false;
+  let sawWork = false;
+  for (const row of rows) {
+    if (!isCollapsedWorkRow(row)) continue;
+    sawWork = true;
+    if (row.workSpans === undefined) return { durationMs: null };
+    spans.push(...row.workSpans);
+    // Either source can say the timing is recovered, and both are asked. The
+    // row's aggregate is what a plugin row from the server carries; the spans
+    // are what a group assembled from tool rows alone has, and that group has
+    // no aggregate accuracy to read.
+    const timingAccuracy = row.messageType === 'thought'
+      ? row.thoughtEvent?.timingAccuracy
+      : row.pluginActivity?.timingAccuracy;
+    if (timingAccuracy === 'upper_bound'
+      || row.workSpans.some((span) => span.timingAccuracy === 'upper_bound')) {
+      upperBound = true;
+    }
+  }
+  if (!sawWork || spans.length === 0) return { durationMs: null };
+  return {
+    durationMs: unionDurationMs(spans),
+    ...(upperBound ? { timingAccuracy: 'upper_bound' as const } : {}),
+  };
+}
+
+/**
  * Fold each finished stretch of machinery behind the answer it produced.
  *
  * While a stretch is running, every row of it is progress: the reader watches
@@ -2003,80 +2097,6 @@ function isStillRunningWorkRow(message: Message): boolean {
  * feed — inside it — so reusing the id would put the same `message-<id>` anchor
  * on the document twice.
  */
-/**
- * How long a set of spans covers, counting a shared second once.
- *
- * The union is the only way to add work rows up. Bind runs a batch's tool
- * calls concurrently, and a plugin row covers the gaps between its own calls
- * that the thinking row beside it is filling — so a sum overstates a stretch
- * by however much of it ran at the same time, which is why the accordion never
- * had a total of its own before these spans existed.
- */
-function unionDurationMs(spans: readonly WorkSpan[]): number {
-  const ordered = [...spans].sort((left, right) => left.startedAtMs - right.startedAtMs);
-  let total = 0;
-  let openedAt: number | null = null;
-  let closesAt = 0;
-  for (const span of ordered) {
-    if (openedAt === null) {
-      openedAt = span.startedAtMs;
-      closesAt = span.endedAtMs;
-      continue;
-    }
-    if (span.startedAtMs > closesAt) {
-      total += closesAt - openedAt;
-      openedAt = span.startedAtMs;
-      closesAt = span.endedAtMs;
-      continue;
-    }
-    closesAt = Math.max(closesAt, span.endedAtMs);
-  }
-  return openedAt === null ? 0 : total + (closesAt - openedAt);
-}
-
-/**
- * What a folded stretch says it worked for, from the rows it holds.
- *
- * The response's own total is the better answer where it applies, and
- * {@link collapseSettledWorkIntoAccordion} prefers it: it is the authority's
- * measurement of the whole run, and where the drawer *is* the whole run it
- * moves onto it unchanged. This is what the other drawers get. A stretch of a
- * self-narrating response has no total of its own reported anywhere, and the
- * alternative to computing one here is the bare "Worked" every such drawer
- * used to read — a row asking to be opened while saying nothing about whether
- * that is worth doing.
- *
- * Every work row it holds has to be able to say when it worked, or the stretch
- * reports nothing. A row whose spans never reached this client took an unknown
- * amount of time, and a union over the rest would print a number quietly
- * missing it — the same reason a thinking run with one unmeasured segment
- * reports no total rather than a shorter one.
- *
- * The accuracy comes from the rows themselves: a stretch holding a row whose
- * own timing is an upper bound is a stretch whose total is one too, and it
- * reads "Worked for at most …" exactly as that row does.
- */
-function foldedStretchTotal(rows: readonly Message[]): WorkTotal {
-  const spans: WorkSpan[] = [];
-  let upperBound = false;
-  let sawWork = false;
-  for (const row of rows) {
-    if (!isCollapsedWorkRow(row)) continue;
-    sawWork = true;
-    if (row.workSpans === undefined) return { durationMs: null };
-    spans.push(...row.workSpans);
-    const timingAccuracy = row.messageType === 'thought'
-      ? row.thoughtEvent?.timingAccuracy
-      : row.pluginActivity?.timingAccuracy;
-    if (timingAccuracy === 'upper_bound') upperBound = true;
-  }
-  if (!sawWork || spans.length === 0) return { durationMs: null };
-  return {
-    durationMs: unionDurationMs(spans),
-    ...(upperBound ? { timingAccuracy: 'upper_bound' as const } : {}),
-  };
-}
-
 export function collapseSettledWorkIntoAccordion(messages: readonly Message[]): Message[] {
   const rows: Message[] = [];
   // How many accordions the response being read has produced so far. Its total

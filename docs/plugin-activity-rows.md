@@ -445,7 +445,9 @@ is the one that might have been partly unloaded, and what follows it is loaded.
   its own calls, so a sum overstates the stretch by whatever ran concurrently; a
   union of the wall-clock stretches those rows occupied does not. A stretch
   holding a row whose spans never reached this client says "Worked" and no
-  number.
+  number, and one holding a recovered boundary reads "Worked for at most …" —
+  that accuracy rides on the span itself, because a plugin group assembled from
+  tool rows alone has no aggregate accuracy to read it from.
 - **A response the client has only part of never labels a drawer.** Counting
   accordions is a proxy for "this drawer is the whole response", and the proxy
   fails across a seam: a response whose earlier stretches were never loaded shows
@@ -565,6 +567,10 @@ It deliberately does **not** cover:
   group, a turn whose activity never reached this client — is missing from it.
   The drawer is then honest about the rows it can show and quiet about the rest,
   which is the direction that never claims time a reader cannot open and see.
+  An interval the authority closed without recording a duration is unmeasurable
+  for the same reason, timestamps or not: `activityDuration` already counts it
+  as nothing, so a span read off its boundaries would put time in the drawer
+  that no row inside can account for.
   Spans reach the client through the activity tree, whose joins are the nullable
   ones [`pluginRuns`](#where-the-code-lives) exists to stop depending on; a run
   the tree never reached has a duration but no spans, and one such row in a
