@@ -393,13 +393,6 @@ to work streams without copying their content into Rally. Issue-dependency and
 sub-issue deliveries add both sides of the relationship, including
 cross-repository issues, while retaining one normalized activity per delivery.
 
-WorkspaceDO discovery upserts write only when type, title, effective canonical
-URL, or merged resource metadata changes. A missing URL retains the stored URL;
-metadata keeps JSON merge-patch semantics, including explicit-null deletion.
-`discoveredDeliveryId` and `discoveredEventType` alone do not count as resource
-changes: those fields and `updated_at` describe the last meaningful discovery
-change, not a last-seen heartbeat. Delivery receipts retain delivery processing
-semantics. Real workerd coverage lives in `resource-update-cost.test.ts`.
 
 ### Linear
 
@@ -536,6 +529,14 @@ actually needs the pattern. Notion's implementation, retry rules, regional fan-o
 and operator commands are documented in [`notion-ingress.md`](notion-ingress.md).
 
 ### Activity ingestion
+
+WorkspaceDO discovery upserts write only when type, title, effective canonical
+URL, or merged resource metadata changes. A missing URL retains the stored URL;
+metadata keeps JSON merge-patch semantics, including explicit-null deletion.
+`discoveredDeliveryId` and `discoveredEventType` alone do not count as resource
+changes: those fields and `updated_at` describe the last meaningful discovery
+change, not a last-seen heartbeat. Real workerd coverage lives in `resource-update-cost.test.ts`.
+
 
 Connectors expose one of two provider-facing activity facets while sharing the same normalized activity, persistence, queue, identity, and opportunity pipeline:
 
@@ -887,6 +888,10 @@ whichever object makes the mistake next.
 
 ## Testing
 
+`apps/api/test-workers/resource-update-cost.test.ts` covers no-op discovery, each
+independent change condition, mixed batches, and URL/metadata merge behavior.
+
+
 | Suite | Covers |
 | --- | --- |
 | `apps/api/test/connector-credential-freshness.test.ts` | Both halves of the freshness contract. Its conformance half **enumerates the registry rather than a hand-written list**, so a connector added later is enrolled by existing: for every adapter that can refresh a credential, a provider that rejects the token must be answered with a refresh and a retry. An adapter whose health check does not present the connection's expiring credential — Notion introspects a token in the request body under the integration's own client credentials — declares that in the fixture table, so the exemption is a reviewable fact rather than a silent pass. |
@@ -929,6 +934,10 @@ new delivery ID; discarding all metadata differences would lose real changes.
 
 **Consequences:** No-op observations preserve resource timestamps and provenance.
 Actual changes retain URL fallback and recursive JSON merge-patch behavior.
+Unchanged rediscovery does not bump resources to the top of updated-time lists
+or create phantom semantic versions.
+
+PR: #611.
 
 ### 2026-09-08 — Resolve event relationships with indexed identity seeks
 
