@@ -245,7 +245,7 @@ export function WorkstreamHeader({
             </Tooltip.Trigger>
             <Tooltip.Portal>
               <Tooltip.Content className="tooltip" side="bottom" sideOffset={6}>
-                Participants of {workstream.title}
+                {naming ? 'Participants of this conversation' : `Participants of ${workstream.title}`}
                 <Tooltip.Arrow className="tooltip-arrow" />
               </Tooltip.Content>
             </Tooltip.Portal>
@@ -570,7 +570,7 @@ export function WorkstreamScreen(): React.JSX.Element {
             region: session.workspace.region,
             workspaceId: session.workspace.id,
           } : null}
-          workstream={context.detail}
+          workstream={{ ...context.detail, appearance: parent.data?.appearance }}
         />
       )}
       substreamId={selectedSubstreamId}

@@ -348,7 +348,7 @@ describe('socket-first work-stream open', () => {
       id: '00000000-0000-7000-8000-000000000663', title: 'Parent artifact', resourceType: 'document', currentVersion: 1,
       direction: 'artifact', relationshipType: 'generated', refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported',
     };
-    const parent = recoveryBoot({ participants: [member], resources: [artifact] });
+    const parent = recoveryBoot({ participants: [member], resources: [artifact], appearance: { icon: 'rocket', color: 'purple' } });
     const child = recoveryBoot({ title: 'Private child', participants: [], resources: [{ ...artifact, id: 'child-artifact', title: 'Child artifact' }] });
     api.getWorkspaceMembers.mockResolvedValue([member, newcomer]);
     api.addParticipant.mockResolvedValue({ ...parent, participants: [member, newcomer] });
@@ -361,6 +361,9 @@ describe('socket-first work-stream open', () => {
     expect(await screen.findByRole('button', { name: 'Manage substream participants' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toHaveAccessibleDescription('Parent member');
     expect(screen.getByRole('heading', { name: 'Private child' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Private child' }).closest('header')!.querySelector('.lucide-rocket')).not.toBeNull();
+    act(() => client.setQueryData(['workstream', workstreamId], { ...parent, appearance: { icon: 'heart', color: 'blue' } }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Private child' }).closest('header')!.querySelector('.lucide-heart')).not.toBeNull());
     expect(screen.queryByRole('button', { name: 'Manage resources' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Open Parent artifact' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open Child artifact' })).not.toBeInTheDocument();

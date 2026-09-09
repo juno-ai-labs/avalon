@@ -267,6 +267,13 @@ describe('WorkstreamHeader presence', () => {
 });
 
 describe('WorkstreamHeader GrokBot shell', () => {
+  it('keeps the group tooltip neutral while the title is being named', async () => {
+    renderWorkstreamHeader({ ...headerWorkstream, title: 'Create a private draft', titleStatus: 'naming', createdAt: new Date().toISOString() }, { grokBotMode: true });
+    fireEvent.focus(screen.getByRole('button', { name: 'Manage work-stream participants' }));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Participants of this conversation');
+    expect(screen.queryByText(/Create a private draft/)).not.toBeInTheDocument();
+  });
+
   it('shows the conversation title and participant facepile without a right-sidebar entry point', () => {
     renderWorkstreamHeader(headerWorkstream, { grokBotMode: true });
 
