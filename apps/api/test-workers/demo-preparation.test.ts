@@ -345,7 +345,7 @@ describe("the demo Workflow binding", () => {
     // run fails on first read and touches nothing; it is terminated anyway.
     const operationId = crypto.randomUUID();
     await expect(env.DEMO_PREPARATION_WORKFLOW!.create({ id: `demo-preparation:${operationId}:1`, params: { region: "global", operationId, attempt: 1 } }))
-      .rejects.toThrow();
+      .rejects.toThrow("Workflow instance has invalid id");
     const instance = await env.DEMO_PREPARATION_WORKFLOW!.create({
       id: demoPreparationInstanceId(operationId, 1),
       params: { region: "global", operationId, attempt: 1 },
