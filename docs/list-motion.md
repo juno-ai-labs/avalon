@@ -9,8 +9,12 @@ reads as two events rather than one move. This module makes it one: the row
 slides out of frame to the left, the rows between its two slots close the gap,
 and it slides back in from the left at its new slot.
 
-It is a primitive rather than a sidebar feature. Any list whose rows carry a
-stable key can take it, and nothing in it knows what a work stream is.
+Nothing in it knows what a work stream is: the sidebar is its one caller, and
+it is written against a small contract — keyed rows under a scroll box — so
+that a second list could take it without a second implementation. The
+transcript's own arrival motion in `message-feed.tsx` (`data-arrival-id`) is a
+different thing, an entrance for a new message rather than a move, and stays
+where it is.
 
 Read this before changing when a sidebar row animates, how long any part of the
 choreography takes, or before adding motion to another list.
@@ -19,9 +23,9 @@ choreography takes, or before adding motion to another list.
 
 | Path | Responsibility |
 | --- | --- |
-| [`apps/desktop/src/renderer/lib/list-motion.ts`](../apps/desktop/src/renderer/lib/list-motion.ts) | The arithmetic, pure over measured positions: `planListMotion` decides which rows moved and which were displaced, `moverKeyframes` and `shifterKeyframes` say what each plays, and `LIST_MOTION` holds every duration, delay, and easing. Owns no DOM and no timer. |
-| [`apps/desktop/src/renderer/lib/use-list-motion.ts`](../apps/desktop/src/renderer/lib/use-list-motion.ts) | `useListMotion(containerRef)`: measures the rows after every commit, plans against the positions it last saw, and plays the plan through the Web Animations API. Owns the interruption handling and the pointer-events guard. |
-| [`apps/desktop/src/renderer/components/sidebar.tsx`](../apps/desktop/src/renderer/components/sidebar.tsx) | The one caller today. Marks each work-stream and note row with `data-motion-key`, marks every section and group heading as a held row so it travels with the column, holds the row being dragged, and attaches the hook to the scroll box. |
+| [`apps/desktop/src/renderer/lib/list-motion.ts`](../apps/desktop/src/renderer/lib/list-motion.ts) | The arithmetic, pure over measured positions: `planListMotion` decides which rows moved and which were displaced, `moverKeyframes` and `shifterKeyframes` say what each plays, `LIST_MOTION` holds every duration, stagger, and easing, and `layoutRowAt` answers which row is laid out under a pointer while rows are in motion. Owns no timer. |
+| [`apps/desktop/src/renderer/lib/use-list-motion.ts`](../apps/desktop/src/renderer/lib/use-list-motion.ts) | `useListMotion(containerRef, layoutKey?)`: measures the rows after every commit, plans against the positions it last saw, and plays the plan through the Web Animations API. Owns the interruption handling. |
+| [`apps/desktop/src/renderer/components/sidebar.tsx`](../apps/desktop/src/renderer/components/sidebar.tsx) | The one caller today. Marks each work-stream and note row with `data-motion-key`, marks the **Pinned** heading and every recency-group heading as a held row so they travel with the column, holds the row being dragged, resolves a drag's target through `layoutRowAt`, names the compact toggle as the layout, and attaches the hook to the scroll box. |
 | [`apps/desktop/src/renderer/components/project-sidebar-section.tsx`](../apps/desktop/src/renderer/components/project-sidebar-section.tsx) | Gives each project's member list its own `data-motion-scope`, since a member is the same row the recent list shows, and marks each project row as held so a reordered project glides with its members. |
 
 ## How it works
@@ -44,15 +48,25 @@ among themselves is unchanged, shift with their project rather than leaving
 the frame as if each had been moved on its own. The project row itself is a
 held row for the same reason, on the row rather than the item that contains
 the members, because the members animate themselves and a moving container
-would carry them a second time. A row
-with `data-motion-hold` is *placed* rather than moved: it is shifted into its
-slot like a neighbour instead of leaving and re-entering, and it takes no part
-in deciding which rows moved. The sidebar holds the row under the pointer
-during a drag, and every section and group heading — a heading travels with
-the rows under it, so the whole column glides rather than the rows gliding past
-headings that have already jumped, and a row leaving the pinned section for the
-top of the recent list passes that list's heading without the heading being the
-thing seen to leave.
+would carry them a second time. A row is
+*held* — placed rather than moved: shifted into its slot like a neighbour
+instead of leaving and re-entering, and taking no part in deciding which rows
+moved — in two cases. One is `data-motion-hold`: the sidebar holds the row
+under the pointer during a drag, each project's own row, the **Pinned**
+heading, and every recency-group heading, so a heading travels with the rows
+under it and the whole column glides, and so a row leaving the pinned section
+for the top of the recent list passes that list's heading without the heading
+being the thing seen to leave. The other is focus: a row that kept its element
+and has focus inside it is one the reader is acting on — an `Alt`+`Arrow` move,
+or the click that opened a work stream and lifted its row — and it stays under
+them rather than flying off through the slot they are looking at. A remounted
+row with focus is not the reader's doing, since the sidebar repairs focus onto
+a pinned row, and it travels.
+
+A row with no layout — a heading hidden in the compact rail — is neither
+measured nor remembered. It is closer to not being there than to being at the
+top of the container, which is what its empty rect would say, and when it
+comes back it is a row never seen before and is left alone.
 
 The container is the scroll box the rows live in. Positions are measured
 relative to its content, not the viewport, so scrolling between two renders is
@@ -67,6 +81,12 @@ compares it with the positions it recorded the last time. Rows it has never
 seen are left alone: a page of rows arriving at once is not a move, and there is
 no old slot to leave from. Rows that are gone cannot be animated.
 
+The hook takes a `layoutKey` naming the layout the rows are in. When it
+changes, every row is measured afresh and nothing plays: the sidebar's compact
+toggle changes the scroll box's padding, hides the headings, and swaps the
+command bar for the rail's controls, which moves every row's position for a
+reason that is not a reorder; the sidebar passes `compact`.
+
 `planListMotion` sorts the rest into two kinds. Within each scope, among the
 rows that are not held, the largest set that kept their relative order is found
 as the longest increasing run of old ranks read in the new order; everything outside that set
@@ -74,36 +94,42 @@ is a **mover**, everything inside it that nonetheless sits at a different
 position is a **shifter**, and a held row is a shifter whatever moved past it. This
 is the smallest set of moves that explains the change: one message lifting a
 row to the top of its group yields one mover and a shift of one slot for each
-row it passed, rather than "every row above it moved".
+row it passed, rather than "every row above it moved". It is more general than
+any single trigger needs — every trigger the sidebar has today moves one row —
+and it is used because the hook cannot see the trigger: a socket update that
+moves two rows at once, two messages in one frame, gets the same treatment
+without a special case, and the single-mover case falls out of it.
 
 ### Playing it
 
 Everything starts on the same frame. A mover plays one animation with three
-phases, timed by `LIST_MOTION`:
+phases, each timed by a field of `LIST_MOTION` — the numbers live there and
+are not repeated here:
 
-1. **Exit** (0 to 160 ms, accelerating away): from its old slot — expressed as
-   a vertical offset from the slot it now occupies — leftwards until it has
+1. **Exit** (`exitMs`, accelerating away): from its old slot — expressed as a
+   vertical offset from the slot it now occupies — leftwards until it has
    cleared the container's left edge. The distance is measured per row, from
-   the row's right edge to the container's left edge plus a clearance, because
-   a fraction of the row's own width would leave a narrow row's edge showing
-   in a wider container.
-2. **Stagger** (160 to 200 ms): off frame, and now at its new slot. The jump
-   between the two slots happens here, where it cannot be seen. The pause is
-   what reads as "left, and came back" rather than a bounce off the edge; it is
-   short because the row cannot be in two places, so this is the only part of
-   the choreography that has to wait for another.
-3. **Enter** (200 to 420 ms, decelerating into place): from off frame at the
-   new slot back to rest.
+   the row's right edge to the container's left edge plus `exitClearancePx`,
+   because a fraction of the row's own width would leave a narrow row's edge
+   showing in a wider container.
+2. **Stagger** (`enterStaggerMs`): off frame, and now at its new slot. The
+   jump between the two slots happens here, where it cannot be seen. The pause
+   is what reads as "left, and came back" rather than a bounce off the edge; it
+   is short because the row cannot be in two places, so this is the only part
+   of the choreography that has to wait for another.
+3. **Enter** (`enterMs`, decelerating into place): from off frame at the new
+   slot back to rest.
 
 Shifters play a straight translation from their old position to rest over
-260 ms, starting on that same first frame — so the gap is closing while the
-mover is still on its way out, and the mover is on its way back in while the
-gap is still closing. Nothing is sequential except the stagger.
+`shiftMs`, starting on that same first frame — the shift outlasts the exit and
+the stagger together, so the gap is closing while the mover is still on its way
+out, and the mover is on its way back in while the gap is still closing.
+Nothing is sequential except the stagger.
 
 Each kind of motion takes the standard curve for what it is doing: a row
-leaving the frame accelerates (`cubic-bezier(.4, 0, 1, 1)`), a row arriving
-decelerates (`cubic-bezier(0, 0, .2, 1)`), and a row moving from one place on
-screen to another starts and ends at rest (`cubic-bezier(.4, 0, .2, 1)`).
+leaving the frame accelerates (`exitEasing`), a row arriving decelerates
+(`enterEasing`), and a row moving from one place on screen to another starts
+and ends at rest (`shiftEasing`).
 
 Every animation is a `transform` run by the Web Animations API, so it is
 composited and travels at the display's own refresh rate; nothing here runs per
@@ -143,19 +169,23 @@ per phase set rather than three chained ones for the same reason: an
 interruption has one thing to cancel, and the phases cannot drift apart under
 load.
 
-### Not a target while moving
+### Rows in motion stay targets
 
-A row that is on its way somewhere is given `pointer-events: none` until it
-settles. The pointer resting where a row is about to pass would otherwise hover
-it; and during a drag it would fire `dragover` against it, which the pinned list
-answers by moving the dragged row *back* — the animation would then carry the
-row through the pointer again, and the two would swap until the pointer moved.
-The value the row had is restored when its last animation finishes or is
-cancelled, and it is kept from the first animation to the last rather than per
-animation, because a cancelled animation settles asynchronously, after its
-replacement has already started, and must not undo it. A row interrupted and
-given nothing new to play is released at once, in the same effect, rather than
-whenever the cancelled animation's event arrives.
+A row in motion keeps its pointer events: a click on a row that is sliding
+lands on that row, and nothing it needs is taken away for the length of an
+animation. What that leaves to solve is a list that reorders on `dragover`.
+The pinned list moves the dragged row to the slot of whichever row the event
+reaches, and mid-motion the row drawn under the pointer is not the row that
+belongs there — after one reorder, the row the dragged row displaced glides
+out through the pointer's position, an event on it would move the dragged row
+back, and the two would trade places until the pointer moved. The sidebar
+therefore resolves a drag's target with `layoutRowAt`: the row whose *layout*
+box, net of any translation it is playing, contains the pointer. A row gliding
+through a slot resolves to the slot's layout owner, which after the reorder is
+the dragged row itself, and a drag reversed mid-motion resolves to the rows'
+final slots at once rather than waiting for them to settle. Where rows have no
+layout at all, as under jsdom, nothing contains the pointer and the row the
+event reached is the slot.
 
 ## Invariants
 
@@ -183,6 +213,14 @@ whenever the cancelled animation's event arrives.
   anyone saw it, and would have to read positions off animations that have not
   started. Anything that makes the hook cancel or restart an animation on an
   unchanged row brings that back.
+- **A list that reorders on `dragover` resolves the target by layout, never
+  by the row the event reached.** Hit-testing follows the drawn box, and a row
+  in motion is drawn where it is no longer laid out; reordering against it
+  moves the dragged row back and forth for as long as the two overlap.
+  `layoutRowAt` is the one answer; a second caller must not hit-test.
+- **A held row is the reader's, or a heading's.** Focus decides the first only
+  for a row that kept its element: the sidebar moves focus onto a remounted
+  row on purpose, and that row is still the one that travelled.
 - **Anything that scrolls to a row does so before this hook's effect runs.**
   The motion's first frame puts a moved row back where it came from, and the
   platform scrolls to the transformed box. A scroll made after the effect, from
@@ -237,17 +275,24 @@ step.
   motion sees rows in their new places at once, as before this module existed.
 - **The numbers in `LIST_MOTION` are the team's to tune.** They were chosen by
   eye against the running client so that the whole choreography is over inside
-  about four hundred milliseconds — long enough to follow, short enough that a
-  row moved by somebody else's message is not an interruption — and no
-  measurement of reader behaviour informed them.
+  about half a second — long enough to follow, short enough that a row moved
+  by somebody else's message is not an interruption — and no measurement of
+  reader behaviour informed them.
+- **Opening a work stream lifts its row, and that lift is a shift.** The
+  recent list is ordered by the reader's own visits, so the click that opens a
+  row also moves it to the top of its group. The row has focus and kept its
+  element, so it is held and glides up rather than leaving the frame under the
+  cursor that just clicked it. A row that crosses into another group on the
+  same click is remounted and travels, which is the motion the reader asked
+  for between groups.
 
 ## Testing
 
 | Suite | What it covers |
 | --- | --- |
 | `apps/desktop/src/renderer/lib/list-motion.test.ts` | The planner's classification — one mover, two movers together, a held row, a heading never being the mover, scopes ranked apart so a block shifts as one, a row that moved between containers, an interrupted offset — and the exact keyframes and options each kind plays. |
-| `apps/desktop/src/renderer/lib/use-list-motion.test.tsx` | The hook under jsdom: the exit distance measured against the container, shifters starting on the first frame, a row followed across a remount, a held row shifted instead of moved, a render that moved nothing leaving every animation alone, interruption touching only the rows that moved and reading a pending animation's own start, the pointer-events guard surviving a late cancel and released at once on an interruption, reduced motion, and scopes keeping shared keys apart. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams` › `list motion`) | That the sidebar wires it: a pin moves the row's animation with it into the **Pinned** section, a touch moves it with the row from one recency group into another, and the reveal's scroll lands before the motion starts. |
+| `apps/desktop/src/renderer/lib/use-list-motion.test.tsx` | The hook under jsdom: the exit distance measured against the container, shifters starting on the first frame, a row followed across a remount, a held row shifted instead of moved, a render that moved nothing leaving every animation alone, interruption touching only the rows that moved and reading a pending animation's own start, a late cancel not clearing its successor's record, reduced motion and a hidden window both remembering positions while playing nothing, measurement through the container's scroll, a focused row held only while it keeps its element, a row with no layout neither measured nor remembered, a changed layout key measuring afresh, and scopes keeping shared keys apart. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams` › `list motion`) | That the sidebar wires it: a pin moves the row's animation with it into the **Pinned** section, a touch moves it with the row from one recency group into another, the reveal's scroll lands before the motion starts, a drag's target is the slot laid out under the pointer while the dragged row is held, and a project's members are scoped apart from the recent list under a held project row. |
 
 jsdom lays nothing out and implements neither `Element.prototype.animate` nor
 `getAnimations`. The hook tests install `getBoundingClientRect` and `animate`
@@ -270,6 +315,41 @@ work stream from its right-click menu, then pause every animation with
 each one.
 
 ## Changelog
+
+### 2026-09-09 — Drags target the slot laid out under the pointer, and the reader's own row is held
+
+**What changed:** Rows in motion keep their pointer events; the pinned list
+resolves a drag's target with `layoutRowAt` instead of the row the event
+reached. A row that kept its element and has focus inside it is held. A row
+with no layout is neither measured nor remembered. `useListMotion` takes a
+`layoutKey`, and the sidebar passes the compact toggle. The hook keeps one
+animation per element rather than a list.
+
+**Why:** Review found the earlier `pointer-events: none` guard landing on every
+shifter, so a click on a row gliding one slot was lost — and on the mobile
+drawer bubbled to the navigation's own close handler — and a drag reversed
+mid-motion waited on each row to settle. The guard existed only to stop a
+drag reordering against a row gliding through the pointer; resolving the
+target by layout removes that cause instead of masking it. Review also found
+the choreography firing on the click that opens a work stream, whose row is
+lifted by the visit, and the `Alt`+`Arrow` move sending the focused row out of
+the clipped container; the compact toggle sliding every row for a relayout;
+and hidden headings measured at the top of the container. The per-element
+list of animations modelled a case the interruption path made impossible.
+
+**Considered and rejected:** Keeping the guard on movers only, which would
+have left the drag oscillation possible against a mover. Reserving the full
+choreography for section changes and shifting within a section, which would
+have made a message lifting a row within its group a shift too, against the
+request this module was built for; holding on focus draws the line at the
+reader's own action instead.
+
+**Consequences:** A second list that reorders on `dragover` must resolve its
+target through `layoutRowAt`. A caller whose layout changes for a reason other
+than a reorder names that layout, or every row slides on the change. A test of
+the wiring can no longer assert on pointer-events; it asserts on what plays.
+
+Shipped in #612.
 
 ### 2026-09-09 — The reveal scrolls before the motion starts
 
@@ -295,6 +375,8 @@ reveal until the motion ends, which reads as the sidebar noticing late.
 it has to run before the hook's effect. A block that should move as one needs
 its own scope and a held row for its container's own row; the container element
 itself must not carry a key, or its children are carried twice.
+
+Shipped in #612.
 
 ### 2026-09-08 — Document created
 
@@ -333,3 +415,5 @@ move, or gives two rows one key in one scope, silently turns the motion off for
 them. The durations live in `LIST_MOTION` and nowhere else, and the choreography
 is one animation per row, so a change to the phases is a change to the
 keyframes rather than to the hook.
+
+Shipped in #612.

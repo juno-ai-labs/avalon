@@ -22,14 +22,26 @@ const jsdomMeasure = Element.prototype.getBoundingClientRect;
 /** The document-order measurement each test installs; see `beforeEach`. */
 let measure: (this: Element) => DOMRect;
 
-/** `generation` goes into the row keys, so bumping it replaces every row's element. */
-function List({ rows, hold = [], generation = 0 }: { rows: string[]; hold?: string[]; generation?: number }): React.JSX.Element {
+/**
+ * `generation` goes into the row keys, so bumping it replaces every row's
+ * element; `hidden` rows render with no layout, the way `display: none` does.
+ */
+function List({ rows, hold = [], hidden = [], generation = 0, layout }: {
+  rows: string[]; hold?: string[]; hidden?: string[]; generation?: number; layout?: unknown;
+}): React.JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null);
-  useListMotion(ref);
+  useListMotion(ref, layout);
   return (
     <div data-testid="list" ref={ref}>
       {rows.map((key) => (
-        <div data-motion-hold={hold.includes(key) ? '' : undefined} data-motion-key={key} data-testid={key} key={`${generation}:${key}`}>
+        <div
+          data-hidden={hidden.includes(key) ? '' : undefined}
+          data-motion-hold={hold.includes(key) ? '' : undefined}
+          data-motion-key={key}
+          data-testid={key}
+          key={`${generation}:${key}`}
+          tabIndex={-1}
+        >
           {key}
         </div>
       ))}
@@ -72,8 +84,13 @@ describe('useListMotion', () => {
       if (container === this || container === null) {
         return { top: 0, left: CONTAINER_LEFT, right: 400, bottom: 800, width: 390, height: 800, x: CONTAINER_LEFT, y: 0, toJSON: () => ({}) };
       }
-      const index = [...container.querySelectorAll('[data-motion-key]')].indexOf(this);
-      const top = index * ROW;
+      if (this.hasAttribute('data-hidden')) {
+        return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) };
+      }
+      // Laid-out rows only, and through the container's scroll, the way a
+      // viewport rect is.
+      const index = [...container.querySelectorAll('[data-motion-key]:not([data-hidden])')].indexOf(this);
+      const top = index * ROW - container.scrollTop;
       return { top, left: ROW_LEFT, right: ROW_LEFT + ROW_WIDTH, bottom: top + ROW, width: ROW_WIDTH, height: ROW, x: ROW_LEFT, y: top, toJSON: () => ({}) };
     };
     Element.prototype.getBoundingClientRect = measure;
@@ -120,11 +137,8 @@ describe('useListMotion', () => {
       expect(shifter?.options).toEqual({ duration: LIST_MOTION.shiftMs, easing: LIST_MOTION.shiftEasing, fill: 'backwards' });
     }
     expect(animate).toHaveBeenCalledTimes(3);
-
-    // Not a hover or drop target while on the way, and one again once there.
-    expect(getByTestId('c').style.pointerEvents).toBe('none');
-    mover?.animation.onfinish?.();
-    expect(getByTestId('c').style.pointerEvents).toBe('');
+    // Rows stay targets throughout: nothing is written to their style.
+    expect(getByTestId('c').getAttribute('style')).toBeNull();
   });
 
   it('follows a row whose element was replaced, the way a row moving between sections is', () => {
@@ -151,10 +165,8 @@ describe('useListMotion', () => {
     const started = animate.mock.calls.length;
     rerender(<List rows={['c', 'a', 'b']} />);
     expect(animate).toHaveBeenCalledTimes(started);
-    for (const key of ['a', 'b', 'c']) {
-      expect(played(key)[0]?.animation.cancel).not.toHaveBeenCalled();
-      expect(getByTestId(key).style.pointerEvents).toBe('none');
-    }
+    for (const key of ['a', 'b', 'c']) expect(played(key)[0]?.animation.cancel).not.toHaveBeenCalled();
+    expect(getByTestId('a')).toBeInTheDocument();
   });
 
   it('measures a row through its own in-flight transform rather than taking the transform for a move', () => {
@@ -201,33 +213,90 @@ describe('useListMotion', () => {
     const second = played('a')[1];
     // From 24px above its previous slot, which is now one slot above: -72px.
     expect(second?.keyframes[0]).toEqual(expect.objectContaining({ transform: `translate(0px, ${-ROW - 24}px)` }));
-    // The cancelled animation's own settling, which lands after its successor
-    // started, leaves the successor's guard in place.
-    first?.animation.oncancel?.();
-    expect(getByTestId('a').style.pointerEvents).toBe('none');
-    second?.animation.onfinish?.();
-    expect(getByTestId('a').style.pointerEvents).toBe('');
+    // The cancelled animation's own settling lands after its successor was
+    // recorded, and must not clear the successor's record: a third change
+    // then still finds, and interrupts, the successor.
     // `c` did not move in the second change and was left to finish its own.
     expect(played('c')).toHaveLength(1);
     expect(played('c')[0]?.animation.cancel).not.toHaveBeenCalled();
+    first?.animation.oncancel?.();
+    drawnOffBy(getByTestId('a'), -12);
+    rerender(<List rows={['a', 'c', 'b']} />);
+    expect(second?.animation.cancel).toHaveBeenCalledTimes(1);
+    // And `a` continues from the successor's drawn position: two slots down, less 12px.
+    expect(played('a')[2]?.keyframes[0]).toEqual(expect.objectContaining({ transform: `translate(0px, ${2 * ROW - 12}px)` }));
   });
 
-  it('makes a row a target again as soon as it is interrupted with nothing new to play', () => {
-    const { rerender, getByTestId } = render(<List rows={['a', 'b', 'c']} />);
-    rerender(<List rows={['c', 'a', 'b']} />);
-    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('prefers-reduced-motion') }));
-    rerender(<List rows={['a', 'b', 'c']} />);
-    for (const key of ['a', 'b', 'c']) {
-      expect(played(key)[0]?.animation.cancel).toHaveBeenCalledTimes(1);
-      expect(getByTestId(key).style.pointerEvents).toBe('');
-    }
-  });
-
-  it('still remembers positions, but plays nothing, for a reader who asked for less motion', () => {
+  it('remembers positions while playing nothing for a reader who asked for less motion', () => {
     vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('prefers-reduced-motion') }));
     const { rerender } = render(<List rows={['a', 'b', 'c']} />);
     rerender(<List rows={['c', 'a', 'b']} />);
     expect(animate).not.toHaveBeenCalled();
+    // The positions the reduced-motion render left are the ones the next
+    // change starts from: `c` travels one slot, not two.
+    vi.unstubAllGlobals();
+    rerender(<List rows={['a', 'c', 'b']} />);
+    expect(played('c')[0]?.keyframes[0]).toEqual(expect.objectContaining({ transform: `translate(0px, ${-ROW}px)` }));
+  });
+
+  it('remembers positions while playing nothing in a hidden window', () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    const { rerender } = render(<List rows={['a', 'b', 'c']} />);
+    rerender(<List rows={['c', 'a', 'b']} />);
+    expect(animate).not.toHaveBeenCalled();
+    visibility.mockReturnValue('visible');
+    rerender(<List rows={['a', 'c', 'b']} />);
+    expect(played('c')[0]?.keyframes[0]).toEqual(expect.objectContaining({ transform: `translate(0px, ${-ROW}px)` }));
+  });
+
+  it('measures through the container\'s scroll, so scrolling is not a move and a move is measured whole', () => {
+    const { rerender, getByTestId } = render(<List rows={['a', 'b', 'c']} />);
+    // jsdom keeps no scroll position of its own; the stub reads this one.
+    Object.defineProperty(getByTestId('list'), 'scrollTop', { configurable: true, value: 100 });
+    rerender(<List rows={['a', 'b', 'c']} />);
+    expect(animate).not.toHaveBeenCalled();
+    rerender(<List rows={['c', 'a', 'b']} />);
+    // Two slots, whatever the viewport shows of them.
+    expect(played('c')[0]?.keyframes[0]).toEqual(expect.objectContaining({ transform: `translate(0px, ${2 * ROW}px)` }));
+  });
+
+  it('holds a row that kept its element and has focus inside it, and not a remounted one', () => {
+    const { rerender, getByTestId } = render(<List rows={['a', 'b', 'c']} />);
+    // The reader's own move: the row they are on is placed, not sent out.
+    getByTestId('c').focus();
+    rerender(<List rows={['c', 'a', 'b']} />);
+    expect(played('c')[0]?.keyframes).toEqual([{ transform: `translate(0px, ${2 * ROW}px)` }, { transform: 'translate(0px, 0px)' }]);
+    // Focus repaired onto a row that was remounted somewhere else is not the
+    // reader's doing, and that row travels.
+    animate.mockClear();
+    rerender(<List generation={1} rows={['a', 'b', 'c']} />);
+    getByTestId('c').focus();
+    expect(played('c')[0]?.keyframes[0]).toEqual(expect.objectContaining({ offset: 0, transform: `translate(0px, ${-2 * ROW}px)` }));
+  });
+
+  it('neither measures nor remembers a row with no layout', () => {
+    const { rerender } = render(<List hidden={['b']} rows={['a', 'b', 'c']} />);
+    rerender(<List hidden={['b']} rows={['c', 'a', 'b']} />);
+    // `c` moved one laid-out slot, not two; `b` was not there to animate.
+    expect(played('c')[0]?.keyframes[0]).toEqual(expect.objectContaining({ transform: `translate(0px, ${ROW}px)` }));
+    expect(played('b')).toEqual([]);
+    // Shown again, it is a row never seen before: left alone, not slid in
+    // from the fake position an empty rect would have given it.
+    animate.mockClear();
+    rerender(<List rows={['c', 'a', 'b']} />);
+    expect(played('b')).toEqual([]);
+  });
+
+  it('measures afresh and plays nothing when the layout it was given changes', () => {
+    const { rerender } = render(<List layout="wide" rows={['a', 'b', 'c']} />);
+    rerender(<List layout="wide" rows={['c', 'a', 'b']} />);
+    const [first] = played('c');
+    rerender(<List layout="compact" rows={['a', 'b', 'c']} />);
+    expect(first?.animation.cancel).toHaveBeenCalledTimes(1);
+    expect(played('c')).toHaveLength(1);
+    // The next change starts from the positions the new layout was measured at.
+    rerender(<List layout="compact" rows={['b', 'a', 'c']} />);
+    expect(played('b').at(-1)?.keyframes[0]).toEqual(expect.objectContaining({ transform: `translate(0px, ${ROW}px)` }));
   });
 
   it('keeps rows in separate scopes apart even when they share a key', () => {

@@ -97,7 +97,11 @@ section ordering. Pins remain manually ordered.
 confirmed and the only order that survives a reload. During a drag, the sidebar
 holds a local arrangement that wins, so rows settle under the pointer rather than
 after the round trip; it is discarded once the response lands, whether the
-response accepted the arrangement or refused it.
+response accepted the arrangement or refused it. The slot the pointer is over is
+the one laid out there, resolved with `layoutRowAt` from
+[`list-motion.md`](list-motion.md), not the row drawn there — mid-motion the
+row drawn under the pointer is one gliding out of the slot the dragged row just
+took, and reordering against it would send it straight back.
 
 A pinned work stream is removed from the recency-grouped list entirely rather
 than shown in both places — which is the same thing the WorkspaceDO page does,
@@ -319,8 +323,12 @@ the design.
 
 **Consequences:** The reveal must run before the motion's hook, as the layout
 effect declared ahead of it; a passive effect there scrolls to nothing. The
-dragged row must keep `data-motion-hold` while
-`dragOrder` is live, or every `dragover` makes it leave and re-enter. The
+dragged row must keep `data-motion-hold` while `dragOrder` is live, or every
+`dragover` makes it leave and re-enter, and the row's `dragover` must keep
+resolving its target through `layoutRowAt`. An `Alt`+`Arrow` move glides
+rather than travels, because the focused row is the reader's own.
+
+Shipped in #612. The
 project section's scope is what keeps a member row from being taken for the
 recent list's copy of the same work stream; a new place that renders the same
 row twice needs one of its own.
