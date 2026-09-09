@@ -108,7 +108,12 @@ which conversation it is: the work stream's own icon tinted with its appearance
 colour for the main conversation, the branch line for a substream, a plus for
 **New substream**. Compact swaps a substream's branch line for the first
 character of its title, capitalized, because a rail of identical lines with no
-titles beside them says only that these are substreams. Artifact selection
+titles beside them says only that these are substreams. The main conversation's
+mark reads the parent work stream's appearance off its **sidebar row** rather
+than its cached detail, so a colour or icon change moves both rails on the same
+receipt; the header stays on the detail, which is what retires the picker's
+preview. See [`workstream-appearance.md`](workstream-appearance.md).
+Artifact selection
 uses `useCitations.openPreview` to open the artifact lightbox, including an
 explicit unavailable-preview state rather than an inspector fallback; arrival
 of an artifact never opens a panel. Generated sites open the existing isolated
