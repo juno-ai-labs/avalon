@@ -14,7 +14,7 @@ still shows.
 | --- | --- |
 | `packages/contracts/src/workstream-appearance.ts` | Stable icon keys, one model-visible description per key, the default key, color keys, and partial updates. |
 | `apps/desktop/src/renderer/components/workstream-appearance-picker.tsx` | Palette, optimistic preview, ordered clicks, and failures. |
-| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | Shared rendering and deterministic defaults. |
+| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | Shared rendering and deterministic defaults: the filled `WorkstreamGlyph` for navigation, and `WorkstreamMark` — the bare symbol tinted with the colour — for a surface already inside the work stream, such as the center rail's main conversation row. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `patchCachedWorkstreamAppearance`, the receipt-time write that puts a committed choice on the sidebar row ahead of the directory projection, and `patchCachedGeneratedIcon`, the naming pass's, which additionally declines a row that already has an icon. Neither touches the cached detail. Built on `patchCachedWorkstream`, the write for any unversioned fact both caches must agree on. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Orders the picker's choices on the retained Main socket and applies each one to the caches when its receipt arrives. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Authoritative write, command receipt, and common-state publication. |
@@ -146,6 +146,16 @@ cover the common cache path. Inspect the actual Electron popup in light and dark
 including scrolling, and check another connected window and reopening.
 
 ## Changelog
+
+### 2026-09-09 — A bare tinted mark beside the filled glyph
+
+The work-stream sidebar's main conversation row asked for this identity, and the
+filled glyph was the wrong weight for it: a rail that only ever shows one work
+stream does not need the badge that tells one stream from another in a list of
+them. `WorkstreamMark` renders the same chosen icon in the same chosen colour
+without the gradient shape, so both components resolve one appearance and only
+the treatment differs. A future surface wanting a third treatment should add it
+here rather than reading `workstreamAppearance` and picking colours itself.
 
 ### 2026-09-09 — The picker offers the ring; the schema accepts more than the picker offers
 
