@@ -130,6 +130,17 @@ source, source ID, scope, stable document ID, revision, and text (null for delet
 Adapters extract text and preserve authority; they cannot choose chunk sizes,
 embedding models, normalization, or indexing behavior. No adapter writes Turbopuffer.
 
+Resource updates invalidate search only when category or text inputs change:
+provider, title, canonical URL, original/derivative MIME types, content references
+and hashes, or the string description in metadata. WorkspaceDO migration 43
+replaces only the update trigger; insert/delete watermarks and pending retries
+survive unchanged. Bookkeeping, hydration status, slug, and unrelated metadata
+edits do not publish indexing work. Keep the trigger aligned with
+`resourceSearchCategory` and `resourceSearchText` when extending extraction.
+Duplicate description keys use the final occurrence, matching `JSON.parse`.
+Content hashes conservatively invalidate same-reference body replacements,
+including the one-time hash backfill during extraction.
+
 `createSearchIndexingPipeline` is the single processing path. It writes the full,
 lossless canonical text for BM25/substring search, then runs the same chunker and
 embedding integration for every live document. Preserving full lexical documents
@@ -356,6 +367,11 @@ The cursor follows [Turbopuffer attribute pagination](https://turbopuffer.com/do
 
 ## Testing
 
+`apps/api/test-workers/resource-update-cost.test.ts` exercises the populated v42
+upgrade, each search input, duplicate description keys against canonical extraction,
+no-op writes, and deletion watermarks using real workerd storage.
+
+
 Run `pnpm --filter @rally/api exec vitest run test/text-search.test.ts test/semantic-chunks.test.ts test/search-embedding-policy.test.ts`.
 The external SDK is doubled to prove source filtering and canonical result
 loading. No database or Durable Object runtime is simulated by this suite.
@@ -462,6 +478,22 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-08 — Index resource content changes, not bookkeeping
+
+**What changed:** A forward migration narrows the resource update trigger to
+search inputs, including body hashes. Insert/delete and revision fencing remain.
+
+**Why:** Every resource update previously queued indexing, including webhook
+provenance and processing state, causing unnecessary storage and Queue/RPC work.
+
+**Considered and rejected:** Filtering only webhook writers would leave other
+canonical writers producing the same redundant indexing jobs.
+
+**Consequences:** New extraction inputs must extend the trigger through another
+forward migration. Existing pending work is retained, with no forced backfill.
+
+PR: #611.
 
 ### 2026-09-08 — Validate snapshot revisions and reconcile older search contracts
 
