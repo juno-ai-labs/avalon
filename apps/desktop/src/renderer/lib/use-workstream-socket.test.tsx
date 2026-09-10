@@ -2687,7 +2687,7 @@ describe('useWorkstreamSocket', () => {
     // `latest_mention_attention_ordinal > seen_attention_ordinal`, so advancing
     // the author's own seen ordinal past a mention clears it. Leaving it set
     // would trade one wrongly lit dot for a louder one: `mentioned` outranks
-    // `unread` and puts the row in Needs attention. The fence is that the turn
+    // `unread` in the marker ranking. The fence is that the turn
     // is the newest attention event known, so a replay cannot erase a mention
     // that landed after it.
     vi.stubGlobal('WebSocket', FakeWebSocket);
