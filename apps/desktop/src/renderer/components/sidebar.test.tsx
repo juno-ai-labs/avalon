@@ -1286,10 +1286,17 @@ describe('Sidebar work-stream markers', () => {
     // rather than laid over it. The dot this replaced said only "a state is
     // true here", and inherited the work-stream marker's radius on the way, so
     // what a person actually saw was an unnamed dark square.
-    const marker = within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' })
-      .querySelector('.automation-glyph-marker');
+    const tile = within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' });
+    const marker = tile.querySelector('.automation-glyph-marker');
     expect(marker).toHaveClass('lucide-play');
     expect(marker).toHaveAttribute('fill', 'var(--av-sys-color-success-base)');
+    // The state reaches a screen reader through that name and nowhere else. The
+    // tile used to also render a visually hidden "Active", which read as the
+    // accessibility path while contributing nothing: `aria-label` on a button
+    // replaces its contents in the accessible name, so the span was never
+    // announced. Queried above by the exact name, so a second source for the
+    // state has to keep the name right rather than appending to it.
+    expect(tile.querySelector('.sr-only')).toBeNull();
     fireEvent.click(within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' }));
     expect(openSidekicks).toHaveBeenCalledWith('shared');
     // The Sidekicks window is a separate renderer with its own copy of the

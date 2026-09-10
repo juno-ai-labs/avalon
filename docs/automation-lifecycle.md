@@ -676,6 +676,13 @@ and no id, and reintroduces exactly the opaque-patch problem where the marker
 overhangs the hexagon. And leaving the marker a dot in the tile with only its
 radius fixed, which keeps a mark that has to be learned rather than read.
 
+`SidekickStripTile` lost its `active` flag with the badge. It rendered a
+visually hidden "Active" beside the caption, which never reached a screen
+reader: `aria-label` on a button replaces the button's contents in the
+accessible name, and the label the tile already gets carries the state. The
+state now travels two ways and only two — the marker for the eye, the label for
+assistive technology — rather than three, one of which was inert.
+
 **What a future change has to respect:** the mask id is per-render
 (`useId`) because SVG ids are document-global and the strip draws one hexagon
 per Sidekick; a fixed id points every hexagon at the first one's mask, which
