@@ -71,7 +71,7 @@ import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
 import { useTranscriptHistory } from '../lib/use-transcript-history';
-import { useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
+import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { ActivityPresence, JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
@@ -95,6 +95,7 @@ import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store'
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
+import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
@@ -850,14 +851,19 @@ export function ConversationSurface({
     initialData: null,
     staleTime: Number.POSITIVE_INFINITY,
   });
+  /**
+   * The transcript on screen is what the local cache remembered, not what the
+   * room has said on this socket. Everything that reads or writes against the
+   * room's fence — range loads, read acknowledgements, sending — waits for the
+   * live snapshot that replaces it; what stays is reading and composing.
+   */
+  const feedFromLocalCache = feedSource.data === 'local_cache';
   const initialFeedTelemetrySnapshot = useMemo<{
     feedSource: WorkstreamFeedSource;
     messageCount: ReturnType<typeof telemetryCountBucket>;
   } | null>(() => {
     if (!routedDetail || !orderedTranscript.data) return null;
-    const resolvedFeedSource = initialFeedCacheState === 'feed_cached'
-      ? 'feed_cache'
-      : feedSource.data;
+    const resolvedFeedSource = resolveFeedOpenSource(initialFeedCacheState, feedSource.data);
     if (!resolvedFeedSource) return null;
     return {
       feedSource: resolvedFeedSource,
@@ -986,12 +992,16 @@ export function ConversationSurface({
     requestSocketSnapshot();
   }, [payloadBelongsToRoute, requestSocketSnapshot, socketConnection.state]);
   useWorkstreamSendReadyTelemetry({
-    isReady: socketConnection.sendReady,
+    // A composer over a seed is painted but cannot send, so it is not the
+    // milestone this measures.
+    isReady: socketConnection.sendReady && !feedFromLocalCache,
     workspaceSocketState: socketConnection.workspaceSocketState,
     workstreamId: id,
     substreamId,
   });
   const socketState = socketConnection.state;
+  /** The room is on the line and what is on screen is its own: ranges can be asked for against it. */
+  const feedLive = socketState === 'connected' && !feedFromLocalCache;
   const loadTranscriptRange = socketConnection.loadTranscriptRange;
   const olderTranscriptRange = orderedTranscript.data
     ? adjacentTranscriptRange(orderedTranscript.data, 'older')
@@ -1069,9 +1079,9 @@ export function ConversationSurface({
   );
 
   useEffect(() => {
-    if (socketState !== 'connected') requestedSearch.current = null;
+    if (!feedLive) requestedSearch.current = null;
     if (!searchTurnId || !Number.isSafeInteger(searchSequence) || searchSequence < 1
-      || socketState !== 'connected' || !orderedTranscript.data) return;
+      || !feedLive || !orderedTranscript.data) return;
     const targetKey = `${conversationAddress}:${searchTurnId}`;
 
     const index = transcript.findIndex((message) => message.transcriptTurnId === searchTurnId);
@@ -1110,8 +1120,8 @@ export function ConversationSurface({
     }).catch((error: unknown) => {
       if (activeConversationAddressRef.current === conversationAddress && requestedSearch.current === requestKey) setOtherHistoryError(error instanceof Error ? error.message : 'The matching message could not be opened.');
     });
-  }, [conversationAddress, id, loadTranscriptRange, orderedTranscript.data, releaseTranscriptFollow,
-    searchSequence, searchTurnId, setSearchParams, socketState, transcript, transcriptVirtualizer]);
+  }, [conversationAddress, feedLive, id, loadTranscriptRange, orderedTranscript.data, releaseTranscriptFollow,
+    searchSequence, searchTurnId, setSearchParams, transcript, transcriptVirtualizer]);
 
   const loadOlderMessages = useCallback(async (): Promise<void> => {
     const generation = conversationGenerationRef.current;
@@ -1126,7 +1136,7 @@ export function ConversationSurface({
     }
     const orderedSnapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey);
     if (!orderedSnapshot || !adjacentTranscriptRange(orderedSnapshot, 'older')) return;
-    if (socketState !== 'connected') {
+    if (!feedLive) {
       pendingOlderAfterReconnectRef.current = true;
       return;
     }
@@ -1183,7 +1193,7 @@ export function ConversationSurface({
       olderRequestsRef.current.delete(conversationAddress);
       if (activeConversationAddressRef.current === conversationAddress) setLoadingOlder(false);
     }
-  }, [conversationAddress, loadTranscriptRange, queryClient, scrollTranscriptTo, socketState, transcriptQueryKey]);
+  }, [conversationAddress, feedLive, loadTranscriptRange, queryClient, scrollTranscriptTo, transcriptQueryKey]);
 
   const nearHistoryEdge = useTranscriptHistory({
     scrollRef: transcriptRef,
@@ -1191,7 +1201,7 @@ export function ConversationSurface({
     conversationAddress,
     enabled: payloadBelongsToRoute && positionedConversation === conversationAddress
       && !searchTurnId && olderTranscriptRange !== null,
-    canLoad: socketState === 'connected' && !loadingOlder && !olderMessagesError,
+    canLoad: feedLive && !loadingOlder && !olderMessagesError,
     loadOlder: () => { void loadOlderMessages(); },
   });
 
@@ -1203,7 +1213,7 @@ export function ConversationSurface({
       ? adjacentTranscriptRange(orderedSnapshot, 'newer')
       : null;
     if (!orderedSnapshot || !orderedRange || loadingNewerRef.current) return;
-    if (socketState !== 'connected') {
+    if (!feedLive) {
       pendingNewerAfterReconnectRef.current = true;
       setOtherHistoryError(undefined);
       return;
@@ -1239,11 +1249,11 @@ export function ConversationSurface({
     } finally {
       loadingNewerRef.current = false;
     }
-  }, [id, loadTranscriptRange, queryClient, socketState]);
+  }, [id, feedLive, loadTranscriptRange, queryClient]);
 
   const jumpToLatest = useCallback(async (): Promise<void> => {
     if (loadingNewerRef.current) return;
-    if (socketState !== 'connected') {
+    if (!feedLive) {
       pendingJumpAfterReconnectRef.current = true;
       setOtherHistoryError(undefined);
       return;
@@ -1313,10 +1323,10 @@ export function ConversationSurface({
     } finally {
       loadingNewerRef.current = false;
     }
-  }, [id, loadTranscriptRange, queryClient, scrollTranscriptToEnd, socketState]);
+  }, [id, feedLive, loadTranscriptRange, queryClient, scrollTranscriptToEnd]);
 
   useEffect(() => {
-    if (socketState !== 'connected') return;
+    if (!feedLive) return;
     if (pendingJumpAfterReconnectRef.current) {
       pendingJumpAfterReconnectRef.current = false;
       void jumpToLatest();
@@ -1330,7 +1340,7 @@ export function ConversationSurface({
       pendingOlderAfterReconnectRef.current = false;
       void loadOlderMessages();
     }
-  }, [jumpToLatest, loadNewerMessages, loadOlderMessages, socketState]);
+  }, [feedLive, jumpToLatest, loadNewerMessages, loadOlderMessages]);
 
   const cacheAddedParticipant = (target: string, member: WorkspaceMember): void => {
     queryClient.setQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, target), (current) => current ? {
@@ -1816,6 +1826,9 @@ export function ConversationSurface({
   const acknowledgeVisibleMessages = useCallback((): void => {
     // This endpoint owns Main attention; child ordinals are a separate sequence.
     if (substreamId !== '0') return;
+    // A seed's waterlines are what the room said some launches ago; an
+    // acknowledgement built on them could read past a mark made since.
+    if (feedFromLocalCache) return;
     const detail = queryClient.getQueryData<WorkstreamDetail>(detailQueryKey);
     const element = transcriptRef.current;
     if (!conversationVisibleRef.current || !api || !detail || !element || document.visibilityState !== 'visible' || !document.hasFocus()) return;
@@ -1853,7 +1866,7 @@ export function ConversationSurface({
     }).finally(() => {
       if (readAckInFlightRef.current === ackKey) readAckInFlightRef.current = null;
     });
-  }, [api, conversationAddress, detailQueryKey, id, queryClient, requestSocketSnapshot, substreamId, transcript, transcriptVirtualizer]);
+  }, [api, conversationAddress, detailQueryKey, feedFromLocalCache, id, queryClient, requestSocketSnapshot, substreamId, transcript, transcriptVirtualizer]);
 
   const scheduleReadAcknowledgement = useVisibleReadAcknowledgement(acknowledgeVisibleMessages);
 
@@ -1937,6 +1950,16 @@ export function ConversationSurface({
     )}>
       {substreamLaunch ? <SubstreamLaunchSurface
         api={api}
+        connecting={feedFromLocalCache ? <ConnectingCard
+          detail="Starting a substream is available once Rally connects"
+          error={socketConnection.openingError}
+          name={detail.titleStatus === 'naming' ? null : detail.title}
+          onRetry={socketConnection.retryOpening}
+          state={socketConnection.openingError
+            ? 'failed'
+            : socketState === 'unavailable' ? 'offline' : 'connecting'}
+          subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'work stream' : 'substream'}
+        /> : null}
         currentUser={launchAuthor}
         draft={{
           throughTurnId: substreamLaunch.throughTurnId,
@@ -1950,6 +1973,7 @@ export function ConversationSurface({
         onCreate={substreamLaunch.onCreate}
         onOpenAttachment={setAttachmentPreview}
         parent={displayedDetail}
+        sendBlocked={feedFromLocalCache}
         workspaceId={workspaceId}
         workspaceRegion={workspaceRegion}
       /> : <>
@@ -2004,19 +2028,35 @@ export function ConversationSurface({
         }}
         ref={transcriptRef}
       >
+        <ConnectingCardSlot>
+          {feedFromLocalCache && (
+            <ConnectingCard
+              detail="Sending is available once Rally connects"
+              error={socketConnection.openingError}
+              name={detail.titleStatus === 'naming' ? null : detail.title}
+              onRetry={socketConnection.retryOpening}
+              state={socketConnection.openingError
+                ? 'failed'
+                : socketState === 'unavailable' ? 'offline' : 'connecting'}
+              subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'work stream' : 'substream'}
+            />
+          )}
+        </ConnectingCardSlot>
         <div className="transcript-column" ref={transcriptContentRef}>
-          <div role="status" className={loadingOlder || (nearHistoryEdge && socketState !== 'connected')
+          {/* Over a seed the connecting card, sticky at this same edge, is the
+              affordance: a row here would sit under it saying the same thing. */}
+          <div role="status" className={loadingOlder || (nearHistoryEdge && !feedLive && !feedFromLocalCache)
             ? 'transcript-history-control' : undefined}>
-            {(loadingOlder || (nearHistoryEdge && socketState !== 'connected')) && <>
+            {(loadingOlder || (nearHistoryEdge && !feedLive && !feedFromLocalCache)) && <>
               <LoaderCircle aria-hidden="true" className="spin" size={14} />
-              <span>{socketState !== 'connected' ? 'Waiting to reconnect…' : 'Loading earlier messages…'}</span>
+              <span>{feedLive ? 'Loading earlier messages…' : 'Waiting to reconnect…'}</span>
             </>}
           </div>
           {olderTranscriptRange && olderMessagesError && !loadingOlder && (
             <div className="transcript-history-control">
-              <Button disabled={socketState !== 'connected'} onClick={() => void loadOlderMessages()}>
+              <Button disabled={!feedLive} onClick={() => void loadOlderMessages()}>
                 <RefreshCcw aria-hidden="true" size={14} />
-                {socketState !== 'connected' ? 'Waiting to reconnect…' : 'Retry loading earlier messages'}
+                {feedLive ? 'Retry loading earlier messages' : 'Waiting to reconnect…'}
               </Button>
             </div>
           )}
@@ -2107,6 +2147,7 @@ export function ConversationSurface({
             }}
             onReorderQueue={reorderQueue}
             queueItems={queueItems}
+            sendBlocked={feedFromLocalCache}
             sending={sending}
             uploading={attachmentDraft.uploading}
             key={conversationAddress}

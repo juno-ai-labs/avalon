@@ -10,6 +10,7 @@ import {
   type ProjectIconKey,
 } from '@rally/contracts';
 
+import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { ProjectAppearancePicker, ProjectIcon } from '../components/project-sidebar-section';
 import {
   Avatar,
@@ -29,6 +30,7 @@ import { isComposingKeyEvent } from '../lib/ime';
 import { useProjectDirectories } from '../lib/use-project-directories';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
+import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 
 export function ProjectSpaceScreen(): React.JSX.Element {
   const { api } = useAppSession();
@@ -59,6 +61,11 @@ export function ProjectSpaceScreen(): React.JSX.Element {
   const [editColorKey, setEditColorKey] = useState<ProjectColorKey>(PROJECT_COLOR_DEFAULT);
   const [editParticipants, setEditParticipants] = useState<Set<string>>(new Set());
   const { active: projects, inactive: inactiveProjects } = useProjectDirectories();
+  // A project has no socket of its own: what it paints is the workspace
+  // directory, and the directory the local cache seeded is what is showing
+  // until the workspace socket's first subscribe answer replaces it.
+  const workspaceSocket = useOptionalWorkspaceSocket();
+  const directoryFromLocalCache = workspaceSocket !== null && workspaceSocket.sidebarConnect === null;
   const resources = useQuery({
     queryKey: ['project-resource-picker'],
     queryFn: ({ signal }) => api!.listResources({ limit: 100, signal }),
@@ -81,6 +88,10 @@ export function ProjectSpaceScreen(): React.JSX.Element {
   const project = projects.data?.items.find((item) => item.id === projectId)
     ?? inactiveProjects.data?.items.find((item) => item.id === projectId);
   if (!project) return <EmptyState title="Project not found" description="It may have been archived or you may no longer have access." />;
+  // Every project edit sends the whole record back, so an edit made against
+  // the seed would carry fields another client may have changed since the row
+  // was written. A remembered project is read-only until the directory is live.
+  const editable = project.status === 'active' && !directoryFromLocalCache;
   const members = (workstreams.data ?? [])
     .filter((workstream) => project.workstreamIds.includes(workstream.id))
     .sort(compareWorkstreamRecency);
@@ -138,10 +149,21 @@ export function ProjectSpaceScreen(): React.JSX.Element {
     }
   };
   return (
+    <div className="project-space-frame">
+    <ConnectingCardSlot>
+      {directoryFromLocalCache && (
+        <ConnectingCard
+          detail={project.status === 'active' ? 'Editing is available once Rally connects' : undefined}
+          name={project.name}
+          state={workspaceSocket.state === 'unavailable' ? 'offline' : 'connecting'}
+          subject="project"
+        />
+      )}
+    </ConnectingCardSlot>
     <div className="project-space-screen">
       <div className="screen-drag-strip window-drag" />
       <header className="project-space-header window-drag">
-        {project.status === 'active'
+        {editable
           ? <button
               aria-label={`Change icon and color for ${project.name}`}
               className="project-space-icon window-no-drag"
@@ -160,22 +182,22 @@ export function ProjectSpaceScreen(): React.JSX.Element {
                 aria-keyshortcuts="Enter F2"
                 className="project-name-button window-no-drag"
                 onClick={(event) => {
-                  if (event.detail === 0 && project.status === 'active') setNameDraft(project.name);
+                  if (event.detail === 0 && editable) setNameDraft(project.name);
                 }}
                 onDoubleClick={() => {
-                  if (project.status === 'active') {
+                  if (editable) {
                     setNameError(null);
                     setNameDraft(project.name);
                   }
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === 'F2' && project.status === 'active') {
+                  if (event.key === 'F2' && editable) {
                     event.preventDefault();
                     setNameError(null);
                     setNameDraft(project.name);
                   }
                 }}
-                title={project.status === 'active' ? 'Double-click to rename' : undefined}
+                title={editable ? 'Double-click to rename' : undefined}
                 type="button"
               >{project.name}</button></h1>
             : <input
@@ -208,7 +230,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
             <span className="window-no-drag">
               <DropdownSelect
                 ariaLabel="Project scope"
-                disabled={project.status !== 'active'}
+                disabled={!editable}
                 onValueChange={(value) => {
                   const scope = value as 'personal' | 'workspace';
                   if (scope !== project.scope) {
@@ -230,6 +252,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
         <div className="project-space-header-actions window-no-drag">
         {project.status === 'active' && <button
           className="participant-header-button"
+          disabled={!editable}
           onClick={() => {
             setEditParticipants(new Set(activeParticipantIds));
             setParticipantsError(null);
@@ -244,6 +267,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
         {project.status === 'active' ? (
           <IconButton
             className="icon-button-danger"
+            disabled={!editable}
             label="Archive project"
             onClick={() => {
               if (!api) return;
@@ -253,7 +277,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
             <Archive aria-hidden="true" size={15} />
           </IconButton>
         ) : (
-          <Button onClick={() => {
+          <Button disabled={directoryFromLocalCache} onClick={() => {
             if (!api) return;
             setError(null);
             void api.restoreProject(project.id).then((restored) => {
@@ -294,7 +318,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
               <span className="waiting-workstream-copy"><strong>{workstream.title}</strong>{workstream.preview && <span>{workstream.preview}</span>}</span>
               <time dateTime={workstream.lastActivityAt}>{formatRelative(workstream.lastActivityAt)}</time>
             </NavLink>
-            <Button onClick={() => {
+            <Button disabled={!editable} onClick={() => {
               if (!api) return;
               setError(null);
               void api.removeWorkstreamFromProject(project.id, workstream.id)
@@ -310,7 +334,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
             <h2 id="project-resources-heading">Default resources</h2>
             <p className="project-space-muted">Resources added here are attached to every work stream in this project.</p>
           </div>
-          <Button disabled={project.status !== 'active' || savingResource} onClick={() => {
+          <Button disabled={!editable || savingResource} onClick={() => {
             setSelectedResourceIds(new Set());
             setError(null);
             setResourcePickerOpen(true);
@@ -318,7 +342,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
         </div>
         {project.defaultResourceIds.length === 0 ? <p className="project-space-muted">No default resources</p> : (
           <ul className="project-default-resource-list">{project.defaultResourceIds.map((id) => (
-            <li key={id}><span>{resourcesById.get(id)?.title ?? 'Resource'}</span><Button disabled={project.status !== 'active' || savingResource} onClick={() => {
+            <li key={id}><span>{resourcesById.get(id)?.title ?? 'Resource'}</span><Button disabled={!editable || savingResource} onClick={() => {
               if (!api) return;
               setSavingResource(true);
               setError(null);
@@ -479,6 +503,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
         <ProjectAppearancePicker colorKey={editColorKey} iconKey={editIconKey} onColorChange={setEditColorKey} onIconChange={setEditIconKey} />
         {appearanceError && <InlineError>{appearanceError}</InlineError>}
       </Modal>
+    </div>
     </div>
   );
 }

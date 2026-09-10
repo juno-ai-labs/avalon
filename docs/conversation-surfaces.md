@@ -263,6 +263,19 @@ the corner.
 Assistant H2 sections use the shared inline Markdown renderer. There is no
 heading-generated card deck or paged document reader.
 
+A conversation whose caches were seeded from the local cache renders under a
+`ConnectingCard` in a sticky slot at the top of the transcript scroller, and
+its composer takes `sendBlocked`: typing, mentions, attachments, and the draft
+work, sending is disabled, Enter is swallowed the way it is for an empty
+draft, and the card's second line says sending is available once Rally
+connects, since the capsule composer hides its footer hint.
+The surface reads the feed-source entry as `feedFromLocalCache`; while it is
+set, range loads, **Jump to latest**, the search jump, and read
+acknowledgements wait as they do for a reconnecting socket, because each
+reads against the room's fence and a seed has none. The gate lifts when the
+live snapshot lands, not when the socket opens. [`local-cache.md`](local-cache.md)
+owns the seed, the card, and what waits on the live frame.
+
 ## Dictation capture and connection startup
 
 `lib/use-realtime-dictation.ts` owns microphone capture for the shared composer
@@ -305,6 +318,34 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — A seeded conversation shows a connecting card and composes without sending
+
+**What changed:** When the local cache seeds a conversation's caches, the
+surface renders the remembered transcript under a small floating
+`ConnectingCard` and passes `sendBlocked` to the composer; range loads, the
+jump, the search jump, and read acknowledgements wait for the live snapshot
+the way they wait for a reconnecting socket. Once the snapshot replaces the
+seed the card goes and the composer sends; a draft typed meanwhile survives.
+
+**Why:** A conversation painted from the disk is readable at once, which is
+the point of the cache, but everything that reads or writes against the
+room's transcript fence has nothing to read it against until the room has
+spoken. Sending in particular would position an optimistic row against a
+fence the room had not confirmed and report a message sent into a
+conversation whose live state the person had not seen.
+
+**Considered and rejected:** Reusing the socket hook's existing queue-and-resend
+semantics for a send over a seed. Those are right for a socket that dropped
+mid-session, where the transcript on screen is the room's own; a seed is not.
+Placing the card in the composer dock beside **Jump to latest**, which would
+put two floating controls in one slot.
+
+**Consequences:** `feedFromLocalCache` is a fourth readiness input beside the
+socket state, the payload check, and the positioned conversation; a new range
+or acknowledgement path has to wait on it too. The composer's `sendBlocked`
+is the one way to disable sending without disabling the draft.
+[`local-cache.md`](local-cache.md) owns the seed itself.
 
 ### 2026-09-10 — The composer's action menu drops "Teach a task"
 
@@ -391,6 +432,7 @@ reduced-motion preference applies the final layout immediately.
 Wrap measurement also runs beneath the forced attachment layout, preserving
 multiline state when the final attachment is removed rather than briefly
 returning the text to the compact column.
+
 ### 2026-09-10 — The both-host feed rules are the base rules
 
 **What changed:** The 47 `app.css` rules scoped

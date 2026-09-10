@@ -27,6 +27,7 @@ import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { RallyApi } from './api';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
+import { clearAllLocalCache, clearWorkspaceLocalCache } from './local-cache';
 import {
   readDevicePreferences,
   setDeviceSelectedRegion,
@@ -512,6 +513,17 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         progress,
       );
       await applyActivatedSession(nextSession, previous);
+    } catch (error) {
+      // A workspace this account is refused is one it will not be active in
+      // again, so the rows it left there while it was a member have no other
+      // moment to leave the device: leaving and surrendering both need the
+      // workspace to be the active one, and a removal made while the client
+      // sat elsewhere reaches it only here.
+      if (previous && workspaceActivationFailureCode(error) === 'workspace_access_denied') {
+        await clearWorkspaceDrafts(selectedRegion, workspaceId);
+        await clearWorkspaceLocalCache(previous.user.id, selectedRegion, workspaceId);
+      }
+      throw error;
     } finally {
       // Only this attempt's own mark comes down. A newer attempt at the same
       // row may have installed its own while this one waited on the browser,
@@ -542,6 +554,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     }
     const departure = await bridge.leaveWorkspace({ expectedOutcome, region: session.workspace.region, workspaceId });
     await clearWorkspaceDrafts(session.workspace.region, workspaceId);
+    await clearWorkspaceLocalCache(session.user.id, session.workspace.region, workspaceId);
     queryClient.removeQueries();
     return departure;
   }, [bridge, queryClient, session?.workspace]);
@@ -595,7 +608,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       abandonPendingWorkstreamFeedOpen();
       const sameAccount = session?.user.email.toLocaleLowerCase('en-US')
         === previousSession.user.email.toLocaleLowerCase('en-US');
-      if (!sameAccount) void clearAllDrafts();
+      // The local cache is workspace content too — transcripts, not just the
+      // sentence being typed — and leaves the device on the same transition.
+      if (!sameAccount) {
+        void clearAllDrafts();
+        void clearAllLocalCache();
+      }
     }
     if (!legacyDraftMigrationStarted.current && session?.workspace) {
       legacyDraftMigrationStarted.current = true;
@@ -628,9 +646,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   }, [bridge, queryClient]);
 
   const surrenderActiveWorkspace = useCallback(async (): Promise<void> => {
-    const departing = session?.workspace ?? null;
+    const departing = session ? { userId: session.user.id, workspace: session.workspace ?? null } : null;
     const nextSession = await bridge.surrenderActiveWorkspace();
-    if (departing) await clearWorkspaceDrafts(departing.region, departing.id);
+    if (departing?.workspace) {
+      await clearWorkspaceDrafts(departing.workspace.region, departing.workspace.id);
+      await clearWorkspaceLocalCache(departing.userId, departing.workspace.region, departing.workspace.id);
+    }
     // Kept alongside `applySession`'s own scope check: with nothing left to
     // select, previous and next are both null and read as the same scope.
     queryClient.clear();

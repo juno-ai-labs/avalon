@@ -162,6 +162,17 @@ describe("telemetry registry", () => {
       feedSource: "boot_payload",
       messageCount: "six_to_twenty",
     }],
+    ["workstream_feed_visible", "desktop-renderer", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      socketLeaseId: "018f22f2-4c22-7abc-8def-012345678901",
+      durationMs: 120,
+      dataReadyDurationMs: 96,
+      sidebarSection: "recent",
+      cacheState: "cold",
+      socketPoolState: "control_warmup",
+      feedSource: "local_cache",
+      messageCount: "six_to_twenty",
+    }],
     ["workstream_send_ready", "desktop-renderer", {
       workstreamId: "00000000-0000-4000-8000-000000000101",
       durationMs: 856,
