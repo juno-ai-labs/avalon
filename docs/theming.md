@@ -24,7 +24,7 @@ properties without knowing which appearance is active.
 | `apps/desktop/src/renderer/styles/app.css` | Component and layout rules expressed through semantic tokens. |
 | `apps/desktop/src/common/themes.ts` | The shared `system | light | dark` preference and resolver. |
 | `apps/desktop/src/renderer/lib/theme.ts` | Applies the resolved appearance, persists the preference, follows macOS, and synchronizes windows. |
-| `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance setting. |
+| `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance setting, drawn with the shared `SegmentedControl` from `components/primitives.tsx`. |
 | `apps/desktop/src/main/theme-assets.ts` | The private cache for a remote font declared by an appearance. |
 | `packages/contracts/src/projects.ts` | `PALETTE_INK` — which of the two absolute inks each palette fill carries, and the reasoning behind the rule that picks it. |
 | `apps/desktop/src/renderer/lib/project-palette.ts` | `glyphInk()`, resolving that table to the `palette-ink` token a glyph paints its symbol in. |
@@ -164,6 +164,28 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-09-10 — The appearance picker gives up its private strip
+
+**What changed:** `ThemePicker` renders `SegmentedControl` instead of its own
+`.settings-theme-modes` markup and CSS. The shared strip is a pill track with a
+flat raised fill on the chosen segment, no borders, and a roving tab stop.
+
+**Why:** Appearance and the connections filter were the same control drawn
+twice, and had drifted into different corner radii, different track fills and
+different ARIA. The selected segment also carried a border inside its own
+padding, which is why it needed a second padding rule to stop the strip from
+shifting when the choice moved; a fill-only selection has nothing to give back.
+
+**Considered and rejected:** A shadow under the chosen segment, which is what a
+raised pill usually gets. `sys.elevation.shadow.sm` is `none` in both
+appearances — this design separates a raised surface from the one behind it by
+fill — so a shadow here would have been the first literal of its kind in the
+stylesheet.
+
+**Consequences:** The appearance strip has no styles of its own. A change to how
+an exclusive choice looks is a change to `.segmented`, and it lands on every
+strip at once.
 
 ### 2026-09-10 — Base tokens leave the appearance files, dead tokens leave the registry
 
