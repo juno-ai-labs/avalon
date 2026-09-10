@@ -2958,7 +2958,6 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
       const handle: ArtifactViewHandle = {
         destroyed: () => contents.isDestroyed(),
         setBounds: (bounds) => view.setBounds(bounds),
-        setBorderRadius: (radius) => view.setBorderRadius(radius),
         loadURL: async (url) => await contents.loadURL(url),
         close: () => contents.close(),
       };
