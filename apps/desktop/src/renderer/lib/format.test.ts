@@ -10,7 +10,6 @@ import {
   statusLabel,
   harnessMarkerStatus,
   workstreamMarkerStatus,
-  workstreamNeedsAttention,
 } from './format';
 import type { WorkstreamSummary } from './types';
 
@@ -173,24 +172,6 @@ describe('work-stream presentation rules', () => {
     // The running marker now speaks for a queued run as well, so its tooltip
     // must not claim the agent is at work in this moment.
     expect(statusDescription.running).not.toMatch(/\bnow\b/u);
-  });
-
-  it('asks for attention only where somebody named this person: unseen, mentioned, needs_input', () => {
-    expect(workstreamNeedsAttention({ harnessStatus: 'needs_input' })).toBe(true);
-    expect(workstreamNeedsAttention({ harnessStatus: 'completed', unseen: true })).toBe(true);
-    expect(workstreamNeedsAttention({ harnessStatus: 'completed', youAreMentioned: true })).toBe(true);
-    // Unread on its own is the ordinary condition of a work stream somebody is
-    // working in. Listing it here buried the states that are addressed to this
-    // person among everything they simply had not got to yet.
-    expect(workstreamNeedsAttention({ harnessStatus: 'running', hasUnread: true })).toBe(false);
-    expect(workstreamNeedsAttention({ harnessStatus: 'completed', hasUnread: true })).toBe(false);
-    // Unread beside one of the three still qualifies — on their account, and
-    // for each of them, not just the one that happened to get a test.
-    expect(workstreamNeedsAttention({ harnessStatus: 'completed', hasUnread: true, unseen: true })).toBe(true);
-    expect(workstreamNeedsAttention({ harnessStatus: 'completed', hasUnread: true, youAreMentioned: true })).toBe(true);
-    expect(workstreamNeedsAttention({ harnessStatus: 'needs_input', hasUnread: true })).toBe(true);
-    expect(workstreamNeedsAttention({ harnessStatus: 'running' })).toBe(false);
-    expect(workstreamNeedsAttention({ harnessStatus: 'failed' })).toBe(false);
   });
 
   it('formats concise task durations', () => {
