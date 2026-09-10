@@ -104,7 +104,10 @@ an answered elicitation), an answer is Rally's, and everything else (a tool
 row, a timing row, the work accordion, a system note, a status pill, the
 proposal card, an open elicitation, the oversized-message placeholder) is an
 event; index 0 owns no space, and a row after a stretch this client has not
-loaded takes the turn gap because its predecessor is unknown. Four cases cover the feed: turn after turn takes
+loaded takes the turn gap because its predecessor is unknown. The two launch
+surfaces draw the same rows outside the feed wrapper and state the same gaps
+for themselves on `.launch-arrival` and the branch context, because a base
+rule gives a row no margin of its own. Four cases cover the feed: turn after turn takes
 `sys.space.stack.gap`, a turn beside an event in either direction takes
 `sys.space.block.gap`, event after event takes `sys.space.event.gap`, and
 Rally's answer after the work that produced it also takes `sys.space.event.gap`,
