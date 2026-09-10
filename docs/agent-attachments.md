@@ -25,6 +25,7 @@ source of truth for retry, replay, and compaction recovery.
 | `apps/api/src/services/resource-object-cleanup.ts` | Retries regional object deletion without logging object keys or provider bodies. |
 | `apps/api/src/durable-objects/workspace-resources-protocol.ts` | The typed request/result contracts for every resource-domain WorkspaceDO method, with refusals as outcomes rather than throws. |
 | `apps/api/src/durable-objects/workspace-resources-storage.ts` | The resource domain's SQL against the object's own storage: upload commit, draft delete, connector resolve, hydration swaps, watches, version reads, cleanup claims, alias claims, inbound-email receipts, webhook resource upserts, and the maintenance bounds beside them. |
+| `apps/api/src/services/resource-listing.ts` | The listing flag that separates a resource being *reachable* from its being *advertised*, the SQL predicate every enumerating statement applies, and the metadata helper its one producer writes. |
 | `apps/api/src/services/workstream-resource-visibility.ts` | Defines the shared principal-visibility SQL and provides full sidebar, bounded point lookup, keyset page, and aggregate inventory queries. |
 | `apps/api/src/services/workstream-resource-inventory.ts` | Renders the bounded current-principal inventory appended to live and replayed compaction checkpoints. |
 | `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
@@ -337,6 +338,13 @@ character envelope.
 - Relationship detachment revokes discovery and access but does not delete shared
   objects; resource deletion, expiry, or orphan ownership ends the object
   lifecycle.
+- Listing is presentation, never authorization. An unlisted resource is absent
+  from every surface that *enumerates* — the artifacts rail, the workspace
+  resource list, `list_resources`, the compaction inventory, the search
+  projection — and unchanged everywhere something resolves it by id, so a
+  reachable resource never becomes unreachable by being unlisted, and an
+  unreachable one never becomes readable by being listed. A new enumerating
+  surface applies `listedResourceVisibilitySql`; a new point lookup does not.
 - Original content identity describes the exact selected R2 bytes, so a cursor or
   derivative version cannot silently cross into newly hydrated content.
 - A model derivative becomes current only after its content object is complete;
@@ -627,6 +635,54 @@ cheap discovery and continuation paths.
 
 ## Changelog
 
+### 2026-09-11 — An attachment is reachable and advertised, separately
+
+**What changed:** `resource-listing.ts` adds one flag in a resource's
+`metadata_json`. An unlisted resource keeps its work-stream link and every
+by-id path — opened from a link, resolved by `loadVisibleWorkstreamResourcesByIds`,
+imported by `terminal_import_resource`, authorized exactly as before — and
+leaves every enumerating surface: the artifacts rail, `GET /resources`,
+`list_resources`, the inventory appendix compaction leaves behind, and the
+search projection, where a null category also withdraws a row indexed earlier.
+Terminal's repository-replacement backup is the first and only producer, and
+WorkspaceDO migration 52 marks the ones already written.
+
+**Why:** Attaching a resource had been one fact, and for anything a person or a
+model produced on purpose that was right — you want to find what you made. It is
+wrong for a capture Rally takes *for* someone: repository checkout cannot replace
+a workspace in place, so it archives the old one first, and that archive has to
+stay reachable while being nobody's deliverable. Listed, a 21 MiB
+`application/gzip` sat in the artifacts rail next to real output and consumed a
+row of the model's inventory despite `model_content_status = 'unsupported'`
+making it unreadable.
+
+**Considered and rejected:** *Not attaching the backup at all* — `importResource`
+resolves only attached resources, so that trades a rail entry for an
+unrecoverable backup, which is the whole point of making it. *A new
+`relationship_type`* — direction is a two-value enum feeding both rails, the
+vocabulary is CHECK-constrained in a shipped migration whose hash a new value
+would move, and "is this a deliverable" is not the same question as "which way
+does it flow". *Filtering by title or provider in the renderer* — leaves the
+model's inventory and search untouched and matches on a repository name. *A
+distinct `provider`* — `provider` drives `requiresAttachment` in
+`authorizationResourceFacts`, so a listing decision would have moved an
+authorization one. *A column on `workstream_resource_links`* — the right shape if
+this recurs, but a WorkstreamDO migration, a protocol change and a mirror write
+for a single producer, against a JSON key that costs one `UPDATE` to withdraw.
+
+**What a future change has to respect:** The predicate is the enforcement point,
+so a surface that enumerates resources applies it and one that resolves by id
+does not. **There are two statements that read attached links and join
+`resources`, not one** — `loadVisibleRows` here and
+`WorkstreamObjectProductService.resources`, which is what
+`GET /workstreams/:id` and the socket's first frame assemble the member's rails
+from. Each takes an optional id list, and each adds the clause on exactly the
+branch that has none; `RESOURCE_WITH_WATCH_STATE_SQL` omits it entirely because
+it is a point lookup. A third such reader repeats that split rather than
+inventing a filter above the SQL. Nothing may read listing as an access
+decision. Promote the flag to a column when a second producer wants something a
+boolean cannot say; one producer does not justify the schema.
+
 ### 2026-09-11 — `list` can be confined to a set of resource types
 
 **What changed:** `ResourceService.list` takes an optional `resourceTypes`, and
@@ -639,6 +695,7 @@ some workspaces. `docs/automation-lifecycle.md`'s entry of the same date has the
 failure that forced it. It is recorded here because this document owns the
 listing path, and the empty-array branch is exactly the kind a later reader
 removes as dead weight.
+
 
 ### 2026-09-08 — Align search admission wording
 

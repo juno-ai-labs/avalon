@@ -173,7 +173,12 @@ recovery resource containing source, untracked files, databases, and artifacts,
 plus a portable Git bundle of local refs. It excludes credentials, the live
 `.git` directory, and regenerable dependency trees.
 If the copy fails, changes during transfer, or exceeds 50 MiB compressed, the
-existing workspace remains untouched.
+existing workspace remains untouched. That resource is attached to the work
+stream but **unlisted**: the checkout receipt's `backup.resourceId` still opens
+and imports it, while the artifacts rail and the model's inventory keep showing
+what the work produced rather than a compressed copy of the workspace it
+replaced. `agent-attachments.md` owns the flag; a preserved final diff is the
+work's own output and stays listed.
 
 Before initial model-facing repository access, Rally mints a
 one-hour installation token narrowed to that repository and the connector's
@@ -674,6 +679,33 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-11 — The recovery backup is reachable without being advertised
+
+**What changed:** `createTerminalWorkspaceBackup` marks its archive unlisted, so
+it leaves the artifacts rail, `list_resources`, the compaction inventory and
+search while keeping its work-stream link, and therefore the by-id paths the
+checkout receipt and `terminal_import_resource` use. WorkspaceDO migration 52
+marks the backups already written. Final-diff preservation is unchanged.
+
+**Why:** Checkout cannot replace a repository in place, so it archives the
+workspace it is about to delete. That archive was attached as an ordinary
+generated resource — the only durable byte store to hand — and so was presented
+as a deliverable: a 21 MiB `application/gzip` in the rail beside real output,
+and a row of the model's inventory for something `model_content_status =
+'unsupported'` already says it cannot read.
+
+**Considered and rejected:** Not attaching it — `importResource` resolves only
+attached resources, so the restore path goes with the rail entry. Moving the
+archive out of the resource graph into Terminal's own state — reimplements R2
+staging, cleanup fencing, download and import for one producer. The rejected
+alternatives for the flag itself are in `agent-attachments.md`.
+
+**What a future change has to respect:** A Terminal capture nobody asked for is
+unlisted; one that is the work's own output is not. The distinction is the
+producer's to make at the insert, not a filter a reading surface applies, and
+the backup must stay attached — unlisting is not detaching, and detaching it
+would make the archive unrecoverable.
 
 ### 2026-09-10 — The network policy gets its own settings page
 

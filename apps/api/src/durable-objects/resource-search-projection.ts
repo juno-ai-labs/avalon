@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { IdSchema, WorkspaceIdSchema } from '@rally/contracts';
 import type { Env } from '../env';
 import { resourceSearchCategory, resourceSearchText } from '../services/resource-search-text';
+import { isUnlistedResourceMetadata } from '../services/resource-listing';
 import { searchDocumentId } from '../services/text-search';
 import type { SearchDocumentBatch, SearchDocument } from '../services/search-document';
 
@@ -87,7 +88,12 @@ export async function prepareResourceSearch(sql: SqlStorage, env: Env, workspace
   const revision = resourceSearchRevision(sql, resourceId);
   if (revision === null) return { documents: [], retry: false };
   const row = sql.exec('SELECT * FROM resources WHERE id = ?', resourceId).toArray()[0];
-  const category = row ? resourceSearchCategory(row.provider, row.canonical_url) : null;
+  // Search is an enumerating surface, so an unlisted resource has no category.
+  // A null category also drives every source below to `live = false`, which
+  // withdraws a row that was indexed before it was marked unlisted.
+  const category = row && !isUnlistedResourceMetadata(row.metadata_json)
+    ? resourceSearchCategory(row.provider, row.canonical_url)
+    : null;
   const categoryId = category ? await searchDocumentId(category, workspaceId, resourceId) : null;
   const text = row && category && (documentId === undefined || documentId === categoryId) ? await resourceSearchText(env, row) : null;
   if (resourceSearchRevision(sql, resourceId) !== revision) throw new Error('search_source_changed');
