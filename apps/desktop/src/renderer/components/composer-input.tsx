@@ -340,8 +340,18 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
     void dictation.start();
   };
 
+  // `stop()` adopts the attempt's finalization promise, and that promise rejects
+  // when the drain, the socket, or the completion timeout fails. Every stop in
+  // this component is fire and forget — the hook puts the same failure in
+  // `dictation.error`, which the composer renders below — so the rejection is
+  // consumed here rather than reaching the renderer's `unhandledrejection`
+  // reporter, which files it as a JavaScript defect.
+  const stopDictation = (): void => {
+    void dictation.stop().catch(() => undefined);
+  };
+
   const toggleDictation = (): void => {
-    if (dictationActive) void dictation.stop();
+    if (dictationActive) stopDictation();
     else startDictation();
   };
 
@@ -358,28 +368,41 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   const [sendAfterDictation, setSendAfterDictation] = useState(false);
   useEffect(() => {
     if (!sendAfterDictation) return;
-    // A failed stop keeps the draft and shows its error; it does not send.
+    // A failed stop keeps the draft and shows its error; it does not send. So
+    // does a silent one: the hook's completion timeout reports "No speech was
+    // detected" as an error rather than an empty transcript.
     if (dictation.state === 'error') {
       setSendAfterDictation(false);
       return;
     }
     if (dictation.state !== 'idle') return;
     setSendAfterDictation(false);
+    // The transcript has landed, so `submitDisabled` now reflects the final
+    // draft rather than the empty one the stop was allowed on. Nothing to send
+    // — or an attachment still uploading — leaves the draft where it is.
+    if (submitDisabled) return;
     void onSubmit();
-  }, [dictation.state, onSubmit, sendAfterDictation]);
+  }, [dictation.state, onSubmit, sendAfterDictation, submitDisabled]);
 
   const submit = async (): Promise<void> => {
-    if (submitDisabled || sendAfterDictation) return;
+    if (sendAfterDictation) return;
+    // Stopping comes before the empty-draft guard, because while dictation is
+    // running the draft is not the whole story: it stays empty until the first
+    // partial arrives, and on a provider that sends nothing before the final
+    // commit it stays empty for the entire recording. Guarding on it first
+    // would make Send unreachable in exactly the case the recording holds the
+    // most. The effect above re-checks it once the transcript is in.
     if (dictationActive) {
       setSendAfterDictation(true);
-      void dictation.stop();
+      stopDictation();
       return;
     }
+    if (submitDisabled) return;
     await onSubmit();
   };
 
   const beginMention = (): void => {
-    if (dictation.state === 'transcribing' || dictation.state === 'finalizing') void dictation.stop();
+    if (dictation.state === 'transcribing' || dictation.state === 'finalizing') stopDictation();
     onMention();
   };
 
@@ -399,7 +422,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
       onPointerCancel={() => {
         const press = microphonePressRef.current;
         microphonePressRef.current = undefined;
-        if (press?.startedRecording) void dictation.stop();
+        if (press?.startedRecording) stopDictation();
       }}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
@@ -415,7 +438,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         const press = microphonePressRef.current;
         microphonePressRef.current = undefined;
         if (press?.startedRecording && performance.now() - press.startedAt >= 350) {
-          void dictation.stop();
+          stopDictation();
         }
       }}
     >
@@ -481,7 +504,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
             onCompositionEnd={() => setComposing(false)}
             onCompositionStart={() => setComposing(true)}
             onChange={(event) => {
-              if (dictation.state === 'transcribing' || dictation.state === 'finalizing') void dictation.stop();
+              if (dictation.state === 'transcribing' || dictation.state === 'finalizing') stopDictation();
               onValueChange(event.target.value);
               resizeTextarea(event.target.value);
             }}
@@ -668,7 +691,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 first-time reader looks for is the one that was missing. Every
                 host already passes `submitDisabled` for an empty draft, so the
                 disabled state is the one it always computed. */}
-            <button aria-label={submitLabel} className="composer-send" disabled={submitDisabled || sendAfterDictation} onClick={() => void submit()} type="button">
+            <button aria-label={submitLabel} className="composer-send" disabled={(submitDisabled && !dictationActive) || sendAfterDictation} onClick={() => void submit()} type="button">
               {submitting || sendAfterDictation ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
             </button>
           </div>
