@@ -368,8 +368,17 @@ list. Pressing it, or Enter, stops dictation and sends the transcript once it
 settles, tail included — the composer submits from an effect keyed on the
 settled state rather than from the click handler, because the final transcript
 arrives through `onValueChange` and the host's submit closure only carries it on
-the render after that. A dictation error ends the attempt without sending, and
-the draft and the error stay on screen.
+the render after that.
+
+Stopping is reachable even while the draft is empty. It has to be: the field
+holds nothing until the first partial arrives, and on a provider that returns
+text only at the final commit it holds nothing for the whole recording, so
+guarding Send on `submitDisabled` first would lock it in exactly the case the
+recording holds the most. `submit` therefore takes the dictation branch before
+that guard, and the effect applies the guard afterwards, against the draft the
+transcript produced. A silent recording ends in the hook's "No speech was
+detected" error rather than an empty transcript; either way a dictation error
+ends the attempt without sending, and the draft and the error stay on screen.
 
 ## Testing
 
@@ -405,6 +414,17 @@ final transcript reaches the host through `onValueChange`, so the host's submit
 closure captured at click time still holds the pre-stop draft, and the tail is
 dropped exactly as if it had never been drained. `stop()` resolving is not the
 moment the text exists — the render after it is.
+
+**Found in review:** two defects in the first cut, both caught by the PR's bot
+reviewers. Guarding `submit` on `submitDisabled` before the dictation branch
+made Send unreachable for a recording that had not produced a partial yet —
+which is the whole recording, on a provider that only returns text at the final
+commit. And `void dictation.stop()` discarded a promise that rejects when
+finalization fails, so a failed stop reached the renderer's `unhandledrejection`
+telemetry and was filed as a JavaScript defect. Stopping now comes before the
+empty-draft guard, and one `stopDictation` helper consumes the rejection for
+every fire-and-forget stop in the component, the five that predate this change
+included.
 
 **What a future change has to respect:** the submit that follows dictation runs
 from an effect keyed on the settled dictation state, not from the click handler.
@@ -443,10 +463,10 @@ adds a permanent gap next to it, which is the cost of the button with none of
 its use.
 
 **What a future change has to respect:** every host of `ComposerInput` must keep
-passing a `submitDisabled` that is true for an empty draft. It is now the only
-thing standing between a visible Send button and a request to send nothing —
-`submit()` guards on the same prop, so a host that stops computing it correctly
-breaks the button and its guard together rather than one of them loudly.
+passing a `submitDisabled` that is true for an empty draft. Both hosts also
+guard inside their own submit, so a host that stops computing the prop correctly
+gets a Send button that looks live and does nothing, rather than an empty
+message — a quiet failure, and the reason the prop is worth keeping honest.
 
 ### 2026-09-10 — The capsule shows the model control again, as a pill
 

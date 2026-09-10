@@ -45,11 +45,15 @@ vi.mock('../lib/use-realtime-dictation', async (importOriginal) => {
         stop: async () => {
           dictationHarness.stop();
           // `finish(attempt, 'error', …)` is where a drain or socket failure
-          // lands, and it is a state of its own rather than a quiet idle.
+          // lands. It rejects the finalization promise that `stop` returned and
+          // then moves to `error`, so the returned promise rejects as well as
+          // the state changing — a caller that only watches the state leaves
+          // that rejection unhandled, which Vitest fails the run for.
           if (dictationHarness.stopError !== undefined) {
+            const failure = new Error(dictationHarness.stopError);
             setError(dictationHarness.stopError);
             setState('error');
-            return;
+            throw failure;
           }
           if (dictationHarness.finalTranscript !== undefined) onTranscript(dictationHarness.finalTranscript);
           setState('idle');
@@ -253,6 +257,74 @@ describe('WorkstreamComposer live dictation', () => {
     // The tail, not the text as it stood when the click landed.
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('Draft the launch note', [], undefined, undefined));
     expect(onSend).toHaveBeenCalledOnce();
+  });
+
+  it('stops and sends a recording that has not produced a transcript yet', async () => {
+    const onSend = vi.fn(async () => undefined);
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={onSend}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    // Nothing has been typed and no partial has arrived, so the host still
+    // calls the draft empty — but the recording may hold a whole sentence that
+    // only lands on the final commit, and Send has to be able to reach it.
+    act(() => dictationHarness.setState?.('listening'));
+    const send = screen.getByRole('button', { name: 'Send message' });
+    expect(send).toBeEnabled();
+
+    dictationHarness.finalTranscript = 'Everything I said at once';
+    fireEvent.click(send);
+
+    await waitFor(() => expect(dictationHarness.stop).toHaveBeenCalledOnce());
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('Everything I said at once', [], undefined, undefined));
+  });
+
+  it('stops without sending when the recording produced nothing', async () => {
+    const onSend = vi.fn(async () => undefined);
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={onSend}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    act(() => dictationHarness.setState?.('listening'));
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await waitFor(() => expect(dictationHarness.stop).toHaveBeenCalledOnce());
+    // Silence stops the recording and sends nothing; it must not post an empty
+    // message just because Send was allowed to reach the stop.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled());
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   it('keeps the draft and does not send when stopping to send fails', async () => {
