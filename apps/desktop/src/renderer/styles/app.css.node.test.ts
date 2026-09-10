@@ -1388,13 +1388,41 @@ describe('message header meta typography', () => {
   it('styles the settled total through the timestamp rule rather than beside it', () => {
     const shared = rule('.message-block time,\n.message-block .message-work-summary');
     expect(shared).not.toBeNull();
-    expect(shared).toContain('font-size: var(--av-sys-font-size-meta)');
-    expect(shared).toContain('color: var(--av-ref-color-neutral-8)');
+    expect(shared).toContain('font-size: var(--av-cmp-feed-byline-font-size)');
+    expect(shared).toContain('color: var(--av-sys-color-text-muted)');
     // Neither may carry a size, weight, or colour of its own anywhere else, or
     // the two stop matching without either rule looking wrong on its own.
     const strays = preludes().filter((prelude) => prelude.includes('.message-work-summary')
       && prelude !== '.message-block time,\n.message-block .message-work-summary');
     expect(strays).toEqual([]);
+  });
+
+  /**
+   * One byline for every turn, whoever is speaking. The name and the time used
+   * to be painted four times over — a base pair, an `.agent-message` pair that
+   * added the navigation label's small capitals and a 0.7 opacity, and a
+   * work-stream pair per speaker — so Rally's turn and a person's carried
+   * different sizes, weights and greys for the same two facts, and neither rule
+   * looked wrong beside the others. What separates the speakers is the accent
+   * on the dot, which is the one thing a per-speaker rule may still say.
+   */
+  it('paints the name and the time once, not once per speaker', () => {
+    const speakerScoped = preludes().filter((prelude) => /\.(agent|human)-message/u.test(prelude)
+      && /(\.message-author\b|\btime\b)/u.test(prelude)
+      && !prelude.includes('.message-author-dot'));
+    expect(speakerScoped).toEqual([]);
+    // The name resolves through the byline tokens rather than through the
+    // accent, so a bright personal hue cannot decide whether it is readable.
+    const author = rule('.message-author');
+    expect(author).toContain('color: var(--av-sys-color-text-subtle);');
+    expect(author).toContain('font-size: var(--av-cmp-feed-byline-font-size);');
+    expect(author).toContain('font-weight: var(--av-cmp-feed-byline-author-weight);');
+    expect(author).not.toContain('--person-accent');
+    // Three parts, one type size. The context label used to carry a third,
+    // fitted against a timestamp size that no longer exists.
+    expect(rule('.message-context-label')).toContain('font-size: var(--av-cmp-feed-byline-font-size);');
+    expect(rule('.message-block time,\n.message-block .message-work-summary'))
+      .toContain('font-weight: var(--av-cmp-feed-byline-time-weight);');
   });
 
   it('centres the header on its children rather than on their line boxes', () => {
@@ -1502,19 +1530,22 @@ describe('message header meta typography', () => {
    * The theme inset that header by 18px anyway, which put the identity line on
    * its own vertical while the prose and the action row under it shared the
    * article's own edge — a hanging indent over an empty gutter. Held on the
-   * value rather than on one spelling, for the same reason as the human rule
-   * above. `padding-inline` is the one that matters most here: it is the
-   * logical spelling this stylesheet actually uses (`padding-inline-start`
-   * appears nowhere in it), and `padding-inline: 18px 0` reads as a horizontal
-   * pair rather than as a leading inset while setting exactly the one this
-   * change removed. A trailing inset stays allowed, since `padding-inline-end`
-   * is what the human header opposite uses.
+   * value rather than on one spelling. `padding-inline` is the one that matters
+   * most here: it is the logical spelling this stylesheet actually uses
+   * (`padding-inline-start` appears nowhere in it), and `padding-inline: 18px 0`
+   * reads as a horizontal pair rather than as a leading inset while setting
+   * exactly the one that was removed. A trailing inset stays allowed, since
+   * `padding-inline-end` is what the human header opposite uses.
+   *
+   * The assistant now states nothing of its own about its header at all: the
+   * shared rule is the only one, and this asserts on it, because a leading
+   * inset arriving there would put *every* byline on its own vertical rather
+   * than just Rally's.
    */
   it('starts the assistant identity line on the same vertical as its prose', () => {
-    // Same shape as the human rule above: the theme's header rule carried only
-    // a margin that disagreed with the shared one by a pixel, and is gone.
     expect(rule('.workstream-screen .agent-message > header')).toBeNull();
-    expect(rule('.agent-message > header'))
+    expect(rule('.agent-message > header')).toBeNull();
+    expect(rule('.message-block > header'))
       .not.toMatch(/padding(?:-left|-inline(?:-start)?)?:/u);
   });
 });

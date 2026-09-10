@@ -335,12 +335,22 @@ family. A new automation is created by `POST /automations` before its
 conversation is opened, so its page starts on a durable id. Socket snapshots remain authoritative after reconnect;
 local optimistic rows are reconciled by stable client turn IDs.
 
-Delivered attachments follow the message body and precede its action row. Human
-identity headers render time, optional work summary, optional context label,
-then the person dot and username. The username ends at the bubble-radius inset.
-The assistant header renders the author name (`Rally`, or `Automation` on an
-automation turn), an optional context label, the time, an optional work summary,
-and the collapse-all control when the turn has collapsible headings. It starts on
+Delivered attachments follow the message body and precede its action row. Every
+turn's identity line is `MessageByline`, one component for the assistant's turn,
+a colleague's, the reader's own and a settled elicitation answer, so the name and
+the time carry one size and one pair of greys whoever is speaking; what tells
+speakers apart is the accent on the dot. The line reads outward from the edge the
+turn is aligned to — name first on the leading edge, name last on the trailing
+one — laid out in markup rather than by CSS ordering, so a screen reader
+announces what a sighted reader sees. The username ends at the bubble-radius
+inset, and the person dot travels inside it. The time is `RelativeTime`, which
+stays current as now moves and names the exact local time on hover;
+[`relative-time.md`](relative-time.md) owns it and the clock behind it.
+
+The assistant turn is the leading-edge case: the author name (`Rally`, or
+`Automation` on an automation turn), an optional context label, the time, an
+optional work summary, and the collapse-all control when the turn has
+collapsible headings. It starts on
 the same vertical as the response body and the action row beneath it: the turn
 has no avatar, so nothing sits left of the name and nothing reserves space for
 one.
@@ -455,6 +465,32 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-10 — One identity line, painted once rather than once per speaker
+
+**What changed:** `MessageBlock` renders both of its headers through a new
+`MessageByline`, and the four `app.css` rules that gave the name and the time a
+size, weight, colour and opacity per speaker collapse to two that state them
+once. The person dot moves inside the name element. The timestamp is
+`RelativeTime`, so it stays current while a work stream is open and gives up the
+absolute local time on hover.
+
+**Why:** Rally's turn and a person's turn were drawing the same two facts — who
+spoke and when — in visibly different ways: 13px/500 in `neutral-11` under a 0.7
+opacity against 12px/500 in `text-subtle`, and an 8.5px time against a 12px one.
+No rule looked wrong beside the others, which is how four of them came to exist;
+the difference is only visible with both rows on screen, which is how it was
+reported.
+
+**Consequences:** a rule scoped to `.agent-message` or `.human-message` that
+touches the name or the time is now a test failure rather than a style choice,
+because that scoping is what let the four drift. The accent stays per speaker
+and paints the dot alone — the name no longer resolves through
+`--person-accent`, so the `profile ? text-default` branch that kept a bright
+personal hue from making a name unreadable is gone with the problem it solved.
+The header order the [September 9 entry](#2026-09-09--attachments-follow-the-message-author-ends-at-the-corner)
+fixed in markup is now the component's rule rather than each branch's: the parts
+are reversed for a trailing-edge turn, in the DOM, for that entry's reason.
+[`relative-time.md`](relative-time.md) owns the byline and the clock from here.
 ### 2026-09-10 — Two of the row's sentences get shorter
 
 **What changed:** *Speak response with an AI-generated voice* is now *Speak

@@ -12,6 +12,7 @@ import {
 
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { ProjectAppearancePicker, ProjectIcon } from '../components/project-sidebar-section';
+import { RelativeTime } from '../components/relative-time';
 import {
   Avatar,
   AvatarStack,
@@ -25,7 +26,7 @@ import {
   StatusDot,
 } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
-import { formatRelative, workstreamMarkerStatus } from '../lib/format';
+import { workstreamMarkerStatus } from '../lib/format';
 import { isComposingKeyEvent } from '../lib/ime';
 import { useProjectDirectories } from '../lib/use-project-directories';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
@@ -316,7 +317,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
             <NavLink className="waiting-workstream-row" to={`/workstreams/${workstream.id}`}>
               <StatusDot status={workstreamMarkerStatus(workstream)} />
               <span className="waiting-workstream-copy"><strong>{workstream.title}</strong>{workstream.preview && <span>{workstream.preview}</span>}</span>
-              <time dateTime={workstream.lastActivityAt}>{formatRelative(workstream.lastActivityAt)}</time>
+              <RelativeTime value={workstream.lastActivityAt} />
             </NavLink>
             <Button disabled={!editable} onClick={() => {
               if (!api) return;
