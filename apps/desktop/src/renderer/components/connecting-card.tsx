@@ -14,6 +14,12 @@ export interface ConnectingCardProps {
   state: ConnectingCardState;
   /** Why the connection failed, when it did; shown under the sentence. */
   error?: string | undefined;
+  /**
+   * What waits for the connection, shown under the sentence while it is being
+   * made. A conversation says its composer will send once Rally connects; the
+   * capsule composer has no footer of its own to say so in.
+   */
+  detail?: string | undefined;
   onRetry?: (() => void) | undefined;
 }
 
@@ -26,7 +32,7 @@ export interface ConnectingCardProps {
  * connection is on its way. It is a status, so it is polite rather than
  * assertive; a failure keeps the same card and adds the one action there is.
  */
-export function ConnectingCard({ error, name, onRetry, state, subject }: ConnectingCardProps): React.JSX.Element {
+export function ConnectingCard({ detail, error, name, onRetry, state, subject }: ConnectingCardProps): React.JSX.Element {
   const target = name === null ? <>this {subject}</> : <strong>{name}</strong>;
   const sentence = state === 'connecting'
     ? <>Connecting to {target}…</>
@@ -44,7 +50,9 @@ export function ConnectingCard({ error, name, onRetry, state, subject }: Connect
       </span>
       <span className="connecting-card-copy">
         <span className="connecting-card-sentence">{sentence}</span>
-        {state === 'failed' && error && <small>{error}</small>}
+        {state === 'failed' && error
+          ? <small>{error}</small>
+          : detail && <small>{detail}</small>}
       </span>
       {state === 'failed' && onRetry && <Button onClick={onRetry}>Retry</Button>}
     </div>

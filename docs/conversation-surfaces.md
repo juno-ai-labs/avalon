@@ -267,7 +267,8 @@ A conversation whose caches were seeded from the local cache renders under a
 `ConnectingCard` in a sticky slot at the top of the transcript scroller, and
 its composer takes `sendBlocked`: typing, mentions, attachments, and the draft
 work, sending is disabled, Enter is swallowed the way it is for an empty
-draft, and the toolbar hint says sending is available once Rally connects.
+draft, and the card's second line says sending is available once Rally
+connects, since the capsule composer hides its footer hint.
 The surface reads the feed-source entry as `feedFromLocalCache`; while it is
 set, range loads, **Jump to latest**, the search jump, and read
 acknowledgements wait as they do for a reconnecting socket, because each

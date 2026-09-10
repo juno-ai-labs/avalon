@@ -172,7 +172,9 @@ The composer over a seed is the ordinary composer with `sendBlocked`: typing,
 mentions, attachments, the slash commands, and the draft all work, and the
 draft survives into the live conversation. Sending is disabled, Enter is
 swallowed the way it is for an empty draft so the sentence stays where it was
-typed, and the toolbar hint says sending is available once Rally connects. The
+typed, and the card's second line says sending is available once Rally
+connects: the capsule composer hides its footer hint, so the reason lives on
+the card the eye is already on. The
 gate lifts when the live snapshot lands, not when the socket opens: a message
 admitted against a seed's transcript would position its optimistic row against
 a fence the room has not confirmed.
@@ -249,6 +251,13 @@ gate. It does not own:
 | The feed, the composer, and the surface the card sits in | [`conversation-surfaces.md`](conversation-surfaces.md) |
 | What the `local_cache` feed source means to the open-latency events | [`telemetry.md`](telemetry.md) |
 | What may be written under `userData` at all | [`security.md`](security.md) |
+
+The cache starts where the workspace tree does. A cold launch first restores
+the session and fetches the workspace profile over REST, and both are gates
+above the providers this module hangs from; with the region unreachable the
+client still stops at its service screen, and nothing here changes that. What
+the cache removes is the socket's share of an open: the ticket, the handshake,
+the subscribe, and the first snapshot, on a client that already has a session.
 
 The draft cache and this one are deliberately two databases. A draft is the
 reader's own unsent words, expiring after twelve hours and released with the
@@ -354,8 +363,9 @@ scrolling.
 every conversation the reader opened or the pool warmed are written to
 IndexedDB from the query cache after each live socket frame, and read back
 into it, marked as a seed, before the next socket answers. A floating card
-names the room the live connection is being made to, and the composer accepts
-a draft but does not send until the live snapshot has replaced the seed.
+names the room the live connection is being made to and, over a conversation,
+says that sending waits for it, and the composer accepts a draft but does not
+send until the live snapshot has replaced the seed.
 
 **Why:** Opening a work stream, a substream, or a project on a cold client
 showed a spinner until the socket ticket, the handshake, the subscribe, and
