@@ -2948,11 +2948,14 @@ pre {
 .transcript-history-control + .inline-error { margin-bottom: var(--space-4); }
 .virtual-message-row { display: flow-root; }
 .message-arrival-layer { display: flow-root; transform-origin: center bottom; }
-/* The spacing scale, derived from the theme's one unit: every margin, padding
-   and gap in the feed is a whole number of these steps, so a theme that wants a
-   looser or tighter feed moves `ref.space.unit` and nothing else. Rule-local
-   rather than eight registry tokens because a theme has no opinion about step
-   five that is not an opinion about the unit. */
+/* The spacing scale, derived from the theme's one unit. Every margin, padding
+   and gap between the feed's rows, inside its turns and on its cards is a step
+   of it, so a theme that wants a looser or tighter feed moves `ref.space.unit`
+   and nothing else; `app.css.node.test.ts` holds that line, and the few values
+   under a step that remain are optical nudges inside inline controls, each
+   exempted there by name. Rule-local rather than eight registry tokens because
+   a theme has no opinion about step five that is not an opinion about the
+   unit. */
 :root {
   --space-1: var(--av-ref-space-unit);
   --space-2: calc(var(--av-ref-space-unit) * 2);
@@ -2972,28 +2975,29 @@ pre {
    system note sat 78px below a bubble and 20px above the answer, and two
    consecutive tool rows were 1px apart.
 
-   Rows render in index order in both the windowed and the plain feed, so the
-   sibling combinator sees the true neighbour, and each row is `flow-root`, so
-   the margin is inside the row's border box and the virtualizer measures it.
-   A turn is a row whose layer holds a `.message-block`; everything else (a
-   tool row, a timing row, the accordion, a system note, a status pill, the
-   proposal card, an open elicitation) is an event. Rally's answer sits on the
-   work that produced it at the same distance its header sits above its body,
-   because it is the same turn finishing; a person's reply after an event is a
-   new turn and keeps the turn-to-event distance. */
-.virtual-message-row > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-stack-gap); }
-.virtual-message-row:not(:has(> .message-arrival-layer > .message-block)) + .virtual-message-row > .message-arrival-layer > :first-child,
-.virtual-message-row + .virtual-message-row:not(:has(> .message-arrival-layer > .message-block)) > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-block-gap); }
-.virtual-message-row:not(:has(> .message-arrival-layer > .message-block)) + .virtual-message-row:not(:has(> .message-arrival-layer > .message-block)) > .message-arrival-layer > :first-child,
-.virtual-message-row:not(:has(> .message-arrival-layer > .message-block)) + .virtual-message-row:has(> .message-arrival-layer > .agent-message) > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-event-gap); }
-.virtual-message-row:first-child > .message-arrival-layer > :first-child { margin-top: 0; }
+   Which gap a row gets is decided by `MessageFeed` from the message list
+   (`feedRowGap`) and stamped on the row as `data-row-gap`, not by a sibling
+   combinator: the feed is windowed, so the first mounted row has no previous
+   sibling whatever its index, and a `+` rule gave it no gap at the window's
+   edge and a different measured height on either side of it. Each row is
+   `flow-root`, so the margin is inside the row's border box and the
+   virtualizer measures it. A turn is a person's `.message-block`, an answer is
+   Rally's, and everything else (a tool row, a timing row, the accordion, a
+   system note, a status pill, the proposal card, an open elicitation) is an
+   event. Rally's answer sits on the work that produced it at the same distance
+   its header sits above its body, because it is the same turn finishing; a
+   person's reply after an event is a new turn and keeps the turn-to-event
+   distance. */
+.virtual-message-row[data-row-gap='stack'] > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-stack-gap); }
+.virtual-message-row[data-row-gap='block'] > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-block-gap); }
+.virtual-message-row[data-row-gap='event'] > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-event-gap); }
 /* The unread divider takes the row's space; the row it labels sits under it. */
 .virtual-message-row > .message-arrival-layer > .unread-divider + * { margin-top: 0; }
 .activity-presence { display: flow-root; transform-origin: left center; }
 /* The live timer under the feed is the next event row, drawn by the surface. */
 .activity-presence .agent-work-timing { margin-top: var(--av-sys-space-block-gap); }
 .message-block { margin: 0; }
-.message-block > header { align-items: center; display: flex; gap: 8px; margin-bottom: var(--space-2); }
+.message-block > header { align-items: center; display: flex; gap: var(--space-2); margin-bottom: var(--space-2); }
 /* The header mixes three type sizes, and each one's line box is taller than its
    glyphs by a different amount, so centring the boxes leaves the text looking
    off-centre. Collapsing the children to their glyph height makes the flex
@@ -3184,10 +3188,10 @@ pre {
   border-radius: var(--av-sys-size-radius-lg);
   color: var(--av-sys-color-text-default);
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   margin: var(--av-sys-space-prose-gap) 0;
   max-width: 100%;
-  padding: 10px 12px;
+  padding: var(--space-3);
   text-align: left;
   width: min(100%, 420px);
 }
@@ -3271,7 +3275,7 @@ pre {
    for an image, or one compact file row. The old tall citation tile made sites
    and audio look like empty documents and survived after attachments moved on. */
 .citation-card { color: var(--av-sys-color-text-default); cursor: pointer; font: inherit; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; overflow: hidden; text-align: left; }
-.citation-card.is-file { align-items: center; background: var(--av-cmp-composer-background); border: .5px solid var(--av-cmp-composer-border-color); border-radius: 12px; display: grid; gap: var(--space-2); grid-template-columns: 36px minmax(0, 1fr); min-height: var(--attachment-file-card-height); min-width: min(220px, 100%); padding: 8px; width: min(340px, 100%); }
+.citation-card.is-file { align-items: center; background: var(--av-cmp-composer-background); border: .5px solid var(--av-cmp-composer-border-color); border-radius: 12px; display: grid; gap: var(--space-2); grid-template-columns: 36px minmax(0, 1fr); min-height: var(--attachment-file-card-height); min-width: min(220px, 100%); padding: var(--space-2); width: min(340px, 100%); }
 .citation-card.is-file:hover { background: var(--av-sys-color-surface-elevated-hover); }
 .citation-card-badge { align-items: center; background: color-mix(in srgb, var(--av-sys-color-accent-base) 18%, var(--av-sys-color-surface-raised)); border-radius: 9px; color: var(--av-sys-color-accent-base); display: inline-flex; height: 36px; justify-content: center; width: 36px; }
 .citation-card.is-image { background: var(--av-ref-color-neutral-4); border: 0; border-radius: 12px; box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--av-sys-color-text-default) 15%, transparent); display: block; max-height: 200px; min-height: 64px; padding: 0; position: relative; transition: filter 140ms ease; }
@@ -3355,7 +3359,7 @@ pre {
 /* The footnotes GFM still renders — the definitions the citation grammar did
    not lift. Without a rule they read as an ordinary numbered list inside the
    answer, which is exactly what a footnote is not. */
-.markdown-body .footnotes { border-top: 1px solid var(--av-sys-color-border-subtle); color: var(--av-sys-color-text-muted); font-size: 0.9em; margin-top: var(--space-5); padding-top: var(--space-3); }
+.markdown-body .footnotes { border-top: 1px solid var(--av-sys-color-border-subtle); color: var(--av-sys-color-text-muted); font-size: 0.9em; margin-top: var(--space-6); padding-top: var(--space-3); }
 
 .citation-identity-card { background: color-mix(in srgb, var(--av-sys-color-brand-base) 10%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-brand-base) 24%, transparent); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-brand-ink); display: inline-block; font-size: 0.92em; font-weight: 580; padding: 3px 9px; }
 /* Markers are restated because Tailwind's preflight sets `list-style: none` on
@@ -3386,26 +3390,26 @@ pre {
 /* Keeps its own `none`: a task list draws checkboxes, and a bullet beside each
    one is what this exception exists to prevent. It carries two classes to the
    marker rules' one, so it survives them. */
-.markdown-body .contains-task-list { list-style: none; padding-left: 4px; }
-.markdown-body .task-list-item { align-items: baseline; display: flex; gap: 9px; }
+.markdown-body .contains-task-list { list-style: none; padding-left: var(--space-1); }
+.markdown-body .task-list-item { align-items: baseline; display: flex; gap: var(--space-2); }
 .markdown-body .task-list-item > input { accent-color: var(--av-sys-color-accent-base); flex: 0 0 auto; margin: 0; transform: translateY(1px); }
-.markdown-inline-code { background: var(--av-ref-color-neutral-4); border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-13); font-size: 0.88em; padding: 2px 4px; }
+.markdown-inline-code { background: var(--av-ref-color-neutral-4); border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-13); font-size: 0.88em; padding: 2px var(--space-1); }
 .markdown-code-block { background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-xl); margin: var(--space-4) 0; overflow: hidden; }
-.markdown-code-block-header { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; gap: 8px; justify-content: space-between; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); }
+.markdown-code-block-header { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; gap: var(--space-2); justify-content: space-between; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); }
 .markdown-code-language { color: var(--av-ref-color-neutral-9); font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; }
 .markdown-code-block-header button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-11); display: flex; height: 26px; justify-content: center; padding: 0; width: 26px; }
 .markdown-code-block-header button:hover { background: var(--av-ref-color-neutral-4); color: var(--av-ref-color-neutral-13); }
 .markdown-code-block pre { background: transparent !important; font-size: 0.93em; line-height: 1.55; margin: 0; overflow: auto; padding: var(--space-3) var(--space-4); tab-size: 2; }
 .markdown-code-block code { background: none; border-radius: 0; display: block; min-width: max-content; padding: 0; }
 .markdown-code-block code > span { display: block; min-height: 1.55em; }
-.markdown-mermaid-diagram { overflow: auto; padding: 18px; }
+.markdown-mermaid-diagram { overflow: auto; padding: var(--space-4); }
 .markdown-mermaid-svg { margin: 0 auto; }
 /* Mermaid writes a responsive max-width into the generated SVG. The wrapper's
    viewBox width is the scrollable frame; the SVG must fill that frame instead
    of shrinking a wide diagram back to the message width. */
 .markdown-mermaid-svg svg { display: block; height: auto; max-width: none !important; width: 100% !important; }
-.markdown-mermaid-error { color: var(--av-sys-color-danger-soft); font-size: 11px; margin: 0; padding: 10px 18px 0; }
-.markdown-body blockquote { border-left: 2px solid var(--av-ref-color-line-4); color: var(--av-ref-color-neutral-11); margin: var(--space-6) 0; padding: 1px 0 1px 15px; }
+.markdown-mermaid-error { color: var(--av-sys-color-danger-soft); font-size: 11px; margin: 0; padding: var(--space-2) var(--space-4) 0; }
+.markdown-body blockquote { border-left: 2px solid var(--av-ref-color-line-4); color: var(--av-ref-color-neutral-11); margin: var(--space-6) 0; padding: 1px 0 1px var(--space-4); }
 .markdown-body blockquote > :last-child { margin-bottom: 0; }
 .markdown-body hr { background: var(--av-ref-color-neutral-5); border: 0; height: 1px; margin: var(--space-6) 0; }
 .markdown-table-scroll { --tw-fade-scrollbar-thumb: var(--av-sys-color-scrollbar-thumb); --tw-fade-scrollbar-width: 9px; margin: var(--space-4) -2px; overflow-x: auto; }
@@ -3414,8 +3418,8 @@ pre {
 .markdown-body td { background: var(--av-sys-color-surface-raised); border: 0; border-radius: var(--av-sys-size-radius-xs); min-width: 120px; padding: var(--space-2) var(--space-3); text-align: left; vertical-align: top; }
 .markdown-body th { background: var(--av-ref-color-neutral-4); color: var(--av-ref-color-neutral-13); font-weight: var(--av-cmp-markdown-strong-weight); }
 .markdown-body del { color: var(--av-ref-color-neutral-10); text-decoration-color: var(--av-ref-color-neutral-9); }
-.markdown-body img { border-radius: var(--av-sys-size-radius-md); display: block; height: auto; margin: 16px 0; max-width: 100%; }
-.agent-message-actions { align-items: center; display: flex; gap: 8px; opacity: 0; transition: opacity 120ms; }
+.markdown-body img { border-radius: var(--av-sys-size-radius-md); display: block; height: auto; margin: var(--space-4) 0; max-width: 100%; }
+.agent-message-actions { align-items: center; display: flex; gap: var(--space-2); opacity: 0; transition: opacity 120ms; }
 .agent-message:hover .agent-message-actions,
 .agent-message:focus-within .agent-message-actions,
 .agent-message-actions.is-speaking { opacity: 1; }
@@ -3424,7 +3428,7 @@ pre {
    appears in both and has to read as the same control. Stating them per row
    instead would put `10px`/`2px`/`4px` in two places, and tuning one row would
    move that control on the agent's turn and leave it behind on the person's. */
-:is(.agent-message-actions, .human-message-actions) button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 10px; gap: 4px; padding: 2px; }
+:is(.agent-message-actions, .human-message-actions) button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 10px; gap: var(--space-1); padding: 2px; }
 :is(.agent-message-actions, .human-message-actions) button:hover { color: var(--av-sys-color-text-default); }
 /* The only thing the substream control needs beyond the row's metrics: it is the
    one two-word label here, and in a tight row it breaks mid-control while its
@@ -3620,17 +3624,17 @@ pre {
   border: 1px solid color-mix(in srgb, var(--av-sys-color-danger-base) 42%, var(--av-sys-color-border-default));
   border-radius: var(--av-sys-size-radius-lg);
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
   grid-template-columns: auto minmax(0, 1fr) auto;
   margin: var(--av-sys-space-block-gap) 0 0;
-  padding: 12px;
+  padding: var(--space-3);
 }
 .run-failure-icon { color: var(--av-sys-color-danger-base); display: grid; padding-top: 1px; place-items: center; }
 .run-failure-copy { min-width: 0; }
 .run-failure-copy strong { color: var(--av-sys-color-text-default); display: block; font-size: 12px; margin-bottom: 3px; }
-.run-failure-copy p { color: var(--av-sys-color-text-subtle); font-size: 11px; line-height: 1.45; margin: 0 0 5px; }
+.run-failure-copy p { color: var(--av-sys-color-text-subtle); font-size: 11px; line-height: 1.45; margin: 0 0 var(--space-1); }
 .run-failure-copy code { color: var(--av-sys-color-text-muted); font-size: 10px; }
-.run-failure-actions { align-items: center; display: flex; gap: 7px; }
+.run-failure-actions { align-items: center; display: flex; gap: var(--space-2); }
 .run-failure-actions .button { white-space: nowrap; }
 .run-stopped-notice {
   align-items: flex-start;
@@ -3638,10 +3642,10 @@ pre {
   border: 1px solid color-mix(in srgb, var(--av-sys-color-text-muted) 42%, var(--av-sys-color-border-default));
   border-radius: var(--av-sys-size-radius-lg);
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
   grid-template-columns: auto minmax(0, 1fr) auto;
   margin: var(--av-sys-space-block-gap) 0 0;
-  padding: 12px;
+  padding: var(--space-3);
 }
 .run-stopped-icon { color: var(--av-sys-color-text-muted); display: grid; padding-top: 1px; place-items: center; }
 .run-stopped-copy { min-width: 0; }
@@ -3651,23 +3655,23 @@ pre {
 .run-stopped-notice {
   border-width: .5px;
   border-radius: 16px;
-  gap: 12px;
+  gap: var(--space-3);
   grid-template-columns: 32px minmax(0, 1fr);
-  padding: 16px;
+  padding: var(--space-4);
 }
 .run-failure-notice { background: var(--av-sys-color-danger-wash); border-color: var(--av-sys-color-danger-edge); }
 .run-stopped-notice { background: var(--av-sys-color-surface-raised); border-color: var(--av-ref-color-line-3); }
 .run-failure-icon,
 .run-stopped-icon { background: var(--av-sys-color-surface-raised-hover); border-radius: 10px; height: 32px; padding: 0; width: 32px; }
 .run-failure-copy strong,
-.run-stopped-copy strong { font-size: 14px; font-weight: 560; margin-bottom: 5px; }
+.run-stopped-copy strong { font-size: 14px; font-weight: 560; margin-bottom: var(--space-1); }
 .run-failure-copy p,
 .run-stopped-copy p { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .run-failure-copy code { display: block; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
-.run-failure-actions { flex-wrap: wrap; gap: 8px; grid-column: 2; }
+.run-failure-actions { flex-wrap: wrap; gap: var(--space-2); grid-column: 2; }
 .run-stopped-notice > .button { grid-column: 2; justify-self: start; }
 .run-failure-actions .button,
-.run-stopped-notice > .button { border-radius: 999px; min-height: 36px; padding: 8px 14px; white-space: normal; }
+.run-stopped-notice > .button { border-radius: 999px; min-height: 36px; padding: var(--space-2) var(--space-3); white-space: normal; }
 .jump-bottom { align-items: center; background: var(--av-sys-color-surface-raised-hover); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-pill); box-shadow: var(--av-sys-elevation-shadow-sm); color: var(--av-sys-color-text-subtle); display: flex; height: 30px; justify-content: center; left: 50%; padding: 0; pointer-events: auto; position: absolute; top: 5px; transform: translateX(-50%); width: 30px; z-index: 4; }
 .jump-bottom:hover { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-ref-color-line-5); color: var(--av-sys-color-text-default); }
 .jump-bottom:focus-visible { border-color: var(--av-sys-color-focus-default); outline: 0; }
@@ -3794,8 +3798,8 @@ pre {
 .elicitation-panel { padding: var(--space-3); }
 /* GrokBot choice-rows: one inset list, not separate elevated cards. */
 .app-shell .elicitation-panel,
-.app-shell .elicitation-collapsed-bar { background: var(--av-cmp-bubble-background); border: 0; border-radius: 16px; box-shadow: none; padding: 12px; }
-.app-shell .elicitation-panel-header { align-items: center; gap: 8px; min-height: 20px; }
+.app-shell .elicitation-collapsed-bar { background: var(--av-cmp-bubble-background); border: 0; border-radius: 16px; box-shadow: none; padding: var(--space-3); }
+.app-shell .elicitation-panel-header { align-items: center; gap: var(--space-2); min-height: 20px; }
 .app-shell .elicitation-panel-header h3 { color: var(--av-sys-color-text-default); font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; margin: 0; overflow-wrap: anywhere; }
 .app-shell .elicitation-header-actions button { height: 20px; width: 20px; }
 .app-shell .elicitation-options { background: var(--av-cmp-elicitation-option-background); border: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); border-radius: 8px; gap: 0; margin-top: var(--space-2); padding: 0; }
@@ -3819,7 +3823,7 @@ pre {
 .app-shell .elicitation-submit kbd { color: inherit; }
 .elicitation-panel-header { align-items: flex-start; display: flex; gap: var(--space-3); justify-content: space-between; min-height: 34px; }
 .elicitation-panel-header > div:first-child { min-width: 0; }
-.elicitation-panel-header h3 { color: var(--av-ref-color-neutral-14); font-size: 15px; font-weight: 590; line-height: 1.38; margin: 4px 0 0; }
+.elicitation-panel-header h3 { color: var(--av-ref-color-neutral-14); font-size: 15px; font-weight: 590; line-height: 1.38; margin: var(--space-1) 0 0; }
 .elicitation-header-actions { display: flex; flex: 0 0 auto; gap: 3px; }
 .elicitation-header-actions button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-11); display: flex; height: 29px; justify-content: center; padding: 0; width: 29px; }
 .elicitation-header-actions button:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 7%, var(--av-sys-color-surface-elevated-hover)); color: var(--av-sys-color-brand-ink); }
@@ -3838,10 +3842,10 @@ pre {
 .elicitation-option:hover .elicitation-checkbox { border-color: var(--av-sys-color-brand-ink); }
 .elicitation-option.is-selected .elicitation-checkbox { background: var(--av-sys-color-brand-base); border-color: var(--av-sys-color-brand-base); }
 .elicitation-other-option { align-items: start; }
-.elicitation-other-option .elicitation-option-copy { gap: 8px; width: 100%; }
+.elicitation-other-option .elicitation-option-copy { gap: var(--space-2); width: 100%; }
 .elicitation-other-option .elicitation-checkbox,
 .elicitation-other-option > kbd { margin-top: 3px; }
-.elicitation-other-option input[type='text'] { background: var(--av-ref-color-neutral-6); border: 0; border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-14); font-size: 13px; height: 38px; outline: 0; padding: 0 10px; width: 100%; }
+.elicitation-other-option input[type='text'] { background: var(--av-ref-color-neutral-6); border: 0; border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-14); font-size: 13px; height: 38px; outline: 0; padding: 0 var(--space-3); width: 100%; }
 .elicitation-other-option input[type='text']::placeholder { color: var(--av-ref-color-neutral-9); }
 .elicitation-other-option input[type='text']:focus { box-shadow: inset 0 0 0 1px var(--av-ref-color-line-6); }
 .elicitation-text-response { background: var(--av-sys-color-surface-raised-hover); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-14); display: block; margin-top: var(--space-3); min-height: 86px; outline: 0; padding: var(--space-3); resize: vertical; width: 100%; }
@@ -3923,12 +3927,12 @@ pre {
   border-radius: 12px;
   color: var(--av-sys-color-text-default);
   display: flex;
-  margin-block: 4px;
+  margin-block: var(--space-1);
   max-width: min(340px, 100%);
   min-height: var(--attachment-file-card-height);
   min-width: min(220px, 100%);
   overflow: visible;
-  padding: 8px;
+  padding: var(--space-2);
   position: relative;
 }
 .attachment-file-card.is-pending { margin-block: 0; width: 220px; }
@@ -3952,7 +3956,7 @@ pre {
 .attachment-file-with-player { max-width: 100%; }
 .attachment-inline-audio { display: block; max-width: 100%; width: 280px; }
 .attachment-inline-audio audio { display: block; height: 36px; max-width: 100%; width: 100%; }
-.attachment-inline-audio > button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; gap: 8px; padding: 6px 8px; }
+.attachment-inline-audio > button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; gap: var(--space-2); padding: var(--space-1) var(--space-2); }
 .attachment-inline-audio [role="alert"] { color: var(--av-sys-color-danger-base); display: block; font-size: 12px; }
 .attachment-file-icon.is-audio,
 .attachment-file-icon.is-pdf { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
@@ -4676,7 +4680,7 @@ body:has(.resource-lightbox) .menu-content { z-index: 1004; }
      ring reaches beyond its own box (2px wide at `outline-offset: 1px`), is 23,
      so anything narrower clips the chevron and the focus ring a keyboard user
      needs to see. Raise the outdent or the ring and this number moves with them. */
-  .transcript-column { padding-left: var(--space-5); padding-right: var(--space-5); }
+  .transcript-column { padding-left: var(--space-6); padding-right: var(--space-6); }
   .composer-dock { padding-left: 16px; padding-right: 16px; }
   .workstream-header-actions .participant-header-button { display: none; }
   .automation-overview-layout { display: block; padding: 38px 22px 90px; }
@@ -5205,9 +5209,9 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   display: flex;
   font-size: 12px;
   font-weight: 500;
-  gap: 4px;
+  gap: var(--space-1);
   line-height: 18px;
-  margin-top: 4px;
+  margin-top: var(--space-1);
   padding: 0;
 }
 
@@ -5336,7 +5340,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 .human-message-bubble .markdown-body p {
-  margin-bottom: 8px;
+  margin-bottom: var(--space-2);
 }
 
 .human-message-bubble .markdown-body p:last-child {
@@ -6388,6 +6392,14 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 }
 
 @media (max-width: 760px) {
+  /* Restated for the work stream because its own column rule, two classes
+     deep, out-specifies the shared narrow rule above whatever the source
+     order: without this the breakpoint is inert here and the chevron clips. */
+  .workstream-screen .transcript-column {
+    padding-left: var(--space-6);
+    padding-right: var(--space-6);
+  }
+
   .workstream-screen :is(.human-message, .agent-message) {
     max-width: min(88%, 640px, calc(100% - 82px));
   }
@@ -7108,7 +7120,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 /* Media use square cover tiles; every delivered item remains in the wrapping grid. */
 .message-attachments, .citation-card-row {
   display: grid; grid-template-columns: repeat(auto-fit, var(--attachment-media-size));
-  align-items: start; gap: 8px; width: 560px; max-width: 100%;
+  align-items: start; gap: var(--space-2); width: 560px; max-width: 100%;
 }
 .message-attachment-images { display: contents; }
 .message-attachment-image-cell, .attachment-media-tile { aspect-ratio: 1; min-width: 0; width: var(--attachment-media-size); height: var(--attachment-media-size); }
@@ -7117,11 +7129,11 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .attachment-file-with-player, .citation-file-attachment { min-width: 0; width: 100%; }
 .message-attachments .attachment-file-card, .citation-card-row .citation-card.is-file { margin: 0; min-width: 0; width: 100%; max-width: 100%; }
 .attachment-media-tile { border: 1px solid var(--av-sys-color-border-subtle); background: var(--av-sys-color-surface-raised); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; position: relative; }
-.attachment-media-open { align-items: center; background: transparent; color: var(--av-sys-color-text-default); display: flex; flex: 1; flex-direction: column; gap: 12px; justify-content: center; min-height: 0; overflow: hidden; padding: 12px; position: relative; width: 100%; }
+.attachment-media-open { align-items: center; background: transparent; color: var(--av-sys-color-text-default); display: flex; flex: 1; flex-direction: column; gap: var(--space-3); justify-content: center; min-height: 0; overflow: hidden; padding: var(--space-3); position: relative; width: 100%; }
 .attachment-media-open video { height: 100%; inset: 0; object-fit: cover; position: absolute; width: 100%; }
 .attachment-media-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-media-open:has(video) .attachment-media-name { background: var(--av-sys-color-scrim-default); bottom: 8px; color: var(--av-sys-color-text-on-media); left: 8px; position: absolute; right: 8px; }
-.attachment-media-tile .attachment-inline-audio { max-width: 100%; padding: 8px; width: 100%; }
+.attachment-media-tile .attachment-inline-audio { max-width: 100%; padding: var(--space-2); width: 100%; }
 
 .composer-attachments .attachment-tile { height: var(--attachment-media-size); aspect-ratio: 1; width: var(--attachment-media-size); }
 .composer-attachments .attachment-file-card { min-width: 0; width: 100%; }
@@ -7145,10 +7157,10 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .composer-attachments { --attachment-media-size: var(--attachment-file-card-height); display: flex; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; align-items: center; gap: 8px; min-width: 0; padding: 11px 13px 8px; }
 .message-attachments > .attachment-file-with-player, .citation-card-row > .citation-file-attachment { grid-column: span 2; }
 .human-message .message-attachments { justify-content: end; align-items: start; }
-.attachment-media-tile .attachment-media-open { gap: 4px; padding: 6px; }
+.attachment-media-tile .attachment-media-open { gap: var(--space-1); padding: var(--space-1); }
 .attachment-media-tile .attachment-media-open > svg { flex-shrink: 0; height: 22px; width: 22px; }
 .attachment-media-tile .attachment-media-name { font-size: 11px; }
-.attachment-media-tile .attachment-inline-audio { padding: 0 4px 4px; }
+.attachment-media-tile .attachment-inline-audio { padding: 0 var(--space-1) var(--space-1); }
 .attachment-inline-audio audio { display: none; }
 .attachment-inline-audio > button { white-space: nowrap; }
 .attachment-media-download { position: absolute; right: 154px; top: 23px; z-index: 3; }

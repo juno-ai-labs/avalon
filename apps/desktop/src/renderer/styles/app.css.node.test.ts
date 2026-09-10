@@ -656,6 +656,57 @@ describe('global reduced-motion kill switch', () => {
  * rather than check it, and deleting it would leave every test green while the
  * app laid out a digest brief in full with a decorative "more" beside it.
  */
+/**
+ * The feed's spacing is one scale. A literal that slips back into a feed rule
+ * renders correctly and stays invisible until somebody moves `ref.space.unit`
+ * and one gap does not move with it, which is how the feed accumulated every
+ * integer from 1px to 18px before the scale existed. Values under a step are
+ * allowed: they are optical nudges inside inline controls, not gaps.
+ */
+describe('feed spacing is a step of the scale', () => {
+  const FEED = /message-block|transcript-event|human-message|agent-message|tool-|work-accordion|agent-work-timing|elicitation|system-message|markdown|attachment|citation|transcript-column|unread-divider|virtual-message|activity-presence|run-failure|run-stopped|assistant-turn|message-delivery-pill|message-attachments|plugin-/u;
+  // Not the feed: the lightbox over it, the composer under it, the automation
+  // overview and the document surfaces that host `.markdown-body` too.
+  const NOT_FEED = /lightbox|gallery|composer|pending-attachment|automation-|note-|meeting-|sidekick|settings|inspector|onboarding|new-chat-screen|message-delivery-controls/u;
+  // Values that are not gaps, each with the reason it stays literal.
+  const EXEMPT: Record<string, string> = {
+    '.transcript-column': 'the 150px is clearance under an overlaid composer, a height rather than a gap',
+    '.system-message-dot': 'centres a 4px dot on the cap height of the line beside it',
+    // Inline chips: their padding sizes the chip to the line it sits in.
+    '.citation-chip': 'inline chip',
+    '.citation-identity-card': 'inline identity chip',
+    '.markdown-body .citation-connector-status': 'inline status pill on a connector card',
+    '.app-shell .elicitation-option > kbd': 'the key cap beside an option',
+  };
+
+  /**
+   * The narrow breakpoint has to out-specify the work stream's own column rule,
+   * which is two classes deep; a shared `.transcript-column` rule inside the
+   * media query is inert on that screen however late it sits. The step is the
+   * 24px one: the collapse chevrons hang 20px outside the column and their
+   * focus ring reaches 3px further, so anything under 23px clips them.
+   */
+  it('keeps the narrow column padding on the work stream at the 24px step', () => {
+    // Anchored on the rule's own comment: the work stream's column rule outside
+    // the media query shares the selector, and matching by selector alone finds
+    // that one first.
+    const narrow = stylesheet.match(/Restated for the work stream[\s\S]*?\.workstream-screen \.transcript-column \{([^}]*)\}/u)?.[1];
+    expect(narrow).toContain('padding-left: var(--space-6);');
+    expect(narrow).toContain('padding-right: var(--space-6);');
+    expect(stylesheet).toContain('--space-6: calc(var(--av-ref-space-unit) * 6);');
+  });
+
+  it('carries no literal spacing of a step or more in a feed rule', () => {
+    const offenders = preludes()
+      .filter((prelude) => FEED.test(prelude) && !NOT_FEED.test(prelude) && !(prelude in EXEMPT))
+      .flatMap((prelude) => [...(rule(prelude) ?? '').matchAll(/(?:margin|padding|gap|row-gap|column-gap)[a-z-]*\s*:\s*([^;]*)/gu)]
+        .filter(([, value]) => [...value!.matchAll(/(-?\d+(?:\.\d+)?)px/gu)].some(([, px]) => Math.abs(Number(px)) >= 4))
+        .map(([declaration]) => `${prelude} { ${declaration.trim()} }`));
+
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe('system message clamp', () => {
   it('clamps a closed system row to the line count the row declares', () => {
     const row = rule('.system-message');

@@ -93,14 +93,18 @@ the jump control. Exiting controls remain mounted but inaccessible until their
 fade completes; changing direction reverses the active animation in place.
 
 The feed's vertical rhythm is one primitive: a row owns the space above it,
-chosen by what precedes it, and no row sets a bottom margin. `app.css` sets it
-on `.virtual-message-row`, which `MessageFeed` renders in index order in both
-the windowed and the plain list, so a sibling combinator sees the true
-neighbour; each row is `flow-root`, so the margin is inside the row's border
-box and the virtualizer measures it. A turn is a row whose layer holds a
-`.message-block`; everything else (a tool row, a timing row, the work
-accordion, a system note, a status pill, the proposal card, an open
-elicitation) is an event. Four cases cover the feed: turn after turn takes
+chosen by what precedes it, and no row sets a bottom margin. `MessageFeed`
+decides the gap from the message list (`feedRowGap`, over `feedRowKind`) and
+stamps it on `.virtual-message-row` as `data-row-gap`; `app.css` keys the
+margin on that attribute. It cannot come from a sibling: the feed is windowed,
+so the first mounted row has no previous sibling whatever its index. Each row
+is `flow-root`, so the margin is inside the row's border box and the
+virtualizer measures it. A turn is a person's `.message-block` (a text turn,
+an answered elicitation), an answer is Rally's, and everything else (a tool
+row, a timing row, the work accordion, a system note, a status pill, the
+proposal card, an open elicitation, the oversized-message placeholder) is an
+event; index 0 owns no space, and a row after a stretch this client has not
+loaded takes the turn gap because its predecessor is unknown. Four cases cover the feed: turn after turn takes
 `sys.space.stack.gap`, a turn beside an event in either direction takes
 `sys.space.block.gap`, event after event takes `sys.space.event.gap`, and
 Rally's answer after the work that produced it also takes `sys.space.event.gap`,
@@ -320,8 +324,8 @@ and the work stream has a bubble the automation surface does not.
 **What changed:** Every margin, padding and gap in the feed is now a whole
 multiple of `ref.space.unit` (4px), through the `--space-1` to `--space-8`
 steps `app.css` derives from it, and the space between rows is set in one place:
-each row owns the space above it, keyed on what precedes it, through four
-sibling rules on `.virtual-message-row`. Turn to turn is 32px, a turn beside an
+each row owns the space above it, keyed on what precedes it, through the
+`data-row-gap` `MessageFeed` computes from the message list. Turn to turn is 32px, a turn beside an
 event is 16, event to event is 8, and Rally's answer sits 8 above the work that
 produced it. The per-row bottom margins (`.message-block` 58, `.transcript-event`
 28, `.agent-work-timing` 26, `.system-message` 20, the status pill 12/18, the
@@ -336,7 +340,9 @@ every heading-led answer. The tool disclosure sits on a 24px row with no padding
 and details at `4 0 4 16`, the accordion's rows are 4 apart, the elicitation
 panel is 12 with 8 above its options and actions, the column is 32 on all sides
 (24 below 760px, the chevron outdent's floor), and the bubble's `8px 12px` moved
-from a literal on the theme rule into `cmp.bubble.padding`, which had been 0.
+from a literal on the theme rule into the shared bubble rule as `--space-2
+--space-3` (by way of `cmp.bubble.padding`, which had been 0 and which the
+entry above retires: a token read once was a name with no second reader).
 
 **Why:** A measured pass over the live feed found 184 spacing declarations
 using every integer from 1px to 18px, three tokens covering three of them, and a
@@ -348,8 +354,12 @@ gaps under it (6, 8, 7, 4, 5) set in four places. The negative margins existed
 only because a turn set a bottom margin that its own work then had to undo. A
 row that owns the space above it makes every gap one number with one owner; it
 was preferred over a `gap` on the column, which the virtualizer's absolute rows
-cannot use, and over stamping a kind on the row from `MessageFeed`, which
-`:has()` on the layer's child makes unnecessary. The numbers themselves were
+cannot use. The first cut decided the gap in CSS with a sibling combinator and
+`:has()`, and review caught why that cannot work in a windowed feed: only the
+rows in the virtualizer's window are in the DOM, so the first mounted row has
+no sibling whatever its index, took no gap at the window's edge, and measured
+a different height on either side of it, which the ledger then chased. The gap
+is computed from the message list instead. The numbers themselves were
 tuned in a real window across six candidates, with machinery rows and the drawer
 compressed hardest because a receipt for work the reader has already read the
 result of should read denser than progress. One unit token rather than eight
