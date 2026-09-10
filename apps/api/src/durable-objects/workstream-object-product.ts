@@ -4033,7 +4033,15 @@ export class WorkstreamObjectProductService {
           ? null : String(row.model_content_error_code),
       }));
       const bindMessage = await projectParticipantModelMessage(this.env, {
-        author: { type: "human" },
+        author: {
+          type: "human",
+          // `null` rather than the transcript's UNKNOWN_MEMBER_DISPLAY_NAME:
+          // that placeholder exists so a row has something to render, and the
+          // model is better served by an attribution that carries the id alone
+          // than by one asserting this person is called "A workspace member".
+          userId: auth.userId,
+          displayName: people.get(auth.userId)?.name ?? null,
+        },
         messageType: "text",
         text: prepared.text,
         structuredContent: null,
@@ -4585,7 +4593,11 @@ export class WorkstreamObjectProductService {
       attentionOrdinal: null,
     });
     const bindMessage = await projectParticipantModelMessage(this.env, {
-      author: { type: "human" },
+      author: {
+        type: "human",
+        userId: auth.userId,
+        displayName: author?.name ?? null,
+      },
       messageType: "elicitation",
       text: "",
       structuredContent: JSON.parse(structuredResponse),
