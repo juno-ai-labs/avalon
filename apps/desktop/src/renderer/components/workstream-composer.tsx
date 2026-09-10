@@ -487,7 +487,7 @@ export function WorkstreamComposer({
             )
           : undefined}
         submitDisabled={sendBlocked || uploading || (!text.trim() && readyAttachmentCount === 0)}
-        submitLabel={submitLabel}
+        submitLabel={sendBlocked ? `${submitLabel}, available once Rally connects` : submitLabel}
         submitting={sending}
         uploading={uploading}
         value={text}

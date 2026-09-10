@@ -1,6 +1,7 @@
 import { WorkstreamTranscriptSnapshotSchema, type WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import { SubstreamInitialContextSchema, type SubstreamInitialContext } from '@rally/contracts/substream-creation';
 import { notifyManager, type QueryClient } from '@tanstack/react-query';
+import { z } from 'zod';
 import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
 import { mirrorQueriesToLocalCache, queryKeyIsOneOf, type QueryMirror } from './local-cache-mirror';
 import type { WorkstreamFeedSource } from './telemetry';
@@ -38,34 +39,48 @@ export const LOCAL_CACHE_FEED_SOURCE = 'local_cache' satisfies WorkstreamFeedSou
 /** The only lineage the mirror will persist: state the admitted socket delivered. */
 const LIVE_FEED_SOURCE = 'socket_snapshot' satisfies WorkstreamFeedSource;
 
-const TITLE_STATUSES = new Set(['naming', 'automatic', 'settled']);
-const SCOPES = new Set(['personal', 'workspace']);
+/**
+ * What a seeded row's detail must hold for the screens that paint from it.
+ *
+ * The query cache holds the renderer's mapped `WorkstreamDetail`, not the wire
+ * detail the contracts have a schema for, so the row is validated here, down
+ * to the fields the header, the composer, the rail, and the run notices read
+ * from each nested item. Fields the schema does not name pass through as they
+ * were. A shape change the schema cannot tell apart still needs
+ * `conversationSlice.version` bumped; a change it can tell apart is refused at
+ * read time and the screen waits for its socket as it did before the cache.
+ */
+const CachedWorkstreamDetailSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  titleStatus: z.enum(['naming', 'automatic', 'settled']),
+  harnessStatus: z.string(),
+  scope: z.enum(['personal', 'workspace']),
+  lastActivityAt: z.string(),
+  createdAt: z.string(),
+  latestAttentionSequenceNumber: z.number(),
+  readThroughSequenceNumber: z.number(),
+  manualUnreadGeneration: z.number(),
+  participantUserIds: z.array(z.string()),
+  participants: z.array(z.object({ id: z.string(), name: z.string(), email: z.string() }).passthrough()),
+  viewers: z.array(z.object({ id: z.string() }).passthrough()),
+  resources: z.array(z.object({ id: z.string(), title: z.string(), resourceType: z.string() }).passthrough()),
+  connections: z.array(z.object({ id: z.string(), displayName: z.string(), status: z.string() }).passthrough()),
+  backgroundTasks: z.array(z.object({ id: z.string(), title: z.string(), status: z.string(), startedAt: z.string() }).passthrough()),
+  latestHarnessRun: z.object({ id: z.string(), status: z.string(), createdAt: z.string() }).passthrough().optional(),
+}).passthrough();
 
-function isCachedWorkstreamDetail(value: unknown): value is WorkstreamDetail {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Record<string, unknown>;
-  return typeof candidate['id'] === 'string'
-    && typeof candidate['title'] === 'string'
-    && typeof candidate['titleStatus'] === 'string'
-    && TITLE_STATUSES.has(candidate['titleStatus'])
-    && typeof candidate['harnessStatus'] === 'string'
-    && typeof candidate['scope'] === 'string'
-    && SCOPES.has(candidate['scope'])
-    && typeof candidate['lastActivityAt'] === 'string'
-    && typeof candidate['createdAt'] === 'string'
-    && typeof candidate['latestAttentionSequenceNumber'] === 'number'
-    && typeof candidate['readThroughSequenceNumber'] === 'number'
-    && typeof candidate['manualUnreadGeneration'] === 'number'
-    && Array.isArray(candidate['participants'])
-    && Array.isArray(candidate['resources'])
-    && Array.isArray(candidate['connections'])
-    && Array.isArray(candidate['backgroundTasks']);
+function parseCachedWorkstreamDetail(value: unknown): WorkstreamDetail | null {
+  // The schema vouches for the shape; the value itself, with every field the
+  // schema passed through untouched, is what the query cache gets.
+  return CachedWorkstreamDetailSchema.safeParse(value).success ? value as WorkstreamDetail : null;
 }
 
 function parseCachedConversation(value: unknown): CachedConversation | null {
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Record<string, unknown>;
-  if (!isCachedWorkstreamDetail(candidate['detail'])) return null;
+  const detail = parseCachedWorkstreamDetail(candidate['detail']);
+  if (!detail) return null;
   const transcript = WorkstreamTranscriptSnapshotSchema.safeParse(candidate['transcript']);
   if (!transcript.success) return null;
   const context = candidate['initialContext'] === null || candidate['initialContext'] === undefined
@@ -73,7 +88,7 @@ function parseCachedConversation(value: unknown): CachedConversation | null {
     : SubstreamInitialContextSchema.safeParse(candidate['initialContext']);
   if (!context.success) return null;
   return {
-    detail: candidate['detail'],
+    detail,
     transcript: transcript.data,
     initialContext: context.data,
     cachedAt: typeof candidate['cachedAt'] === 'string' ? candidate['cachedAt'] : '',
@@ -210,9 +225,8 @@ export async function retainConversationChildren(
   parentId: string,
   keep: ReadonlySet<string>,
 ): Promise<string[]> {
-  const entries = await conversationSlice.entries(scope);
+  const entries = await conversationSlice.entriesForSubject(scope, parentId);
   const removed = entries.filter((entry) => {
-    if (entry.subject !== parentId) return false;
     const substreamId = substreamIdOfKey(entry.key, parentId);
     return substreamId !== null && substreamId !== '0' && !keep.has(substreamId);
   });

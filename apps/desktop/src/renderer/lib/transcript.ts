@@ -1426,7 +1426,8 @@ function activitiesForTurns(
 
 /**
  * The snapshot as an opening would have delivered it: the unread and latest
- * ranges, and nothing the reader paged into afterwards.
+ * ranges and every turn the socket delivered live since, and nothing the
+ * reader paged into afterwards.
  *
  * This is the shape the local cache keeps, and the reason is what happens when
  * the socket answers. Its first frame is an `initial` snapshot, which replaces
@@ -1443,7 +1444,16 @@ function activitiesForTurns(
 export function openingTranscriptSnapshot(
   snapshot: WorkstreamTranscriptSnapshot,
 ): WorkstreamTranscriptSnapshot {
-  const ranges = snapshot.ranges.filter((range) => range.purpose !== 'requested');
+  // `requested` names two different things: history the reader paged into,
+  // and a turn the socket delivered live, which `mergeRealtimeTranscriptTurn`
+  // appends under the same purpose. Only the first is dropped. A live turn
+  // always extends the top of what the opening ranges covered, and a page-in
+  // never does, so the ceiling of the opening ranges tells them apart.
+  const opening = snapshot.ranges.filter((range) => range.purpose !== 'requested');
+  if (opening.length === 0) return snapshot;
+  const ceiling = Math.max(...opening.map((range) => range.covered.endExclusive));
+  const ranges = snapshot.ranges.filter((range) => range.purpose !== 'requested'
+    || range.covered.startInclusive >= ceiling);
   if (ranges.length === snapshot.ranges.length) return snapshot;
   const turns = [...ranges.flatMap((range) => range.turns), ...snapshot.activeTurns];
   const retainedTurnIds = new Set(turns.map((turn) => turn.turnId));

@@ -1,4 +1,5 @@
 import { desktopWorkspaceIdentityKey, type RallyRegion } from '../../common/desktop';
+import { createIndexedDbStore } from './indexeddb-store';
 
 /**
  * The on-device cache behind an immediate open.
@@ -73,22 +74,21 @@ export interface LocalCacheSlice<T> {
   remove(scope: string, key: string): Promise<void>;
   /** The identities of every row of this kind in one scope, for pruning. */
   entries(scope: string): Promise<LocalCacheEntryIdentity[]>;
+  /** The identities of one scope's rows about one subject, through the subject index. */
+  entriesForSubject(scope: string, subject: string): Promise<LocalCacheEntryIdentity[]>;
   /** Drop every row about one subject, in every scope. */
   removeSubject(subject: string): Promise<void>;
   /** Drop one key's row in every scope. */
   removeKey(key: string): Promise<void>;
 }
 
-let databasePromise: Promise<IDBDatabase | null> | null = null;
-let epoch = 0;
-
 /**
  * A write states the epoch its content was captured in, and a wipe moves the
  * epoch on, so a coalesced write that was scheduled before sign-out cannot land
- * behind the clear. Same mechanism as the draft cache, for the same race.
+ * behind the clear. The same store, and the same race, as the draft cache.
  */
 export function localCacheEpoch(): number {
-  return epoch;
+  return store.epoch();
 }
 
 /**
@@ -102,69 +102,26 @@ export function localCacheScope(userId: string, region: RallyRegion, workspaceId
   return `${userId}:${desktopWorkspaceIdentityKey(region, workspaceId)}`;
 }
 
-function openDatabase(): Promise<IDBDatabase | null> {
-  if (databasePromise) return databasePromise;
-  databasePromise = new Promise<IDBDatabase | null>((resolve) => {
-    if (typeof indexedDB === 'undefined') {
-      resolve(null);
-      return;
-    }
-    let request: IDBOpenDBRequest;
-    try {
-      request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-    } catch {
-      resolve(null);
-      return;
-    }
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (database.objectStoreNames.contains(ENTRY_STORE)) return;
-      const entries = database.createObjectStore(ENTRY_STORE, { keyPath: ['scope', 'kind', 'key'] });
-      entries.createIndex(KIND_SUBJECT_INDEX, ['kind', 'subject']);
-      entries.createIndex(KIND_KEY_INDEX, ['kind', 'key']);
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => resolve(null);
-    request.onblocked = () => resolve(null);
-  });
-  return databasePromise;
-}
+const store = createIndexedDbStore({
+  name: DATABASE_NAME,
+  version: DATABASE_VERSION,
+  label: 'local cache',
+  upgrade(database) {
+    if (database.objectStoreNames.contains(ENTRY_STORE)) return;
+    const entries = database.createObjectStore(ENTRY_STORE, { keyPath: ['scope', 'kind', 'key'] });
+    entries.createIndex(KIND_SUBJECT_INDEX, ['kind', 'subject']);
+    entries.createIndex(KIND_KEY_INDEX, ['kind', 'key']);
+  },
+});
 
-function awaitRequest<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error('The local cache request failed.'));
-  });
-}
+const { awaitRequest } = store;
 
-function awaitTransaction(transaction: IDBTransaction): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error ?? new Error('The local cache transaction failed.'));
-    transaction.onabort = () => reject(transaction.error ?? new Error('The local cache transaction was aborted.'));
-  });
-}
-
-async function withEntries<T>(
+function withEntries<T>(
   mode: IDBTransactionMode,
-  run: (store: IDBObjectStore) => Promise<T>,
+  run: (entries: IDBObjectStore) => Promise<T>,
   fallback: T,
 ): Promise<T> {
-  const database = await openDatabase();
-  if (!database) return fallback;
-  try {
-    const transaction = database.transaction([ENTRY_STORE], mode);
-    // Subscribed before the first request so a transaction that commits
-    // promptly cannot settle before anyone is listening for it.
-    const settled = awaitTransaction(transaction);
-    // A read never awaits the commit, so keep its rejection from going unhandled.
-    settled.catch(() => undefined);
-    const result = await run(transaction.objectStore(ENTRY_STORE));
-    if (mode === 'readwrite') await settled;
-    return result;
-  } catch {
-    return fallback;
-  }
+  return store.withStores([ENTRY_STORE], mode, (transaction) => run(transaction.objectStore(ENTRY_STORE)), fallback);
 }
 
 /**
@@ -226,8 +183,8 @@ export function defineLocalCacheSlice<T>(definition: LocalCacheSliceDefinition<T
       if (parsed === null) void remove(scope, key);
       return parsed;
     },
-    async write(scope, key, value, subject = key, atEpoch = epoch) {
-      if (atEpoch !== epoch) return false;
+    async write(scope, key, value, subject = key, atEpoch = store.epoch()) {
+      if (atEpoch !== store.epoch()) return false;
       return withEntries('readwrite', async (store) => {
         store.put({ scope, kind, key, subject, version, updatedAt: Date.now(), value } satisfies LocalCacheRow);
         return true;
@@ -240,6 +197,15 @@ export function defineLocalCacheSlice<T>(definition: LocalCacheSliceDefinition<T
         return (Array.isArray(rows) ? rows : []).flatMap((row) => {
           const parsed = parseRow(row);
           return parsed ? [{ key: parsed.key, subject: parsed.subject }] : [];
+        });
+      }, []);
+    },
+    entriesForSubject(scope, subject) {
+      return withEntries('readonly', async (entries) => {
+        const rows = await awaitRequest(entries.index(KIND_SUBJECT_INDEX).getAll(IDBKeyRange.only([kind, subject])));
+        return (Array.isArray(rows) ? rows : []).flatMap((row) => {
+          const parsed = parseRow(row);
+          return parsed && parsed.scope === scope ? [{ key: parsed.key, subject: parsed.subject }] : [];
         });
       }, []);
     },
@@ -260,7 +226,7 @@ export function defineLocalCacheSlice<T>(definition: LocalCacheSliceDefinition<T
 
 /** Sign-out leaves nothing of any workspace on the device. */
 export async function clearAllLocalCache(): Promise<void> {
-  epoch += 1;
+  store.advanceEpoch();
   await withEntries('readwrite', async (store) => {
     store.clear();
   }, undefined);
@@ -268,7 +234,7 @@ export async function clearAllLocalCache(): Promise<void> {
 
 /** An account leaving one workspace removes only the rows it wrote under that scope. */
 export async function clearWorkspaceLocalCache(userId: string, region: RallyRegion, workspaceId: string): Promise<void> {
-  epoch += 1;
+  store.advanceEpoch();
   const scope = localCacheScope(userId, region, workspaceId);
   await withEntries('readwrite', async (store) => {
     store.delete(prefixRange([scope]));
@@ -280,8 +246,5 @@ export async function clearWorkspaceLocalCache(userId: string, region: RallyRegi
  * and resets the epoch so one file's wipe does not fence another's writes.
  */
 export function closeLocalCache(): void {
-  const opening = databasePromise;
-  databasePromise = null;
-  epoch = 0;
-  void opening?.then((database) => database?.close());
+  store.close();
 }

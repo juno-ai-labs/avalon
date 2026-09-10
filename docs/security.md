@@ -152,11 +152,13 @@ are canonical storage services, not authorization layers.
   directory still lists that the reader opened or the socket pool warmed, its
   detail and opening transcript ranges, in a second unencrypted IndexedDB
   database keyed by account and workspace, so a second account on the device
-  never reads the first's rows. It is bounded by membership rather than time:
-  the live directory and child rosters retire rows the device missed, an
-  access revocation or archive removes them at once, leaving removes that
-  workspace's scope, and signing out or another account taking over removes
-  all of them. No credential is ever written there.
+  never reads the first's rows. It is bounded by membership as the device can
+  observe it rather than by time: the live directory and child rosters retire
+  rows the device missed, an access revocation or archive removes them at
+  once, leaving a workspace or being refused by one removes that workspace's
+  scope, and signing out or another account taking over removes all of them.
+  A removal from a workspace the client never tries to open again stays on the
+  disk until sign-out. No credential is ever written there.
   [`local-cache.md`](local-cache.md) owns the mechanism.
 - The macOS menu bar status item is built entirely in the main process, from
   values the regional API returned, and the renderer's only reach into it is

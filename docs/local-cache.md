@@ -20,7 +20,8 @@ socket hooks' first frame.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/lib/local-cache.ts` | The `rally-local-cache` IndexedDB store: rows keyed by `[scope, kind, key]`, the version stamp, the epoch, `defineLocalCacheSlice`, `clearAllLocalCache`, `clearWorkspaceLocalCache`. The only file that touches IndexedDB. |
+| `apps/desktop/src/renderer/lib/indexeddb-store.ts` | `createIndexedDbStore`: the best-effort IndexedDB database with an epoch fence that this cache and the draft cache are both built on. The only file that opens IndexedDB. |
+| `apps/desktop/src/renderer/lib/local-cache.ts` | The `rally-local-cache` database on that store: rows keyed by `[scope, kind, key]`, the version stamp, `defineLocalCacheSlice`, `clearAllLocalCache`, `clearWorkspaceLocalCache`. |
 | `apps/desktop/src/renderer/lib/local-cache-mirror.ts` | `mirrorQueriesToLocalCache`: keep a slice equal to a family of query-cache entries, coalescing a burst of writes into one; `LOCAL_CACHE_WRITE_COALESCE_MS`. |
 | `apps/desktop/src/renderer/lib/local-cache-scope.tsx` | `LocalCacheScopeProvider` and `useLocalCacheScope`: the regional workspace every row below it belongs to. No provider, no cache. |
 | `apps/desktop/src/renderer/lib/conversation-cache.ts` | The `conversation` slice: one row per `(parent, substream)`, `hydrateConversation`, `mirrorConversation`, the seed marker, and the pruning and forgetting entry points. |
@@ -30,9 +31,10 @@ socket hooks' first frame.
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Prunes cached children that left the parent's private-child roster. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Hydrates the directory before connecting, mirrors it after the first subscribe answer, and prunes conversations whose parent that answer no longer lists. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `evictCachedWorkstream` and `evictCachedSubstream` forget the disk along with the memory. |
-| `apps/desktop/src/renderer/lib/app-session.tsx` | Wipes the whole cache when the account leaves the device and one workspace's rows when that membership ends, beside the draft cache's wipes. |
+| `apps/desktop/src/renderer/lib/app-session.tsx` | Wipes the whole cache when the account leaves the device and one workspace's rows when that membership ends or the workspace refuses the account, beside the draft cache's wipes. |
 | `apps/desktop/src/renderer/App.tsx` | Mounts the scope provider above the workspace socket provider. |
-| `apps/desktop/src/renderer/components/connecting-card.tsx` | The floating card: connecting, waiting for a connection, or failed with a retry. |
+| `apps/desktop/src/renderer/components/connecting-card.tsx` | The floating card, connecting, waiting for a connection, or failed with a retry, and the always-mounted slot that is its live region. |
+| `apps/desktop/src/renderer/components/substream-launch.tsx` | Carries the parent's card and send gate while a substream is branched off a seed. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Reads the seed marker: shows the card, gates sending, and holds range loads and read acknowledgements until the feed is live. |
 | `apps/desktop/src/renderer/screens/project-space.tsx` | Shows the card over a project painted from the seeded directory. |
 | `apps/desktop/src/renderer/components/workstream-composer.tsx` | `sendBlocked`: everything but sending. |
@@ -41,7 +43,9 @@ socket hooks' first frame.
 
 ### The store and its slices
 
-The store is one object store of rows `{ scope, kind, key, subject, version,
+The database is opened through `createIndexedDbStore`, the same best-effort,
+epoch-fenced store the draft cache is built on; what is particular to this
+cache is one object store of rows `{ scope, kind, key, subject, version,
 updatedAt, value }` with a compound primary key of `[scope, kind, key]`. A
 *scope* is the account's user id followed by
 `desktopWorkspaceIdentityKey(region, workspaceId)`, so one account's rows for
@@ -120,6 +124,14 @@ the detail without the transcript.
 The seed marker is the feed-source entry the surface already reads for
 telemetry, set to `local_cache`. It is the one signal everything else keys on:
 
+- `submitSubstreamCommand` in the socket hook rejects every room command,
+  stop, retry, an elicitation answer, a queue reorder, with
+  `workstream_feed_seeded` while the marker is set, beside its existing
+  refusals for a revoked reader and a spent opening. The run, the elicitation,
+  and the queue on screen are the seed's, and a command has nothing to address
+  them against; the gate lives in the choke point so every control inherits
+  it, rather than in each control.
+
 - `canonicalCachesAvailable()` in the socket hook is false while the marker is
   set, so a seed never completes an opening. The opening deadline arms as it
   would over empty caches, the room is subscribed from sequence zero, and a
@@ -160,16 +172,23 @@ swap is invisible and in every case it is never a collapse.
 
 ### The connecting card and the composer
 
-`ConnectingCard` is one component with three states. Over a conversation it
-sits in a zero-height sticky slot at the top of the transcript scroller, so it
-floats over the first rows without pushing them down and leaves no layout jump
-when it goes; over a project space the slot is absolute at the top of the
-screen. It says `Connecting to <name>…` while the socket is dialling or
+`ConnectingCard` is one component with three states, and `ConnectingCardSlot`
+is where it floats. Over a conversation the slot is zero-height and sticky at
+the top of the transcript scroller, so the card floats over the first rows
+without pushing them down and leaves no layout jump when it goes; over a
+project space the slot is absolute, below the title bar's drag strip so the
+card never takes a window's drag handle. The slot is the `polite` live region
+and stays mounted whether or not a card is in it: a live region that mounts
+with its text already present is generally not announced, only a change inside
+one is. The card lets the pointer through to the rows under it; only its
+**Retry** takes a click. It says `Connecting to <name>…` while the socket is dialling or
 awaiting its snapshot, `Waiting for a connection to <name>…` while the desktop
 is offline, and `Rally could not connect to <name>.` with the hook's opening
 error and a **Retry** that restarts the opening sequence once the three
-attempts are spent. A work stream Rally is still naming is `this work stream`
-rather than its placeholder title. A project's card follows the workspace
+attempts are spent; the line saying what waits for the connection stays on the
+failed card, since that is the moment someone tries to send. A work stream
+Rally is still naming is `this work stream` rather than its placeholder
+title. A project's card follows the workspace
 socket instead: it shows until the first subscribe answer has replaced the
 seeded directory, since a project has no socket of its own.
 
@@ -179,10 +198,14 @@ draft survives into the live conversation. Sending is disabled, Enter is
 swallowed the way it is for an empty draft so the sentence stays where it was
 typed, and the card's second line says sending is available once Rally
 connects: the capsule composer hides its footer hint, so the reason lives on
-the card the eye is already on. The
-gate lifts when the live snapshot lands, not when the socket opens: a message
-admitted against a seed's transcript would position its optimistic row against
-a fence the room has not confirmed.
+the card the eye is already on, and the send button's own label says it too,
+for whoever reaches the button without seeing the card. The gate lifts when
+the live snapshot lands, not when the socket opens: a message admitted against
+a seed's transcript would position its optimistic row against a fence the room
+has not confirmed. Branching a substream off a seed is gated the same way: the
+launch surface carries the parent's card and `sendBlocked`, because a branch
+persists the turn id it was taken from, which the room has not confirmed
+either.
 
 A project painted from the seed is read-only until the directory is live.
 Every project edit sends the whole record back, so a rename made against the
@@ -197,11 +220,13 @@ stream** plus still navigate.
 
 The bound on this cache is membership, not a number or an age:
 
-- **The directory prunes parents.** Every live subscribe answer keeps the
-  conversations whose parent is a row in the page it carries or an automation
-  in its list, and removes the rest for that scope. Page one is the whole of
-  what the payload can vouch for, so a conversation opened from a later page is
-  forgotten and re-cached on its next open. The directory row itself holds one
+- **The directory prunes parents.** A live subscribe answer that carries the
+  whole directory, one with no `nextCursor`, keeps the conversations whose
+  parent is a row in it or an automation in its list, and removes the rest for
+  that scope. Page one of a longer directory prunes nothing: it cannot tell a
+  parent on a later page from one that is gone, which is the same reason the
+  sidebar merges such a page rather than replacing its rows. On a paged
+  workspace the disk follows evictions and the child rosters. The directory row itself holds one
   page of the flat list, `WORKSTREAM_PAGE_SIZE` rows, however many pages the
   sidebar has loaded, so the next launch paints what a fresh subscribe answer
   would carry and the live answer replaces it without a visible collapse.
@@ -216,7 +241,10 @@ The bound on this cache is membership, not a number or an age:
   next launch would paint.
 - **Sign-out and account replacement wipe everything**, and leaving or
   surrendering a workspace wipes its scope, in the same places the draft cache
-  is wiped. The store carries an epoch for the same race the drafts carry one
+  is wiped. A workspace that refuses the account when it tries to activate it
+  wipes its scope too: a removal made while the client sat in another
+  workspace reaches the device only there, since leaving and surrendering both
+  need the workspace to be the active one. The store carries an epoch for the same race the drafts carry one
   for: a coalesced write scheduled before the wipe states the epoch its content
   belongs to and is dropped when the wipe has moved it on, so nothing in flight
   at sign-out restores what the wipe removed. Hydration reads the epoch before
@@ -250,9 +278,15 @@ Nothing else evicts, and nothing expires.
   than the seed.
 - **The persisted transcript holds no `requested` range.** Break it and the
   live snapshot collapses a long painted history to the opening window.
-- **Sending, range loads, read acknowledgements, and the search jump wait for
-  the live feed.** Each reads against the room's fence, and a seed has none.
-- **Every write states its epoch.** A write from before a wipe is dropped.
+- **Sending, room commands, range loads, read acknowledgements, and the
+  search jump wait for the live feed.** Each reads against the room's fence,
+  and a seed has none. Break it and a message, a stop, or an answer is
+  positioned against turns the room may have moved, and the person is told it
+  landed in a conversation whose live state they had not seen.
+- **Every write states its epoch, and every hydration checks it.** A write
+  from before a wipe is dropped; a row read before a wipe is not seeded. Break
+  either and a sign-out leaves the previous account's transcript on the disk,
+  or on the next account's screen.
 - **Eviction reaches the disk.** A memory-only eviction leaves a transcript the
   reader was shut out of on the device.
 - **No provider, no cache.** Outside a `LocalCacheScopeProvider` every consumer
@@ -271,7 +305,7 @@ gate. It does not own:
 
 | For | Read |
 | --- | --- |
-| The draft the composer keeps, which is a different database with a different lifetime | [`composer-drafts.md`](composer-drafts.md) |
+| The draft the composer keeps, a different database with a different lifetime on the same `createIndexedDbStore` | [`composer-drafts.md`](composer-drafts.md) |
 | Which channel carries what, and the waterline ledgers a seed must not touch | [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) |
 | The socket pool, retention, and the pair a work stream opens | [`websocket-architecture.md`](websocket-architecture.md) |
 | Ticket admission and what the first frame carries | [`realtime-sockets.md`](realtime-sockets.md) |
@@ -290,7 +324,8 @@ The draft cache and this one are deliberately two databases. A draft is the
 reader's own unsent words, expiring after twelve hours and released with the
 server-side draft resource; a cached transcript is the room's words, bounded by
 membership and replaced by the next frame. They share the same helpers in
-shape and could share a module; they do not share rows, keys, or lifetimes.
+shape and share the store beneath them; they do not share rows, keys, or
+lifetimes.
 
 ## Failure modes and limits
 
@@ -305,6 +340,13 @@ shape and could share a module; they do not share rows, keys, or lifetimes.
   shown before.
 - **A room rebuilt with lower sequence numbers:** the seed is replaced, because
   both fences are skipped for a seed, the resume registry's included.
+- **A workspace the account is removed from while the client sits in another
+  one** keeps its rows until the account next tries to open it and is refused,
+  or signs out. Membership is the bound as this device can observe it; the
+  device is not told about a removal it did not witness.
+- **A reader shut out while a hydration is in flight:** the read that lands
+  after the revocation seeds nothing, because the hook's `stillWanted` reads
+  `accessRevoked` as well as its own teardown.
 - **The seed's run state and unread marks are stale until the snapshot lands.**
   A work stream that was running when the row was written paints as running
   for the second or two the socket takes. The card is what says so.
@@ -335,9 +377,9 @@ same way it backs the draft cache. Two traps, both already paid for once:
 - **An eviction under fake timers leaves the store holding a database open
   that never settles**, because `evictCachedWorkstream` forgets the disk and
   the open landed on the fake clock that was then discarded. A later test in
-  the same file that uses the cache hangs on that open. `closeLocalCache()`
-  before such a test drops the connection so the next use reopens it; the
-  socket suites do this in the `beforeEach` of their local-cache blocks.
+  the same worker that uses the cache would hang on that open, so the
+  renderer's test setup calls `closeLocalCache()` after every test; no file
+  has to know.
 
 The suites are `lib/local-cache.test.ts`, `lib/local-cache-mirror.test.ts`,
 `lib/conversation-cache.test.ts`, `lib/workspace-directory-cache.test.ts`,
@@ -397,7 +439,13 @@ the account to every row's scope, made hydration refuse a row a wipe overtook,
 let a seed skip the resume registry's fence as well as the transcript's,
 bounded the directory row to one page, made a remembered project read-only
 until its directory is live, followed the accepted child roster when pruning,
-and gave the seed marker precedence in the open-latency event.
+and gave the seed marker precedence in the open-latency event. A second round
+kept live turns in the persisted row, gated every room command and the
+substream launch on the seed, pruned parents only from a whole directory,
+refused a hydration a revocation overtook, wiped a workspace that refuses the
+account, validated the cached detail with a schema, let the card pass the
+pointer through and keep its live region mounted, and moved the IndexedDB
+plumbing both caches had been carrying into `createIndexedDbStore`.
 
 **Why:** Opening a work stream, a substream, or a project on a cold client
 showed a spinner until the socket ticket, the handshake, the subscribe, and
@@ -427,7 +475,13 @@ hydration irrelevant, and it is the same rule the draft cache keys by. Patching
 only the edited field of a project instead of keeping a seeded project
 read-only. That moves the fix into the API for every field a project has;
 disabling the edits for the second or two the directory takes is the cheaper
-thing to reverse. SQLite for the store. The
+thing to reverse. Validating the cached detail through the contracts' wire
+schema. The query cache holds the renderer's mapped detail, not the wire
+shape, so the row is validated by a schema of the fields the seeded screens
+read, nested items included, and `version` covers what that schema cannot
+tell apart. A `live` range purpose for turns the socket appends, which would
+have told them from paged history in the contract; the ceiling of the opening
+ranges tells them apart without one. SQLite for the store. The
 renderer is sandboxed with no Node integration, so SQLite would live in the
 main process behind a new IPC surface, as a native module or `node:sqlite`,
 and every read, write, and wipe would cross it; the cache's access pattern is
@@ -444,5 +498,7 @@ carries a third value, `local_cache`, which the open-latency telemetry reports
 and which every path that reads against the room's fence has to treat as not
 live. A future surface that should paint before its socket answers defines a
 slice and hydrates and mirrors through it; it does not touch the store. A new
-project mutation reads `directoryFromLocalCache` the way the existing ones do.
-The draft cache and this cache remain two databases with two lifetimes.
+project mutation reads `directoryFromLocalCache` the way the existing ones do,
+and a new room command inherits the seed gate from `submitSubstreamCommand`
+without naming it. The draft cache and this cache remain two databases with
+two lifetimes on one store.

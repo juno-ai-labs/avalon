@@ -513,6 +513,17 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         progress,
       );
       await applyActivatedSession(nextSession, previous);
+    } catch (error) {
+      // A workspace this account is refused is one it will not be active in
+      // again, so the rows it left there while it was a member have no other
+      // moment to leave the device: leaving and surrendering both need the
+      // workspace to be the active one, and a removal made while the client
+      // sat elsewhere reaches it only here.
+      if (previous && workspaceActivationFailureCode(error) === 'workspace_access_denied') {
+        await clearWorkspaceDrafts(selectedRegion, workspaceId);
+        await clearWorkspaceLocalCache(previous.user.id, selectedRegion, workspaceId);
+      }
+      throw error;
     } finally {
       // Only this attempt's own mark comes down. A newer attempt at the same
       // row may have installed its own while this one waited on the browser,

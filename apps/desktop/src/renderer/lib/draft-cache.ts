@@ -1,6 +1,7 @@
 import type { MentionIdentity } from './api';
 import type { WorkstreamResource } from './types';
 import type { RallyRegion } from '../../common/desktop';
+import { createIndexedDbStore } from './indexeddb-store';
 import {
   newAutomationDraftKey,
   newWorkstreamDraftKey,
@@ -54,19 +55,42 @@ export interface CachedDraftAttachment {
   updatedAt: number;
 }
 
-let databasePromise: Promise<IDBDatabase | null> | null = null;
 let lastSortKey = 0;
-let epoch = 0;
 
 /**
- * A write carries the epoch its content was captured in, and a wipe moves the
- * epoch on. Anything still in flight from before the wipe — a debounced save, a
- * file mid-fingerprint, an upload about to record its resource — is therefore
- * dropped rather than landing behind the clear and restoring what was erased.
- * A composer created after the wipe reads the new epoch and writes normally.
+ * The store both drafts and the local cache are kept in the shape of; what is
+ * particular to drafts is the two object stores below and the twelve-hour
+ * lifetime above. A write carries the epoch its content was captured in, and a
+ * wipe moves the epoch on, so a debounced save, a file mid-fingerprint, or an
+ * upload about to record its resource from before the wipe is dropped rather
+ * than landing behind the clear and restoring what was erased.
  */
+const store = createIndexedDbStore({
+  name: DATABASE_NAME,
+  version: DATABASE_VERSION,
+  label: 'draft cache',
+  upgrade(database, transaction) {
+    if (!database.objectStoreNames.contains(TEXT_STORE)) {
+      database.createObjectStore(TEXT_STORE, { keyPath: 'draftKey' });
+    }
+    const attachments = database.objectStoreNames.contains(ATTACHMENT_STORE)
+      ? transaction.objectStore(ATTACHMENT_STORE)
+      : (() => {
+          const created = database.createObjectStore(ATTACHMENT_STORE, { keyPath: ['draftKey', 'localId'] });
+          created.createIndex(DRAFT_KEY_INDEX, 'draftKey');
+          return created;
+        })();
+    // Added in version 2 so the launch sweep can range-scan straight to the
+    // expired rows instead of materializing every cached file to read a date.
+    if (!attachments.indexNames.contains(UPDATED_AT_INDEX)) {
+      attachments.createIndex(UPDATED_AT_INDEX, 'updatedAt');
+    }
+  },
+});
+
+/** The epoch a draft write about to be scheduled should carry. */
 export function draftCacheEpoch(): number {
-  return epoch;
+  return store.epoch();
 }
 
 /** Insertion keys must keep rising even when two files land in the same tick. */
@@ -75,87 +99,7 @@ export function nextDraftSortKey(): number {
   return lastSortKey;
 }
 
-function openDatabase(): Promise<IDBDatabase | null> {
-  if (databasePromise) return databasePromise;
-  databasePromise = new Promise<IDBDatabase | null>((resolve) => {
-    if (typeof indexedDB === 'undefined') {
-      resolve(null);
-      return;
-    }
-    let request: IDBOpenDBRequest;
-    try {
-      request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-    } catch {
-      resolve(null);
-      return;
-    }
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(TEXT_STORE)) {
-        database.createObjectStore(TEXT_STORE, { keyPath: 'draftKey' });
-      }
-      const attachments = database.objectStoreNames.contains(ATTACHMENT_STORE)
-        ? request.transaction!.objectStore(ATTACHMENT_STORE)
-        : (() => {
-            const created = database.createObjectStore(ATTACHMENT_STORE, { keyPath: ['draftKey', 'localId'] });
-            created.createIndex(DRAFT_KEY_INDEX, 'draftKey');
-            return created;
-          })();
-      // Added in version 2 so the launch sweep can range-scan straight to the
-      // expired rows instead of materializing every cached file to read a date.
-      if (!attachments.indexNames.contains(UPDATED_AT_INDEX)) {
-        attachments.createIndex(UPDATED_AT_INDEX, 'updatedAt');
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => resolve(null);
-    request.onblocked = () => resolve(null);
-  });
-  return databasePromise;
-}
-
-function awaitRequest<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error('The draft cache request failed.'));
-  });
-}
-
-function awaitTransaction(transaction: IDBTransaction): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error ?? new Error('The draft cache transaction failed.'));
-    transaction.onabort = () => reject(transaction.error ?? new Error('The draft cache transaction was aborted.'));
-  });
-}
-
-/**
- * A composer must keep working when the cache does not: a browser in private
- * mode, a revoked quota, or a corrupt database all resolve to the fallback
- * instead of surfacing an error the user cannot act on.
- */
-async function withStores<T>(
-  storeNames: string[],
-  mode: IDBTransactionMode,
-  run: (transaction: IDBTransaction) => Promise<T>,
-  fallback: T,
-): Promise<T> {
-  const database = await openDatabase();
-  if (!database) return fallback;
-  try {
-    const transaction = database.transaction(storeNames, mode);
-    // Subscribed before the first request so a transaction that commits
-    // promptly cannot settle before anyone is listening for it.
-    const settled = awaitTransaction(transaction);
-    // A read never awaits the commit, so keep its rejection from going unhandled.
-    settled.catch(() => undefined);
-    const result = await run(transaction);
-    if (mode === 'readwrite') await settled;
-    return result;
-  } catch {
-    return fallback;
-  }
-}
+const { awaitRequest, withStores } = store;
 
 function isMentionIdentity(value: unknown): value is MentionIdentity {
   if (!value || typeof value !== 'object') return false;
@@ -221,9 +165,9 @@ export async function writeDraftText(
   draftKey: string,
   text: string,
   mentions: MentionIdentity[] = [],
-  atEpoch: number = epoch,
+  atEpoch: number = store.epoch(),
 ): Promise<void> {
-  if (atEpoch !== epoch) return;
+  if (atEpoch !== store.epoch()) return;
   await withStores([TEXT_STORE], 'readwrite', async (transaction) => {
     const store = transaction.objectStore(TEXT_STORE);
     if (text.length === 0) store.delete(draftKey);
@@ -252,9 +196,9 @@ export async function readDraftAttachments(draftKey: string): Promise<CachedDraf
  */
 export async function writeDraftAttachment(
   attachment: Omit<CachedDraftAttachment, 'updatedAt'>,
-  atEpoch: number = epoch,
+  atEpoch: number = store.epoch(),
 ): Promise<boolean> {
-  if (atEpoch !== epoch) return false;
+  if (atEpoch !== store.epoch()) return false;
   return withStores([ATTACHMENT_STORE], 'readwrite', async (transaction) => {
     transaction.objectStore(ATTACHMENT_STORE).put({ ...attachment, updatedAt: Date.now() } satisfies CachedDraftAttachment);
     return true;
@@ -269,9 +213,9 @@ export async function updateDraftAttachment(
   draftKey: string,
   localId: string,
   patch: Pick<Partial<CachedDraftAttachment>, 'resource' | 'sha256'>,
-  atEpoch: number = epoch,
+  atEpoch: number = store.epoch(),
 ): Promise<void> {
-  if (atEpoch !== epoch) return;
+  if (atEpoch !== store.epoch()) return;
   await withStores([ATTACHMENT_STORE], 'readwrite', async (transaction) => {
     const store = transaction.objectStore(ATTACHMENT_STORE);
     const existing = parseCachedAttachment(await awaitRequest(store.get([draftKey, localId])));
@@ -331,7 +275,7 @@ export async function pruneExpiredDrafts(): Promise<CachedDraftAttachment[]> {
 
 /** Sign-out leaves no drafted text or file bytes behind on the device. */
 export async function clearAllDrafts(): Promise<void> {
-  epoch += 1;
+  store.advanceEpoch();
   await withStores([TEXT_STORE, ATTACHMENT_STORE], 'readwrite', async (transaction) => {
     transaction.objectStore(TEXT_STORE).clear();
     transaction.objectStore(ATTACHMENT_STORE).clear();
@@ -340,7 +284,7 @@ export async function clearAllDrafts(): Promise<void> {
 
 /** Leaving one workspace removes only keys that belong to that workspace. */
 export async function clearWorkspaceDrafts(region: RallyRegion, workspaceId: string): Promise<void> {
-  epoch += 1;
+  store.advanceEpoch();
   const prefix = workspaceDraftPrefix(region, workspaceId);
   const range = IDBKeyRange.bound(prefix, `${prefix}\uffff`);
   await withStores([TEXT_STORE, ATTACHMENT_STORE], 'readwrite', async (transaction) => {
@@ -409,9 +353,6 @@ export async function migrateLegacyDrafts(region: RallyRegion, workspaceId: stri
  * which is noise a test that never touches a draft should not have to absorb.
  */
 export function closeDraftCache(): void {
-  const opening = databasePromise;
-  databasePromise = null;
   lastSortKey = 0;
-  epoch = 0;
-  void opening?.then((database) => database?.close());
+  store.close();
 }

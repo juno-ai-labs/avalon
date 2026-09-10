@@ -335,10 +335,11 @@ export function WorkspaceSocketProvider({
       if (sidebar.projects) applyVersionedProjectSnapshot(queryClient, sidebar.projects);
       directoryLive = true;
       // The directory is the bound on the conversation cache: a conversation
-      // stays on disk for as long as its parent is a row here. Page one is
-      // the whole of what this payload can vouch for, so a conversation
-      // opened from a later page is forgotten and re-cached on its next open.
-      if (localCacheScope !== null) {
+      // stays on disk for as long as its parent is a row here. Only the whole
+      // directory can say a parent is gone; page one cannot tell a later page
+      // from a tombstone, as the merge above already knows, so on a paged
+      // workspace the disk follows evictions and the child rosters instead.
+      if (localCacheScope !== null && wholeDirectory) {
         void retainConversationParents(localCacheScope, new Set([
           ...page.items.map((workstream) => workstream.id),
           ...sidebar.automations.items.map((automation) => automation.id),

@@ -110,6 +110,17 @@ describe('local cache store', () => {
     expect(await notes.entries(eu1)).toEqual([]);
   });
 
+  it('lists one scope\'s rows about a subject through the index, and no other scope\'s', async () => {
+    await notes.write(global1, 'p:0', { text: 'main' }, 'p');
+    await notes.write(global1, 'p:child', { text: 'child' }, 'p');
+    await notes.write(global1, 'q:0', { text: 'other' }, 'q');
+    await notes.write(eu1, 'p:0', { text: 'main in eu' }, 'p');
+
+    expect((await notes.entriesForSubject(global1, 'p')).map((entry) => entry.key).sort()).toEqual(['p:0', 'p:child']);
+    expect((await notes.entriesForSubject(eu1, 'p')).map((entry) => entry.key)).toEqual(['p:0']);
+    expect(await notes.entriesForSubject(global1, 'r')).toEqual([]);
+  });
+
   it('removes one key without touching its neighbours', async () => {
     await notes.write(global1, 'a', { text: 'a' });
     await notes.write(global1, 'b', { text: 'b' });
