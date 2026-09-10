@@ -209,6 +209,9 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   value,
 }, forwardedRef): React.JSX.Element {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const resizeAnimationsRef = useRef<Animation[]>([]);
+  const measuredTextareaRef = useRef(false);
   const highlightRef = useRef<HTMLDivElement>(null);
   const dictationBaseRef = useRef('');
   const microphonePressRef = useRef<{ startedAt: number; startedRecording: boolean } | undefined>(undefined);
@@ -249,15 +252,64 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   const resizeTextarea = useCallback((nextValue?: string): void => {
     const textarea = textareaRef.current;
     if (!textarea) return;
+    const composer = composerRef.current;
+    const shell = textarea.parentElement;
+    const previousHeight = textarea.getBoundingClientRect().height;
+    const previousTextLeft = textarea.getBoundingClientRect().left + parseFloat(getComputedStyle(textarea).paddingLeft);
+    for (const animation of resizeAnimationsRef.current) animation.cancel();
+    resizeAnimationsRef.current = [];
+    // Measure at the compact width every time, so expanding the text column
+    // cannot alternate between wrapped and unwrapped on successive edits.
+    if (composer) delete composer.dataset.multiline;
     textarea.style.height = 'auto';
+    if (layout === 'message-capsule' && attachments.length === 0 && composer) {
+      const singleRowHeight = textarea.clientHeight;
+      composer.dataset.multiline = String(textarea.scrollHeight > singleRowHeight);
+    }
     if ((nextValue ?? textarea.value).length > 0) {
       textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
     }
+    if (layout === 'message-capsule' && shell && measuredTextareaRef.current
+      && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      && typeof textarea.animate === 'function') {
+      const height = textarea.getBoundingClientRect().height;
+      const textLeft = textarea.getBoundingClientRect().left + parseFloat(getComputedStyle(textarea).paddingLeft);
+      // Use the current painted position when typing reverses an unfinished
+      // transition. Height moves the capsule edge; translation carries the text
+      // and its mention highlights together without scaling the glyphs.
+      const motion = { duration: 220, easing: 'cubic-bezier(.32, .72, 0, 1)' };
+      if (previousHeight !== height) {
+        resizeAnimationsRef.current.push(textarea.animate([
+          { height: `${previousHeight}px` }, { height: `${height}px` },
+        ], motion));
+      }
+      if (previousTextLeft !== textLeft) {
+        resizeAnimationsRef.current.push(shell.animate([
+          { transform: `translateX(${previousTextLeft - textLeft}px)` }, { transform: 'translateX(0)' },
+        ], motion));
+      }
+    }
+    measuredTextareaRef.current = true;
     syncHighlightScroll();
-  }, [maxHeight, syncHighlightScroll]);
+  }, [attachments.length, layout, maxHeight, syncHighlightScroll]);
   useLayoutEffect(() => {
     resizeTextarea(value);
   }, [resizeTextarea, value]);
+  useEffect(() => () => {
+    for (const animation of resizeAnimationsRef.current) animation.cancel();
+  }, []);
+  useLayoutEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    let width = composer.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (composer.clientWidth === width) return;
+      width = composer.clientWidth;
+      resizeTextarea();
+    });
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, [resizeTextarea]);
   const dictation = useRealtimeDictation(api, (transcript) => {
     onValueChange(appendDictationTranscript(dictationBaseRef.current, transcript));
     requestAnimationFrame(() => resizeTextarea());
@@ -334,6 +386,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   return (
     <>
       <div
+        ref={composerRef}
         className={clsx(
           'workstream-composer',
           className,
