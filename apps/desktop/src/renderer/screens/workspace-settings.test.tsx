@@ -11,7 +11,7 @@ import type { DesktopApplicationSettings } from '../../common/desktop';
 import { ApiError } from '../lib/api';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from '../lib/use-client-feature-flags';
 import type { Workspace, WorkspaceInvitation } from '../lib/types';
-import { escapeClosesSettings, WorkspaceSettingsScreen } from './workspace-settings';
+import { WorkspaceSettingsScreen } from './workspace-settings';
 
 const api = vi.hoisted(() => ({
   createWorkspaceInvitation: vi.fn(),
@@ -2521,81 +2521,5 @@ describe('Closing the settings window with Escape', () => {
     fireEvent.keyDown(within(dialog).getByLabelText('Workspace API key'), { key: 'Escape' });
 
     expect(close).not.toHaveBeenCalled();
-  });
-});
-
-describe('escapeClosesSettings', () => {
-  function escapeOn(target: EventTarget, init: KeyboardEventInit = {}, pane: Element | null = null): boolean {
-    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape', ...init });
-    target.dispatchEvent(event);
-    return escapeClosesSettings(event, pane);
-  }
-
-  it('answers only a bare, unclaimed Escape', () => {
-    const field = document.createElement('input');
-    document.body.append(field);
-
-    expect(escapeOn(field)).toBe(true);
-    expect(escapeOn(field, { key: 'Enter' })).toBe(false);
-    // A shortcut that happens to contain Escape belongs to whoever bound it.
-    expect(escapeOn(field, { metaKey: true })).toBe(false);
-    expect(escapeOn(field, { shiftKey: true })).toBe(false);
-
-    field.addEventListener('keydown', (event) => event.preventDefault(), { once: true });
-    expect(escapeOn(field)).toBe(false);
-    field.remove();
-  });
-
-  it('yields to the layer the keystroke was aimed at', () => {
-    const layer = document.createElement('div');
-    layer.setAttribute('role', 'listbox');
-    const option = document.createElement('button');
-    layer.append(option);
-    document.body.append(layer);
-
-    // A select menu is dismissed by this Escape; the window is not.
-    expect(escapeOn(option)).toBe(false);
-    layer.remove();
-  });
-
-  it('ignores controls that hold no typing', () => {
-    const toggle = document.createElement('input');
-    toggle.type = 'checkbox';
-    toggle.checked = true;
-    document.body.append(toggle);
-
-    // A checked box carries a value of its own; it is not unsaved text.
-    expect(escapeOn(toggle)).toBe(true);
-    toggle.remove();
-  });
-
-  it('sweeps the pane for text no element currently holds focus over', () => {
-    const pane = document.createElement('div');
-    const draft = document.createElement('input');
-    const elsewhere = document.createElement('button');
-    pane.append(draft);
-    document.body.append(pane, elsewhere);
-
-    expect(escapeOn(elsewhere, {}, pane)).toBe(true);
-    draft.value = 'teammate@company.com';
-    expect(escapeOn(elsewhere, {}, pane)).toBe(false);
-
-    // Values that are already saved, or that cannot be edited at all, are not
-    // drafts — a generated endpoint and a disabled field both read as text.
-    draft.readOnly = true;
-    expect(escapeOn(elsewhere, {}, pane)).toBe(true);
-    draft.readOnly = false;
-    draft.disabled = true;
-    expect(escapeOn(elsewhere, {}, pane)).toBe(true);
-
-    // A picker that ships with a value is never empty, so counting it would
-    // leave Escape permanently dead in whichever section shows one.
-    draft.disabled = false;
-    draft.type = 'time';
-    draft.value = '10:30';
-    expect(escapeOn(elsewhere, {}, pane)).toBe(true);
-
-    pane.remove();
-    elsewhere.remove();
   });
 });

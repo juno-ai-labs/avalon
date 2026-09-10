@@ -93,6 +93,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/desktop/src/renderer/components/appearance-picker.tsx` | The one icon-and-colour palette, shared with the work stream's header. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows. |
 | `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | Enabled standalone Sidekick tiles above the account menu open library details, and `SidekickStripTile`, the tile shape they and the empty strip's **New Sidekick** action share; the center rail shows authorized main-conversation attachments and the participant facepile. |
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` it cuts out of the fill along that marker's own outline (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen, and the empty strip's tile is the same silhouette outlined around a plus. |
+| `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksWindow`: the window's routes, and the one place its Escape-to-close gesture is installed. |
 | `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
 
 ## How it works
@@ -103,6 +104,16 @@ The separate Sidekicks window lists all accessible personal, workspace and
 workstream-owned entries, including drafts. `GET /sidekicks` uses
 `WorkspaceDO.listSidekickDirectory`; the old `/automations` listing remains a
 compatibility adapter. Directory membership never grants access to an owner.
+
+The window closes on **Escape**, through the shared
+`renderer/lib/window-escape.ts` that Settings also uses, and nominates nothing as
+unsaved: the only writing surface it hosts is a Sidekick's conversation composer,
+whose text and attachments are cached on the device and restored on the next
+visit (see [`composer-drafts.md`](composer-drafts.md)), so closing costs no
+sentence. The keystroke still stops at anything with a nearer claim on it — an
+IME composition, the run-history or delete dialog, a model menu, the composer's
+own mention and command lists, and the library's search box while it still holds
+a filter.
 
 `POST /sidekicks` creates a personal draft and its authoring conversation.
 `/sidekicks/new` replaces itself with the resulting detail route so Back cannot
@@ -636,6 +647,28 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-10 — The Sidekicks window closes on Escape
+
+**What changed:** `SidekicksWindow` — the window's routes, moved out of `App` into
+`screens/sidekicks-library.tsx` — installs `useEscapeClosesWindow`, so a bare
+Escape closes the window. It nominates no unsaved-text scope.
+
+**Why:** The window is a singleton opened from the sidebar, the account menu and
+a deep link, and it has no sidebar of its own to navigate away through, so
+dismissing it meant reaching for Command-W or the traffic light. Settings had
+answered the same keystroke since it got its own window; this is that gesture,
+extracted rather than copied.
+
+The scope is the part worth respecting later. Settings sweeps its pane because it
+saves immediately and a half-written invitation has nowhere to come from. Here
+the composer's draft is cached and restored, so a sweep would protect nothing and
+would leave Escape dead in every Sidekick that holds one — the failure would read
+as a key that quietly stopped working. What still holds the keystroke is
+everything that consumes it itself: `preventDefault` from the composer's mention
+and command lists, Radix's own dismissal of a dialog or menu, and the focused
+control when it holds typing, which is what lets the library's search box clear
+its filter before a second Escape takes the window.
 
 ### 2026-09-10 — A running Sidekick says so with a play, cut out of its own hexagon
 
