@@ -152,6 +152,52 @@ describe('jump to latest', () => {
   });
 });
 
+/**
+ * The composer is measured from the conversation above it, not from the pane it
+ * sits in: it is three quarters of the widest a turn is ever drawn, so the
+ * field and the bubbles it produces read as one column. Nothing in a component
+ * test can see that — jsdom lays nothing out, and both numbers render correctly
+ * whatever they are. What can be checked here is that the two rules are still
+ * reading one number, and that the pane width at which the field gives up the
+ * inset is still the one the design states rather than whatever is left after
+ * somebody retunes the dock's gutters.
+ */
+describe('composer width', () => {
+  /** The pane width below which the field takes the whole row. */
+  const NARROW_PANE = 600;
+
+  it('takes three quarters of the same cap a turn is drawn to', () => {
+    expect(rule('.workstream-screen .composer-stack')).toContain('max-width: calc(var(--turn-width-cap) * .75);');
+
+    // One declaration of the cap, and every turn rule reading it. A literal
+    // copied back into any of them is a width that stops moving with the field,
+    // and there is no screen on which that reads as a defect rather than as a
+    // choice somebody made.
+    expect([...stylesheet.matchAll(/--turn-width-cap:/gu)]).toHaveLength(1);
+    expect([...stylesheet.matchAll(/max-width: min\(88%, ([^,]+), calc\(100% - 82px\)\)/gu)].map(([, cap]) => cap))
+      .toEqual(['var(--turn-width-cap)', 'var(--turn-width-cap)', 'var(--turn-width-cap)']);
+  });
+
+  it('gives the row back to the field below a 600px pane', () => {
+    const dock = rule('.workstream-screen .composer-dock');
+
+    // The query below resolves against the nearest named container, so it is
+    // inert — silently, and only at narrow widths — without this.
+    expect(dock).toContain('container: composer-dock / inline-size;');
+
+    const gutter = Number(dock?.match(/padding: 0 (\d+)px \d+px;/u)?.[1]);
+    const threshold = Number(stylesheet.match(/@container composer-dock \(width < (\d+)px\)/u)?.[1]);
+
+    // A size query reads the container's content box, which is inside the
+    // dock's gutters; the pane is those two gutters wider.
+    expect(gutter).toBeGreaterThan(0);
+    expect(threshold + 2 * gutter).toBe(NARROW_PANE);
+
+    expect(stylesheet.match(/@container composer-dock \([^)]*\) \{([\s\S]*?)\n\}/u)?.[1])
+      .toContain('.workstream-screen .composer-stack { max-width: none; }');
+  });
+});
+
 describe('secondary surface focus and layout', () => {
   it('keeps Terminal selection and keyboard focus distinguishable from resting borders', () => {
     expect(rule('.terminal-network-modes > label:has(input:checked)')).toContain('var(--av-sys-color-text-default)');
