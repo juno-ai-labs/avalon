@@ -172,7 +172,7 @@ const MARKER_PRECEDENCE: readonly WorkstreamMarkerStatus[] = [
  *
  * The single answer every surface asks for, so the sidebar and the home screen
  * cannot disagree about which of a work stream's states is the one worth
- * showing. Surfaces may omit that result: the sidebar hides `completed`.
+ * showing. Surfaces may omit that result — see `workstreamMarkerIsQuiet`.
  * `scheduled` has no personal state to lose to and is not in the
  * ranking; it falls through as the run's own status.
  */
@@ -184,6 +184,25 @@ export function workstreamMarkerStatus(
   if (workstream.youAreMentioned === true) active.add('mentioned');
   if (workstream.hasUnread === true) active.add('unread');
   return MARKER_PRECEDENCE.find((status) => active.has(status)) ?? workstream.harnessStatus;
+}
+
+/**
+ * The markers that say nothing is happening, which a list may leave undrawn.
+ *
+ * A dot earns its place by reporting that something is under way or that
+ * somebody is owed an answer. `completed` and `scheduled` report neither: one
+ * run has finished and the next has not begun, which is the resting condition
+ * of every work stream a person is not currently watching. Drawn on a list,
+ * they mark the ordinary as though it were news.
+ *
+ * This is a predicate rather than a condition inside a component so the two
+ * quiet states cannot drift apart surface by surface, the same reason
+ * `MARKER_PRECEDENCE` is a single array. A surface still decides whether to
+ * honour it: the work-stream header names the run's state in words, and there
+ * a resting run is exactly what somebody opened the header to read.
+ */
+export function workstreamMarkerIsQuiet(status: WorkstreamMarkerStatus): boolean {
+  return status === 'completed' || status === 'scheduled';
 }
 
 /**

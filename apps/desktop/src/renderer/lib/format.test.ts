@@ -7,6 +7,7 @@ import {
   nextRecencyBoundary,
   recencyGroupBatchFilter,
   statusLabel,
+  workstreamMarkerIsQuiet,
   workstreamMarkerStatus,
   workstreamNeedsAttention,
 } from './format';
@@ -156,6 +157,19 @@ describe('work-stream presentation rules', () => {
     // one state the ranking does not mention.
     expect(workstreamMarkerStatus({ harnessStatus: 'scheduled' })).toBe('scheduled');
     expect(workstreamMarkerStatus({ harnessStatus: 'failed' })).toBe('failed');
+  });
+
+  it('calls a finished run and a run that has not started the same resting state', () => {
+    expect(workstreamMarkerIsQuiet('completed')).toBe(true);
+    expect(workstreamMarkerIsQuiet('scheduled')).toBe(true);
+    // Everything else is either under way or owed an answer, so it keeps its dot.
+    expect(workstreamMarkerIsQuiet('running')).toBe(false);
+    expect(workstreamMarkerIsQuiet('needs_input')).toBe(false);
+    expect(workstreamMarkerIsQuiet('stopped')).toBe(false);
+    expect(workstreamMarkerIsQuiet('failed')).toBe(false);
+    expect(workstreamMarkerIsQuiet('unread')).toBe(false);
+    expect(workstreamMarkerIsQuiet('mentioned')).toBe(false);
+    expect(workstreamMarkerIsQuiet('unseen')).toBe(false);
   });
 
   it('asks for attention only where somebody named this person: unseen, mentioned, needs_input', () => {
