@@ -319,6 +319,32 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-10 — Turn to turn is the height of the hover row
+
+**What changed:** `sys.space.stack.gap`, the space a turn owns above itself
+when the row before it is also a turn, goes from eight units (32px) to four
+(16px). Nothing else in the rhythm moves: a turn beside an event is still four
+units and event to event two, so the feed now spaces on two distances rather
+than three, with turn-to-turn and turn-to-event equal.
+
+**Why:** Both kinds of turn keep an action row under themselves that is laid
+out always and painted on hover (Rally's Copy, Speak, Image, PDF and New
+substream strip, and the person's New substream), and it measures about 18px
+tall with 8 above it under an answer and 4 under a bubble. At 32px the row a
+reader hovered floated in the middle of a 58px void between Rally's answer and
+the person's reply, and two people talking in the room sat 54px apart, which
+read as separate conversations rather than one exchange. The number is set to
+the hover row: with the gap about its own height, the strip sits under its
+turn and the next turn sits the same distance under the strip, close without
+touching. The first cut added a fifth gap, a closer one for a person's turn
+after a person's turn only, and was withdrawn when the ask turned out to be
+every turn: two tokens at one value would have been a name with no second
+reader. Sixteen rather than twenty because the ask was "nearly the hover row",
+and the row is under twenty. It is the same `* 4` as the block gap by
+coincidence rather than by alias; the two stay separate tokens because they
+sit between different things, and the next tuning of either should not move
+the other.
+
 ### 2026-09-10 — A seeded conversation shows a connecting card and composes without sending
 
 **What changed:** When the local cache seeds a conversation's caches, the

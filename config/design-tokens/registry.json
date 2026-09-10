@@ -30,7 +30,7 @@
     "sys.size.radius": "The corner scale.",
     "sys.size.border": "Border widths.",
     "sys.size.control": "The height of a control.",
-    "sys.space.stack": "Between one turn and the next in the feed.",
+    "sys.space.stack": "Between one turn and the next in the feed. Fitted to the action row a turn reveals on hover, which is about this tall: the row sits under its turn, and the next turn sits the same distance under the row.",
     "sys.space.row": "Between rows in a list.",
     "sys.space.group": "Between one group of rows and the next.",
     "sys.space.block": "Between a turn and an event row in the feed, in either direction: a turn and the work that follows it, or an event and the person's reply.",

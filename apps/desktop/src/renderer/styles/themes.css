@@ -274,8 +274,10 @@
   /* The height of a control. */
   --av-sys-size-control-height: 36px;
 
-  /* Between one turn and the next in the feed. */
-  --av-sys-space-stack-gap: calc(var(--av-ref-space-unit) * 8);
+  /* Between one turn and the next in the feed. Fitted to the action row a turn
+   * reveals on hover, which is about this tall: the row sits under its turn,
+   * and the next turn sits the same distance under the row. */
+  --av-sys-space-stack-gap: calc(var(--av-ref-space-unit) * 4);
 
   /* Between rows in a list. */
   --av-sys-space-row-gap: var(--av-ref-space-unit);
@@ -651,7 +653,7 @@
 
   --av-sys-size-control-height: 36px;
 
-  --av-sys-space-stack-gap: calc(var(--av-ref-space-unit) * 8);
+  --av-sys-space-stack-gap: calc(var(--av-ref-space-unit) * 4);
 
   --av-sys-space-row-gap: var(--av-ref-space-unit);
 
