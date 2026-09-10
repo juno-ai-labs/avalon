@@ -89,6 +89,47 @@ function renderComposer(
   );
 }
 
+describe('WorkstreamComposer over a remembered conversation', () => {
+  it('lets a message be written but not sent while sending is blocked', () => {
+    const onSend = vi.fn(async () => undefined);
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          footerHint="Sending is available once Rally connects"
+          members={[creator]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={onSend}
+          onStop={async () => undefined}
+          sendBlocked
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const composer = screen.getByLabelText('Message the work stream');
+    fireEvent.change(composer, { target: { value: 'Half a thought' } });
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(composer).toHaveValue('Half a thought');
+    expect(screen.getByText('Sending is available once Rally connects')).toBeInTheDocument();
+  });
+});
+
 describe('WorkstreamComposer mention confirmation', () => {
   it('uses the compact GrokBot input chrome', () => {
     vi.stubGlobal('navigator', {

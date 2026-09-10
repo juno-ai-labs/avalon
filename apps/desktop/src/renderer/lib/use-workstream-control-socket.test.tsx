@@ -7,6 +7,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from './types';
 import { useWorkstreamControlSocket, type WorkstreamChildDirectory } from './use-workstream-control-socket';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { conversationCacheKey, conversationSlice } from './conversation-cache';
+import { clearAllLocalCache, closeLocalCache } from './local-cache';
+import { LocalCacheScopeProvider } from './local-cache-scope';
 
 import type * as TelemetryModule from './telemetry';
 import { cancelWorkstreamFeedOpen, markWorkstreamFeedOpenStarted } from './telemetry';
@@ -412,4 +415,64 @@ describe('useWorkstreamControlSocket', () => {
     expect(warning.mock.calls[0]?.[0]).toContain('Ignored invalid WorkstreamDO socket event');
     expect(JSON.stringify(warning.mock.calls)).not.toContain('do-not-log');
   });
+  it('forgets a cached child the roster no longer lists, and keeps the ones it does', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const scope = 'global:00000000-0000-7000-8000-000000000012';
+    const kept = '00000000-0000-7000-8000-000000000021';
+    const dropped = '00000000-0000-7000-8000-000000000022';
+    // An earlier test evicted a revoked work stream under fake timers, which
+    // leaves the cache holding a database open that never settles; drop it.
+    closeLocalCache();
+    await clearAllLocalCache();
+    const row = {
+      detail: {
+        ...summary(), createdAt: '2026-08-17T18:00:00.000Z',
+        participants: [], viewers: [], resources: [], connections: [], backgroundTasks: [],
+      },
+      transcript: {
+        snapshotId: '00000000-0000-7000-8000-000000000777', snapshotThrough: 0, eventSequence: 0,
+        snapshotAtUtc: '2026-08-17T19:00:00.000Z', unreadAnchorSequence: null, unreadReason: 'no_unread' as const,
+        ranges: [], activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
+      },
+      initialContext: null,
+      cachedAt: '',
+    };
+    for (const substreamId of ['0', kept, dropped]) {
+      await conversationSlice.write(scope, conversationCacheKey(workstreamId, substreamId), row, workstreamId);
+    }
+    const queryClient = new QueryClient();
+    const getWorkstreamControlSocketTicket = vi.fn(async () => ({
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`, ticket: 'control-ticket',
+      protocols: socketTicketProtocols('control-ticket'),
+    }));
+    renderHook(() => useWorkstreamControlSocket({ getWorkstreamControlSocketTicket }, workstreamId, true), {
+      wrapper: ({ children }: PropsWithChildren) => (
+        <QueryClientProvider client={queryClient}>
+          <LocalCacheScopeProvider scope={scope}>{children}</LocalCacheScopeProvider>
+        </QueryClientProvider>
+      ),
+    });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+
+    act(() => {
+      socket.open();
+      socket.message(metadata(4, {
+        privateChildren: [{
+          substreamId: asSubstreamId(kept), title: 'Still here', createdByUserId: asUserId('00000000-0000-7000-8000-000000000013'),
+          createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
+        }],
+        privateChildrenWaterline: 2,
+      }));
+    });
+
+    await vi.waitFor(async () => {
+      expect((await conversationSlice.entries(scope)).map((entry) => entry.key).sort()).toEqual([
+        conversationCacheKey(workstreamId, '0'),
+        conversationCacheKey(workstreamId, kept),
+      ].sort());
+    }, { timeout: 2_000 });
+    closeLocalCache();
+  });
+
 });

@@ -67,6 +67,7 @@ vi.mock('../lib/use-transcript-follow', () => ({
 }));
 
 import { patchCachedWorkstreamAppearance, setCachedWorkstreams } from '../lib/workstreams-cache';
+import { workstreamFeedSourceQueryKey } from '../lib/telemetry';
 import { WorkstreamScreen } from './workstream';
 import type { WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 
@@ -740,6 +741,64 @@ describe('socket-first work-stream open', () => {
 
     expect(await screen.findByText('Work stream could not be opened')).toBeInTheDocument();
     expect(screen.getByText('The live connection timed out after 3 attempts.')).toBeInTheDocument();
+  });
+
+  it('paints a remembered transcript with a connecting card and blocks sending until the live snapshot lands', async () => {
+    const createMessage = vi.fn();
+    const socket = {
+      activeCompaction: null, createMessage, requestSnapshot: vi.fn(), retryOpening: vi.fn(),
+      sendReady: true, state: 'connecting', workspaceSocketState: 'connecting',
+    };
+    retainedSocket.mockReturnValue(socket);
+    const boot = recoveryBoot({ title: 'Remembered work stream' });
+    const { transcript, ...detail } = boot;
+    const cache = renderScreen((client) => {
+      client.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'local_cache');
+      client.setQueryData(['workstream', workstreamId], detail);
+      client.setQueryData(['ordered-transcript', workstreamId], transcript);
+    });
+
+    // The screen is not "Opening": the remembered conversation is on it.
+    expect(screen.queryByText('Opening work stream…')).not.toBeInTheDocument();
+    expect(document.querySelector('.connecting-card')?.textContent ?? '').toContain('Connecting to Remembered work stream…');
+    const composer = screen.getByLabelText('Message the work stream');
+    fireEvent.change(composer, { target: { value: 'Typed while connecting' } });
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    expect(createMessage).not.toHaveBeenCalled();
+    expect(composer).toHaveValue('Typed while connecting');
+    expect(screen.getByText('Sending is available once Rally connects')).toBeInTheDocument();
+
+    socket.state = 'connected';
+    act(() => {
+      cache.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'socket_snapshot');
+      cache.setQueryData(['workstream', workstreamId], { ...detail, title: 'Live work stream' });
+    });
+
+    await waitFor(() => expect(document.querySelector('.connecting-card')).toBeNull());
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
+    expect(composer).toHaveValue('Typed while connecting');
+  });
+
+  it('keeps the remembered transcript and offers a retry on the card when the cached open times out', async () => {
+    const retryOpening = vi.fn();
+    retainedSocket.mockReturnValue({
+      activeCompaction: null, createMessage: vi.fn(), requestSnapshot: vi.fn(), retryOpening,
+      openingError: 'The live connection timed out after 3 attempts.',
+      sendReady: false, state: 'unavailable', workspaceSocketState: 'connecting',
+    });
+    const boot = recoveryBoot({ title: 'Remembered work stream' });
+    const { transcript, ...detail } = boot;
+    renderScreen((client) => {
+      client.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'local_cache');
+      client.setQueryData(['workstream', workstreamId], detail);
+      client.setQueryData(['ordered-transcript', workstreamId], transcript);
+    });
+
+    expect(screen.queryByText('Work stream could not be opened')).not.toBeInTheDocument();
+    expect(screen.getByText('The live connection timed out after 3 attempts.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(retryOpening).toHaveBeenCalledTimes(1);
   });
 
 });

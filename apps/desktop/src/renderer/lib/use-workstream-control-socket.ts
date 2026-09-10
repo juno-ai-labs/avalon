@@ -23,6 +23,8 @@ import {
   workstreamFeedOpenAttemptId,
 } from './telemetry';
 import { evictCachedWorkstream } from './workstreams-cache';
+import { retainConversationChildren } from './conversation-cache';
+import { useLocalCacheScope } from './local-cache-scope';
 
 type WorkstreamControlSocketApi = Pick<RallyApi, 'getWorkstreamControlSocketTicket'>;
 const HEARTBEAT_MS = 50_000;
@@ -122,6 +124,7 @@ export function useWorkstreamControlSocket(
   socketLeaseId?: string,
 ): void {
   const queryClient = useQueryClient();
+  const localCacheScope = useLocalCacheScope();
   const [generatedSocketLeaseId] = useState(() => socketLeaseId ?? uuidV7());
   const resolvedSocketLeaseId = socketLeaseId ?? generatedSocketLeaseId;
   const initialReasonRef = useRef(initialReason);
@@ -129,6 +132,14 @@ export function useWorkstreamControlSocket(
   useEffect(() => {
     if (!api || !enabled) return;
     let stopped = false;
+    /**
+     * The children the local cache was last told to keep. The control
+     * socket is the authority for which private children this reader may
+     * still open, so a child that leaves its roster leaves the disk too; the
+     * comparison keeps a metadata frame that changed nothing about the roster
+     * from scanning the store again.
+     */
+    let retainedChildren: string | null = null;
     let accessRevoked = false;
     let socket: RealtimeSocket | null = null;
     let reconnectTimer: number | null = null;
@@ -195,6 +206,14 @@ export function useWorkstreamControlSocket(
                 < (current?.privateChildrenWaterline ?? stored.viewerWaterline)))) return current;
           return { privateChildren: metadata.privateChildren, privateChildrenWaterline: metadata.privateChildrenWaterline, stateVersion: incoming };
         });
+        if (localCacheScope !== null && metadata.privateChildren) {
+          const listed = metadata.privateChildren.map((child) => child.substreamId).sort();
+          const roster = listed.join(',');
+          if (roster !== retainedChildren) {
+            retainedChildren = roster;
+            void retainConversationChildren(localCacheScope, workstreamId, new Set(listed));
+          }
+        }
       }
       if (applied.commonApplied) {
         void queryClient.invalidateQueries({ queryKey: ['terminal-workstream', workstreamId], exact: true });
@@ -324,5 +343,5 @@ export function useWorkstreamControlSocket(
       clearHeartbeat();
       socket?.close();
     };
-  }, [api, enabled, queryClient, resolvedSocketLeaseId, workstreamId]);
+  }, [api, enabled, localCacheScope, queryClient, resolvedSocketLeaseId, workstreamId]);
 }

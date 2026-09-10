@@ -27,6 +27,7 @@ import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { RallyApi } from './api';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
+import { clearAllLocalCache, clearWorkspaceLocalCache } from './local-cache';
 import {
   readDevicePreferences,
   setDeviceSelectedRegion,
@@ -542,6 +543,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     }
     const departure = await bridge.leaveWorkspace({ expectedOutcome, region: session.workspace.region, workspaceId });
     await clearWorkspaceDrafts(session.workspace.region, workspaceId);
+    await clearWorkspaceLocalCache(session.workspace.region, workspaceId);
     queryClient.removeQueries();
     return departure;
   }, [bridge, queryClient, session?.workspace]);
@@ -595,7 +597,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       abandonPendingWorkstreamFeedOpen();
       const sameAccount = session?.user.email.toLocaleLowerCase('en-US')
         === previousSession.user.email.toLocaleLowerCase('en-US');
-      if (!sameAccount) void clearAllDrafts();
+      // The local cache is workspace content too — transcripts, not just the
+      // sentence being typed — and leaves the device on the same transition.
+      if (!sameAccount) {
+        void clearAllDrafts();
+        void clearAllLocalCache();
+      }
     }
     if (!legacyDraftMigrationStarted.current && session?.workspace) {
       legacyDraftMigrationStarted.current = true;
@@ -630,7 +637,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const surrenderActiveWorkspace = useCallback(async (): Promise<void> => {
     const departing = session?.workspace ?? null;
     const nextSession = await bridge.surrenderActiveWorkspace();
-    if (departing) await clearWorkspaceDrafts(departing.region, departing.id);
+    if (departing) {
+      await clearWorkspaceDrafts(departing.region, departing.id);
+      await clearWorkspaceLocalCache(departing.region, departing.id);
+    }
     // Kept alongside `applySession`'s own scope check: with nothing left to
     // select, previous and next are both null and read as the same scope.
     queryClient.clear();
