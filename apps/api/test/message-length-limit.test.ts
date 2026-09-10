@@ -28,6 +28,7 @@ import { describe, expect, it } from "vitest";
 import type { HonoAppEnv } from "../src/env";
 import { InitializeWorkstreamObjectInputSchema } from "../src/durable-objects/workstream-object-product";
 import { errorHandler } from "../src/middleware/errors";
+import { conversationRoutes } from "../src/routes/conversations";
 import { workstreamRoutes } from "../src/routes/workstreams";
 import { provisionalWorkstreamDescription } from "../src/services/workstream-description-service";
 import { provisionalWorkstreamTitle } from "../src/services/workstream-naming-service";
@@ -46,6 +47,7 @@ import { createTestEnv } from "./helpers/cloudflare-test";
 function routedApp() {
   const app = new Hono<HonoAppEnv>();
   app.route("/workstreams", workstreamRoutes);
+  app.route("/conversations", conversationRoutes);
   app.onError(errorHandler);
   return app;
 }
@@ -122,6 +124,41 @@ describe("the message ceiling", () => {
 
     expect(notJson.code).toBe("invalid_request");
     expect(noMessage.code).toBe("invalid_request");
+  });
+
+  it("answers the same way for the message a substream is created with", async () => {
+    // The message rides one level down here — a substream is created with the
+    // instruction that starts it — and a nested field is exactly where a bound
+    // quietly stops being the caller's to act on: the schema alone refuses it
+    // as `invalid_request`, which says nothing about what to shorten.
+    const over = await post(`/conversations/${workstreamId}/substreams/confirm`, {
+      operationId: "00000000-0000-7000-8000-0000000000c2",
+      opening: {
+        clientMessageId: "client-1",
+        text: "x".repeat(MESSAGE_MAX_CHARACTERS + 1),
+      },
+    });
+
+    expect(over.status).toBe(400);
+    expect(over.code).toBe("message_too_long");
+    expect(over.message).toBe(MESSAGE_TOO_LONG_MESSAGE);
+
+    // And the guard claims nothing beyond its own bound: a confirmation at the
+    // ceiling, and one carrying no message at all, both reach the handler and
+    // fail there for want of a session.
+    const atCeiling = await post(`/conversations/${workstreamId}/substreams/confirm`, {
+      operationId: "00000000-0000-7000-8000-0000000000c2",
+      opening: {
+        clientMessageId: "client-1",
+        text: "x".repeat(MESSAGE_MAX_CHARACTERS),
+      },
+    });
+    const idleChild = await post(`/conversations/${workstreamId}/substreams/confirm`, {
+      operationId: "00000000-0000-7000-8000-0000000000c2",
+    });
+
+    expect(atCeiling.code).toBe("authentication_required");
+    expect(idleChild.code).toBe("authentication_required");
   });
 
   it("bounds every schema the message travels through at the same number", () => {

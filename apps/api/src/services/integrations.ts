@@ -2322,13 +2322,25 @@ export async function publishWorkstreamEvent(
   workspaceId: string,
   workstreamId: string,
   event: Omit<ServerSocketEvent, "sequence" | "occurredAt"> | Record<string, unknown>,
+  /**
+   * Which of the parent's conversations the event belongs to; the main one by
+   * default. A private child holds its own room, and an event addressed
+   * without this lands in the parent's — which is how a substream's rename
+   * used to arrive as a rename of the work stream it lives in.
+   */
+  substreamId = "0",
 ): Promise<boolean> {
   try {
     const agent = await durableObjectStubForWorkspace(
       env,
       env.SUBSTREAM_AGENTS,
       workspaceId,
-      conversationObjectName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(workstreamId)),
+      conversationObjectName(
+        env.AVALON_REGION,
+        asWorkspaceId(workspaceId),
+        asWorkstreamId(workstreamId),
+        asSubstreamId(substreamId),
+      ),
     );
     const response = await agent.publishEvent({ workspaceId: asWorkspaceId(workspaceId), workstreamId: asWorkstreamId(workstreamId), event });
     // A room that answered `409 room_identity_mismatch` or rejected the frame

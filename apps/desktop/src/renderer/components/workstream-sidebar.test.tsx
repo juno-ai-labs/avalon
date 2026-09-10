@@ -149,6 +149,11 @@ describe('WorkstreamSidebar', () => {
     // row gives the work stream's icon: no creator avatar, no outer connector.
     expect(child.querySelector('.workstream-context-mark > .tabler-icon-border-corner-pill')).not.toBeNull();
     expect(child.querySelector('.avatar')).toBeNull();
+    // Never a conversation glyph, even though a substream now has an icon of
+    // its own: the naming pass stores what it chose, and this rail draws the
+    // branch line regardless — the payload behind these rows carries no
+    // appearance to draw instead.
+    expect(child.querySelector('.workstream-mark')).toBeNull();
     const sidebar = screen.getByRole('complementary');
     const navigation = within(sidebar).getAllByRole('button').slice(0, 3);
     expect(navigation.map((button) => button.getAttribute('aria-label'))).toEqual([
