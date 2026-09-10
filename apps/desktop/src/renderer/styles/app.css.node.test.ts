@@ -863,10 +863,33 @@ describe('message header meta typography', () => {
     expect(rule('.workstream-screen .human-message-bubble'))
       .toContain('border-radius: var(--turn-bubble-radius);');
     // On the value, not one spelling of the property: a literal creeping back
-    // as `padding-inline-end: 18px` — now the file's usual spelling, and so the
-    // likelier regression — would pass a check that only banned `padding-right`.
+    // as `padding-inline-end: 18px` — a spelling this file does use, and so a
+    // likely regression — would pass a check that only banned `padding-right`.
+    // `padding-inline` is in the pattern for the same reason: it sets the
+    // trailing inset as surely as either, and it is the logical spelling the
+    // stylesheet actually reaches for.
     expect(rule('.workstream-screen .human-message > header'))
-      .not.toMatch(/padding(-right|-inline-end)?:/u);
+      .not.toMatch(/padding(?:-right|-inline(?:-end)?)?:/u);
+  });
+
+  /**
+   * Rally's turn has no avatar, so nothing occupies a gutter left of its name.
+   * The theme inset that header by 18px anyway, which put the identity line on
+   * its own vertical while the prose and the action row under it shared the
+   * article's own edge — a hanging indent over an empty gutter. Held on the
+   * value rather than on one spelling, for the same reason as the human rule
+   * above. `padding-inline` is the one that matters most here: it is the
+   * logical spelling this stylesheet actually uses (`padding-inline-start`
+   * appears nowhere in it), and `padding-inline: 18px 0` reads as a horizontal
+   * pair rather than as a leading inset while setting exactly the one this
+   * change removed. A trailing inset stays allowed, since `padding-inline-end`
+   * is what the human header opposite uses.
+   */
+  it('starts the assistant identity line on the same vertical as its prose', () => {
+    expect(rule('.workstream-screen .agent-message > header'))
+      .not.toMatch(/padding(?:-left|-inline(?:-start)?)?:/u);
+    expect(rule(':is(.workstream-screen, .automation-chat-surface) .agent-message > header'))
+      .not.toMatch(/padding(?:-left|-inline(?:-start)?)?:/u);
   });
 });
 
