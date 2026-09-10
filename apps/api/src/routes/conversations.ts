@@ -1,6 +1,6 @@
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono } from "hono";
-import { zValidator } from "../middleware/validation";
+import { requireSendableMessageLength, zValidator } from "../middleware/validation";
 import {
   IdSchema,
   UpdateWorkstreamRequestSchema,
@@ -78,7 +78,7 @@ conversationRoutes.post("/:parentId/substreams/prepare", zValidator("param", par
     },
   }));
 });
-conversationRoutes.post("/:parentId/substreams/confirm", zValidator("param", parentParam), zValidator("json", z.strictObject({
+conversationRoutes.post("/:parentId/substreams/confirm", requireSendableMessageLength("opening.text"), zValidator("param", parentParam), zValidator("json", z.strictObject({
   operationId: IdSchema,
   /** The instruction the substream is created with, where the caller sent one. */
   opening: SubstreamOpeningMessageSchema.nullish(),
