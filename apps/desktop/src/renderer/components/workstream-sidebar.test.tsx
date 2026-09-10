@@ -35,6 +35,9 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class {
     constructor(callback: () => void) { resized = callback; }
     observe() {}
+    // Radix measures the tooltip arrow through `useSize`, which unobserves on
+    // unmount; a stub without it throws during teardown, not during the assert.
+    unobserve() {}
     disconnect() {}
   });
 });
@@ -212,6 +215,18 @@ describe('WorkstreamSidebar', () => {
     act(() => { width = 900; resized(); });
     expect(screen.getByRole('complementary')).not.toHaveClass('is-compact');
     expect(localStorage.getItem('rally.workstream-sidebar-collapsed')).toBeNull();
+  });
+
+  it('explains a truncated artifact with the rail\u2019s own tooltip, never the platform\u2019s', async () => {
+    setup();
+    const row = screen.getByRole('button', { name: 'Open Launch draft.md' });
+    // The native tooltip is the thing being replaced: leaving `title` behind
+    // means both fire, at different delays, in different type.
+    expect(row).not.toHaveAttribute('title');
+    fireEvent.focus(row);
+    const tip = await screen.findByRole('tooltip');
+    expect(tip).toHaveClass('tooltip');
+    expect(tip).toHaveTextContent('Launch draft.md');
   });
 
   it('drops the artifact section entirely until a work stream has one', () => {

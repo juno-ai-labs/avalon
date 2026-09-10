@@ -8,7 +8,7 @@ import clsx from 'clsx';
 import type { WorkstreamDetail } from '../lib/types';
 import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-socket';
 import { COLLAPSED_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '../lib/ui-store';
-import { AvatarStack, IconButton } from './primitives';
+import { AvatarStack, IconButton, Tip } from './primitives';
 import { PENDING_SUBSTREAM_DRAFT_ID } from './substream-launch';
 import { ResourceIcon } from './markdown-citations';
 import { WorkstreamMark } from './workstream-glyph';
@@ -184,11 +184,20 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
         {artifacts.length > 0 && (
           <section aria-label="Artifacts" className="workstream-context-section">
             <h2>Artifacts</h2>
+            {/* The rail's own tooltip, not the platform's: a title long enough
+                to be truncated here — or hidden outright by the compact rail —
+                is the whole reason these rows carry one, and `title` draws it
+                in the desktop's type after the desktop's delay, and never at
+                all for a reader arriving on the row by keyboard. It opens to
+                the side, where it covers the feed rather than the next
+                artifact. */}
             {artifacts.map((resource) => (
-              <button className="workstream-context-row" key={resource.id} aria-label={`Open ${resource.title}`} title={resource.title} type="button" onClick={(event) => onOpenArtifact(resource.id, event.currentTarget)}>
-                <span className="workstream-context-resource-icon"><ResourceIcon type={resource.resourceType} /></span>
-                <span className="workstream-context-copy"><span>{resource.title}</span><small>{resource.resourceType.replaceAll('_', ' ')} · v{resource.currentVersion}</small></span>
-              </button>
+              <Tip key={resource.id} label={resource.title} side="right">
+                <button className="workstream-context-row" aria-label={`Open ${resource.title}`} type="button" onClick={(event) => onOpenArtifact(resource.id, event.currentTarget)}>
+                  <span className="workstream-context-resource-icon"><ResourceIcon type={resource.resourceType} /></span>
+                  <span className="workstream-context-copy"><span>{resource.title}</span><small>{resource.resourceType.replaceAll('_', ' ')} · v{resource.currentVersion}</small></span>
+                </button>
+              </Tip>
             ))}
           </section>
         )}
