@@ -13,6 +13,11 @@ import type { WorkstreamSummary } from './types';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 import { WorkspaceSocketProvider, useWorkspaceSocket } from './workspace-socket';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { conversationCacheKey, conversationSlice } from './conversation-cache';
+import { clearAllLocalCache } from './local-cache';
+import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
+import { LocalCacheScopeProvider } from './local-cache-scope';
+import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-directory-cache';
 
 import type * as TelemetryModule from './telemetry';
 
@@ -1511,5 +1516,148 @@ describe('the workspace and work-stream sockets over one store', () => {
       metadata: { ...controlMetadata(7), harnessStatus: 'running', exactState: 'running' },
     }));
     expect(storedStatus(queryClient)).toBe('completed');
+  });
+});
+
+describe('the workspace socket over the local cache', () => {
+  const scope = 'global:00000000-0000-7000-8000-000000000001';
+  const remembered = '00000000-0000-7000-8000-000000000002';
+  const forgotten = '00000000-0000-7000-8000-000000000003';
+
+  function syncPayload(ids: readonly string[]): Record<string, unknown> {
+    return {
+      type: 'workspace_sync',
+      eventId: '00000000-0000-7000-8000-000000000017',
+      waterline: 4,
+      occurredAt: '2026-08-17T20:00:00.000Z',
+      topics: ['workstream_directory'],
+      reason: 'initial',
+      sidebar: {
+        workstreams: {
+          directoryWaterline: 7,
+          nextCursor: null,
+          stateVersions: ids.map((id, index) => ({
+            workstreamId: id,
+            commonEventId: `00000000-0000-7000-8000-00000000001${index}`,
+            viewerEventId: `00000000-0000-7000-8001-00000000001${index}`,
+            authorityGeneration: 1,
+            commonWaterline: 7,
+            viewerWaterline: 4,
+          })),
+          items: ids.map((id) => ({
+            id,
+            workspaceId: '00000000-0000-7000-8000-000000000001',
+            title: 'Live row',
+            titleStatus: 'settled',
+            objective: '',
+            emailAddress: null,
+            createdByUserId: null,
+            harnessStatus: 'completed',
+            latestAttentionSequenceNumber: 0,
+            readThroughSequenceNumber: 0,
+            manualUnreadFromSequenceNumber: null,
+            manualUnreadGeneration: 0,
+            hasUnread: false,
+            youAreMentioned: false,
+            firstUnreadSequenceNumber: null,
+            lastActivityAt: '2026-08-17T20:00:00.000Z',
+            createdAt: '2026-08-17T19:00:00.000Z',
+            updatedAt: '2026-08-17T20:00:00.000Z',
+            archivedAt: null,
+            scope: 'workspace',
+            systemKind: null,
+            nextPendingWakeup: null,
+            pinPosition: null,
+            participantUserIds: [],
+            participantExtraCount: 0,
+          })),
+        },
+        automations: { waterline: 1, items: [] },
+        notes: { waterline: 1, items: [], nextCursor: null },
+      },
+    };
+  }
+
+  it('paints the remembered sidebar before the socket connects, then takes the socket\'s, and forgets what it no longer lists', async () => {
+    await clearAllLocalCache();
+    await workspaceDirectorySlice.write(scope, DIRECTORY_CACHE_KEY, {
+      workstreams: [summary({ id: remembered, title: 'Remembered row' }), summary({ id: forgotten, title: 'Archived elsewhere' })],
+      automations: [],
+      notes: [],
+      projects: { waterline: 2, items: [] },
+      inactiveProjects: { waterline: 2, items: [] },
+    });
+    const conversation = {
+      detail: {
+        ...summary({ id: remembered }), createdAt: '2026-08-17T19:00:00.000Z',
+        participants: [], viewers: [], resources: [], connections: [], backgroundTasks: [],
+      },
+      transcript: {
+        snapshotId: '00000000-0000-7000-8000-000000000777', snapshotThrough: 0, eventSequence: 0,
+        snapshotAtUtc: '2026-08-17T19:00:00.000Z', unreadAnchorSequence: null, unreadReason: 'no_unread' as const,
+        ranges: [], activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
+      },
+      initialContext: null,
+      cachedAt: '',
+    };
+    await conversationSlice.write(scope, conversationCacheKey(remembered, '0'), conversation, remembered);
+    await conversationSlice.write(scope, conversationCacheKey(forgotten, '0'), {
+      ...conversation, detail: { ...conversation.detail, id: forgotten },
+    }, forgotten);
+
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <LocalCacheScopeProvider scope={scope}>
+          <WorkspaceSocketProvider
+            api={{ getWorkspaceSocketTicket }}
+            workspaceId="00000000-0000-7000-8000-000000000001"
+          >
+            <div />
+          </WorkspaceSocketProvider>
+        </LocalCacheScopeProvider>
+      </QueryClientProvider>,
+    );
+
+    // Before the socket has even opened, the sidebar has its rows.
+    await vi.waitFor(() => {
+      expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.map((row) => row.title))
+        .toEqual(['Remembered row', 'Archived elsewhere']);
+    }, { timeout: 2_000 });
+    expect(queryClient.getQueryData(['projects'])).toEqual({ waterline: 2, items: [] });
+    const socket = FakeWebSocket.instances[0]!;
+    expect(socket.readyState).toBe(FakeWebSocket.CONNECTING);
+
+    act(() => socket.open());
+    // Page one of a longer directory cannot say the missing row is gone:
+    // it may simply be on a later page. Nothing leaves the disk on it.
+    const pageOne = syncPayload([remembered]);
+    const sidebar = pageOne['sidebar'] as { workstreams: Record<string, unknown> };
+    act(() => socket.message({
+      ...pageOne,
+      sidebar: { ...sidebar, workstreams: { ...sidebar.workstreams, nextCursor: '1755460800000:00000000-0000-7000-8000-0000000000aa' } },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect((await conversationSlice.entries(scope)).map((entry) => entry.key).sort())
+      .toEqual([conversationCacheKey(forgotten, '0'), conversationCacheKey(remembered, '0')].sort());
+
+    act(() => socket.message(syncPayload([remembered])));
+
+    // The whole directory replaces the seed outright, and the conversation of
+    // the row it no longer lists is gone from the disk.
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.map((row) => `${row.id}:${row.title}`))
+      .toEqual([`${remembered}:Live row`]);
+    await vi.waitFor(async () => {
+      expect((await conversationSlice.entries(scope)).map((entry) => entry.key)).toEqual([conversationCacheKey(remembered, '0')]);
+    }, { timeout: 2_000 });
+    await vi.waitFor(async () => {
+      const row = await workspaceDirectorySlice.read(scope, DIRECTORY_CACHE_KEY);
+      expect(row?.workstreams.map((item) => item.title)).toEqual(['Live row']);
+    }, { timeout: LOCAL_CACHE_WRITE_COALESCE_MS + 2_000 });
   });
 });

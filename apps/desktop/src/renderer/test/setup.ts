@@ -1,7 +1,19 @@
 import '@testing-library/jest-dom/vitest';
 import { configure } from '@testing-library/react';
+import { afterEach } from 'vitest';
 // jsdom ships no IndexedDB, and the composer's draft cache lives in one.
 import 'fake-indexeddb/auto';
+import { closeLocalCache } from '../lib/local-cache';
+
+// An eviction forgets a conversation on disk from wherever it runs, so a test
+// that evicts under fake timers leaves the local cache holding a database open
+// that lands on the fake clock and never settles; the next test in the same
+// worker that touches the cache would then hang on it. Dropping the connection
+// after every test makes the cache an environment fact rather than a hazard
+// each file has to know about.
+afterEach(() => {
+  closeLocalCache();
+});
 
 // `waitFor` and every helper built on it default to a one-second budget, which
 // bets on the machine rather than on the code: a loaded CI runner can leave the

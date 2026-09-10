@@ -1,6 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query';
 import type { WorkstreamAppearance, WorkstreamAppearancePatch } from '@rally/contracts';
 import type { WorkstreamDetail, WorkstreamSummary } from './types';
+import { forgetConversation, forgetConversationParent } from './conversation-cache';
 
 /** The one cache entry every work-stream list reader and writer shares. */
 export const WORKSTREAMS_QUERY_KEY = ['workstreams'] as const;
@@ -41,6 +42,13 @@ function assertWorkstreamList(value: unknown): asserts value is WorkstreamSummar
  * invariant catches a cast or other type escape at the corrupting write rather
  * than at a later `.map` or `.filter` in the sidebar.
  */
+/**
+ * One page of the sidebar's list, as the subscribe answer and every later
+ * `list_workstreams` request size it. The local cache persists this many rows
+ * of the flat list, whatever browsing has appended past them.
+ */
+export const WORKSTREAM_PAGE_SIZE = 250;
+
 export function setCachedWorkstreams(
   queryClient: QueryClient,
   update: WorkstreamsCacheUpdate,
@@ -179,6 +187,9 @@ export function evictCachedWorkstream(
   }
   setCachedWorkstreams(queryClient, (current) =>
     current?.filter((workstream) => workstream.id !== workstreamId));
+  // The disk goes with the memory, or the next launch paints a transcript
+  // the reader was shut out of. Every child under the parent goes too.
+  forgetConversationParent(workstreamId);
 }
 
 /** Remove one independently addressed child without disturbing its parent. */
@@ -200,6 +211,7 @@ export function evictCachedSubstream(
     ['substream-workstream-socket-snapshot-generation', workstreamId, substreamId],
   ] as const;
   for (const queryKey of queryKeys) queryClient.removeQueries({ queryKey, exact: true });
+  forgetConversation(workstreamId, substreamId);
 }
 
 /** Invalidate both main-room and independently addressed child detail rows. */

@@ -4,6 +4,7 @@ import {
   type ClientSocketEvent,
   type PendingTranscriptInput,
   type WorkstreamTranscriptSnapshot,
+  WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
 } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, renderHook } from '@testing-library/react';
@@ -33,6 +34,10 @@ import {
   useRetainedWorkstreamSocket,
 } from './workstream-socket-pool';
 import { WorkstreamSocketResumeProvider } from './workstream-socket-resume';
+import { conversationCacheKey, conversationSlice } from './conversation-cache';
+import { clearAllLocalCache } from './local-cache';
+import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
+import { LocalCacheScopeProvider } from './local-cache-scope';
 import {
   orderedTranscriptMessages,
   transcriptGaps,
@@ -4486,4 +4491,283 @@ describe('useWorkstreamSocket', () => {
     expect(socket.send.mock.calls.filter(([frame]) => frame === 'ping')).toHaveLength(2);
   });
 
+});
+
+describe('useWorkstreamSocket over the local cache', () => {
+  const scope = 'global:00000000-0000-7000-8000-0000000000aa';
+
+  function createScopedWrapper(queryClient: QueryClient): ({ children }: PropsWithChildren) => React.JSX.Element {
+    return function Wrapper({ children }: PropsWithChildren): React.JSX.Element {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <LocalCacheScopeProvider scope={scope}>{children}</LocalCacheScopeProvider>
+        </QueryClientProvider>
+      );
+    };
+  }
+
+  function rememberedTranscript(): WorkstreamBoot['transcript'] {
+    return {
+      ...emptyTranscriptSnapshot(),
+      snapshotThrough: 3,
+      // Deliberately far ahead of anything the live room will say below.
+      eventSequence: 500,
+      ranges: [{
+        purpose: 'latest',
+        requested: { startInclusive: 3, endExclusive: 4 },
+        covered: { startInclusive: 3, endExclusive: 4 },
+        turns: [transcriptTurn(3, 'Remembered turn')],
+        activities: [],
+        pluginRuns: [],
+      }],
+    };
+  }
+
+  async function remember(workstreamId: string, title: string): Promise<void> {
+    await clearAllLocalCache();
+    await conversationSlice.write(scope, conversationCacheKey(workstreamId, '0'), {
+      detail: workstreamDetail({ id: workstreamId, title }),
+      transcript: rememberedTranscript(),
+      initialContext: null,
+      cachedAt: '2026-09-01T00:00:00.000Z',
+    }, workstreamId);
+  }
+
+  it('paints the remembered conversation before the socket answers, then lets the live snapshot replace it whatever its numbers say', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-0000000007a1';
+    await remember(workstreamId, 'Remembered title');
+    const queryClient = new QueryClient();
+    const getSocketTicket = vi.fn(async (...args: Parameters<WorkstreamSocketApi['getSocketTicket']>) => {
+      void args;
+      return {
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      };
+    });
+    const api = socketApiWith({ getSocketTicket });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createScopedWrapper(queryClient) });
+
+    await vi.waitFor(() => {
+      expect(queryDetail(queryClient, workstreamId)?.title).toBe('Remembered title');
+    }, { timeout: 2_000 });
+    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBe('local_cache');
+    expect(orderedTranscriptMessages(
+      queryClient.getQueryData<WorkstreamTranscriptSnapshot>(['ordered-transcript', workstreamId]),
+      workstreamId,
+    ).map((message) => message.text)).toEqual(['Remembered turn']);
+    // A seed is not a resume position: the room is asked for everything.
+    expect(getSocketTicket.mock.calls[0]?.[3]).toBe(0);
+
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => {
+      socket.open();
+      socket.message(snapshotFrame({
+        sequence: 1,
+        workstream: { id: workstreamId, title: 'Live title' },
+        transcript: {
+          ...emptyTranscriptSnapshot(),
+          snapshotThrough: 4,
+          eventSequence: 7,
+          ranges: [{
+            purpose: 'latest',
+            requested: { startInclusive: 4, endExclusive: 5 },
+            covered: { startInclusive: 4, endExclusive: 5 },
+            turns: [transcriptTurn(4, 'Live turn')],
+            activities: [],
+            pluginRuns: [],
+          }],
+        },
+      }));
+    });
+
+    expect(queryDetail(queryClient, workstreamId)?.title).toBe('Live title');
+    expect(queryClient.getQueryData<WorkstreamTranscriptSnapshot>(['ordered-transcript', workstreamId])?.eventSequence).toBe(7);
+    expect(orderedTranscriptMessages(
+      queryClient.getQueryData<WorkstreamTranscriptSnapshot>(['ordered-transcript', workstreamId]),
+      workstreamId,
+    ).map((message) => message.text)).toEqual(['Live turn']);
+    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBe('socket_snapshot');
+
+    // What the room said is what the next launch will paint.
+    await vi.waitFor(async () => {
+      const row = await conversationSlice.read(scope, conversationCacheKey(workstreamId, '0'));
+      expect(row?.detail.title).toBe('Live title');
+    }, { timeout: LOCAL_CACHE_WRITE_COALESCE_MS + 2_000 });
+  });
+
+  it('rejects a room command while the seed is on screen, before any socket has answered', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-0000000007a4';
+    await remember(workstreamId, 'Remembered title');
+    const queryClient = new QueryClient();
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createScopedWrapper(queryClient) });
+    await vi.waitFor(() => {
+      expect(queryDetail(queryClient, workstreamId)?.title).toBe('Remembered title');
+    }, { timeout: 2_000 });
+
+    // The run, the elicitation, and the queue on screen are the seed's; no
+    // command may address them, whichever control it comes from.
+    await expect(result.current.stopHarness()).rejects.toMatchObject({ code: 'workstream_feed_seeded' });
+    await expect(result.current.retryHarness()).rejects.toMatchObject({ code: 'workstream_feed_seeded' });
+  });
+
+  it('does not repaint a conversation the reader was shut out of while its row was being read', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-0000000007a5';
+    await remember(workstreamId, 'Remembered title');
+    const queryClient = new QueryClient();
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createScopedWrapper(queryClient) });
+    // The ticket resolves on the microtask queue; the row's read does not
+    // settle until a macrotask. Everything up to the socket exists, the seed
+    // does not.
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    const socket = FakeWebSocket.instances[0]!;
+    expect(queryDetail(queryClient, workstreamId)).toBeUndefined();
+
+    act(() => {
+      socket.open();
+      socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(queryDetail(queryClient, workstreamId)).toBeUndefined();
+    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBeUndefined();
+  });
+
+  it('lets a rebuilt room replace the seed even when the resume registry remembers a higher sequence', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-0000000007a3';
+    await remember(workstreamId, 'Remembered title');
+    const queryClient = new QueryClient();
+    const getSocketTicket = vi.fn(async (...args: Parameters<WorkstreamSocketApi['getSocketTicket']>) => {
+      void args;
+      return {
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      };
+    });
+    const api = socketApiWith({ getSocketTicket });
+    // The shared registry the shell provides: it outlives the query entries.
+    function Wrapper({ children }: PropsWithChildren): React.JSX.Element {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <WorkstreamSocketResumeProvider scope="user-one:workspace-one">
+            <LocalCacheScopeProvider scope={scope}>{children}</LocalCacheScopeProvider>
+          </WorkstreamSocketResumeProvider>
+        </QueryClientProvider>
+      );
+    }
+    const { rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => useWorkstreamSocket(api, workstreamId, enabled),
+      { initialProps: { enabled: true }, wrapper: Wrapper },
+    );
+    await vi.waitFor(() => {
+      expect(queryDetail(queryClient, workstreamId)?.title).toBe('Remembered title');
+    }, { timeout: 2_000 });
+    act(() => {
+      const socket = FakeWebSocket.instances[0]!;
+      socket.open();
+      socket.message(snapshotFrame({
+        sequence: 500,
+        workstream: { id: workstreamId, title: 'Live title' },
+        transcript: { ...emptyTranscriptSnapshot(), snapshotThrough: 4, eventSequence: 7 },
+      }));
+    });
+    expect(queryDetail(queryClient, workstreamId)?.title).toBe('Live title');
+
+    // The screen goes away and its query entries are collected; the registry
+    // keeps sequence 500. The next visit seeds from the disk again.
+    rerender({ enabled: false });
+    queryClient.removeQueries();
+    await remember(workstreamId, 'Remembered again');
+    rerender({ enabled: true });
+    await vi.waitFor(() => {
+      expect(queryDetail(queryClient, workstreamId)?.title).toBe('Remembered again');
+    }, { timeout: 2_000 });
+    expect(getSocketTicket.mock.calls[1]?.[3]).toBe(0);
+
+    // The room was rebuilt meanwhile and answers from a lower sequence.
+    act(() => {
+      const socket = FakeWebSocket.instances[1]!;
+      socket.open();
+      socket.message(snapshotFrame({
+        sequence: 5,
+        workstream: { id: workstreamId, title: 'Rebuilt room' },
+        transcript: { ...emptyTranscriptSnapshot(), snapshotThrough: 1, eventSequence: 3 },
+      }));
+    });
+    expect(queryDetail(queryClient, workstreamId)?.title).toBe('Rebuilt room');
+    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBe('socket_snapshot');
+  });
+
+  it('reports a socket that never answers over a seed, and never writes the seed back', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-0000000007a2';
+    await remember(workstreamId, 'Remembered title');
+    // Only the clock the hook's deadline runs on is faked. The fake IndexedDB
+    // schedules its own work on `setImmediate`, which stays real so the seed
+    // can land while fake time stands still.
+    vi.useFakeTimers({ now: new Date('2026-09-01T12:00:00.000Z'), toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const queryClient = new QueryClient();
+    const getSocketTicket = vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    }));
+    const api = socketApiWith({ getSocketTicket });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createScopedWrapper(queryClient),
+    });
+
+    const startedAt = Date.now();
+    await vi.waitFor(() => {
+      expect(queryDetail(queryClient, workstreamId)?.title).toBe('Remembered title');
+    }, { timeout: 2_000 });
+    expect(getSocketTicket).toHaveBeenCalledTimes(1);
+
+    // The socket never answers. A seed completes no opening, so the deadline
+    // still fires and a second attempt is made. `waitFor` advanced the fake
+    // clock while it polled, so the remaining wait is measured from it.
+    await act(async () => vi.advanceTimersByTimeAsync(9_999 - (Date.now() - startedAt)));
+    expect(result.current.state).toBe('connecting');
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(result.current.state).toBe('reconnecting');
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(getSocketTicket).toHaveBeenCalledTimes(2);
+    // Nor does the deadline read the seed as a recovery when it fires: the
+    // attempts are counted, and the third one ending is reported as the
+    // failure it is. A remembered transcript is not a live connection.
+    await act(async () => vi.advanceTimersByTimeAsync(20_000));
+    await act(async () => vi.advanceTimersByTimeAsync(1_500));
+    expect(getSocketTicket).toHaveBeenCalledTimes(3);
+    await act(async () => vi.advanceTimersByTimeAsync(40_000));
+    expect(result.current.state).toBe('unavailable');
+    expect(result.current.openingError).toBe('The live connection timed out after 3 attempts.');
+    // The remembered conversation stays on screen throughout.
+    expect(queryDetail(queryClient, workstreamId)?.title).toBe('Remembered title');
+    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBe('local_cache');
+
+    // And the seed did not persist itself: the row still says what it said.
+    await act(async () => vi.advanceTimersByTimeAsync(LOCAL_CACHE_WRITE_COALESCE_MS));
+    const row = await conversationSlice.read(scope, conversationCacheKey(workstreamId, '0'));
+    expect(row?.cachedAt).toBe('2026-09-01T00:00:00.000Z');
+  });
 });

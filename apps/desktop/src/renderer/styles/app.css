@@ -10,6 +10,9 @@
   font-family: var(--av-sys-font-family-ui);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  /* The band a screen leaves for the window's title bar to be dragged by.
+     Platform geometry, like the inset below, not a theme token. */
+  --screen-drag-strip-height: 46px;
 
   /* How far into the page the window's own buttons reach. Not an `--av-` token:
      a theme cannot set this and the registry does not declare it — it is the
@@ -1607,7 +1610,7 @@ pre {
 /* Shared screens */
 
 .screen-with-titlebar { height: 100%; position: relative; }
-.screen-drag-strip { height: 46px; left: 0; position: absolute; right: 0; top: 0; }
+.screen-drag-strip { height: var(--screen-drag-strip-height); left: 0; position: absolute; right: 0; top: 0; }
 .screen-error-state { align-items: center; display: flex; height: 100%; justify-content: center; }
 .screen-state-actions { align-items: center; display: flex; gap: 2px; position: absolute; right: 10px; top: 9px; }
 .muted-notice { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
@@ -3669,6 +3672,54 @@ pre {
 .jump-bottom:hover { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-ref-color-line-5); color: var(--av-sys-color-text-default); }
 .jump-bottom:focus-visible { border-color: var(--av-sys-color-focus-default); outline: 0; }
 .jump-bottom[aria-hidden="true"] { pointer-events: none; }
+
+/* The card over a screen painted from the local cache while its socket is
+   still opening. The slot is a zero-height sticky row at the top of whatever
+   scrolls beneath it, so the card floats over the first rows without pushing
+   them down and without a layout jump when it goes; a host without a scroller
+   makes the slot absolute instead. */
+.connection-card-slot {
+  /* Zero height so the card floats over the rows rather than pushing them; the
+     card keeps its own height by starting at the slot's top, not stretching to
+     its zero cross size. */
+  align-items: flex-start;
+  display: flex;
+  height: 0;
+  justify-content: center;
+  pointer-events: none;
+  position: sticky;
+  top: var(--space-3);
+  z-index: 4;
+}
+.connecting-card {
+  align-items: center;
+  animation: fade-in 160ms ease-out;
+  background: var(--av-sys-color-surface-elevated);
+  border: 1px solid var(--av-ref-color-line-4);
+  border-radius: var(--av-sys-size-radius-pill);
+  box-shadow: var(--av-sys-elevation-shadow-md);
+  color: var(--av-sys-color-text-subtle);
+  display: flex;
+  font-size: 12px;
+  gap: var(--space-2);
+  max-width: min(100% - var(--space-8), 440px);
+  padding: 6px 14px 6px 10px;
+  pointer-events: auto;
+}
+.connecting-card-icon { color: var(--av-sys-color-text-muted); display: grid; flex: 0 0 auto; place-items: center; }
+.connecting-card.is-failed .connecting-card-icon { color: var(--av-sys-color-danger-base); }
+.connecting-card-copy { display: grid; min-width: 0; }
+.connecting-card-sentence { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connecting-card-sentence strong { color: var(--av-sys-color-text-default); font-weight: 570; }
+.connecting-card-copy small { color: var(--av-sys-color-text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connecting-card > .button { flex: 0 0 auto; }
+/* The card floats over rows a person may want to click or select; only its
+   one action takes the pointer. */
+.connecting-card { pointer-events: none; }
+.connecting-card > .button { pointer-events: auto; }
+@media (prefers-reduced-motion: reduce) { .connecting-card, .connecting-card .spin { animation: none; } }
+.project-space-frame { height: 100%; position: relative; }
+.project-space-frame > .connection-card-slot { left: 0; position: absolute; right: 0; top: calc(var(--screen-drag-strip-height) + var(--space-3)); }
 
 /* Composer */
 

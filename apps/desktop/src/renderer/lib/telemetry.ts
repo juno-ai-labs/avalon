@@ -20,7 +20,7 @@ let pendingSurfaceEntrypoint: TelemetrySurfaceEntrypoint = 'direct';
 let activeSurfaceEntrypoint: TelemetrySurfaceEntrypoint = 'direct';
 
 export type WorkstreamFeedCacheState = 'feed_cached' | 'detail_cached' | 'cold';
-export type WorkstreamFeedSource = 'feed_cache' | 'socket_snapshot' | 'boot_payload';
+export type WorkstreamFeedSource = 'feed_cache' | 'socket_snapshot' | 'boot_payload' | 'local_cache';
 export type WorkstreamFeedSidebarSection = 'pinned' | 'recent';
 export type WorkstreamFeedSocketPoolState = 'retained_pair' | 'control_warmup' | 'cold';
 export type TelemetryCountBucket =

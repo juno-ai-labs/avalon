@@ -478,6 +478,38 @@ explicit product states rather than speculative guesses.
 
 ## Changelog
 
+### 2026-09-10 — The feed hook paints from the local cache and treats a seed as no opening
+
+**What changed:** `useWorkstreamSocket` reads the conversation's row from the
+local cache when its effect starts, seeds empty detail, transcript, and
+context caches from it in one batch under the `local_cache` feed source, and
+mirrors the caches back to the row for as long as it is mounted once a live
+snapshot has installed them. A seed does not count as canonical caches: the
+opening deadline arms and counts its attempts over one, the room is
+subscribed from sequence zero, and the first snapshot replaces the seed
+whatever its sequence says. The control socket prunes cached children that
+left the private-child roster. Outside a `LocalCacheScopeProvider` nothing
+changes.
+
+**Why:** The proactive pool already makes a warmed row open instantly; a row
+opened on a cold launch, or a substream nobody warmed, still waited on the
+whole ticket, handshake, subscribe, and snapshot sequence with nothing to
+show. What that sequence was about to deliver had been on the device the last
+time the row was open.
+
+**Considered and rejected:** Hydrating in the surface rather than the hook. The
+hook is the only producer of those caches and the only place that knows
+whether an opening completed; a seed written by anyone else would look to it
+like a completed opening. Persisting from the pool rather than per hook. The
+hook already owns the write path and its lifetime is the retention policy, so
+warm rows stay fresh on disk without a second registry.
+
+**Consequences:** `canonicalCachesAvailable()` has a fourth input, the seed
+marker, and every future check that a room's state is renderable has to
+exclude a seed the same way. Every write to the three entries is a disk write
+one coalescing window later; a field that must not persist is stripped in the
+conversation mirror. [`local-cache.md`](local-cache.md) owns the design.
+
 ### 2026-09-09 — Separate cache observation and onboarding admission from warming
 
 The startup selector used a second stateful paging hook, which could replace a
