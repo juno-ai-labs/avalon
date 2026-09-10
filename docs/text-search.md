@@ -328,7 +328,8 @@ reloaded from a canonical source.
 - Scope prefilters are an optimization, never authority. The projected search decision decides every returned result; an index attribute never grants access. `connection_id` names which decision admits a row; it grants nothing by itself.
 - The response never reports what it omitted. A projection miss is filled after the response, and the mutation-side registration is what keeps misses rare; there is no partial-results flag to carry one.
 - A row without its display attributes, or with `archived` set, is never returned. Member retrieval filters on `archived Eq false`, which a null attribute does not match, so neither kind consumes a candidate page; the read path checks the same value again on every row it renders. Omission is the safe failure; nothing falls back to a canonical reload.
-- Every writer of a conversation's display writes the current state it reads beside the text: the producer at upsert time, the patch job when it runs. A display job names the conversation and never carries a title, so a delayed or redelivered job cannot write an old one, and the pipeline's post-write fence retries an upsert whose display changed underneath it.
+- Every writer of a conversation's display writes the current state it reads beside the text: the producer at upsert time, the patch job when it runs. A display job names the conversation and never carries a title, so a delayed or redelivered job cannot write an old one; the pipeline's post-write fence retries an upsert whose display changed underneath it, and the patch job re-reads the display after patching and retries when it changed, so two overlapping deliveries for one conversation converge on the newest state rather than the last to run.
+- A resource result's time is the resource's `updated_at` as of its last search-input change. Bookkeeping writes (processing state, webhook provenance, hydration stamps) bump `updated_at` without requeueing the row, on purpose, so the index shows when the content last changed rather than when the row was last touched.
 - Public cursors identify consumed candidate positions and never grant access. Fully rejected pages may expose continuation; index-existence concealment is not part of this member-only API.
 
 - One tokenizer is retained per isolate (about 26 MiB after releasing construction
@@ -542,6 +543,21 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-10 — Fence overlapping display deliveries
+
+Review found that two `search_conversation_projection_v1` deliveries for one
+conversation can overlap across queue invocations: the first reads the display
+before an archive, the second archives and patches, and the first then patches
+the rows back to unarchived and acknowledges. The `NotEq` filter cannot fence
+that, because it makes the newer value eligible for the stale patch. The job now
+re-reads the display after patching and throws when it changed, so the stale
+delivery retries and re-patches the current state; the newest state always writes
+last. A version carried in the job was rejected because the job deliberately
+carries nothing but the address. The same review asked about a resource's
+`occurredAt` going stale on bookkeeping writes; that is the documented intent of
+the migration-43 trigger (the index shows the last content change), now written
+into the invariants above rather than changed.
 
 ### 2026-09-10 — Register decisions before the first search and drop the completeness flag
 

@@ -69,6 +69,24 @@ describe('projected search authorization', () => {
     expect(authority).not.toHaveBeenCalled();
   });
 
+  it('republishes a durable decision to KV after a deferred cached miss', async () => {
+    const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName('global', subject.workspaceId));
+    await workspace.initializeWorkspace(subject.workspaceId, 'wnam');
+    const projected = { ...resource, resourceId: crypto.randomUUID() };
+    await new SearchAuthorizationResolver(env, { checkMany: async () => [allowed] }).project(subject, [projected]);
+    const key = await searchAuthorizationKey(subject, projected);
+    await env.AUTHORIZATION_CACHE!.delete(key);
+    const authority = vi.fn(async (): Promise<AuthorizationDecision[]> => { throw new Error('owner read'); });
+    const deferred: Promise<unknown>[] = [];
+    const resolver = new SearchAuthorizationResolver(env, { checkMany: authority }, (work) => { deferred.push(work); });
+    expect(await resolver.checkMany(subject, [projected])).toEqual([expect.objectContaining({ status: 'unavailable' })]);
+    await Promise.all(deferred);
+    // The durable projection answered the fill and KV holds the decision again.
+    expect(await env.AUTHORIZATION_CACHE!.get(key, 'json')).toMatchObject({ decision: allowed });
+    expect(await resolver.checkMany(subject, [projected])).toEqual([allowed]);
+    expect(authority).not.toHaveBeenCalled();
+  });
+
   it('does not repeat unavailable first fills on later searches', async () => {
     const pendingResource = { ...resource, resourceId: crypto.randomUUID() };
     const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName('global', subject.workspaceId));
