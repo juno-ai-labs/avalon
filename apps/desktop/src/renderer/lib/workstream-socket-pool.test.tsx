@@ -219,6 +219,37 @@ describe('WorkstreamSocketPool', () => {
     expect(warmedSockets.every((socket) => socket.close.mock.calls.length === 1)).toBe(true);
   });
 
+  it('warms an opening route without marking it viewed until its feed mounts', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApi();
+    const workstreamId = '00000000-0000-7000-8000-000000000639';
+    const view = render(
+      <WorkstreamSocketPool activeWorkstreamId={workstreamId} api={api} backgroundWorkstreamIds={[]}>
+        <div>Opening workspace</div>
+      </WorkstreamSocketPool>, { wrapper: createWrapper([workstreamId]) },
+    );
+    await flushPromises();
+    const pair = [...FakeWebSocket.instances];
+    const feed = pair.find((socket) => String(socket.url).endsWith('/feed'))!;
+    act(() => { feed.readyState = FakeWebSocket.OPEN; feed.dispatchEvent(new Event('open')); });
+    await flushPromises();
+    expect(feed.send.mock.calls.map(([frame]) => JSON.parse(String(frame)))).toEqual([
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
+    ]);
+    view.rerender(
+      <WorkstreamSocketPool activeWorkstreamId={workstreamId} api={api} backgroundWorkstreamIds={[]}>
+        <ActiveConnection api={api} enabled workstreamId={workstreamId} />
+      </WorkstreamSocketPool>,
+    );
+    await flushPromises();
+    expect(FakeWebSocket.instances).toEqual(pair);
+    expect(pair.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
+    expect(feed.send.mock.calls.map(([frame]) => JSON.parse(String(frame)))).toEqual([
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
+      { type: 'mark_opened' },
+    ]);
+  });
+
   it('reuses both warmed sockets after navigation succeeds', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);

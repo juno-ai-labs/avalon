@@ -1,3 +1,6 @@
+import { orderPinnedWorkstreams } from '../components/sidebar';
+import { compareWorkstreamRecency } from './format';
+import type { WorkstreamSummary } from './types';
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -45,4 +48,26 @@ export function useOpenFirstWorkstream(): (skipWorkstreamIds?: readonly string[]
     const state: WorkstreamLandingState = { skipWorkstreamIds: [...skipWorkstreamIds] };
     void navigate(WORKSTREAM_LANDING_ROUTE, { replace: true, state });
   }, [navigate]);
+}
+
+export function openWorkstreamId(pathname: string): string | null {
+  const id = /^\/workstreams\/([^/]+)$/.exec(pathname)?.[1];
+  if (id === undefined || id === 'new') return null;
+  try {
+    return decodeURIComponent(id);
+  } catch {
+    // This runs during the shell's render, where a throw takes the whole window
+    // to the error boundary rather than just the route — and the segment is
+    // reachable by hand-edited hash or deep link, so `/workstreams/%` must not
+    // be able to do that. Falling back to the raw segment is also what React
+    // Router does when it decodes a param, which keeps the id this returns
+    // equal to the one the screen keys its detail query by.
+    return id;
+  }
+}
+
+/** Shared by startup warming and the root route; pin order wins over recency. */
+export function firstLandingWorkstream(workstreams: WorkstreamSummary[]): WorkstreamSummary | undefined {
+  return orderPinnedWorkstreams(workstreams, null)[0]
+    ?? [...workstreams].sort(compareWorkstreamRecency)[0];
 }
