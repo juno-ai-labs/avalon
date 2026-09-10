@@ -979,7 +979,10 @@ describe("connector tools selected for harness runs", () => {
       JSON.stringify({ pluginId: "plugin_google" }),
       JSON.stringify({
         canonicalToolName: "plugin_inspect",
-        capability: "rally.sidekick.plugins.inspect",
+        // A receipt this conversation wrote before the Sidekick rename: the wire
+        // name and the capability are the old vocabulary, and the replay still
+        // has to count the inspection.
+        capability: "rally.automation.plugins.inspect",
       }),
     );
     database.objectStore.prepare(

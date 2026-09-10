@@ -390,7 +390,7 @@ function iso(timestamp: number | null): string | null {
 }
 
 function forbidden(): ApiError {
-  return new ApiError(403, "sidekick_forbidden", "You cannot manage this automation");
+  return new ApiError(403, "sidekick_forbidden", "You cannot manage this Sidekick");
 }
 
 function scheduleDueAfter(kind: "calendar" | "interval", definitionJson: string, after: number): number | null {
@@ -542,7 +542,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     await this.initialized;
     const request = AutomationSubmitDefinitionRequestSchema.parse(input);
     const row = this.assertAutomation(request.workspaceId, request.automationId);
-    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This automation was deleted");
+    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was deleted");
     const definitionJson = JSON.stringify(request.draft);
     const definitionHash = await sha256(definitionJson);
     const now = Date.now();
@@ -605,14 +605,14 @@ export class SidekickDO extends ConversationParentDurableObject {
     await this.initialized;
     const request = AutomationActorRequestSchema.parse(input);
     const row = this.assertAutomation(request.workspaceId, request.automationId);
-    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This automation was deleted");
+    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was deleted");
     this.assertManager(row, request.actor);
     if (row.owning_room_archived_at !== null) {
-      throw new ApiError(409, "sidekick_room_archived", "The work stream that owns this automation is archived");
+      throw new ApiError(409, "sidekick_room_archived", "The work stream that owns this Sidekick is archived");
     }
     const revision = this.revision(row.current_definition_revision);
     if (!revision || revision.ready !== 1) {
-      throw new ApiError(422, "sidekick_definition_not_ready", "The automation's definition is not ready to apply");
+      throw new ApiError(422, "sidekick_definition_not_ready", "The Sidekick's definition is not ready to apply");
     }
     if (
       row.lifecycle === "active"
@@ -764,7 +764,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     const request = AutomationSetAppearanceRequestSchema.parse(input);
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertManager(row, request.actor);
-    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This automation was deleted");
+    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was deleted");
     const patch = WorkstreamAppearancePatchSchema.parse(request.appearance);
     const current = row.appearance_json
       ? WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json))
@@ -789,7 +789,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertManager(row, request.actor);
     if (row.lifecycle === "paused") return;
-    if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active automation can be paused");
+    if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can be paused");
     await this.pauseBy(row, "person");
   }
 
@@ -799,9 +799,9 @@ export class SidekickDO extends ConversationParentDurableObject {
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertManager(row, request.actor);
     if (row.lifecycle === "active") return;
-    if (row.lifecycle !== "paused") throw new ApiError(409, "sidekick_not_paused", "Only a paused automation can be resumed");
+    if (row.lifecycle !== "paused") throw new ApiError(409, "sidekick_not_paused", "Only a paused Sidekick can be resumed");
     if (row.owning_room_archived_at !== null) {
-      throw new ApiError(409, "sidekick_room_archived", "The work stream that owns this automation is archived");
+      throw new ApiError(409, "sidekick_room_archived", "The work stream that owns this Sidekick is archived");
     }
     await this.resumeFromPause(row);
   }
@@ -884,7 +884,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     const request = AutomationRunNowRequestSchema.parse(input);
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertManager(row, request.actor);
-    if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active automation can run");
+    if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
     const accepted = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
     const definition = accepted ? AutomationDraftSchema.parse(JSON.parse(accepted.definition_json)) : null;
     if (!definition || (definition.triggers.length === 0 && !sidekickReceivesEmail(definition))) {
@@ -943,7 +943,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     await this.initialized;
     const request = AutomationExternalEventAdmissionSchema.parse(input);
     const row = this.assertAutomation(request.workspaceId, request.automationId);
-    if (row.lifecycle !== "active") return { admitted: false, outcomeCode: `automation_${row.lifecycle}` };
+    if (row.lifecycle !== "active") return { admitted: false, outcomeCode: `sidekick_${row.lifecycle}` };
     const revision = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
     const definition = revision ? AutomationDraftSchema.parse(JSON.parse(revision.definition_json)) : null;
     if (definition?.definitionVersion === 2) {
@@ -1457,7 +1457,7 @@ export class SidekickDO extends ConversationParentDurableObject {
   ): Promise<{ runId: string; reused: boolean }> {
     const row = this.row();
     if (!row || row.accepted_definition_revision === null) {
-      throw new ApiError(409, "sidekick_not_active", "The automation has no accepted definition");
+      throw new ApiError(409, "sidekick_not_active", "The Sidekick has no accepted definition");
     }
     const now = Date.now();
     const runId = uuidV7(now);
@@ -1759,7 +1759,7 @@ export class SidekickDO extends ConversationParentDurableObject {
       const connection = connectionsByPlugin.get(pluginId);
       if (!connection) throw new ApiError(422, "sidekick_plugin_unavailable", `No connection is available for ${pluginId}`);
       if (row.scope === "workspace" && connection.scope !== "workspace") {
-        throw new ApiError(422, "sidekick_workspace_connection_required", "A workspace automation may bind only workspace connections");
+        throw new ApiError(422, "sidekick_workspace_connection_required", "A workspace Sidekick may bind only workspace connections");
       }
       // You may bind a workspace connection or your own personal one, never
       // somebody else's: a room's automation outlives whoever wrote it, and
@@ -1844,7 +1844,7 @@ export class SidekickDO extends ConversationParentDurableObject {
         resource_type: string;
       }>();
       if (!resource || resource.connection_id !== selectedConnection?.id || !selectedPluginId) {
-        throw new ApiError(422, "sidekick_resource_not_found", "An evaluator names a resource this automation cannot watch");
+        throw new ApiError(422, "sidekick_resource_not_found", "An evaluator names a resource this Sidekick cannot watch");
       }
       referencedResources.set(resource.id, {
         pluginId: evaluator.source.suggestedSourcePluginId,
@@ -1930,7 +1930,7 @@ export class SidekickDO extends ConversationParentDurableObject {
 
   private assertAutomation(workspaceId: string, automationId: string): AutomationRow {
     const row = this.row();
-    if (!row) throw new ApiError(404, "sidekick_not_found", "This automation does not exist");
+    if (!row) throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
     if (row.workspace_id !== workspaceId || row.automation_id !== automationId) {
       throw new Error("sidekick_identity_mismatch");
     }
@@ -1983,10 +1983,10 @@ export class SidekickDO extends ConversationParentDurableObject {
   }
 
   private assertViewer(row: AutomationRow, actor: AutomationActor): void {
-    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This automation was deleted");
+    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was deleted");
     if (row.scope === "workspace" || row.author_user_id === actor.userId || row.run_as_user_id === actor.userId) return;
     if (row.scope === "workstream" && actor.participantOfOwningWorkstream) return;
-    throw new ApiError(404, "sidekick_not_found", "This automation does not exist");
+    throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
   }
 
   private nextRunAt(row: AutomationRow): number | null {
@@ -1998,8 +1998,8 @@ export class SidekickDO extends ConversationParentDurableObject {
 
   private detail(): AutomationDetail {
     const row = this.row();
-    if (!row) throw new ApiError(404, "sidekick_not_found", "This automation does not exist");
-    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This automation was deleted");
+    if (!row) throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
+    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was deleted");
     const current = this.revision(row.current_definition_revision);
     const lastRunAt = first(this.state.storage.sql.exec<{ created_at: number }>(
       `SELECT created_at FROM runs ORDER BY created_at DESC LIMIT 1`,

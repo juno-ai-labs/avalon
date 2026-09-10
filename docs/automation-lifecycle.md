@@ -241,7 +241,7 @@ run it already made. The object must hold an accepted revision
 | --- | --- | --- | --- |
 | **Manual** | `POST /automations/:id/run` with an `idempotency-key` header; `runNow` | `manual:<idempotencyKey>` | `sidekick_not_active` unless `active`; `sidekick_forbidden` unless the caller may manage it |
 | **Schedule** | the `automation_schedule` alarm for one schedule row; `executeSchedule` | `schedule:<scheduleId>:<plannedFor>` | skipped silently unless `active`; the next occurrence is computed from now and re-armed |
-| **Connector event** | the Queue consumer's `admitExternalEvent`, one message per matched registration | `external:<workspaceEventId>` | `automation_<lifecycle>` unless `active`; `sidekick_event_before_activation_boundary` when the event's sequence is at or below `effective_after_event_sequence` |
+| **Connector event** | the Queue consumer's `admitExternalEvent`, one message per matched registration | `external:<workspaceEventId>` | `sidekick_<lifecycle>` unless `active`; `sidekick_event_before_activation_boundary` when the event's sequence is at or below `effective_after_event_sequence` |
 | **Inbound email** | `resend-inbound-email-service.ts` calling `admitInboundEmail` once per delivery | `inbound_email:<resendEmailId>` | see below; the refusal is written to `inbound_email_receipts` |
 
 **Connector events** follow one regional path. The regional activity Queue
@@ -709,6 +709,16 @@ for an expected Sidekick that is not listed; both name the same condition.
   the fences, and the immutability trigger survive.
 - Vectorize metadata carries `scopeKind` for information only; nothing queries
   by it, so vectors written before the rename keep `automation` there.
+
+**What review added:** the outcome an admitted event gets from a paused,
+draft, or deleted Sidekick (`sidekick_paused`, ...), the activation outcomes
+`sidekick_activation_appended`, `sidekick_activation_replayed`, and
+`sidekick_activation_failed`, the consumer's `sidekick_directory_applied`
+reason, and the description refresh's `sidekick_parent` skip reason follow the
+same rule; the user-visible messages behind the renamed codes say Sidekick; and
+the drafting receipt replay selects receipts under both capability
+vocabularies, since a conversation that inspected a plugin before the rename
+holds receipts under `rally.automation.*` and must still count them.
 
 **Consequences:** Receipts and telemetry written from now on carry the new
 capability strings and codes; the runbook's search terms changed with them.

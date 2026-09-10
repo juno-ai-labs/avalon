@@ -1033,7 +1033,7 @@ where to look when one misbehaves.
   the object's `durable_outbox` (a row there has not been accepted by the
   Queue yet; `parent_effect_enqueue_failed` says why) and the regional
   activities dead-letter queue (`conversation_effect_processing_failed` names
-  the message that kept throwing). An `sidekick_directory_version_conflict`
+  the message that kept throwing). A `sidekick_directory_version_conflict`
   is a producer bug: the same `source_version` carrying two hashes.
 - **Apply refuses.** The code is the answer: `sidekick_definition_not_ready`
   (the chat has not submitted a ready draft), `sidekick_plugin_unavailable`
