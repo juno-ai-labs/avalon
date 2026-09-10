@@ -27,6 +27,7 @@ function readJson<T>(path: string): T {
 const registry = readJson<{ tokens: Record<string, { $type: string }> }>(
   join(tokensDirectory, 'registry.json'),
 );
+const baseFile = readJson<{ tokens: Record<string, string> }>(join(tokensDirectory, 'base.json'));
 const themeFiles = readdirSync(join(tokensDirectory, 'themes'))
   .filter((entry) => entry.endsWith('.json'))
   .map((entry) => readJson<{ id: string; tokens: Record<string, string> }>(
@@ -214,6 +215,50 @@ describe('no colour is written into app.css', () => {
  * background before any renderer exists to ask, so it cannot read a stylesheet;
  * this is what stops the copy drifting from the original.
  */
+/**
+ * The inverse of "names only tokens the registry declares": every token the
+ * registry declares is read by something. A token nothing reads still costs
+ * three declarations and a line in the generated file, and the set had grown
+ * twenty-four of them (a retired turn-alignment trio, sixteen connector fills
+ * the masks replaced, three state colours) before this existed.
+ *
+ * A reader is a source file naming the custom property or the dotted path, a
+ * token file aliasing it, or one of the two places that read by prefix:
+ * `workstream-glyph.tsx` and its neighbours build `--av-sys-color-project-<key>`
+ * from a palette key, and the build script exports every `sys.color.syntax.*`
+ * for the message exporter.
+ */
+describe('every token has a reader', () => {
+  const READ_BY_PREFIX = ['sys.color.project.', 'sys.color.syntax.'];
+
+  it('is named by a source file, aliased by a token file, or read by prefix', () => {
+    const sources: string[] = [];
+    const walk = (directory: string): void => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (/\.(tsx?|css)$/u.test(entry.name) && !entry.name.includes('.test.') && entry.name !== 'themes.css') {
+          sources.push(readFileSync(path, 'utf8'));
+        }
+      }
+    };
+    walk(resolve(process.cwd(), 'src'));
+    sources.push(readFileSync(resolve(process.cwd(), '../../scripts/build-theme-assets.mjs'), 'utf8'));
+    const corpus = sources.join('\n');
+    const aliased = new Set<string>();
+    for (const file of [baseFile, ...themeFiles]) {
+      for (const [, target] of JSON.stringify(file.tokens).matchAll(/\{([a-z0-9.-]+)\}/gu)) aliased.add(target!);
+    }
+    const unread = Object.keys(registry.tokens).filter((path) =>
+      !corpus.includes(customProperty(path))
+      && !corpus.includes(`'${path}'`)
+      && !aliased.has(path)
+      && !READ_BY_PREFIX.some((prefix) => path.startsWith(prefix)));
+
+    expect(unread).toEqual([]);
+  });
+});
+
 describe('window background', () => {
   it.each(resolvedThemes.map((theme) => [theme] as const))('matches the %s theme’s own canvas', (theme) => {
     const file = themeFiles.find((candidate) => candidate.id === theme);
