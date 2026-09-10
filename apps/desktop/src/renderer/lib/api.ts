@@ -1715,6 +1715,16 @@ export class RallyApi {
       attachmentIds?: string[];
       confirmedParticipantUserIds?: string[];
     },
+    /**
+     * Pins every run of the created substream to one model, as
+     * `createWorkstream` does for a work stream. Sent only when the launch
+     * composer's developer-mode selector named one; null leaves the substream
+     * unpinned and following the `agent-model-workstream` flag.
+     *
+     * A sibling of the opening message rather than a field inside it: the pin
+     * belongs to the child, not to the turn that starts it.
+     */
+    modelOverride: AgentModelOverride | null = null,
   ): Promise<SubstreamCreationResult> {
     const mentions = opening && (opening.text.includes('@') || (opening.mentions?.length ?? 0) > 0)
       ? await this.messageMentionPayload(opening.text, opening.mentions)
@@ -1733,6 +1743,7 @@ export class RallyApi {
             confirmedParticipantUserIds: opening.confirmedParticipantUserIds ?? [],
           },
         } : {}),
+        ...(modelOverride ? { modelOverride } : {}),
       },
       schema: SubstreamCreationResultSchema,
     });

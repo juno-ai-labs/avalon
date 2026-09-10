@@ -2137,6 +2137,18 @@ export function ConversationSurface({
             error={sendError ?? attachmentDraft.error ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message}
             fileInputRef={fileInputRef}
             members={members.data ?? []}
+            /* Locked, because a pin is written once when the conversation is
+               created and nothing afterwards edits it. What it names is the
+               latest run's model first and the pin only as a fallback: an
+               unpinned conversation is nearly all of them and only its run can
+               say what the flag served, while a pinned one whose run failed
+               before its first token records nothing and would otherwise read
+               as following a flag it never consults. */
+            model={{
+              kind: 'settled',
+              model: displayedDetail.latestHarnessRun?.model ?? displayedDetail.modelOverride ?? null,
+              pinned: (displayedDetail.modelOverride ?? null) !== null,
+            }}
             onAttach={attachmentDraft.addFiles}
             onOpenAttachment={setAttachmentPreview}
             onRemoveAttachment={attachmentDraft.removeAttachment}

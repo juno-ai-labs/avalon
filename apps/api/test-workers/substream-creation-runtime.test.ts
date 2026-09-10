@@ -491,6 +491,57 @@ describe("substream preparation on workerd", () => {
     });
   });
 
+  it("pins the child to the model its creator chose, and runs it there", async () => {
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000ce43";
+    await service.prepare(WORKSTREAM_ID, { operationId, throughTurnId: "source-turn-1" });
+    const created = await service.confirm(WORKSTREAM_ID, operationId, {
+      clientMessageId: "pinned-opening",
+      text: "Check the enterprise tier claims",
+      mentions: [],
+      attachmentIds: [],
+      confirmedParticipantUserIds: [],
+    }, "x-ai/grok-4.6");
+
+    const child = conversation(created.substreamId);
+    await runInDurableObject(child, (_instance, state) => {
+      expect(state.storage.sql.exec<{ model_override: string | null }>(
+        `SELECT model_override FROM workstream WHERE id = 1`,
+      ).one().model_override).toBe("x-ai/grok-4.6");
+    });
+    // On the child's row and nowhere else. A pin written onto the parent would
+    // look right in the composer that set it and take every other conversation
+    // in the work stream with it.
+    await runInDurableObject(conversation(), (_instance, state) => {
+      expect(state.storage.sql.exec<{ model_override: string | null }>(
+        `SELECT model_override FROM workstream WHERE id = 1`,
+      ).one().model_override).toBeNull();
+    });
+
+    // And on the wire, because that is where the composer's locked pill reads
+    // it: a pinned conversation whose run failed before it streamed a token
+    // records no model, and the pill would otherwise describe it as following
+    // a flag it never consults.
+    const detail = await child.fetch("https://object.test/internal/product", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation: "get", auth: creatorAuth }),
+    });
+    expect(await detail.json()).toMatchObject({ modelOverride: "x-ai/grok-4.6" });
+
+    // And the column is what the child's own run resolves its route from, which
+    // is the whole point of writing it: a pin the composer records but routing
+    // never reads would leave the work running on the flag's model while the
+    // pill named another one.
+    await runDurableObjectAlarm(child);
+    await expect.poll(async () => {
+      const streamed = provider.calls.find((call) => call.stream);
+      if (streamed) return streamed.model;
+      return runInDurableObject(child, (_instance, state) => JSON.stringify(
+        state.storage.sql.exec(`SELECT status, error_json FROM runs`).toArray(),
+      ));
+    }, { timeout: 10_000 }).toBe("x-ai/grok-4.6");
+  });
+
   it("refuses a mention of somebody the work stream has not admitted before creating anything", async () => {
     const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
     const operationId = "00000000-0000-7000-8000-00000000ce42";

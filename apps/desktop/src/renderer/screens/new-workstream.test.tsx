@@ -157,7 +157,10 @@ async function openComposerActions(): Promise<void> {
 }
 
 async function openModelMenu(): Promise<void> {
-  await openComposerActions();
+  // The pill in the composer's own toolbar, not the composer-actions menu: the
+  // model control has one home in every layout now.
+  const trigger = await screen.findByRole('button', { name: /^Model:/u });
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
 }
 
 function closeOpenMenus(): void {

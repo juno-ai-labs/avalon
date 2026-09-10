@@ -11,7 +11,7 @@ export type { AgentModelOverride };
  * The unpinned state, as a radio value the menu can carry.
  *
  * It is deliberately not the first model in the list. Which model an unpinned
- * work stream runs on is decided by the `agent-model-workstream` flag, and the
+ * conversation runs on is decided by the `agent-model-workstream` flag, and the
  * renderer cannot see the served variation — so naming a model here would be a
  * claim this process is not in a position to make, and would be wrong for
  * exactly the audience this control exists for the moment the flag is rolled
@@ -103,18 +103,18 @@ export function agentModelLabel(id: AgentModelOverride | null): string {
 }
 
 /**
- * The name to show for the model a work stream is *already* running on.
+ * The name to show for the model a conversation is *already* running on.
  *
  * That id is not necessarily one of the ids a pin may name: it is read off the
- * work stream's latest run, and an unpinned work stream runs on whatever
+ * conversation's latest run, and an unpinned conversation runs on whatever
  * `agent-model-workstream` served it — any OpenRouter id the flag's variation
  * carries. A known id gets the same short name the menu gives it, so a pinned
- * work stream reads identically to the composer that pinned it; anything else
+ * conversation reads identically to the composer that pinned it; anything else
  * falls back to the id's own model segment, because the vendor prefix costs
  * half a pill's width to repeat what the name already implies. The full id
  * stays in the tooltip either way.
  *
- * Null is a work stream with neither a recorded run model nor a pin, where the
+ * Null is a conversation with neither a recorded run model nor a pin, where the
  * honest answer is the same as an untouched composer's: the flag decides, and
  * this process cannot see the served variation.
  */
@@ -135,12 +135,16 @@ export function agentModelInUseLabel(model: string | null): string {
  * explain itself.
  *
  * `pinned` is the difference between two claims only one of which is true of any
- * given work stream, and conflating them is a promise the server does not keep.
+ * given conversation, and conflating them is a promise the server does not keep.
  * A pin is fixed: `resolveWorkstreamModelRouting` finds it on the row and never
- * consults the flag, so every run of that work stream uses it. An **unpinned**
- * work stream re-evaluates `agent-model-workstream` on *every* launch, so the
+ * consults the flag, so every run of that conversation uses it. An **unpinned**
+ * conversation re-evaluates `agent-model-workstream` on *every* launch, so the
  * id shown is what the latest run happened to get and a later run may differ.
  * What is immutable there is the setting, not the model.
+ *
+ * "Conversation" rather than "work stream" because a substream carries a pin of
+ * its own now and shows this same pill; naming the parent's kind in a child's
+ * tooltip would describe the wrong row.
  *
  * The tooltip still fires on the disabled trigger. That is worth knowing rather
  * than assuming: a disabled button swallows clicks, which is what keeps the menu
@@ -151,7 +155,7 @@ export function agentModelInUseLabel(model: string | null): string {
 export function agentModelInUseTriggerLabel(model: string | null, pinned: boolean): string {
   if (model !== null && model.trim() === '') model = null;
   if (pinned && model !== null) {
-    return `Model: ${model} — pinned when this work stream was created, so every run uses it. It cannot be changed.`;
+    return `Model: ${model} — pinned when this conversation was created, so every run uses it. It cannot be changed.`;
   }
   const subject = model === null
     ? `${UNPINNED_AGENT_MODEL_LABEL} (no run yet)`
