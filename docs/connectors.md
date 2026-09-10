@@ -359,12 +359,17 @@ filters — an `appliedFilters` echo of exactly what narrowed the query. The ech
 is the load-bearing part. GitHub's `head` filter wants `owner:branch` and
 answers anything else with HTTP 200 and an empty array, so a bare `[]` cannot be
 told apart from a repository with nothing in it, and a run that hit that
-reported twenty-five open pull requests as none. `hasMore` is observed rather
-than inferred, by asking GitHub for one item past the page and dropping it; at
-`perPage: 100` there is no room for the extra item and a full page is the only
-signal available. `issues.list` pages on what GitHub served rather than what
-survives its pull-request filter, or a repository whose issue numbers are mostly
-pull requests ends its list early. Parameter descriptions are principle 13 in
+reported twenty-five open pull requests as none. `hasMore` is a full page, read
+conservatively: a page that comes back exactly full may or may not be the last
+one, and saying `true` costs one empty page where saying `false` loses whatever
+followed it. Do not try to sharpen it by asking GitHub for one item past the
+page — `page` is indexed in units of the `per_page` actually sent, so requesting
+31 to show 30 makes page 2 begin at item 32 and drops item 31 on every boundary.
+The `Link` header answers it exactly without moving the boundaries, at the cost
+of threading response headers through every request in this adapter, and is the
+move if something ever needs `hasMore` exact. `issues.list` pages on what GitHub
+served rather than what survives its pull-request filter, or a repository whose
+issue numbers are mostly pull requests ends its list early. Parameter descriptions are principle 13 in
 [`agent-tools.md`](agent-tools.md), and
 `apps/api/test/tool-schema-descriptions.test.ts` holds them.
 
@@ -959,9 +964,13 @@ had advertised the five defaulted parameters beside it as required.
 **Considered and rejected:** describing `head` and `base` alone and leaving the
 bare array. The description stops the model sending a filter it did not mean;
 it does not tell a model reading an empty page why the page is empty, and a
-filter can be meant and still match nothing. Also rejected: reading GitHub's
-`Link` header for `hasMore`, which needs response headers threaded through the
-whole request path for a signal that one extra item already supplies exactly.
+filter can be meant and still match nothing. Also rejected: asking GitHub for
+one item past the page to make `hasMore` exact, which shipped into review and
+was caught there — `page` counts in units of the `per_page` sent, so the
+peeked-at item falls before the next page's first and is skipped rather than
+returned. `hasMore` is the conservative full-page reading instead, and the exact
+answer, if one is ever needed, is the `Link` header rather than a wider
+request.
 
 **Consequences:** Anything reading a GitHub list tool's `output` as an array now
 reads the named collection on it. `head` and `base` are sent only when the
