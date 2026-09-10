@@ -16,6 +16,9 @@ const dictationHarness = vi.hoisted(() => ({
   start: vi.fn(),
   stop: vi.fn(),
   stopError: undefined as string | undefined,
+  // A finalization that never answers, which the real hook holds open for its
+  // 60s completion timeout before failing.
+  stopHangs: false,
 }));
 
 vi.mock('../lib/use-realtime-dictation', async (importOriginal) => {
@@ -44,6 +47,10 @@ vi.mock('../lib/use-realtime-dictation', async (importOriginal) => {
         state,
         stop: async () => {
           dictationHarness.stop();
+          if (dictationHarness.stopHangs) {
+            setState('finalizing');
+            return new Promise<void>(() => undefined);
+          }
           // `finish(attempt, 'error', …)` is where a drain or socket failure
           // lands. It rejects the finalization promise that `stop` returned and
           // then moves to `error`, so the returned promise rejects as well as
@@ -96,6 +103,7 @@ beforeEach(() => {
   dictationHarness.setError = undefined;
   dictationHarness.setState = undefined;
   dictationHarness.stopError = undefined;
+  dictationHarness.stopHangs = false;
   dictationHarness.start.mockReset();
   dictationHarness.stop.mockReset();
   vi.stubGlobal('ResizeObserver', class {
@@ -357,6 +365,46 @@ describe('WorkstreamComposer live dictation', () => {
     await waitFor(() => expect(screen.getByText('The dictation connection closed before transcription completed.')).toBeVisible());
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByRole('textbox', { name: 'Message the work stream' })).toHaveValue('Draft the');
+  });
+
+  it('lets the microphone cancel a send whose finalization never answers', async () => {
+    const onSend = vi.fn(async () => undefined);
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={onSend}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    act(() => dictationHarness.setState?.('listening'));
+    act(() => dictationHarness.emit?.('Draft the launch note'));
+    dictationHarness.stopHangs = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    // Send is spinning, Enter returns on the pending flag, and the field is
+    // read-only while finalizing — the microphone is the only control left.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled());
+    const microphone = screen.getByRole('button', { name: 'Cancel sending' });
+    fireEvent.pointerDown(microphone, { button: 0 });
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
+    expect(onSend).not.toHaveBeenCalled();
+    // The drain is left to finish on its own; the transcript stays in the draft.
+    expect(screen.getByRole('textbox', { name: 'Message the work stream' })).toHaveValue('Draft the launch note');
+    expect(dictationHarness.stop).toHaveBeenCalledOnce();
   });
 
   it('supports pointer click-to-toggle without double stopping', async () => {

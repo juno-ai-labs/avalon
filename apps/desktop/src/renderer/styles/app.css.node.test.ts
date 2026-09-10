@@ -660,15 +660,21 @@ describe('dictation button recording state', () => {
   });
 
   it('lets no rule paint the button while it is recording except that one', () => {
+    // Order matters here, and it is the whole point. `':not(.is-listening)'`
+    // contains `'.is-listening'` as a substring, so skipping every prelude that
+    // merely mentions the state would exempt the over-specified rules this
+    // guard exists to catch — a capsule rule spelled *with* `.is-listening`
+    // rather than around it out-specifies the state rule exactly as the one
+    // that omits it. Only two preludes may paint: the state rule itself, and a
+    // shape rule that has stood down with `:not(…)`.
+    const STATE_RULE = '.microphone-control.is-listening .dictation-button';
     const offenders: string[] = [];
 
     for (const [, selector = '', body = ''] of stylesheet.matchAll(/([^{}]+)\{([^{}]*)\}/gu)) {
       const prelude = selector.replace(/\/\*[\s\S]*?\*\//gu, ' ').trim();
       if (!prelude.includes('.dictation-button')) continue;
-      if (prelude.includes('.is-listening')) continue;
       if (!/(?:^|;|\s)(?:background|color):/u.test(body)) continue;
-      // A shape rule may paint the button at rest, but it has to stand down
-      // once it is recording, or it out-specifies the state by its own classes.
+      if (prelude === STATE_RULE) continue;
       if (prelude.includes(':not(.is-listening)')) continue;
       offenders.push(prelude);
     }
