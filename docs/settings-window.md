@@ -44,9 +44,27 @@ Closing the window builds another one, hidden, immediately: somebody who has jus
 used Settings is the likeliest person to use it again, and the machine is idle in
 that moment.
 
-`mayPrewarm` refuses when there is no session with a workspace, or while a
-sign-out is in progress. A window built then would boot to the sign-in screen,
-and `logout` closes this window rather than replacing it.
+`mayPrewarm` refuses when there is no session with a workspace, while a sign-out
+is in progress, or when there is no main window. A window built then would boot
+to the sign-in screen, and `logout` closes this window rather than replacing it.
+
+### A speculative window must never hold the application open
+
+A hidden window is still a window to Electron, and `window-all-closed` — the
+only path that quits Rally off macOS — fires only once every one of them has
+gone. So a prewarmed window left in place when somebody closes the main window
+keeps the process alive with nothing on screen. It is worse than an idle
+process: it holds the single-instance lock, and the `second-instance` handler
+needs a `mainWindow` to raise, so a relaunch does nothing either. Rally could
+then be neither seen nor quit.
+
+Two things prevent it, and both are needed. The main window's `closed` handler
+calls `releasePrewarmed()`, which destroys a window nobody asked for and does
+*not* build a replacement; and `mayPrewarm` declines to build one while there is
+no main window, so the next token refresh does not undo it. A window that was
+actually opened is left alone — that one is somebody's open Settings, not a
+cache. Prewarming resumes when a main window exists again, through the same
+`auth:consume-pending-deep-links` trigger as a cold launch.
 
 ### Readiness and the wish to be seen are separate
 
@@ -150,6 +168,15 @@ value is what the reveal is measured against.
   keeps it and its renderer process alive otherwise, and nothing else holds a
   reference — so forgetting one leaks a process, and a prewarm that runs on every
   token refresh leaks one per failure.
+- **A failed creation clears the request that asked for it.** `pendingReveal`
+  left set outlives the window it belonged to, and the next window built for any
+  reason — a token refresh reaches `prewarm` — inherits it and shows and focuses
+  itself with nobody having asked. This holds for a construction that threw as
+  much as for a load that rejected.
+- **A prewarmed window is never the reason the application cannot exit.** Off
+  macOS nothing quits Rally but `window-all-closed`, which counts hidden windows.
+  A window built on speculation is released when the main window closes and is
+  not rebuilt while there is none.
 - **Disposing a window must not run `onClosed`.** `destroy()` emits `closed`, and
   the controller treats a close as "this person uses Settings" and rebuilds. A
   disposal that reaches that callback turns a window which cannot load into an
@@ -192,6 +219,12 @@ meeting surfaces mount on the same placeholder.
 
 ## Failure modes and limits
 
+- **The hidden renderer still reports its screen view.** `TelemetryRouteObserver`
+  mounts with the settings surface and reports `application_settings` whether or
+  not the window is ever shown, so that metric now counts prewarms rather than
+  opens and inflates for people who never open Settings. Nothing breaks; the
+  number quietly stops meaning what it meant. Known and unfixed — see
+  [Open questions](#open-questions).
 - **A load that fails** destroys the window, clears the shared `settingsWindow`
   reference, and rethrows. Under `prewarm` that is reported through `reportError`
   and swallowed; under `open` it reaches the caller. Either way exactly one
@@ -243,6 +276,14 @@ exists to survive and Electron does not guarantee it.
   markdown stack to draw a list of toggles. Prewarming hides this from the click.
   Fixing it would speed up every window, including the first one, which
   prewarming cannot help.
+- **What `application_settings` should count.** The screen view fires on renderer
+  mount, which used to *be* opening Settings and now happens once per prewarm.
+  Reporting it on reveal instead would restore the old meaning, but the reveal is
+  known only in the main process, so it needs a signal from there. Gating in the
+  renderer on `document.visibilityState` is the obvious alternative and is not
+  safe: a window created with `show: false` reported `visible` under Xvfb with no
+  window manager during this change's own verification, so that signal cannot be
+  trusted to identify a hidden window.
 - **Whether prewarming should be conditional.** It is unconditional today. A
   machine under memory pressure is the case that would argue otherwise, and the
   threshold for that is a number nobody here can currently derive.
@@ -288,8 +329,13 @@ as a safety net* in case `ready-to-show` never fires for a hidden window. It
 fires — confirmed by opening the real app — and the fallback would trade a
 guaranteed reveal for a window shown before it has painted.
 
-**Consequences:** A window whose renderer load fails is now this controller's to
-destroy — Electron does not, nothing else holds it, and `prewarm` runs often
+**Consequences:** Prewarming makes a hidden window a permanent fixture of a
+signed-in session, and two things that were previously safe stopped being so:
+`settingsWindow` being non-null no longer means anybody wants Settings, and a
+window existing no longer means the application should stay alive. The second is
+the sharper one — off macOS nothing quits Rally but `window-all-closed` — so any
+future window built on speculation has to be released the same way. A window
+whose renderer load fails is now this controller's to destroy — Electron does not, nothing else holds it, and `prewarm` runs often
 enough (every token refresh) that forgetting one would leak a renderer process
 per failure. Any future path that abandons a settings window disposes of it, and
 does so without running `onClosed`, or the rebuild that callback triggers becomes

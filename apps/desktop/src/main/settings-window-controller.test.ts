@@ -325,6 +325,96 @@ describe('SettingsWindowController', () => {
     await expect(test.controller.open()).rejects.toBe(failure);
   });
 
+  /**
+   * The next window is built for nobody — `prewarm` is reached by every token
+   * refresh — so a request left over from a failed `open` would put Settings in
+   * front of somebody who never asked for it.
+   */
+  async function expectsNoInheritedRequest(test: ReturnType<typeof harness>): Promise<void> {
+    expect(test.controller.isRevealRequested()).toBe(false);
+    const warmed = test.controller.prewarm();
+    await test.finishLoad();
+    await warmed;
+    test.latest().callbacks.onReadyToShow();
+    expect(test.latest().shown).toBe(0);
+    expect(test.controller.isRevealRequested()).toBe(false);
+  }
+
+  it('does not leave a request behind when the window could not be built', async () => {
+    const test = harness();
+    test.failNextCreate(new Error('settings window could not be built'));
+
+    await expect(test.controller.open()).rejects.toThrow();
+
+    await expectsNoInheritedRequest(test);
+  });
+
+  it('does not leave a request behind when its renderer could not load', async () => {
+    const test = harness();
+    const opened = test.controller.open();
+    await test.breakLoad(new Error('settings loadURL failed'));
+    await expect(opened).rejects.toThrow();
+
+    await expectsNoInheritedRequest(test);
+  });
+
+  it('gives up a prewarmed window when the last window somebody used closes', async () => {
+    const test = harness();
+    const prewarmed = test.controller.prewarm();
+    await test.finishLoad();
+    await prewarmed;
+    test.latest().callbacks.onReadyToShow();
+
+    test.controller.releasePrewarmed();
+
+    // `window-all-closed` is the only thing that quits Rally off macOS and it
+    // waits for every window, hidden ones included.
+    expect(test.latest().destroyed).toBe(1);
+    // Released, not recycled: rebuilding here would re-block the exit.
+    expect(test.createWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a settings window somebody actually opened', async () => {
+    const test = harness();
+    const opened = test.controller.open();
+    await test.finishLoad();
+    test.latest().callbacks.onReadyToShow();
+    await opened;
+
+    test.controller.releasePrewarmed();
+
+    expect(test.latest().destroyed).toBe(0);
+    expect(test.controller.isRevealRequested()).toBe(true);
+  });
+
+  it('discards a prewarm that was released while it was still loading', async () => {
+    const test = harness();
+    const prewarmed = test.controller.prewarm();
+    test.controller.releasePrewarmed();
+    await test.finishLoad();
+    await prewarmed;
+    test.latest().callbacks.onReadyToShow();
+
+    expect(test.latest().destroyed).toBe(1);
+    expect(test.latest().shown).toBe(0);
+  });
+
+  it('prewarms again once a release is followed by a real request', async () => {
+    const test = harness();
+    const prewarmed = test.controller.prewarm();
+    await test.finishLoad();
+    await prewarmed;
+    test.controller.releasePrewarmed();
+
+    const opened = test.controller.open();
+    await test.finishLoad();
+    test.latest().callbacks.onReadyToShow();
+    await opened;
+
+    expect(test.windows).toHaveLength(2);
+    expect(test.latest().shown).toBe(1);
+  });
+
   it('never adopts a window that was destroyed while it loaded', async () => {
     const test = harness();
     const opened = test.controller.open();

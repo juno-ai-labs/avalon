@@ -4212,8 +4212,11 @@ const settingsWindowController = new SettingsWindowController({
   },
   // A window is worth having in advance only for somebody who could open it: a
   // signed-out or workspace-less renderer would boot to sign-in, and a sign-out
-  // closes this window rather than replacing it.
-  mayPrewarm: () => Boolean(inMemorySession?.workspace) && !loggingOut,
+  // closes this window rather than replacing it. The main window is part of
+  // that test rather than an afterthought — with none open there is nobody to
+  // open Settings from, and a speculative window would be the only thing left
+  // holding a process that should have exited.
+  mayPrewarm: () => Boolean(inMemorySession?.workspace) && !loggingOut && Boolean(mainWindow),
   reportError: (error) => logError('rally', 'failed to prepare the settings window', error),
 });
 
@@ -4427,6 +4430,16 @@ async function createMainWindow(): Promise<void> {
     rendererReady = false;
     conversationDetailsExpansion = 0;
     mainWindow = null;
+    // A hidden window is still a window, and `window-all-closed` — the only
+    // path that quits Rally off macOS — waits for every one of them. Left in
+    // place, a settings window nobody opened would keep the process alive with
+    // nothing on screen, holding the single-instance lock; the `second-instance`
+    // handler above needs a `mainWindow` to raise, so a relaunch would do
+    // nothing either and Rally could be neither seen nor quit. A window that was
+    // actually opened stays: `releasePrewarmed` gives up only the speculative
+    // one, and `mayPrewarm` declines to build another while there is no main
+    // window to build it for.
+    settingsWindowController.releasePrewarmed();
   });
 
   await loadRenderer(mainWindow, rendererUrl(), 'main');

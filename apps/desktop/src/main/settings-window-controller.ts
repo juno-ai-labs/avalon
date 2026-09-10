@@ -88,6 +88,8 @@ export class SettingsWindowController {
    * while a later `open` on a window already on screen still raises it.
    */
   private pendingReveal = false;
+  /** Set while a window nobody asked for should be given up on arrival. */
+  private releaseRequested = false;
   private pendingSection: DesktopSettingsSection | null = null;
 
   constructor(private readonly dependencies: SettingsWindowControllerDependencies) {}
@@ -152,36 +154,53 @@ export class SettingsWindowController {
     this.pendingSection = null;
     this.ready = false;
     this.closed = false;
-    const window = this.dependencies.createWindow(section, {
-      onReadyToShow: () => {
-        this.ready = true;
-        this.revealIfReady();
-      },
-      onClosed: () => {
-        this.closed = true;
-        this.forget();
-        // Closing settings is the strongest signal there is that this person
-        // opens settings, and the machine is idle in the moment right after.
-        void this.prewarm();
-      },
-    });
-    // Adopted before the load rather than after it, so that `ready-to-show`
-    // arriving mid-load — which is the normal case — has a window to reveal.
-    this.window = window;
+    this.releaseRequested = false;
+    let window: SettingsWindowHandle | null = null;
     try {
+      window = this.dependencies.createWindow(section, {
+        onReadyToShow: () => {
+          this.ready = true;
+          this.revealIfReady();
+        },
+        onClosed: () => {
+          this.closed = true;
+          this.forget();
+          // Closing settings is the strongest signal there is that this person
+          // opens settings, and the machine is idle in the moment right after.
+          void this.prewarm();
+        },
+      });
+      // Adopted before the load rather than after it, so that `ready-to-show`
+      // arriving mid-load — which is the normal case — has a window to reveal.
+      this.window = window;
       await window.load();
     } catch (error) {
-      // Nothing else holds this window. Electron does not dispose one whose
-      // load failed, so leaving it here would strand a blank window and its
-      // renderer process for the life of the process, and the next attempt
-      // would strand another.
-      if (this.window === window) this.forget();
-      if (!window.isDestroyed()) window.destroy();
+      // Both halves matter, and they answer different failures.
+      //
+      // `forget()`, because the request that asked for this window must not
+      // outlive it. A `pendingReveal` left set is inherited by the next window
+      // built for any reason — a token refresh reaches `prewarm` — which then
+      // shows and focuses itself with nobody having asked for it. That is why
+      // this catches the construction too, where there is no window at all.
+      //
+      // The disposal, because Electron keeps a window whose load failed exactly
+      // where it was, and nothing else holds a reference: leaving it strands a
+      // blank window and its renderer process for the life of the process, and
+      // the next attempt strands another.
+      this.forget();
+      if (window && !window.isDestroyed()) window.destroy();
       throw error;
     }
     // Closed while it loaded: `onClosed` has already run and cleared the state
     // above, so there is nothing left to reveal.
     if (this.closed || window.isDestroyed()) return;
+    // Released while it loaded. Nobody wants this window and it must not be the
+    // reason the application cannot exit, so it goes rather than lingering.
+    if (this.releaseRequested && !this.revealRequested) {
+      this.forget();
+      window.destroy();
+      return;
+    }
     this.revealIfReady();
   }
 
@@ -200,6 +219,29 @@ export class SettingsWindowController {
     if (window.isMinimized()) window.restore();
     window.show();
     window.focus();
+  }
+
+  /**
+   * Give up a window nobody has asked to see.
+   *
+   * A hidden window is still a window to Electron, and `window-all-closed` —
+   * the only thing that quits Rally off macOS — fires only once every one of
+   * them has gone. A window built on speculation must never be the reason the
+   * application cannot exit, so closing the last window somebody was actually
+   * using releases it, and it is not rebuilt in its place.
+   *
+   * A window that *was* asked for is left alone. That one is somebody's open
+   * Settings, not a cache.
+   */
+  releasePrewarmed(): void {
+    if (this.revealRequested) return;
+    // Recorded even with no window in hand: a creation already in flight adopts
+    // its window after this returns, and reads this on the way through.
+    this.releaseRequested = true;
+    const window = this.window;
+    if (!window) return;
+    this.forget();
+    if (!window.isDestroyed()) window.destroy();
   }
 
   private forget(): void {
