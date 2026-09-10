@@ -3434,7 +3434,15 @@ pre {
    line. The agent's row deliberately does not do this: it is also visible while
    speech is playing and while a save is in flight, so tying its hit-testing to
    hover would take away the Stop speaking it puts there. */
-.human-message-actions { display: flex; margin-top: var(--space-1); opacity: 0; pointer-events: none; transition: opacity 120ms; }
+/* The slot holds its height with nothing in it. Every person's turn lays it
+   out, control or not, because the one-unit turn gap relies on it to keep the
+   next turn off the bubble; an empty flex row is 0px tall, and a turn without
+   the control (a surface that cannot start a substream, an answered
+   elicitation, a turn in flight) would otherwise hand the next turn a 4px
+   clearance on the bubble itself. The height is stated on the scale rather than
+   inherited from the control's line box, so the empty slot and the full one
+   are the same height. */
+.human-message-actions { display: flex; margin-top: var(--space-1); min-height: var(--space-5); opacity: 0; pointer-events: none; transition: opacity 120ms; }
 .human-message:hover .human-message-actions, .human-message:focus-within .human-message-actions { opacity: 1; pointer-events: auto; }
 @media (prefers-reduced-motion: reduce) { :is(.agent-message-actions, .human-message-actions) { transition: none; } }
 /* A save in flight keeps the row visible and stops a second one starting; the
