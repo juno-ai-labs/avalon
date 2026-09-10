@@ -14,7 +14,6 @@ import {
   Cog,
   Copy,
   EyeOff,
-  FileStack,
   Globe2,
   GripVertical,
   Info,
@@ -69,9 +68,8 @@ import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { layoutRowAt } from '../lib/list-motion';
 import { useListMotion } from '../lib/use-list-motion';
 import { Avatar, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
-import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
+import { ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup } from './sidebar-skeleton';
-import { ContextNestedMenu } from './nested-menu';
 import { AutomationGlyph, WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
@@ -468,7 +466,6 @@ function WorkstreamRow({
   onRename,
   onTogglePin,
   projects,
-  onAddToProject,
 }: {
   debugEnabled: boolean;
   drag?: PinnedRowDrag;
@@ -481,8 +478,11 @@ function WorkstreamRow({
   onMarkUnread: (workstream: WorkstreamSummary) => void;
   onRename: (workstream: WorkstreamSummary) => void;
   onTogglePin: (workstream: WorkstreamSummary, pinned: boolean) => void;
+  // Not a menu input any more. It still gates `draggable`, because the only
+  // thing a work stream can be dropped on is a project row: an empty list
+  // means this row has nowhere to go and must not advertise itself as
+  // draggable.
   projects: ProjectSummary[];
-  onAddToProject: (projectId: string, workstreamId: string) => void;
 }): React.JSX.Element {
   const location = useLocation();
   const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
@@ -759,22 +759,6 @@ function WorkstreamRow({
           <ContextMenu.Item className="menu-item" onSelect={() => onRename(workstream)}>
             <Pencil aria-hidden="true" size={16} /> Rename
           </ContextMenu.Item>
-          {projects.length > 0 && (
-            <ContextNestedMenu
-              icon={<FileStack aria-hidden="true" size={16} />}
-              label="Add to project"
-              options={projects.map((project) => {
-                const selected = project.workstreamIds.includes(workstream.id);
-                return {
-                  id: project.id,
-                  label: project.name,
-                  icon: <ProjectIcon project={project} />,
-                  selected,
-                  ...(!selected ? { onSelect: () => onAddToProject(project.id, workstream.id) } : {}),
-                };
-              })}
-            />
-          )}
           {/* Named for the state it moves to, the way the note item is. Private
               is not ownership: everyone left in the work stream can still read
               it, write to it, and bring somebody else in. */}
@@ -1437,7 +1421,6 @@ export function Sidebar({
       onArchive={setArchiveWorkstreamTarget}
       onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
       onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
-      onAddToProject={(projectId, workstreamId) => void onAddWorkstreamToProject(projectId, workstreamId)}
       onRename={openRename}
       onTogglePin={(target, pin) => void togglePin(target, pin)}
       pinPending={pinPendingWorkstreamId === workstream.id}
@@ -1750,7 +1733,6 @@ export function Sidebar({
                     onArchive={setArchiveWorkstreamTarget}
                     onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
                     onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
-                    onAddToProject={(projectId, workstreamId) => void onAddWorkstreamToProject(projectId, workstreamId)}
                     onRename={openRename}
                     onTogglePin={(target, pin) => void togglePin(target, pin)}
                     pinPending={pinPendingWorkstreamId === pinned.id}
@@ -1854,7 +1836,6 @@ export function Sidebar({
                         onArchive={setArchiveWorkstreamTarget}
                         onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
                         onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
-                        onAddToProject={(projectId, workstreamId) => void onAddWorkstreamToProject(projectId, workstreamId)}
                         onRename={openRename}
                         onTogglePin={(target, pin) => void togglePin(target, pin)}
                         pinPending={pinPendingWorkstreamId === item.workstream.id}
