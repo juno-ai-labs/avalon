@@ -56,8 +56,13 @@ through the ordinary common projection rather than a second write.
 [`substream-creation.md`](substream-creation.md) owns how that child is created;
 this document owns what happens to its title afterwards.
 
-The icon a pass chooses is written by the same call and ignored for a child:
-nothing draws a substream's own appearance, and its rows carry the branch line.
+The icon half of the answer is dropped for a child. The pass still asks for one
+— it is the work stream's own pass, and one call answers both halves — but
+`advanceTitle` sends `null` to the child's `rename`, so no appearance is written
+and none is published. Nothing draws a substream's own appearance: its rows
+carry the branch line, and its header shows the parent's mark. An icon written
+there would be a shared identity nobody chose, on an object whose `rename`
+treats the first icon it stores as final.
 
 ### The two passes
 
@@ -462,7 +467,15 @@ ordinary work-stream update and belongs to the object's product service.
 identity port, the message port and the rename publication, and
 `publishWorkstreamEvent` takes one too. The first pass is called for a private
 substream by its creation service; `settleAgentRun` now passes the substream its
-run belongs to instead of dropping it.
+run belongs to instead of dropping it. The name half of a pass is used for
+either; the icon half is dropped for a child.
+
+**Why the pass is shared rather than copied:** a substream is named from an
+opening message exactly as a work stream is, so a second implementation would be
+a second answer to what a good name is, what happens when the model is
+unreachable, and when a skeleton comes down — and the two would drift on the
+first change to any of them. What differs between the two is one field, and one
+line says so.
 
 **Why:** A substream is created with an instruction now, which is exactly what a
 name is chosen from, and it had no name of its own — children were written
