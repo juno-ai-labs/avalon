@@ -1234,18 +1234,36 @@ describe('Sidebar work-stream markers', () => {
     }
   });
 
-  it('scrolls compact search and creation with the stream icons', () => {
+  // Search sits above the scroll box in both layouts, so it is at the top
+  // however far the list is scrolled. The rail's New chat row arrives under it
+  // with the compact toggle and leaves with the expand, and is marked so the
+  // list motion shows it doing so; the titlebar's own New chat is hidden in the
+  // rail rather than unmounted, so it can fade with the layout.
+  it('keeps search above the scroll box in both layouts, with the rail\'s New chat row inserted under it', () => {
     const onOpenSearch = vi.fn();
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[]} onOpenSearch={onOpenSearch} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const view = (compact: boolean): React.JSX.Element => (
+      <MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onOpenSearch={onOpenSearch} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>
+    );
+    const { rerender } = render(view(true));
     const search = screen.getByRole('button', { name: 'Search workspace' });
     const create = screen.getByRole('link', { name: 'New chat' });
-    const navigation = screen.getByRole('navigation');
-    expect(navigation).toContainElement(search);
-    expect(navigation).toContainElement(create);
+    expect(screen.getByRole('navigation')).not.toContainElement(search);
+    const bar = search.closest('.sidebar-commandbar');
+    expect(bar).not.toBeNull();
+    expect(bar).toContainElement(create);
     expect(search.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(create).toHaveAttribute('data-motion-key', 'action:new');
+    expect(create).toHaveAttribute('data-motion-insert');
     fireEvent.click(search);
     expect(onOpenSearch).toHaveBeenCalledOnce();
     expect(create).toHaveAttribute('href', '/workstreams/new');
+
+    rerender(view(false));
+    expect(screen.getByRole('navigation')).not.toContainElement(screen.getByRole('button', { name: 'Search workspace' }));
+    const [titlebarCreate, ...others] = screen.getAllByRole('link', { name: 'New chat' });
+    expect(others).toEqual([]);
+    expect(titlebarCreate?.closest('.sidebar-titlebar')).not.toBeNull();
+    expect(bar?.querySelector('[data-motion-key="action:new"]')).toBeNull();
   });
 
   it.each([false, true])('shows only enabled standalone Sidekicks and opens their library detail (compact=%s)', (compact) => {
@@ -1257,12 +1275,11 @@ describe('Sidebar work-stream markers', () => {
     ];
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[{ ...automation, loadable: true }, shared, ...excluded]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
-    if (compact) {
-      expect(screen.getByRole('navigation')).toContainElement(strip);
-    } else {
-      expect(strip.closest('.sidebar-scroll')).toBeNull();
-      expect(strip.nextElementSibling).toContainElement(screen.getByRole('button', { name: 'Open account menu' }));
-    }
+    // Below the list and above the account row in both layouts: the rail keeps
+    // the strip where the full sidebar has it rather than folding it into the
+    // scrolling list.
+    expect(strip.closest('.sidebar-scroll')).toBeNull();
+    expect(strip.nextElementSibling).toContainElement(screen.getByRole('button', { name: 'Open account menu' }));
     expect(within(strip).getAllByRole('button')).toHaveLength(2);
     for (const item of excluded) expect(screen.queryByText(item.name)).toBeNull();
     fireEvent.click(within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' }));
@@ -2539,6 +2556,107 @@ describe('pinned work streams', () => {
       const scopes = rows.map((row) => row?.closest('[data-motion-scope]')?.getAttribute('data-motion-scope') ?? null);
       expect(scopes).toEqual(expect.arrayContaining([`project:${project.id}`, null]));
       expect(screen.getByText('Launch').closest('[data-motion-key]')).toHaveAttribute('data-motion-hold');
+    });
+
+    // The rows' shapes travel under CSS for as long as the box's width does,
+    // and a move planned against positions still in flight would fight that
+    // travel. The sidebar hears the platform's own transition events on its
+    // layout channel — on the aside itself, since the rows' transitions bubble
+    // through it — and holds the motion until they say the layout has settled.
+    it('holds the rows\' motion while the sidebar\'s layout is still travelling', () => {
+      const today = workstream('ws-today', 'Roadmap review', 'completed', '2026-08-01T09:00:00.000Z');
+      const yesterday = workstream('ws-yesterday', 'Quarterly planning', 'completed', '2026-07-31T09:00:00.000Z');
+      const view = (streams: WorkstreamSummary[]): React.JSX.Element => (
+        <MemoryRouter><Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
+        </Tooltip.Provider></MemoryRouter>
+      );
+      // jsdom has no `TransitionEvent`, so the property name goes on by hand.
+      const layoutEvent = (type: string): Event => {
+        const event = new Event(type, { bubbles: true });
+        Object.defineProperty(event, 'propertyName', { value: '--sidebar-compact' });
+        return event;
+      };
+      const { rerender } = render(view([today, yesterday]));
+      const aside = screen.getByRole('complementary', { name: 'Rally navigation' });
+      // Another property transitioning on the aside — the workspace-switch
+      // fade — is not the layout's, and holds nothing.
+      const fade = new Event('transitionrun', { bubbles: true });
+      Object.defineProperty(fade, 'propertyName', { value: 'opacity' });
+      fireEvent(aside, fade);
+      fireEvent(aside, layoutEvent('transitionrun'));
+      // Touched, so it crosses into Today: a move, were the layout at rest.
+      const touched = { ...yesterday, lastActivityAt: '2026-08-01T11:00:00.000Z' };
+      rerender(view([today, touched]));
+      expect(animate).not.toHaveBeenCalled();
+      // A row's own transition ending is not the layout's.
+      fireEvent(screen.getByRole('link', { name: /Roadmap review/u }), layoutEvent('transitionend'));
+      const aged = { ...today, lastActivityAt: '2026-07-31T10:00:00.000Z' };
+      rerender(view([aged, touched]));
+      expect(animate).not.toHaveBeenCalled();
+      // The render the settling itself causes measures the rows afresh, and
+      // the next move plans from those positions: the row travels the two
+      // slots from the Yesterday group it was measured in.
+      fireEvent(aside, layoutEvent('transitionend'));
+      expect(animate).not.toHaveBeenCalled();
+      rerender(view([{ ...today, lastActivityAt: '2026-08-01T11:30:00.000Z' }, touched]));
+      expect(playedOn('workstream:ws-today')?.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
+    });
+
+    // A toggle reversed mid-flight cancels the running transition and starts
+    // another in one style change, and nothing pins which event arrives
+    // first. The hold counts runs rather than trusting the last event.
+    it('keeps the hold through a reversal whichever order its cancel and run arrive in', () => {
+      const today = workstream('ws-today', 'Roadmap review', 'completed', '2026-08-01T09:00:00.000Z');
+      const yesterday = workstream('ws-yesterday', 'Quarterly planning', 'completed', '2026-07-31T09:00:00.000Z');
+      const view = (streams: WorkstreamSummary[]): React.JSX.Element => (
+        <MemoryRouter><Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
+        </Tooltip.Provider></MemoryRouter>
+      );
+      const layoutEvent = (type: string): Event => {
+        const event = new Event(type, { bubbles: true });
+        Object.defineProperty(event, 'propertyName', { value: '--sidebar-compact' });
+        return event;
+      };
+      const { rerender } = render(view([today, yesterday]));
+      const aside = screen.getByRole('complementary', { name: 'Rally navigation' });
+      fireEvent(aside, layoutEvent('transitionrun'));
+      // The reversal's new run lands before the old transition's cancel.
+      fireEvent(aside, layoutEvent('transitionrun'));
+      fireEvent(aside, layoutEvent('transitioncancel'));
+      const touched = { ...yesterday, lastActivityAt: '2026-08-01T11:00:00.000Z' };
+      rerender(view([today, touched]));
+      expect(animate).not.toHaveBeenCalled();
+      // The surviving transition's end is what releases it.
+      fireEvent(aside, layoutEvent('transitionend'));
+      rerender(view([today, yesterday]));
+      expect(playedOn('workstream:ws-yesterday')).toBeDefined();
+    });
+
+    // `transitionrun` arrives with the first frame after the toggle, and a
+    // render can land before it. The toggle raises the hold itself, and a
+    // frame later — jsdom runs no transitions, so nothing is travelling — the
+    // sidebar releases it and the next move plays.
+    it('raises the hold from the toggle itself, and releases it a frame later when nothing travels', async () => {
+      const today = workstream('ws-today', 'Roadmap review', 'completed', '2026-08-01T09:00:00.000Z');
+      const yesterday = workstream('ws-yesterday', 'Quarterly planning', 'completed', '2026-07-31T09:00:00.000Z');
+      const view = (compact: boolean, streams: WorkstreamSummary[]): React.JSX.Element => (
+        <MemoryRouter><Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} compact={compact} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
+        </Tooltip.Provider></MemoryRouter>
+      );
+      const { rerender } = render(view(false, [today, yesterday]));
+      rerender(view(true, [today, yesterday]));
+      const touched = { ...yesterday, lastActivityAt: '2026-08-01T11:00:00.000Z' };
+      rerender(view(true, [today, touched]));
+      // The rail's New chat row arriving is the one thing that plays: no row moved.
+      expect(animate.mock.calls.map(([element]) => (element as HTMLElement).dataset.motionKey)).toEqual(['action:new']);
+      await act(() => new Promise<void>((resolve) => { requestAnimationFrame(() => resolve()); }));
+      // The touched row goes back to Yesterday and the other climbs two
+      // slots past it: a move, and it plays.
+      rerender(view(true, [today, yesterday]));
+      expect(playedOn('workstream:ws-today')?.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
     });
 
     // A row leaves one recency group for another whenever it is touched — its

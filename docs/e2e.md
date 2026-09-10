@@ -652,7 +652,22 @@ Both collapsed navigation sidebars are 96 CSS pixels wide, allowing symmetric
 space around the macOS traffic lights. Their navigation controls, including
 Search and New substream, are 54-pixel squares with 9-pixel padding. Collapse
 controls sit at the bottom; the account avatar and navigation toggle remain
-side by side. The main conversation row uses the work-stream title, and carries
+side by side. In the global navigation, Search sits above the scrolling
+streams in both widths and the rail's New chat row sits under it; the
+Sidekick strip stays below the streams as a horizontal row in both widths,
+one tile centred and the next showing past the edge when there are more.
+Collapse and expand the global navigation with ⌘B and confirm its contents
+travel with the edge rather than cutting a frame ahead of it: the rows narrow
+to their marks as the titles fade, the headings close, the search pill closes
+to its icon in place, the titlebar's New chat fades while the rail's slides in
+under Search once the slot has opened, and on expand the rail's New chat
+slides out to the left as the pill reopens. Drag the edge past the threshold
+and confirm the contents snap with it, as the edge does. Toggle the
+work-stream sidebar the same way and confirm its rows narrow to their marks as
+the copy fades, the section headings close as the section rules appear, a
+substream's branch line cross-fades into its initial, the participants'
+avatars shrink into the square, and the footer's toggle glides to the centre.
+The main conversation row uses the work-stream title, and carries
 the work stream's own icon in its colour; a substream row carries the branch
 line, which compact replaces with the first character of the substream's title.
 
@@ -667,10 +682,10 @@ the status badge. Both badges have a surface-colored cutout and stay attached
 to the glyph in expanded and collapsed navigation. Check public and private
 rows, selected and hovered rows, and light and dark appearances.
 
-In collapsed navigation, Search and New chat are the first two items inside
-the same vertical scroller as work streams and Sidekicks. Scroll a long list
-and confirm both move out of view while the account and collapse controls
-stay fixed at the bottom.
+In collapsed navigation, Search and New chat sit in the command bar above
+the work-stream scroller. Scroll a long list and confirm both stay put at the
+top, that the Sidekick strip stays put below the list, and that the account
+and collapse controls stay fixed at the bottom.
 
 Hover a public stream icon and then move onto its globe in both appearances.
 The globe stays visible and only the stream preview opens; the public badge

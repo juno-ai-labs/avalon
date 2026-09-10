@@ -26,17 +26,18 @@ let measure: (this: Element) => DOMRect;
  * `generation` goes into the row keys, so bumping it replaces every row's
  * element; `hidden` rows render with no layout, the way `display: none` does.
  */
-function List({ rows, hold = [], hidden = [], generation = 0, layout }: {
-  rows: string[]; hold?: string[]; hidden?: string[]; generation?: number; layout?: unknown;
+function List({ rows, hold = [], hidden = [], insert = [], generation = 0, layout, settling = false }: {
+  rows: string[]; hold?: string[]; hidden?: string[]; insert?: string[]; generation?: number; layout?: unknown; settling?: boolean;
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null);
-  useListMotion(ref, layout);
+  useListMotion(ref, layout, settling);
   return (
     <div data-testid="list" ref={ref}>
       {rows.map((key) => (
         <div
           data-hidden={hidden.includes(key) ? '' : undefined}
           data-motion-hold={hold.includes(key) ? '' : undefined}
+          data-motion-insert={insert.includes(key) ? '' : undefined}
           data-motion-key={key}
           data-testid={key}
           key={`${generation}:${key}`}
@@ -227,16 +228,37 @@ describe('useListMotion', () => {
     expect(played('a')[2]?.keyframes[0]).toEqual(expect.objectContaining({ transform: `translate(0px, ${2 * ROW - 12}px)` }));
   });
 
-  it('remembers positions while playing nothing for a reader who asked for less motion', () => {
-    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('prefers-reduced-motion') }));
-    const { rerender } = render(<List rows={['a', 'b', 'c']} />);
-    rerender(<List rows={['c', 'a', 'b']} />);
-    expect(animate).not.toHaveBeenCalled();
-    // The positions the reduced-motion render left are the ones the next
-    // change starts from: `c` travels one slot, not two.
-    vi.unstubAllGlobals();
-    rerender(<List rows={['a', 'c', 'b']} />);
-    expect(played('c')[0]?.keyframes[0]).toEqual(expect.objectContaining({ transform: `translate(0px, ${-ROW}px)` }));
+  describe('for a reader who asked for less motion', () => {
+    // Installed and restored here rather than in the bodies, so a failing
+    // assertion cannot leave the stub in place for the next test; a test that
+    // needs the preference to change flips the flag rather than the stub.
+    let reduced = true;
+    beforeEach(() => {
+      reduced = true;
+      vi.stubGlobal('matchMedia', (query: string) => ({ matches: reduced && query.includes('prefers-reduced-motion') }));
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('remembers positions while playing nothing', () => {
+      const { rerender } = render(<List rows={['a', 'b', 'c']} />);
+      rerender(<List rows={['c', 'a', 'b']} />);
+      expect(animate).not.toHaveBeenCalled();
+      // The positions the reduced-motion render left are the ones the next
+      // change starts from: `c` travels one slot, not two.
+      reduced = false;
+      rerender(<List rows={['a', 'c', 'b']} />);
+      expect(played('c')[0]?.keyframes[0]).toEqual(expect.objectContaining({ transform: `translate(0px, ${-ROW}px)` }));
+    });
+
+    it('plays no entrance and leaves no stand-in', () => {
+      const { rerender, getByTestId } = render(<List insert={['x']} rows={['a']} />);
+      rerender(<List insert={['x']} rows={['x', 'a']} />);
+      rerender(<List insert={['x']} rows={['a']} />);
+      expect(animate).not.toHaveBeenCalled();
+      expect(getByTestId('list').querySelector('[data-motion-stand-in]')).toBeNull();
+    });
   });
 
   it('remembers positions while playing nothing in a hidden window', () => {
@@ -297,6 +319,116 @@ describe('useListMotion', () => {
     // The next change starts from the positions the new layout was measured at.
     rerender(<List layout="compact" rows={['b', 'a', 'c']} />);
     expect(played('b').at(-1)?.keyframes[0]).toEqual(expect.objectContaining({ transform: `translate(0px, ${ROW}px)` }));
+  });
+
+  it('plays nothing on its first commit, whatever the rows carry', () => {
+    render(<List insert={['x']} rows={['x', 'a']} />);
+    expect(animate).not.toHaveBeenCalled();
+  });
+
+  it('slides a row marked for insertion in from the left, after the rows it displaced have opened the gap', () => {
+    const { rerender } = render(<List insert={['x']} rows={['a', 'b']} />);
+    rerender(<List insert={['x']} rows={['x', 'a', 'b']} />);
+    const away = -(ROW_LEFT + ROW_WIDTH - CONTAINER_LEFT + LIST_MOTION.exitClearancePx);
+    const enterStart = (LIST_MOTION.exitMs + LIST_MOTION.enterStaggerMs) / LIST_MOTION_TOTAL_MS;
+    const [entrance] = played('x');
+    expect(entrance?.keyframes).toEqual([
+      { offset: 0, transform: `translate(${away}px, 0px)`, easing: 'linear' },
+      { offset: enterStart, transform: `translate(${away}px, 0px)`, easing: LIST_MOTION.enterEasing },
+      { offset: 1, transform: 'translate(0px, 0px)' },
+    ]);
+    expect(entrance?.options).toEqual({ duration: LIST_MOTION_TOTAL_MS, fill: 'backwards' });
+    for (const key of ['a', 'b']) {
+      expect(played(key)[0]?.keyframes).toEqual([{ transform: `translate(0px, ${-ROW}px)` }, { transform: 'translate(0px, 0px)' }]);
+    }
+    // An unmarked row still appears in place: a page arriving is not a move.
+    animate.mockClear();
+    rerender(<List insert={['x']} rows={['x', 'y', 'a', 'b']} />);
+    expect(played('y')).toEqual([]);
+  });
+
+  it('sends a removed row out through a stand-in over the slot it left, and takes the stand-in out when the exit settles', () => {
+    const { rerender, getByTestId } = render(<List insert={['b']} rows={['a', 'b', 'c']} />);
+    const removed = getByTestId('b');
+    rerender(<List insert={['b']} rows={['a', 'c']} />);
+    const list = getByTestId('list');
+    const standIn = list.querySelector<HTMLElement>('[data-motion-stand-in]');
+    expect(standIn).not.toBeNull();
+    // A copy of the row, not the row: placed where the row was, and nothing
+    // to the reader or to the next render — no identity, no key.
+    expect(standIn).not.toBe(removed);
+    expect(standIn?.textContent).toBe('b');
+    expect(standIn).toHaveAttribute('inert');
+    expect(standIn).toHaveAttribute('aria-hidden', 'true');
+    expect(standIn).not.toHaveAttribute('data-motion-key');
+    expect(standIn).not.toHaveAttribute('data-motion-insert');
+    expect(standIn?.style.position).toBe('absolute');
+    expect(standIn?.style.top).toBe(`${ROW}px`);
+    expect(standIn?.style.left).toBe(`${ROW_LEFT - CONTAINER_LEFT}px`);
+    expect(standIn?.style.width).toBe(`${ROW_WIDTH}px`);
+    expect(standIn?.style.height).toBe(`${ROW}px`);
+    const exit = animate.mock.calls.find((call) => (call[0] as HTMLElement).hasAttribute('data-motion-stand-in'));
+    expect(exit?.[1]).toEqual([
+      { transform: 'translate(0px, 0px)', easing: LIST_MOTION.exitEasing },
+      { transform: `translate(${-(ROW_LEFT - CONTAINER_LEFT + ROW_WIDTH + LIST_MOTION.exitClearancePx)}px, 0px)` },
+    ]);
+    expect(exit?.[2]).toEqual({ duration: LIST_MOTION.exitMs, fill: 'forwards' });
+    // The row below closes the gap from the same frame.
+    expect(played('c')[0]?.keyframes[0]).toEqual({ transform: `translate(0px, ${ROW}px)` });
+    // A render while it is leaving does not take the copy for a row.
+    const started = animate.mock.calls.length;
+    rerender(<List insert={['b']} rows={['a', 'c']} />);
+    expect(animate).toHaveBeenCalledTimes(started);
+    const exitAnimation = animate.mock.results[animate.mock.calls.indexOf(exit!)]!.value as FakeAnimation;
+    exitAnimation.onfinish?.();
+    expect(list.querySelector('[data-motion-stand-in]')).toBeNull();
+  });
+
+  it('takes a stand-in out when its exit is cancelled, and cancels every exit on unmount', () => {
+    const { rerender, getByTestId, unmount } = render(<List insert={['b']} rows={['a', 'b', 'c']} />);
+    rerender(<List insert={['b']} rows={['a', 'c']} />);
+    const list = getByTestId('list');
+    const exit = animate.mock.calls.find((call) => (call[0] as HTMLElement).hasAttribute('data-motion-stand-in'));
+    const exitAnimation = animate.mock.results[animate.mock.calls.indexOf(exit!)]!.value as FakeAnimation;
+    // Cancelled — by the layout going, say — the copy goes with it.
+    exitAnimation.oncancel?.();
+    expect(list.querySelector('[data-motion-stand-in]')).toBeNull();
+    rerender(<List insert={['b']} rows={['a', 'b', 'c']} />);
+    rerender(<List insert={['b']} rows={['a', 'c']} />);
+    const second = animate.mock.calls.filter((call) => (call[0] as HTMLElement).hasAttribute('data-motion-stand-in')).at(-1);
+    const secondAnimation = animate.mock.results[animate.mock.calls.indexOf(second!)]!.value as FakeAnimation;
+    unmount();
+    expect(secondAnimation.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  // The sidebar's rows change shape under CSS transitions for as long as its
+  // box's width does. A move planned against positions still in flight would
+  // fight that travel, and the last positions measured mid-flight are not
+  // where the rows came to rest.
+  it('measures afresh and plays nothing while the layout is settling, and once more when it has settled', () => {
+    const { rerender } = render(<List rows={['a', 'b', 'c']} />);
+    rerender(<List rows={['c', 'a', 'b']} settling />);
+    rerender(<List rows={['a', 'b', 'c']} settling />);
+    expect(animate).not.toHaveBeenCalled();
+    rerender(<List rows={['b', 'a', 'c']} />);
+    expect(animate).not.toHaveBeenCalled();
+    // The next change plans from the settled positions: `b` travels one slot.
+    rerender(<List rows={['a', 'b', 'c']} />);
+    expect(played('b')[0]?.keyframes[0]).toEqual(expect.objectContaining({ transform: `translate(0px, ${-ROW}px)` }));
+  });
+
+  it('lets an entrance play through a change of layout, while a move is cancelled', () => {
+    const { rerender } = render(<List insert={['x']} layout="wide" rows={['a', 'b', 'c']} />);
+    rerender(<List insert={['x']} layout="wide" rows={['c', 'a', 'b']} />);
+    const [move] = played('c');
+    // The row is inserted by the very change of layout — the sidebar's New
+    // chat row arrives with the compact toggle — and is the change.
+    rerender(<List insert={['x']} layout="compact" rows={['x', 'c', 'a', 'b']} />);
+    expect(move?.animation.cancel).toHaveBeenCalledTimes(1);
+    const [entrance] = played('x');
+    expect(entrance).toBeDefined();
+    rerender(<List insert={['x']} layout="compact" rows={['x', 'c', 'a', 'b']} settling />);
+    expect(entrance?.animation.cancel).not.toHaveBeenCalled();
   });
 
   it('keeps rows in separate scopes apart even when they share a key', () => {
