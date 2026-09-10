@@ -17,6 +17,7 @@ const SEARCH_DOCUMENT_SCHEMA = {
   source_id: { type: "string" },
   scope_id: { type: "string" },
   substream_id: { type: "string" },
+  connection_id: { type: "string", filterable: false },
   revision: { type: "uint" },
   deleted: { type: "bool" },
   record_type: { type: "string" },
@@ -39,8 +40,8 @@ const SEARCH_DOCUMENT_SCHEMA = {
 /** Every attribute a page needs to render and admit a candidate without a loader. */
 const CANDIDATE_ATTRIBUTES = ["source", "source_id", "scope_id", "revision", "chunk_start", "chunk_end"] as const;
 /** What a member result renders. Only substring retrieval asks for these; chunks carry none of them. */
-const DISPLAY_ATTRIBUTES = ["substream_id", "text", "title", "source_label", "archived", "url", "mime_type", "occurred_at",
-  "transcript_sequence"] as const;
+const DISPLAY_ATTRIBUTES = ["substream_id", "connection_id", "text", "title", "source_label", "archived", "url", "mime_type",
+  "occurred_at", "transcript_sequence"] as const;
 
 /** Separate deployments and embedding spaces; EU never falls back to Global. */
 export async function workspaceSearchIndex(env: Env, workspaceId: string): Promise<TextSearchIndex> {
@@ -90,6 +91,7 @@ export interface TextSearchDocument {
   sourceId: string;
   scopeId: string;
   substreamId?: string | undefined;
+  connectionId?: string | undefined;
   revision: number;
   text: string;
   vector?: number[];
@@ -110,6 +112,7 @@ const CandidateSchema = z.object({
   source_id: z.string(),
   scope_id: z.string(),
   substream_id: z.string().nullable().optional(),
+  connection_id: z.string().nullable().optional(),
   revision: z.number().int().nonnegative(),
   generation: z.string().nullable().optional(),
   chunk_start: z.number().int().nonnegative().nullable().optional(),
@@ -193,6 +196,7 @@ export class TextSearchIndex {
         source_id: document.sourceId,
         scope_id: document.scopeId,
         substream_id: document.substreamId ?? null,
+        connection_id: document.connectionId ?? null,
         revision: document.revision,
         text: document.text,
         ...(isSemantic ? { vector: document.vector! } : {}),

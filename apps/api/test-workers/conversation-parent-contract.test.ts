@@ -391,7 +391,6 @@ describe("conversation parent contract", () => {
     const searchEnv = { ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' };
     const response = await searchWorkspacePage(searchEnv, AUTH, { query: 'needle', category: 'all', pageSize: 7 });
     expect(response.results.map((row) => row.id)).toEqual(['message-0', 'message-1', ...linkIds]);
-    expect(response.complete).toBe(true);
     expect(response.results[0]).toMatchObject({ title: 'Indexed message-0', excerpt: expect.stringContaining('from the index'),
       occurredAt: '2026-09-05T00:00:00.000Z', location: { kind: 'message', workstreamId: PERSONAL_ROOM_ID, substreamId: '0',
         turnId: 'search-turn', transcriptSequence: 1 } });
@@ -411,12 +410,10 @@ describe("conversation parent contract", () => {
     const defer = (work: Promise<unknown>) => { deferred.push(work); };
     const first = await searchWorkspacePage(searchEnv, memberAuth, { query: 'needle', category: 'all', pageSize: 7 }, undefined, defer);
     expect(first.results).toEqual([]);
-    expect(first.complete).toBe(false);
     expect(deferred.length).toBeGreaterThan(0);
     await Promise.all(deferred);
     const filled = await searchWorkspacePage(searchEnv, memberAuth, { query: 'needle', category: 'all', pageSize: 7 }, undefined, defer);
     expect(filled.results.map((row) => row.id)).toEqual(['message-1']);
-    expect(filled.complete).toBe(true);
     // Archiving through the product commits the index's display intent with the change.
     await archiveRoom(WORKSPACE_ROOM_ID);
     await runInDurableObject(conversation(WORKSPACE_ROOM_ID), (_instance, state) => {
@@ -772,12 +769,13 @@ describe("conversation parent contract", () => {
       expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID, sessionId: participantSession },
         { query: 'private search', category: 'links' })).toEqual([]);
       source = 'artifacts';
-      // Deployment enables checks without activation; incomplete inventory is retryable and starts discovery.
+      // Deployment enables checks without activation; incomplete inventory is retryable, starts
+      // discovery, and simply omits the candidate from the page.
       await expect(searchWorkspacePage(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
-        .resolves.toMatchObject({ results: [], complete: false });
+        .resolves.toEqual({ results: [] });
       includeVerifiedMessage = true;
       const mixedPage = await searchWorkspacePage(searchEnv, AUTH, { query: 'private search', category: 'all' });
-      expect(mixedPage).toMatchObject({ complete: false, results: [{ id: 'verified-message' }] });
+      expect(mixedPage).toEqual({ results: [expect.objectContaining({ id: 'verified-message' })] });
       includeVerifiedMessage = false;
       const visibleResourceId = crypto.randomUUID();
       await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec(`INSERT INTO resources
@@ -792,7 +790,7 @@ describe("conversation parent contract", () => {
       const partial = await workspaceStub().authorizationBackfillStatus({ workspaceId: WORKSPACE_ID });
       expect(partial).toMatchObject({ pendingParents: 0, pendingChildren: 1, complete: false });
       await expect(searchWorkspacePage(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
-        .resolves.toMatchObject({ results: [], complete: false });
+        .resolves.toEqual({ results: [] });
       expect(await workspaceStub().authorizationBackfillStatus({ workspaceId: WORKSPACE_ID })).toEqual(partial);
       await projectAuthorization(TEST_ENV, { ...initialProjection, substreamId: reserved.substreamId });
       // The queue publishes completed discovery; the next search never performs that owner walk.

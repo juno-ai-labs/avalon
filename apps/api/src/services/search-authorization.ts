@@ -12,7 +12,7 @@ export const SearchAuthorizationSnapshotSchema = z.strictObject({
   decision: AuthorizationDecisionSchema, observedAt: z.number().int().nonnegative(),
 });
 export const SearchAuthorizationTargetSchema = z.strictObject({
-  kind: z.enum(['resource', 'parent', 'connection']), id: z.string(),
+  kind: z.enum(['resource', 'parent', 'connection', 'member']), id: z.string(),
 });
 export const SearchAuthorizationPushJobSchema = z.strictObject({
   type: z.literal('search_authorization_push_v1'), region: z.enum(['global', 'eu']),
@@ -123,17 +123,29 @@ export function createSearchAccessContext(env: Env, auth: AuthContext, defer?: D
     new SearchAuthorizationResolver(env, undefined, defer));
 }
 
-/** Mutation-driven projection. Jobs contain only the workspace address and reload current owners. */
+/**
+ * Mutation-driven projection. Jobs contain only the workspace address and
+ * reload current owners. A targeted job first registers every pair its target
+ * reaches, so a decision exists before the first search that would need it;
+ * the read path then never has to fill one.
+ */
 export async function pushSearchAuthorization(env: Env, job: z.infer<typeof SearchAuthorizationPushJobSchema>, attempt = 1) {
   if (job.region !== env.AVALON_REGION) throw new Error('search_authorization_region_mismatch');
   const startedAt = Date.now();
   const stats = { written: 0, superseded: 0, kvWriteMs: 0, resolveMs: 0 };
   let selected = 0;
+  let registered = 0;
   let selectionMs = 0;
   let outcome = 'failed';
   let errorCode: string | undefined;
   try {
-    const snapshots = await (await authorizationWorkspace(env, job.workspaceId)).listSearchAuthorizationSnapshots({ workspaceId: job.workspaceId, ...(job.target ? { target: job.target } : {}) });
+    const workspace = await authorizationWorkspace(env, job.workspaceId);
+    if (job.target) {
+      for (const pair of await workspace.enumerateSearchAuthorization({ workspaceId: job.workspaceId, target: job.target })) {
+        registered += (await workspace.registerSearchAuthorization(pair)).length;
+      }
+    }
+    const snapshots = await workspace.listSearchAuthorizationSnapshots({ workspaceId: job.workspaceId, ...(job.target ? { target: job.target } : {}) });
     selected = snapshots.length;
     selectionMs = Date.now() - startedAt;
     const subjects = new Map<string, { subject: AuthorizationSubject; resources: AuthorizationResource[] }>();
@@ -168,7 +180,7 @@ export async function pushSearchAuthorization(env: Env, job: z.infer<typeof Sear
       outbox_ms: job.timing ? job.timing.enqueuedAt - job.timing.mutationAt : null,
       queue_ms: job.timing ? startedAt - job.timing.enqueuedAt : null,
       duration_ms: completedAt - startedAt, selection_ms: selectionMs, resolve_ms: stats.resolveMs,
-      kv_write_ms: stats.kvWriteMs, selected_keys: selected, written_keys: stats.written, superseded_keys: stats.superseded };
+      kv_write_ms: stats.kvWriteMs, registered_keys: registered, selected_keys: selected, written_keys: stats.written, superseded_keys: stats.superseded };
     if (outcome === 'failed') logWarn(env, 'authz_push_timing', fields);
     else logInfo(env, 'authz_push_timing', fields);
   }

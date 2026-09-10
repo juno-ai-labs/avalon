@@ -18,7 +18,9 @@ reused. Queue-maintained attachment discovery can lag source changes, while a
 positive result still requires its canonical grant. New requests pass session and
 workspace-membership middleware. This does not relax mutation checks, socket
 admission, or local socket visibility/revocation. Missing authority remains a
-retryable failure for direct reads and explicit partial status for search/lists.
+retryable failure for direct reads and explicit partial status for resource
+lists; member search omits the candidate and reports nothing, because its
+decisions are registered from the mutation side before the search needs them.
 Member search candidate pagination exposes matching-index continuation even when
 no candidate on a page is admitted. Repeated substring queries and correlation
 with known source IDs can reveal content matches; this API does not promise

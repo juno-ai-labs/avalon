@@ -287,8 +287,10 @@ describe("index-served display", () => {
     expect(provider.write.mock.calls[1]![0].upsert_rows[0]).toMatchObject({ substream_id: null, title: null, archived: null });
     provider.query.mockResolvedValue({ rows: [] });
     await index.queryPage([{ source: "messages", scopeIds: null, load: async () => new Map() }], { query: "needle", mode: "substring", limit: 7 });
+    await index.upsert([{ id: "c", source: "files", sourceId: "r2", scopeId: "ws", connectionId: "conn", revision: 1, text: "synced" }]);
+    expect(provider.write.mock.calls[2]![0].upsert_rows[0]).toMatchObject({ connection_id: "conn" });
     expect(provider.query.mock.calls[0]![0].include_attributes).toEqual(expect.arrayContaining([
-      "text", "title", "source_label", "archived", "occurred_at", "transcript_sequence", "url", "mime_type", "substream_id"]));
+      "text", "title", "source_label", "archived", "occurred_at", "transcript_sequence", "url", "mime_type", "substream_id", "connection_id"]));
     // Chunks carry no display, and a semantic namespace's schema never gains one.
     await index.query([{ source: "note", scopeIds: ["private"], load: async () => new Map() }], { query: "needle", mode: "semantic", limit: 7, vector: [1, 0] });
     expect(provider.query.mock.calls[1]![0].include_attributes).toEqual(["source", "source_id", "scope_id", "revision", "chunk_start", "chunk_end", "generation"]);

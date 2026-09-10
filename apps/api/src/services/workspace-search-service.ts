@@ -23,26 +23,22 @@ export async function searchWorkspace(env: Env, auth: AuthContext, request: Sear
  * One candidate page, admitted through the projected search decisions and
  * rendered from the index's own attributes. Nothing here reads a content
  * owner (WorkstreamDO, SubstreamAgent) or R2; admission reads KV in Global and
- * the WorkspaceDO snapshot table in EU, one warm object. A decision the
- * projection does not hold yet is filled after the response (`defer`), and a
- * row indexed before the display attributes existed is omitted until its
- * queued rewrite lands. Not finding something is the safe failure; the next
- * search finds it.
+ * the WorkspaceDO snapshot table in EU, one warm object. The projection is
+ * registered from the mutation side, so a decision exists before the search
+ * that needs it; one the projection still lacks is omitted and filled after
+ * the response (`defer`), and a row indexed before the display attributes
+ * existed is omitted until its queued rewrite lands. Not finding something is
+ * the safe failure; the page never reports which candidates it left out.
  */
 export async function searchWorkspacePage(env: Env, auth: AuthContext, request: SearchRequest, signal?: AbortSignal,
   defer?: DeferredWork) {
   signal?.throwIfAborted();
   const started = performance.now();
-  let complete = true;
   const access = createSearchAccessContext(env, auth, defer);
   const readableGroups = async (groups: ConversationGroup[]) => {
     const decisions = await access.checkMany(groups.map((group) => ({ kind: 'conversation' as const,
       workspaceId: auth.workspaceId, parentId: IdSchema.parse(group.parentId), substreamId: asSubstreamId(group.substreamId) })));
-    return groups.filter((_, index) => {
-      const decision = decisions[index]!;
-      if (decision.status === 'unavailable') complete = false;
-      return decision.status === 'allowed';
-    });
+    return groups.filter((_, index) => decisions[index]!.status === 'allowed');
   };
   const scopeMs = performance.now() - started;
   let retrievalMs = 0;
@@ -105,14 +101,17 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
     if (request.category !== 'all' && request.category !== category) continue;
     sources.push({ source: category, scopeIds: [auth.workspaceId], load: async (candidates) => {
       const results = new Map<string, SearchResult>();
-      const admitted = candidates.filter((candidate) => IdSchema.safeParse(candidate.source_id).success);
-      const decisions = await access.checkMany(admitted.map((candidate) => ({ kind: 'resource' as const,
-        workspaceId: auth.workspaceId, resourceId: IdSchema.parse(candidate.source_id) })));
+      const admitted = candidates.filter((candidate) => IdSchema.safeParse(candidate.source_id).success
+        && (candidate.connection_id == null || IdSchema.safeParse(candidate.connection_id).success));
+      // A connector's rows share one decision, read once; an attachment or note has its own.
+      const addresses = admitted.map((candidate) => candidate.connection_id != null
+        ? { kind: 'connection' as const, workspaceId: auth.workspaceId, connectionId: IdSchema.parse(candidate.connection_id) }
+        : { kind: 'resource' as const, workspaceId: auth.workspaceId, resourceId: IdSchema.parse(candidate.source_id) });
+      const unique = [...new Map(addresses.map((address) => [JSON.stringify(address), address])).values()];
+      const decisions = new Map((await access.checkMany(unique)).map((decision, index) => [JSON.stringify(unique[index]), decision]));
       admitted.forEach((candidate, index) => {
         signal?.throwIfAborted();
-        const decision = decisions[index]!;
-        if (decision.status === 'unavailable') complete = false;
-        if (decision.status !== 'allowed' || typeof candidate.text !== 'string' || typeof candidate.title !== 'string') return;
+        if (decisions.get(JSON.stringify(addresses[index]))?.status !== 'allowed' || typeof candidate.text !== 'string' || typeof candidate.title !== 'string') return;
         const passage = passageOf(candidate.text);
         if (!passage) return;
         results.set(candidate.id, {
@@ -136,6 +135,6 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
   logInfo(env, 'search_response_timing', { scope_ms: scopeMs, retrieval_ms: retrievalMs,
     hydration_ms: hydrationMs, duration_ms: performance.now() - started, result_count: result.results.length,
     paginated: Boolean(request.pageSize), continuation: Boolean(request.cursor) });
-  return request.pageSize ? { ...result, complete, timings: { scopeMs, retrievalMs, hydrationMs,
-    serverMs: performance.now() - started } } : { ...result, complete };
+  return request.pageSize ? { ...result, timings: { scopeMs, retrievalMs, hydrationMs,
+    serverMs: performance.now() - started } } : result;
 }

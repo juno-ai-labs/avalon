@@ -12,8 +12,10 @@ does not deploy this code or backfill dormant objects.
 The core [authorization primitive](authorization.md) owns the optional migrated
 member read path and exact attachment discovery. Deployment enables this path
 for every workspace; incomplete attachment evidence initiates queued discovery.
-Search returns verified matches with `complete: false` if any candidate has
-unavailable authority; the desktop labels partial results and offers retry.
+Search returns verified matches only. A candidate whose authority the projection
+does not hold is omitted and filled after the response; the page carries no
+completeness flag, because the projection is registered from the mutation side
+before a search needs it.
 
 ## Where the code lives
 
@@ -90,10 +92,14 @@ request path) and renders every result from the attributes the
 candidate came back with: the full text, the title and source label, the time,
 the transcript position, the link URL, the MIME type and the archive state. A
 decision the projection does not hold yet is answered unavailable, the candidate
-is omitted, the page reports `complete: false`, and the fill (registration,
-canonical walk, publication) runs after the response through `waitUntil`, so the
-next search finds it. Conversation messages and links are grouped by
-parent/substream. A row indexed before the display attributes existed, or whose
+is omitted without the page saying so, and the fill (registration, canonical
+walk, publication) runs after the response through `waitUntil`, so the next
+search finds it. That is the exception: push jobs register every pair their
+target reaches from the WorkspaceDO directories before a member's first search
+(see [authorization](authorization.md)). Conversation messages and links are
+grouped by parent/substream. A connector resource row carries `connection_id`
+and is admitted by the `(subject, connection)` decision, read once per page;
+an attachment or note is admitted by its own resource decision. A row indexed before the display attributes existed, or whose
 conversation is archived, is omitted: not finding something is the safe failure.
 No revision or content-hash check runs against canonical text on the read path;
 the conditional upsert, the deletion watermark and the pipeline's post-write
@@ -319,7 +325,8 @@ reloaded from a canonical source.
 ## Invariants
 
 - Search scope enumeration includes archived and system conversations and has its own complete-list contract. Sidebar visibility is not search readability.
-- Scope prefilters are an optimization, never authority. The projected search decision decides every returned result; an index attribute never grants access.
+- Scope prefilters are an optimization, never authority. The projected search decision decides every returned result; an index attribute never grants access. `connection_id` names which decision admits a row; it grants nothing by itself.
+- The response never reports what it omitted. A projection miss is filled after the response, and the mutation-side registration is what keeps misses rare; there is no partial-results flag to carry one.
 - A row without its display attributes, or with `archived` set, is never returned. Member retrieval filters on `archived Eq false`, which a null attribute does not match, so neither kind consumes a candidate page; the read path checks the same value again on every row it renders. Omission is the safe failure; nothing falls back to a canonical reload.
 - Every writer of a conversation's display writes the current state it reads beside the text: the producer at upsert time, the patch job when it runs. A display job names the conversation and never carries a title, so a delayed or redelivered job cannot write an old one, and the pipeline's post-write fence retries an upsert whose display changed underneath it.
 - Public cursors identify consumed candidate positions and never grant access. Fully rejected pages may expose continuation; index-existence concealment is not part of this member-only API.
@@ -429,7 +436,9 @@ proves the display attributes each producer writes and the patch passes a rename
 or archived conversation runs; `test-workers/search-projection.test.ts`
 covers the display trigger, its outbox channel and the migration-52 requeue;
 `test-workers/search-authorization.test.ts`, `test-workers/conversation-parent-contract.test.ts`
-and `test/search-route.test.ts` cover deferred fills and index-served rendering
+and `test/search-route.test.ts` cover deferred fills, connection-admitted rows and index-served rendering;
+`test-workers/search-authorization-universe.test.ts` covers what each push target registers, the
+push registering before it reloads, the `member` push and the connection decision
 with no content RPC. A disposable live namespace in gcp-us-west1 verified on
 2026-09-10 that the display attributes can be added to an existing namespace,
 that `text` returns with the row, that `patch_by_filter` reports `rows_patched`
@@ -533,6 +542,22 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-10 — Register decisions before the first search and drop the completeness flag
+
+The entry below accepted a shorter first page for a cold user. The team then
+chose complete consistency as the design goal and asked for the incomplete flag
+to go: the search response no longer carries `complete`, the route no longer
+returns 503 to a client without partial-result support, and the desktop has no
+partial footer. What makes that honest is on the write side, recorded in the
+[authorization changelog](authorization.md#changelog): push jobs register every
+pair their target reaches before reloading owners, membership changes push the
+member they name, and migration 48 queues the existing directories. Connector
+rows now carry `connection_id` and are admitted by one decision per connection,
+read once per page, because 81,000 synced resources times the member list does
+not fit a per-resource projection. Nothing on the read path changed shape: the
+request field `supportsPartialResults` is still accepted and ignored for
+desktop builds that send it. Resource lists keep their own `complete` field.
 
 ### 2026-09-10 — Serve results from the index and keep content owners off the read path
 
