@@ -1174,8 +1174,9 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         request.status, request.status === "failed" ? request.errorCode : null, now, request.operationId,
       );
       this.parentSql.exec(
-        `UPDATE conversation_children SET status = ?, updated_at = ? WHERE substream_id = ?`,
-        request.status, now, operation.substreamId,
+        `UPDATE conversation_children SET status = ?, title = COALESCE(?, title), updated_at = ?
+          WHERE substream_id = ?`,
+        request.status, request.title ?? null, now, operation.substreamId,
       );
     });
     if (request.status === "ready") {

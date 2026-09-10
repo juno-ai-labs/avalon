@@ -419,6 +419,72 @@ describe("substream preparation on workerd", () => {
     });
   });
 
+  it("creates the child with the message that started it, named from it and waiting on nothing else", async () => {
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000ce40";
+    // No title: the launch surface has no field for one, and this is the whole
+    // of what the desktop sends.
+    await service.prepare(WORKSTREAM_ID, { operationId, throughTurnId: "source-turn-1" });
+    const created = await service.confirm(WORKSTREAM_ID, operationId, {
+      clientMessageId: "opening-instruction",
+      text: "Compare the pricing page\nwith last quarter",
+      mentions: [],
+      attachmentIds: [],
+      confirmedParticipantUserIds: [],
+    });
+
+    expect(created.opening?.turnId).toEqual(expect.any(String));
+    // The first line of the message, not the placeholder preparation reserved
+    // the child under, and in `naming` so its header shows a skeleton rather
+    // than a name nobody chose.
+    expect(created.title).toBe("Compare the pricing page");
+    await runInDurableObject(conversation(created.substreamId), (_instance, state) => {
+      // `automatic` rather than `naming` because this caller has no deferral,
+      // so the first naming pass is awaited inside the confirmation. Reaching
+      // it at all is the assertion: the pass advances `naming` -> `automatic`
+      // with a compare-and-set, so a child provisioned settled, or a pass
+      // addressed at the parent as it used to be, both leave this untouched.
+      expect(state.storage.sql.exec<{ title: string; title_status: string }>(
+        `SELECT title, title_status FROM workstream WHERE id = 1`,
+      ).one()).toMatchObject({ title: "Compare the pricing page", title_status: "automatic" });
+      // The turn is durable and the child's loop has been asked to run: an
+      // opening message that reached the transcript without waking the loop
+      // would sit there with nobody working on it.
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM canonical_conversation_turn_details WHERE client_message_id = 'opening-instruction'`,
+      ).one().count).toBe(1);
+    });
+    // And the work stream it branched out of keeps its own name: naming a child
+    // is addressed at the child.
+    await runInDurableObject(conversation(), (_instance, state) => {
+      expect(state.storage.sql.exec<{ title: string }>(
+        `SELECT title FROM workstream WHERE id = 1`,
+      ).one().title).toBe("Source");
+    });
+    // The row every member's sidebar reads carries the same title as the child
+    // itself, in the write that made it visible.
+    expect((await parent().listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID,
+    })).children.find((child) => child.substreamId === created.substreamId))
+      .toMatchObject({ title: "Compare the pricing page" });
+
+    // A retry of the same confirmation replays the turn rather than saying it
+    // twice: the response is lost far more often than the write is.
+    const replay = await service.confirm(WORKSTREAM_ID, operationId, {
+      clientMessageId: "opening-instruction",
+      text: "Compare the pricing page\nwith last quarter",
+      mentions: [],
+      attachmentIds: [],
+      confirmedParticipantUserIds: [],
+    });
+    expect(replay.opening?.turnId).toBe(created.opening?.turnId);
+    await runInDurableObject(conversation(created.substreamId), (_instance, state) => {
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM canonical_conversation_turn_details`,
+      ).one().count).toBe(1);
+    });
+  });
+
   it("does not let another parent member confirm or a cancelled preparation become ready", async () => {
     const operationId = "00000000-0000-7000-8000-00000000ce21";
     const creator = new SubstreamCreationService(TEST_ENV, creatorAuth);

@@ -12,14 +12,17 @@ const api = vi.hoisted(() => ({
   getWorkspaceMembers: vi.fn(),
   removeParticipant: vi.fn(),
   prepareSubstream: vi.fn(),
+  confirmSubstream: vi.fn(),
   cancelSubstream: vi.fn(),
 }));
 const retainedSocket = vi.hoisted(() => vi.fn());
 const scrollTranscriptToEnd = vi.hoisted(() => vi.fn());
 const restoreTranscriptPosition = vi.hoisted(() => vi.fn());
 
+/** Set by the tests that need a signed-in author; null everywhere else. */
+const session = vi.hoisted(() => ({ current: null as unknown }));
 vi.mock('../lib/app-session', () => ({
-  useAppSession: () => ({ api, session: null }),
+  useAppSession: () => ({ api, session: session.current }),
 }));
 
 vi.mock('../lib/use-client-feature-flags', () => ({
@@ -138,6 +141,7 @@ describe('socket-first work-stream open', () => {
   afterEach(() => { vi.restoreAllMocks(); });
   beforeEach(() => {
     vi.clearAllMocks();
+    session.current = null;
     api.getWorkspaceMembers.mockResolvedValue([]);
     retainedSocket.mockReturnValue({
       activeCompaction: null,
@@ -318,27 +322,102 @@ describe('socket-first work-stream open', () => {
     await waitFor(() => expect(loadTranscriptRange).toHaveBeenCalledTimes(2));
   });
 
-  it('keeps preparation inputs stable while pending and cancels a failed attempt only once on edit', async () => {
-    let rejectPreparation!: (error: Error) => void;
-    api.prepareSubstream.mockImplementation(() => new Promise((_resolve, reject) => { rejectPreparation = reject; }));
-    api.cancelSubstream.mockResolvedValue(undefined);
+  /** A main conversation with `count` settled turns, newest last. */
+  function conversationBoot(count: number): WorkstreamBoot {
     const boot = recoveryBoot();
-    renderScreen((cache) => {
+    boot.transcript.snapshotThrough = count;
+    boot.transcript.ranges = [{
+      purpose: 'latest',
+      requested: { startInclusive: 1, endExclusive: count + 1 },
+      covered: { startInclusive: 1, endExclusive: count + 1 },
+      turns: Array.from({ length: count }, (_value, index) => ({
+        transcriptSequence: index + 1,
+        turnId: `turn-${index + 1}`,
+        entryKind: 'conversation' as const,
+        actor: 'assistant' as const,
+        authorUserId: null,
+        authorSnapshot: null,
+        attentionOrdinal: index + 1,
+        createdAtUtc: '2026-08-26T14:00:00.000Z',
+        revision: 1,
+        blocks: [{
+          type: 'text' as const,
+          blockId: `turn-${index + 1}:text:0`,
+          blockIndex: 0,
+          text: `Main turn ${index + 1}`,
+          streaming: false,
+        }],
+        activityId: null,
+      })),
+      activities: [],
+      pluginRuns: [],
+    }];
+    return boot;
+  }
+
+  function openConversation(count: number): QueryClient {
+    const boot = conversationBoot(count);
+    return renderScreen((cache) => {
       cache.setQueryData(['workstream', workstreamId], boot);
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
     });
+  }
+
+  it('creates a substream from the launch composer and seeds the conversation it opens', async () => {
+    const childId = '00000000-0000-7000-8000-000000000670';
+    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New substream', context: { parts: [] } });
+    api.confirmSubstream.mockResolvedValue({
+      substreamId: childId,
+      title: 'Check the pricing page',
+      opening: { turnId: 'turn-child-1', clientMessageId: 'client-1', createdAt: '2026-08-26T14:05:00.000Z' },
+    });
+    session.current = {
+      user: { id: '00000000-0000-7000-8000-000000000671', name: 'Creator', email: 'creator@example.test' },
+      workspace: { id: '00000000-0000-7000-8000-000000000672', region: 'global', role: 'member' },
+    };
+    const client = openConversation(2);
+
     fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
-    const title = screen.getByRole('textbox', { name: 'Title' });
-    fireEvent.click(screen.getByRole('button', { name: 'Review context' }));
-    expect(title).toBeDisabled();
-    await act(async () => { rejectPreparation(new Error('Preparation failed')); });
-    expect(title).toBeEnabled();
-    expect(screen.getByText('Preparation failed')).toBeInTheDocument();
-    fireEvent.change(title, { target: { value: 'Revised title' } });
-    expect(screen.queryByText('Preparation failed')).not.toBeInTheDocument();
-    fireEvent.change(title, { target: { value: 'Revised title again' } });
-    expect(api.cancelSubstream).toHaveBeenCalledTimes(1);
-    expect(api.cancelSubstream).toHaveBeenCalledWith(workstreamId, api.prepareSubstream.mock.calls[0]![1].operationId);
+    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.change(composer, { target: { value: 'Check the pricing page' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(api.confirmSubstream).toHaveBeenCalled());
+    expect(api.prepareSubstream).toHaveBeenCalledWith(workstreamId, {
+      operationId: api.prepareSubstream.mock.calls[0]![1].operationId,
+      throughTurnId: null,
+    });
+    expect(api.confirmSubstream.mock.calls[0]![2]).toMatchObject({
+      text: 'Check the pricing page',
+      attachmentIds: [],
+      confirmedParticipantUserIds: [],
+    });
+    // Both halves of the destination, or its screen shows its opening state on
+    // arrival despite everything about the turn being known here.
+    await waitFor(() => expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId]))
+      .toMatchObject({ title: 'Check the pricing page', titleStatus: 'naming' }));
+    expect(client.getQueryData(['substream-ordered-transcript', workstreamId, childId])).toBeDefined();
+  });
+
+  it('shows no branch context when the substream is started from the sidebar', async () => {
+    openConversation(3);
+    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
+    expect(await screen.findByRole('textbox', { name: 'What should this substream work on?' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Branching from' })).not.toBeInTheDocument();
+  });
+
+  it('puts the message back in the composer when the substream could not be created', async () => {
+    api.prepareSubstream.mockRejectedValue(new Error('The context could not be prepared.'));
+    openConversation(1);
+    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
+    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.change(composer, { target: { value: 'Look at the invoice' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    expect(await screen.findByText('The context could not be prepared.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'What should this substream work on?' }))
+      .toHaveValue('Look at the invoice'));
+    expect(api.confirmSubstream).not.toHaveBeenCalled();
   });
 
   it('keeps parent participants in the sidebar while the title bar manages the selected conversation', async () => {

@@ -162,6 +162,15 @@ export const SetPrivateChildTerminalStatusRequestSchema = z.strictObject({
   ...PrivateChildOperationAddress,
   status: z.enum(["ready", "failed"]),
   errorCode: z.string().min(1).max(180).nullable().default(null),
+  /**
+   * The title the child is published under, where confirmation has a better one
+   * than preparation reserved. Preparation happens before the opening message
+   * exists, so the title it wrote is a placeholder; carrying the real one here
+   * means the registry row and the child object agree in the same write that
+   * makes the row visible, rather than the sidebar showing the placeholder
+   * until the naming pass converges it a second or two later.
+   */
+  title: z.string().min(1).max(500).optional(),
 });
 
 export const ListVisiblePrivateChildrenRequestSchema = z.strictObject({

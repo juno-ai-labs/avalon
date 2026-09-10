@@ -11,6 +11,7 @@ import {
   AddParticipantDialog,
   AddResourceDialog,
   acceptedMessageOverlayDeliveryState,
+  branchProvenance,
   highestVisibleAttentionSequence,
   initialTranscriptAnchorIndex,
   manualElicitationResponse,
@@ -1199,5 +1200,36 @@ describe('workspaceMemberFromSession', () => {
       role: 'member',
       timezone: 'America/Los_Angeles',
     });
+  });
+});
+
+describe('what a substream shows of where it came from', () => {
+  const turn = (sequence: number): Message => ({
+    id: `row-${sequence}`,
+    transcriptTurnId: `turn-${sequence}`,
+    workstreamId: 'workstream-1',
+    sequenceNumber: sequence,
+    authorType: 'agent',
+    messageType: 'text',
+    text: `Main turn ${sequence}`,
+    createdAt: '2026-09-09T20:00:00.000Z',
+  });
+  const transcript = [1, 2, 3, 4, 5, 6, 7].map(turn);
+
+  it('ends at the message that was branched from and reaches five turns back', () => {
+    expect(branchProvenance(transcript, 'turn-7').map((message) => message.text))
+      .toEqual(['Main turn 3', 'Main turn 4', 'Main turn 5', 'Main turn 6', 'Main turn 7']);
+  });
+
+  it('stops at the start of the conversation rather than padding the window', () => {
+    expect(branchProvenance(transcript, 'turn-2').map((message) => message.text))
+      .toEqual(['Main turn 1', 'Main turn 2']);
+  });
+
+  it('shows nothing for a substream started from the sidebar, or from a turn off the loaded window', () => {
+    expect(branchProvenance(transcript, null)).toEqual([]);
+    // Not the newest turns: a branch point this client cannot see is provenance
+    // it does not have, and the last five turns are a different claim.
+    expect(branchProvenance(transcript, 'turn-99')).toEqual([]);
   });
 });

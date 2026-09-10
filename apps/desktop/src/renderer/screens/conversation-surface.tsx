@@ -86,6 +86,11 @@ import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { evictCachedWorkstream, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
+import {
+  SubstreamLaunchSurface,
+  type LaunchingSubstream,
+  type SubstreamLaunchProps,
+} from '../components/substream-launch';
 import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
@@ -214,6 +219,40 @@ export function workstreamPayloadBelongsToRoute(
 ): boolean {
   return workstream?.id === routeWorkstreamId
     && transcript !== undefined;
+}
+
+/**
+ * How many main-conversation turns a substream shows above its composer.
+ *
+ * Enough to recognize what is being branched out of at a glance, and few
+ * enough that the composer stays where the eye left it. What the substream
+ * actually inherits is not this: the platform freezes a summary of the
+ * conversation through the branch point, and the child's own feed shows it
+ * under **Context from the main conversation** once it exists.
+ */
+const BRANCH_PROVENANCE_TURNS = 5;
+
+/**
+ * The turns shown, faded, above a substream's composer: the message it branches
+ * from and the ones that led to it, oldest first.
+ *
+ * A substream started from the sidebar branches from wherever the conversation
+ * has reached rather than from a message somebody pointed at, and it shows
+ * nothing — the same empty body the work-stream launcher has, because there is
+ * no particular moment to be looking at.
+ */
+export function branchProvenance(
+  transcript: readonly Message[],
+  throughTurnId: string | null,
+): Message[] {
+  if (throughTurnId === null) return [];
+  const cutoff = transcript.findIndex((message) =>
+    message.transcriptTurnId === throughTurnId || message.id === throughTurnId);
+  // A branch point outside the loaded window is not an error and not a reason
+  // to show the wrong turns: the substream is still the one that was asked
+  // for, and its provenance is simply not on the client to draw.
+  if (cutoff < 0) return [];
+  return transcript.slice(Math.max(0, cutoff + 1 - BRANCH_PROVENANCE_TURNS), cutoff + 1);
 }
 
 export function manualElicitationResponse(
@@ -566,6 +605,15 @@ export interface ConversationHeaderContext {
   rename: (title: string) => Promise<void>;
 }
 
+export interface ConversationSubstreamLaunch {
+  /** The main-conversation turn the substream branches from, or null from the sidebar. */
+  throughTurnId: string | null;
+  launching: LaunchingSubstream | null;
+  error?: string | undefined;
+  onCancel: () => void;
+  onCreate: SubstreamLaunchProps['onCreate'];
+}
+
 export interface ConversationSurfaceProps {
   parentKind: ConversationParentKind;
   parentId: string;
@@ -573,6 +621,16 @@ export interface ConversationSurfaceProps {
   /** Parent-owned sidebar data; never substitute the selected child's roster or inventory. */
   workstreamContext?: WorkstreamDetail;
   onStartSubstream?: (throughTurnId: string) => void;
+  /**
+   * A substream being written in front of this conversation.
+   *
+   * It replaces the three rows of the column — header, transcript, dock — and
+   * nothing else: the sidebar, the inspector and the parent's own socket
+   * belong to the work stream, which has not been left. The turns it fades in
+   * above its composer come from this transcript, which is the one place they
+   * are already loaded.
+   */
+  substreamLaunch?: ConversationSubstreamLaunch | null;
   renderHeader?: (context: ConversationHeaderContext) => React.ReactNode;
   renderSidebar?: (context: ConversationHeaderContext & {
     attachedSidekicks: SidekickAttachment[] | undefined;
@@ -601,6 +659,7 @@ export function ConversationSurface({
   renderHeader,
   renderSidebar,
   onStartSubstream,
+  substreamLaunch,
 }: ConversationSurfaceProps): React.JSX.Element {
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
   const parentDetailQueryKey = useMemo(() => workstreamDetailQueryKey(id, '0'), [id]);
@@ -1819,6 +1878,7 @@ export function ConversationSurface({
   }
 
   const detail = routedDetail;
+  const launchAuthor = workspaceMemberFromSession(session);
   const runTiming = workstreamRunTiming(detail.harnessStatus, detail.latestHarnessRun);
   const orderedOwnsRunTiming = orderedTranscriptOwnsRunTiming(
     orderedTranscript.data,
@@ -1864,7 +1924,34 @@ export function ConversationSurface({
         openArtifact: sidebarCitations.openPreview,
         focusTranscript: () => transcriptRef.current?.focus({ preventScroll: true }),
       })}
-    <div className={clsx('workstream-screen', parentKind === 'automation' && 'automation-screen')}>
+    <div className={clsx(
+      'workstream-screen',
+      parentKind === 'automation' && 'automation-screen',
+      // The launch geometry, taken whole from the work-stream launcher: an
+      // `auto` header row that can grow into place, the launcher's own dock
+      // padding and composer treatment while composing, and nothing of its own
+      // once `is-launching` lands — by then the element is already dressed as
+      // the conversation it is about to become.
+      substreamLaunch && 'workstream-launch-screen',
+      substreamLaunch?.launching && 'is-launching',
+    )}>
+      {substreamLaunch ? <SubstreamLaunchSurface
+        api={api}
+        currentUser={launchAuthor}
+        draft={{
+          throughTurnId: substreamLaunch.throughTurnId,
+          provenance: branchProvenance(visibleTranscript, substreamLaunch.throughTurnId),
+        }}
+        error={substreamLaunch.error}
+        launching={substreamLaunch.launching}
+        members={members.data ?? []}
+        onCancel={substreamLaunch.onCancel}
+        onCreate={substreamLaunch.onCreate}
+        onOpenAttachment={setAttachmentPreview}
+        parent={displayedDetail}
+        workspaceId={workspaceId}
+        workspaceRegion={workspaceRegion}
+      /> : <>
       {renderHeader?.({
         detail: displayedDetail,
         socketState,
@@ -2030,6 +2117,7 @@ export function ConversationSurface({
           />
         </div>
       </div>
+      </>}
 
       {(RIGHT_SIDEBAR_ENABLED || resourcePreview) && <InspectorRail
         {...(resourcePreview ? { lightbox: {

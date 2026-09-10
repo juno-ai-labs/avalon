@@ -4499,10 +4499,19 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // naming pass over their transcripts, and nothing outside Rally is
     // waiting on a run's outcome the way Slack waits on a room's.
     if (input.parentKind !== "automation") {
+      // Addressed at the conversation that ran, not at its parent. A private
+      // child is named from its own transcript now that it is created with an
+      // instruction and starts in `naming`; before that it was born settled,
+      // so a pass addressed here at the parent found nothing to do and the
+      // misaddressing was invisible.
       await refreshWorkstreamName(executionEnv, {
         workspaceId: input.workspaceId,
         workstreamId: input.parentId,
+        substreamId: input.substreamId,
       });
+      // The description is the work stream's own — what the sidebar and the
+      // directory say it is about — and a private child has no surface that
+      // shows one, so this stays addressed at the main conversation.
       await refreshWorkstreamDescription(executionEnv, {
         workspaceId: input.workspaceId,
         workstreamId: input.parentId,

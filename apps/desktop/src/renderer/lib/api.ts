@@ -3,7 +3,12 @@ import { SearchResponseSchema, type SearchRequest, type SearchResponse } from '@
 import { OnboardingJourneySchema, type UpdateOnboardingJourney } from '@rally/contracts';
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
-import { SubstreamPreparationPreviewSchema, type SubstreamPreparationPreview } from '@rally/contracts/substream-creation';
+import {
+  SubstreamCreationResultSchema,
+  SubstreamPreparationPreviewSchema,
+  type SubstreamCreationResult,
+  type SubstreamPreparationPreview,
+} from '@rally/contracts/substream-creation';
 import {
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationExecutionPrincipalClaimSchema,
@@ -1661,7 +1666,6 @@ export class RallyApi {
 
   async prepareSubstream(parentId: string, input: {
     operationId: string;
-    title: string;
     throughTurnId: string | null;
   }): Promise<SubstreamPreparationPreview> {
     return this.request(`/conversations/${encodeURIComponent(parentId)}/substreams/prepare`, {
@@ -1672,12 +1676,45 @@ export class RallyApi {
     });
   }
 
-  async confirmSubstream(parentId: string, operationId: string): Promise<{ substreamId: string }> {
+  /**
+   * Create the prepared substream, with the message that starts it.
+   *
+   * The opening message travels with the confirmation rather than following it
+   * over the child's socket: the child does not exist until this answers, so a
+   * message sent afterwards would be a second thing to retry, and a failure
+   * between the two would leave an empty substream standing for words that
+   * were never said.
+   */
+  async confirmSubstream(
+    parentId: string,
+    operationId: string,
+    opening?: {
+      clientMessageId: string;
+      text: string;
+      mentions?: MentionIdentity[];
+      attachmentIds?: string[];
+      confirmedParticipantUserIds?: string[];
+    },
+  ): Promise<SubstreamCreationResult> {
+    const mentions = opening && (opening.text.includes('@') || (opening.mentions?.length ?? 0) > 0)
+      ? await this.messageMentionPayload(opening.text, opening.mentions)
+      : [];
     return this.request(`/conversations/${encodeURIComponent(parentId)}/substreams/confirm`, {
       method: 'POST',
       headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
-      body: { operationId },
-      schema: z.strictObject({ substreamId: z.string().min(1) }),
+      body: {
+        operationId,
+        ...(opening ? {
+          opening: {
+            clientMessageId: opening.clientMessageId,
+            text: opening.text,
+            mentions,
+            attachmentIds: opening.attachmentIds ?? [],
+            confirmedParticipantUserIds: opening.confirmedParticipantUserIds ?? [],
+          },
+        } : {}),
+      },
+      schema: SubstreamCreationResultSchema,
     });
   }
 
