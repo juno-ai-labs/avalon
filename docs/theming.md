@@ -80,6 +80,20 @@ serves it through `rally-font://`.
   `palette-ink-dark` hold the same values in both appearance files, and the
   `--personal-ink-*` pair swaps which neutral it points at precisely so that it
   does not invert.
+- **A spacing token is re-fitted, never escaped per consumer.** When a shared
+  value is wrong for one rule, the fix is the token or a decision written down
+  beside the rule — not a literal on that one selector. Overriding each
+  consumer in turn is what let `sys.space.group.gap` keep a retired theme's
+  60px in the one place nobody had overridden; the value that survives that
+  process is the one nobody argued for. `app.css.node.test.ts` enforces this
+  for the sidebar's group breaks; `margin-top: 0` on the compact rail is
+  allowed because it hides the headings the gap spaces, which is a decision
+  rather than an escape.
+- **A rule that names a token is not proof the token reaches it.** Check for a
+  shorthand later in `app.css` that shadows the longhand on the same element —
+  `.sidebar-primary-actions` (`app.css:703`) names `sys.space.group.gap` and has
+  never used it, because `.sidebar-secondary-actions` sets a `margin` shorthand
+  at equal specificity further down the file.
 - **Appearance files are data.** They cannot carry HTML or JavaScript, and the
   desktop registers no appearance-document protocol or iframe.
 
@@ -130,6 +144,81 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-09-10 — The group gap stopped being Airy's number
+
+**What changed:** `sys.space.group.gap` goes from 60px to 14px in both themes,
+and the four rules that existed only to escape it are gone —
+`.workstreams-section` (22px), `.projects-section` (12px),
+`.grokbot-shell .workstreams-section` (10px), and
+`.grokbot-shell .sidebar-group` (14px). One selector went with them:
+`.grokbot-shell .sidebar.is-compact .workstreams-section`, which had been
+carrying enough specificity to beat the first two and is now covered by the
+`.sidebar-section` beside it.
+
+**Why:** 60px was Airy's, set by the 2026-08-19 entry "The navigation's own
+vertical rhythm became themeable" when Airy's whole premise was that negative
+space does the work of borders. Airy is gone — the 2026-09-04 entry "Rally has
+one design with light and dark appearances" retired the named families — but
+its number stayed on as the single value every theme inherits, which is a
+different claim than the one that was argued for. What followed is the part
+worth recording: rather than the token being re-fitted, each consumer somebody
+actually looked at was overridden back down to the low teens, one rule at a
+time. That left the token deciding nothing anywhere except one place nobody had
+looked — above **Pinned** — so the number that survived was the one no argument
+was ever made for. Measured in the running client, the gap from the search field
+to the **Pinned** label was 70px; it is now 24px.
+
+**Where 14px comes from.** Not a fresh guess. It is what
+`.grokbot-shell .sidebar-group` already used, and a sidebar group is exactly
+what `registry.json` says this token's group is for: `sys.space.group` is
+"Between one group of rows and the next." The overrides were the team's revealed
+answer to what this break should
+measure; the change adopts the one attached to the token's own definition
+instead of inventing a fifth number.
+
+**Considered and rejected:** a `.grokbot-shell .pinned-section` override, which
+was cheaper to reverse and would have fixed the reported symptom on its own. It
+was rejected because it is the same move that produced the bug: a fifth escape
+would have left the token meaning nothing, and the next section added to the
+sidebar would have inherited 60px and needed a sixth.
+
+**One rule still reads as a token consumer and is not** — review caught this,
+and it is why the paragraph above says one place rather than two.
+`.sidebar-primary-actions` (`app.css:703`) declares
+`margin-bottom: var(--av-sys-space-group-gap)`, but its only render site
+(`sidebar.tsx`) puts `sidebar-secondary-actions` on the same element, and
+`.sidebar-secondary-actions` (`app.css:5330`) sets `margin: 0 1px 14px` at equal
+specificity some 4,600 lines later. Source order decides it, so that shorthand
+shadows the longhand — along with the `display` and `gap` beside it, which the
+same rule also replaces. All three declarations at `app.css:703` are dead as
+written, and were carrying 14px long before this change. They are left in place
+rather than swept with the others: deleting them is a no-op only for as long as
+both classes stay on that element, the block does not render, and a change that
+cannot be looked at in a window is not one to make on cascade reasoning alone.
+Whoever removes `conversationOnly` should fix that rule before trusting it.
+
+**Consequences:** `.workstreams-section`'s margin moves from 10px to 14px — the
+one visible change beyond **Pinned**, accepted so the breaks in that rail are one
+value rather than three. What a reader actually sees depends on what precedes it:
+under a pinned section the gap moves 10px to 14px, but with nothing pinned it
+follows `.sidebar-commandbar` and collapses against that rule's 12px, so the
+visible move is 12px to 14px. Both are the same declaration. `.sidebar-section`
+and `.sidebar-group` now resolve to the same 14px, which is deliberate — the
+sidebar states its hierarchy through its headings rather than through two
+different break sizes, and the two values it had before (10px against 14px) were
+not carrying that distinction on purpose either. `.projects-section` now follows
+the token too, but
+`app-shell.tsx` passes `conversationOnly` unconditionally, so it does not render
+in the shipping client and could not be looked at; if that flag ever comes off,
+it and the shadowed rule above are what to check first. The
+compact rail keeps its explicit `margin-top: 0` because it hides the headings
+these gaps are spacing, which is a different reason than escaping the token. A
+`.sidebar-section` that wants a different break should now say why in a comment
+rather than write a sixth number. Margins here collapse: `.sidebar-commandbar`
+has a 12px bottom margin and the section a 14px top, so the token alone decides
+that gap — raising the commandbar's number would not show until it passed the
+token's.
 
 ### 2026-09-10 — The ink table follows APCA, not the WCAG 2 ratio
 
