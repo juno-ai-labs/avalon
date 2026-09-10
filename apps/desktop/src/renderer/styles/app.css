@@ -7005,11 +7005,12 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 /* The new-Sidekick tile's hexagon: the same silhouette as a Sidekick's, drawn
    as an empty slot rather than an identity, because there is no Sidekick yet to
    take a fill or a symbol from. Dashed because the outline is what says "not a
-   Sidekick yet" at 36px, where a solid fill in any colour would read as one. The stroke is in the viewBox's
-   own units, so it scales with the tile like the shape it traces.
+   Sidekick yet" at 36px, where a solid fill in any colour would read as one.
+   The stroke is in the viewBox's own units, so it scales with the tile like the
+   shape it traces.
 
-   `text-muted`, the same token the dot above uses and the same ink the plus
-   inside is drawn in — not a `border-*` token. This outline is the whole mark
+   `text-muted`, the same ink the plus inside is drawn in — not a `border-*`
+   token. This outline is the whole mark
    rather than a divider beside content, so it answers to the 3:1 floor for
    graphical objects, and the border ramp has no headroom for that: against
    `surface-default`, `border-strong` is 1.38:1 in the light theme and 1.44:1 in
