@@ -48,7 +48,7 @@
     "sys.size.radius.pill": "999px",
     "sys.size.border.hairline": "1px",
     "sys.size.control.height": "36px",
-    "sys.space.stack.gap": "calc({ref.space.unit} * 3)",
+    "sys.space.stack.gap": "{ref.space.unit}",
     "sys.space.row.gap": "{ref.space.unit}",
     "sys.space.group.gap": "14px",
     "sys.space.block.gap": "calc({ref.space.unit} * 4)",
