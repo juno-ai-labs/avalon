@@ -38,10 +38,10 @@ describe('workstreamAppearance', () => {
   });
 
   it('inks a glyph from the colour it is actually painted, not the one the id generates', () => {
-    // Every ring hue takes black ink and only the neutral and two retired keys
-    // take white, so a saved `black` is the case that tells the two apart. The
-    // glyph resolves one appearance now, and inking off the wrong half of it
-    // would put white on a light fill.
+    // `launch-room` generates `lime`, one of the three fills that still take
+    // black ink, and the saved colour is `black`, which takes white. That pair
+    // is what tells the two apart: the glyph resolves one appearance now, and
+    // inking off the wrong half of it would put black on a near-black fill.
     const saved = { icon: null, color: 'black' } satisfies WorkstreamAppearance;
     const generated = render(<WorkstreamGlyph id="launch-room" />).container;
     const stored = render(<WorkstreamGlyph appearance={saved} id="launch-room" />).container;

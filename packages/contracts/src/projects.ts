@@ -110,34 +110,62 @@ export const PROJECT_COLOR_KEYS_STORABLE = PALETTE_KEYS;
 export const PROJECT_COLOR_RING = PALETTE_RING;
 
 /**
- * Which ink reads on each fill, decided by WCAG contrast rather than by eye:
- * for every key the winner beats 4.5:1, so there is no marginal case to argue
- * about. On this palette black wins almost everywhere, which is what adopting a
- * light ramp costs — only `black` and the two darkest retired keys take white.
- * Checked in rather than computed at render so a value change that flips an ink
- * has to be a visible edit, and `palette.css.node.test.ts` recomputes it from
- * the tokens in both appearances.
+ * Which ink reads on each fill.
+ *
+ * The basis is APCA — the perceptual contrast model the WCAG 3 drafts are built
+ * on — together with a look at every fill at the sizes it actually ships. It is
+ * deliberately not WCAG 2's relative-luminance ratio, which this table used to
+ * follow. WCAG 2 makes black the winner on thirteen of these nineteen fills,
+ * `blue`, `red` and `violet` among them, where a white symbol plainly reads
+ * better and where every other design system ships white. Its luminance curve is
+ * known to misjudge saturated mid-tones, and this palette is nothing but
+ * saturated mid-tones: on `blue` it scores black 5.71 against white's 3.68,
+ * while APCA scores white Lc 69 against black's Lc 40.
+ *
+ * The boundary sits between `green` and `cyan`, and it was set by review rather
+ * than by arithmetic alone. APCA's own crossover is one step further along,
+ * between `emerald` and `orange`, but the fills on either side of it are ties in
+ * its terms — `cyan` is Lc 52 white against Lc 57 black, `emerald` Lc 54 against
+ * Lc 55. Where the two inks tie, the ring reads better with one of them running
+ * through it than with two exceptions stranded in the middle.
+ *
+ * What this knowingly gives up: none of the thirteen fills from `cyan` to
+ * `indigo` meets WCAG 2's 4.5:1 for text with the white ink, and four of them —
+ * `cyan` at 2.43:1, `emerald`, `orange`, `yellow` — are under even the 3:1 that
+ * standard asks of a graphical object. An audit run against WCAG 2 will flag
+ * them. That is the price of following the model that matches what is on the
+ * screen, and it is recorded here so the next person meets it as a decision
+ * rather than as a surprise.
+ *
+ * `emerald` and `orange` are the weakest entries whichever ink they take:
+ * neither reaches APCA's Lc 60 for body text on them, and these fills carry
+ * message-bubble prose, so that gap is real. It belongs to the fills rather than
+ * to this table — darkening those two closes it and no ink choice can.
+ *
+ * Checked in rather than computed at render, so a value change that flips an ink
+ * has to be a visible edit; `palette.css.node.test.ts` holds the readable floor
+ * against the tokens in both appearances.
  */
 export const PALETTE_INK = {
-  rose: "black",
-  red: "black",
-  orange: "black",
+  rose: "white",
+  red: "white",
+  orange: "white",
   amber: "black",
   lime: "black",
   green: "black",
-  emerald: "black",
-  cyan: "black",
-  blue: "black",
-  indigo: "black",
-  violet: "black",
-  purple: "black",
-  fuchsia: "black",
-  pink: "black",
+  emerald: "white",
+  cyan: "white",
+  blue: "white",
+  indigo: "white",
+  violet: "white",
+  purple: "white",
+  fuchsia: "white",
+  pink: "white",
   black: "white",
   gray: "white",
   brown: "white",
-  yellow: "black",
-  teal: "black",
+  yellow: "white",
+  teal: "white",
 } as const satisfies Record<PaletteKey, "white" | "black">;
 
 export const ProjectIdSchema = z.string().uuid().brand<"ProjectId">();
