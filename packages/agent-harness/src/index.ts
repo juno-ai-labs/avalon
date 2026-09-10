@@ -2204,7 +2204,7 @@ export interface AutomationCreatorPluginCatalogEntry {
 
 export type AutomationCompilerFailureCode =
   | HarnessFailureCode
-  | "automation_draft_not_submitted";
+  | "sidekick_draft_not_submitted";
 
 export class AutomationCompilerError extends Error {
   constructor(
@@ -2866,7 +2866,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   {
     name: "plugins_list",
     description: "List every connector plugin authorized for this Sidekick creator, with compact trusted metadata.",
-    capability: "rally.automation.plugins.list",
+    capability: "rally.sidekick.plugins.list",
     mode: "read",
     idempotency: "safe",
     inputSchema: { type: "object", additionalProperties: false, properties: {} },
@@ -2874,7 +2874,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   {
     name: "plugins_search",
     description: "Search authorized connector plugins and their tools by capability, provider, action, or keyword.",
-    capability: "rally.automation.plugins.search",
+    capability: "rally.sidekick.plugins.search",
     mode: "read",
     idempotency: "safe",
     inputSchema: {
@@ -2887,7 +2887,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   {
     name: "plugin_inspect",
     description: "Inspect one authorized plugin's trusted system guidance and exact tool schemas before recommending it.",
-    capability: "rally.automation.plugins.inspect",
+    capability: "rally.sidekick.plugins.inspect",
     mode: "read",
     idempotency: "safe",
     inputSchema: {
@@ -2900,7 +2900,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   {
     name: "people_search",
     description: "Search authorized workspace people and return canonical person IDs for evaluator rules.",
-    capability: "rally.automation.people.search",
+    capability: "rally.sidekick.people.search",
     mode: "read",
     idempotency: "safe",
     inputSchema: {
@@ -2913,7 +2913,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   {
     name: "resources_search",
     description: "Search authorized resources and return canonical resource IDs with their source plugin and binding relationship.",
-    capability: "rally.automation.resources.search",
+    capability: "rally.sidekick.resources.search",
     mode: "read",
     idempotency: "safe",
     inputSchema: {
@@ -2926,7 +2926,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   {
     name: "set_evaluator_rules",
     description: "Replace all external-event evaluator rules for this draft. Search for people and resources and inspect each named plugin first. Pass [] only to clear all rules.",
-    capability: "rally.automation.evaluators.set",
+    capability: "rally.sidekick.evaluators.set",
     mode: "write",
     idempotency: "record_before_execute",
     get inputSchema() {
@@ -2936,7 +2936,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   {
     name: "sidekicks_list",
     description: "List the Sidekicks this conversation can edit, each with its current definition: in a work stream, the ones the room owns; in a Sidekick's own conversation, that Sidekick. Start an edit from the definition returned here and submit the whole revised draft with its sidekickId.",
-    capability: "rally.automation.list",
+    capability: "rally.sidekick.list",
     mode: "read",
     idempotency: "safe",
     inputSchema: { type: "object", additionalProperties: false, properties: {} },
@@ -2944,7 +2944,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   {
     name: "submit_draft",
     description: "Save the best current Sidekick draft. Set ready=false when blocking input remains, then call core_request_elicitation with the structured question. A ready draft with a connector_activity, semantic_activity or webhook trigger is refused unless set_evaluator_rules has already sent at least one rule.",
-    capability: "rally.automation.submit",
+    capability: "rally.sidekick.submit",
     mode: "write",
     idempotency: "record_before_execute",
     inputSchema: automationDraftSubmissionJsonSchema,

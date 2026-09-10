@@ -535,13 +535,13 @@ column catalog; what follows is only what WorkspaceDO still holds.
   the changelog carries; a fresh WorkspaceDO still creates them inside frozen
   migration 1 and drops them with its identity row.
 
-- `memory_scopes` owns durable work-stream, user, workspace, and automation
+- `memory_scopes` owns durable work-stream, user, workspace, and Sidekick
   memory authority. `memory_items` stores compact prose facts; `memory_tables`,
   `memory_table_columns`, `memory_table_rows`, and `memory_table_cells` store typed
-  collections with natural-key deduplication and targeted queries. An
-  automation's chat and its runs resolve one scope of kind `automation` keyed by
-  the automation id, beside the workspace scope; there is no automation memory
-  engine elsewhere. A run creates the tables its definition describes through
+  collections with natural-key deduplication and targeted queries. A
+  Sidekick's chat and its runs resolve one scope of kind `sidekick` (stored as
+  `automation` before WorkspaceDO migration 50) keyed by the Sidekick id, beside
+  the workspace scope; there is no Sidekick memory engine elsewhere. A run creates the tables its definition describes through
   the memory tables plugin under that scope the first time it needs them.
 - A run's convergence is its `AutomationDO`'s `runs.occurrence_key`, unique per
   automation and derived per trigger: `schedule:<scheduleId>:<plannedFor>` for a
@@ -1008,6 +1008,23 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-09-10 — WorkspaceDO migration 50 stores a Sidekick's memory scope as `sidekick`
+
+**What changed:** `memory_scopes.kind` admits `sidekick` where it admitted
+`automation`, and every existing `automation` row reads `sidekick`. The kind is
+a CHECK vocabulary on a row an immutability trigger refuses to update, so the
+migration replaces the table: it holds the eight dependents in scratch copies,
+rebuilds the parent with its rows mapped, recreates the immutability trigger
+and the workspace identity fences, and restores the dependents parent-first
+with foreign keys enforced, per the recipe in
+[`durable-object-sqlite.md`](durable-object-sqlite.md#schema-and-migrations).
+`workspace-memory-scope-kind-migration.test.ts` is the populated upgrade on
+workerd.
+
+**Why:** [`automation-lifecycle.md`](automation-lifecycle.md#2026-09-10--the-stored-names-follow-the-model-facing-ones)
+records the rename; this entry records that it reached a stored vocabulary and
+how.
 
 ### 2026-09-09 — Bound and recover early-access operations
 

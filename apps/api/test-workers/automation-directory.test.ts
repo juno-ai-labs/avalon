@@ -176,7 +176,7 @@ describe("automation directory", () => {
       workspaceId: WORKSPACE_ID,
       workstreamId: ROOM_ID,
       userId: MEMBER_ID,
-    }))).rejects.toMatchObject({ code: "automation_directory_access_denied", status: 403 });
+    }))).rejects.toMatchObject({ code: "sidekick_directory_access_denied", status: 403 });
   });
 
   it("authorizes library summaries across personal, workspace, and room scopes", async () => {
@@ -247,7 +247,7 @@ describe("automation directory", () => {
       automationId,
       actor: { userId: MEMBER_ID, actorRole: "member", participantOfOwningWorkstream: false },
       appearance: { color: "purple" },
-    }))).rejects.toMatchObject({ code: "automation_forbidden", status: 403 });
+    }))).rejects.toMatchObject({ code: "sidekick_forbidden", status: 403 });
     const detail: AutomationDetail = await automationStub(automationId).readDetail({
       workspaceId: WORKSPACE_ID,
       automationId,

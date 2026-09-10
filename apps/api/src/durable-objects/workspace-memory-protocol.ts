@@ -22,7 +22,7 @@ import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 const TimestampSchema = z.string().min(1);
 const JsonTextSchema = z.string().min(1);
 
-export const MemoryScopeKindSchema = z.enum(["workstream", "automation", "user", "workspace"]);
+export const MemoryScopeKindSchema = z.enum(["workstream", "sidekick", "user", "workspace"]);
 
 // -- Scopes -------------------------------------------------------------------
 

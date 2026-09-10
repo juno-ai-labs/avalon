@@ -18,7 +18,7 @@ export async function resolveMemorySearchAccess(env: Env, input: WorkstreamWorkf
     userId: context.executionPrincipal.type === 'user' ? context.executionPrincipal.userId : null,
     delegation: PREFIX + JSON.stringify(context) };
   const selected: Array<Promise<MemoryScope>> = [ensureScope(env, input.workspaceId, 'workspace', input.workspaceId, false)];
-  if (input.parentKind === 'automation') selected.push(ensureScope(env, input.workspaceId, 'automation', input.parentId, false));
+  if (input.parentKind === 'automation') selected.push(ensureScope(env, input.workspaceId, 'sidekick', input.parentId, false));
   else {
     if (input.executionPrincipal.type === 'user') selected.push(ensureScope(env, input.workspaceId, 'user', input.executionPrincipal.userId, false));
     selected.push(ensureScope(env, input.workspaceId, 'workstream', input.parentId, false));

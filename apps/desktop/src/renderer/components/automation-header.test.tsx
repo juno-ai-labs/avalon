@@ -154,7 +154,7 @@ describe('AutomationHeader', () => {
     });
 
     // A newer ready revision on a paused automation: Apply used to light up
-    // and the object answered 409 automation_not_active; Run now was offered
+    // and the object answered 409 sidekick_not_active; Run now was offered
     // and answered the same. Resume is the one thing to do here.
     expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
     fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
