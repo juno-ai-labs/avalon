@@ -6,10 +6,12 @@ import { createCloudflareTestBinding } from '../test/helpers/cloudflare-test';
 import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
 import { AUTHORIZATION_PROJECTION_MIGRATION, AUTHORIZATION_PROJECTION_TIMING_MIGRATION, flushAuthorizationDeliveries, flushAuthorizationProjection } from '../src/durable-objects/authorization-projection';
 import { AuthorizationStorage } from '../src/durable-objects/authorization-storage';
+import type { WorkspaceDO } from '../src/durable-objects/workspace-do';
 import { type AuthorizationSnapshot } from '../src/services/authorization-policy';
 
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-000000000b01');
 const parentId = '00000000-0000-7000-8000-000000000b02';
+const siblingSubstreamId = '00000000-0000-7000-8000-000000000b07';
 const resourceId = '00000000-0000-7000-8000-000000000b03';
 
 describe('authorization SQLite state', () => {
@@ -111,32 +113,86 @@ describe('authorization SQLite state', () => {
     });
   });
 
+  // Every case below drives the state itself; blockConcurrencyWhile keeps the object's real
+  // alarm from draining authorization_delivery before the assertion reads it.
+  const directoryParent = (stub: DurableObjectStub<WorkspaceDO>) => runInDurableObject(stub, (_instance, state) => {
+    state.storage.sql.exec(
+      `INSERT INTO workspace_workstream_directory
+         (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+          title, description, preview, scope, exact_state, last_activity_at,
+          origin_type, title_status, latest_attention_ordinal,
+          unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
+       VALUES (?, 1, 1, ?, 'hash', 'Stuck', '', '', 'workspace', 'open', 0,
+               'ad_hoc', 'settled', 0, 0, 0, 0, 0)`,
+      parentId, `event:${parentId}`);
+  });
+
+  const deliveryKeys = (state: DurableObjectState) => state.storage.sql
+    .exec<{ job_key: string }>('SELECT job_key FROM authorization_delivery').toArray().map((row) => row.job_key);
+
   it('re-enqueues a tracked parent whose discovery never completed', async () => {
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName('authorization-storage-stuck-parent'));
     await stub.initializeWorkspace(workspaceId, 'wnam');
-    await runInDurableObject(stub, (_instance, state) => {
-      state.storage.sql.exec(
-        `INSERT INTO workspace_workstream_directory
-           (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
-            title, description, preview, scope, exact_state, last_activity_at,
-            origin_type, title_status, latest_attention_ordinal,
-            unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
-         VALUES (?, 1, 1, ?, 'hash', 'Stuck', '', '', 'workspace', 'open', 0,
-                 'ad_hoc', 'settled', 0, 0, 0, 0, 0)`,
-        parentId, `event:${parentId}`);
-    });
-
-    // The parent was discovered once, its projection job died, and the delivery row was drained.
-    await stub.beginAuthorizationBackfill({ workspaceId, refresh: false });
-    await runInDurableObject(stub, (_instance, state) => {
+    await directoryParent(stub);
+    await runInDurableObject(stub, async (instance, state) => state.blockConcurrencyWhile(async () => {
+      // The parent was discovered once, its projection job died, and the delivery row was drained.
+      await instance.beginAuthorizationBackfill({ workspaceId, refresh: false });
       state.storage.sql.exec('DELETE FROM authorization_delivery');
-    });
-    expect(await stub.authorizationBackfillStatus({ workspaceId })).toMatchObject({ complete: false, pendingParents: 1 });
+      expect(await instance.authorizationBackfillStatus({ workspaceId })).toMatchObject({ complete: false, pendingParents: 1 });
 
-    // This is what the 503 read path calls; it must re-enqueue rather than skip the tracked parent.
-    await stub.beginAuthorizationBackfill({ workspaceId, refresh: false });
-    await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec('SELECT * FROM authorization_delivery').toArray()).toHaveLength(1);
-    });
+      // This is what the unavailable read path calls; it must re-queue rather than skip the tracked parent.
+      await instance.beginAuthorizationBackfill({ workspaceId, refresh: false });
+      expect(deliveryKeys(state)).toEqual([JSON.stringify([parentId, null])]);
+    }));
+  });
+
+  it('re-enqueues a child whose discovery died after its parent completed', async () => {
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName('authorization-storage-stuck-child'));
+    await stub.initializeWorkspace(workspaceId, 'wnam');
+    await directoryParent(stub);
+    await runInDurableObject(stub, async (instance, state) => state.blockConcurrencyWhile(async () => {
+      // Registering children is what completes the parent, so this is the state a dead-lettered
+      // authorization_projection_conversation_not_ready leaves behind.
+      await instance.beginAuthorizationBackfill({ workspaceId, refresh: false });
+      await instance.registerAuthorizationChildren({ workspaceId, parentId, substreamIds: ['0', siblingSubstreamId] });
+      await instance.applyAuthorizationLocations({ workspaceId, parentId, substreamId: siblingSubstreamId, parentKind: 'workstream',
+        revision: 1, validatedAt: Date.now(), resourceIds: [] });
+      state.storage.sql.exec('DELETE FROM authorization_delivery');
+      expect(state.storage.sql.exec<{ completed: number }>(
+        'SELECT completed FROM authorization_backfill').one().completed).toBe(1);
+      expect(await instance.authorizationBackfillStatus({ workspaceId })).toMatchObject({ complete: false, pendingChildren: 1 });
+
+      await instance.beginAuthorizationBackfill({ workspaceId, refresh: false });
+      // Only the stuck child is re-queued: the completed sibling keeps its receipt.
+      expect(deliveryKeys(state)).toEqual([JSON.stringify([parentId, '0'])]);
+      expect(await instance.authorizationBackfillStatus({ workspaceId })).toMatchObject({ pendingChildren: 1 });
+    }));
+  });
+
+  it('re-queues nothing for a complete workspace or for discovery already scheduled', async () => {
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName('authorization-storage-no-churn'));
+    await stub.initializeWorkspace(workspaceId, 'wnam');
+    await directoryParent(stub);
+    await runInDurableObject(stub, async (instance, state) => state.blockConcurrencyWhile(async () => {
+      await instance.beginAuthorizationBackfill({ workspaceId, refresh: false });
+      await instance.registerAuthorizationChildren({ workspaceId, parentId, substreamIds: ['0'] });
+      await instance.applyAuthorizationLocations({ workspaceId, parentId, substreamId: '0', parentKind: 'workstream',
+        revision: 1, validatedAt: Date.now(), resourceIds: [] });
+      state.storage.sql.exec('DELETE FROM authorization_delivery');
+      expect(await instance.authorizationBackfillStatus({ workspaceId })).toMatchObject({ complete: true });
+
+      // refresh:false must never redo finished work; without that half of the guard an operator
+      // rebuild and an ordinary read become the same thing.
+      await instance.beginAuthorizationBackfill({ workspaceId, refresh: false });
+      expect(deliveryKeys(state)).toEqual([]);
+      expect(await instance.authorizationBackfillStatus({ workspaceId })).toMatchObject({ complete: true });
+
+      // A stuck child with delivery still pending is already scheduled; a retrying reader adds nothing.
+      state.storage.sql.exec('UPDATE authorization_backfill_children SET completed = 0');
+      await instance.beginAuthorizationBackfill({ workspaceId, refresh: false });
+      const queued = state.storage.sql.exec<{ revision: number }>('SELECT revision FROM authorization_delivery').one().revision;
+      await instance.beginAuthorizationBackfill({ workspaceId, refresh: false });
+      expect(state.storage.sql.exec<{ revision: number }>('SELECT revision FROM authorization_delivery').one().revision).toBe(queued);
+    }));
   });
 });
