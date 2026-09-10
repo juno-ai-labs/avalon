@@ -1284,6 +1284,11 @@ describe('Sidebar work-stream markers', () => {
     for (const item of excluded) expect(screen.queryByText(item.name)).toBeNull();
     fireEvent.click(within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' }));
     expect(openSidekicks).toHaveBeenCalledWith('shared');
+    // The Sidekicks window is a separate renderer with its own copy of the
+    // telemetry module, and its surface mounts no route observer, so a marker
+    // set here reaches nothing and is left for this window's next navigation to
+    // consume as `sidebar_automation`.
+    expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
     expect(screen.queryByRole('link', { name: /Daily product brief/u })).toBeNull();
   });
 
@@ -1300,6 +1305,8 @@ describe('Sidebar work-stream markers', () => {
     expect(within(strip).getAllByRole('button')).toHaveLength(1);
     fireEvent.click(create);
     expect(openSidekicks).toHaveBeenCalledWith('new');
+    // Strands a marker in this window otherwise; see the Sidekick tile above.
+    expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
   });
 
   it('drops the new-Sidekick tile once one is enabled', () => {
