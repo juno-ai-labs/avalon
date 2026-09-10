@@ -116,6 +116,52 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-10 — The ink table follows APCA, not the WCAG 2 ratio
+
+**What changed:** `PALETTE_INK` flips thirteen of nineteen fills from black ink
+to white. Only `amber`, `lime` and `green` still take black; every other fill,
+the ring's `cyan` through `indigo` included, now carries the near-white ink. The
+table's deciding rule changed with it, from WCAG 2's relative-luminance ratio to
+APCA, the perceptual model the WCAG 3 drafts are built on.
+
+**Why:** A spot-check sheet rendering every fill twice — once with each ink, at
+the 16px and 36px the sidebar actually uses — showed the old table picking the
+worse ink on most of the ring. WCAG 2 scores black the winner on `blue` (5.71
+against white's 3.68), `red`, `rose` and `violet`, where white plainly reads
+better and where every other design system ships white. Its luminance curve is
+known to misjudge saturated mid-tones, and this palette is nothing but saturated
+mid-tones. APCA scores the same fills the way the eye reads them: white on `blue`
+is Lc 69 against black's Lc 40. The 2026-09-09 entry below, which recorded that
+"black wins on every fill but the three darkest", is superseded — that was a true
+statement about WCAG 2, and WCAG 2 is what turned out to be wrong here.
+
+The boundary sits between `green` and `cyan` by review rather than by arithmetic.
+APCA's own crossover is one step further along, between `emerald` and `orange`,
+but the fills either side are ties in its terms (`cyan` Lc 52 white against 57
+black, `emerald` 54 against 55), and a ring reads better with one ink running
+through it than with two exceptions stranded mid-ramp. The two departures are
+named in `palette.css.node.test.ts` so a third cannot appear quietly.
+
+Two alternatives were rejected. Splitting the table in two — one ink for glyphs
+at the graphical-object bar, another for text at the higher one — was built far
+enough to see it buy nothing: the same fills won either way, and a second table
+would have let the two drift with nothing tying them together. Darkening
+`emerald` and `orange` so every accent clears APCA's Lc 60 for body text was left
+for a separate change, because it moves the palette itself rather than the ink
+over it.
+
+**Consequences:** This is accepted WCAG 2 debt, and it is written down rather
+than discovered. On the fills from `cyan` to `indigo` the white ink does not meet
+that standard's ratios — white on `cyan` is 2.43:1, under both its 3:1 for a
+graphical object and its 4.5:1 for text — so an audit run against WCAG 2 will
+flag them. `palette.css.node.test.ts` pins the four fills that fall under 3:1 by
+name, so the debt cannot grow by accident, and holds an APCA floor of Lc 45 on
+whichever ink each fill takes. `emerald` and `orange` remain the weakest entries
+whichever ink they carry: neither reaches Lc 60 for body text, which is a
+property of those two fills and not of this table. Anything painting on a palette
+fill still reads `PALETTE_INK` and the two absolute ink tokens, never
+`text-on-inverse`.
+
 ### 2026-09-09 — Media overlay ink stays light
 
 Media caption overlays use `sys.color.text.on-media`, white in both appearances.
