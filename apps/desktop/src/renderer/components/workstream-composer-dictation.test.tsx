@@ -7,10 +7,15 @@ import type { WorkstreamDetail } from '../lib/types';
 
 const dictationHarness = vi.hoisted(() => ({
   emit: undefined as ((transcript: string) => void) | undefined,
+  // What `stop` writes out before it settles, standing in for the tail the real
+  // hook drains: it delivers the final transcript and only then finishes the
+  // attempt, so a caller that submits on `stop` resolving is a render behind it.
+  finalTranscript: undefined as string | undefined,
   setError: undefined as ((error: string | undefined) => void) | undefined,
-  setState: undefined as ((state: 'idle' | 'listening' | 'transcribing' | 'finalizing') => void) | undefined,
+  setState: undefined as ((state: 'idle' | 'listening' | 'transcribing' | 'finalizing' | 'error') => void) | undefined,
   start: vi.fn(),
   stop: vi.fn(),
+  stopError: undefined as string | undefined,
 }));
 
 vi.mock('../lib/use-realtime-dictation', async (importOriginal) => {
@@ -22,7 +27,7 @@ vi.mock('../lib/use-realtime-dictation', async (importOriginal) => {
       _api: unknown,
       onTranscript: (transcript: string) => void,
     ) => {
-      const [state, setState] = React.useState<'idle' | 'listening' | 'transcribing' | 'finalizing'>('idle');
+      const [state, setState] = React.useState<'idle' | 'listening' | 'transcribing' | 'finalizing' | 'error'>('idle');
       const [error, setError] = React.useState<string>();
       dictationHarness.emit = onTranscript;
       dictationHarness.setError = setError;
@@ -39,6 +44,14 @@ vi.mock('../lib/use-realtime-dictation', async (importOriginal) => {
         state,
         stop: async () => {
           dictationHarness.stop();
+          // `finish(attempt, 'error', …)` is where a drain or socket failure
+          // lands, and it is a state of its own rather than a quiet idle.
+          if (dictationHarness.stopError !== undefined) {
+            setError(dictationHarness.stopError);
+            setState('error');
+            return;
+          }
+          if (dictationHarness.finalTranscript !== undefined) onTranscript(dictationHarness.finalTranscript);
           setState('idle');
         },
       };
@@ -75,8 +88,10 @@ const workstream: WorkstreamDetail = {
 
 beforeEach(() => {
   dictationHarness.emit = undefined;
+  dictationHarness.finalTranscript = undefined;
   dictationHarness.setError = undefined;
   dictationHarness.setState = undefined;
+  dictationHarness.stopError = undefined;
   dictationHarness.start.mockReset();
   dictationHarness.stop.mockReset();
   vi.stubGlobal('ResizeObserver', class {
@@ -126,7 +141,7 @@ describe('WorkstreamComposer live dictation', () => {
 
     expect(input).toHaveValue('Existing draft live words');
     expect(input).toHaveAttribute('readonly');
-    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
 
     const stopButton = screen.getByRole('button', { name: 'Stop dictation' });
     act(() => stopButton.focus());
@@ -202,6 +217,74 @@ describe('WorkstreamComposer live dictation', () => {
     await waitFor(() => expect(dictationHarness.stop).toHaveBeenCalledOnce());
     await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
     expect(dictationHarness.stop.mock.invocationCallOrder[0]).toBeLessThan(onSend.mock.invocationCallOrder[0]!);
+  });
+
+  it('sends the finalized transcript when send is pressed mid-recording', async () => {
+    const onSend = vi.fn(async () => undefined);
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={onSend}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    act(() => dictationHarness.setState?.('listening'));
+    act(() => dictationHarness.emit?.('Draft the'));
+    const send = screen.getByRole('button', { name: 'Send message' });
+    expect(send).toBeEnabled();
+
+    dictationHarness.finalTranscript = 'Draft the launch note';
+    fireEvent.click(send);
+
+    await waitFor(() => expect(dictationHarness.stop).toHaveBeenCalledOnce());
+    // The tail, not the text as it stood when the click landed.
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('Draft the launch note', [], undefined, undefined));
+    expect(onSend).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the draft and does not send when stopping to send fails', async () => {
+    const onSend = vi.fn(async () => undefined);
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={onSend}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    act(() => dictationHarness.setState?.('listening'));
+    act(() => dictationHarness.emit?.('Draft the'));
+    dictationHarness.stopError = 'The dictation connection closed before transcription completed.';
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await waitFor(() => expect(screen.getByText('The dictation connection closed before transcription completed.')).toBeVisible());
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByRole('textbox', { name: 'Message the work stream' })).toHaveValue('Draft the');
   });
 
   it('supports pointer click-to-toggle without double stopping', async () => {

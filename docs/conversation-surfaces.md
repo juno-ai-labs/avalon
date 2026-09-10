@@ -362,6 +362,15 @@ that wait. Live capture retains its existing socket backpressure failure.
 The frame-size and rate limits live in `@rally/contracts/realtime-transcription`,
 shared with the proxy. Audio is not persisted to disk.
 
+While dictation is running the composer's text belongs to it: the field is
+read-only and the mention and device controls are disabled. Send is not on that
+list. Pressing it, or Enter, stops dictation and sends the transcript once it
+settles, tail included — the composer submits from an effect keyed on the
+settled state rather than from the click handler, because the final transcript
+arrives through `onValueChange` and the host's submit closure only carries it on
+the render after that. A dictation error ends the attempt without sending, and
+the draft and the error stay on screen.
+
 ## Testing
 
 Shared components have fixture-level component tests for settled, streaming,
@@ -371,6 +380,40 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — Send during dictation stops it and sends what it heard
+
+**What changed:** A live recording no longer disables Send. Pressing it (or
+Enter, which runs the same `submit`) stops dictation and sends the transcript
+including the tail still in flight. `dictationBlocking` is gone; the states it
+named now only gate *editing*, under the name `dictationEditingBlocked`, because
+the transcript is written into the same field a caret would be fighting for.
+While the stop drains, Send shows its sending spinner and is disabled, so the
+wait looks like work rather than a dead button.
+
+**Why:** Stopping and sending was two deliberate acts with an indefinite gap
+between them — the recording had to be stopped, finalization watched, and only
+then could the message go. Nothing about that gap is the user's problem to
+manage. Send already meant "I am done talking".
+
+**Considered and rejected:** Sending the text as it stands and letting the tail
+land in an emptied composer, or be dropped. It is the fastest option and it
+loses the last words the user spoke, which is the one thing a Send button must
+never do quietly. Also rejected: `await dictation.stop()` inside the click
+handler and then submitting. That is the obvious shape and it is wrong: the
+final transcript reaches the host through `onValueChange`, so the host's submit
+closure captured at click time still holds the pre-stop draft, and the tail is
+dropped exactly as if it had never been drained. `stop()` resolving is not the
+moment the text exists — the render after it is.
+
+**What a future change has to respect:** the submit that follows dictation runs
+from an effect keyed on the settled dictation state, not from the click handler.
+Anything that moves it back into the handler, however it awaits, reintroduces
+the stale-closure drop. `workstream-composer-dictation.test.tsx` holds the line
+by asserting on the finalized text rather than on the call, and its harness's
+`stop` delivers the transcript before it settles precisely so that shape fails.
+A dictation error is not a send: the draft stays, the error shows, nothing is
+submitted.
 
 ### 2026-09-10 — Send is permanent chrome, not a control the first keystroke summons
 
