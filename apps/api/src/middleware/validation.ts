@@ -106,12 +106,24 @@ export const zValidator: typeof honoZValidator = ((
  * JSON, or that carries no string there, is passed through untouched for the
  * validator to reject in its own words.
  */
-export function requireSendableMessageLength(field: "openingMessage" | "text"): MiddlewareHandler {
+export function requireSendableMessageLength(
+  /**
+   * Where the message sits in the body. `opening.text` is one level down
+   * because a substream is created with the message that starts it, and the
+   * caller of that route deserves the same answer as the caller of every other
+   * route that carries composed text — not the validator's generic refusal for
+   * a bound they can act on.
+   */
+  field: "openingMessage" | "text" | "opening.text",
+): MiddlewareHandler {
   return async (c, next) => {
     const body: unknown = await c.req.json().catch(() => null);
-    const value = body !== null && typeof body === "object"
-      ? (body as Record<string, unknown>)[field]
-      : undefined;
+    const value = field.split(".").reduce<unknown>(
+      (current, key) => current !== null && typeof current === "object"
+        ? (current as Record<string, unknown>)[key]
+        : undefined,
+      body,
+    );
     if (typeof value === "string" && value.length > MESSAGE_MAX_CHARACTERS) {
       throw new ApiError(400, "message_too_long", MESSAGE_TOO_LONG_MESSAGE);
     }

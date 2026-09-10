@@ -470,7 +470,22 @@ export function WorkstreamScreen(): React.JSX.Element {
    * keystroke that submits the composer, so leaving the surface is free and a
    * substream nobody finished writing never exists.
    */
-  const [creation, setCreation] = useState<{ parentId: string; throughTurnId: string | null } | null>(null);
+  const [creation, setCreation] = useState<{
+    parentId: string;
+    throughTurnId: string | null;
+    /**
+     * Minted once, when the surface opens, and kept across every attempt.
+     *
+     * These are what make a retry a retry. Both halves of creation are
+     * idempotent under them — the operation resumes rather than reserving a
+     * second child, and the turn replays rather than being said twice — and a
+     * lost response is the failure this path actually has, since the composer
+     * hands the words back and the obvious thing to do is press enter again.
+     * Fresh ids per attempt would turn that into a second substream.
+     */
+    operationId: string;
+    clientMessageId: string;
+  } | null>(null);
   const [launching, setLaunching] = useState<LaunchingSubstream | null>(null);
   const [creationError, setCreationError] = useState<string | null>(null);
   const creationRef = useRef(creation);
@@ -546,7 +561,12 @@ export function WorkstreamScreen(): React.JSX.Element {
   };
   const startCreation = (throughTurnId: string | null): void => {
     setLaunching(null); setCreationError(null);
-    setCreation({ parentId: id, throughTurnId });
+    setCreation({
+      parentId: id,
+      throughTurnId,
+      operationId: uuidV7(),
+      clientMessageId: crypto.randomUUID(),
+    });
   };
   useEffect(() => {
     setRenameTarget(null); setArchiveTarget(null); setSubstreamPending(false); setSubstreamMenuError(null);
@@ -570,9 +590,8 @@ export function WorkstreamScreen(): React.JSX.Element {
   const createSubstream = async (opening: Parameters<SubstreamLaunchProps['onCreate']>[0]): Promise<void> => {
     const attempt = creationRef.current;
     if (!api || !attempt) throw new Error('This work stream is not ready for a new substream.');
-    const operationId = uuidV7();
     const createdAt = new Date().toISOString();
-    const trace = startPerfTrace('substream_create', { operationId });
+    const trace = startPerfTrace('substream_create', { operationId: attempt.operationId });
     const startedAt = performance.now();
     // In the same commit as the request, not after it: this is what makes the
     // substream appear to open on the keystroke rather than on the response.
@@ -585,13 +604,13 @@ export function WorkstreamScreen(): React.JSX.Element {
     setCreationError(null);
     try {
       await trace.step('prepare_request', () => api.prepareSubstream(attempt.parentId, {
-        operationId, throughTurnId: attempt.throughTurnId,
+        operationId: attempt.operationId, throughTurnId: attempt.throughTurnId,
       }));
       const created = await trace.step('confirm_request', () => api.confirmSubstream(
         attempt.parentId,
-        operationId,
+        attempt.operationId,
         {
-          clientMessageId: crypto.randomUUID(),
+          clientMessageId: attempt.clientMessageId,
           text: opening.text,
           mentions: opening.mentions,
           attachmentIds: opening.attachmentIds,

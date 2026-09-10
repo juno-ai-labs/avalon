@@ -121,6 +121,12 @@ export function launchedSubstreamDetail(
   return {
     ...identity,
     title: context.title,
+    // Stated rather than inherited. Every private child is provisioned
+    // `personal`, so a child seeded from a workspace-scoped parent would read
+    // as workspace-visible until the room's own snapshot corrected it — and its
+    // composer would skip the confirmation it owes a mention of somebody who is
+    // not in the child.
+    scope: 'personal',
     // The naming pass is running against the message that was just sent, and
     // this is what puts the same skeleton in the child's header that the work
     // stream's own launch puts in its own.
