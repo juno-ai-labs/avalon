@@ -1,4 +1,5 @@
 import type { WorkstreamTranscriptSnapshot } from '@rally/contracts';
+import type { AgentModelOverride } from './agent-models';
 import type { MentionIdentity } from './api';
 import type { MessageAttachment, WorkspaceMember, WorkstreamDetail } from './types';
 
@@ -105,6 +106,13 @@ export function launchedSubstreamDetail(
     /** The first line of the opening message, standing in until the naming pass answers. */
     title: string;
     createdAt: string;
+    /**
+     * The model this creation pinned the child to, or null for the ordinary
+     * unpinned case. Required rather than optional because the parent carries a
+     * pin of its own in the fields this seed spreads, and a caller that forgot
+     * this would hand the child its parent's — see the field below.
+     */
+    modelOverride: AgentModelOverride | null;
   },
 ): WorkstreamDetail {
   // Pulled off rather than overwritten: a child that inherited the parent's run
@@ -131,6 +139,14 @@ export function launchedSubstreamDetail(
     // this is what puts the same skeleton in the child's header that the work
     // stream's own launch puts in its own.
     titleStatus: 'naming',
+    // Stated rather than inherited, for the same reason `scope` is, and this
+    // one is a claim about the model the work will run on: a substream does not
+    // take its parent's pin, so a child seeded from a pinned parent would show
+    // the parent's model as its own until the room's snapshot corrected it —
+    // the exact inheritance the create path refuses. Null is the honest seed
+    // for an unpinned child, and reads as **Default** like an untouched
+    // composer.
+    modelOverride: context.modelOverride,
     createdAt: context.createdAt,
     createdBy: { ...context.creator, role: 'creator' },
     participants: [{ ...context.creator, role: 'creator' }],
