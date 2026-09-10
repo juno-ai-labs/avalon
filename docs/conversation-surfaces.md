@@ -319,8 +319,9 @@ untouched, and still the menu's second section where it renders. The create
 screen the item opened is untouched too, and still reached from the product:
 `AutomationScreen` hosts it at both `/automations/new` and `/sidekicks/new`
 (the id `new` is the create), and the Sidekicks library's **New Sidekick**
-button links to the second of those. The menu bar's **New Automation** item and
-the Slack agent emit `rallywithai://automations/new`, which deliberately does
+button links to the second of those. The menu bar item's **New Automation** row
+([`menu-bar.md`](menu-bar.md)) and the Slack agent emit
+`rallywithai://automations/new`, which deliberately does
 *not* land there: `app-session.tsx` routes that intent to `#/workstreams/new`,
 because the builder the link once opened is gone and an automation is now
 drafted by asking for one in a work stream. So this removal takes away the only
@@ -331,10 +332,15 @@ composer no longer offers it. Nothing was rehomed, because the prop was not a
 composer capability to move: it was the work-stream host reaching a product
 route through an optional prop on the shared input, which is what the boundary
 above forbids, and removing the item removes the violation rather than relocating
-it. The reasoning for adding the item was not recorded — it arrived in a pull
-request about work-stream icons, with no note of its own. A future change that
-wants a second action here should add it as a capability the surface owns, not
-as an optional callback a host fills with navigation.
+it. No reasoning for adding the item was ever recorded: it arrived whole in
+`3acc1987`, the GrokBot layout rebuild that landed as
+[#551](https://github.com/juno-ai-labs/avalon/pull/551), which is to say it was
+copied in with a borrowed layout rather than designed for this product — the
+prop's own doc comment called it "GrokBot-style". A future change that wants a
+second action here should add it as a capability the surface owns, not as an
+optional callback a host fills with navigation.
+
+Shipped in [#665](https://github.com/juno-ai-labs/avalon/pull/665).
 
 ### 2026-09-10 — Jump to latest hangs above the composer, whatever its height
 
