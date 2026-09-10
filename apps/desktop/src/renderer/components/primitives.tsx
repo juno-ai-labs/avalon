@@ -1,4 +1,4 @@
-import { useContext } from 'react';
+import { useContext, useState } from 'react';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { PersonalAvatar } from './personal-avatar';
 import * as AvatarPrimitive from '@radix-ui/react-avatar';
@@ -66,19 +66,50 @@ export function ConnectorMark({ className, mark }: {
  * Slot string-merges `className`, so an element whose class is a callback (a
  * `NavLink`) needs a plain wrapper to be the trigger instead.
  */
-export function Tip({ align, children, delayDuration = 450, label, side = 'bottom', sideOffset = 6 }: {
+export function Tip({
+  align,
+  children,
+  className,
+  delayDuration = 450,
+  disableHoverableContent,
+  label,
+  onOpenChange,
+  open,
+  side = 'bottom',
+  sideOffset = 6,
+}: {
   align?: 'start' | 'center' | 'end';
   children: React.ReactNode;
+  /** A modifier beside `.tooltip`, for a shape the base rule does not cover. */
+  className?: string;
   delayDuration?: number;
+  /**
+   * Whether the pointer may travel into the tooltip and keep it open. Off for a
+   * tooltip hanging off something small that the pointer is aiming at rather
+   * than reading.
+   */
+  disableHoverableContent?: boolean;
   label: React.ReactNode;
+  /**
+   * Pass both to take the answer over: Radix still decides *when* to open, and
+   * reports it here, but the caller renders `open`. Leave both out and it stays
+   * uncontrolled, which is what almost every caller wants.
+   */
+  onOpenChange?: (open: boolean) => void;
+  open?: boolean;
   side?: 'top' | 'right' | 'bottom' | 'left';
   sideOffset?: number;
 }): React.JSX.Element {
   return (
-    <Tooltip.Root delayDuration={delayDuration}>
+    <Tooltip.Root
+      delayDuration={delayDuration}
+      disableHoverableContent={disableHoverableContent}
+      onOpenChange={onOpenChange}
+      open={open}
+    >
       <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
       <Tooltip.Portal>
-        <Tooltip.Content align={align} className="tooltip" side={side} sideOffset={sideOffset}>
+        <Tooltip.Content align={align} className={clsx('tooltip', className)} side={side} sideOffset={sideOffset}>
           {label}
           <Tooltip.Arrow className="tooltip-arrow" />
         </Tooltip.Content>
@@ -115,6 +146,80 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
 
   return <Tip label={label} side={tooltipSide}>{button}</Tip>;
 });
+
+interface DragHintProps {
+  /** The handle itself: whatever the pointer can already grab. */
+  children: React.ReactElement;
+  /** What dragging it does, e.g. `Drag to resize`. */
+  action: string;
+  /**
+   * The faster route to the same place: the double-click that collapses a
+   * sidebar, and the key that does the same thing without a pointer. Name both
+   * where both exist. This line is read on focus as well as on hover, so a
+   * pointer gesture on its own tells a keyboard reader about something they
+   * cannot do. Left out when the handle has no quick action, and when the
+   * window is too narrow for the one it would otherwise name, because a hint
+   * that promises an action which does nothing is worse than no hint.
+   */
+  shortcut?: string | undefined;
+  /** Which way the hint leans off the handle: away from what it resizes. */
+  side?: 'top' | 'right' | 'bottom' | 'left';
+  /**
+   * True while the handle is being dragged. The gesture has to say so itself:
+   * a grab focuses the handle, and a focus is how a tooltip decides to open
+   * without waiting out its delay, so on a quick grab the press *opens* the
+   * hint instead of dismissing it. Radix's own dismissal cannot catch that one,
+   * because it reads an open state from the render before the focus.
+   */
+  suppressed?: boolean;
+}
+
+/**
+ * The hint a drag handle shows on hover: a `Tip` with two lines and a veto.
+ * A grip is the one control here that
+ * carries no words of its own, so nothing on screen said that the dividers
+ * could be dragged at all, or that double-clicking one collapses the sidebar
+ * beside it. That shortcut has been in the code the whole time and was
+ * reachable only by guessing.
+ *
+ * The trigger is the handle's whole pointer target rather than the grip drawn
+ * inside it: the target is what can be grabbed, and it is also what reveals
+ * the grip, so the hint and the pill appear for the same gesture. Both
+ * dividers centre their grip in that target, which is why the content is
+ * centre-aligned: it lands beside the pill without either side measuring the
+ * other.
+ */
+export function DragHint({ action, children, shortcut, side = 'right', suppressed = false }: DragHintProps): React.JSX.Element {
+  // Radix still decides when to open: the delay, the hover, and the focus are
+  // all its own, and this only takes a veto over the answer. Corrected during
+  // the render rather than in an effect because the open and the drag land in
+  // the same batch, and a hint that commits to the screen for one frame over
+  // the edge it is about is the whole defect.
+  const [open, setOpen] = useState(false);
+  if (open && suppressed) setOpen(false);
+
+  return (
+    // `disableHoverableContent`, where the rest of the app leaves it on: those
+    // tooltips hang off controls with room around them, while this one hangs
+    // off a 12px divider with the transcript immediately beside it. Letting the
+    // pointer travel into the hint would hold it open over the thing the handle
+    // is there to reveal, and a two-line hint has nothing in it to travel for.
+    // `sideOffset` is 8 rather than `Tip`'s 6 because the grip pill overhangs
+    // its pointer target by 2px on each side, so 8 leaves the same air.
+    <Tip
+      className="tooltip-hint"
+      disableHoverableContent
+      label={<>
+        <span>{action}</span>
+        {shortcut !== undefined && <small>{shortcut}</small>}
+      </>}
+      onOpenChange={setOpen}
+      open={open}
+      side={side}
+      sideOffset={8}
+    >{children}</Tip>
+  );
+}
 
 export function StatusDot({
   status,

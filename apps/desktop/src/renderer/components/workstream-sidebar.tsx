@@ -8,7 +8,7 @@ import clsx from 'clsx';
 import type { WorkstreamDetail } from '../lib/types';
 import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-socket';
 import { COLLAPSED_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '../lib/ui-store';
-import { AvatarStack, IconButton, Tip } from './primitives';
+import { AvatarStack, DragHint, IconButton, Tip } from './primitives';
 import { PENDING_SUBSTREAM_DRAFT_ID } from './substream-launch';
 import { ResourceIcon } from './markdown-citations';
 import { WorkstreamMark } from './workstream-glyph';
@@ -222,55 +222,72 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
         >{compact ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</IconButton>
       </div>
       {resizing && dragWidth !== null && <div aria-hidden="true" className="sidebar-drag-guide" style={{ left: dragWidth }} />}
-      <div
-        role="separator"
-        aria-label="Resize work-stream sidebar"
-        aria-orientation="vertical"
-        aria-valuemin={COLLAPSED_SIDEBAR_WIDTH}
-        aria-valuemax={MAX_SIDEBAR_WIDTH}
-        aria-valuenow={effectiveWidth}
-        className={clsx('sidebar-resizer workstream-context-resizer', resizing && 'is-near')}
-        tabIndex={0}
-        onDoubleClick={() => { if (!narrow) saveCollapsed(!collapsed); }}
-        onBlur={() => setKeyResizing(false)}
-        onKeyDown={(event) => {
-          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-          event.preventDefault();
-          setKeyResizing(true);
-          if (event.key === 'ArrowLeft' && !compact) resize(width > MIN_SIDEBAR_WIDTH ? width - 16 : SIDEBAR_COLLAPSE_DRAG_THRESHOLD - 1);
-          if (event.key === 'ArrowRight') resize(compact ? MIN_SIDEBAR_WIDTH : width + 16);
-        }}
-        onKeyUp={() => setKeyResizing(false)}
-        onPointerDown={(event) => {
-          if (event.button !== 0) return;
-          event.preventDefault();
-          event.currentTarget.focus();
-          const bounds = sidebar.current?.getBoundingClientRect();
-          if (!bounds) return;
-          drag.current = { pointerId: event.pointerId, offset: event.clientX - bounds.right };
-          event.currentTarget.setPointerCapture(event.pointerId);
-          setResizing(true);
-        }}
-        onPointerMove={(event) => {
-          if (drag.current?.pointerId !== event.pointerId) return;
-          const bounds = sidebar.current?.getBoundingClientRect();
-          if (bounds) {
-            const requested = event.clientX - drag.current.offset - bounds.left;
-            setDragWidth(Math.max(0, requested));
-            resize(requested);
-          }
-        }}
-        onPointerUp={(event) => {
-          if (drag.current?.pointerId !== event.pointerId) return;
-          drag.current = null;
-          setResizing(false); setDragWidth(null);
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        }}
-        onPointerCancel={() => { drag.current = null; setResizing(false); setDragWidth(null); }}
-        onLostPointerCapture={() => { drag.current = null; setResizing(false); setDragWidth(null); }}
+      {/* Named only while the double-click would do something: a pane too
+          narrow for this rail's contents holds it compact, and the toggle
+          above is disabled for the same reason. */}
+      <DragHint
+        action="Drag to resize"
+        suppressed={resizing}
+        shortcut={narrow ? undefined : compact ? 'Double-click or Enter to expand' : 'Double-click or Enter to collapse'}
       >
-        <span aria-hidden="true" className="sidebar-resizer-handle"><GripVertical size={11} strokeWidth={2} /></span>
-      </div>
+        <div
+          role="separator"
+          aria-label="Resize work-stream sidebar"
+          aria-orientation="vertical"
+          aria-valuemin={COLLAPSED_SIDEBAR_WIDTH}
+          aria-valuemax={MAX_SIDEBAR_WIDTH}
+          aria-valuenow={effectiveWidth}
+          className={clsx('sidebar-resizer workstream-context-resizer', resizing && 'is-near')}
+          tabIndex={0}
+          onDoubleClick={() => { if (!narrow) saveCollapsed(!collapsed); }}
+          onBlur={() => setKeyResizing(false)}
+          onKeyDown={(event) => {
+            // As in the navigation: the key the ARIA authoring practices give a
+            // splitter, performing the toggle the double-click performs, so the
+            // hint names something a keyboard can actually do.
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              if (!narrow) saveCollapsed(!collapsed);
+              return;
+            }
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            setKeyResizing(true);
+            if (event.key === 'ArrowLeft' && !compact) resize(width > MIN_SIDEBAR_WIDTH ? width - 16 : SIDEBAR_COLLAPSE_DRAG_THRESHOLD - 1);
+            if (event.key === 'ArrowRight') resize(compact ? MIN_SIDEBAR_WIDTH : width + 16);
+          }}
+          onKeyUp={() => setKeyResizing(false)}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.currentTarget.focus();
+            const bounds = sidebar.current?.getBoundingClientRect();
+            if (!bounds) return;
+            drag.current = { pointerId: event.pointerId, offset: event.clientX - bounds.right };
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setResizing(true);
+          }}
+          onPointerMove={(event) => {
+            if (drag.current?.pointerId !== event.pointerId) return;
+            const bounds = sidebar.current?.getBoundingClientRect();
+            if (bounds) {
+              const requested = event.clientX - drag.current.offset - bounds.left;
+              setDragWidth(Math.max(0, requested));
+              resize(requested);
+            }
+          }}
+          onPointerUp={(event) => {
+            if (drag.current?.pointerId !== event.pointerId) return;
+            drag.current = null;
+            setResizing(false); setDragWidth(null);
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }}
+          onPointerCancel={() => { drag.current = null; setResizing(false); setDragWidth(null); }}
+          onLostPointerCapture={() => { drag.current = null; setResizing(false); setDragWidth(null); }}
+        >
+          <span aria-hidden="true" className="sidebar-resizer-handle"><GripVertical size={11} strokeWidth={2} /></span>
+        </div>
+      </DragHint>
     </aside>
   );
 }

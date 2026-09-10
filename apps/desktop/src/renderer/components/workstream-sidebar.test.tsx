@@ -37,6 +37,8 @@ beforeEach(() => {
     observe() {}
     // Radix measures the tooltip arrow through `useSize`, which unobserves on
     // unmount; a stub without it throws during teardown, not during the assert.
+    // Both the artifact rows' `Tip` and the resize handle's `DragHint` mount
+    // one, so every test that opens this sidebar needs it.
     unobserve() {}
     disconnect() {}
   });
@@ -242,6 +244,78 @@ describe('WorkstreamSidebar', () => {
       const row = screen.getByRole('button', { name: `Open ${title}` });
       expect(row.querySelector('.tabler-icon-rosette-asterisk'), title).not.toBeNull();
     }
+  });
+
+  // Same divider, same silence: the double-click that collapses this rail is
+  // written down nowhere else, so which way the hint names has to follow the
+  // state the next one would leave behind.
+  it('names the drag and the double-click, in the direction the next one goes', () => {
+    setup();
+    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+
+    fireEvent.focus(edge);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click or Enter to collapse');
+
+    fireEvent.doubleClick(edge);
+    fireEvent.blur(edge);
+    fireEvent.focus(edge);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click or Enter to expand');
+  });
+
+  // As in the navigation: the reader most likely to be reading the hint is the
+  // one who cannot double-click, so Enter does what the double-click does and
+  // is refused where the double-click is refused.
+  it('collapses and expands from Enter on the divider, and refuses it in a narrow pane', () => {
+    setup();
+    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+
+    fireEvent.keyDown(edge, { key: 'Enter' });
+    expect(edge).toHaveAttribute('aria-valuenow', '96');
+    fireEvent.keyDown(edge, { key: 'Enter' });
+    expect(edge).toHaveAttribute('aria-valuenow', '280');
+
+    act(() => { width = 703; resized(); });
+    expect(edge).toHaveAttribute('aria-valuenow', '96');
+    fireEvent.keyDown(edge, { key: 'Enter' });
+    expect(localStorage.getItem('rally.workstream-sidebar-collapsed')).toBe('false');
+  });
+
+  // A pane too narrow for the rail's contents holds it compact and disables the
+  // toggle above; the double-click on the divider is guarded by the same
+  // condition. The hint has to stop offering what the handle would refuse.
+  // The pane narrows before the hint is ever opened: this file's observer stub
+  // keeps only the newest callback, and an open tooltip's own observer is newer
+  // than the sidebar's.
+  it('drops the shortcut a narrow pane would refuse', () => {
+    setup();
+    act(() => { width = 703; resized(); });
+    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+
+    fireEvent.focus(edge);
+
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent('Double-click');
+  });
+
+  // A hint that rides along beside the divider for the whole drag is worse than
+  // no hint: it sits over the transcript the drag is revealing, at the one
+  // moment the reader is watching an edge move. The press has to leave it shut.
+  it('keeps the hint shut through a grab that never waited for it', () => {
+    setup();
+    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+    edge.setPointerCapture = vi.fn();
+    edge.releasePointerCapture = vi.fn();
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.pointerDown(edge, { clientX: 563, pointerId: 1, button: 0 });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.pointerMove(edge, { clientX: 600, pointerId: 1 });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.pointerUp(edge, { pointerId: 1 });
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
   it('drops the artifact section entirely until a work stream has one', () => {
