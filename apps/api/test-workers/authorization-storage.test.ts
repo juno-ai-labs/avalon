@@ -110,4 +110,33 @@ describe('authorization SQLite state', () => {
       expect(rows.map((row) => JSON.parse(row.snapshot_json))).toEqual([snapshot]);
     });
   });
+
+  it('re-enqueues a tracked parent whose discovery never completed', async () => {
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName('authorization-storage-stuck-parent'));
+    await stub.initializeWorkspace(workspaceId, 'wnam');
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO workspace_workstream_directory
+           (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+            title, description, preview, scope, exact_state, last_activity_at,
+            origin_type, title_status, latest_attention_ordinal,
+            unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
+         VALUES (?, 1, 1, ?, 'hash', 'Stuck', '', '', 'workspace', 'open', 0,
+                 'ad_hoc', 'settled', 0, 0, 0, 0, 0)`,
+        parentId, `event:${parentId}`);
+    });
+
+    // The parent was discovered once, its projection job died, and the delivery row was drained.
+    await stub.beginAuthorizationBackfill({ workspaceId, refresh: false });
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec('DELETE FROM authorization_delivery');
+    });
+    expect(await stub.authorizationBackfillStatus({ workspaceId })).toMatchObject({ complete: false, pendingParents: 1 });
+
+    // This is what the 503 read path calls; it must re-enqueue rather than skip the tracked parent.
+    await stub.beginAuthorizationBackfill({ workspaceId, refresh: false });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec('SELECT * FROM authorization_delivery').toArray()).toHaveLength(1);
+    });
+  });
 });
