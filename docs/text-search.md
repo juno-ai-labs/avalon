@@ -377,7 +377,15 @@ filled after the response. A `search_conversation_projection_v1` job that
 dead-letters leaves a conversation's previous title, or an archived conversation's
 rows, visible to admitted readers until it is redriven; a text rewrite that
 dead-letters leaves its row omitted, because a row carries no display until it is
-rewritten. Edited or deleted text stays findable by admitted readers until its
+rewritten. The display rewrite itself is lazy: migration 52 requeues a
+conversation's turns when its SubstreamAgent next wakes, and WorkspaceDO
+migration 47 a workspace's resources when that object does, so a conversation
+nobody opens and no alarm reaches keeps rows with no display, which search omits
+with no error and no dead letter. The patch job cannot repair those rows either,
+because its filter requires the `substream_id` they lack. The forcing function
+is the migration tracker's **Force a migration** for both classes, under
+Operations below; until it has run in a region, "not yet rewritten" and "never
+rewritten" look the same from search. Edited or deleted text stays findable by admitted readers until its
 rewrite or watermark lands, typically seconds. The team accepted this window,
 with ten minutes as the bound the projection chain is expected to meet and a
 non-empty dead-letter queue as the signal that it did not.
@@ -418,7 +426,7 @@ generation cleanup and retry. Its only doubles are external APIs/model assets.
 The pinned Qwen tokenizer was separately exercised in workerd with its actual
 public model assets served from a temporary local mirror. The same pipeline suite
 proves the display attributes each producer writes and the patch passes a renamed
-or archived conversation runs until no row differs; `test-workers/search-projection.test.ts`
+or archived conversation runs; `test-workers/search-projection.test.ts`
 covers the display trigger, its outbox channel and the migration-52 requeue;
 `test-workers/search-authorization.test.ts`, `test-workers/conversation-parent-contract.test.ts`
 and `test/search-route.test.ts` cover deferred fills and index-served rendering
@@ -467,8 +475,10 @@ stored objects; an untouched object does not migrate just because code deployed.
 See [Durable Object migration tracking](durable-object-migration-tracking.md).
 Verify migration reports, regional activity Queue drain and dead letters, then
 perform member searches and revocation checks. A current schema report proves
-schema application, not successful indexing. These deployment and fleet-backfill
-steps have not been run for this change.
+schema application, not successful indexing. For this change the forced wake is
+what turns the display rewrite from lazy into complete: a SubstreamAgent that
+never wakes never requeues its turns, and its conversation stays out of search.
+These deployment and fleet-backfill steps have not been run for this change.
 
 Browser Run captures Markdown asynchronously from links present in a canonical
 participant turn, including completed web fetch records. Link text and URL are
@@ -539,7 +549,8 @@ extra RPC, and the read path renders from those attributes: no content owner,
 no R2, no revision or content-hash re-validation (EU admission still reads the
 WorkspaceDO snapshot table, one warm object, because EU has no KV binding). A rename or archive reaches
 the rows through a coalesced `search_conversation_v1` outbox row and a job that
-reads the current display and patches by filter until no row still differs.
+reads the current display and patches by filter for as long as the provider
+reports rows remaining.
 Admission stays on the projected decision; a miss is answered unavailable and
 filled after the response, so a request never waits on an owner. Rows without
 the display attributes are omitted rather than reloaded, which is why migration
@@ -552,7 +563,15 @@ retrieval now filters `archived Eq false`. A namespace with no write since the
 attributes shipped refuses both the filter and the `include_attributes` with a
 400 (both messages verified live); it has nothing renderable, so it answers
 with an empty page rather than failing the search until an unrelated write
-extends its schema. The
+extends its schema; the display patch treats the same refusal as nothing to
+patch, since no row there carries a substream id (a schema on the patch write
+does not lift the refusal, verified live). The patch loop continues on the
+provider's `rows_remaining` rather than on a positive `rows_patched`, so its
+termination is the provider's statement and not an inference that every patched
+row left the filter. Semantic retrieval no longer asks for the display
+attributes, which chunk rows never carry. Migration 52's lazy requeue is now
+named as the gap it is: a conversation whose object never wakes is absent from
+search until the fleet is force-migrated. The
 alternative of moving readability keys into the index as well was designed and
 rejected for now: the KV projection already exists, little data mutates, and a
 missed result is acceptable where a wrong one is not. `readAdmittedSearchContent`
