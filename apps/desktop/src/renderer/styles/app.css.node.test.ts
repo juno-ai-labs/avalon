@@ -1177,6 +1177,17 @@ describe('message header meta typography', () => {
     expect(rule('.human-message-actions')).toContain('opacity: 0;');
   });
 
+  /**
+   * The person's slot holds its height with nothing in it. It is laid out on
+   * every person's turn, control or not, because the one-unit turn gap relies
+   * on it to keep the next turn off the bubble; an empty flex row is 0px tall,
+   * and a turn without the control would otherwise hand the next turn a 4px
+   * clearance on the surfaces that cannot start a substream.
+   */
+  it('holds the person’s action slot at its height when it is empty', () => {
+    expect(rule('.human-message-actions')).toContain('min-height: var(--space-5);');
+  });
+
   it('gives both action rows one set of button metrics', () => {
     const shared = rule(':is(.agent-message-actions, .human-message-actions) button');
     expect(shared).not.toBeNull();

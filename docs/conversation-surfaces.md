@@ -118,7 +118,10 @@ rule gives a row no margin of its own. Four cases cover the feed: turn after tur
 Rally's answer after the work that produced it also takes `sys.space.event.gap`,
 because it is the same turn finishing rather than a new one. The surface's own
 trailing rows, the live timer and the run notices, take `sys.space.block.gap`
-above them for the same reason. Every other margin, padding and gap in the feed
+above them for the same reason. Turn after turn is one unit, and what keeps the
+next turn off a bubble is the action slot every person's turn lays out under
+itself, painted on hover and held at its height where the surface has no
+control to put in it; Rally's answer carries its own row once it has settled. Every other margin, padding and gap in the feed
 is a step of the `--space-N` scale `app.css` derives from `ref.space.unit`; a
 value off that scale is either a sub-unit optical nudge inside an inline
 control or a bleed derived from something else, and says which in a comment.
@@ -345,6 +348,17 @@ with no second reader. Turn to turn now sits under both the turn-to-event and
 the event-to-event gaps. The three were tuned separately, each on its own
 screenshots, and the ordering is what those tunings produced rather than a
 rule; a later tuning of any of them should not assume the others follow.
+
+**Review then found** that the clearance was not the turn's own everywhere:
+the person's action row was rendered only where the turn could start a
+substream, so on an automation's conversation, a substream other than the main
+one, the launch provenance, an answered elicitation, and a turn still in
+flight, the next turn sat 4px under the bubble itself. The slot is now laid out
+on every person's turn, with the control inside it only where one exists, and
+holds its height (`min-height` at the 20px step) when empty, so the one-unit
+gap means the same thing on every surface that reads the token and a turn's
+footprint no longer depends on which screen draws it. Rally's answer already
+carried its row on every surface once settled.
 
 ### 2026-09-10 — A seeded conversation shows a connecting card and composes without sending
 
