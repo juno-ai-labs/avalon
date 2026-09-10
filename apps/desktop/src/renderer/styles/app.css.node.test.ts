@@ -187,6 +187,31 @@ describe('sidebar layout motion', () => {
     expect(rule('.sidebar-automation-strip')).toContain('overflow-x: auto;');
     expect(rule('.app-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target')).toContain('flex-basis: 54px;');
   });
+
+  it('traces the new-Sidekick hexagon in viewBox units, so it scales with the tile', () => {
+    // A pixel stroke would hold its width while the tile shrank from 60px to the
+    // rail's 36px, so the outline would thicken relative to the shape it traces.
+    const slot = rule('.sidekick-new-glyph .automation-glyph-shape');
+    expect(slot).toContain('stroke-width: 3;');
+    expect(slot).not.toMatch(/stroke-width:[^;]*px/u);
+    expect(slot).toContain('stroke-dasharray:');
+  });
+
+  it('draws that outline in an ink token, because it is the mark rather than a divider', () => {
+    // The border ramp is built for lines beside content and has no headroom for
+    // the 3:1 a graphical object needs: against `surface-default`,
+    // `border-strong` measures 1.38:1 light and 1.44:1 dark, where `text-muted`
+    // is 5.35:1 and 7.99:1. This outline is the entire new-Sidekick mark — at
+    // the rail's 36px it is all that distinguishes the tile — so it takes the
+    // ink token the plus inside it already uses.
+    const slot = rule('.sidekick-new-glyph .automation-glyph-shape');
+    expect(slot).toContain('stroke: var(--av-sys-color-text-muted);');
+    expect(slot).not.toMatch(/stroke:\s*var\(--av-sys-color-border-/u);
+    expect(rule(
+      '.sidebar-row.automation-tile:hover .sidekick-new-glyph .automation-glyph-shape,\n'
+      + '.sidebar-row.automation-tile:focus-visible .sidekick-new-glyph .automation-glyph-shape',
+    )).toContain('stroke: var(--av-sys-color-text-subtle);');
+  });
 });
 
 describe('work-stream context sidebar layout', () => {
