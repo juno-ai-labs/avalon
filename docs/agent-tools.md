@@ -511,9 +511,11 @@ principle 8 and the GitHub list envelope in
 
 `apps/api/test/tool-schema-descriptions.test.ts` walks every authored tool for
 both halves. Descriptions are asserted per surface, exactly, rather than at
-zero: GitHub, Terminal, and X are complete and can never regress, and the ten
+zero: GitHub, Terminal, and X are complete and can never regress, and the eleven
 surfaces still owed prose can only pay it down. Lower a number when you
-describe a parameter; never raise one.
+describe a parameter; never raise one. A conditional surface — one whose plugin
+is not built without credentials — is only in that walk if the walk supplies
+them, so give it a sentinel in `EXPECTED_TOOLS` too.
 
 ## Attachment contract registry
 
@@ -963,11 +965,20 @@ over names can see.
 
 **Alternative rejected:** describing only the parameters that look risky, which
 is what "cursors and ids" already was. `head` does not look risky; it looks like
-a branch. The 227 parameters still undescribed across ten other surfaces —
+a branch. The 239 parameters still undescribed across eleven other surfaces —
 Google's 60 and Slack's 39 the largest — are recorded as an exact per-surface
 count rather than fixed here, because each one needs a sentence somebody has to
 know the provider to write, and a floor would have let a described surface
 regress under it.
+
+**Also caught by the map, and worth more than the count itself:** `multimodal`
+reached it only because a review noticed the walk never built that plugin. Its
+factory returns `null` without the Azure inference pair, so an environment
+without one silently dropped three served tools and their twelve parameters out
+of a walk that claimed to cover everything — passing both guards by not being
+looked at. A conditional surface needs its credentials supplied in the walk
+*and* a sentinel in `EXPECTED_TOOLS`, or the guard's own coverage is the thing
+that regresses.
 
 **Consequences:** A new tool fails `pnpm test` until its parameters are
 described and its surface is named in that count. Lowering a number is the
