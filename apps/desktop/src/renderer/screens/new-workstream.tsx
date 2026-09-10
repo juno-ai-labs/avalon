@@ -1,4 +1,4 @@
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type WorkstreamTranscriptSnapshot } from '@rally/contracts';
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
+import { optimisticOpeningTranscript } from '../lib/launched-conversation';
 import {
   completeMentionAtCaret,
   mentionsInTrimmedText,
@@ -64,73 +65,6 @@ interface LaunchingWorkstream {
   openingMessage: string;
   /** Drives the work timer, which the created stream keeps counting from. */
   startedAt: number;
-}
-
-function optimisticOpeningTranscript(
-  created: CreatedWorkstream,
-  input: CreateWorkstreamInput,
-  author: Pick<WorkspaceMember, 'id' | 'name' | 'avatarUrl'>,
-): WorkstreamTranscriptSnapshot {
-  const turn = {
-    transcriptSequence: 1,
-    turnId: created.turnId,
-    entryKind: 'conversation' as const,
-    actor: 'human' as const,
-    authorUserId: author.id,
-    authorSnapshot: {
-      userId: author.id,
-      displayName: author.name,
-      avatarUrl: author.avatarUrl ?? null,
-    },
-    clientMessageId: created.clientMessageId,
-    attentionOrdinal: 1,
-    createdAtUtc: created.createdAt,
-    // Local seed only. The first authoritative turn starts at revision 1 and
-    // must replace this provisional content even when its identity is equal.
-    revision: 0,
-    blocks: [{
-      type: 'text' as const,
-      blockId: `${created.turnId}:text:0`,
-      blockIndex: 0,
-      text: input.openingMessage,
-      streaming: false,
-      messageType: 'text' as const,
-      mentions: input.mentions.flatMap((mention) => (
-        mention.startOffset === undefined || mention.endOffset === undefined
-          ? []
-          : [{
-              type: mention.type,
-              userId: mention.userId,
-              connectorType: mention.connectorType,
-              startOffset: mention.startOffset,
-              endOffset: mention.endOffset,
-            }]
-      )),
-      attachments: input.attachments,
-    }],
-    activityId: null,
-  };
-  return {
-    snapshotId: `optimistic:${created.turnId}`,
-    snapshotThrough: 1,
-    eventSequence: 0,
-    snapshotAtUtc: created.createdAt,
-    unreadAnchorSequence: null,
-    unreadReason: 'no_unread',
-    ranges: [{
-      purpose: 'latest',
-      requested: { startInclusive: 1, endExclusive: 2 },
-      covered: { startInclusive: 1, endExclusive: 2 },
-      turns: [turn],
-      activities: [],
-      pluginRuns: [],
-    }],
-    activities: [],
-    activeActivities: [],
-    pluginRuns: [],
-    activeTurns: [],
-    pendingInputs: [],
-  };
 }
 
 /**
@@ -416,7 +350,14 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
       queryClient.setQueryData(['workstream', created.workstream.id], detail);
       queryClient.setQueryData(
         ['ordered-transcript', created.workstream.id],
-        optimisticOpeningTranscript(created, input, workspace.currentUser),
+        optimisticOpeningTranscript({
+          turnId: created.turnId,
+          clientMessageId: created.clientMessageId,
+          createdAt: created.createdAt,
+          text: input.openingMessage,
+          mentions: input.mentions,
+          attachments: input.attachments,
+        }, workspace.currentUser),
       );
       void queryClient.invalidateQueries({ queryKey: ['workstream', created.workstream.id], exact: true });
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });

@@ -23,7 +23,8 @@ mid-call, or the event carrying the name never lands.
 | `apps/api/src/durable-objects/workstream-identity-storage.ts` | `rename` — the one write that advances the status, sets the title, and offers the icon. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | The first pass's caller on the desktop create path, and the routed environment it is given. |
 | `apps/api/src/services/slack-workspace-workstream-service.ts` | The first pass's caller for a work stream summoned from Slack. |
-| `apps/api/src/durable-objects/substream-agent.ts` | The second pass's caller, at the end of a run (`settleAgentRun`). |
+| `apps/api/src/services/substream-creation-service.ts` | The first pass's caller for a private substream, addressed at the child. |
+| `apps/api/src/durable-objects/substream-agent.ts` | The second pass's caller, at the end of a run (`settleAgentRun`), addressed at the conversation that ran. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workstream-object-product.ts` | Where the grace is applied to a read: `directoryWorkstream` for a sidebar row, `summary` for the work stream itself. |
 | `apps/desktop/src/renderer/lib/naming-skeleton.ts` | `useNamingSkeleton` — the same rule applied to what the client already holds. Every renderer surface that shows a skeleton reads it from here. |
 
@@ -40,6 +41,23 @@ coming.
 
 A create that carries its own title is not named at all: it is written `settled`,
 and neither pass will look at it.
+
+### A private substream is named the same way
+
+A substream is created with the message that starts it, so the same rule applies
+one level down: its provisional title is that message's first line, its
+`title_status` is `naming`, and both passes run against the child. Every call
+carries the substream alongside the work stream — `createIdentityObjectPort` and
+`createMessageObjectPort` take it, and `publishWorkstreamEvent` addresses the
+child's own room — because each of those defaults to the main conversation, and
+a default taken here renames the work stream somebody is not looking at. The
+child's rename reaches the parent's registry, and from there every sidebar,
+through the ordinary common projection rather than a second write.
+[`substream-creation.md`](substream-creation.md) owns how that child is created;
+this document owns what happens to its title afterwards.
+
+The icon a pass chooses is written by the same call and ignored for a child:
+nothing draws a substream's own appearance, and its rows carry the branch line.
 
 ### The two passes
 
@@ -309,9 +327,9 @@ text under another's header.
 
 ## Boundary
 
-This module owns the title of a work stream: the placeholder, the passes that
-replace it, `title_status`, and when a reader is shown a skeleton instead of
-text.
+This module owns the title of a conversation — a work stream or one of its
+private substreams: the placeholder, the passes that replace it, `title_status`,
+and when a reader is shown a skeleton instead of text.
 
 It does not own the objective — that is
 [`workstream-descriptions.md`](workstream-descriptions.md), a separate loop over
@@ -437,6 +455,27 @@ ordinary work-stream update and belongs to the object's product service.
   file's hard-coded date asserts nothing.
 
 ## Changelog
+
+### 2026-09-10 — Substreams are named, and every address carries the substream
+
+**What changed:** Both inputs take an optional `substreamId`, threaded into the
+identity port, the message port and the rename publication, and
+`publishWorkstreamEvent` takes one too. The first pass is called for a private
+substream by its creation service; `settleAgentRun` now passes the substream its
+run belongs to instead of dropping it.
+
+**Why:** A substream is created with an instruction now, which is exactly what a
+name is chosen from, and it had no name of its own — children were written
+`settled` with a placeholder title somebody had typed into a dialog. Threading
+the address was most of the work: every port here defaults to the main
+conversation, and `settleAgentRun` was already calling the refresh pass with the
+parent's id for a run that happened in a child. That did nothing visible only
+because children were settled and the parent's own title usually was too, so the
+pass looked at the wrong conversation and correctly decided not to touch it.
+
+**What a future change has to respect:** a naming call that does not carry the
+substream is a call addressed at the work stream. Where a caller has one, it
+passes it; where a pass grows a third port, that port takes it too.
 
 ### 2026-09-09 — The naming pass chooses an icon as well as a name (#619)
 
