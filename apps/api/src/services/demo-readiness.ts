@@ -31,9 +31,12 @@ import type { Workstream } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { AutomationService } from "./automation-service";
 import {
   packRoomFacts,
+  packSidekickFacts,
   visibleRoomsFor,
+  visibleSidekicksFor,
   type DemoCast,
   type DemoPack,
   type DemoPackRoomFacts,
@@ -63,11 +66,23 @@ export interface DemoRoomExpectation {
   elicitationId: string | null;
 }
 
+/** One Sidekick as one viewer should find it in the Sidekicks directory. */
+export interface DemoSidekickExpectation {
+  /** The pack's step id, which names the Sidekick in a gap. */
+  stepId: string;
+  sidekickId: string;
+  name: string;
+  scope: "personal" | "workspace";
+  /** Whether the pack seeded a run for it, from its receipt. */
+  runId: string | null;
+}
+
 /** Everything one verified viewer should find, rooms newest first. */
 export interface DemoViewExpectation {
   role: string;
   viewerUserId: string;
   rooms: DemoRoomExpectation[];
+  sidekicks: DemoSidekickExpectation[];
   attention: { waitingForYou: number; waitingReason: "mentioned" | "needs_input" | "unseen" | null };
 }
 
@@ -98,11 +113,28 @@ export function demoReadinessManifest(
   const created = new Map(
     receipts.filter((receipt) => receipt.kind === "create_workstream").map((receipt) => [receipt.room, receipt]),
   );
+  const sidekickFacts = packSidekickFacts(pack.steps);
+  const sidekicks = new Map(sidekickFacts.map((facts) => {
+    const receipt = byAction.get(facts.stepId);
+    if (!receipt?.sidekickId) {
+      throw new ApiError(409, "demo_readiness_sidekick_unconfirmed", `Sidekick "${facts.stepId}" has no receipt`);
+    }
+    if (facts.hasFirstRun && !receipt.sidekickRunId) {
+      throw new ApiError(409, "demo_readiness_sidekick_run_unconfirmed", `Sidekick "${facts.stepId}" has no confirmed run`);
+    }
+    return [facts.stepId, {
+      stepId: facts.stepId,
+      sidekickId: receipt.sidekickId,
+      name: facts.name,
+      scope: facts.scope,
+      runId: receipt.sidekickRunId,
+    } satisfies DemoSidekickExpectation];
+  }));
   const facts = packRoomFacts(pack.steps);
   const rooms = new Map<string, Omit<DemoRoomExpectation, "unseen" | "hasUnread" | "mentioned">>();
   for (const room of facts.values()) {
     const receipt = created.get(room.room);
-    if (!receipt) throw new ApiError(409, "demo_readiness_room_unconfirmed", `Room "${room.room}" has no receipt`);
+    if (!receipt?.workstreamId) throw new ApiError(409, "demo_readiness_room_unconfirmed", `Room "${room.room}" has no receipt`);
     const resourceIds = room.uploads.map((actionId) => {
       const upload = byAction.get(actionId);
       if (!upload?.resourceId) throw new ApiError(409, "demo_readiness_upload_unconfirmed", `Upload "${actionId}" has no receipt`);
@@ -136,6 +168,12 @@ export function demoReadinessManifest(
         ...rooms.get(room.room)!,
         ...expectation.rooms[room.room]!,
       })),
+      // Not part of `expect`: which Sidekicks a viewer is offered follows from
+      // scope and authorship alone, with none of the per-viewer opened/unread
+      // state a room carries, so there is nothing here for a pack to state that
+      // the steps do not already say.
+      sidekicks: visibleSidekicksFor(expectation.viewer, sidekickFacts)
+        .map((visible) => sidekicks.get(visible.stepId)!),
       attention: expectation.attention,
     })),
   };
@@ -209,6 +247,61 @@ function compareRoom(
 }
 
 /**
+ * Compare one viewer's Sidekicks directory with what the pack published.
+ *
+ * The directory row is a projection, delivered by the same effect Queue the
+ * sidebar's rooms arrive through, so a Sidekick that was published is not yet a
+ * Sidekick anybody can see — which is exactly what this barrier exists to wait
+ * for. `nextRunAt` is the part that proves the schedule was armed rather than
+ * merely written down: an accepted definition whose apply died before its
+ * schedule alarm would still be listed, and would never run.
+ *
+ * A seeded briefing is checked the same way and for the same reason: the run
+ * finished inside its own conversation while seeding, and the row that puts it
+ * in the Sidekick's history is a projection of that conversation, delivered
+ * afterwards. A demo that shows a Sidekick which has apparently never run is
+ * one whose effects have not all landed yet.
+ */
+async function compareSidekicks(
+  env: Env,
+  auth: AuthContext,
+  view: DemoViewExpectation,
+  gap: (room: string | null, code: string, detail: string) => void,
+): Promise<void> {
+  if (view.sidekicks.length === 0) return;
+  const service = new AutomationService(env, auth);
+  const { items } = await service.listSidekicks();
+  const byId = new Map(items.map((item) => [item.id, item]));
+  for (const expected of view.sidekicks) {
+    const actual = byId.get(expected.sidekickId);
+    if (!actual) {
+      gap(null, "sidekick_missing", `"${expected.name}" is not listed`);
+      continue;
+    }
+    if (actual.name !== expected.name) {
+      gap(null, "sidekick_name", `"${actual.name}" instead of "${expected.name}"`);
+    }
+    if (actual.scope !== expected.scope) {
+      gap(null, "sidekick_scope", `"${expected.name}" is ${actual.scope} instead of ${expected.scope}`);
+    }
+    if (actual.status !== "active") {
+      gap(null, "sidekick_status", `"${expected.name}" is ${actual.status} instead of active`);
+    }
+    if (actual.nextRunAt === null) {
+      gap(null, "sidekick_schedule", `"${expected.name}" has no next run`);
+    }
+    if (expected.runId !== null) {
+      const runs = await service.runs(expected.sidekickId);
+      const run = runs.items.find((candidate) => candidate.id === expected.runId) ?? null;
+      if (!run) gap(null, "sidekick_run_missing", `"${expected.name}" shows no briefing`);
+      else if (run.status !== "completed") {
+        gap(null, "sidekick_run_state", `"${expected.name}"'s briefing is ${run.status} instead of completed`);
+      }
+    }
+  }
+}
+
+/**
  * Compare every verified viewer's projection with the manifest, once.
  *
  * Reads the whole directory and the attention summary as each viewer, and the
@@ -249,6 +342,7 @@ export async function checkDemoReadiness(
       const byWorkstream = new Map(view.rooms.map((room) => [room.workstreamId, room.room]));
       gap(null, "order", `listed ${listedOrder.map((id) => byWorkstream.get(id)).join(", ")}; expected ${view.rooms.map((room) => room.room).join(", ")}`);
     }
+    await compareSidekicks(env, auth, view, gap);
     if (attention.waitingForYou !== view.attention.waitingForYou
       || attention.waitingReason !== view.attention.waitingReason) {
       gap(null, "attention", `${attention.waitingForYou} waiting (${attention.waitingReason ?? "none"}); expected ${view.attention.waitingForYou} (${view.attention.waitingReason ?? "none"})`);

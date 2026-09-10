@@ -21,10 +21,14 @@ const OPERATION_ID = "00000000-0000-7000-8000-0000000000e2";
 const MEMO_ID = "00000000-0000-7000-8000-0000000000f1";
 const RENEWAL_ID = "00000000-0000-7000-8000-0000000000f2";
 
-function receipt(overrides: Partial<DemoSeedReceipt> & Pick<DemoSeedReceipt, "actionId" | "kind" | "room" | "workstreamId">): DemoSeedReceipt {
+function receipt(overrides: Partial<DemoSeedReceipt> & Pick<DemoSeedReceipt, "actionId" | "kind">): DemoSeedReceipt {
   return {
     operationId: OPERATION_ID,
     workspaceId: "00000000-0000-7000-8000-0000000000e1",
+    room: null,
+    workstreamId: null,
+    sidekickId: null,
+    sidekickRunId: null,
     turnId: null,
     harnessRunId: null,
     runOutcome: null,
@@ -38,6 +42,14 @@ function receipt(overrides: Partial<DemoSeedReceipt> & Pick<DemoSeedReceipt, "ac
 /** The placeholder pack's receipts, as the seeder would leave them. */
 function placeholderReceipts(): DemoSeedReceipt[] {
   return PLACEHOLDER_DEMO_PACK.steps.map((step) => {
+    if (step.kind === "sidekick") {
+      return receipt({
+        actionId: step.id,
+        kind: step.kind,
+        sidekickId: `sidekick-${step.id}`,
+        ...(step.firstRun ? { sidekickRunId: `sidekick-run-${step.id}`, runOutcome: "completed" as const } : {}),
+      });
+    }
     const workstreamId = step.room === "decision-memo" ? MEMO_ID : RENEWAL_ID;
     if (step.kind === "create_workstream") {
       return receipt({ actionId: step.id, kind: step.kind, room: step.room, workstreamId, runOutcome: "completed" });

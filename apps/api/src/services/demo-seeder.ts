@@ -5,9 +5,11 @@
  * person, as the cast member who did it. A work stream is created by
  * `WorkstreamObjectCreationService`, a message by the room's own admission
  * through `WorkstreamObjectClient`, a document by `ResourceService.upload` and
- * `attach_resource`, and an assistant turn by an ordinary harness run whose
- * provider bytes come from the seed instead of OpenRouter. Nothing here writes
- * a transcript row, and none of those paths know they were seeding.
+ * `attach_resource`, a Sidekick by `createAutomation` and the same
+ * `saveDefinition` a drafting conversation publishes through, and an assistant
+ * turn by an ordinary harness run whose provider bytes come from the seed
+ * instead of OpenRouter. Nothing here writes a transcript row, and none of
+ * those paths know they were seeding.
  *
  * Two things this module owns that they do not:
  *
@@ -26,21 +28,24 @@
  * both inside one step; a test can force the alarm between them.
  *
  * Replaying an action is safe by construction. The client message id of every
- * seeded turn and the resource id of every seeded document are derived from the
- * operation and the action, so a replay after a crash meets the production
- * path's own receipt for the same request rather than writing it again.
+ * seeded turn, the resource id of every seeded document and the id of every
+ * seeded Sidekick are derived from the operation and the action, so a replay
+ * after a crash meets the production path's own receipt for the same request
+ * rather than writing it again.
  *
  * `docs/demo-workspaces.md` owns the feature.
  */
 import {
   asUserId,
   asWorkspaceId,
+  type AutomationDraft,
   type WorkspaceId,
 } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { logInfo } from "../observability/logger";
+import { AutomationService, createAutomation } from "./automation-service";
 import { ResourceService } from "./resource-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
@@ -57,8 +62,12 @@ export interface DemoSeedReceipt {
   actionId: string;
   workspaceId: string;
   kind: DemoSeedAction["kind"];
-  room: string;
-  workstreamId: string;
+  /** The pack's name for the room, and the work stream it got. Null for a Sidekick. */
+  room: string | null;
+  workstreamId: string | null;
+  /** The Sidekick this action published, and the one run it seeded for it. */
+  sidekickId: string | null;
+  sidekickRunId: string | null;
   turnId: string | null;
   harnessRunId: string | null;
   runOutcome: DemoSeedRunOutcome | null;
@@ -72,8 +81,10 @@ interface ReceiptRecord {
   action_id: string;
   workspace_id: string;
   kind: DemoSeedAction["kind"];
-  room: string;
-  workstream_id: string;
+  room: string | null;
+  workstream_id: string | null;
+  sidekick_id: string | null;
+  sidekick_run_id: string | null;
   turn_id: string | null;
   harness_run_id: string | null;
   run_outcome: DemoSeedRunOutcome | null;
@@ -82,7 +93,8 @@ interface ReceiptRecord {
   completed_at: string;
 }
 
-const RECEIPT_COLUMNS = `operation_id, action_id, workspace_id, kind, room, workstream_id, turn_id,
+const RECEIPT_COLUMNS = `operation_id, action_id, workspace_id, kind, room, workstream_id,
+  sidekick_id, sidekick_run_id, turn_id,
   harness_run_id, run_outcome, elicitation_id, resource_id, completed_at`;
 
 function toReceipt(record: ReceiptRecord): DemoSeedReceipt {
@@ -93,6 +105,8 @@ function toReceipt(record: ReceiptRecord): DemoSeedReceipt {
     kind: record.kind,
     room: record.room,
     workstreamId: record.workstream_id,
+    sidekickId: record.sidekick_id,
+    sidekickRunId: record.sidekick_run_id,
     turnId: record.turn_id,
     harnessRunId: record.harness_run_id,
     runOutcome: record.run_outcome,
@@ -128,11 +142,12 @@ async function demoSeedReceipt(db: D1Database, operationId: string, actionId: st
 export async function recordDemoSeedReceipt(db: D1Database, receipt: DemoSeedReceipt): Promise<DemoSeedReceipt> {
   await db.prepare(
     `INSERT INTO demo_seed_receipts (${RECEIPT_COLUMNS})
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (operation_id, action_id) DO NOTHING`,
   ).bind(
     receipt.operationId, receipt.actionId, receipt.workspaceId, receipt.kind, receipt.room,
-    receipt.workstreamId, receipt.turnId, receipt.harnessRunId, receipt.runOutcome,
+    receipt.workstreamId, receipt.sidekickId, receipt.sidekickRunId, receipt.turnId,
+    receipt.harnessRunId, receipt.runOutcome,
     receipt.elicitationId, receipt.resourceId, receipt.completedAt,
   ).run();
   return (await demoSeedReceipt(db, receipt.operationId, receipt.actionId)) ?? receipt;
@@ -158,20 +173,36 @@ export function demoSeedClientMessageId(operationId: string, actionId: string): 
 }
 
 /**
- * The resource id of a seeded document, derived the same way: a UUID whose
- * bits come from a hash of the operation and action (RFC 9562 version 8, the
- * custom-bits version), so a replayed upload asks for the draft that already
- * exists rather than minting a second document.
+ * An id derived from the operation and the action rather than minted: a UUID
+ * whose bits come from a hash of the two (RFC 9562 version 8, the custom-bits
+ * version). A replayed action asks the production path for the same id it asked
+ * for the first time, and meets that path's own receipt instead of writing a
+ * second object. `purpose` keeps two kinds of object made by one action — a
+ * document and a Sidekick — from colliding on one id.
  */
-export async function demoSeedResourceId(operationId: string, actionId: string): Promise<string> {
+async function demoSeedDerivedId(purpose: string, operationId: string, actionId: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(`demo-seed-resource ${operationId} ${actionId}`),
+    new TextEncoder().encode(`demo-seed-${purpose} ${operationId} ${actionId}`),
   ));
   digest[6] = (digest[6]! & 0x0f) | 0x80;
   digest[8] = (digest[8]! & 0x3f) | 0x80;
   const hex = [...digest.subarray(0, 16)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+/** The resource id of a seeded document, so a replayed upload attaches the draft it already made. */
+export function demoSeedResourceId(operationId: string, actionId: string): Promise<string> {
+  return demoSeedDerivedId("resource", operationId, actionId);
+}
+
+/**
+ * The id of a seeded Sidekick, so a replayed publication meets the object that
+ * already exists: `createAutomation` answers `created: false` for it, and the
+ * definition is submitted against the Sidekick the first attempt made.
+ */
+export function demoSeedSidekickId(operationId: string, actionId: string): Promise<string> {
+  return demoSeedDerivedId("sidekick", operationId, actionId);
 }
 
 /** One demo's worth of seeding: the pack, who plays whom, and how they act. */
@@ -272,6 +303,14 @@ export type DemoSeedProgress =
       turnCreatedAt: string;
       /** Known for an opening run; a message-started run's id is minted at activation. */
       harnessRunId: string | null;
+    }
+  | {
+      /** A published Sidekick whose one seeded run has been admitted but has not finished. */
+      state: "sidekick_run_pending";
+      action: Extract<DemoSeedAction, { kind: "sidekick" }>;
+      sidekickId: string;
+      /** The Sidekick's own run id, which the object hands back at admission. */
+      sidekickRunId: string;
     };
 
 function actorAuth(session: DemoSeedSession, action: DemoSeedAction): AuthContext {
@@ -361,7 +400,76 @@ export async function applyDemoSeedAction(
       await new WorkstreamObjectClient(env, auth, workstreamId, "0").attachResource(resourceId);
       return { state: "confirmed", receipt: await confirm(env, session, action, { workstreamId, resourceId }) };
     }
+    case "sidekick": {
+      const sidekickId = await demoSeedSidekickId(session.operationId, action.actionId);
+      await createAutomation(env, {
+        workspaceId: session.workspaceId,
+        authorUserId: action.actorUserId,
+        scope: action.scope,
+        owningWorkstreamId: null,
+        automationId: sidekickId,
+      });
+      const service = new AutomationService(env, auth);
+      // Publishes as well as records: `saveDefinition` applies a ready
+      // definition, which is what arms the schedule and puts the row in the
+      // directory. A replay writes an identical second revision and applies
+      // that, which lands on the same accepted state rather than a different
+      // one; `create` above has already answered `created: false` for it.
+      const { ready } = await service.saveDefinition(sidekickId, {
+        draft: sidekickDraft(action),
+        evaluatorRules: null,
+        submittedByRunId: null,
+      });
+      if (!ready) {
+        throw new ApiError(409, "demo_seed_sidekick_not_published", `The Sidekick for "${action.actionId}" was not published`);
+      }
+      if (action.firstRun === null) {
+        return { state: "confirmed", receipt: await confirm(env, session, action, { sidekickId }) };
+      }
+      const admitted = await service.runSeeded(sidekickId, action.firstRun);
+      return {
+        state: "sidekick_run_pending",
+        action,
+        sidekickId,
+        sidekickRunId: admitted.runId,
+      };
+    }
   }
+}
+
+/**
+ * The definition a Sidekick step publishes.
+ *
+ * Written here rather than in the pack because most of it is the same for every
+ * seeded Sidekick and none of it is a product decision: no connector is bound,
+ * no memory table is declared, and the only trigger is the pack's own schedule.
+ * `ready` is true because a demo publishes what it seeds — an unready draft
+ * would leave a Sidekick in the library that never runs and never appears in
+ * the strip.
+ */
+function sidekickDraft(action: Extract<DemoSeedAction, { kind: "sidekick" }>): AutomationDraft {
+  return {
+    name: action.definition.name,
+    description: action.definition.description,
+    overview: action.definition.overview,
+    instructions: action.definition.instructions,
+    definitionVersion: 2,
+    triggers: [{
+      type: "calendar",
+      rrule: action.schedule.rrule,
+      timezone: action.schedule.timezone,
+      summary: action.schedule.summary,
+    }],
+    requiredCapabilities: [],
+    expectedOutputs: [],
+    defaultBehavior: {},
+    recommendedPlugins: [],
+    memoryTables: [],
+    suggestedScope: action.scope,
+    followUpQuestion: null,
+    elicitation: null,
+    ready: true,
+  };
 }
 
 async function confirm(
@@ -369,7 +477,9 @@ async function confirm(
   session: DemoSeedSession,
   action: DemoSeedAction,
   outcome: {
-    workstreamId: string;
+    workstreamId?: string;
+    sidekickId?: string;
+    sidekickRunId?: string;
     turnId?: string;
     harnessRunId?: string;
     runOutcome?: DemoSeedRunOutcome;
@@ -382,8 +492,10 @@ async function confirm(
     actionId: action.actionId,
     workspaceId: session.workspaceId,
     kind: action.kind,
-    room: action.room,
-    workstreamId: outcome.workstreamId,
+    room: action.kind === "sidekick" ? null : action.room,
+    workstreamId: outcome.workstreamId ?? null,
+    sidekickId: outcome.sidekickId ?? null,
+    sidekickRunId: outcome.sidekickRunId ?? null,
     turnId: outcome.turnId ?? null,
     harnessRunId: outcome.harnessRunId ?? null,
     runOutcome: outcome.runOutcome ?? null,
@@ -395,7 +507,8 @@ async function confirm(
     operation_id: session.operationId,
     action_id: action.actionId,
     workspace_id: session.workspaceId,
-    workstream_id: outcome.workstreamId,
+    workstream_id: outcome.workstreamId ?? null,
+    sidekick_id: outcome.sidekickId ?? null,
     kind: action.kind,
     run_outcome: outcome.runOutcome ?? null,
   });
@@ -428,6 +541,7 @@ export async function settleDemoSeedAction(
   options: { deadlineAt?: number } = {},
 ): Promise<DemoSeedReceipt> {
   if (progress.state === "confirmed") return progress.receipt;
+  if (progress.state === "sidekick_run_pending") return settleSeededSidekickRun(env, session, progress, options);
   const { action } = progress;
   const expected: DemoSeedRunOutcome = action.seed.assistant?.kind === "ask" ? "needs_input" : "completed";
   const client = new WorkstreamObjectClient(env, actorAuth(session, action), progress.workstreamId, "0");
@@ -478,5 +592,84 @@ export async function settleDemoSeedAction(
       );
     }
     await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_INTERVAL_MS));
+  }
+}
+
+/**
+ * Wait for a seeded Sidekick's one briefing to finish, then record it.
+ *
+ * The same shape as a room's settlement, and read the same way: from the run's
+ * own conversation, which is a child substream under the Sidekick admitting
+ * only the person it runs as. Not from the Sidekick's run history — that row is
+ * a projection of this conversation, delivered afterwards through the effect
+ * Queue, so waiting on it here would make seeding wait for a hop that is the
+ * readiness barrier's to wait for, and would report "still running" for a run
+ * that had already finished.
+ *
+ * `completed` is the only success. A briefing is a `say`, so there is no other
+ * outcome to accept: `needs_input` would mean the run opened a question in a
+ * conversation the demo never shows anybody, and a failed or stopped run fails
+ * the action rather than being skipped past.
+ */
+async function settleSeededSidekickRun(
+  env: Env,
+  session: DemoSeedSession,
+  progress: Extract<DemoSeedProgress, { state: "sidekick_run_pending" }>,
+  options: { deadlineAt?: number },
+): Promise<DemoSeedReceipt> {
+  const { action } = progress;
+  const conversation = new WorkstreamObjectClient(
+    env,
+    actorAuth(session, action),
+    progress.sidekickId,
+    progress.sidekickRunId,
+  );
+  for (;;) {
+    // The conversation does not exist yet at the first ask. A Sidekick admits
+    // an occurrence and provisions its run's conversation on its own alarm
+    // afterwards, so "not there" is a stage of starting rather than a failure,
+    // and the deadline below is what ends the wait if it never arrives.
+    const run = await conversationRunOrNull(conversation);
+    if (run && (run.status === "failed" || run.status === "stopped")) {
+      throw new ApiError(
+        409,
+        "demo_seed_sidekick_run_failed",
+        `The seeded run for "${action.actionId}" ${run.status}${run.error ? ` (${run.error.code})` : ""}`,
+      );
+    }
+    if (run && (run.status === "completed" || run.status === "needs_input")) {
+      if (run.status !== "completed") {
+        throw new ApiError(
+          409,
+          "demo_seed_sidekick_run_outcome_mismatch",
+          `The seeded run for "${action.actionId}" settled as ${run.status}, not completed`,
+        );
+      }
+      return confirm(env, session, action, {
+        sidekickId: progress.sidekickId,
+        sidekickRunId: progress.sidekickRunId,
+        runOutcome: "completed",
+      });
+    }
+    if (options.deadlineAt !== undefined && Date.now() >= options.deadlineAt) {
+      throw new ApiError(
+        409,
+        "demo_seed_sidekick_run_unsettled",
+        `The seeded run for "${action.actionId}" has not settled (${run ? run.status : "not started"})`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_INTERVAL_MS));
+  }
+}
+
+/** The run a conversation is on, or null while that conversation is still being provisioned. */
+async function conversationRunOrNull(
+  conversation: WorkstreamObjectClient,
+): Promise<Awaited<ReturnType<WorkstreamObjectClient["get"]>>["latestHarnessRun"]> {
+  try {
+    return (await conversation.get()).latestHarnessRun ?? null;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
   }
 }

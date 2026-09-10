@@ -30,9 +30,11 @@ import {
 } from "./helpers/conversation-effects";
 import {
   DEMO_OPERATION_ID,
+  DEMO_SIDEKICK_PACK,
   DEMO_TWO_ROOM_PACK,
   DEMO_WORKSPACE_ID,
   demoRoomStub,
+  demoRunStub,
   demoSeedEnv,
   openDemoTestSession,
   playDemoAction,
@@ -119,4 +121,42 @@ describe("the readiness barrier", () => {
     expect(after.gaps).toEqual([]);
     expect(after.ready).toBe(true);
   }, 60_000);
+
+  it("waits for a seeded Sidekick to reach the presenter's library and its briefing to reach its history", async () => {
+    const seed = await openDemoTestSession(DEMO_SIDEKICK_PACK);
+    for (const action of seed.actions) await playDemoAction(seed, action);
+    const receipts = await demoSeedReceipts(env.DB, DEMO_OPERATION_ID);
+    const manifest = demoReadinessManifest(DEMO_SIDEKICK_PACK, seed.cast, receipts);
+    const published = receipts.find((receipt) => receipt.kind === "sidekick")!;
+    // The presenter is neither its author nor in any room with it; it is on
+    // their list because it is the workspace's.
+    expect(manifest.views[0]!.sidekicks.map((sidekick) => [sidekick.name, sidekick.scope])).toEqual([
+      ["Morning briefing", "workspace"],
+    ]);
+
+    // Publication and the briefing are both done, and neither has reached the
+    // presenter: a Sidekick's directory row rides the same Queue a room's does.
+    const before = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
+    expect(before.ready).toBe(false);
+    expect(before.gaps.map((gap) => gap.code)).toContain("sidekick_missing");
+
+    // The run's own conversation reports up to the Sidekick, and the Sidekick
+    // to the workspace — the same two legs a room's projection travels.
+    await deliverChildEffects(env, demoRunStub(published.sidekickId!, published.sidekickRunId!));
+    const sidekick = parentStubFor(env, "global", {
+      workspaceId: DEMO_WORKSPACE_ID,
+      parentKind: "automation",
+      parentId: published.sidekickId!,
+    });
+    for (const envelope of await pendingParentEffects(sidekick)) {
+      if (!envelope.effect.kind.startsWith("directory_")) continue;
+      const result = await consumeEffectBodies(env, [envelope]);
+      if (result.retried > 0) throw new Error(`sidekick effect retried: ${envelope.effect.kind}`);
+    }
+    for (const room of manifest.views[0]!.rooms) await deliverDirectoryEffects(room.workstreamId);
+
+    const after = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
+    expect(after.gaps).toEqual([]);
+    expect(after.ready).toBe(true);
+  }, 90_000);
 });
