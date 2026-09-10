@@ -20,6 +20,11 @@ the [WorkerEntrypoint RPC model](https://developers.cloudflare.com/workers/runti
 [RPC lifecycle and disposal](https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/),
 and [Versions and gradual deployments](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/).
 
+Global additionally binds the existing `avalon-desktop-releases` R2 bucket as
+`DESKTOP_RELEASES` for [private downloads](private-access.md). Apply
+regional migration 0101 before releasing the Global API, then Ace and the site.
+EU has no installer binding or public intake route in this first slice. Global requires the Turnstile secret and a finite approved rate-limit binding before production acquisition opens; the four application limits must also be finite. See [private-access operations](private-access.md#operations).
+
 ## Sidekick staged deployment
 
 PR #583 deploys both class exports while retaining `AutomationDO` at v9. After
@@ -303,6 +308,33 @@ catalog reads plus sixteen small KV writes; inference performs only the KV reads
 for Azure-bound models in its route plan.
 
 ## Changelog
+
+### 2026-09-09 — Bound and recover early-access operations
+
+**What changed:** Global acquisition now runs a fail-closed pre-database guard in `worker-events.ts`. A finite approved `ACCESS_EDGE_RATE_LIMITER` binding and four finite application limits, plus `TURNSTILE_SECRET_KEY`, are required for production acquisition. The Global recovery router uses the existing Ace operator credential. No EU acquisition or cross-region provider credentials are introduced.
+
+**Why:** Public acquisition needs predictable failure and recoverable operator actions before launch, without imposing account approval or building a campaign system.
+
+**Consequences:** [Private access](private-access.md) owns configuration, undecided numerical limits, and recovery procedures. PR #637.
+
+### 2026-09-09 — Deploy the access API before its public form
+
+**What changed:** Global binds the existing desktop-release bucket for streamed
+bearer downloads. Migration `0101_private_access.sql` introduces the intake,
+complete grant schema and configurable intake rate buckets.
+
+**Why:** The site must reach a migrated, healthy request endpoint as soon as its
+email form is published. Independent merge-triggered workflows do not enforce
+that ordering themselves.
+
+**Considered and rejected:** Merely documenting migration order while publishing
+the site first would expose a broken form. For this first rollout, dispatch the
+verified API revision through the existing deployment workflow and confirm its
+health before merging the site/Ace change; later merge deployments are idempotent.
+
+**Consequences:** Verify `rally.ai` in Resend and the `hello@example.com` reply mailbox.
+EU receives schema but no public intake/download binding. See
+[private access](private-access.md) for operational limits and erasure.
 
 ### 2026-09-08 — Retire the temporary Worker class export after the rename
 

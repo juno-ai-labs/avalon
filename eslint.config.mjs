@@ -32,6 +32,8 @@ import { durableObjectSyncTransactionRule } from "./scripts/eslint-rules/durable
 export default tseslint.config(
   {
     ignores: [
+      // Nested agent worktrees are independent checkouts with their own config.
+      "**/.claude/worktrees/**",
       "**/dist/**",
       "**/dist-*/**",
       "**/out/**",
@@ -44,6 +46,7 @@ export default tseslint.config(
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
+  { languageOptions: { parserOptions: { tsconfigRootDir: import.meta.dirname } } },
   {
     plugins: {
       rally: {

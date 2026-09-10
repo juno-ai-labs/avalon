@@ -26,7 +26,8 @@
     "./model-markdown": "./src/model-markdown.ts",
     "./citations": "./src/citations.ts",
     "./message-mentions": "./src/message-mentions.ts",
-    "./search": "./src/search.ts"
+    "./search": "./src/search.ts",
+    "./private-access": "./src/private-access.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
