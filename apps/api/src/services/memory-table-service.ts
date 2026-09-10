@@ -28,8 +28,10 @@ import {
 } from "../durable-objects/workspace-memory-protocol";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
-  MEMORY_SCOPE_KINDS,
+  MODEL_MEMORY_SCOPE_KINDS,
   ensureScope,
+  modelScopeKind,
+  storedScopeKind,
   resolveMemoryAccess,
   writableScope,
   type MemoryScope,
@@ -68,7 +70,7 @@ const ColumnSchema = z.strictObject({
 });
 
 const CreateSchema = z.strictObject({
-  scopeKind: z.enum(MEMORY_SCOPE_KINDS),
+  scopeKind: z.enum(MODEL_MEMORY_SCOPE_KINDS).transform(storedScopeKind),
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().min(1).max(1_200),
   usageInstructions: z.string().trim().min(1).max(4_000),
@@ -268,7 +270,7 @@ async function loadAuthorizedTable(
   }
   const scope = scopes.find((candidate) => candidate.memoryScopeId === found.table.memoryScopeId);
   if (!scope) throw new Error("memory_table_not_authorized");
-  if (requireWritable && !scope.writable) throw new Error(`memory_scope_not_writable:${scope.kind}`);
+  if (requireWritable && !scope.writable) throw new Error(`memory_scope_not_writable:${modelScopeKind(scope.kind)}`);
   const keyIds = new Set(JSON.parse(found.table.keyColumnIdsJson) as string[]);
   const keyColumns = found.columns.filter((column) => keyIds.has(column.memoryTableColumnId));
   if (keyColumns.length === 0) throw new Error("memory_table_key_schema_invalid");
@@ -280,7 +282,7 @@ function publicTable(table: AuthorizedTable) {
   return {
     memoryTableId: table.table.memoryTableId,
     memoryScopeId: table.table.memoryScopeId,
-    scopeKind: table.table.scopeKind,
+    scopeKind: modelScopeKind(table.table.scopeKind),
     name: table.table.name,
     description: table.table.description,
     usageInstructions: table.table.usageInstructions,
@@ -303,7 +305,7 @@ function compactTable(table: AuthorizedTable) {
   return {
     memoryTableId: table.table.memoryTableId,
     memoryScopeId: table.table.memoryScopeId,
-    scopeKind: table.table.scopeKind,
+    scopeKind: modelScopeKind(table.table.scopeKind),
     name: table.table.name,
     description: table.table.description,
     keyColumns: table.keyColumns.map((column) => column.name),
@@ -1164,7 +1166,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
         inputSchema: {
           type: "object", additionalProperties: false,
           properties: {
-            scopeKind: { type: "string", enum: MEMORY_SCOPE_KINDS },
+            scopeKind: { type: "string", enum: MODEL_MEMORY_SCOPE_KINDS },
             name: { type: "string" }, description: { type: "string" }, usageInstructions: { type: "string" },
             columns: { type: "array", items: columnJsonSchema },
             keyColumns: { type: "array", items: { type: "string" } },
@@ -1273,7 +1275,7 @@ export async function materializeAutomationMemoryTables(
       usageInstructions: declared.usageInstructions,
       columns: declared.columns,
       keyColumns: declared.keyColumns,
-      rationale: "Declared by the automation's definition",
+      rationale: "Declared by the Sidekick's definition",
     };
     const receiptId = `${harnessRunId}:${index}`;
     const inputHash = await mutationInputHash("create", declaration);

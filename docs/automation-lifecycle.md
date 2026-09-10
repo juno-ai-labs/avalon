@@ -79,8 +79,8 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The parent half it inherits: child registry, projections, receipts, aggregation, the outbox and its drain. See [`workstream-durable-object.md`](workstream-durable-object.md). |
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through, which resolves whether the caller is in the owning room before asking the object. |
 | `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
-| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the drafting plugin's host, which creates a room's automation on its first submission and posts the proposal card; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; `createAutomationPostResultPlugin`, the `automation_post_result` tool; and the run prompt context built from the definition. |
-| `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:automations` plugin: the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
+| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the drafting plugin's host, which creates a room's automation on its first submission and posts the proposal card; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; `createAutomationPostResultPlugin`, the `sidekick_post_result` tool; and the run prompt context built from the definition. |
+| `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:automations` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
 | `packages/contracts/src/automation-evaluators.ts` | The strict external-event evaluator grammar (`always`, or `all` over leaves) and the delivery message the matcher emits. |
@@ -128,8 +128,10 @@ a filter.
 `POST /sidekicks` creates a personal draft and its authoring conversation.
 `/sidekicks/new` replaces itself with the resulting detail route so Back cannot
 create a second draft. The existing `rally:automations` plugin can also create a
-workstream-owned Sidekick from a workstream conversation. Persisted plugin and
-tool identities remain unchanged. Workstream-owned entries are managed in the
+workstream-owned Sidekick from a workstream conversation. The persisted plugin
+id and the canonical tool names stay; the model reads the plugin as
+`rally_sidekicks` and its tools under the `sidekick_` prefix. Workstream-owned
+entries are managed in the
 library; the center sidebar shows loaded attachments only.
 
 `createAutomation` reserves the durable owner before bootstrapping its main
@@ -189,7 +191,7 @@ here the play the changelog below explains.
 
 
 ### Drafting in the conversation
-`automation_submit_draft` calls `SidekickDO.saveDefinition` under the submitting
+`sidekick_submit_draft` calls `SidekickDO.saveDefinition` under the submitting
 actor's management authority. The owner appends an immutable revision and publishes
 it immediately when ready. New definitions carry `definitionVersion: 2`; inbound
 email is explicit. There is no instruction editor, type selector, or Create/Apply
@@ -331,8 +333,9 @@ row, no activity, and no notification.
 
 ### Posting a result
 
-A run of a room's automation holds one extra plugin, `rally:automation-result`,
-preloaded, with the tool `automation_post_result`. It is offered only when
+A run of a room's automation holds one extra plugin, `rally:automation-result`
+(`rally_sidekick_result` to the model), preloaded, with the tool
+`sidekick_post_result`. It is offered only when
 `readRunDefinition().owningWorkstreamId` is not null, so a personal or
 workspace automation cannot post into a room at all. The tool asks
 `WorkstreamDO.authority` for the room's generation and archive state, refuses an
@@ -462,7 +465,7 @@ Sidekick's id, exactly what every Sidekick showed before the picker existed.
 - **`AutomationDO` forwards nothing its children say.** The workspace hears the
   automation's row and nothing else; forwarding a run's aggregate would put
   every run in the work-stream directory, which is the design this replaced.
-- **The one way a result reaches a room is `automation_post_result`.** Rally
+- **The one way a result reaches a room is `sidekick_post_result`.** Rally
   posts nothing after a run; the run posts, once, when its instructions say the
   room should hear it. A second delivery path is a duplicate the room reads
   twice.
@@ -521,7 +524,7 @@ or the memory store the automation scope lives in.
   when its alarm fires.
 - **The Queue redelivers a matched event.** `admitExternalEvent` answers
   `automation_occurrence_replayed`; the consumer logs it and acks.
-- **A result cannot be posted.** `automation_post_result` throws
+- **A result cannot be posted.** `sidekick_post_result` throws
   `automation_owning_room_archived`, `automation_owning_room_missing`, or
   `automation_post_result_refused:<code>` (a stale generation or an archived
   room decided inside the room's object); the run sees the tool error and says
@@ -657,6 +660,58 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-10 — The model reads Sidekick everywhere a person does
+
+**What changed:** Every surface the model reads now says Sidekick. The drafting
+plugin's model id is `rally_sidekicks` and its tools render under the
+`sidekick_` prefix (`sidekick_submit_draft`, `sidekick_plugin_inspect`,
+`sidekick_set_evaluator_rules`, ...); `automations_list` is `sidekicks_list` and
+answers `{ sidekicks: [{ sidekickId, ... }] }`; the draft's target field is
+`sidekickId`. The result plugin is `rally_sidekick_result` and its tool is
+`sidekick_post_result`. A run's task context carries its definition under
+`sidekick`, with each durable table's `scopeKind` as `sidekick`, and the memory
+and table tools accept and return the scope kind `sidekick`. The run prompt's
+`# Result delivery` and `# Where this Sidekick was set up` sections, the
+untrusted headers (`UNTRUSTED SIDEKICK RESULT`, `UNTRUSTED SIDEKICK TRIGGER
+ACTIVITY`, `AUTHORIZED SIDEKICK CONDITION`), the work-opportunity classifier,
+the memory and table plugin policy, the drafting plugin's whole system message,
+the tool summaries, and the refusals the model reads verbatim follow. So do the
+attachment tools' `sidekick` prefix with its `sidekick_read_resource` and
+`sidekick_view_resource` suggested calls, and Slack's activity trigger
+descriptions.
+
+**Why:** The product rename had reached the plugin's display name, its
+description, and the opening lines of its system message, and stopped. The
+model was told it was working with Sidekicks and then handed tools, fields, and
+rules that all called the same thing an automation, inside one system message.
+A medium model reads that as two things. The rebrand inventory's rule applies
+here as it did to Avalon: a field is model-facing if something stringifies it,
+and every one of these was.
+
+**Not renamed, deliberately:** the canonical plugin ids `rally:automations` and
+`rally:automation-result`, which are the identity of a persisted plugin
+activation and the key the desktop's activity rows use; the canonical tool
+names receipts record (`submit_draft`, `plugin_inspect`, ...), which is why a
+drafting conversation resumed across the deploy keeps its inspections and staged
+rules; the stored memory scope kind `automation`, which rows and vector metadata
+carry and which now meets the model only through `modelScopeKind` and
+`storedScopeKind` at the tool boundary; the `rally.automation.*` capability
+strings, which are authorization identity; and the `automation_*` error codes
+(`automation_owning_room_archived`, `automation_post_result_refused:<code>`),
+which the runbook searches logs for; the one exception is the kind suffix on
+`memory_scope_not_writable:<kind>`, which names the kind the model chose and so
+reads `sidekick`. Internal type, function, and file names
+stay as they were, as the rest of this document already records for the object.
+
+**Consequences:** The result tool's canonical name is now `post_result`, so its
+receipts change name; the room's replay on the run id is what still makes a
+second post a no-op. Telemetry's `tool_name` values change with the wire names.
+A run in flight across the deploy sees the new names on its next turn; a model
+that still emits `automationId` is refused by the strict draft schema and
+retries with the schema it is shown. Two golden prompt hashes moved,
+`automationWorkstream` and `semanticTrigger`, and each was checked against a
+rename-only reversal of the new text before it was regenerated.
 
 ### 2026-09-10 — The Sidekicks window closes on Escape
 

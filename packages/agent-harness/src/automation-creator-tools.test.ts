@@ -119,21 +119,21 @@ describe("the automations plugin", () => {
       "plugin_inspect",
       "people_search",
       "resources_search",
-      "automations_list",
+      "sidekicks_list",
       "submit_draft",
       "set_evaluator_rules",
     ]);
   });
 
   it("lists what the conversation may edit through the host, and tells the agent to start there", async () => {
-    const listed = { automations: [{ automationId: "a-1", name: "Standup reminder" }] };
+    const listed = { sidekicks: [{ sidekickId: "a-1", name: "Standup reminder" }] };
     const state = host({ automationDirectoryPort: { listAutomations: async () => listed } });
     const plugin = createAutomationsPlugin(state);
 
-    await expect(toolNamed(plugin.tools, "automations_list").execute({}, toolContext))
+    await expect(toolNamed(plugin.tools, "sidekicks_list").execute({}, toolContext))
       .resolves.toMatchObject({ output: listed });
-    expect(plugin.systemMessage).toContain("call automations_list");
-    expect(plugin.systemMessage).toContain("with its automationId");
+    expect(plugin.systemMessage).toContain("call sidekicks_list");
+    expect(plugin.systemMessage).toContain("with its sidekickId");
   });
 
   it("hands the named automation to the host beside the draft, and never inside it", async () => {
@@ -157,15 +157,15 @@ describe("the automations plugin", () => {
     const tools = createAutomationsPlugin(state).tools;
 
     const named = "3d1f8c2a-5b6e-4c7d-8e9f-0a1b2c3d4e5f";
-    await toolNamed(tools, "submit_draft").execute({ ...eventDrivenDraft, automationId: named }, toolContext);
-    await toolNamed(tools, "submit_draft").execute({ ...eventDrivenDraft, automationId: null }, toolContext);
+    await toolNamed(tools, "submit_draft").execute({ ...eventDrivenDraft, sidekickId: named }, toolContext);
+    await toolNamed(tools, "submit_draft").execute({ ...eventDrivenDraft, sidekickId: null }, toolContext);
     await toolNamed(tools, "submit_draft").execute(eventDrivenDraft, toolContext);
     // What a model that fills every property puts here: a slash, a nil UUID.
     // Neither names an automation, and handed through they threw from the
     // directory lookup as a bare schema error the model retried identically.
-    await toolNamed(tools, "submit_draft").execute({ ...eventDrivenDraft, automationId: "/" }, toolContext);
+    await toolNamed(tools, "submit_draft").execute({ ...eventDrivenDraft, sidekickId: "/" }, toolContext);
     await toolNamed(tools, "submit_draft")
-      .execute({ ...eventDrivenDraft, automationId: "00000000-0000-4000-8000-000000000000" }, toolContext);
+      .execute({ ...eventDrivenDraft, sidekickId: "00000000-0000-4000-8000-000000000000" }, toolContext);
 
     expect(targets).toEqual([
       { automationId: named },
@@ -176,7 +176,7 @@ describe("the automations plugin", () => {
     ]);
     // The draft is the definition an automation stores; the address it is
     // stored at is not part of it.
-    expect(drafts.every((draft) => !("automationId" in (draft as object)))).toBe(true);
+    expect(drafts.every((draft) => !("sidekickId" in (draft as object)))).toBe(true);
   });
 
   it("tells the agent to ask for a scope it cannot change afterwards", () => {

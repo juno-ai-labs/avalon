@@ -445,7 +445,7 @@ the Automation home page.
    pause/resume does not create missed catch-up runs.
 4. Build one external-event automation that matches an exact resource and a
    case-sensitive substring. Confirm the architect stages rules with
-   `automation_set_evaluator_rules` before submission. Send matching,
+   `sidekick_set_evaluator_rules` before submission. Send matching,
    nonmatching, wrong-case, duplicate, and reordered connector events; only the
    matching canonical event creates one occurrence.
 5. Watch the same resource from two work streams and trigger the automation from

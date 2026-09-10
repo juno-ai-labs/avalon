@@ -136,14 +136,14 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
       definition: creatorDefinition("plugins_list"),
       execute: async () => ({
         output: executeAutomationCreatorDiscoveryTool("plugins_list", {}, catalog),
-        summary: "Listed authorized automation plugins",
+        summary: "Listed authorized Sidekick plugins",
       }),
     },
     {
       definition: creatorDefinition("plugins_search"),
       execute: async (raw) => ({
         output: executeAutomationCreatorDiscoveryTool("plugins_search", asRecord(raw), catalog),
-        summary: "Searched authorized automation plugins",
+        summary: "Searched authorized Sidekick plugins",
       }),
     },
     {
@@ -152,7 +152,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         const output = executeAutomationCreatorDiscoveryTool("plugin_inspect", asRecord(raw), catalog);
         const pluginId = String(asRecord(raw).pluginId ?? "");
         if (pluginId) inspectedAutomationPluginIds.add(pluginId);
-        return { output, summary: "Inspected an authorized automation plugin" };
+        return { output, summary: "Inspected an authorized Sidekick plugin" };
       },
     },
     {
@@ -190,12 +190,12 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
       },
     },
     {
-      definition: creatorDefinition("automations_list"),
+      definition: creatorDefinition("sidekicks_list"),
       execute: async () => {
         if (!input.automationDirectoryPort) throw new Error("automation_directory_host_unavailable");
         return {
           output: await input.automationDirectoryPort.listAutomations(),
-          summary: "Listed the automations this conversation can edit",
+          summary: "Listed the Sidekicks this conversation can edit",
         };
       },
     },
@@ -260,7 +260,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
               !loadedAutomationPluginIds.has(pluginId) || !inspectedAutomationPluginIds.has(pluginId)
             ));
           if (unloadedPluginId) {
-            throw new Error(`Load and inspect ${unloadedPluginId} before submitting it in a ready automation draft`);
+            throw new Error(`Load and inspect ${unloadedPluginId} before submitting it in a ready Sidekick draft`);
           }
           // AutomationAgent refuses both of these too, and that throw is the one
           // no caller can bypass. These exist for what the model reads: a
@@ -300,7 +300,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         });
         return {
           output: { accepted: true },
-          summary: draftState.submitted.ready ? "Submitted ready automation draft" : "Submitted partial automation draft",
+          summary: draftState.submitted.ready ? "Submitted ready Sidekick draft" : "Submitted partial Sidekick draft",
         };
       },
     },
@@ -340,7 +340,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
             issues.push({
               code: "custom",
               path: ["evaluators", index, "source", "suggestedSourcePluginId"],
-              message: "This plugin has not been inspected. Call automation_plugin_inspect with this plugin ID, then set the rules again using only the event types and filter fields it declares.",
+              message: "This plugin has not been inspected. Call sidekick_plugin_inspect with this plugin ID, then set the rules again using only the event types and filter fields it declares.",
               input: evaluator.source.suggestedSourcePluginId,
             });
             continue;
@@ -355,7 +355,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
             issues.push({
               code: "custom",
               path: ["evaluators", index, "source", "event"],
-              message: "This plugin declares no event of that name or family. Use one of the event types listed by automation_plugin_inspect for this plugin.",
+              message: "This plugin declares no event of that name or family. Use one of the event types listed by sidekick_plugin_inspect for this plugin.",
               input: evaluator.source.event,
             });
             continue;
@@ -395,7 +395,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
               issues.push({
                 code: "custom",
                 path: ["evaluators", index, "source", "resourceId"],
-                message: "This event cannot be filtered by that resource type. Use a resource whose type appears in the relationships automation_plugin_inspect lists for this event.",
+                message: "This event cannot be filtered by that resource type. Use a resource whose type appears in the relationships sidekick_plugin_inspect lists for this event.",
                 input: evaluator.source.resourceId,
               });
             }
@@ -428,7 +428,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
                   issues.push({
                     code: "custom",
                     path: ["evaluators", index, "when", "allOf", leafIndex],
-                    message: "This filter field, operator, or value type is not one the plugin declares. Use a field from automation_plugin_inspect with one of the operators it lists and a value of the type it names.",
+                    message: "This filter field, operator, or value type is not one the plugin declares. Use a field from sidekick_plugin_inspect with one of the operators it lists and a value of the type it names.",
                     input: leaf,
                   });
                 }
@@ -466,12 +466,12 @@ export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "\"workspace\" belongs to the admins and acts with the workspace's own connections,",
   "and \"workstream\" belongs to this work stream — everyone in the room can manage it,",
   "Rally posts its results here, and it outlives whoever asked for it.",
-  "Nothing else is delivered for an automation: if its result should reach an inbox, a channel, a DM, or a document,",
+  "Nothing else is delivered for a Sidekick: if its result should reach an inbox, a channel, a DM, or a document,",
   "write that send and its recipient into the instructions as a step, because the run performs it with its own tools",
   "and a result the instructions do not send goes nowhere.",
-  "An automation can never deliver into a different work stream, so do not offer to send results to one.",
-  "To change an automation that already exists, call automations_list, start from its current definition,",
-  "and submit the whole revised draft with its automationId; ready changes save immediately.",
+  "A Sidekick can never deliver into a different work stream, so do not offer to send results to one.",
+  "To change a Sidekick that already exists, call sidekicks_list, start from its current definition,",
+  "and submit the whole revised draft with its sidekickId; ready changes save immediately.",
 ].join(" ");
 
 /**
@@ -504,8 +504,8 @@ export function createAutomationsPlugin(
 } {
   return {
     canonicalId: AUTOMATIONS_PLUGIN_ID,
-    modelId: "rally_automations",
-    shortWireName: "automation",
+    modelId: "rally_sidekicks",
+    shortWireName: "sidekick",
     displayName: "Sidekicks",
     searchAliases: [
       "sidekick", "knowledge", "instructions", "automation", "automate", "schedule", "recurring", "every morning",

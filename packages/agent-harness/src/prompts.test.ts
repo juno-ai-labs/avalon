@@ -96,9 +96,9 @@ describe("prompt renderers", () => {
         actual: renderWorkstreamSystemPrompt({
           title: "Weekly engineering brief: 2026-08-07",
           objective: "Produce the scheduled weekly engineering brief.",
-          automation: workstreamAutomation,
+          sidekick: workstreamAutomation,
         }),
-        hash: "0cf23c044417f17bf9d0e9a8ad1c12f1f903d33db90413eb99fc1258e40dcbc5",
+        hash: "a29ccbd4e26227051dbe560961d6fc87d2bdaa046e24f291c666d28fda78273d",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -111,7 +111,7 @@ describe("prompt renderers", () => {
             textSnippet: "Tests passed before the deploy step failed.",
           },
         }),
-        hash: "b98bdc86b45a25090bb71d169f5ea8432b1439f69d040a7bbc73b59a42ab2dba",
+        hash: "1d55d7f2cbe6a00faa9b9bb2c49a363e0525c8f7f469311726526f4ea677bc0a",
       },
       workstreamName: {
         actual: renderWorkstreamNameMessages({
@@ -235,7 +235,7 @@ describe("prompt renderers", () => {
     const prompt = renderWorkstreamSystemPrompt({
       title: "Weekly engineering brief: 2026-08-07",
       objective: "Produce the scheduled weekly engineering brief.",
-      automation: workstreamAutomation,
+      sidekick: workstreamAutomation,
     });
 
     expect(prompt).toContain('"destination": "00000000-0000-7000-8000-0000000000aa"');
@@ -243,8 +243,8 @@ describe("prompt renderers", () => {
     // Nothing delivers a final message for a run any more. The room that owns
     // the automation hears a result only through the one tool that posts
     // there, so the section names the tool rather than promising a delivery.
-    expect(prompt).toContain("is the room that owns this automation");
-    expect(prompt).toContain("the one way a result reaches that room is the automation_post_result tool");
+    expect(prompt).toContain("is the room that owns this Sidekick");
+    expect(prompt).toContain("the one way a result reaches that room is the sidekick_post_result tool");
     expect(prompt).not.toContain("Rally sends this run's final message");
   });
 
@@ -257,13 +257,13 @@ describe("prompt renderers", () => {
     const undelivered = renderWorkstreamSystemPrompt({
       title: "Weekly engineering brief: 2026-08-07",
       objective: "Produce the scheduled weekly engineering brief.",
-      automation: { ...workstreamAutomation, resultDelivery: [] },
+      sidekick: { ...workstreamAutomation, resultDelivery: [] },
     });
 
     expect(undelivered).toContain("# Result delivery");
     expect(undelivered).toContain("Rally sends this run's result nowhere");
     expect(undelivered).toContain("sending it is part of doing the work, with your own tools, inside this run");
-    expect(undelivered).not.toContain("automation_post_result");
+    expect(undelivered).not.toContain("sidekick_post_result");
   });
 
   it("charges the delivery rule to no interactive run", () => {
@@ -282,7 +282,7 @@ describe("prompt renderers", () => {
     const prompt = renderWorkstreamSystemPrompt({
       title: "Monday shipped digest",
       objective: "Ask what each person shipped.",
-      automation: {
+      sidekick: {
         ...workstreamAutomation,
         instructions: "Ask what each person shipped this weekend.",
         authoringOrigin: {
@@ -294,7 +294,7 @@ describe("prompt renderers", () => {
       },
     });
 
-    expect(prompt).toContain("# Where this automation was set up");
+    expect(prompt).toContain("# Where this Sidekick was set up");
     expect(prompt).toContain("eng-shipped");
     expect(prompt).toContain("C0SHIPPED");
     // The whole reason this is standing context: the instructions a person
@@ -311,13 +311,13 @@ describe("prompt renderers", () => {
     const prompt = renderWorkstreamSystemPrompt({
       title: "Weekly engineering brief: 2026-08-07",
       objective: "Produce the scheduled weekly engineering brief.",
-      automation: workstreamAutomation,
+      sidekick: workstreamAutomation,
     });
 
     // A run with no channel behind it must not meet a section about one; a
     // section that always rendered would have it reasoning about a "here" that
     // does not exist.
-    expect(prompt).not.toContain("# Where this automation was set up");
+    expect(prompt).not.toContain("# Where this Sidekick was set up");
   });
 
 
@@ -616,7 +616,7 @@ describe("prompt renderers", () => {
     const prompt = renderWorkstreamSystemPrompt({
       title: "Weekly brief",
       objective: "Prepare the brief.",
-      automation: workstreamAutomation,
+      sidekick: workstreamAutomation,
     });
 
     expect(prompt).toContain('"expectedOutputs": [');
@@ -765,12 +765,12 @@ describe("prompt renderers", () => {
     const prompt = renderWorkstreamSystemPrompt({
       title: "Daily blog watch",
       objective: "Report only newly discovered entries.",
-      automation: {
+      sidekick: {
         ...workstreamAutomation,
         durableTables: [{
           memoryTableId: "table-seen-entries",
           memoryScopeId: "scope-automation",
-          scopeKind: "automation",
+          scopeKind: "sidekick",
           name: "Seen entries",
           description: "One row per discovered blog entry.",
           usageInstructions: "Query candidate URLs, insert by canonical URL, and report only newly inserted rows.",
