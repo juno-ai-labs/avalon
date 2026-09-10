@@ -259,7 +259,14 @@ what the double-click performs and refused under exactly the same condition,
 which is the action the ARIA authoring practices give a window splitter. That second line is dropped exactly where the gesture would be refused:
 a window too narrow for the navigation's expanded width, or a pane too narrow
 for the work-stream rail's contents, which are the same conditions that disable
-each footer toggle. Keeping the two in step is the point of the hint, so a new
+each footer toggle. The navigation takes that condition as a prop,
+`constrained`, rather than deriving it: `compact` is `collapsed || constrained`
+and so reads the same for a sidebar the reader collapsed as for one the window
+is pinning, and somebody who did both is held by the window. Derived as
+`compact && !collapsed` it read false for exactly that reader, which brought
+the footer toggle back to life, made the hint offer an expansion that could not
+happen, and rewrote the saved preference to expanded for a widening that might
+never come. Keeping the two in step is the point of the hint, so a new
 guard on either double-click adds itself to the hint in the same change. The
 right sidebar's handle takes the same hint from the same primitive, with one
 difference in what it offers: that panel closes from its own header control, so
@@ -372,8 +379,9 @@ on hover or focus: `Drag to resize`, and under it the quick action. That is the
 navigation's handle, the work-stream sidebar's, and the right sidebar's. The two
 sidebars offer the double-click they have always had, named in the direction the
 next one would go, and the right sidebar's handle gained a double-click of its
-own that restores `DEFAULT_RAIL_WIDTH`, clamped as the drag is. Each of those
-three quick actions is
+own that restores `DEFAULT_RAIL_WIDTH`, clamped as the drag is. Naming the
+navigation's also fixed the condition behind it, which had been derived from a
+value that cannot carry it. Each of those three quick actions is
 also on `Enter`, the key the ARIA authoring practices give a window splitter,
 and the hint names the key beside the gesture. The hint is one primitive,
 `DragHint` in `components/primitives.tsx`, and its second line is omitted
@@ -398,7 +406,10 @@ handle that promises least the one a reader meets in a panel they opened
 deliberately; it has a close control, so resetting the width is the action that
 was missing rather than a collapse.
 
-**Consequences:** A hint has a veto for the length of a drag, `suppressed`,
+**Consequences:** The navigation's "the window is forcing this" is now the
+shell's `sidebarConstrained` passed down, not a derivation, and a second reader
+of that condition adds itself to the prop rather than inferring it again from
+`compact`. A hint has a veto for the length of a drag, `suppressed`,
 which each handle drives from the state that already raises its `.is-resizing`
 class. It exists because a grab focuses the handle and a focus is how a tooltip
 decides to open without waiting: without the veto a quick grab *opens* the hint,
