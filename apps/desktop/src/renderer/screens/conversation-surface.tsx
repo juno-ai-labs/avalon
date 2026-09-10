@@ -95,7 +95,7 @@ import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store'
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
-import { ConnectingCard } from '../components/connecting-card';
+import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
@@ -1950,6 +1950,16 @@ export function ConversationSurface({
     )}>
       {substreamLaunch ? <SubstreamLaunchSurface
         api={api}
+        connecting={feedFromLocalCache ? <ConnectingCard
+          detail="Starting a substream is available once Rally connects"
+          error={socketConnection.openingError}
+          name={detail.titleStatus === 'naming' ? null : detail.title}
+          onRetry={socketConnection.retryOpening}
+          state={socketConnection.openingError
+            ? 'failed'
+            : socketState === 'unavailable' ? 'offline' : 'connecting'}
+          subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'work stream' : 'substream'}
+        /> : null}
         currentUser={launchAuthor}
         draft={{
           throughTurnId: substreamLaunch.throughTurnId,
@@ -1963,6 +1973,7 @@ export function ConversationSurface({
         onCreate={substreamLaunch.onCreate}
         onOpenAttachment={setAttachmentPreview}
         parent={displayedDetail}
+        sendBlocked={feedFromLocalCache}
         workspaceId={workspaceId}
         workspaceRegion={workspaceRegion}
       /> : <>
@@ -2017,8 +2028,8 @@ export function ConversationSurface({
         }}
         ref={transcriptRef}
       >
-        {feedFromLocalCache && (
-          <div className="connection-card-slot">
+        <ConnectingCardSlot>
+          {feedFromLocalCache && (
             <ConnectingCard
               detail="Sending is available once Rally connects"
               error={socketConnection.openingError}
@@ -2029,21 +2040,25 @@ export function ConversationSurface({
                 : socketState === 'unavailable' ? 'offline' : 'connecting'}
               subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'work stream' : 'substream'}
             />
-          </div>
-        )}
+          )}
+        </ConnectingCardSlot>
         <div className="transcript-column" ref={transcriptContentRef}>
-          <div role="status" className={loadingOlder || (nearHistoryEdge && socketState !== 'connected')
+          <div role="status" className={loadingOlder || (nearHistoryEdge && !feedLive)
             ? 'transcript-history-control' : undefined}>
-            {(loadingOlder || (nearHistoryEdge && socketState !== 'connected')) && <>
+            {(loadingOlder || (nearHistoryEdge && !feedLive)) && <>
               <LoaderCircle aria-hidden="true" className="spin" size={14} />
-              <span>{socketState !== 'connected' ? 'Waiting to reconnect…' : 'Loading earlier messages…'}</span>
+              <span>{feedLive
+                ? 'Loading earlier messages…'
+                : feedFromLocalCache ? 'Earlier messages load once Rally connects…' : 'Waiting to reconnect…'}</span>
             </>}
           </div>
           {olderTranscriptRange && olderMessagesError && !loadingOlder && (
             <div className="transcript-history-control">
-              <Button disabled={socketState !== 'connected'} onClick={() => void loadOlderMessages()}>
+              <Button disabled={!feedLive} onClick={() => void loadOlderMessages()}>
                 <RefreshCcw aria-hidden="true" size={14} />
-                {socketState !== 'connected' ? 'Waiting to reconnect…' : 'Retry loading earlier messages'}
+                {feedLive
+                  ? 'Retry loading earlier messages'
+                  : feedFromLocalCache ? 'Earlier messages load once Rally connects…' : 'Waiting to reconnect…'}
               </Button>
             </div>
           )}

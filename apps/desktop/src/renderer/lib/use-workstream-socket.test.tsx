@@ -4,11 +4,12 @@ import {
   type ClientSocketEvent,
   type PendingTranscriptInput,
   type WorkstreamTranscriptSnapshot,
+  WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
 } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Message, WorkstreamBoot, WorkstreamDetail, WorkstreamSummary } from './types';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import {
@@ -34,7 +35,7 @@ import {
 } from './workstream-socket-pool';
 import { WorkstreamSocketResumeProvider } from './workstream-socket-resume';
 import { conversationCacheKey, conversationSlice } from './conversation-cache';
-import { clearAllLocalCache, closeLocalCache } from './local-cache';
+import { clearAllLocalCache } from './local-cache';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
 import { LocalCacheScopeProvider } from './local-cache-scope';
 import {
@@ -4532,17 +4533,6 @@ describe('useWorkstreamSocket over the local cache', () => {
     }, workstreamId);
   }
 
-  // Earlier tests in this file evict work streams under fake timers, and an
-  // eviction forgets the conversation on disk: its database open lands on the
-  // fake clock and is discarded with it, leaving the module holding an open
-  // that will never settle. Dropping that connection is what the seam is for.
-  beforeEach(() => {
-    closeLocalCache();
-  });
-  afterEach(() => {
-    closeLocalCache();
-  });
-
   it('paints the remembered conversation before the socket answers, then lets the live snapshot replace it whatever its numbers say', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const workstreamId = '00000000-0000-7000-8000-0000000007a1';
@@ -4605,6 +4595,59 @@ describe('useWorkstreamSocket over the local cache', () => {
       const row = await conversationSlice.read(scope, conversationCacheKey(workstreamId, '0'));
       expect(row?.detail.title).toBe('Live title');
     }, { timeout: LOCAL_CACHE_WRITE_COALESCE_MS + 2_000 });
+  });
+
+  it('rejects a room command while the seed is on screen, before any socket has answered', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-0000000007a4';
+    await remember(workstreamId, 'Remembered title');
+    const queryClient = new QueryClient();
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createScopedWrapper(queryClient) });
+    await vi.waitFor(() => {
+      expect(queryDetail(queryClient, workstreamId)?.title).toBe('Remembered title');
+    }, { timeout: 2_000 });
+
+    // The run, the elicitation, and the queue on screen are the seed's; no
+    // command may address them, whichever control it comes from.
+    await expect(result.current.stopHarness()).rejects.toMatchObject({ code: 'workstream_feed_seeded' });
+    await expect(result.current.retryHarness()).rejects.toMatchObject({ code: 'workstream_feed_seeded' });
+  });
+
+  it('does not repaint a conversation the reader was shut out of while its row was being read', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-0000000007a5';
+    await remember(workstreamId, 'Remembered title');
+    const queryClient = new QueryClient();
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createScopedWrapper(queryClient) });
+    // The ticket resolves on the microtask queue; the row's read does not
+    // settle until a macrotask. Everything up to the socket exists, the seed
+    // does not.
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    const socket = FakeWebSocket.instances[0]!;
+    expect(queryDetail(queryClient, workstreamId)).toBeUndefined();
+
+    act(() => {
+      socket.open();
+      socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(queryDetail(queryClient, workstreamId)).toBeUndefined();
+    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBeUndefined();
   });
 
   it('lets a rebuilt room replace the seed even when the resume registry remembers a higher sequence', async () => {

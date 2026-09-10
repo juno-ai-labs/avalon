@@ -35,9 +35,7 @@ export function mirrorQueriesToLocalCache<T>(queryClient: QueryClient, options: 
   matches: (queryKey: readonly unknown[]) => boolean;
   snapshot: () => T | null;
   write: (value: T, atEpoch: number) => Promise<unknown>;
-  coalesceMs?: number;
 }): QueryMirror {
-  const coalesceMs = options.coalesceMs ?? LOCAL_CACHE_WRITE_COALESCE_MS;
   let timer: number | null = null;
   let pendingEpoch = localCacheEpoch();
   let stopped = false;
@@ -56,7 +54,7 @@ export function mirrorQueriesToLocalCache<T>(queryClient: QueryClient, options: 
     timer = window.setTimeout(() => {
       timer = null;
       void flush();
-    }, coalesceMs);
+    }, LOCAL_CACHE_WRITE_COALESCE_MS);
   };
   const unsubscribe = queryClient.getQueryCache().subscribe((event: QueryCacheNotifyEvent) => {
     if (event.type !== 'updated' || event.action.type !== 'success') return;

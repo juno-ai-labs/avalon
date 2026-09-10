@@ -371,7 +371,10 @@ never registers a login item. See [`menu-bar.md`](menu-bar.md).
    composer are on screen at once under a small floating card reading
    `Connecting to <title>…` with `Sending is available once Rally connects`
    beneath it. Type into the composer and confirm the send button is disabled
-   and Enter keeps the text where it is.
+   and Enter keeps the text where it is. Click a turn to branch a substream
+   and confirm the launch surface shows the same card and holds creation;
+   click Stop or Retry on a run the seed shows and confirm the command is
+   refused with a message rather than sent.
 2. Open the substream and the project space the same way and confirm each
    paints with its own card. Under the project's card confirm the rename,
    icon, audience, participants, archive, and resource controls are disabled

@@ -8,7 +8,7 @@ import type { WorkstreamSummary } from './types';
 import { useWorkstreamControlSocket, type WorkstreamChildDirectory } from './use-workstream-control-socket';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { conversationCacheKey, conversationSlice } from './conversation-cache';
-import { clearAllLocalCache, closeLocalCache } from './local-cache';
+import { clearAllLocalCache } from './local-cache';
 import { LocalCacheScopeProvider } from './local-cache-scope';
 
 import type * as TelemetryModule from './telemetry';
@@ -420,9 +420,6 @@ describe('useWorkstreamControlSocket', () => {
     const scope = 'global:00000000-0000-7000-8000-000000000012';
     const kept = '00000000-0000-7000-8000-000000000021';
     const dropped = '00000000-0000-7000-8000-000000000022';
-    // An earlier test evicted a revoked work stream under fake timers, which
-    // leaves the cache holding a database open that never settles; drop it.
-    closeLocalCache();
     await clearAllLocalCache();
     const row = {
       detail: {
@@ -482,7 +479,6 @@ describe('useWorkstreamControlSocket', () => {
       conversationCacheKey(workstreamId, '0'),
       conversationCacheKey(workstreamId, kept),
     ].sort());
-    closeLocalCache();
   });
 
 });

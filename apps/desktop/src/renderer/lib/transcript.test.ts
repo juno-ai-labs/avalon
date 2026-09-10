@@ -3150,6 +3150,34 @@ describe('openingTranscriptSnapshot', () => {
     expect(opening.eventSequence).toBe(9);
   });
 
+  it('keeps a turn the socket delivered live, which wears the same purpose as paged history', () => {
+    const opened = {
+      snapshotId: 'snapshot-3',
+      snapshotThrough: 4,
+      eventSequence: 9,
+      snapshotAtUtc: '2026-09-01T12:00:00.000Z',
+      unreadAnchorSequence: null,
+      unreadReason: 'no_unread' as const,
+      ranges: [
+        range('requested', 1, [turn(1, null), turn(2, null)]),
+        range('latest', 3, [turn(3, null), turn(4, null)]),
+      ],
+      activities: [],
+      activeActivities: [],
+      pluginRuns: [],
+      activeTurns: [],
+      pendingInputs: [],
+    } satisfies WorkstreamTranscriptSnapshot;
+    // The reader's own next message, appended the way the socket appends it.
+    const withLiveTurn = mergeRealtimeTranscriptTurn(opened, turn(5, null), 10);
+    expect(withLiveTurn.ranges.map((entry) => entry.purpose)).toEqual(['requested', 'latest', 'requested']);
+
+    const opening = openingTranscriptSnapshot(withLiveTurn);
+
+    expect(opening.ranges.flatMap((entry) => entry.turns.map((item) => item.turnId))).toEqual(['turn-3', 'turn-4', 'turn-5']);
+    expect(opening.eventSequence).toBe(10);
+  });
+
   it('returns the snapshot itself when nothing was paged in', () => {
     const snapshot = {
       snapshotId: 'snapshot-2',

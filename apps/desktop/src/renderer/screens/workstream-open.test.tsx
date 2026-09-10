@@ -763,7 +763,8 @@ describe('socket-first work-stream open', () => {
     expect(document.querySelector('.connecting-card')?.textContent ?? '').toContain('Connecting to Remembered work stream…');
     const composer = screen.getByLabelText('Message the work stream');
     fireEvent.change(composer, { target: { value: 'Typed while connecting' } });
-    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    // The button says why on its own label, for whoever cannot see the card.
+    expect(screen.getByRole('button', { name: 'Send message, available once Rally connects' })).toBeDisabled();
     fireEvent.keyDown(composer, { key: 'Enter' });
     expect(createMessage).not.toHaveBeenCalled();
     expect(composer).toHaveValue('Typed while connecting');
