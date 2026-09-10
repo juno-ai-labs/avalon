@@ -44,9 +44,28 @@ export interface ArtifactViewHandle {
    */
   destroyed(): boolean;
   setBounds(bounds: PreviewBounds): void;
+  /**
+   * Round the view's own corners.
+   *
+   * Part of the contract because CSS cannot reach a native view: the pane the
+   * renderer draws is rounded, the view composited over it is not, and the
+   * result is a page with square corners sitting inside a rounded box.
+   */
+  setBorderRadius(radius: number): void;
   loadURL(url: string): Promise<void>;
   close(): void;
 }
+
+/**
+ * The corner the rail's preview is composited with, in CSS pixels.
+ *
+ * It mirrors `--av-cmp-surface-radius`, which is what `.site-detail-pane`
+ * draws its own corner from. The two are pinned together by a renderer test
+ * rather than by a shared constant: the token belongs to the design system and
+ * cannot be imported into the main process, so the test is what notices if one
+ * of them moves.
+ */
+export const PREVIEW_CORNER_RADIUS = 12;
 
 export interface ArtifactHostWindow {
   /** Whether the window is gone; see `ArtifactViewHandle.destroyed`. */
@@ -287,6 +306,10 @@ export class ArtifactPreviewController {
       this.view = this.createView(request);
       this.artifactId = request.artifactId;
       const created = this.view;
+      // Once, at creation: the corner is a property of the surface rather than
+      // of any one layout, so it must not ride along with the bounds a scroll
+      // recomputes many times a second.
+      created.setBorderRadius(PREVIEW_CORNER_RADIUS);
       this.applyBounds();
       const result = loadArtifactInitialUrl(() => created.loadURL(request.url)).then((loaded) => {
         // DNS, TLS, and terminal navigation failures should not leave an empty

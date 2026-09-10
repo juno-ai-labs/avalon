@@ -212,6 +212,35 @@ while the name takes `sys.color.text.subtle` against the time's
 further — a name is not a fill either, and colouring it by identity is what made
 the two speakers' bylines diverge. The avatar and the person's own bubble are
 unaffected and still take the fill.
+
+### 2026-09-10 — The grouped list is an unscoped primitive
+
+**What changed:** The inset hairline grouping the shell draws around a set of
+rows is now `InsetSurface`/`InsetList` in `primitives.tsx`, backed by an
+`.inset-surface` rule that carries no `.app-shell` ancestor.
+
+**Why:** Every rule the GrokBot rewrite added hangs off `.app-shell`, and a
+Radix portal mounts on `document.body`, outside it. That is invisible until a
+surface renders through one: the live-artifact detail moved into the resource
+lightbox on 2026-09-04 and silently reverted to the pre-rewrite look, drawing
+outlined buttons as a tab strip and a bordered card per error, because none of
+the shell's rules could reach it. Scoping to the shell was never a decision
+about which surfaces get the design; it was a way of keeping the rewrite off the
+old surfaces while it landed, and a portal is not an old surface.
+
+**Considered and rejected:** Adding `.app-shell` to the lightbox, which would
+pull all eighty scoped rules into every dialog that portals, most of which have
+never been looked at in that context. Also rejected: giving the artifact detail
+its own bordered-card rules, which is how a second visual vocabulary starts.
+
+**Consequences:** A new portal surface can reach for this rather than inventing
+a bordered box. It must stay unscoped, which `app.css.node.test.ts` now asserts,
+because scoping it silently returns every portal to the old look with nothing
+failing. The rules the shell still
+scopes (`.elicitation-options` among them) are unchanged: they are the same
+treatment with component-specific values, and generalising them was not worth
+re-QAing a surface this change had no other reason to touch.
+
 ### 2026-09-10 — Recording fills with danger; the microphone stops wearing the account accent
 
 **What changed:** Two rules in `app.css`, no token movement. The composer's
