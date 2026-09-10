@@ -35,5 +35,5 @@ body.access-home { min-height: 100svh; display: flex; flex-direction: column; ba
 .access-home .rally-footer > small { grid-column: 1 / -1; }
 
 .access-challenge { display: flex; justify-content: center; margin: 0 auto; }
-.access-challenge[data-interactive] { margin-bottom: 16px; }
+.access-challenge[data-revealed] { margin-bottom: 16px; }
 .access-challenge[hidden] { display: none; }

@@ -74,6 +74,7 @@ describe('early-access browser handlers', () => {
 
 it('requires a verified browser token, resets it on failure, and submits only the fresh token', async () => {
   vi.stubGlobal('location', new URL('https://rallywith.ai/'));
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   vi.stubGlobal('__RALLY_TURNSTILE_SITE_KEY__', 'test-site-key');
   document.body.innerHTML = '<div id="access-challenge"></div><form id="access-request"><input id="access-email" type="email" required value="team@example.com"><button id="access-submit" disabled>Get early access</button></form><p id="access-status"></p>';
   let callbacks: Parameters<NonNullable<typeof window.turnstile>['render']>[1] | undefined;
@@ -99,29 +100,59 @@ it('requires a verified browser token, resets it on failure, and submits only th
   expect(document.querySelector<HTMLElement>('#access-challenge')!.hidden).toBe(true);
 });
 
-it('runs the challenge invisibly and reserves room for the widget only while Cloudflare requires an interaction', async () => {
-  vi.stubGlobal('location', new URL('https://rallywith.ai/'));
-  vi.stubGlobal('__RALLY_TURNSTILE_SITE_KEY__', 'test-site-key');
-  document.body.innerHTML = '<div id="access-challenge"></div>';
-  let options: Parameters<NonNullable<typeof window.turnstile>['render']>[1] | undefined;
-  const reset = vi.fn();
-  window.turnstile = { render: (_container, value) => { options = value; return 'widget'; }, reset };
-  const { accessChallenge } = await import('../src/access-challenge');
-  const onChange = vi.fn();
-  const onError = vi.fn();
-  const challenge = accessChallenge(onChange, onError);
-  document.head.querySelector('script[src*="challenges.cloudflare.com"]')!.dispatchEvent(new Event('load'));
-  const container = document.querySelector<HTMLElement>('#access-challenge')!;
-  expect(options).toMatchObject({ appearance: 'interaction-only', action: 'access_request' });
-  expect(container.dataset.interactive).toBeUndefined();
-  options!['before-interactive-callback']();
-  expect(container.dataset.interactive).toBe('');
-  options!.callback('proof');
-  expect(onChange).toHaveBeenLastCalledWith('proof');
-  expect(container.dataset.interactive).toBe('');
-  challenge.reset();
-  expect(container.dataset.interactive).toBeUndefined();
-  expect(reset).toHaveBeenCalledWith('widget');
-  expect(onChange).toHaveBeenLastCalledWith(null);
-  expect(onError).not.toHaveBeenCalled();
+describe('invisible challenge', () => {
+  type Observe = (entries: { contentRect: { height: number } }[]) => void;
+  const setUp = async () => {
+    vi.stubGlobal('location', new URL('https://rallywith.ai/'));
+    vi.stubGlobal('__RALLY_TURNSTILE_SITE_KEY__', 'test-site-key');
+    const observers: Observe[] = [];
+    vi.stubGlobal('ResizeObserver', class { constructor(callback: Observe) { observers.push(callback); } observe() {} disconnect() {} });
+    document.body.innerHTML = '<style>.access-challenge { margin: 0 auto; } .access-challenge[data-revealed] { margin-bottom: 16px; }</style><div id="access-challenge" class="access-challenge"></div><p id="access-challenge-note" aria-live="polite"></p>';
+    let options: Parameters<NonNullable<typeof window.turnstile>['render']>[1] | undefined;
+    const reset = vi.fn();
+    window.turnstile = { render: (_container, value) => { options = value; return 'widget'; }, reset };
+    const { accessChallenge } = await import('../src/access-challenge');
+    const onChange = vi.fn();
+    const onError = vi.fn();
+    const challenge = accessChallenge(onChange, onError);
+    document.head.querySelector('script[src*="challenges.cloudflare.com"]')!.dispatchEvent(new Event('load'));
+    const container = document.querySelector<HTMLElement>('#access-challenge')!;
+    const note = document.querySelector<HTMLElement>('#access-challenge-note')!;
+    const resize = (height: number) => observers.forEach((observe) => observe([{ contentRect: { height } }]));
+    return { options: options!, reset, onChange, onError, challenge, container, note, resize };
+  };
+
+  it('asks Cloudflare for an interaction-only widget and passes a silent proof without reserving any room', async () => {
+    const { options, onChange, onError, container, note, resize } = await setUp();
+    expect(options.appearance).toBe('interaction-only');
+    resize(0);
+    options.callback('silent-proof');
+    expect(onChange).toHaveBeenLastCalledWith('silent-proof');
+    expect(container.dataset.revealed).toBeUndefined();
+    expect(getComputedStyle(container).marginBottom).toBe('0px');
+    expect(note.textContent).toBe('');
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('reserves room and announces the widget while it is rendered, ends the announcement on proof, and releases the room when Cloudflare hides it again', async () => {
+    const { options, container, note, resize } = await setUp();
+    resize(65);
+    expect(container.dataset.revealed).toBe('');
+    expect(getComputedStyle(container).marginBottom).toBe('16px');
+    expect(note.textContent).toBe(accessCopy.verification);
+    options.callback('interactive-proof');
+    expect(note.textContent).toBe('');
+    expect(container.dataset.revealed).toBe('');
+    resize(0);
+    expect(container.dataset.revealed).toBeUndefined();
+    expect(getComputedStyle(container).marginBottom).toBe('0px');
+    expect(note.textContent).toBe('');
+  });
+
+  it('drops the token and resets the widget on request', async () => {
+    const { reset, onChange, challenge } = await setUp();
+    challenge.reset();
+    expect(onChange).toHaveBeenLastCalledWith(null);
+    expect(reset).toHaveBeenCalledWith('widget');
+  });
 });
