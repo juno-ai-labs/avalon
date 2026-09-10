@@ -3,7 +3,7 @@
 /**
  * The one way a run reaches the room that owns its automation.
  *
- * `automation_post_result` is a tool the run holds, offered only to a run of a
+ * `sidekick_post_result` is a tool the run holds, offered only to a run of a
  * room's automation. It asks the room's parent whether the room still stands,
  * then appends the result into the room's main conversation as an activation:
  * loop input the room wakes on, keyed by the run so a retry lands once. The
@@ -100,7 +100,7 @@ const DEFINITION: AutomationDraft = {
  * room's own loop, which does not hold it, acknowledges what it was woken with.
  */
 const provider = useOpenRouterDouble((call) => {
-  const tool = call.toolNames.find((name) => name.endsWith("automation_post_result"));
+  const tool = call.toolNames.find((name) => name.endsWith("sidekick_post_result"));
   const toolAnswered = call.messages.some((message) => message.role === "tool");
   if (tool && !toolAnswered) return { callTool: { name: tool, arguments: { text: RESULT_TEXT } } };
   return { say: tool ? "Posted the count." : "Acknowledged." };
@@ -289,7 +289,7 @@ beforeEach(async () => {
   await seedRoomAutomation();
 });
 
-describe("automation_post_result", () => {
+describe("sidekick_post_result", () => {
   it("posts the run's result into the owning room's main conversation, once, and the room runs on it", async () => {
     const started = await automationStub().runNow({ ...addressed(), actor: manager(), idempotencyKey: "post-result-0001" });
 
@@ -297,7 +297,7 @@ describe("automation_post_result", () => {
     await runDurableObjectAlarm(automationStub());
     const [run] = await settledRun(runChild(started.runId));
     expect(run).toMatchObject({ status: "completed", error_json: null });
-    const offered = provider.calls.filter((call) => call.toolNames.some((name) => name.endsWith("automation_post_result")));
+    const offered = provider.calls.filter((call) => call.toolNames.some((name) => name.endsWith("sidekick_post_result")));
     expect(offered.length).toBeGreaterThanOrEqual(2);
     expect(offered[1]!.messages.some((message) => message.role === "tool")).toBe(true);
 
@@ -312,7 +312,7 @@ describe("automation_post_result", () => {
     expect(await runInDurableObject(roomConversation(), (_instance, state) =>
       state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM pending_loop_inputs`).one().count,
     )).toBe(0);
-    const acknowledged = provider.calls.filter((call) => !call.toolNames.some((name) => name.endsWith("automation_post_result")));
+    const acknowledged = provider.calls.filter((call) => !call.toolNames.some((name) => name.endsWith("sidekick_post_result")));
     expect(acknowledged.length).toBeGreaterThanOrEqual(1);
     // What the room's model was asked carries the posted result, labelled as
     // an automation's untrusted output, and nothing about the tool.
@@ -331,7 +331,7 @@ describe("automation_post_result", () => {
       executionPrincipal: { type: "user", userId: AUTHOR_ID },
       activation: activation(started.runId),
     });
-    expect(replay).toEqual({ outcome: "replayed", code: "automation_activation_replayed" });
+    expect(replay).toEqual({ outcome: "replayed", code: "sidekick_activation_replayed" });
     expect(await activationTurns()).toHaveLength(1);
   });
 
@@ -399,7 +399,7 @@ describe("automation_post_result", () => {
       executionPrincipal: { type: "user", userId: AUTHOR_ID },
       activation: activation(STAGED_RUN_ID),
     });
-    expect(appended).toEqual({ outcome: "appended", code: "automation_activation_appended" });
+    expect(appended).toEqual({ outcome: "appended", code: "sidekick_activation_appended" });
     // The wake is real: the room runs on it before this test lets go of it.
     const [roomRun] = await settledRun(roomConversation());
     expect(roomRun).toMatchObject({ status: "completed", error_json: null });

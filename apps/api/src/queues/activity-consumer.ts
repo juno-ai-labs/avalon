@@ -795,7 +795,7 @@ async function consumeEffect(
     if (envelope.effect.kind === "directory_automation") {
       const workspace = await workspaceDirectory(env, envelope.workspaceId);
       await workspace.applyAutomationDirectory({ workspaceId: envelope.workspaceId, envelope });
-      logInfo(env, "conversation_effect_terminal", { ...fields, outcome: "applied", reason: "automation_directory_applied" });
+      logInfo(env, "conversation_effect_terminal", { ...fields, outcome: "applied", reason: "sidekick_directory_applied" });
       message.ack();
       return;
     }

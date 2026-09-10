@@ -130,7 +130,7 @@ export function validateDraftEvaluatorRules(
   return input.evaluators.map((evaluator, index) => {
     const manifest = scope.inspectedPlugins.get(evaluator.source.suggestedSourcePluginId);
     if (!manifest) {
-      throw evaluatorIssue(index, ["source", "suggestedSourcePluginId"], "automation_plugin_not_inspected");
+      throw evaluatorIssue(index, ["source", "suggestedSourcePluginId"], "sidekick_plugin_not_inspected");
     }
     const expandedEventTypes = expandEventTypes(evaluator, manifest, index);
     if (evaluator.source.resourceId) {
@@ -140,13 +140,13 @@ export function validateDraftEvaluatorRules(
         || resource.pluginId !== evaluator.source.suggestedSourcePluginId
         || resource.sourceBindingKey !== evaluator.source.sourceBindingKey
       ) {
-        throw evaluatorIssue(index, ["source", "resourceId"], "automation_resource_not_found");
+        throw evaluatorIssue(index, ["source", "resourceId"], "sidekick_resource_not_found");
       }
     }
     for (const eventType of expandedEventTypes) {
       const descriptor = manifest.activityTriggers.find((candidate) => candidate.eventType === eventType);
       if (!descriptor) {
-        throw evaluatorIssue(index, ["source", "event"], "automation_evaluator_invalid");
+        throw evaluatorIssue(index, ["source", "event"], "sidekick_evaluator_invalid");
       }
       const selectedResource = evaluator.source.resourceId
         ? scope.resources.get(evaluator.source.resourceId)
@@ -157,7 +157,7 @@ export function validateDraftEvaluatorRules(
           (relationship) => relationship.resourceType === selectedResource.resourceType,
         )
       ) {
-        throw evaluatorIssue(index, ["source", "resourceId"], "automation_evaluator_resource_relationship_invalid");
+        throw evaluatorIssue(index, ["source", "resourceId"], "sidekick_evaluator_resource_relationship_invalid");
       }
       validatePredicate(evaluator.when, descriptor, scope.personIds, index);
     }
@@ -175,7 +175,7 @@ function expandEventTypes(
   }
   const eventTypes = manifest.eventFamilies[evaluator.source.event.eventFamily];
   if (!eventTypes || eventTypes.length === 0 || new Set(eventTypes).size !== eventTypes.length) {
-    throw evaluatorIssue(index, ["source", "event", "eventFamily"], "automation_evaluator_invalid");
+    throw evaluatorIssue(index, ["source", "event", "eventFamily"], "sidekick_evaluator_invalid");
   }
   return eventTypes;
 }
@@ -195,21 +195,21 @@ function validatePredicate(
     // A dotted key on an open descriptor would compile and never match: the
     // event context indexes metadata by its bare keys.
     if (descriptor.openFilterFields === true && leaf.attribute.includes(".")) {
-      throw evaluatorIssue(evaluatorIndex, [...path, "attribute"], "automation_evaluator_invalid");
+      throw evaluatorIssue(evaluatorIndex, [...path, "attribute"], "sidekick_evaluator_invalid");
     }
     const field = descriptor.openFilterFields === true
       ? null
       : descriptor.filterFields.find((candidate) => candidate.key === leaf.attribute) ?? undefined;
     if (field === undefined || (field !== null && !field.operators.includes(leaf.operator))) {
-      throw evaluatorIssue(evaluatorIndex, [...path, "attribute"], "automation_evaluator_invalid");
+      throw evaluatorIssue(evaluatorIndex, [...path, "attribute"], "sidekick_evaluator_invalid");
     }
     if (field !== null && leaf.kind !== "presence" && leaf.kind !== field.valueType) {
-      throw evaluatorIssue(evaluatorIndex, [...path, "kind"], "automation_evaluator_invalid");
+      throw evaluatorIssue(evaluatorIndex, [...path, "kind"], "sidekick_evaluator_invalid");
     }
     if (leaf.kind === "person_id" || leaf.kind === "person_id_array") {
       const values = Array.isArray(leaf.value) ? leaf.value : [leaf.value];
       if (values.some((personId) => !personIds.has(personId))) {
-        throw evaluatorIssue(evaluatorIndex, [...path, "value"], "automation_person_not_found");
+        throw evaluatorIssue(evaluatorIndex, [...path, "value"], "sidekick_person_not_found");
       }
     }
   }

@@ -509,7 +509,7 @@ async function automationCreatorTool(
   name: string,
 ): Promise<Awaited<ReturnType<typeof __integrationTesting.loadHarnessTools>>["tools"][number]> {
   const selected = await __integrationTesting.loadHarnessTools(env(database), input);
-  const plugin = selected.plugins.find((candidate) => candidate.canonicalId === "rally:automations");
+  const plugin = selected.plugins.find((candidate) => candidate.canonicalId === "rally:sidekicks");
   if (!plugin) throw new Error("automations_plugin_missing");
   const tool = plugin.tools.find((candidate) => candidate.definition.name === name);
   if (!tool) throw new Error(`automation_creator_tool_missing:${name}`);
@@ -882,7 +882,7 @@ describe("connector tools selected for harness runs", () => {
     // parent surface — deferred, so being here costs a catalog entry and no
     // connector read until somebody loads it.
     expect(parentTools.plugins.map((plugin) => plugin.canonicalId))
-      .toContain("rally:automations");
+      .toContain("rally:sidekicks");
     expect(parentTools.plugins).toHaveLength(5);
     expect(parentTools.plugins.flatMap((plugin) => plugin.tools)
       .some((tool) => tool.definition.mode === "write")).toBe(true);
@@ -979,6 +979,9 @@ describe("connector tools selected for harness runs", () => {
       JSON.stringify({ pluginId: "plugin_google" }),
       JSON.stringify({
         canonicalToolName: "plugin_inspect",
+        // A receipt this conversation wrote before the Sidekick rename: the wire
+        // name and the capability are the old vocabulary, and the replay still
+        // has to count the inspection.
         capability: "rally.automation.plugins.inspect",
       }),
     );
@@ -1000,7 +1003,7 @@ describe("connector tools selected for harness runs", () => {
       "replay/automation-resources",
       JSON.stringify({
         canonicalToolName: "resources_search",
-        capability: "rally.automation.resources.search",
+        capability: "rally.sidekick.resources.search",
       }),
     );
     database.replayOutputs.set("replay/automation-resources", {
@@ -1041,12 +1044,12 @@ describe("connector tools selected for harness runs", () => {
       JSON.stringify(evaluatorRules),
       JSON.stringify({
         canonicalToolName: "set_evaluator_rules",
-        capability: "rally.automation.evaluators.set",
+        capability: "rally.sidekick.evaluators.set",
       }),
     );
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
     const automations = selected.plugins.find((plugin) =>
-      plugin.canonicalId === "rally:automations"
+      plugin.canonicalId === "rally:sidekicks"
     );
     if (!automations) throw new Error("automations_plugin_missing");
     // A restored durable activation skips onActivate. Its first tool still has
@@ -1128,7 +1131,7 @@ describe("connector tools selected for harness runs", () => {
       replacement.loadedAutomationPluginIds,
     );
     const replacementSubmit = replacement.plugins.find((candidate) =>
-      candidate.canonicalId === "rally:automations"
+      candidate.canonicalId === "rally:sidekicks"
     )?.tools.find((tool) => tool.definition.name === "submit_draft");
     if (!replacementSubmit) throw new Error("replacement_automation_creator_tools_missing");
     await expect(replacementSubmit.execute(
@@ -1171,7 +1174,7 @@ describe("connector tools selected for harness runs", () => {
       JSON.stringify({ pluginId: "plugin_google" }),
       JSON.stringify({
         canonicalToolName: "plugin_inspect",
-        capability: "rally.automation.plugins.inspect",
+        capability: "rally.sidekick.plugins.inspect",
       }),
     );
     // The receipt holds what the model sent, sentinel included: the strip
@@ -1208,11 +1211,11 @@ describe("connector tools selected for harness runs", () => {
       JSON.stringify(sentinelRules),
       JSON.stringify({
         canonicalToolName: "set_evaluator_rules",
-        capability: "rally.automation.evaluators.set",
+        capability: "rally.sidekick.evaluators.set",
       }),
     );
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
-    const automations = selected.plugins.find((plugin) => plugin.canonicalId === "rally:automations");
+    const automations = selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
     if (!automations) throw new Error("automations_plugin_missing");
     __integrationTesting.recordCredentialPluginActivation(
       `connection:${WORKSPACE_CONNECTION_ID}`,
@@ -1791,7 +1794,7 @@ describe("editing an automation a conversation already owns", () => {
     const submit = await automationCreatorTool(database, workflowInput(), "submit_draft");
 
     await expect(submit.execute(
-      { ...manualDraft("Weekly digest"), automationId: OWNED_AUTOMATION_ID },
+      { ...manualDraft("Weekly digest"), sidekickId: OWNED_AUTOMATION_ID },
       { toolCallId: "edit-owned" } as never,
     )).resolves.toMatchObject({ output: { accepted: true } });
 
@@ -1813,7 +1816,7 @@ describe("editing an automation a conversation already owns", () => {
     const submit = await automationCreatorTool(database, workflowInput(), "submit_draft");
 
     await expect(submit.execute(
-      { ...manualDraft("Weekly digest"), automationId: FOREIGN_AUTOMATION_ID },
+      { ...manualDraft("Weekly digest"), sidekickId: FOREIGN_AUTOMATION_ID },
       { toolCallId: "edit-foreign" } as never,
     )).rejects.toThrow("not one this work stream owns");
 
@@ -1828,17 +1831,17 @@ describe("editing an automation a conversation already owns", () => {
     const submit = await automationCreatorTool(database, automationConversationInput(), "submit_draft");
 
     await expect(submit.execute(
-      { ...manualDraft("Someone else's job"), automationId: OWNED_AUTOMATION_ID },
+      { ...manualDraft("Someone else's job"), sidekickId: OWNED_AUTOMATION_ID },
       { toolCallId: "edit-another-automation" } as never,
-    )).rejects.toThrow("edits only its own automation");
+    )).rejects.toThrow("edits only its own Sidekick");
     expect(database.submittedDefinitions).toEqual([]);
 
     await expect(submit.execute(
-      { ...manualDraft("Named itself"), automationId: AUTOMATION_ID },
+      { ...manualDraft("Named itself"), sidekickId: AUTOMATION_ID },
       { toolCallId: "edit-itself-by-id" } as never,
     )).resolves.toMatchObject({ output: { accepted: true } });
     await expect(submit.execute(
-      { ...manualDraft("Named nothing"), automationId: null },
+      { ...manualDraft("Named nothing"), sidekickId: null },
       { toolCallId: "edit-itself-by-default" } as never,
     )).resolves.toMatchObject({ output: { accepted: true } });
 
@@ -1868,13 +1871,13 @@ describe("editing an automation a conversation already owns", () => {
     );
     database.automationDetails.set(AUTOMATION_ID, automationDetail(AUTOMATION_ID, "Drive digest"));
 
-    const roomList = await automationCreatorTool(database, workflowInput(), "automations_list");
+    const roomList = await automationCreatorTool(database, workflowInput(), "sidekicks_list");
     await expect(roomList.execute({}, { toolCallId: "list-in-room" } as never))
       .resolves.toMatchObject({
         output: {
-          automations: [
+          sidekicks: [
             {
-              automationId: OWNED_AUTOMATION_ID,
+              sidekickId: OWNED_AUTOMATION_ID,
               name: "Weekly digest",
               lifecycle: "active",
               scope: "workstream",
@@ -1883,7 +1886,7 @@ describe("editing an automation a conversation already owns", () => {
               currentDefinition: { name: "Weekly digest", definitionVersion: 2, triggers: [{ type: "manual" }, { type: "inbound_email" }] },
             },
             {
-              automationId: SECOND_OWNED_AUTOMATION_ID,
+              sidekickId: SECOND_OWNED_AUTOMATION_ID,
               name: "Standup notes",
               lifecycle: "paused",
               currentDefinitionRevision: 1,
@@ -1901,11 +1904,11 @@ describe("editing an automation a conversation already owns", () => {
 
     database.detailReads.length = 0;
     database.workstreamAutomationListReads.length = 0;
-    const ownList = await automationCreatorTool(database, automationConversationInput(), "automations_list");
+    const ownList = await automationCreatorTool(database, automationConversationInput(), "sidekicks_list");
     await expect(ownList.execute({}, { toolCallId: "list-in-automation" } as never))
       .resolves.toMatchObject({
         output: {
-          automations: [{ automationId: AUTOMATION_ID, name: "Drive digest" }],
+          sidekicks: [{ sidekickId: AUTOMATION_ID, name: "Drive digest" }],
         },
       });
     // The room's rail is never consulted from an automation's own conversation:

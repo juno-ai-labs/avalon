@@ -70,7 +70,7 @@ export interface WorkstreamAttachmentToolOptions {
   /** Reuse the derivative/tool implementation behind a separately authorized scope. */
   loadVisibleResources?: () => Promise<VisibleWorkstreamResourceSet>;
   cursorNamespace?: "workstream" | "automation-draft";
-  modelToolPrefix?: "workstream" | "automation";
+  modelToolPrefix?: "workstream" | "sidekick";
   capabilityPrefix?: string;
 }
 
@@ -122,8 +122,8 @@ export function createWorkstreamAttachmentTools(
     {
       definition: {
         name: "list_resources",
-        description: options.modelToolPrefix === "automation"
-          ? ATTACHMENT_LIST_RESOURCES_DESCRIPTION.replace("this work stream", "this automation draft's frozen attachment set")
+        description: options.modelToolPrefix === "sidekick"
+          ? ATTACHMENT_LIST_RESOURCES_DESCRIPTION.replace("this work stream", "this Sidekick draft's frozen attachment set")
           : ATTACHMENT_LIST_RESOURCES_DESCRIPTION,
         capability: `${capabilityPrefix}.list`,
         mode: "read",
@@ -656,10 +656,10 @@ export async function rehydrateWorkstreamViewReceipt(
 
 function readSuggestion(
   resourceId: string,
-  modelToolPrefix: "workstream" | "automation" = "workstream",
+  modelToolPrefix: "workstream" | "sidekick" = "workstream",
 ): SuggestedAttachmentToolCall {
-  return modelToolPrefix === "automation"
-    ? { tool: "automation_read_resource", arguments: { resourceId } }
+  return modelToolPrefix === "sidekick"
+    ? { tool: "sidekick_read_resource", arguments: { resourceId } }
     : { tool: "workstream_read_resource", arguments: { resourceId } };
 }
 
@@ -745,17 +745,17 @@ export function siteReadRemediation(
   resourceId: string,
   mimeType: string | null,
   calledTool: string,
-  modelToolPrefix: "workstream" | "automation",
+  modelToolPrefix: "workstream" | "sidekick",
 ): AttachmentOperationError {
   return attachmentError(
     "resource_tool_mismatch",
-    modelToolPrefix === "automation"
+    modelToolPrefix === "sidekick"
       ? `${calledTool} cannot read a site; a site's source is edited in a terminal workspace, which this run does not have.`
       : `${calledTool} cannot read a site; a site's source is edited in the terminal workspace, so import it there to read or revise it.`,
     {
       actualMimeType: mimeType,
       attachmentKind: "site",
-      ...(modelToolPrefix === "automation"
+      ...(modelToolPrefix === "sidekick"
         ? {}
         : { suggestedCall: { tool: "terminal_import_resource", arguments: { resourceId } } }),
     },
@@ -765,7 +765,7 @@ export function siteReadRemediation(
 function assertReadableKind(
   row: VisibleWorkstreamResourceRow,
   calledTool: string,
-  modelToolPrefix: "workstream" | "automation",
+  modelToolPrefix: "workstream" | "sidekick",
 ): void {
   const kind = rowKind(row);
   if (kind === "site") throw siteReadRemediation(row.id, row.mime_type, calledTool, modelToolPrefix);
@@ -776,8 +776,8 @@ function assertReadableKind(
     {
       actualMimeType: row.mime_type,
       attachmentKind: kind,
-      suggestedCall: modelToolPrefix === "automation"
-        ? { tool: "automation_view_resource", arguments: { resourceIds: [row.id] } }
+      suggestedCall: modelToolPrefix === "sidekick"
+        ? { tool: "sidekick_view_resource", arguments: { resourceIds: [row.id] } }
         : { tool: "workstream_view_resource", arguments: { resourceIds: [row.id] } },
     },
   );

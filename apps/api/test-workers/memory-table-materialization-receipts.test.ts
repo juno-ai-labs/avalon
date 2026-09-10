@@ -1,0 +1,190 @@
+/// <reference types="@cloudflare/vitest-pool-workers/types" />
+
+/**
+ * A Sidekick's declared memory tables are materialized at apply under a
+ * receipt whose id is deterministic in the Sidekick, its revision, and the
+ * table's position, and the publication alarm re-applies the same revision
+ * until every effect has landed. The receipt's payload hash therefore has to
+ * survive anything the platform renames: the scope kind and the rationale
+ * moved from `automation` to `sidekick` once, and a hash that carried them
+ * turned every same-revision re-apply into `memory_table_mutation_receipt_mismatch`
+ * and the alarm into a permanent stall.
+ *
+ * On real workerd because the receipt decision is the object's, made inside
+ * its own transaction, and a Node double's answer would be this test's own.
+ */
+
+import { env } from "cloudflare:workers";
+import { runInDurableObject } from "cloudflare:test";
+import { beforeEach, describe, expect, it } from "vitest";
+import { asWorkspaceId, type AutomationMemoryTable } from "@rally/contracts";
+
+import { sha256 } from "../src/lib/crypto";
+import { workspaceDOName } from "../src/durable-objects/names";
+import { WorkspaceMemoryScopeSchema, WorkspaceMemoryTableCreateResultSchema } from "../src/durable-objects/workspace-memory-protocol";
+import { materializeAutomationMemoryTables } from "../src/services/memory-table-service";
+import { createTestEnv } from "../test/helpers/cloudflare-test";
+
+/** Its own workspace: a shared id makes this file queue behind its siblings. */
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000d10");
+const AUTOMATION_ID = "00000000-0000-7000-8000-000000000d11";
+const USER_ID = "00000000-0000-7000-8000-000000000d12";
+const SCOPE_ID = "00000000-0000-7000-8000-000000000d13";
+const REVISION = 3;
+const AT = "2026-09-01T00:00:00.000Z";
+
+const DECLARED: AutomationMemoryTable = {
+  name: "Seen entries",
+  description: "One row per discovered blog entry.",
+  usageInstructions: "Query candidate URLs, insert by canonical URL, and report only newly inserted rows.",
+  columns: [{ name: "url", description: "Canonical entry URL", type: "url", required: true, searchable: false }],
+  keyColumns: ["url"],
+};
+
+function workspace() {
+  return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
+}
+
+/** The serialization the receipt hash has always used: keys sorted, all the way down. */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/**
+ * The hash the apply wrote before the rename: the whole declaration, scope
+ * kind and rationale included, under the names of the day. Spelled out here
+ * rather than borrowed from the service, so this file is its own witness to
+ * what a stored receipt carries.
+ */
+async function preRenameInputHash(): Promise<string> {
+  return sha256(stableJson({
+    operation: "create",
+    args: {
+      scopeKind: "automation",
+      name: DECLARED.name,
+      description: DECLARED.description,
+      usageInstructions: DECLARED.usageInstructions,
+      columns: DECLARED.columns,
+      keyColumns: DECLARED.keyColumns,
+      rationale: "Declared by the automation's definition",
+    },
+  }));
+}
+
+/** The bindings the apply path reaches the object through, and no others. */
+function serviceEnv() {
+  return createTestEnv({
+    WORKSPACE_DOS: env.WORKSPACE_DOS,
+    AVALON_REGION: env.AVALON_REGION,
+    APP_ENV: env.APP_ENV,
+    LOG_LEVEL: env.LOG_LEVEL,
+  });
+}
+
+async function materialize() {
+  return materializeAutomationMemoryTables(serviceEnv(), {
+    workspaceId: WORKSPACE_ID,
+    automationId: AUTOMATION_ID,
+    definitionRevision: REVISION,
+    runAsUserId: USER_ID,
+    tables: [DECLARED],
+  });
+}
+
+async function counts() {
+  return runInDurableObject(workspace(), (_instance, state) => {
+    const count = (table: string): number => Number(state.storage.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM ${table}`,
+    ).toArray()[0]?.n ?? 0);
+    return { tables: count("memory_tables"), mutations: count("memory_table_mutations") };
+  });
+}
+
+beforeEach(async () => {
+  await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
+  await runInDurableObject(workspace(), (_instance, state) => {
+    for (const table of [
+      "memory_table_cells",
+      "memory_table_rows",
+      "memory_table_columns",
+      "memory_table_mutations",
+      "memory_tables",
+      "memory_scopes",
+    ]) {
+      state.storage.sql.exec(`DELETE FROM ${table}`);
+    }
+  });
+});
+
+describe("materializing a Sidekick's declared tables across the rename", () => {
+  it("given a receipt the apply wrote before the rename, when the same revision is applied again, then it converges instead of stalling", async () => {
+    // The scope as migration 50 leaves it, and the table and receipt the
+    // pre-rename apply wrote into it: the deterministic receipt id, and the
+    // hash of the whole declaration under the old names.
+    const scope = WorkspaceMemoryScopeSchema.parse(await workspace().ensureMemoryScope({
+      workspaceId: WORKSPACE_ID,
+      proposedScopeId: SCOPE_ID,
+      kind: "sidekick",
+      ownerId: AUTOMATION_ID,
+      at: AT,
+    }));
+    const harnessRunId = `automation-apply:${AUTOMATION_ID}:${REVISION}`;
+    const seeded = WorkspaceMemoryTableCreateResultSchema.parse(await workspace().createMemoryTable({
+      workspaceId: WORKSPACE_ID,
+      memoryTableId: "table-seen-entries",
+      memoryScopeId: scope.memoryScopeId,
+      name: DECLARED.name,
+      description: DECLARED.description,
+      usageInstructions: DECLARED.usageInstructions,
+      keyColumnIdsJson: JSON.stringify(["table-seen-entries:column:0"]),
+      provenanceJson: JSON.stringify({ source: "automation_definition", automationId: AUTOMATION_ID, definitionRevision: REVISION }),
+      columns: [{
+        memoryTableColumnId: "table-seen-entries:column:0",
+        name: "url",
+        description: "Canonical entry URL",
+        valueType: "url",
+        isRequired: true,
+        isSearchable: false,
+        position: 0,
+      }],
+      mutation: {
+        memoryTableMutationId: "mutation-pre-rename",
+        receiptId: `${harnessRunId}:0`,
+        operation: "create",
+        actorPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }),
+        harnessRunId,
+        workstreamId: AUTOMATION_ID,
+        rationale: "Declared by the automation's definition",
+        inputHash: await preRenameInputHash(),
+        mutationJson: "{}",
+        resultJson: JSON.stringify({ memoryTableId: "table-seen-entries", name: DECLARED.name }),
+      },
+      at: AT,
+    }));
+    expect(seeded).toEqual({ outcome: "created" });
+
+    // The publication alarm's re-apply: the same Sidekick, the same revision,
+    // the same declaration, now hashed under the new names.
+    await expect(materialize()).resolves.toEqual([
+      { name: DECLARED.name, memoryTableId: expect.any(String), outcome: "opened" },
+    ]);
+    expect(await counts()).toEqual({ tables: 1, mutations: 1 });
+  });
+
+  it("given a table this apply materialized, when the same revision is applied again, then the receipt replays under the new hash", async () => {
+    const first = await materialize();
+    expect(first).toEqual([{ name: DECLARED.name, memoryTableId: expect.any(String), outcome: "created" }]);
+
+    await expect(materialize()).resolves.toEqual([
+      { name: DECLARED.name, memoryTableId: first[0]!.memoryTableId, outcome: "opened" },
+    ]);
+    expect(await counts()).toEqual({ tables: 1, mutations: 1 });
+  });
+});

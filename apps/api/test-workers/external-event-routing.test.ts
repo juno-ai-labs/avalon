@@ -378,7 +378,7 @@ describe("external event routing", () => {
         audienceKind: "workspace",
       },
       payloadHash: `sha256:${"c0".repeat(32)}`,
-    })).toEqual({ admitted: false, outcomeCode: "automation_event_before_activation_boundary" });
+    })).toEqual({ admitted: false, outcomeCode: "sidekick_event_before_activation_boundary" });
 
     await ingestSlackEvent(EVENT_ID, "event-1");
     const matched = await match(EVENT_ID);

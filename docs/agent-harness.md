@@ -7,12 +7,12 @@ subordinate execution receipt for one activation of that loop; it never creates
 or identifies the loop. The loop is not a participant, separate persona,
 terminal, or general code-execution environment.
 
-An automation is drafted in a conversation of its own, and every run of it is a
-conversation of its own, both `SubstreamAgent`s under the automation's
-`AutomationDO`; there is no second host. The drafting tools are the loadable
-`rally:automations` plugin, available in a work stream and in an automation's
-chat alike and withheld from a run, and a run's loop reads its definition from
-the parent by revision at start. See
+A Sidekick is drafted in a conversation of its own, and every run of it is a
+conversation of its own, both `SubstreamAgent`s under the Sidekick's
+`SidekickDO`; there is no second host. The drafting tools are the loadable
+`rally:sidekicks` plugin (`rally_sidekicks` to the model), available in a work
+stream and in a Sidekick's chat alike and withheld from a run, and a run's loop
+reads its definition from the parent by revision at start. See
 [`automation-lifecycle.md`](automation-lifecycle.md).
 
 Sidekick submission returns to the conversation loop after publication. The model
@@ -267,7 +267,7 @@ Every address, identifier, URL, name, date, and quoted fact in an outward-facing
 
 Interactive multi-round work starts with a short plan and reports meaningful phase changes. Headless runs skip progress narration. Completions lead with the outcome, evidence, and blockers; private reasoning is never emitted.
 
-A run of a room's automation posts its result into that room itself, once, through the `automation_post_result` tool of the preloaded `rally:automation-result` plugin, which is offered to no other run; the room is named as the single entry in the automation context's `resultDelivery`. Nothing posts after the run. When the list is empty, which it is for every personal and workspace automation, the `# Result delivery` section says so and tells the run that any sending its instructions ask for is its own work, done with its tools inside the run; left silent, a run that *describes* emailing a summary has not emailed it. The section is rendered only for automation runs, and its populated arm says the same thing the plugin's system message does: nothing posts there for the run, and `automation_post_result`, called once after the work is done, is the one way. [`automation-lifecycle.md`](automation-lifecycle.md) owns why an automation has no destinations of its own.
+A run of a room's Sidekick posts its result into that room itself, once, through the `sidekick_post_result` tool of the preloaded `rally:sidekick-result` plugin (`rally_sidekick_result` to the model), which is offered to no other run; the room is named as the single entry in the task context's `sidekick.resultDelivery`. Nothing posts after the run. When the list is empty, which it is for every personal and workspace Sidekick, the `# Result delivery` section says so and tells the run that any sending its instructions ask for is its own work, done with its tools inside the run; left silent, a run that *describes* emailing a summary has not emailed it. The section is rendered only for Sidekick runs, and its populated arm says the same thing the plugin's system message does: nothing posts there for the run, and `sidekick_post_result`, called once after the work is done, is the one way. [`automation-lifecycle.md`](automation-lifecycle.md) owns why a Sidekick has no destinations of its own.
 
 A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every work-stream run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal work-stream rule steers into.
 
@@ -282,7 +282,7 @@ Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are ne
 Every connector adapter supplies a static agent-plugin descriptor whose provider type and code-authored tool order must match its manifest. At run start Rally creates one Bind plugin per eligible installed connection, identified as `connection:<uuid>` with a stable hashed wire prefix. Its tools are narrowed to the connection's frozen grants and run policy:
 
 - Ad-hoc runs may include workspace connections and the initiating user's personal connections that a person has not disabled. A stored `needs_reconnect` no longer removes a connection from a run — see [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate).
-- Automation runs include the connections the automation's definition bound at apply time (`readRunDefinition().defaultPluginIds` and `connectorBindings`) and eligible connections attached through the run's resources. Attached connections remain limited to the immutable grants frozen for the run.
+- Sidekick runs include the connections the Sidekick's definition bound at apply time (`readRunDefinition().defaultPluginIds` and `connectorBindings`) and eligible connections attached through the run's resources. Attached connections remain limited to the immutable grants frozen for the run.
 - Inbound-email runs remove external connector writes.
 
 Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `rally_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches plus `totalMatches` so a truncated result can be narrowed. It uses OR discovery rather than requiring the entire query to occur in one catalog field. An explicit load may run a convergent host-owned `onActivate` preparation hook after reauthorization and dynamic tool loading. Successful preparation is single-flighted for the run, then activation is durably recorded before the plugin's tools or trusted guidance become visible. Failed preparation remains retryable only when the host returns model-safe retry guidance; provider details are not exposed.
@@ -290,15 +290,15 @@ Bound connections, attached resources, and previously used plugins are activatio
 When that durable activation belongs to a credential plugin, the host also
 records its model-facing `plugin_*` ID in the automation-drafting state for the
 run. Explicit loads, preloads, and restored hints all cross the same bridge.
-`automation_submit_draft` can therefore enforce that a ready definition names
+`sidekick_submit_draft` can therefore enforce that a ready definition names
 only connectors the model both loaded through discovery and inspected through
 the automation catalog, without maintaining an unrelated second notion of
 "loaded." Because restored durable activations deliberately skip `onActivate`,
-the `rally:automations` plugin prepares itself on its first tool call too: it
+the `rally:sidekicks` plugin prepares itself on its first tool call too: it
 rebuilds completed plugin inspections and staged evaluator rules from the run's
 tool receipts before validating a resumed draft. Its first submission from a
-work stream creates the room's automation and posts the proposal card; from an
-automation's own chat it submits a revision to that automation.
+work stream creates the room's Sidekick and posts the proposal card; from a
+Sidekick's own chat it submits a revision to that Sidekick.
 
 A hosted-MCP connection may supply `HarnessPlugin.loadTools` instead of a
 code-authored tool array. It still appears through the same static trusted
@@ -313,7 +313,7 @@ returns `plugin_tools_unavailable` and leaves the plugin inactive. The protocol,
 validation, and provider declaration are owned by
 [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
-Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `rally_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `rally_core` plugin owns exact time and structured elicitation; elicitation uses `provider_key` idempotency because the receipt-derived key is also the durable question identity. `rally_automations` (canonical id `rally:automations`, deferred in a room, preloaded in an automation's own conversation) owns automation research, the `automations_list` an edit starts from, and draft submission; `rally_automation_result` is preloaded only on a run of a room's automation and holds `automation_post_result`. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
+Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `rally_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `rally_core` plugin owns exact time and structured elicitation; elicitation uses `provider_key` idempotency because the receipt-derived key is also the durable question identity. `rally_sidekicks` (canonical id `rally:sidekicks`, wire prefix `sidekick_`, deferred in a room, preloaded in a Sidekick's own conversation) owns Sidekick research, the `sidekicks_list` an edit starts from, and draft submission; `rally_sidekick_result` (canonical id `rally:sidekick-result`, the same prefix) is preloaded only on a run of a room's Sidekick and holds `sidekick_post_result`. The canonical ids are the identity of a persisted activation and stay; the model reads only the model id, the wire prefix, and the prose. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
 In a provider-verified region, ordinary work-stream runs also register the
 deferred built-in `rally:terminal` plugin. It has no connection row. An explicit
@@ -836,7 +836,7 @@ plugin remains available, so the agent can explicitly call `memory_search` when
 the task needs older context. Non-message ad-hoc runs search workspace, user, and
 work-stream memory at admission. A conversation whose parent is an automation, its
 drafting chat and every run alike, searches the workspace scope and the
-automation's own scope of kind `automation`, keyed by the automation id and
+Sidekick's own scope of kind `sidekick`, keyed by the Sidekick id and
 writable: what a run learns is what the next run should know, and what the
 person said while drafting is part of that. The person's own scope stays out,
 because a run acts for the automation rather than as the person, and a
@@ -1268,6 +1268,42 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-10 — The canonical plugin ids and capability strings follow
+
+**What changed:** The drafting plugin's canonical id is `rally:sidekicks` and
+the result plugin's is `rally:sidekick-result`; the creator tools' capabilities
+are `rally.sidekick.*`; the codes the drafting tools throw are `sidekick_*`
+(`sidekick_draft_not_submitted`, `sidekick_evaluator_rules_required`, ...). A
+stored activation hint under either old id is translated to the new one when a
+run restores its hints, so a resumed drafting conversation keeps its plugin.
+[`automation-lifecycle.md`](automation-lifecycle.md#2026-09-10--the-stored-names-follow-the-model-facing-ones)
+carries the whole list and the boundary that remains.
+
+**Why:** The previous entry kept the canonical ids as persisted identity. The
+translation at the one place hints are read is cheaper than a second name, and
+it is the same shape the harness already uses for a renamed field.
+
+### 2026-09-10 — The model reads Sidekick everywhere a person does
+
+**What changed:** The drafting plugin is `rally_sidekicks` to the model with its
+tools under the `sidekick_` prefix, `sidekicks_list` replaces `automations_list`
+and answers `sidekickId`s, the result plugin is `rally_sidekick_result` holding
+`sidekick_post_result`, the run's task context carries its definition under
+`sidekick`, the memory and table tools speak the scope kind `sidekick` for the
+stored `automation`, and the prompt sections, untrusted headers, classifier
+prompts, and plugin policy say Sidekick. Canonical plugin ids, canonical tool
+names, capability strings, stored scope kinds, and error codes are unchanged.
+[`automation-lifecycle.md`](automation-lifecycle.md#2026-09-10--the-model-reads-sidekick-everywhere-a-person-does)
+carries the full list, the boundary, and why.
+
+**Why:** The rename had stopped at the plugin's display name, so one system
+message called the same thing a Sidekick and an automation. Renaming at the
+serialization boundary, as the Avalon rebrand did for `matchedRallyUserId`,
+moves only the half the model sees.
+
+**Consequences:** The `automationWorkstream` and `semanticTrigger` golden hashes
+moved, each verified against a rename-only reversal before regeneration.
 
 ### 2026-09-09 — A host port for context that lives in the prefix after a compaction
 

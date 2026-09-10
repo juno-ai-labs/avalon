@@ -56,8 +56,8 @@ describe("attachment contracts", () => {
     const suggestions = [
       { tool: "workstream_read_resource", arguments: { resourceId: RESOURCE_ID } },
       { tool: "workstream_view_resource", arguments: { resourceIds: [RESOURCE_ID] } },
-      { tool: "automation_read_resource", arguments: { resourceId: RESOURCE_ID } },
-      { tool: "automation_view_resource", arguments: { resourceIds: [RESOURCE_ID] } },
+      { tool: "sidekick_read_resource", arguments: { resourceId: RESOURCE_ID } },
+      { tool: "sidekick_view_resource", arguments: { resourceIds: [RESOURCE_ID] } },
     ];
     for (const suggestion of suggestions) {
       expect(() => SuggestedAttachmentToolCallSchema.parse(suggestion)).not.toThrow();

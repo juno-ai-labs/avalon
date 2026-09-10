@@ -152,8 +152,8 @@ ingress fetches the message, resolves the sender to an active member, writes
 the payload to R2 and the resource, and then calls
 `AutomationDO.admitInboundEmail` exactly once. The object answers a retry from
 `inbound_email_receipts` by Resend email id before deciding anything; a new
-message is refused with `automation_not_active`,
-`automation_email_route_mismatch`, or `email_sender_not_authorized`, and the
+message is refused with `sidekick_not_active`,
+`sidekick_email_route_mismatch`, or `email_sender_not_authorized`, and the
 refusal is the receipt, so a retry never re-evaluates it. There is no pre-fetch
 screen and no hourly window; the sender must be inside the message, so the
 message is fetched first, and the address is a routing identifier every member
@@ -177,7 +177,7 @@ screening at ingress. [`security.md`](security.md) records the decision and what
 a re-tightening would have to cover.
 
 Pausing an automation changes nothing in Global: the claim stands and the
-object's own lifecycle check refuses the mail with `automation_not_active`,
+object's own lifecycle check refuses the mail with `sidekick_not_active`,
 writing a refusal receipt rather than a run. Resuming makes the same address
 deliverable again. An archived or deleted owner keeps its claim forever; the
 row is the tombstone.
@@ -205,7 +205,7 @@ the request field, the frozen targets, the `PATCH` route, the desktop editor,
 the result email and its template and preview script, and the child's delivery
 loop. The one destination that was never chosen, the room that owns a
 `workstream`-scoped automation, is reached by the run itself through its
-`automation_post_result` tool; there are no delivery receipts and no
+`sidekick_post_result` tool; there are no delivery receipts and no
 classifier.
 
 What replaced it is the run itself. An automation's instructions say where a
@@ -364,8 +364,8 @@ sunbird, terrapin, waxbill
   same tools as any other automation run, so ingress screening carries the weight.
 - **A run posts its own result into the owning room, once, and Rally posts
   nothing after it.** The room that owns a `workstream`-scoped automation
-  travels in the automation prompt context as the one `resultDelivery` entry,
-  and the run's `automation_post_result` tool is the one way a result reaches
+  travels in the task context's `sidekick.resultDelivery` as its one entry,
+  and the run's `sidekick_post_result` tool is the one way a result reaches
   it. There is no result email, no receipt, and no second path.
 - **Every run lands in its own Rally work stream**, and that cannot be turned
   off; a room-owned automation's result is additionally posted to the owning
@@ -402,7 +402,7 @@ registry, and what happens to mail addressed to one. It does not own:
   one call that either writes the receipt and the run together or writes the
   refusal receipt alone.
 - **A message an automation refuses is receipted, not dropped.** The outcome code
-  (`automation_not_active`, `automation_email_route_mismatch`,
+  (`sidekick_not_active`, `sidekick_email_route_mismatch`,
   `email_sender_not_authorized`) is stored against the Resend email ID, so a
   provider retry resolves to the same refusal instead of being re-evaluated
   against a lifecycle that has since moved. The message is fetched and stored
