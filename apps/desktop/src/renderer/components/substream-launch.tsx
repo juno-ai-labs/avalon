@@ -1,13 +1,14 @@
 import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
 import { X } from 'lucide-react';
 import { IconBorderCornerPill } from '@tabler/icons-react';
-import { useRef, useState } from 'react';
+import { type ReactNode, useRef, useState } from 'react';
 import type { RallyApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import type { Message, MessageAttachment, WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { RallyRegion } from '../../common/desktop';
 import { AgentWorkTiming } from './agent-work-timing';
+import { ConnectingCardSlot } from './connecting-card';
 import type { AttachmentPreview } from './attachments';
 import { IconButton, TitleSkeleton } from './primitives';
 import { MessageBlock } from './workstream-blocks';
@@ -50,6 +51,15 @@ export interface LaunchingSubstream {
 
 export interface SubstreamLaunchProps {
   api: RallyApi | null;
+  /**
+   * The parent's connecting card while the parent is a local-cache seed. A
+   * branch taken from a seed would persist a turn id the room has not
+   * confirmed, so the launch surface carries the same card and the same gate
+   * as the conversation it stands in front of.
+   */
+  connecting?: ReactNode;
+  /** The parent is a seed: the composer accepts the words and does not create. */
+  sendBlocked?: boolean;
   /**
    * Who is writing, where the session has resolved one. Absent only while a
    * session is being torn down, and the surface still draws: the composer, the
@@ -101,6 +111,7 @@ export interface SubstreamLaunchProps {
  */
 export function SubstreamLaunchSurface({
   api,
+  connecting = null,
   currentUser,
   members,
   parent,
@@ -111,6 +122,7 @@ export function SubstreamLaunchSurface({
   onCancel,
   onCreate,
   onOpenAttachment,
+  sendBlocked = false,
   workspaceId,
   workspaceRegion,
 }: SubstreamLaunchProps): React.JSX.Element {
@@ -213,6 +225,7 @@ export function SubstreamLaunchSurface({
 
     <div className="launch-body">
       <div className="launch-transcript-layer transcript-scroll">
+        <ConnectingCardSlot>{connecting}</ConnectingCardSlot>
         <div className="transcript-column substream-launch-column">
           {draft.provenance.length > 0 && (
             <section aria-label="Branching from" className="substream-branch-context">
@@ -288,7 +301,7 @@ export function SubstreamLaunchSurface({
           className="launch-composer"
           error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? error ?? attachmentDraft.error}
           fileInputRef={fileInputRef}
-          footerHint="Enter to create · Shift+Enter for a new line"
+          footerHint={sendBlocked ? 'Starting a substream is available once Rally connects' : 'Enter to create · Shift+Enter for a new line'}
           members={members}
           onAttach={attachmentDraft.addFiles}
           onOpenAttachment={onOpenAttachment}
@@ -297,6 +310,7 @@ export function SubstreamLaunchSurface({
           onSend={send}
           onStop={async () => undefined}
           placeholder="What should this substream work on?"
+          sendBlocked={sendBlocked}
           sending={launching !== null}
           submitLabel="Create substream"
           substreamId={PENDING_SUBSTREAM_DRAFT_ID}

@@ -10,6 +10,21 @@ import {
   workstreamFeedOpenAttemptId,
 } from './telemetry';
 
+/**
+ * What the open-latency event names as the feed's source. A transcript that
+ * was already in the query cache when the surface mounted reads as the feed
+ * cache, unless the entry says it is the local cache's seed: the pool hydrates
+ * a conversation before the surface mounts, so the seed is usually there first.
+ */
+export function resolveFeedOpenSource(
+  cacheState: WorkstreamFeedCacheState,
+  feedSource: WorkstreamFeedSource | null | undefined,
+): WorkstreamFeedSource | null {
+  if (feedSource === 'local_cache') return 'local_cache';
+  if (cacheState === 'feed_cached') return 'feed_cache';
+  return feedSource ?? null;
+}
+
 export function useWorkstreamFeedOpenTelemetry({
   cacheState,
   feedSource,

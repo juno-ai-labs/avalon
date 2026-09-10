@@ -3,6 +3,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllDrafts } from '../lib/draft-cache';
 import type { Message, WorkspaceMember, WorkstreamDetail } from '../lib/types';
+import { ConnectingCard } from './connecting-card';
 import { SubstreamLaunchSurface, type SubstreamLaunchProps } from './substream-launch';
 
 vi.mock('../lib/platform', () => ({
@@ -156,6 +157,22 @@ describe('substream launch surface', () => {
     renderSurface({ draft: { throughTurnId: null, provenance: [] } });
     expect(screen.queryByRole('region', { name: 'Branching from' })).not.toBeInTheDocument();
     expect(screen.getByText('New substream')).toBeInTheDocument();
+  });
+
+  it('carries the parent\'s connecting card and holds creation while the parent is a seed', () => {
+    const { onCreate } = renderSurface({
+      connecting: <ConnectingCard detail="Starting a substream is available once Rally connects" name="Remembered" state="connecting" subject="work stream" />,
+      sendBlocked: true,
+    });
+
+    expect(document.querySelector('.connecting-card')?.textContent ?? '').toContain('Connecting to Remembered…');
+    fireEvent.change(composer(), { target: { value: 'Branch from a seed' } });
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+    expect(onCreate).not.toHaveBeenCalled();
+    expect(composer()).toHaveValue('Branch from a seed');
+    expect(screen.getByRole('button', { name: /Create substream/u })).toBeDisabled();
+    // Once on the card, once as the launch composer's footer hint.
+    expect(screen.getAllByText('Starting a substream is available once Rally connects')).toHaveLength(2);
   });
 
   it('offers no stop control for the parent run it is standing in front of', () => {

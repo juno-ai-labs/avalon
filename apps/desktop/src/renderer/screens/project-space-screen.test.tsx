@@ -1,6 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import {
   PROJECT_COLOR_KEYS,
@@ -23,6 +23,11 @@ const api = vi.hoisted(() => ({
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ data: [] }) }));
+/** Null unless a test wants the screen to think the directory is still the local cache's. */
+const workspaceSocket = vi.hoisted(() => ({
+  current: null as null | { sidebarConnect: null | { generation: number }; state: 'connecting' | 'connected' | 'unavailable' },
+}));
+vi.mock('../lib/workspace-socket', () => ({ useOptionalWorkspaceSocket: () => workspaceSocket.current }));
 
 const project = ProjectSummarySchema.parse({
   id: asProjectId('019d3c99-63cc-7a88-8eb4-bf54b091be06'),
@@ -68,6 +73,7 @@ function renderProject(summary = project): QueryClient {
 describe('project space appearance', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    workspaceSocket.current = null;
     api.getWorkspaceMembers.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000002',
       name: 'Morgan Ellis',
@@ -216,4 +222,47 @@ describe('project space appearance', () => {
     fireEvent.click(restore);
     await waitFor(() => expect(api.restoreProject).toHaveBeenCalledWith(archived.id));
   });
+  it('paints a remembered project under a connecting card until the workspace socket answers', async () => {
+    workspaceSocket.current = { sidebarConnect: null, state: 'connecting' };
+    const queryClient = renderProject();
+
+    expect(screen.getByRole('heading', { name: 'Hiring' })).toBeInTheDocument();
+    expect(screen.getByRole('status').textContent ?? '').toContain('Connecting to Hiring…');
+
+    workspaceSocket.current = { sidebarConnect: null, state: 'unavailable' };
+    await act(async () => queryClient.setQueryData(['projects'], { waterline: 2, items: [project] }));
+    await waitFor(() => expect(screen.getByRole('status').textContent ?? '').toContain('Waiting for a connection to Hiring…'));
+  });
+
+  it('keeps a remembered project read-only until the directory is live', async () => {
+    workspaceSocket.current = { sidebarConnect: null, state: 'connecting' };
+    const queryClient = renderProject();
+
+    expect(screen.getByRole('status').textContent ?? '').toContain('Editing is available once Rally connects');
+    const name = screen.getByRole('button', { name: 'Hiring' });
+    fireEvent.doubleClick(name);
+    expect(screen.queryByLabelText('Project name')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Change icon and color for Hiring' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Project scope')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add participant' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Archive project' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add resource' })).toBeDisabled();
+
+    // The subscribe answer lands: the same record, now the socket's word.
+    workspaceSocket.current = { sidebarConnect: { generation: 1 }, state: 'connected' };
+    await act(async () => queryClient.setQueryData(['projects'], { waterline: 2, items: [project] }));
+    await waitFor(() => expect(document.querySelector('.connecting-card')).toBeNull());
+    expect(screen.getByRole('button', { name: 'Archive project' })).toBeEnabled();
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Hiring' }));
+    expect(screen.getByLabelText('Project name')).toBeInTheDocument();
+  });
+
+  it('shows no card once the socket has delivered the directory, and keeps the empty status region', () => {
+    workspaceSocket.current = { sidebarConnect: { generation: 1 }, state: 'connected' };
+    renderProject();
+
+    expect(document.querySelector('.connecting-card')).toBeNull();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
 });

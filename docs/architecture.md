@@ -30,7 +30,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | --- | --- |
 | `apps/desktop/src/main` | Window and Settings lifecycle, custom-protocol login completion, encrypted session storage, file selection, the macOS status item, main-owned telemetry/crash handling, and raw Node transport for work-stream socket swarms. |
 | `apps/desktop/src/preload` | The packaged CommonJS preload — the only channel between a sandboxed renderer and main. |
-| `apps/desktop/src/renderer` | Both React surfaces. Talks only to the configured regional API. |
+| `apps/desktop/src/renderer` | Both React surfaces. Talks only to the configured regional API. Keeps a local cache of the directory and each opened conversation so a space, a stream, and a substream paint before their socket answers; [`local-cache.md`](local-cache.md) owns it. |
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
 | `apps/api/src/index.ts`, `apps/api/src/worker-events.ts` | The regional API's statically imported HTTP/event graph and platform exports. Heavy stateless providers run in the typed document, Terminal, and Global telemetry-delivery service Workers owned by [`api-worker-deployment.md`](api-worker-deployment.md). |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |

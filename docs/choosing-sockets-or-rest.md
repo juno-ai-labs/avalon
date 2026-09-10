@@ -740,6 +740,7 @@ describes behaviour to replace, not a pattern to copy into something new.**
 | Transcript parts, tool blocks, token frames, presence | SubstreamAgent socket, snapshot on subscribe | Yes. |
 | Transcript range loading | Correlated, snapshot-fenced half-open range request on the SubstreamAgent socket | Yes — a pull the reader asked for, answered by the authority with explicit inspected coverage. |
 | Opening a conversation | Selecting it immediately subscribes the addressed SubstreamAgent feed; its first `snapshot` carries metadata, the unread-centered 5 + anchor + 5 range, the latest-five range, active turns, and reconnect timing baselines, while the WorkstreamDO control socket starts independently for work streams | Yes. Main and child conversations both recover by abandoning stale connection state and reconnecting from cursor zero; Retry restarts that same socket path. |
+| The first paint of the sidebar, a project space, or a conversation after a launch | The renderer's local cache seeds the query-cache entries from what the socket last delivered, marked as a seed; the socket's first payload then applies over it through the ordinary receivers, and a seed moves no ledger | Yes, as a seed. Nothing is fetched: the seed is not a second channel for the data, it is the last thing the one channel said, and the connect payload still replaces it unasked. [`local-cache.md`](local-cache.md) owns it. |
 | Workspace profile, members, invitations, connectors, resources, digest, flags, viewer preferences | `workspace_sync` invalidation on the socket → REST refetch of whichever surface is mounted | **No.** The socket carries the news; the data comes over HTTP. |
 | The sidebar's automations and notes | Carried on the `workspace_sync` answer to `subscribe`, then pushed whole as `workspace_sidebar_list` on every write, each with its own waterline | Yes. |
 | Suggested actions | `GET /work-opportunities?limit=4`, invalidated by the `activity` and `work_opportunities` topics | **No.** The rows are in the object holding the socket. |
@@ -822,6 +823,28 @@ read survives, and it is not a precedent.
   the caller is made to wait for.
 
 ## Changelog
+
+### 2026-09-10 — A seed from the local cache paints first and moves no ledger
+
+**What changed:** The sidebar lists, both project directories, and each
+opened conversation's detail and transcript are hydrated from the renderer's
+local cache before their socket answers, written directly into the
+query-cache entries and never through the versioned receivers. The socket's
+first payload applies over the seed as it would over empty caches, and the
+feed's first `snapshot` skips its event-sequence fence for a seed.
+
+**Why:** A seed has no waterline of its own and cannot be ordered against
+the authority's; handing it to a receiver would either be dropped as not newer
+or, worse, advance a ledger with a number the room did not stamp, and the next
+real push would be dropped against it. Writing the entries directly keeps the
+one-receiver rule intact: the ledgers still order every versioned payload, and
+the seed is simply what was on screen before the first one.
+
+**Consequences:** A receiver that keys "have I seen this?" on the presence
+of an entry rather than on its ledger would read a seed as already applied;
+none does today, and one must not be added. The feed-source entry carries
+`local_cache` while the seed stands, and everything that reads against the
+room's fence waits on it. [`local-cache.md`](local-cache.md) owns the rest.
 
 ### 2026-09-08 — Scope the shared cache patch to its conversation
 
