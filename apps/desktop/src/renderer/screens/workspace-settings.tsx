@@ -58,6 +58,7 @@ import { ApiError } from '../lib/api';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { desktopBridge } from '../lib/platform';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
+import { useEscapeClosesWindow } from '../lib/window-escape';
 import type {
   GitHubRepositoryAccessSettings,
   TerminalNetworkPolicyPreview,
@@ -367,70 +368,6 @@ function initialSettingsSection(): SettingsSection {
   if (nativeSection) return nativeSection;
   const hashQuery = window.location.hash.split('?', 2)[1];
   return parseDesktopSettingsSection(new URLSearchParams(hashQuery ?? '').get('section')) ?? 'account';
-}
-
-/** Input types Escape may close the window over: the rest hold no typing. */
-const TEXT_ENTRY_INPUT_TYPES = new Set(['email', 'number', 'password', 'search', 'tel', 'text', 'url']);
-
-function holdsUnsavedText(target: Element | null): boolean {
-  if (target instanceof HTMLTextAreaElement) return target.value.trim() !== '';
-  if (target instanceof HTMLInputElement) {
-    return TEXT_ENTRY_INPUT_TYPES.has(target.type) && target.value.trim() !== '';
-  }
-  return target instanceof HTMLElement && target.isContentEditable;
-}
-
-/**
- * Whether the visible settings pane holds typing, wherever focus happens to be.
- *
- * A draft is abandoned by the window closing, not by the caret leaving it: an
- * invitation typed and then left while its Role select or Send button takes
- * focus is the same unsaved text it was a keystroke earlier. Scoping the sweep
- * to the pane is what keeps that from becoming "any text anywhere" — the
- * sidebar's search box is a filter rather than a draft, a generated endpoint or
- * signing secret is `readOnly` and already saved, and Radix portals every
- * dialog's fields out of this subtree, where an open dialog owns Escape anyway.
- * A pane that is not the active one is not in the DOM, so what is protected is
- * what the person can see.
- */
-function paneHoldsUnsavedText(pane: Element | null): boolean {
-  if (!pane) return false;
-  return [...pane.querySelectorAll('input, textarea')].some((field) => {
-    if (field instanceof HTMLInputElement && !TEXT_ENTRY_INPUT_TYPES.has(field.type)) return false;
-    const editable = field as HTMLInputElement | HTMLTextAreaElement;
-    const savedValue = editable.dataset.savedValue;
-    if (savedValue !== undefined) return !editable.readOnly && !editable.disabled && editable.value !== savedValue;
-    return !editable.readOnly && !editable.disabled && editable.value.trim() !== '';
-  });
-}
-
-/**
- * Whether an Escape keystroke is a request to close the Settings window.
- *
- * macOS spends Escape on *cancelling* — a sheet, a popover, an operation in
- * flight — and closes an ordinary window like this one with Command-W, so
- * Escape here is a convenience rather than the platform gesture. It is offered
- * because every other desktop application has trained people to expect it, and
- * it is answered only when nothing nearer has a claim on the keystroke:
- *
- * - Radix renders dialogs and select menus into portals and dismisses them on
- *   Escape itself. That keystroke belongs to the layer on top; taking the
- *   window with it would close Settings out from under a confirmation.
- * - Settings applies every change immediately and has no undo. An Escape aimed
- *   at a half-written invitation, endpoint, or API key would discard text with
- *   nowhere else to come from — the loss Apple's rule exists to prevent. The
- *   focused element is checked for the sidebar's search box, which sits outside
- *   the pane; the pane itself is swept because a draft does not stop being one
- *   when focus moves off it.
- */
-export function escapeClosesSettings(event: KeyboardEvent, pane: Element | null): boolean {
-  if (event.key !== 'Escape' || event.defaultPrevented) return false;
-  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
-  const target = event.target instanceof Element ? event.target : null;
-  const dismissableLayer = target?.closest(
-    '[role="dialog"], [role="alertdialog"], [role="listbox"], [role="menu"], [data-radix-popper-content-wrapper]',
-  );
-  return !dismissableLayer && !holdsUnsavedText(target) && !paneHoldsUnsavedText(pane);
 }
 
 export function WorkspaceSettingsScreen({
@@ -997,17 +934,14 @@ export function WorkspaceSettingsScreen({
     if (first) setActiveSection(first);
   }, [activeSection, availableSections, settingsNavigationWithConnectors]);
 
-  // Only the Settings window closes on Escape. The same screen is also a route
-  // inside the main window on surfaces with no separate window to open, and
-  // there the keystroke would shut the workspace itself.
-  useEffect(() => {
-    if (!standaloneWindow) return undefined;
-    const close = (event: KeyboardEvent): void => {
-      if (escapeClosesSettings(event, contentRef.current)) window.close();
-    };
-    window.addEventListener('keydown', close);
-    return () => window.removeEventListener('keydown', close);
-  }, [standaloneWindow]);
+  // The gesture belongs to the Settings *window*, not to this screen. The same
+  // screen is also a route inside the main window on surfaces with no separate
+  // window to open, and there the keystroke would shut the workspace itself
+  // rather than the settings the person is looking at. The visible pane is
+  // swept for unsaved text because Settings saves immediately and has no undo:
+  // a half-written invitation, endpoint, or API key has nowhere to come from
+  // once this window is gone.
+  useEscapeClosesWindow({ enabled: standaloneWindow, unsavedTextScope: contentRef });
 
   useEffect(() => bridge.onSettingsSectionRequested((section) => {
     const nextSection = parseDesktopSettingsSection(section);

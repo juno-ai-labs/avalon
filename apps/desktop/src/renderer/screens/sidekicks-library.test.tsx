@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SidekicksLibraryScreen } from './sidekicks-library';
+import { SidekicksLibraryScreen, SidekicksWindow } from './sidekicks-library';
 
 const getSidekicks = vi.hoisted(() => vi.fn());
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api: { getSidekicks } }) }));
@@ -38,5 +38,38 @@ describe('SidekicksLibraryScreen', () => {
     expect(screen.getByRole('link', { name: /Daily brief/ })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Team brief/ })).toBeNull();
     expect(within(screen.getByRole('group', { name: 'Sidekick ownership' })).getByRole('button', { name: 'Everyone' })).toHaveAttribute('aria-pressed', 'true');
+  });
+});
+
+describe('SidekicksWindow', () => {
+  function renderWindow(): void {
+    render(<QueryClientProvider client={new QueryClient()}><SidekicksWindow /></QueryClientProvider>);
+  }
+
+  it('closes the window on Escape', async () => {
+    const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
+    renderWindow();
+    await screen.findByRole('link', { name: /Daily brief/ });
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('leaves the keystroke to a search box that still holds a filter', async () => {
+    const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
+    renderWindow();
+    const search = await screen.findByRole('searchbox', { name: 'Search Sidekicks' });
+    fireEvent.change(search, { target: { value: 'morning' } });
+
+    // Chromium answers Escape in a `type="search"` field by clearing it. A
+    // window that vanished on the same keystroke would never let anyone see the
+    // filter come off.
+    fireEvent.keyDown(search, { key: 'Escape' });
+    expect(close).not.toHaveBeenCalled();
+
+    fireEvent.change(search, { target: { value: '' } });
+    fireEvent.keyDown(search, { key: 'Escape' });
+    expect(close).toHaveBeenCalledOnce();
   });
 });
