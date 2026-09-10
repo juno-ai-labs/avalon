@@ -368,8 +368,8 @@ rendered only in the rail, marked `data-motion-insert`; a test that counts New
 chat links sees one in either layout. `.sidebar-rail-new-button` is styled
 without reference to `.is-compact`, because its stand-in is drawn after the
 class has gone. The first section under the command bar drops its own top
-margin, since the bar's padding now provides the 12px the collapsed margins
-used to. A stand-in overhangs the command bar into the list for 160ms on
+margin, since the bar's bottom padding is the group gap the collapsed margins
+used to provide. A stand-in overhangs the command bar into the list for 160ms on
 expand, uncut, because the bar does not clip. React fills in `propertyName`
 for `transitionend` alone, so the component reads it from the native event.
 
