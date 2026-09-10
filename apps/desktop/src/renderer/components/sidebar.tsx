@@ -68,7 +68,7 @@ import {
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { layoutRowAt } from '../lib/list-motion';
 import { useListMotion } from '../lib/use-list-motion';
-import { Avatar, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
+import { Avatar, Button, DragHint, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 import { ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup } from './sidebar-skeleton';
 import { AutomationGlyph, HexagonGlyph, SIDEKICK_RUNNING_MARKER, WorkstreamGlyph } from './workstream-glyph';
@@ -2129,48 +2129,56 @@ export function Sidebar({
           </IconButton>
         </div>
         {resizing && dragWidth !== null && <div aria-hidden="true" className="sidebar-drag-guide" style={{ left: dragWidth }} />}
-        <div
-          aria-label="Resize navigation"
-          aria-orientation="vertical"
-          aria-valuemax={MAX_SIDEBAR_WIDTH}
-          aria-valuemin={COLLAPSED_SIDEBAR_WIDTH}
-          aria-valuenow={effectiveSidebarWidth}
-          className={clsx('sidebar-resizer', pointerNearEdge && 'is-near')}
-          onDoubleClick={() => { if (!forcedCompact) setSidebarCollapsed(!sidebarCollapsed); }}
-          onBlur={() => setKeyResizing(false)}
-          onKeyDown={(event) => {
-            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-            setKeyResizing(true);
-            if (event.key === 'ArrowLeft' && !compact) {
-              resizeSidebar(sidebarWidth > MIN_SIDEBAR_WIDTH
-                ? sidebarWidth - 16
-                : SIDEBAR_COLLAPSE_DRAG_THRESHOLD - 1);
-            }
-            if (event.key === 'ArrowRight') resizeSidebar(compact ? MIN_SIDEBAR_WIDTH : sidebarWidth + 16);
-          }}
-          onKeyUp={() => setKeyResizing(false)}
-          onPointerDown={(event) => {
-            if (event.button !== 0) return;
-            event.preventDefault();
-            event.currentTarget.focus();
-            event.currentTarget.setPointerCapture(event.pointerId);
-            // Measure the panel rather than reading the width state. The handle
-            // is drawn at the sidebar's trailing edge, and while a collapse or
-            // expand is still travelling that edge is not yet the width the
-            // state holds — an offset taken from the state would be wrong by
-            // however far the animation had left to go, and stay wrong for the
-            // whole drag. The work-stream sidebar's handle already measures.
-            const edge = panel.current?.getBoundingClientRect().right;
-            grabOffset.current = event.clientX - (edge ?? effectiveSidebarWidth);
-            setResizing(true);
-          }}
-          role="separator"
-          tabIndex={0}
+        {/* The hint names the double-click only while it would do something:
+            a window too narrow to hold the expanded sidebar pins it compact,
+            and the toggle in the footer is disabled for the same reason. */}
+        <DragHint
+          action="Drag to resize"
+          {...(forcedCompact ? {} : { shortcut: compact ? 'Double-click to expand' : 'Double-click to collapse' })}
         >
-          <span aria-hidden="true" className="sidebar-resizer-handle">
-            <GripVertical size={11} strokeWidth={2} />
-          </span>
-        </div>
+          <div
+            aria-label="Resize navigation"
+            aria-orientation="vertical"
+            aria-valuemax={MAX_SIDEBAR_WIDTH}
+            aria-valuemin={COLLAPSED_SIDEBAR_WIDTH}
+            aria-valuenow={effectiveSidebarWidth}
+            className={clsx('sidebar-resizer', pointerNearEdge && 'is-near')}
+            onDoubleClick={() => { if (!forcedCompact) setSidebarCollapsed(!sidebarCollapsed); }}
+            onBlur={() => setKeyResizing(false)}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+              setKeyResizing(true);
+              if (event.key === 'ArrowLeft' && !compact) {
+                resizeSidebar(sidebarWidth > MIN_SIDEBAR_WIDTH
+                  ? sidebarWidth - 16
+                  : SIDEBAR_COLLAPSE_DRAG_THRESHOLD - 1);
+              }
+              if (event.key === 'ArrowRight') resizeSidebar(compact ? MIN_SIDEBAR_WIDTH : sidebarWidth + 16);
+            }}
+            onKeyUp={() => setKeyResizing(false)}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return;
+              event.preventDefault();
+              event.currentTarget.focus();
+              event.currentTarget.setPointerCapture(event.pointerId);
+              // Measure the panel rather than reading the width state. The handle
+              // is drawn at the sidebar's trailing edge, and while a collapse or
+              // expand is still travelling that edge is not yet the width the
+              // state holds — an offset taken from the state would be wrong by
+              // however far the animation had left to go, and stay wrong for the
+              // whole drag. The work-stream sidebar's handle already measures.
+              const edge = panel.current?.getBoundingClientRect().right;
+              grabOffset.current = event.clientX - (edge ?? effectiveSidebarWidth);
+              setResizing(true);
+            }}
+            role="separator"
+            tabIndex={0}
+          >
+            <span aria-hidden="true" className="sidebar-resizer-handle">
+              <GripVertical size={11} strokeWidth={2} />
+            </span>
+          </div>
+        </DragHint>
       </aside>
       <Modal
         footer={(
