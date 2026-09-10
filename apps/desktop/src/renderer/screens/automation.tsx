@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
+import type { AutomationDetail } from '../lib/types';
 import { SidekickDetailLayout } from '../components/sidekick-detail-layout';
 import { AutomationHeader, type AutomationHeaderAction } from '../components/automation-header';
 import { Button, EmptyState, OpeningState } from '../components/primitives';
@@ -120,11 +121,22 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
   // whatever order it sees; this is about which answer the screen keeps. The
   // chain is a ref so it survives a re-render, and a rejected link is caught
   // out of it so one refusal does not strand every later pick.
+  //
+  // The chain orders these requests against each other and nothing else, which
+  // is why the write below is also guarded. A pause, a resume, or the workspace
+  // socket's `automations` push all refresh this same entry while a pick is in
+  // flight, and an older full response landing afterwards would put that whole
+  // Sidekick back — a stale lifecycle, not just a stale icon — with the
+  // notification that would have corrected it already spent. `updatedAt` is the
+  // object's own clock and every mutation there bumps it, so a response older
+  // than what is cached is a response with nothing left to say: whatever wrote
+  // that newer entry read this appearance too.
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const setAppearance = (patch: WorkstreamAppearancePatch): Promise<void> => {
     const result = queue.current.then(async () => {
       const updated = await api!.setAutomationAppearance(id, patch);
-      queryClient.setQueryData(['automation', id], updated);
+      queryClient.setQueryData<AutomationDetail>(['automation', id], (cached) =>
+        cached && cached.updatedAt > updated.updatedAt ? cached : updated);
       void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
     });
     queue.current = result.catch(() => undefined);
