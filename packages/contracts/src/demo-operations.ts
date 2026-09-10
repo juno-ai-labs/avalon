@@ -131,6 +131,8 @@ export const DemoTemplateSchema = z.strictObject({
     roles: z.array(RoleSchema),
     /** The role the presenter plays, which is cast from the template's members. */
     presenterRole: RoleSchema.nullable(),
+    /** What each other role is — the part the operator casts somebody into, which labels its field. */
+    roleLabels: z.record(RoleSchema, z.string().min(1).max(40)),
   }),
   members: z.array(z.strictObject({
     userId: IdSchema,

@@ -452,8 +452,30 @@ export const DemoPackSchema = z.strictObject({
    * was checked.
    */
   expect: z.array(ViewerExpectationSchema).default([]),
+  /**
+   * What each cast role is, in a word or two — the part the operator is
+   * casting somebody into. The form labels its dropdowns with these, because
+   * a role token reads as this pack's own character and says nothing about
+   * who should play it: a colleague seated in the wrong part has the pack's
+   * scripted words attributed to them under their real name.
+   */
+  roleLabels: z.record(DemoPackRoleSchema, z.string().trim().min(1).max(40)).default({}),
 }).superRefine((pack, context) => {
   const roles = new Set(pack.roles);
+  // Every role the operator casts, and only those: an unlabelled dropdown
+  // says nothing about the part, and a label for a role nobody plays would
+  // read as one more person in the demo.
+  const cast = new Set(demoCastRoles(pack.roles));
+  for (const role of cast) {
+    if (!pack.roleLabels[role]) {
+      context.addIssue({ code: "custom", path: ["roleLabels"], message: `Role "${role}" has no label` });
+    }
+  }
+  for (const role of Object.keys(pack.roleLabels)) {
+    if (!cast.has(role)) {
+      context.addIssue({ code: "custom", path: ["roleLabels", role], message: `"${role}" is not a role the operator casts` });
+    }
+  }
   if (roles.size !== pack.roles.length) {
     context.addIssue({ code: "custom", path: ["roles"], message: "Roles must be unique" });
   }
@@ -926,6 +948,11 @@ export const PLACEHOLDER_DEMO_PACK = {
   // form. A role is a part in the script, not a person: whoever is cast as
   // `priya` plays it under their own name.
   roles: ["presenter", "priya", "marcus", "dana"],
+  // What each part is, in the order the operator meets them in the form. A
+  // role is a part in the script, not a person: whoever is cast as `priya`
+  // plays it under their own name, and the label is what tells the operator
+  // whose words they are about to put in a colleague's mouth.
+  roleLabels: { priya: "Product", marcus: "Sales", dana: "Legal" },
   steps: [
     {
       kind: "create_workstream",

@@ -21,9 +21,11 @@ import { ApiError } from "../lib/api-error";
 import type { DemoPackRole } from "./demo-pack";
 
 /**
- * The company's own email domain. Demos are cast from the people on it and
- * from nobody else, so this is the one place the domain is written down and
- * changing it changes who may be seated in a demo workspace.
+ * The company's own email domain — the one its people sign in to Rally with,
+ * which is not the one the product is served from and not the one the
+ * Cloudflare Access policy on the internal tools names. Demos are cast from
+ * the accounts on it and from nobody else, so this is the one place it is
+ * written down and changing it changes who may be seated in a demo workspace.
  */
 export const DEMO_CAST_EMAIL_DOMAIN = "rallywith.ai";
 
@@ -33,6 +35,14 @@ export interface DemoCastCandidate {
   name: string;
   email: string;
 }
+
+/**
+ * What makes somebody castable: an account on the domain that has signed in.
+ * One predicate, used by the list the form is built from and by the read that
+ * checks what the form sent, so the two cannot drift into disagreeing about
+ * who is a colleague.
+ */
+const CASTABLE = `platform_user_id IS NOT NULL AND email LIKE ? ESCAPE '\\'`;
 
 /**
  * A LIKE pattern matching every address on the domain, with the wildcards a
@@ -45,15 +55,13 @@ function domainPattern(domain: string): string {
 }
 
 /**
- * Everyone a cast role may be played by, by address. Ordered by email rather
- * than by name so the form's list is stable and an operator finds the person
- * they are looking for where they left them.
+ * Everyone a cast role may be played by. Ordered the way the form shows them —
+ * by name, with the address breaking a tie between two people who share one —
+ * so a dropdown an operator scans reads as sorted rather than as arbitrary.
  */
 export async function listDemoCastCandidates(env: Env): Promise<DemoCastCandidate[]> {
   const rows = await env.DB.prepare(
-    `SELECT id, name, email FROM users
-      WHERE platform_user_id IS NOT NULL AND email LIKE ? ESCAPE '\\'
-      ORDER BY email`,
+    `SELECT id, name, email FROM users WHERE ${CASTABLE} ORDER BY name, email`,
   ).bind(domainPattern(DEMO_CAST_EMAIL_DOMAIN)).all<{ id: string; name: string; email: string }>();
   return (rows.results ?? []).map((row) => ({ userId: row.id, name: row.name, email: row.email }));
 }
@@ -64,27 +72,32 @@ export async function listDemoCastCandidates(env: Env): Promise<DemoCastCandidat
  * for two people under one name.
  *
  * The presenter is excluded: they are checked against the template instead,
- * which is the stricter question. The refusal's status is the caller's,
- * because the same question means two different things — a start request
- * naming somebody who is not a colleague is a bad request, and a stored cast
- * that has stopped being one is a conflict with what the row says.
+ * which is the stricter question. In a start request the cast never carries
+ * them — naming the presenter's role is refused outright — but a stored cast
+ * does, and this is the read `checking_template` makes of it.
+ *
+ * One statement for the whole cast rather than one per role: the roles are
+ * few, but a query in a loop is a shape that grows with the pack.
  */
 export async function readDemoCast(env: Env, input: {
   cast: Readonly<Record<DemoPackRole, string>>;
   presenterRole: DemoPackRole | null;
-  status: 422 | 409;
 }): Promise<Record<DemoPackRole, DemoCastCandidate>> {
+  const wanted = Object.entries(input.cast).filter(([role]) => role !== input.presenterRole);
+  if (wanted.length === 0) return {};
+  const ids = [...new Set(wanted.map(([, userId]) => userId))];
+  const rows = await env.DB.prepare(
+    `SELECT id, name, email FROM users
+      WHERE ${CASTABLE} AND id IN (${ids.map(() => "?").join(", ")})`,
+  ).bind(domainPattern(DEMO_CAST_EMAIL_DOMAIN), ...ids)
+    .all<{ id: string; name: string; email: string }>();
+  const colleagues = new Map((rows.results ?? []).map((row) => [row.id, row]));
   const read: Record<DemoPackRole, DemoCastCandidate> = {};
-  for (const [role, userId] of Object.entries(input.cast)) {
-    if (role === input.presenterRole) continue;
-    const person = await env.DB.prepare(
-      `SELECT id, name, email FROM users
-        WHERE id = ? AND platform_user_id IS NOT NULL AND email LIKE ? ESCAPE '\\'`,
-    ).bind(userId, domainPattern(DEMO_CAST_EMAIL_DOMAIN))
-      .first<{ id: string; name: string; email: string }>();
+  for (const [role, userId] of wanted) {
+    const person = colleagues.get(userId);
     if (!person) {
       throw new ApiError(
-        input.status,
+        422,
         "demo_cast_not_a_colleague",
         `The person cast as "${role}" is not a @${DEMO_CAST_EMAIL_DOMAIN} account in this region`,
       );
@@ -106,11 +119,11 @@ export async function readDemoCast(env: Env, input: {
  * collide between a start request and the phase that acts on it, and a retry
  * can be days later.
  */
-export function assertDemoCastNamesDistinct(input: { names: readonly string[]; status: 422 | 409 }): void {
-  const folded = input.names.map((name) => name.toLowerCase());
+export function assertDemoCastNamesDistinct(names: readonly string[]): void {
+  const folded = names.map((name) => name.toLowerCase());
   if (new Set(folded).size === folded.length) return;
   throw new ApiError(
-    input.status,
+    422,
     "demo_cast_name_duplicate",
     "Two people in this demo have the same name; nobody watching could tell which of them a mention names",
   );

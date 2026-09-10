@@ -271,11 +271,16 @@ export async function demoTemplate(env: Env): Promise<{
     version: string;
     roles: string[];
     presenterRole: string | null;
+    roleLabels: Record<string, string>;
   };
   members: { userId: string; name: string; email: string; role: "owner" | "admin" | "member" }[];
   castCandidates: { userId: string; name: string; email: string }[];
   castEmailDomain: string;
 }> {
+  // Demos are prepared where the template lives, and this answer is the
+  // company's directory: an EU call could do nothing with it but read out
+  // every European colleague's name and address.
+  requireDemoRegion(env);
   const rows = await env.DB.prepare(
     `SELECT member.user_id, user.name, user.email, member.role
        FROM workspace_members member JOIN users user ON user.id = member.user_id
@@ -291,6 +296,7 @@ export async function demoTemplate(env: Env): Promise<{
       version: pack.version,
       roles: [...pack.roles],
       presenterRole: pack.roles.includes(DEMO_PRESENTER_ROLE) ? DEMO_PRESENTER_ROLE : null,
+      roleLabels: { ...pack.roleLabels },
     },
     members: (rows.results ?? []).map((row) => ({
       userId: row.user_id,
@@ -415,7 +421,6 @@ export async function startDemoOperation(
   const people = await readDemoCast(env, {
     cast: bound,
     presenterRole: pack.roles.includes(DEMO_PRESENTER_ROLE) ? DEMO_PRESENTER_ROLE : null,
-    status: 422,
   });
   const cast = {
     ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? { [DEMO_PRESENTER_ROLE]: input.presenterUserId } : {}),
@@ -428,13 +433,10 @@ export async function startDemoOperation(
   if (new Set(seated).size !== seated.length) {
     throw new ApiError(422, "demo_cast_duplicate", "Each pack role must be played by a different person");
   }
-  assertDemoCastNamesDistinct({
-    names: [
-      ...Object.values(people).map((person) => person.name),
-      ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? [presenter.name] : []),
-    ],
-    status: 422,
-  });
+  assertDemoCastNamesDistinct([
+    ...Object.values(people).map((person) => person.name),
+    ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? [presenter.name] : []),
+  ]);
   const at = nowIso();
   const inserted = await env.DB.prepare(
     `INSERT INTO demo_operations
@@ -783,18 +785,14 @@ async function phaseBody(
       const people = await readDemoCast(env, {
         cast,
         presenterRole: pack.roles.includes(DEMO_PRESENTER_ROLE) ? DEMO_PRESENTER_ROLE : null,
-        status: 409,
       });
       // Against the directory as it reads now, not as the start request found
       // it: everybody's name is rewritten from their platform identity each
       // time they sign in, and this operation may be a retry days later.
-      assertDemoCastNamesDistinct({
-        names: [
-          ...Object.values(people).map((person) => person.name),
-          ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? [presenterMember.name] : []),
-        ],
-        status: 409,
-      });
+      assertDemoCastNamesDistinct([
+        ...Object.values(people).map((person) => person.name),
+        ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? [presenterMember.name] : []),
+      ]);
       const connections = await workspaceRuntimeDatabase(env, DEMO_TEMPLATE_WORKSPACE_ID).prepare(
         `SELECT COUNT(*) AS count FROM connector_connections WHERE workspace_id = ? AND scope = 'workspace'`,
       ).bind(DEMO_TEMPLATE_WORKSPACE_ID).first<{ count: number }>();

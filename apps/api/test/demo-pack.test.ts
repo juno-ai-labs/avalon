@@ -28,12 +28,17 @@ const CAST: DemoCast = {
 
 const SAY = { kind: "say" as const, text: "Here is what I found." };
 
+/** A label per role the operator casts; the schema requires one each. */
+function roleLabels(roles: string[]): Record<string, string> {
+  return Object.fromEntries(roles.filter((role) => role !== "presenter").map((role) => [role, `The ${role} part`]));
+}
+
 function pack(steps: unknown[], roles = ["presenter", "priya", "marcus", "dana"]) {
-  return DemoPackSchema.safeParse({ version: "test", roles, steps });
+  return DemoPackSchema.safeParse({ version: "test", roles, steps, roleLabels: roleLabels(roles) });
 }
 
 function parsedPack(steps: unknown[], roles = ["presenter", "priya", "marcus"]) {
-  return DemoPackSchema.parse({ version: "test", roles, steps });
+  return DemoPackSchema.parse({ version: "test", roles, steps, roleLabels: roleLabels(roles) });
 }
 
 function open(overrides: Record<string, unknown> = {}) {
@@ -189,6 +194,19 @@ describe("the pack schema", () => {
         assistant: { kind: "say", text: "Adam Presenter owns the Northgate call." },
       },
     }]);
+  });
+
+  it("refuses a pack whose parts cannot be labelled: a role with no label, one nobody casts", () => {
+    // The labels are what the New demo form's dropdowns are titled, so a
+    // missing one is a part the operator casts a real colleague into with
+    // nothing telling them which part it is — found here, not in Ace.
+    const parse = (labels: Record<string, string>) => DemoPackSchema.safeParse({
+      version: "test", roles: ["presenter", "priya", "marcus"], steps: [open()], roleLabels: labels,
+    });
+    expect(issues(parse({ priya: "Product" }))).toContain('Role "marcus" has no label');
+    expect(issues(parse({ priya: "Product", marcus: "Sales", presenter: "Presenting" })))
+      .toContain('"presenter" is not a role the operator casts');
+    expect(parse({ priya: "Product", marcus: "Sales" }).success).toBe(true);
   });
 
   it("refuses a room used before it is created", () => {
