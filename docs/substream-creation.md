@@ -36,8 +36,11 @@ The middle sidebar puts the main conversation first, then one full-width row per
 child, then **New substream**. Every row is the navigation sidebar's work-stream
 row — borderless, one 36px leading mark slot — and the mark is what tells them
 apart: the work stream's own tinted icon for the main conversation, a Tabler
-`corner-down-right` arrow (the `↳` the main feed's **New substream** control is
-drawn with) for a child, and a Tabler `plus` for creation.
+`corner-down-right` arrow for a child, and a Tabler `plus` for creation. The
+arrow is the same shape the main feed's **New substream** control draws as a
+text `↳`, but the rail and the feed no longer mean the same thing by it: in the
+rail it says *is* a substream, on a turn it says *start* one. The launch
+banner's own `border-corner-pill` is untouched.
 Compact hides the titles and swaps a child's arrow for the first character
 of its title. It retains the existing sidebar colors, row sizing, drag width and
 icon-only collapse. A completed
@@ -154,7 +157,7 @@ A substream is named the way a work stream is, by
 provisional title is the first line of the opening message, its `title_status`
 is `naming`, and its header shows the same skeleton until the pass answers. The icon
 that pass chooses is stored on the child like any other, and drawn nowhere: a
-substream's rows keep the branch line, and the child directory payload behind
+substream's rows keep the arrow, and the child directory payload behind
 them carries no appearance. Both passes are addressed at the child —
 `workstreamId` plus `substreamId` through the identity and message ports, and
 the rename event published into the child's own room. The child's rename reaches
@@ -413,7 +416,23 @@ a glyph, and the arrow is now the rail's "is a substream" mark rather than its
 "start one" mark, so a change to either has to keep that reading. See
 [conversation-surfaces.md](conversation-surfaces.md) for the row itself.
 
+**Rejected:** keeping one glyph for both controls and only recolouring the
+branch line off the 10% token. That fixes legibility and leaves the arrow on
+the creation row, which is the half of the complaint that is about meaning
+rather than contrast.
+
+**Left alone deliberately:** the launch banner
+(`substream-launch.tsx`) still draws `border-corner-pill`. It is a creation
+surface, so the plus would follow the rail's logic, but it is drawn in full ink
+rather than the 10% token, so nothing about it is illegible, and changing it is
+a product decision about a different surface rather than part of this one.
+
+Shipped in #656.
+
 ### 2026-09-10 — The sidebar's creation mark matches the feed's
+
+Superseded by the entry above: the sidebar's creation row is a plus again, and
+the arrow moved to the rows that are substreams.
 
 Both entry points into a new substream now use the same `↳`; the sidebar's row
 previously used a Tabler `plus`. See

@@ -59,7 +59,7 @@ this document owns what happens to its title afterwards.
 The icon is stored for a child as it is for a work stream: the same call
 answers both halves, the child's own row has somewhere to put it, and there is
 no conditional here at all. Nothing draws it today — a substream's sidebar rows
-carry the branch line, its compact mark carries the first character of its
+carry the `↳` arrow, its compact mark carries the first character of its
 title, and its header shows the parent's icon — and the directory payload those
 rows are built from has no appearance field to carry one. So this is a value
 kept where it belongs rather than a value on screen; a surface that ever wants
