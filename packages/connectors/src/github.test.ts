@@ -1255,6 +1255,36 @@ describe("GitHub connector", () => {
       .toEqual([100, 101, 102, 103, 104, 105]);
   });
 
+  it("does not read a missing check-run total as the end of the list", async () => {
+    // `actions.list_workflow_runs` and `checks.list_for_ref` take `hasMore` from
+    // GitHub's `total_count`, which is exact when it arrives. Standing the
+    // page's own length in for a missing one is the trap: `page * perPage <
+    // totalCount` is then false for an exactly-full first page, so the one
+    // shape that certainly has more to read is the one that reports the end.
+    const checkRuns = Array.from({ length: 30 }, (_, index) => ({ id: index + 1, name: "build", status: "completed" }));
+    const adapter = githubAdapter(async () => jsonResponse({ check_runs: checkRuns }));
+    const listed = await adapter.executeTool("checks.list_for_ref", { owner: "acme", repo: "widget", ref: "main" }, {
+      connection: personalConnection([GitHubCapabilities.checksRead]),
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    });
+
+    expect(listed.output).toMatchObject({ count: 30, hasMore: true });
+    // Omitted rather than invented: a caller cannot tell a stand-in from a real
+    // total, and this one would be wrong.
+    expect(listed.output).not.toHaveProperty("totalCount");
+
+    const counted = githubAdapter(async () => jsonResponse({ total_count: 30, check_runs: checkRuns }));
+    const exact = await counted.executeTool("checks.list_for_ref", { owner: "acme", repo: "widget", ref: "main" }, {
+      connection: personalConnection([GitHubCapabilities.checksRead]),
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    });
+
+    // With a real total the answer is exact, and thirty of thirty is the end.
+    expect(exact.output).toMatchObject({ count: 30, totalCount: 30, hasMore: false });
+  });
+
   it("describes every pull-request parameter and asks for none it would have defaulted", () => {
     // The wire schema is the whole of what a model has to go on, so it is
     // asserted as a contract rather than left to a reviewer to notice. `head`

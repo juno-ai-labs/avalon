@@ -425,9 +425,9 @@ export const githubTools: ToolDefinition[] = [
   tool("pull_requests.list_reviews", "List reviews for a GitHub pull request. Returns reviews, count, page, perPage, and hasMore. An empty page 1 means nobody has reviewed it yet; an empty later page only means the earlier pages held every review.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
   tool("pull_requests.create", "Create a pull request from an existing branch.", GitHubCapabilities.pullRequestsWrite, "write", pullRequestCreateSchema),
   tool("pull_requests.create_review", "Submit an overall review on a GitHub pull request.", GitHubCapabilities.pullRequestsWrite, "write", pullRequestReviewCreateSchema),
-  tool("actions.list_workflow_runs", "List GitHub Actions workflow runs in an accessible repository. Returns workflowRuns, count, totalCount, page, perPage, hasMore, and appliedFilters. On page 1, an empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no runs; on a later page it only means the earlier pages held everything.", GitHubCapabilities.actionsRead, "read", workflowRunsListSchema),
+  tool("actions.list_workflow_runs", "List GitHub Actions workflow runs in an accessible repository. Returns workflowRuns, count, page, perPage, hasMore, appliedFilters, and totalCount when GitHub reports one. On page 1, an empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no runs; on a later page it only means the earlier pages held everything.", GitHubCapabilities.actionsRead, "read", workflowRunsListSchema),
   tool("actions.get_workflow_run", "Read one GitHub Actions workflow run.", GitHubCapabilities.actionsRead, "read", workflowRunGetSchema),
-  tool("checks.list_for_ref", "List check runs for a Git ref. Returns checkRuns, count, totalCount, page, perPage, hasMore, and appliedFilters. A finished check reports its verdict in conclusion, not in status. An empty page 1 means no check has reported on that ref, which is not the same as a passing one; an empty later page only means the earlier pages held every check.", GitHubCapabilities.checksRead, "read", checksListSchema),
+  tool("checks.list_for_ref", "List check runs for a Git ref. Returns checkRuns, count, page, perPage, hasMore, appliedFilters, and totalCount when GitHub reports one. A finished check reports its verdict in conclusion, not in status. An empty page 1 means no check has reported on that ref, which is not the same as a passing one; an empty later page only means the earlier pages held every check.", GitHubCapabilities.checksRead, "read", checksListSchema),
 ];
 
 export const GitHubAgentPluginDescriptor = defineConnectorAgentPlugin({
@@ -2054,6 +2054,14 @@ function githubListPage(
  * The same page shape for the two endpoints that answer with an object holding
  * a named array and GitHub's own `total_count`, which makes `hasMore` exact
  * rather than conservative.
+ *
+ * When `total_count` is missing, it falls back to the conservative reading
+ * rather than to the page's own length. Standing in the page length for a total
+ * looks harmless and is the worst of the three options: `page * perPage <
+ * totalCount` is then false for an exactly-full first page, so the one case
+ * where there is certainly more to read is the one case that reports
+ * `hasMore: false`. `totalCount` is omitted entirely rather than invented,
+ * because a caller cannot tell a real total from a stand-in.
  */
 function githubCountedListPage(
   key: string,
@@ -2064,14 +2072,14 @@ function githubCountedListPage(
 ): GitHubListPage {
   const all = recordArray(value, providerKey);
   const items = all.slice(0, args.perPage);
-  const totalCount = numberValue(value, "total_count") ?? all.length;
+  const totalCount = numberValue(value, "total_count");
   return {
     [key]: items.map((item) => boundGitHubValue(item)),
     count: items.length,
-    totalCount,
+    ...(totalCount != null ? { totalCount } : {}),
     page: args.page,
     perPage: args.perPage,
-    hasMore: args.page * args.perPage < totalCount,
+    hasMore: totalCount != null ? args.page * args.perPage < totalCount : items.length >= args.perPage,
     appliedFilters: definedValues(appliedFilters),
   };
 }
