@@ -308,4 +308,81 @@ describe('SessionGate identity-first ordering', () => {
     act(() => rejectActivation!(new Error('Sign in could not be completed: access denied')));
     expect(await screen.findByText('Sign in could not be completed: access denied')).toBeVisible();
   });
+
+  describe('Escape before a secondary window has a screen', () => {
+    const workspaceSession: DesktopSession = {
+      ...identitySession,
+      workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
+    };
+
+    it.each(['sidekicks', 'settings'] as const)(
+      'closes the %s window while the workspace profile is still in flight',
+      async (surface) => {
+        const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
+        window.history.replaceState({}, '', `/?surface=${surface}`);
+        sessionState.session = workspaceSession;
+        sessionState.api.getWorkspace.mockImplementationOnce(() => new Promise(() => {}));
+        renderGate();
+        expect(screen.getByText('Opening workspace…')).toBeVisible();
+
+        fireEvent.keyDown(document.body, { key: 'Escape' });
+
+        expect(close).toHaveBeenCalledOnce();
+      },
+    );
+
+    it('closes the window from the service-setup error, which is the same dead end', async () => {
+      const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
+      window.history.replaceState({}, '', '/?surface=sidekicks');
+      sessionState.session = workspaceSession;
+      sessionState.api.getWorkspace.mockRejectedValueOnce(new Error('Regional service unavailable.'));
+      renderGate();
+      expect(await screen.findByText('Regional service unavailable.')).toBeVisible();
+
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+
+      expect(close).toHaveBeenCalledOnce();
+    });
+
+    it('hands the keystroke to the screen once the profile lands, rather than answering it twice', async () => {
+      const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
+      window.history.replaceState({}, '', '/?surface=settings');
+      sessionState.session = workspaceSession;
+      renderGate();
+      // `WorkspaceSettingsScreen` is mocked here, so it installs nothing. What is
+      // being pinned is that this listener stands down: left armed, it would
+      // answer a keystroke the real screen refuses over unsaved text in its pane,
+      // and no test of the screen could see it because the listener is not there.
+      expect(await screen.findByText('settings')).toBeVisible();
+
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+
+      expect(close).not.toHaveBeenCalled();
+    });
+
+    it('leaves the main window alone, where the keystroke would shut the workspace', async () => {
+      const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
+      sessionState.session = workspaceSession;
+      sessionState.api.getWorkspace.mockImplementationOnce(() => new Promise(() => {}));
+      renderGate();
+      expect(screen.getByText('Opening workspace…')).toBeVisible();
+
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+
+      expect(close).not.toHaveBeenCalled();
+    });
+
+    it('leaves a meeting window alone: a recording in progress is not a dead end', async () => {
+      const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
+      window.history.replaceState({}, '', '/?surface=meeting');
+      sessionState.session = workspaceSession;
+      sessionState.api.getWorkspace.mockImplementationOnce(() => new Promise(() => {}));
+      renderGate();
+      expect(screen.getByText('Opening workspace…')).toBeVisible();
+
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+
+      expect(close).not.toHaveBeenCalled();
+    });
+  });
 });
