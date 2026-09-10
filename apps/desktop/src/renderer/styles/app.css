@@ -6989,40 +6989,23 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .sidebar-row.automation-tile.is-active:hover { background: var(--av-cmp-row-background-selected); }
 .sidebar-row.automation-tile:focus-visible { outline-offset: -2px; }
 .sidebar-automation-strip > .sidebar-context-target:only-child { flex-basis: auto; min-width: 80px; max-width: 100px; }
-.automation-tile-glyph { display: block; height: 60px; position: relative; transition: height var(--sidebar-layout-motion), width var(--sidebar-layout-motion); width: 60px; }
+.automation-tile-glyph { display: block; height: 60px; transition: height var(--sidebar-layout-motion), width var(--sidebar-layout-motion); width: 60px; }
 .automation-glyph { color: var(--glyph-ink, var(--av-sys-color-text-on-inverse)); display: block; height: 100%; width: 100%; }
 .automation-tile-name { font-size: 11px; font-weight: 400; height: 16px; letter-spacing: .005em; line-height: 16px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; transition: height var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); white-space: nowrap; }
-.automation-tile-state {
-  background: var(--av-sys-color-surface-default);
-  border-radius: var(--av-sys-size-radius-pill);
-  bottom: 0;
-  height: 14px;
-  position: absolute;
-  right: 0;
-  width: 14px;
-}
-.automation-tile-state .status-dot {
-  box-shadow: none;
-  height: 8px;
-  inset: auto;
-  left: 50%;
-  position: absolute;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 8px;
-}
-.automation-tile-state.active .status-dot { background: var(--av-sys-color-success-base); }
-.automation-tile-state.paused .status-dot { background: var(--av-sys-color-workstream-stopped); }
-.automation-tile-state.draft .status-dot { background: transparent; border: 1px dashed var(--av-sys-color-text-muted); }
+/* A running Sidekick's marker is a play cut out of its own hexagon, drawn in
+   `HexagonGlyph` — geometry, colour and knockout together, in the viewBox units
+   that scale it with the tile. Nothing here positions it: the box no longer
+   needs to be a containing block, because the marker is part of the artwork
+   rather than a badge laid over it. */
 /* The new-Sidekick tile's hexagon: the same silhouette as a Sidekick's, drawn
    as an empty slot rather than an identity, because there is no Sidekick yet to
-   take a fill or a symbol from. Dashed for the reason the draft lifecycle dot
-   above is — the outline is what says "not a Sidekick yet" at 36px, where a
-   solid fill in any colour would read as one. The stroke is in the viewBox's
-   own units, so it scales with the tile like the shape it traces.
+   take a fill or a symbol from. Dashed because the outline is what says "not a
+   Sidekick yet" at 36px, where a solid fill in any colour would read as one.
+   The stroke is in the viewBox's own units, so it scales with the tile like the
+   shape it traces.
 
-   `text-muted`, the same token the dot above uses and the same ink the plus
-   inside is drawn in — not a `border-*` token. This outline is the whole mark
+   `text-muted`, the same ink the plus inside is drawn in — not a `border-*`
+   token. This outline is the whole mark
    rather than a divider beside content, so it answers to the 3:1 floor for
    graphical objects, and the border ramp has no headroom for that: against
    `surface-default`, `border-strong` is 1.38:1 in the light theme and 1.44:1 in
