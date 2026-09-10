@@ -165,6 +165,20 @@ would have let the two drift with nothing tying them together. Darkening
 for a separate change, because it moves the palette itself rather than the ink
 over it.
 
+**The glyph lost its gradient in the same change.** `WorkstreamGlyph` painted
+its symbol over `linear-gradient(145deg, color-mix(in srgb, <fill> 78%,
+surface-default), <fill>)`, so the colour behind the symbol was never the one the
+ink table had been computed from. Review caught it. Because the mix target
+follows the appearance while a fill and its ink deliberately do not, the sheen
+always moved contrast the *losing* way for whichever ink that fill carried —
+lightening under white ink in light, darkening under black ink in dark — costing
+up to 19 Lc and dropping `cyan` and `emerald` (light) and `amber`, `lime` and
+`green` (dark) under the floor at that stop. The shape now paints the raw token,
+as `AutomationGlyph` always did. Shading away from each fill's own ink instead
+was measured and also cleared the floor at Lc 50.1, but the flat fill won: a
+contrast guarantee that needs no second surface to reason about is worth more
+than the depth, and it is what makes the floor provable rather than approximate.
+
 **Consequences:** This is accepted WCAG 2 debt, and it is written down rather
 than discovered. On the fills from `cyan` to `indigo` the white ink does not meet
 that standard's ratios — white on `cyan` is 2.43:1, under both its 3:1 for a
