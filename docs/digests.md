@@ -21,7 +21,7 @@ mention, or changing what a connector can deliver to a person.
 | Recording and sending what a run wrote | `apps/api/src/services/digest-run-settlement.ts` |
 | Destination dispatch | `apps/api/src/services/digest-delivery-service.ts` |
 | Email HTML | `apps/api/src/services/digest-email-content.ts` |
-| Access-request acknowledgements using the shared renderer | `apps/api/src/services/access-request-service.ts`; lifecycle in [private access](private-access.md). |
+| Access-request acknowledgements, plain text only through the shared reducer | `apps/api/src/services/access-request-service.ts`; lifecycle in [private access](private-access.md). |
 | Markdown → email HTML | `apps/api/src/services/email-markdown.ts` |
 | Which lines are code, for both of the above | `packages/contracts/src/markdown-code.ts` — see [`markdown-code.md`](markdown-code.md) |
 | Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |
