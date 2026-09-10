@@ -289,13 +289,16 @@ describe("index-served display", () => {
     await index.queryPage([{ source: "messages", scopeIds: null, load: async () => new Map() }], { query: "needle", mode: "substring", limit: 7 });
     expect(provider.query.mock.calls[0]![0].include_attributes).toEqual(expect.arrayContaining([
       "text", "title", "source_label", "archived", "occurred_at", "transcript_sequence", "url", "mime_type", "substream_id"]));
+    // Chunks carry no display, and a semantic namespace's schema never gains one.
+    await index.query([{ source: "note", scopeIds: ["private"], load: async () => new Map() }], { query: "needle", mode: "semantic", limit: 7, vector: [1, 0] });
+    expect(provider.query.mock.calls[1]![0].include_attributes).toEqual(["source", "source_id", "scope_id", "revision", "chunk_start", "chunk_end", "generation"]);
   });
 
-  it("patches a renamed conversation until no row still shows the old display", async () => {
-    provider.write.mockResolvedValueOnce({ rows_patched: 2 }).mockResolvedValueOnce({ rows_affected: 0 })
-      .mockResolvedValueOnce({ rows_patched: 1 }).mockResolvedValueOnce({});
+  it("patches a renamed conversation for as long as the provider says rows remain", async () => {
+    provider.write.mockResolvedValueOnce({ rows_patched: 2, rows_remaining: true }).mockResolvedValueOnce({ rows_patched: 1 })
+      .mockResolvedValueOnce({ rows_affected: 0 });
     expect(await index.patchConversationDisplay({ scopeId: "room", substreamId: "0" }, { title: "New", archived: false })).toBe(3);
-    expect(provider.write).toHaveBeenCalledTimes(4);
+    expect(provider.write).toHaveBeenCalledTimes(3);
     const first = provider.write.mock.calls[0]![0];
     expect(first.patch_by_filter.patch).toEqual({ title: "New", source_label: "New", archived: false });
     expect(first.patch_by_filter_allow_partial).toBe(true);
@@ -307,5 +310,10 @@ describe("index-served display", () => {
     // A namespace that was never written has nothing to patch.
     provider.write.mockRejectedValueOnce(Object.assign(new Error("missing"), { status: 404 }));
     expect(await index.patchConversationDisplay({ scopeId: "room", substreamId: "0" }, { title: "New", archived: true })).toBe(0);
+    // Neither has one written only before the display attributes shipped (message observed live).
+    provider.write.mockRejectedValueOnce(Object.assign(new Error('400 {"error":"filter error in key `substream_id`: attribute not found"}'), { status: 400 }));
+    expect(await index.patchConversationDisplay({ scopeId: "room", substreamId: "0" }, { title: "New", archived: true })).toBe(0);
+    provider.write.mockRejectedValueOnce(Object.assign(new Error("unrelated bad request"), { status: 400 }));
+    await expect(index.patchConversationDisplay({ scopeId: "room", substreamId: "0" }, { title: "New", archived: true })).rejects.toThrow("search_index_write_failed");
   });
 });

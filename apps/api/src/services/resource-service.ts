@@ -287,7 +287,6 @@ export class ResourceService {
     return this.toResource(row);
   }
 
-  /** Admit a page once, then load canonical snapshots through the owning store. */
   /** Opening a search result repeats the same attachment authority checks. */
   async searchPreview(id: string, signal: AbortSignal): Promise<Response> {
     const before = await this.loadSearchResource(id);

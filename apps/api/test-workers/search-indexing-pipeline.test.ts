@@ -101,7 +101,8 @@ beforeEach(() => {
         for (const [key, row] of indexed) {
           if (key.startsWith(`${namespace}\0`) && matchesFilter(row, patch.filters)) { indexed.set(key, { ...row, ...patch.patch }); patched += 1; }
         }
-        // The live API omits `rows_patched` when the filter matched nothing (probe, 2026-09-10).
+        // The live API omits `rows_patched` when the filter matched nothing and
+        // `rows_remaining` unless a partial pass left matches behind (probe, 2026-09-10).
         return Response.json(patched ? { rows_affected: patched, rows_patched: patched } : { rows_affected: 0 });
       }
       for (const row of z.array(z.record(z.string(), z.unknown())).parse(body.upsert_rows ?? [])) {
