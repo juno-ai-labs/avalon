@@ -563,7 +563,7 @@ export const googleTools: ToolDefinition[] = [
           description:
             "Gmail search query. Supports Gmail's operators, for example from:dana@example.com, to:, cc:, subject:, newer_than:30d, older_than:1y, has:attachment, in:anywhere, is:unread, and OR / parentheses / \"quoted phrases\". Prefer an operator query over bare keywords, which match message bodies and return far too much.",
         },
-        maxResults: { type: "integer", minimum: 1, maximum: 25 },
+        maxResults: { type: "integer", minimum: 1, maximum: 25, description: "Maximum messages to return in one page. Defaults to 10; follow the returned page token for more." },
         pageToken: GOOGLE_PAGE_TOKEN_SCHEMA
       },
       required: ["query"]
@@ -605,7 +605,13 @@ export const googleTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { threadId: { type: "string", minLength: 1 } },
+      properties: {
+        threadId: {
+          type: "string",
+          minLength: 1,
+          description: "The thread's id, copied from a search hit's `threadId` field, for example `18f0a2c4d5e6f701`. A search hit's `id` is the message's own id and names a different thread or none at all.",
+        }
+      },
       required: ["threadId"]
     }
   },
@@ -618,7 +624,13 @@ export const googleTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { messageId: { type: "string", minLength: 1 } },
+      properties: {
+        messageId: {
+          type: "string",
+          minLength: 1,
+          description: "The message's id, copied from a search hit's `id` field, for example `18f0a2c4d5e6f702`. A search hit's `threadId` is the thread's id, not this.",
+        }
+      },
       required: ["messageId"]
     }
   },
@@ -648,7 +660,7 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        maxResults: { type: "integer", minimum: 1, maximum: 250 },
+        maxResults: { type: "integer", minimum: 1, maximum: 250, description: "Maximum calendars to return in one page. Defaults to 100." },
         pageToken: GOOGLE_PAGE_TOKEN_SCHEMA
       }
     }
@@ -664,10 +676,24 @@ export const googleTools: ToolDefinition[] = [
       additionalProperties: false,
       properties: {
         calendarId: { type: "string", minLength: 1, description: "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar." },
-        timeMin: { type: "string", minLength: 1, format: "date-time" },
-        timeMax: { type: "string", minLength: 1, format: "date-time" },
-        query: { type: "string", minLength: 1 },
-        maxResults: { type: "integer", minimum: 1, maximum: 100 },
+        timeMin: {
+          type: "string",
+          minLength: 1,
+          format: "date-time",
+          description: "Start of the window, as an RFC 3339 timestamp that includes an offset, for example 2026-08-11T00:00:00-07:00. An event overlapping the window is included. A bare date such as 2026-08-11, or a timestamp with no offset, is refused; call the current-time tool rather than guessing the offset.",
+        },
+        timeMax: {
+          type: "string",
+          minLength: 1,
+          format: "date-time",
+          description: "End of the window, as an RFC 3339 timestamp that includes an offset, for example 2026-08-12T00:00:00-07:00. It is exclusive, so a whole day is that day's midnight through the next day's midnight.",
+        },
+        query: {
+          type: "string",
+          minLength: 1,
+          description: "Plain text matched against an event's title, description, location, and attendees. Omit it to get every event in the window. It is not a query language, so operators written into it are matched literally and return nothing rather than filtering.",
+        },
+        maxResults: { type: "integer", minimum: 1, maximum: 100, description: "Maximum occurrences to return in one page. Defaults to 25; follow the returned page token for the rest of the window." },
         pageToken: GOOGLE_PAGE_TOKEN_SCHEMA
       },
       required: ["timeMin", "timeMax"]
@@ -684,7 +710,11 @@ export const googleTools: ToolDefinition[] = [
       additionalProperties: false,
       properties: {
         calendarId: { type: "string", minLength: 1, description: "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar." },
-        eventId: { type: "string", minLength: 1 }
+        eventId: {
+          type: "string",
+          minLength: 1,
+          description: "The event's own id, as calendar.list_events returns it in each occurrence's `id`. It is not the calendar's id and not the title.",
+        }
       },
       required: ["eventId"]
     }
@@ -737,7 +767,7 @@ export const googleTools: ToolDefinition[] = [
           enum: ["relevance", "modified"],
           description: "Result order. Defaults to relevance.",
         },
-        maxResults: { type: "integer", minimum: 1, maximum: 100 },
+        maxResults: { type: "integer", minimum: 1, maximum: 100, description: "Maximum files to return in one page. Defaults to 25." },
         pageToken: GOOGLE_PAGE_TOKEN_SCHEMA
       }
     }
@@ -751,7 +781,13 @@ export const googleTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { fileId: { type: "string", minLength: 1 } },
+      properties: {
+        fileId: {
+          type: "string",
+          minLength: 1,
+          description: "The Drive file id, as drive.search returns it, for example `1A2b3C4d5E6f7G8h9I0j`. It is the long segment in a Drive URL after /d/, not the file's name and not the whole URL.",
+        }
+      },
       required: ["fileId"]
     }
   },
@@ -764,7 +800,13 @@ export const googleTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { fileId: { type: "string", minLength: 1 } },
+      properties: {
+        fileId: {
+          type: "string",
+          minLength: 1,
+          description: "The Drive file id, as drive.search returns it, for example `1A2b3C4d5E6f7G8h9I0j`. Use drive.export instead for a Google Doc, Sheet, or Slides file, which has no downloadable body of its own.",
+        }
+      },
       required: ["fileId"]
     }
   },
@@ -778,8 +820,12 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        fileId: { type: "string", minLength: 1 },
-        mimeType: { type: "string", enum: ["text/plain", "application/pdf"] }
+        fileId: {
+          type: "string",
+          minLength: 1,
+          description: "The Drive file id of a Google Doc, Sheet, or Slides file, as drive.search returns it, for example `1A2b3C4d5E6f7G8h9I0j`. An uploaded PDF or image is not a Workspace document; read one with drive.download.",
+        },
+        mimeType: { type: "string", enum: ["text/plain", "application/pdf"], description: "What to convert the document to: `text/plain` for text the model can read, `application/pdf` for a rendered copy that keeps the layout." }
       },
       required: ["fileId", "mimeType"]
     }
@@ -793,7 +839,13 @@ export const googleTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { documentId: { type: "string", minLength: 1 } },
+      properties: {
+        documentId: {
+          type: "string",
+          minLength: 1,
+          description: "The Google Doc's id, as drive.search or docs.create_document returns it, for example `1A2b3C4d5E6f7G8h9I0j`. It is the segment in the document URL between /d/ and /edit, not the title and not the whole URL.",
+        }
+      },
       required: ["documentId"]
     }
   },
@@ -807,8 +859,8 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        title: { type: "string", minLength: 1, maxLength: 500 },
-        text: { type: "string", maxLength: 100000 }
+        title: { type: "string", minLength: 1, maxLength: 500, description: "The document's name in Drive, for example \"Q3 launch plan\". Drive allows duplicate names, so a title already in use creates a second document rather than opening the first." },
+        text: { type: "string", maxLength: 100000, description: "Initial body content, inserted as plain text. Defaults to an empty document. Markdown is stored as its literal characters, so `# Heading` appears as those characters rather than as a heading." }
       },
       required: ["title"]
     }
@@ -823,9 +875,18 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        documentId: { type: "string", minLength: 1 },
-        tabId: { type: "string", minLength: 1, maxLength: 500 },
-        text: { type: "string", minLength: 1, maxLength: 100000 }
+        documentId: {
+          type: "string",
+          minLength: 1,
+          description: "The Google Doc's id, for example `1A2b3C4d5E6f7G8h9I0j`. Rally can only write to a document it created or that was shared with it individually.",
+        },
+        tabId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 500,
+          description: "Append into one named tab of a multi-tab document, as the `tabId` docs.read_document reports for that tab. Omit it for a document with a single tab, which is the usual case.",
+        },
+        text: { type: "string", minLength: 1, maxLength: 100000, description: "Plain text added at the end of the document, exactly as written. Start it with a newline to begin a new paragraph rather than continuing the last one." }
       },
       required: ["documentId", "text"]
     }
@@ -840,10 +901,19 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        documentId: { type: "string", minLength: 1 },
-        find: { type: "string", minLength: 1, maxLength: 10000 },
-        replace: { type: "string", maxLength: 100000 },
-        matchCase: { type: "boolean", default: true }
+        documentId: {
+          type: "string",
+          minLength: 1,
+          description: "The Google Doc's id, for example `1A2b3C4d5E6f7G8h9I0j`. Rally can only write to a document it created or that was shared with it individually.",
+        },
+        find: {
+          type: "string",
+          minLength: 1,
+          maxLength: 10000,
+          description: "The exact literal text to look for, for example \"Q2 launch\". It is not a pattern: wildcards and regular-expression syntax are matched as those characters. Text nothing matches changes nothing and is reported as zero replacements rather than as an error, so read the document first.",
+        },
+        replace: { type: "string", maxLength: 100000, description: "What every occurrence becomes. An empty string deletes the matched text." },
+        matchCase: { type: "boolean", default: true, description: "Require the same capitalization as `find`. Defaults to true; set it false to match \"launch\" and \"Launch\" alike." }
       },
       required: ["documentId", "find", "replace"]
     }
@@ -857,7 +927,13 @@ export const googleTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { spreadsheetId: { type: "string", minLength: 1 } },
+      properties: {
+        spreadsheetId: {
+          type: "string",
+          minLength: 1,
+          description: "The spreadsheet's id, as drive.search or sheets.create_spreadsheet returns it, for example `1A2b3C4d5E6f7G8h9I0j`. Call this first to learn the exact sheet names the other Sheets tools need in a range.",
+        }
+      },
       required: ["spreadsheetId"]
     }
   },
@@ -872,9 +948,14 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        spreadsheetId: { type: "string", minLength: 1 },
-        range: { type: "string", minLength: 1, maxLength: 1000 },
-        majorDimension: { type: "string", enum: ["ROWS", "COLUMNS"] },
+        spreadsheetId: { type: "string", minLength: 1, description: "The spreadsheet's id, for example `1A2b3C4d5E6f7G8h9I0j`." },
+        range: {
+          type: "string",
+          minLength: 1,
+          maxLength: 1000,
+          description: "An A1 range, for example `Sheet1!A1:D50`, or a whole sheet by name, for example `Sheet1`. Take the sheet name from sheets.read_spreadsheet and match it exactly; a range naming a sheet that does not exist is refused, while a correctly named range covering empty cells returns no values, which is a real answer rather than a failure.",
+        },
+        majorDimension: { type: "string", enum: ["ROWS", "COLUMNS"], description: "Whether the returned array holds one entry per row or one per column. Defaults to ROWS." },
         valueRenderOption: {
           type: "string",
           enum: ["FORMATTED_VALUE", "UNFORMATTED_VALUE"],
@@ -894,11 +975,12 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        title: { type: "string", minLength: 1, maxLength: 500 },
+        title: { type: "string", minLength: 1, maxLength: 500, description: "The spreadsheet's name in Drive, for example \"Q3 pipeline\". Drive allows duplicate names, so a title already in use creates a second spreadsheet rather than opening the first." },
         sheetTitles: {
           type: "array",
           items: { type: "string", minLength: 1, maxLength: 100 },
-          maxItems: 25
+          maxItems: 25,
+          description: "Names for the tabs to create, in order, for example [\"Summary\", \"Raw data\"]. Defaults to one tab named Sheet1. These are the names every later range has to use."
         }
       },
       required: ["title"]
@@ -950,16 +1032,17 @@ export const GoogleAgentPluginDescriptor = defineConnectorAgentPlugin({
 function calendarEventWriteInputSchema(includeEventId: boolean): Record<string, unknown> {
   const properties: Record<string, unknown> = {
     calendarId: { type: "string", minLength: 1, description: "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar." },
-    summary: { type: "string", minLength: 1, maxLength: 1000 },
-    description: { type: "string", maxLength: 20000 },
-    location: { type: "string", maxLength: 2000 },
-    start: { type: "string", minLength: 1, format: "date-time" },
-    end: { type: "string", minLength: 1, format: "date-time" },
-    timeZone: { type: "string", minLength: 1, maxLength: 100 },
+    summary: { type: "string", minLength: 1, maxLength: 1000, description: "The event's title, as it appears in the calendar grid, for example \"Design review\"." },
+    description: { type: "string", maxLength: 20000, description: "The event's notes body, as plain text. Agendas, links, and context belong here rather than in the title." },
+    location: { type: "string", maxLength: 2000, description: "Where it happens, as free text: a room name, a street address, or a meeting URL. It is a label, so this does not book a room or create a video call." },
+    start: { type: "string", minLength: 1, format: "date-time", description: "When it starts, as an RFC 3339 timestamp that includes an offset, for example 2026-08-11T09:00:00-07:00. Call the current-time tool rather than guessing the offset." },
+    end: { type: "string", minLength: 1, format: "date-time", description: "When it ends, as an RFC 3339 timestamp that includes an offset, for example 2026-08-11T10:00:00-07:00. It must be after the start." },
+    timeZone: { type: "string", minLength: 1, maxLength: 100, description: "The IANA zone the event is anchored in, for example America/Los_Angeles. Defaults to the calendar's own zone. It decides what the event reads as after a daylight-saving change; it does not shift the offsets already written into start and end." },
     attendeeEmails: {
       type: "array",
       items: { type: "string", format: "email" },
-      maxItems: 50
+      maxItems: 50,
+      description: "Guests to invite, as full email addresses, for example [\"dana@example.com\"]. Each one is emailed a real invitation, so take every address from a tool result rather than composing it. Defaults to none, which creates the event with no guests."
     }
   };
   if (includeEventId) {
@@ -997,15 +1080,23 @@ function sheetValuesWriteInputSchema(append: boolean): Record<string, unknown> {
     type: "object",
     additionalProperties: false,
     properties: {
-      spreadsheetId: { type: "string", minLength: 1 },
-      range: { type: "string", minLength: 1, maxLength: 1000 },
+      spreadsheetId: { type: "string", minLength: 1, description: "The spreadsheet's id, for example `1A2b3C4d5E6f7G8h9I0j`. Rally can only write to a spreadsheet it created or that was shared with it individually." },
+      range: {
+        type: "string",
+        minLength: 1,
+        maxLength: 1000,
+        description: append
+          ? "An A1 range naming the existing table to add rows beneath, for example `Sheet1!A1:D1` or a whole sheet by name, for example `Sheet1`. Sheets finds the last populated row in that block and writes below it, so the range is a pointer at the table rather than the cells that change."
+          : "The A1 range to overwrite, for example `Sheet1!A1:D50`. Writing starts at its top-left cell and covers as many cells as `values` supplies; a range larger than the data leaves the surplus cells untouched rather than clearing them.",
+      },
       values: {
         type: "array",
         items: { type: "array", items: { type: ["string", "number", "boolean", "null"] }, maxItems: 1000 },
-        maxItems: 1000
+        maxItems: 1000,
+        description: "The cells, as an array of rows in reading order, for example [[\"Name\", \"Owner\"], [\"Launch\", \"Dana\"]]. Every row is one inner array even when there is a single column. `null` leaves that cell as it is; an empty string clears it. At most 10,000 cells in one call."
       },
-      valueInputOption: { type: "string", enum: ["RAW", "USER_ENTERED"] },
-      ...(append ? { insertDataOption: { type: "string", enum: ["INSERT_ROWS", "OVERWRITE"] } } : {})
+      valueInputOption: { type: "string", enum: ["RAW", "USER_ENTERED"], description: "How Sheets reads the strings you send. USER_ENTERED, the default, parses them the way typing would, so `=SUM(A1:A9)` becomes a formula and `10/6` becomes a date. RAW stores every string as literal text." },
+      ...(append ? { insertDataOption: { type: "string", enum: ["INSERT_ROWS", "OVERWRITE"], description: "INSERT_ROWS, the default, inserts new rows and pushes existing content down. OVERWRITE writes into the rows already below the table, replacing anything there." } } : {})
     },
     required: ["spreadsheetId", "range", "values"]
   };
@@ -1016,11 +1107,24 @@ function emailInputSchema(): Record<string, unknown> {
     type: "object",
     additionalProperties: false,
     properties: {
-      to: { type: "array", items: { type: "string", format: "email" }, minItems: 1 },
-      cc: { type: "array", items: { type: "string", format: "email" } },
-      subject: { type: "string" },
+      to: {
+        type: "array",
+        items: { type: "string", format: "email" },
+        minItems: 1,
+        description: "Primary recipients, as full email addresses, for example [\"dana@example.com\"]. Take each one from a tool result — gmail.find_contacts, a search hit's headers, or a contact the person gave you — rather than composing it from a name and a company domain.",
+      },
+      cc: {
+        type: "array",
+        items: { type: "string", format: "email" },
+        description: "Copied recipients, as full email addresses. They see each other and the primary recipients. Defaults to none.",
+      },
+      subject: { type: "string", description: "The subject line, as plain text on one line. When replying inside a thread, reuse the original subject so mail clients keep the conversation together." },
       body: { type: "string", description: "The message body, delivered as plain text exactly as written. Write plain text, not Markdown." },
-      threadId: { type: "string", minLength: 1 },
+      threadId: {
+        type: "string",
+        minLength: 1,
+        description: "Place this message inside an existing Gmail thread, as that thread's `threadId` copied from a search hit. Omit it to start a new conversation. It is refused without `inReplyTo`, and the two must come from the same thread: a `threadId` from one conversation with an `inReplyTo` from another is accepted by Gmail and files the message where nobody is reading it.",
+      },
       inReplyTo: { type: "string", minLength: 1, description: "RFC Message-ID header of the message being replied to" },
       references: {
         type: "array",

@@ -104,8 +104,13 @@ const linearTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        query: { type: "string", minLength: 1, maxLength: 500 },
-        first: { type: "integer", minimum: 1, maximum: 25 },
+        query: {
+          type: "string",
+          minLength: 1,
+          maxLength: 500,
+          description: "Words to look for in issue titles and descriptions, for example `login timeout`. It is not a query language, so `assignee:dana` or `state:done` is matched as those literal characters and finds nothing; filter by reading the issues the words return instead.",
+        },
+        first: { type: "integer", minimum: 1, maximum: 25, description: "Maximum issues to return in one page. Defaults to 20." },
         after: LINEAR_CURSOR_SCHEMA,
       },
       required: ["query"],
@@ -117,7 +122,10 @@ const linearTools: ToolDefinition[] = [
     capability: LinearCapabilities.read,
     mode: "read",
     idempotency: "safe",
-    inputSchema: idInputSchema("issueId"),
+    inputSchema: idInputSchema(
+      "issueId",
+      "The issue's Linear id, which is the UUID search_issues returns as `id`, for example `a1b2c3d4-e5f6-4789-a012-3456789abcde`. The human-readable key such as `ENG-142` is the `identifier` field and is not accepted here.",
+    ),
   },
   {
     name: "list_teams",
@@ -125,7 +133,7 @@ const linearTools: ToolDefinition[] = [
     capability: LinearCapabilities.read,
     mode: "read",
     idempotency: "safe",
-    inputSchema: pageInputSchema(50),
+    inputSchema: pageInputSchema(50, "Maximum teams to return in one page."),
   },
   {
     name: "list_projects",
@@ -133,7 +141,7 @@ const linearTools: ToolDefinition[] = [
     capability: LinearCapabilities.read,
     mode: "read",
     idempotency: "safe",
-    inputSchema: pageInputSchema(25),
+    inputSchema: pageInputSchema(25, "Maximum projects to return in one page, most recently updated first."),
   },
   {
     name: "read_project",
@@ -141,7 +149,10 @@ const linearTools: ToolDefinition[] = [
     capability: LinearCapabilities.read,
     mode: "read",
     idempotency: "safe",
-    inputSchema: idInputSchema("projectId"),
+    inputSchema: idInputSchema(
+      "projectId",
+      "The project's Linear id, which is the UUID list_projects returns as `id`, for example `a1b2c3d4-e5f6-4789-a012-3456789abcde`. The project's name is not accepted here.",
+    ),
   },
   {
     // The discovery path for `stateId`. Without it the only way to learn a
@@ -173,14 +184,34 @@ const linearTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        teamId: { type: "string", minLength: 1, maxLength: 200 },
-        title: { type: "string", minLength: 1, maxLength: 500 },
-        description: { type: ["string", "null"], maxLength: 40_000 },
-        priority: { type: ["integer", "null"], minimum: 0, maximum: 4 },
-        projectId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
-        assigneeId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
-        stateId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
-        dueDate: { type: ["string", "null"], minLength: 1, format: "date" },
+        teamId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "The team that will own the issue, as the UUID list_teams returns as `id`. The team key such as `ENG` is the `key` field and is not accepted here.",
+        },
+        title: { type: "string", minLength: 1, maxLength: 500, description: "The issue's one-line title, for example \"Login times out on slow networks\"." },
+        description: { type: ["string", "null"], maxLength: 40_000, description: "The issue body, in Markdown. Omit it, or send `null`, to create the issue with no description." },
+        priority: {
+          type: ["integer", "null"],
+          minimum: 0,
+          maximum: 4,
+          description: "Linear's priority, where the number falls as the urgency rises: 1 is Urgent, 2 is High, 3 is Medium, 4 is Low, and 0 is no priority at all. Omit it, or send `null`, to leave it unset.",
+        },
+        projectId: { type: ["string", "null"], minLength: 1, maxLength: 200, description: "Put the issue in this project, as the UUID list_projects returns as `id`. Omit it, or send `null`, to leave it out of every project." },
+        assigneeId: {
+          type: ["string", "null"],
+          minLength: 1,
+          maxLength: 200,
+          description: "Assign the issue to this person, as their Linear user UUID — read one from the `assignee` of an issue this person already owns. A name or email address is not a user id. Omit it, or send `null`, to leave the issue unassigned.",
+        },
+        stateId: {
+          type: ["string", "null"],
+          minLength: 1,
+          maxLength: 200,
+          description: "Open the issue in this workflow state, as the UUID list_workflow_states returns as `id` for this same team. A state belongs to one team, so a state id from another team is refused. Omit it, or send `null`, for the team's default starting state.",
+        },
+        dueDate: { type: ["string", "null"], minLength: 1, format: "date", description: "The due date as a plain calendar date, `YYYY-MM-DD`, for example 2026-09-30. Omit it, or send `null`, for no due date." },
       },
       required: ["teamId", "title"],
     },
@@ -195,14 +226,34 @@ const linearTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        issueId: { type: "string", minLength: 1, maxLength: 200 },
-        title: { type: "string", minLength: 1, maxLength: 500 },
-        description: { type: ["string", "null"], maxLength: 40_000 },
-        stateId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
-        assigneeId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
-        projectId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
-        priority: { type: ["integer", "null"], minimum: 0, maximum: 4 },
-        dueDate: { type: ["string", "null"], minLength: 1, format: "date" },
+        issueId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "The issue to change, as the UUID search_issues returns as `id`. The key such as `ENG-142` is not accepted here.",
+        },
+        title: { type: "string", minLength: 1, maxLength: 500, description: "Replace the title with this one line. Omit it to leave the title alone." },
+        description: { type: ["string", "null"], maxLength: 40_000, description: "Replace the whole issue body with this Markdown; it is not appended, so read the issue first and send the full new text. Send `null` to clear it, or omit it to leave it alone." },
+        stateId: {
+          type: ["string", "null"],
+          minLength: 1,
+          maxLength: 200,
+          description: "Move the issue to this workflow state, as the UUID list_workflow_states returns as `id` for the issue's own team. A state id from another team is refused. Omit it to leave the state alone.",
+        },
+        assigneeId: {
+          type: ["string", "null"],
+          minLength: 1,
+          maxLength: 200,
+          description: "Reassign the issue to this person, as their Linear user UUID — read one from the `assignee` of an issue they already own. Send `null` to unassign it, or omit it to leave the assignee alone.",
+        },
+        projectId: { type: ["string", "null"], minLength: 1, maxLength: 200, description: "Move the issue into this project, as the UUID list_projects returns as `id`. Send `null` to take it out of its project, or omit it to leave the project alone." },
+        priority: {
+          type: ["integer", "null"],
+          minimum: 0,
+          maximum: 4,
+          description: "Set Linear's priority, where the number falls as the urgency rises: 1 is Urgent, 2 is High, 3 is Medium, 4 is Low, and 0 is no priority at all. Send `null` to clear it, or omit it to leave it alone.",
+        },
+        dueDate: { type: ["string", "null"], minLength: 1, format: "date", description: "Set the due date as a plain calendar date, `YYYY-MM-DD`, for example 2026-09-30. Send `null` to clear it, or omit it to leave it alone." },
       },
       required: ["issueId"],
       minProperties: 2,
@@ -218,8 +269,13 @@ const linearTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        issueId: { type: "string", minLength: 1, maxLength: 200 },
-        body: { type: "string", minLength: 1, maxLength: 40_000 },
+        issueId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "The issue to comment on, as the UUID search_issues returns as `id`. The key such as `ENG-142` is not accepted here.",
+        },
+        body: { type: "string", minLength: 1, maxLength: 40_000, description: "The comment text, in Markdown. It is posted as the authorized Linear identity and notifies the issue's subscribers." },
       },
       required: ["issueId", "body"],
     },
@@ -1677,14 +1733,22 @@ function definedValues<T extends Record<string, unknown>>(record: T): Record<str
   return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined));
 }
 
-function idInputSchema(name: string): Record<string, unknown> {
-  return { type: "object", additionalProperties: false, properties: { [name]: { type: "string", minLength: 1, maxLength: 200 } }, required: [name] };
+function idInputSchema(name: string, description: string): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: { [name]: { type: "string", minLength: 1, maxLength: 200, description } },
+    required: [name],
+  };
 }
 
-function pageInputSchema(maximum: number): Record<string, unknown> {
+function pageInputSchema(maximum: number, description: string): Record<string, unknown> {
   return {
     type: "object", additionalProperties: false,
-    properties: { first: { type: "integer", minimum: 1, maximum }, after: LINEAR_CURSOR_SCHEMA },
+    properties: {
+      first: { type: "integer", minimum: 1, maximum, description: `${description} Defaults to ${Math.min(maximum, 25)}.` },
+      after: LINEAR_CURSOR_SCHEMA,
+    },
   };
 }
 
