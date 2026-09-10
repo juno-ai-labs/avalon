@@ -58,6 +58,15 @@ interface WorkstreamComposerProps {
   fileInputRef: RefObject<HTMLInputElement | null>;
   sending: boolean;
   uploading: boolean;
+  /**
+   * The conversation is painted from the local cache and its socket has not
+   * yet delivered the live transcript. Everything about the composer works —
+   * typing, mentions, attachments, the draft — except sending, which waits
+   * for the socket so a message is never queued against a transcript the
+   * room has not confirmed. Enter is swallowed the way it is for an empty
+   * draft, so the sentence stays where it was typed.
+   */
+  sendBlocked?: boolean;
   error?: string;
   attachments: PendingAttachment[];
   onSend: (
@@ -109,6 +118,7 @@ export function WorkstreamComposer({
   fileInputRef,
   sending,
   uploading,
+  sendBlocked = false,
   error,
   attachments,
   onSend,
@@ -306,7 +316,7 @@ export function WorkstreamComposer({
   const send = async (): Promise<void> => {
     const submitted = mentionsInTrimmedText(text, selectedMentions);
     const trimmed = submitted.text;
-    if ((!trimmed && readyAttachmentCount === 0) || uploading) return;
+    if (sendBlocked || (!trimmed && readyAttachmentCount === 0) || uploading) return;
     const resolvedPersonIds = new Set(resolveMentionPayload(
       trimmed,
       submitted.mentions,
@@ -476,8 +486,8 @@ export function WorkstreamComposer({
               </div>
             )
           : undefined}
-        submitDisabled={uploading || (!text.trim() && readyAttachmentCount === 0)}
-        submitLabel={submitLabel}
+        submitDisabled={sendBlocked || uploading || (!text.trim() && readyAttachmentCount === 0)}
+        submitLabel={sendBlocked ? `${submitLabel}, available once Rally connects` : submitLabel}
         submitting={sending}
         uploading={uploading}
         value={text}

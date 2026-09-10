@@ -2,7 +2,7 @@ import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-q
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useDebugEnabled } from './use-debug-enabled';
 import { useWorkspaceSocket } from './workspace-socket';
-import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { setCachedWorkstreams, WORKSTREAM_PAGE_SIZE, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import type { WorkstreamAppearance } from '@rally/contracts';
 import type { WorkstreamSummary } from './types';
 
@@ -26,7 +26,6 @@ export function useCachedWorkstreams(): WorkstreamSummary[] | undefined {
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
-const WORKSTREAM_PAGE_SIZE = 250;
 
 /**
  * The query result every existing caller already reads, widened with paging.

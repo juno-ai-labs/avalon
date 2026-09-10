@@ -733,7 +733,7 @@ export const TELEMETRY_EVENTS = {
       sidebarSection: z.enum(["pinned", "recent"]),
       cacheState: z.enum(["feed_cached", "detail_cached", "cold"]),
       socketPoolState: z.enum(["retained_pair", "control_warmup", "cold"]),
-      feedSource: z.enum(["feed_cache", "socket_snapshot", "boot_payload"]),
+      feedSource: z.enum(["feed_cache", "socket_snapshot", "boot_payload", "local_cache"]),
       messageCount: countBucket,
     }).superRefine((properties, context) => {
       if (properties.dataReadyDurationMs > properties.durationMs) {

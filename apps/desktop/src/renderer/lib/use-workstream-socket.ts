@@ -77,6 +77,13 @@ import { withDerivedUnread } from './workstream-state-store';
 import { evictCachedSubstream, patchCachedGeneratedIcon, patchCachedWorkstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY, workstreamDetailQueryKey } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
+import {
+  conversationSeededFromLocalCache,
+  hydrateConversation,
+  mirrorConversation,
+  type ConversationCacheKeys,
+} from './conversation-cache';
+import { useLocalCacheScope } from './local-cache-scope';
 
 export type { StreamCursor } from './workstream-socket-resume';
 
@@ -706,6 +713,7 @@ export function useWorkstreamSocket(
   parentKind: ConversationParentKind = 'workstream',
 ): WorkstreamSocketConnection {
   const admissionAllowed = useConversationAdmission();
+  const localCacheScope = useLocalCacheScope();
   const effectiveOpenCommitted = openCommitted && admissionAllowed;
   const admissionAllowedRef = useRef(admissionAllowed);
   admissionAllowedRef.current = admissionAllowed;
@@ -849,6 +857,19 @@ export function useWorkstreamSocket(
     const transcriptQueryKey = orderedTranscriptQueryKey(parentId, substreamId);
     const contextQueryKey = substreamInitialContextQueryKey(parentId, substreamId);
     const overlaysQueryKey = transcriptOverlaysQueryKey(parentId, substreamId);
+    const feedSourceQueryKey = workstreamFeedSourceQueryKey(parentId, substreamId);
+    const localCacheKeys: ConversationCacheKeys = {
+      detail: detailQueryKey,
+      transcript: transcriptQueryKey,
+      initialContext: contextQueryKey,
+      feedSource: feedSourceQueryKey,
+    };
+    /**
+     * Whether what the caches hold came off the disk rather than off this or
+     * any socket. A seed paints, and that is all it does: it completes no
+     * opening, it fences no snapshot, and the composer above it does not send.
+     */
+    const seededFromLocalCache = (): boolean => conversationSeededFromLocalCache(queryClient, localCacheKeys);
     let closedByEffect = false;
     const socketTelemetry = realtimeSocketTelemetry('substream_feed');
     // Separate from `closedByEffect`, which means this hook is tearing down. The
@@ -909,6 +930,16 @@ export function useWorkstreamSocket(
           'workstream_socket_open_timeout',
         ));
       }
+      // A seed has no fence to address a command against: the run, the
+      // elicitation, or the queue on screen is what the room said some
+      // launches ago. Every command inherits the gate here, not per control.
+      if (seededFromLocalCache()) {
+        return Promise.reject(new ApiError(
+          'Rally is still connecting to this conversation.',
+          409,
+          'workstream_feed_seeded',
+        ));
+      }
       return new Promise((resolve, reject) => {
         pendingSubstreamCommands.set(command.operationId, { command, resolve, reject });
         sendPendingSubstreamCommands();
@@ -923,7 +954,8 @@ export function useWorkstreamSocket(
     let openingTimedOutAttempts = 0;
     let openingTerminal = false;
     const canonicalCachesAvailable = (): boolean =>
-      queryClient.getQueryData<WorkstreamDetail>(detailQueryKey)?.id === parentId
+      !seededFromLocalCache()
+      && queryClient.getQueryData<WorkstreamDetail>(detailQueryKey)?.id === parentId
       && queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
         transcriptQueryKey,
       ) !== undefined
@@ -1433,12 +1465,20 @@ export function useWorkstreamSocket(
         : undefined;
       // Snapshots are valid at sequence zero and may intentionally replace
       // state at the same sequence after an explicit initial subscription.
+      //
+      // A seed the local cache painted is not a fence at all. Its numbers are
+      // what the room said some launches ago, and a room rebuilt since then
+      // can legitimately answer with lower ones; whatever the room sends now
+      // is newer than anything the disk remembered.
+      // The resume registry outlives the query entries, so the sequence it
+      // remembers from an earlier visit is a fence the seed must skip too.
+      const replacingLocalSeed = event.type === 'snapshot' && seededFromLocalCache();
       if (event.type === 'snapshot') {
-        if (event.sequence < resumeState.lastSequence) return;
+        if (!replacingLocalSeed && event.sequence < resumeState.lastSequence) return;
         // The room sequence can be equal when a requested snapshot races the
         // upsert that prompted it. Transcript event sequence is the canonical
         // fence: an older snapshot must never roll the cache back.
-        if (currentTranscript && event.transcript.eventSequence < currentTranscript.eventSequence) return;
+        if (!replacingLocalSeed && currentTranscript && event.transcript.eventSequence < currentTranscript.eventSequence) return;
         resumeState.lastSequence = event.sequence;
         streamCursors.clear();
       } else {
@@ -1475,7 +1515,7 @@ export function useWorkstreamSocket(
         // outside the bounded opening ranges did not change, so relabelling an
         // old range with the new snapshot id would make stale lifecycle state
         // look authoritative.
-        const transcript = currentTranscript && event.reason === 'reconciliation'
+        const transcript = currentTranscript && !replacingLocalSeed && event.reason === 'reconciliation'
           ? mergeCanonicalTranscriptSnapshot(currentTranscript, event.transcript)
           : event.transcript;
         queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
@@ -2223,6 +2263,27 @@ export function useWorkstreamSocket(
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    // The disk paints first and the socket corrects it. Hydration lands only
+    // in caches that are still empty, so a live snapshot that beats the read
+    // is never overwritten; the mirror writes only what a live snapshot
+    // installed, so a seed never persists itself. Both are no-ops outside a
+    // workspace scope, which is what keeps every standalone embedding and
+    // test on the path that existed before the cache.
+    const localCacheMirror = localCacheScope === null
+      ? null
+      : mirrorConversation(queryClient, localCacheScope, parentId, substreamId, localCacheKeys);
+    if (localCacheScope !== null) {
+      void hydrateConversation(
+        queryClient,
+        localCacheScope,
+        parentId,
+        substreamId,
+        localCacheKeys,
+        // A hydration still in flight when the reader is shut out must not
+        // repaint what the eviction just removed.
+        () => !closedByEffect && !accessRevoked,
+      );
+    }
     void connect();
     // The cursors survive this effect — they live in the resume state — so a
     // remount can inherit a reveal already in progress. Without this the held
@@ -2237,6 +2298,7 @@ export function useWorkstreamSocket(
     )) scheduleReveal();
     return () => {
       closedByEffect = true;
+      localCacheMirror?.stop();
       setSendReady(false);
       requestSnapshotRef.current = () => undefined;
       markOpenedRef.current = () => undefined;
@@ -2289,6 +2351,7 @@ export function useWorkstreamSocket(
   }, [
     api,
     enabled,
+    localCacheScope,
     openingRetryGeneration,
     queryClient,
     resolvedSocketLeaseId,
