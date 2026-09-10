@@ -1,11 +1,42 @@
-import { DownloadGrantExpirySchema, type AccessRequestListItem } from '@rally/contracts/private-access';
+import { ACCESS_PAGE_SIZE, DownloadGrantExpirySchema, type AccessRequestListItem, type DownloadGrantListItem } from '@rally/contracts/private-access';
 import type { D1DatabaseLike } from './index';
 
-export async function listAccessRequests(db: D1DatabaseLike): Promise<AccessRequestListItem[]> {
+export async function listAccessRequests(db: D1DatabaseLike, query = '', before?: string): Promise<AccessRequestListItem[]> {
   const result = await db.prepare(`SELECT id, email, created_at AS createdAt,
-    acknowledgement_status AS acknowledgementStatus, acknowledged_at AS acknowledgedAt
-    FROM access_requests ORDER BY created_at DESC, id DESC`).all<AccessRequestListItem>();
+    acknowledgement_status AS acknowledgementStatus, acknowledged_at AS acknowledgedAt,
+    acknowledgement_first_attempt_at AS firstAttemptAt, acknowledgement_generation AS generation
+    FROM access_requests WHERE instr(email, ?) > 0
+    AND (? IS NULL OR (created_at, id) < (SELECT created_at, id FROM access_requests WHERE id = ?))
+    ORDER BY created_at DESC, id DESC LIMIT ?`)
+    .bind(query.toLowerCase(), before ?? null, before ?? null, ACCESS_PAGE_SIZE + 1).all<AccessRequestListItem>();
   return result.results ?? [];
+}
+
+export async function listDownloadGrants(db: D1DatabaseLike, query = '', before?: string): Promise<DownloadGrantListItem[]> {
+  const result = await db.prepare(`SELECT g.id, r.email, g.created_at AS createdAt,
+    g.expires_at AS expiresAt, g.used_at AS usedAt, g.revoked_at AS revokedAt
+    FROM download_grants g LEFT JOIN access_requests r ON r.id = g.source_id
+    WHERE (? = '' OR instr(r.email, ?) > 0 OR g.id = ?)
+    AND (? IS NULL OR (g.created_at, g.id) < (SELECT created_at, id FROM download_grants WHERE id = ?))
+    ORDER BY g.created_at DESC, g.id DESC LIMIT ?`)
+    .bind(query, query.toLowerCase(), query, before ?? null, before ?? null, ACCESS_PAGE_SIZE + 1).all<DownloadGrantListItem>();
+  return result.results ?? [];
+}
+
+export async function revokeDownloadGrant(db: D1DatabaseLike, id: string): Promise<boolean> {
+  return await db.prepare(`UPDATE download_grants SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ? RETURNING id`)
+    .bind(new Date().toISOString(), id).first() !== null;
+}
+
+/** A distributed cap per known grant, without creating rows for attacker tokens. */
+export async function admitDownloadStart(db: D1DatabaseLike, token: string, limit: number, now = Date.now()): Promise<boolean> {
+  if (!Number.isFinite(limit)) return true;
+  const bucket = Math.floor(now / 60_000);
+  return await db.prepare(`UPDATE download_grants SET start_bucket = ?,
+    start_count = CASE WHEN start_bucket = ? THEN start_count + 1 ELSE 1 END
+    WHERE token_hash = ? AND start_bucket <= ? AND (start_bucket < ? OR start_count < ?)
+    AND revoked_at IS NULL AND ((expires_at IS NULL AND used_at IS NULL) OR expires_at > ?)
+    RETURNING id`).bind(bucket, bucket, await hashDownloadToken(token), bucket, bucket, limit, new Date(now).toISOString()).first() !== null;
 }
 
 export type DownloadGrantSource = 'manual' | 'access_invitation' | 'workspace_invitation';

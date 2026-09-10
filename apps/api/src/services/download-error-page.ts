@@ -1,10 +1,10 @@
 import { DownloadGrantTokenSchema } from '@rally/contracts/private-access';
 
 /** Fixed copy and a validated capability only; no caller text is interpolated. */
-export function downloadErrorPage(status: 410 | 503, token?: string): Response {
-  const retry = status === 503 && DownloadGrantTokenSchema.safeParse(token).success;
-  const title = status === 503 ? 'Your download is temporarily unavailable.' : 'This download link is no longer available.';
-  const message = status === 503
+export function downloadErrorPage(status: 410 | 429 | 503, token?: string): Response {
+  const retry = status !== 410 && DownloadGrantTokenSchema.safeParse(token).success;
+  const title = status === 429 ? 'Please wait before downloading again.' : status === 503 ? 'Your download is temporarily unavailable.' : 'This download link is no longer available.';
+  const message = status === 429 ? 'Too many download attempts. Please try again in a minute.' : status === 503
     ? 'Your link has not been used. Please try again.'
     : 'The link may be invalid, used, expired or revoked. Ask the sender for a new link.';
   return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8">

@@ -78,13 +78,15 @@ SidekickDO migration 3 adds automation.loadable, atomically maintained with the 
 ### Early-access acquisition
 
 - `access_requests`: Global normalized email uniqueness, original request time,
-  frozen acknowledgement sender/subject/body and provider-acceptance state.
+  frozen acknowledgement sender/subject/body, first-attempt time, generation and provider-acceptance/suppression state.
 - `download_grants`: SHA-256 token digest, manual/invitation source attribution,
   operator, first admission, revocation and optional exact UTC expiry. Null expiry
-  means single-use without time expiry; a deadline allows repeated admission.
+  means single-use without time expiry; a deadline allows repeated admission. Minute bucket/count fields coordinate download starts.
 - `access_request_rate_buckets`: hashed edge IP and current hourly count, written
   only for a finite configured intake cap. Old buckets are removed on the next
   guarded request; raw IPs are never stored.
+
+`access_email_budget` holds one hourly aggregate attempt counter in Global; it is distinct from IP counters. Stable `(created_at, id)` indexes support request/grant paging.
 
 All arrive in `0101_private_access.sql`. These pre-workspace records have no
 workspace association; existing workspace deletion does not erase them. Both
@@ -1005,6 +1007,14 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-09-09 — Bound and recover early-access operations
+
+**What changed:** Added the singleton `access_email_budget`, acknowledgement generations and suppression, per-grant minute counters, and stable paging indexes in the still-undeployed migration 0101. These coordinate budget and recovery without another storage service; generation checks prevent stale send completions from reversing an operator decision.
+
+**Why:** Public acquisition needs predictable failure and recoverable operator actions before launch, without imposing account approval or building a campaign system.
+
+**Consequences:** [Private access](private-access.md) owns configuration, undecided numerical limits, and recovery procedures. PR #637.
 
 ### 2026-09-09 — Add pre-workspace access requests and download grants
 

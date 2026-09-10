@@ -169,6 +169,9 @@ export interface Env {
   AZURE_INFERENCE_ENDPOINT?: string;
   AZURE_INFERENCE_API_KEY?: string;
   FIRECRAWL_API_KEY?: string;
+  /** Acquisition-only controls; missing production bindings fail closed. */
+  ACCESS_EDGE_RATE_LIMITER?: RateLimit;
+  TURNSTILE_SECRET_KEY?: string;
   RESEND_API_KEY?: string;
   RESEND_FROM_EMAIL?: string;
   RESEND_NOTIFICATION_FROM_EMAIL?: string;

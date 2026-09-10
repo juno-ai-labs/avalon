@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { accessCopy } from '../src/access-copy';
 
 beforeEach(() => { vi.resetModules(); document.body.innerHTML = ''; history.replaceState(null, '', '/'); });
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); delete window.turnstile; document.head.querySelectorAll('script[src*="challenges.cloudflare.com"]').forEach((script) => script.remove()); });
 
 describe('early-access browser handlers', () => {
   it('hands a single valid fragment token to an explicit POST and removes it from history', async () => {
@@ -67,6 +67,34 @@ describe('early-access browser handlers', () => {
     await vi.waitFor(() => expect(status.textContent).toBe(accessCopy.success), { timeout: 5_000 });
     expect(status.dataset.state).toBe('success');
     expect(form.hidden).toBe(true);
-    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toEqual({ email: 'team@example.com' });
+    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toEqual({ email: 'team@example.com', turnstileToken: 'local-development' });
   });
+});
+
+
+it('requires a verified browser token, resets it on failure, and submits only the fresh token', async () => {
+  vi.stubGlobal('location', new URL('https://rallywith.ai/'));
+  vi.stubGlobal('__RALLY_TURNSTILE_SITE_KEY__', 'test-site-key');
+  document.body.innerHTML = '<div id="access-challenge"></div><form id="access-request"><input id="access-email" type="email" required value="team@example.com"><button id="access-submit" disabled>Get early access</button></form><p id="access-status"></p>';
+  let callbacks: Parameters<NonNullable<typeof window.turnstile>['render']>[1] | undefined;
+  const reset = vi.fn();
+  window.turnstile = { render: (_container, options) => { callbacks = options; return 'widget'; }, reset };
+  const http = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ error: { code: 'access_verification_failed' } }, { status: 400 }))
+    .mockResolvedValueOnce(Response.json({ accepted: true }, { status: 202 }));
+  await import('../src/landing');
+  const form = document.querySelector<HTMLFormElement>('form')!;
+  const button = document.querySelector<HTMLButtonElement>('button')!;
+  form.dispatchEvent(new Event('submit', { cancelable: true }));
+  expect(http).not.toHaveBeenCalled(); expect(button.disabled).toBe(true);
+  document.head.querySelector('script[src*="challenges.cloudflare.com"]')!.dispatchEvent(new Event('load'));
+  callbacks!.callback('first-proof');
+  expect(button.disabled).toBe(false);
+  form.dispatchEvent(new Event('submit', { cancelable: true }));
+  await vi.waitFor(() => expect(reset).toHaveBeenCalledWith('widget'));
+  expect(button.disabled).toBe(true);
+  callbacks!.callback('fresh-proof');
+  form.dispatchEvent(new Event('submit', { cancelable: true }));
+  await vi.waitFor(() => expect(form.hidden).toBe(true));
+  expect(JSON.parse(String(http.mock.calls[1]![1]!.body))).toEqual({ email: 'team@example.com', turnstileToken: 'fresh-proof' });
+  expect(document.querySelector<HTMLElement>('#access-challenge')!.hidden).toBe(true);
 });

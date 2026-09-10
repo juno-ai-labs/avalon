@@ -18,7 +18,7 @@ membership. It sends no invitation email yet. [Private access](private-access.md
 owns that lifecycle and the remaining distribution work.
 
 Timed links use an operator-chosen local date/time and permit repeat downloads
-until that deadline. Both generation actions share the current lifetime choice.
+until that deadline. Both generation actions share the current lifetime choice, defaulting to timed mode. Requests and grant history are searched server-side and paged in groups of 50. Access-protected same-origin actions revoke grants and relay acknowledgement recovery to the Global operator API. The existing `demos` role also authorizes these acquisition recovery actions; it does not authorize telemetry administration.
 
 ## Where the code lives
 
@@ -447,6 +447,14 @@ contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only change
 do not publish a new Ace bundle.
 
 ## Changelog
+
+### 2026-09-09 — Bound and recover early-access operations
+
+**What changed:** The Access page now searches and pages requests and grant history, labels generated links with recipients, and supports revocation and explicit acknowledgement recovery. Recovery uses the existing Global operator credential and reports pending/failed/uncertain mail so an operator can reconcile it without raw SQL. Timed mode is the default; no default duration is invented.
+
+**Why:** Public acquisition needs predictable failure and recoverable operator actions before launch, without imposing account approval or building a campaign system.
+
+**Consequences:** [Private access](private-access.md) owns configuration, undecided numerical limits, and recovery procedures. PR #637.
 
 ### 2026-09-09 — Add access intake review and download issuance
 

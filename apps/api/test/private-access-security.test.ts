@@ -1,3 +1,4 @@
+import { mockAccessMail } from './helpers/access-providers';
 import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -15,13 +16,13 @@ const start = Date.parse('2026-09-09T12:00:00.000Z');
 function submit(email = 'security@example.com') {
   return app.request('https://api.rallywith.ai/access/requests', { method: 'POST',
     headers: { origin: 'https://rallywith.ai', 'content-type': 'application/json' },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, turnstileToken: 'test-challenge' }),
   }, env);
 }
 beforeEach(() => {
   database = migratedSqliteDatabase();
   env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: 'global', APP_ENV: 'production',
-    PUBLIC_API_BASE_URL: 'https://api.rallywith.ai', ALLOWED_ORIGINS: 'https://rallywith.ai', RESEND_API_KEY: 'test-not-a-key' });
+    PUBLIC_API_BASE_URL: 'https://api.rallywith.ai', ALLOWED_ORIGINS: 'https://rallywith.ai', TURNSTILE_SECRET_KEY: 'test-turnstile-key', RESEND_API_KEY: 'test-not-a-key' });
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(start);
 });
@@ -31,7 +32,7 @@ describe('early-access abuse regressions against real migrations', () => {
   it('admits only one provider call while a duplicate acknowledgement is in flight', async () => {
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
-    const provider = vi.spyOn(globalThis, 'fetch')
+    const provider = mockAccessMail()
       .mockImplementationOnce(async () => { await held; return Response.json({ id: 'first' }); })
       .mockImplementation(async () => Response.json({ id: 'duplicate' }));
     // Both real SELECTs see pending before either UPDATE may claim it. This
@@ -64,7 +65,7 @@ describe('early-access abuse regressions against real migrations', () => {
   });
 
   it('does not resend an uncertain acknowledgement outside the provider deduplication window', async () => {
-    const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('connection lost after send'))
+    const provider = mockAccessMail().mockRejectedValueOnce(new Error('connection lost after send'))
       .mockImplementation(async () => Response.json({ id: 'duplicate' }));
     expect((await submit()).status).toBe(502);
     vi.setSystemTime(start + 24 * 60 * 60 * 1000);
@@ -83,7 +84,7 @@ describe('early-access abuse regressions against real migrations', () => {
   });
 
   it.each(['api.with-avalon.com', 'github.with-avalon.com'])('does not expose acquisition through the alternate host %s', async (host) => {
-    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ id: 'unused' }));
+    const provider = mockAccessMail().mockImplementation(async () => Response.json({ id: 'unused' }));
     const response = await app.request(`https://${host}/access/requests`, { method: 'POST',
       headers: { origin: 'https://rallywith.ai', 'content-type': 'application/json' },
       body: JSON.stringify({ email: 'unwanted@example.com' }),
@@ -94,7 +95,7 @@ describe('early-access abuse regressions against real migrations', () => {
   });
 
   it('refuses non-JSON signup bodies before storing an address or contacting the provider', async () => {
-    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ id: 'unused' }));
+    const provider = mockAccessMail().mockImplementation(async () => Response.json({ id: 'unused' }));
     const response = await app.request('https://api.rallywith.ai/access/requests', { method: 'POST',
       headers: { origin: 'https://rallywith.ai', 'content-type': 'text/plain' },
       body: JSON.stringify({ email: 'unwanted@example.com' }),

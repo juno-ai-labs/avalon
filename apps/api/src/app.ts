@@ -1,3 +1,4 @@
+import { accessOperatorRoutes } from './routes/access-operations';
 import { Hono } from "hono";
 import { searchRoutes } from "./routes/search";
 import type { HonoAppEnv } from "./env";
@@ -131,6 +132,7 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/telemetry", publicTelemetryRoutes);
   app.route('/internal/telemetry', telemetryOperatorRoutes);
   app.route('/internal/demos', demoOperatorRoutes);
+  app.route('/internal/access', accessOperatorRoutes);
   app.route('/internal/workspaces', workspaceOperatorRoutes);
 
   const identityApi = new Hono<HonoAppEnv>();
