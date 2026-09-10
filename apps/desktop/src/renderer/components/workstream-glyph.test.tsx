@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { PROJECT_COLOR_RING, type WorkstreamAppearance } from '@rally/contracts';
 import { glyphInk } from '../lib/project-palette';
 import { Plus } from 'lucide-react';
-import { AutomationGlyph, HexagonGlyph, resolveWorkstreamAppearance, WorkstreamGlyph, WorkstreamMark, workstreamAppearance, type ResolvableAppearance } from './workstream-glyph';
+import { AutomationGlyph, HexagonGlyph, resolveWorkstreamAppearance, SIDEKICK_RUNNING_MARKER, WorkstreamGlyph, WorkstreamMark, workstreamAppearance, type ResolvableAppearance } from './workstream-glyph';
 
 describe('workstreamAppearance', () => {
   it('derives a stable color and icon from the work-stream id', () => {
@@ -133,5 +133,70 @@ describe('HexagonGlyph', () => {
     // the sidebar's own surface.
     expect(glyph?.style.getPropertyValue('--glyph-ink')).toBe('var(--av-sys-color-text-muted)');
     expect(container.querySelector('.lucide-plus')).not.toBeNull();
+  });
+});
+
+describe('HexagonGlyph markers', () => {
+  it('cuts the marker out of the fill it sits on rather than painting over it', () => {
+    // `launch-room` draws `lime`, and the running marker is `success-base`. Two
+    // greens: painted straight onto the fill the play would be a shape only its
+    // own edge distinguishes, and on a Sidekick that drew `green` there would be
+    // no edge at all. The knockout is what makes the separation independent of
+    // which of the fifteen fills this Sidekick happens to have, so the hexagon
+    // being masked *by the marker* is the behaviour, not decoration.
+    const { container } = render(<AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />);
+    const shape = container.querySelector('.automation-glyph-shape');
+    const mask = container.querySelector('mask');
+
+    expect(mask?.id).toBeTruthy();
+    expect(shape).toHaveAttribute('mask', `url(#${mask?.id})`);
+    // The cut follows the marker's own outline, dilated by a stroke so a gap is
+    // left around it. A rect or a circle in here would be a hole the shape of
+    // something else, which is the treatment this replaced.
+    const knockout = mask?.querySelector('.automation-glyph-knockout');
+    expect(knockout).toHaveClass('lucide-play');
+    expect(knockout).toHaveAttribute('stroke', 'black');
+    expect(Number(knockout?.getAttribute('stroke-width'))).toBeGreaterThan(0);
+  });
+
+  it('paints the marker in its own colour, over the hole and not stroked', () => {
+    const { container } = render(<AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />);
+    const marker = container.querySelector('.automation-glyph-marker');
+
+    expect(marker).toHaveClass('lucide-play');
+    expect(marker).toHaveAttribute('fill', 'var(--av-sys-color-success-base)');
+    // Filled rather than outlined: at the rail's 36px the marker is about 7px
+    // across and a 2-unit stroke is most of the symbol.
+    expect(marker).toHaveAttribute('stroke', 'none');
+    // Painted after the shape, so the hole it fills is already cut.
+    expect(container.querySelector('.automation-glyph-shape')?.compareDocumentPosition(marker!))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it('gives every hexagon on the page its own mask, because SVG ids are document-global', () => {
+    // One id shared by the strip's tiles would point all of them at the first
+    // Sidekick's mask. It would look right until a second marker differed.
+    const { container } = render(<div>
+      <AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />
+      <AutomationGlyph id="another-room" marker={SIDEKICK_RUNNING_MARKER} />
+    </div>);
+    const ids = [...container.querySelectorAll('mask')].map((mask) => mask.id);
+
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+    // And each hexagon references its own rather than whichever came first.
+    expect([...container.querySelectorAll('.automation-glyph-shape')].map((shape) => shape.getAttribute('mask')))
+      .toEqual(ids.map((id) => `url(#${id})`));
+  });
+
+  it('leaves the fill whole where there is no state to mark', () => {
+    // The new-Sidekick slot and the library's rows draw the same hexagon with no
+    // lifecycle behind it; a mask with nothing cut out of it is a hole waiting
+    // to be one.
+    const { container } = render(<HexagonGlyph fill="none" ink="var(--av-sys-color-text-muted)" symbol={Plus} />);
+
+    expect(container.querySelector('mask')).toBeNull();
+    expect(container.querySelector('.automation-glyph-shape')).not.toHaveAttribute('mask');
+    expect(container.querySelector('.automation-glyph-marker')).toBeNull();
   });
 });
