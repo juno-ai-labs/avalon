@@ -286,19 +286,72 @@ pre {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* One exclusive choice as a row of pills in a recessed track — the shape
+   `SegmentedControl` draws for the appearance preference and the connections
+   filter alike. Two strips had grown their own rules: one squared off with a
+   hairline track and a bordered selection, the other with neither, and they sat
+   two panes apart looking like different controls.
+
+   The track is `cmp.segmented.track` rather than a neutral step because it has
+   to recess below a settings card in both appearances while staying clear of
+   the raised fill above it — see that token's note in the registry. The
+   selected pill carries no border and no shadow: `sys.elevation.shadow.sm` is
+   `none` in both appearances, and this design separates a raised surface from
+   the one behind it by fill, not by depth. That is also why the chosen segment
+   no longer gives two pixels of padding back — a border inside the padding was
+   what made it grow and nudge its neighbours. */
+.segmented {
+  align-items: center;
+  background: var(--av-cmp-segmented-track);
+  border-radius: var(--av-sys-size-radius-pill);
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+}
+
+.segmented > button {
+  background: transparent;
+  border: 0;
+  border-radius: var(--av-sys-size-radius-pill);
+  color: var(--av-sys-color-text-muted);
+  font-size: var(--av-cmp-control-font-size);
+  line-height: 20px;
+  padding: 4px 14px;
+  transition: background-color 140ms ease, color 140ms ease;
+  white-space: nowrap;
+}
+
+.segmented > button:hover { color: var(--av-sys-color-text-default); }
+
+.segmented > button[aria-checked='true'] {
+  background: var(--av-sys-color-surface-raised);
+  color: var(--av-sys-color-text-default);
+  font-weight: var(--av-sys-font-weight-emphasis);
+}
+
+.segmented > button:focus-visible {
+  outline: 2px solid var(--av-sys-color-focus-default);
+  outline-offset: 1px;
+}
+
+/* A pill, not a boxed tag: fully rounded, no outline, and one flat fill a shade
+   off the surface behind it. The old 3px corner and hairline border read as a
+   miniature input next to the rounded rows and cards around it, which is why
+   `.automation-header` had already overridden both. The shape is stated once
+   here instead. */
 .badge {
   align-items: center;
   background: var(--av-ref-color-neutral-4);
-  border: 1px solid var(--av-ref-color-line-3);
-  border-radius: var(--av-sys-size-radius-sm);
+  border: 1px solid transparent;
+  border-radius: var(--av-sys-size-radius-pill);
   color: var(--av-ref-color-neutral-11);
   display: inline-flex;
-  font-size: 10.5px;
-  font-weight: 520;
+  font-size: var(--av-sys-font-size-meta);
+  font-weight: var(--av-sys-font-weight-emphasis);
   line-height: 18px;
   max-width: 140px;
   overflow: hidden;
-  padding: 0 6px;
+  padding: 0 9px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1960,6 +2013,7 @@ pre {
   color: var(--av-sys-color-text-muted);
   display: inline-flex;
   gap: 4px;
+  padding: 0 8px;
 }
 .badge-private > svg { color: var(--av-sys-color-text-disabled); }
 
@@ -2188,9 +2242,6 @@ pre {
 .settings-diagnostics dt { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: var(--av-cmp-control-font-size); gap: 6px; }
 .settings-diagnostics dd { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); margin: 0; overflow-wrap: anywhere; text-align: right; }
 .settings-diagnostics dd > small { display: block; font-size: 12px; margin-top: 4px; }
-.settings-telemetry-heading { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
-.settings-telemetry-empty { color: var(--av-sys-color-text-muted); padding: 14px; }
-.settings-telemetry-empty > p { margin: 0; }
 
 /* Rally has one design with a three-position appearance preference. */
 .settings-theme-card {
@@ -2214,44 +2265,6 @@ pre {
 
 .settings-theme-heading strong { display: block; font-size: 13px; font-weight: 400; }
 .settings-theme-heading small { color: var(--av-sys-color-text-muted); display: block; font-size: 12px; margin-top: 2px; }
-
-/* System follows the Mac; Light and Dark pin one of Rally's two appearances. */
-.settings-theme-modes {
-  background: var(--av-sys-color-surface-subtle);
-  border: var(--av-sys-size-border-hairline) solid var(--av-ref-color-line-2);
-  border-radius: var(--av-sys-size-radius-lg);
-  display: inline-flex;
-  gap: 2px;
-  margin-bottom: 0;
-  padding: 2px;
-}
-
-.settings-theme-mode {
-  background: transparent;
-  border: 0;
-  border-radius: var(--av-sys-size-radius-md);
-  color: var(--av-sys-color-text-muted);
-  font-size: 11.5px;
-  padding: 5px 14px;
-  transition: background 140ms ease, color 140ms ease;
-}
-
-.settings-theme-mode:hover { color: var(--av-sys-color-text-default); }
-
-.settings-theme-mode[aria-checked='true'] {
-  background: var(--av-sys-color-surface-raised);
-  border: var(--av-sys-size-border-hairline) solid var(--av-ref-color-line-4);
-  color: var(--av-sys-color-text-default);
-  font-weight: var(--av-sys-font-weight-emphasis);
-  /* The border is inside the padding, so the cell must give it back or the
-     selected segment grows by two pixels and nudges its neighbours. */
-  padding: 4px 13px;
-}
-
-.settings-theme-mode:focus-visible {
-  outline: 2px solid var(--av-sys-color-focus-default);
-  outline-offset: 1px;
-}
 
 .settings-theme-status { color: var(--av-sys-color-text-muted); font-size: 12px; grid-column: 1 / -1; margin: 0; }
 
@@ -2376,24 +2389,6 @@ pre {
 
 .settings-connection-toolbar { align-items: center; display: flex; justify-content: space-between; margin-bottom: 12px; }
 .settings-connection-toolbar > span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
-.settings-segmented {
-  align-items: center;
-  background: var(--av-sys-color-surface-subtle);
-  border-radius: var(--av-cmp-control-radius);
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-}
-.settings-segmented button {
-  background: transparent;
-  border-radius: var(--av-cmp-control-radius);
-  color: var(--av-sys-color-text-muted);
-  font-size: var(--av-cmp-control-font-size);
-  min-height: 30px;
-  padding: 0 10px;
-}
-.settings-segmented button:hover { color: var(--av-sys-color-text-subtle); }
-.settings-segmented button[aria-pressed='true'] { background: var(--av-ref-color-neutral-6); color: var(--av-sys-color-text-default); }
 
 .settings-section-copy { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); line-height: 1.5; margin: 0 0 14px; }
 .provider-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); }
@@ -5512,23 +5507,30 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 .workstream-glyph-icon { filter: drop-shadow(0 1px 1px color-mix(in srgb, var(--av-sys-color-text-default) 20%, transparent)); position: relative; }
 
-/* Work-stream identity: fixed palette above an independently scrolling catalog. */
-.workstream-appearance-trigger { display: inline-flex; align-items: center; justify-content: center; padding: 4px; border: 0; border-radius: var(--av-cmp-control-radius); background: transparent; cursor: pointer; flex-shrink: 0; }
-.workstream-appearance-trigger:hover { background: var(--av-sys-color-surface-raised-hover); }
-.workstream-appearance-popup { width: 288px; max-width: calc(100vw - 24px); max-height: var(--radix-dropdown-menu-content-available-height); display: flex; flex-direction: column; padding: 12px; }
-.workstream-appearance-label { color: var(--av-sys-color-text-subtle); font-size: var(--av-cmp-control-font-size); font-weight: 600; padding: 0 2px 8px; }
-.workstream-appearance-colors, .workstream-appearance-icons { display: grid; gap: 4px; }
-.workstream-appearance-icons { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+/* Chosen identity: fixed palette above an independently scrolling catalog.
+   One picker; a work stream's header and a Sidekick's profile both open it. */
+.appearance-picker-trigger { display: inline-flex; align-items: center; justify-content: center; padding: 4px; border: 0; border-radius: var(--av-cmp-control-radius); background: transparent; cursor: pointer; flex-shrink: 0; }
+/* The row hover, not a surface one. The same hexagon in the sidebar hovers on
+   `--av-cmp-row-background-hover`, and a mark that fills differently depending
+   on which rail you found it in reads as two controls. It is also the correct
+   *weight*: `surface.raised-hover` is opaque in dark and, in light, is the
+   value `cmp.row.background-selected` holds — so the old fill announced a
+   selected row on something nothing had selected. */
+.appearance-picker-trigger:hover { background: var(--av-cmp-row-background-hover); }
+.appearance-picker-popup { width: 288px; max-width: calc(100vw - 24px); max-height: var(--radix-dropdown-menu-content-available-height); display: flex; flex-direction: column; padding: 12px; }
+.appearance-picker-label { color: var(--av-sys-color-text-subtle); font-size: var(--av-cmp-control-font-size); font-weight: 600; padding: 0 2px 8px; }
+.appearance-picker-colors, .appearance-picker-icons { display: grid; gap: 4px; }
+.appearance-picker-icons { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 /* See PROJECT_COLOR_COLUMNS — the swatch grid is seven wide so the second
    row can run back the other way and meet the first at both ends. */
-.workstream-appearance-colors { grid-template-columns: repeat(7, minmax(0, 1fr)); }
-.workstream-appearance-icons { overflow-y: auto; min-height: 0; max-height: 180px; padding: 2px; }
-.workstream-appearance-choice { color: var(--av-sys-color-text-default); display: flex; align-items: center; justify-content: center; height: 36px; border-radius: var(--av-cmp-control-radius); border: 1px solid transparent; cursor: pointer; outline: none; }
-.workstream-appearance-choice[data-highlighted] { background: var(--av-sys-color-surface-raised-hover); outline: 2px solid var(--av-sys-color-text-subtle); outline-offset: -2px; }
-.workstream-appearance-choice[data-state='checked'] { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-sys-color-text-default); }
-.workstream-appearance-swatch { height: 20px; width: 20px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--av-sys-color-project-edge); }
-.workstream-appearance-divider { height: 1px; flex-shrink: 0; background: var(--av-sys-color-border-default); margin: 12px 0; }
-.workstream-appearance-error { color: var(--av-sys-color-danger-base); font-size: var(--av-cmp-control-font-size); margin: 10px 0 0; }
+.appearance-picker-colors { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.appearance-picker-icons { overflow-y: auto; min-height: 0; max-height: 180px; padding: 2px; }
+.appearance-picker-choice { color: var(--av-sys-color-text-default); display: flex; align-items: center; justify-content: center; height: 36px; border-radius: var(--av-cmp-control-radius); border: 1px solid transparent; cursor: pointer; outline: none; }
+.appearance-picker-choice[data-highlighted] { background: var(--av-sys-color-surface-raised-hover); outline: 2px solid var(--av-sys-color-text-subtle); outline-offset: -2px; }
+.appearance-picker-choice[data-state='checked'] { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-sys-color-text-default); }
+.appearance-picker-swatch { height: 20px; width: 20px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--av-sys-color-project-edge); }
+.appearance-picker-divider { height: 1px; flex-shrink: 0; background: var(--av-sys-color-border-default); margin: 12px 0; }
+.appearance-picker-error { color: var(--av-sys-color-danger-base); font-size: var(--av-cmp-control-font-size); margin: 10px 0 0; }
 
 .workstream-row {
   align-items: center;
@@ -6310,7 +6312,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 }
 
 .composer-action-menu-item > svg { height: 16px; stroke-width: 1.9; width: 16px; }
-.composer-action-menu-item .composer-teach-task-icon { color: var(--av-sys-color-danger-base); stroke-width: 2.4; }
 
 [data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule { border-color: var(--av-cmp-composer-border-color); }
 [data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule:focus-within { border-color: var(--av-cmp-composer-border-color-focus); }
@@ -6879,12 +6880,19 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 /* The conversation retains its shared feed/composer geometry. The profile is a sibling. */
 .workstream-screen.automation-screen { grid-template-rows: auto minmax(0, 1fr) auto; }
 .automation-header { display: flex; flex-direction: column; gap: 24px; padding: 28px; }
-.sidekick-profile-glyph { display: block; width: 64px; height: 64px; }
+/* The hexagon is the picker's trigger. The button's padding is cancelled by an
+   equal negative margin so the hit and hover area extends past the mark while
+   the profile's own geometry stays what it was before the glyph became a
+   control — the header's 24px gap is measured from the hexagon, not from the
+   hover pad around it. */
+.sidekick-profile-glyph { display: flex; align-self: flex-start; }
+.sidekick-profile-glyph .appearance-picker-trigger { padding: 6px; margin: -6px; border-radius: 18px; }
+.sidekick-profile-glyph .automation-glyph { width: 64px; height: 64px; }
 .automation-header-row { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .automation-title-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .automation-title-line h1 { width: 100%; margin: 0 0 12px; font-size: 24px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
 .automation-description { margin-top: 16px; color: var(--av-sys-color-text-subtle); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
-.automation-header .badge { border-radius: var(--av-sys-size-radius-pill); padding: 3px 9px; }
+.automation-header .badge { padding: 3px 9px; }
 .automation-header .button { border-radius: var(--av-sys-size-radius-pill); }
 .automation-header .workstream-header-actions { width: 100%; gap: 8px; }
 .automation-header .workstream-header-actions > .button { flex: 1; justify-content: center; }
@@ -6976,40 +6984,23 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .sidebar-row.automation-tile.is-active:hover { background: var(--av-cmp-row-background-selected); }
 .sidebar-row.automation-tile:focus-visible { outline-offset: -2px; }
 .sidebar-automation-strip > .sidebar-context-target:only-child { flex-basis: auto; min-width: 80px; max-width: 100px; }
-.automation-tile-glyph { display: block; height: 60px; position: relative; transition: height var(--sidebar-layout-motion), width var(--sidebar-layout-motion); width: 60px; }
+.automation-tile-glyph { display: block; height: 60px; transition: height var(--sidebar-layout-motion), width var(--sidebar-layout-motion); width: 60px; }
 .automation-glyph { color: var(--glyph-ink, var(--av-sys-color-text-on-inverse)); display: block; height: 100%; width: 100%; }
 .automation-tile-name { font-size: 11px; font-weight: 400; height: 16px; letter-spacing: .005em; line-height: 16px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; transition: height var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); white-space: nowrap; }
-.automation-tile-state {
-  background: var(--av-sys-color-surface-default);
-  border-radius: var(--av-sys-size-radius-pill);
-  bottom: 0;
-  height: 14px;
-  position: absolute;
-  right: 0;
-  width: 14px;
-}
-.automation-tile-state .status-dot {
-  box-shadow: none;
-  height: 8px;
-  inset: auto;
-  left: 50%;
-  position: absolute;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 8px;
-}
-.automation-tile-state.active .status-dot { background: var(--av-sys-color-success-base); }
-.automation-tile-state.paused .status-dot { background: var(--av-sys-color-workstream-stopped); }
-.automation-tile-state.draft .status-dot { background: transparent; border: 1px dashed var(--av-sys-color-text-muted); }
+/* A running Sidekick's marker is a play cut out of its own hexagon, drawn in
+   `HexagonGlyph` — geometry, colour and knockout together, in the viewBox units
+   that scale it with the tile. Nothing here positions it: the box no longer
+   needs to be a containing block, because the marker is part of the artwork
+   rather than a badge laid over it. */
 /* The new-Sidekick tile's hexagon: the same silhouette as a Sidekick's, drawn
    as an empty slot rather than an identity, because there is no Sidekick yet to
-   take a fill or a symbol from. Dashed for the reason the draft lifecycle dot
-   above is — the outline is what says "not a Sidekick yet" at 36px, where a
-   solid fill in any colour would read as one. The stroke is in the viewBox's
-   own units, so it scales with the tile like the shape it traces.
+   take a fill or a symbol from. Dashed because the outline is what says "not a
+   Sidekick yet" at 36px, where a solid fill in any colour would read as one.
+   The stroke is in the viewBox's own units, so it scales with the tile like the
+   shape it traces.
 
-   `text-muted`, the same token the dot above uses and the same ink the plus
-   inside is drawn in — not a `border-*` token. This outline is the whole mark
+   `text-muted`, the same ink the plus inside is drawn in — not a `border-*`
+   token. This outline is the whole mark
    rather than a divider beside content, so it answers to the 3:1 floor for
    graphical objects, and the border ramp has no headroom for that: against
    `surface-default`, `border-strong` is 1.38:1 in the light theme and 1.44:1 in

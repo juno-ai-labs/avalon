@@ -1,16 +1,32 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { WorkstreamAppearancePicker } from './workstream-appearance-picker';
+import { AppearancePicker } from './appearance-picker';
+import { WorkstreamGlyph } from './workstream-glyph';
+
+/**
+ * The work stream's own arrangement of the shared picker. The behaviour under
+ * test belongs to the picker rather than to either caller, so it is exercised
+ * through one of them rather than through a component built for the test.
+ */
+function WorkstreamAppearancePicker(
+  props: Omit<React.ComponentProps<typeof AppearancePicker>, 'label' | 'renderGlyph'>,
+): React.JSX.Element {
+  return <AppearancePicker
+    {...props}
+    label="Change work-stream icon and color"
+    renderGlyph={(appearance) => <WorkstreamGlyph appearance={appearance} id={props.id} />}
+  />;
+}
 
 function openPicker(): void {
   fireEvent.keyDown(screen.getByRole('button', { name: 'Change work-stream icon and color' }), { key: 'Enter' });
 }
 
-describe('work stream appearance picker', () => {
+describe('appearance picker', () => {
   it('keeps the popup open and submits rapid choices without a save', async () => {
     let finish!: () => void;
     const onChange = vi.fn().mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; })).mockResolvedValue(undefined);
-    render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'blue' }} size={20} onChange={onChange} />);
+    render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'blue' }} onChange={onChange} />);
     openPicker();
     fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Purple' }));
     expect(screen.getByRole('menuitemradio', { name: 'Purple' })).toHaveAttribute('aria-checked', 'true');
@@ -28,7 +44,7 @@ describe('work stream appearance picker', () => {
   });
 
   it('restores server state and reports a failed save', async () => {
-    render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'blue' }} size={20} onChange={vi.fn().mockRejectedValue(new Error('offline'))} />);
+    render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'blue' }} onChange={vi.fn().mockRejectedValue(new Error('offline'))} />);
     openPicker();
     // A different swatch than the stored one, or there is no optimistic state to
     // roll back and the final assertion passes whether or not the failed choice
@@ -40,7 +56,7 @@ describe('work stream appearance picker', () => {
   });
   it('keeps a saved preview through unrelated metadata and retires it when the value arrives', async () => {
     const onChange = vi.fn().mockResolvedValue(undefined);
-    const props = { id: 'room', size: 20, onChange };
+    const props = { id: 'room', onChange };
     const { rerender } = render(<WorkstreamAppearancePicker {...props} appearance={{ icon: 'atom', color: 'blue' }} />);
     openPicker();
     fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Purple' }));
@@ -56,7 +72,7 @@ describe('work stream appearance picker', () => {
     let fail!: (error: Error) => void;
     const onChange = vi.fn().mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { fail = reject; }))
       .mockResolvedValue(undefined);
-    render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'blue' }} size={20} onChange={onChange} />);
+    render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'blue' }} onChange={onChange} />);
     openPicker();
     fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Purple' }));
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Rocket' }));
@@ -68,7 +84,7 @@ describe('work stream appearance picker', () => {
 
   it('does not show a stale failure when reopened', async () => {
     let fail!: (error: Error) => void;
-    render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'blue' }} size={20}
+    render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'blue' }}
       onChange={() => new Promise<void>((_resolve, reject) => { fail = reject; })} />);
     openPicker();
     fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Purple' }));
@@ -83,13 +99,13 @@ describe('work stream appearance picker', () => {
     // `black` is storable and not offered. A work stream set to it before the
     // picker stopped listing it must still open the picker without throwing —
     // it simply has nothing checked, and picking anything moves it onto a hue.
-    render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'black' }} size={20} onChange={vi.fn()} />);
+    render(<WorkstreamAppearancePicker id="room" appearance={{ icon: 'atom', color: 'black' }} onChange={vi.fn()} />);
     openPicker();
 
     expect(screen.queryByRole('menuitemradio', { name: 'Black' })).not.toBeInTheDocument();
     // Scoped to the colour group: the icon group shares the menuitemradio role,
     // and its selection is unrelated.
-    const colours = document.querySelector('.workstream-appearance-colors');
+    const colours = document.querySelector('.appearance-picker-colors');
     const checked = [...(colours?.querySelectorAll('[role="menuitemradio"][aria-checked="true"]') ?? [])];
     expect(checked).toHaveLength(0);
     expect(screen.getByRole('menuitemradio', { name: 'Blue' })).toBeInTheDocument();

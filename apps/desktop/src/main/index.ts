@@ -3175,10 +3175,6 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     await reportTelemetryProductIntent(rawIntent, telemetryWindowContext(event.sender));
   });
-  ipcMain.handle('telemetry:inspector', (event) => {
-    assertTrustedIpcSender(event);
-    return developerSettingsFlagController.enabled() ? telemetryReporter?.inspector() ?? [] : [];
-  });
   ipcMain.handle('telemetry:javascript-error', async (event, rawCandidate: unknown) => {
     assertTrustedIpcSender(event);
     await reportJavascriptErrorCandidate(rawCandidate, telemetryWindowContext(event.sender));
