@@ -192,22 +192,6 @@ export class WorkstreamObjectClient {
     return WorkstreamDetailSchema.parse(await this.request({ operation: "get" }));
   }
 
-  /** Only call after the search access context admits this exact conversation. */
-  async admittedSearchTurns(turnIds: string[]) {
-    const response = await (await objectStub(this.env, this.auth.workspaceId, this.workstreamId, this.substreamId)).readAdmittedSearchContent({
-      workspaceId: this.auth.workspaceId, parentId: this.workstreamId, substreamId: this.substreamId, turnIds, links: [],
-    });
-    return z.object({ title: z.string(), turns: z.array(TranscriptTurnSchema), links: z.array(z.object({ linkId: z.string(), link: SearchLinkSchema.nullable() })) }).parse(decode(response));
-  }
-
-  /** Only call after the search access context admits this exact conversation. */
-  async admittedSearchLinks(links: Array<{ turnId: string; linkId: string }>) {
-    const response = await (await objectStub(this.env, this.auth.workspaceId, this.workstreamId, this.substreamId)).readAdmittedSearchContent({
-      workspaceId: this.auth.workspaceId, parentId: this.workstreamId, substreamId: this.substreamId, turnIds: [], links,
-    });
-    return z.object({ title: z.string(), turns: z.array(TranscriptTurnSchema), links: z.array(z.object({ linkId: z.string(), link: SearchLinkSchema.nullable() })) }).parse(decode(response));
-  }
-
   async searchLinks(links: Array<{ turnId: string; linkId: string }>) {
     return z.object({ title: z.string(), links: z.array(z.object({ linkId: z.string(), link: SearchLinkSchema.nullable() })) }).parse(
       await this.request({ operation: "search_links", links }),

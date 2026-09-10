@@ -1,12 +1,12 @@
 import { pushSearchAuthorization } from '../src/services/search-authorization';
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
-import { WorkstreamObjectClient } from '../src/services/workstream-object-client';
 import { WorkstreamDirectoryService } from '../src/services/workstream-directory-service';
 import { createResourceObjectPort } from '../src/runtime/resource-port';
 import { ResourceService } from '../src/services/resource-service';
 import type { WorkstreamDO } from '../src/durable-objects/workstream-do';
 import { WorkstreamIdentityStorage } from '../src/durable-objects/workstream-identity-storage';
 import { WorkspaceDO } from '../src/durable-objects/workspace-do';
+import { SubstreamAgent } from '../src/durable-objects/substream-agent';
 import { WorkstreamResourceStorage } from '../src/durable-objects/workstream-resource-storage';
 import { createAccessContext } from '../src/services/authorization-service';
 import { projectAuthorization } from '../src/services/authorization-projection-service';
@@ -361,63 +361,68 @@ describe("conversation parent contract", () => {
     expect(scopes).toContain('00000000-0000-7000-8000-000000001099');
   });
 
-  it("loads independent conversations concurrently without directory prefiltering while batching links", async () => {
+  it("renders admitted results from the index and never reads a conversation object for content", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID]);
     await seedRoom(WORKSPACE_ROOM_ID, "workspace", [AUTHOR_ID]);
     const urls = ['https://example.com/one', 'https://example.com/two'];
     const linkIds = await Promise.all(urls.map((url) => searchDocumentId('conversation_links', `${PERSONAL_ROOM_ID}/0/search-turn`, url)));
-    for (const room of [PERSONAL_ROOM_ID, WORKSPACE_ROOM_ID]) {
-      await runInDurableObject(conversation(room), async (_instance, state) => {
-        await seedParticipantMessage(state, { id: 'search-turn', sequence: 1, text: `needle ${urls.join(' ')}` });
-        if (room === PERSONAL_ROOM_ID) urls.forEach((url, i) => state.storage.sql.exec(
-          `INSERT INTO conversation_search_links (id, turn_id, url, label, markdown, captured, deleted, revision)
-           VALUES (?, 'search-turn', ?, ?, 'needle page', 1, 0, 1)`, linkIds[i]!, url, url));
-      });
-    }
-    const candidates = [PERSONAL_ROOM_ID, WORKSPACE_ROOM_ID].map((room, i) => ({
-      id: `message-${i}`, source: 'messages', scope_id: room, source_id: '0/search-turn', revision: 1,
-    }));
-    const rows = [...candidates, ...linkIds.map((id) => ({ id, source: 'conversation_links',
-      scope_id: PERSONAL_ROOM_ID, source_id: `0/search-turn/${id}`, revision: 1 }))];
-    const requests: unknown[] = [];
+    // The objects hold none of this text: every rendered field comes back with the candidate.
+    const display = { substream_id: '0', archived: false, occurred_at: Date.parse('2026-09-05T00:00:00Z'),
+      transcript_sequence: 1, url: null, mime_type: null };
+    const message = (id: string, room: string, extra: Record<string, unknown> = {}) => ({ id, source: 'messages', scope_id: room,
+      source_id: '0/search-turn', revision: 1, text: `needle from the index ${id}`, title: `Indexed ${id}`, source_label: `Indexed ${id}`,
+      ...display, ...extra });
+    const rows = [
+      message('message-0', PERSONAL_ROOM_ID), message('message-1', WORKSPACE_ROOM_ID),
+      ...linkIds.map((id, i) => ({ id, source: 'conversation_links', scope_id: PERSONAL_ROOM_ID, source_id: `0/search-turn/${id}`,
+        revision: 1, text: `needle page ${i}`, title: `Page ${i}`, source_label: 'Indexed room', ...display,
+        occurred_at: null, transcript_sequence: null, url: urls[i]! })),
+      message('message-archived', WORKSPACE_ROOM_ID, { archived: true }),
+      // Indexed before the display attributes existed: omitted until its rewrite lands.
+      { id: 'message-legacy', source: 'messages', scope_id: WORKSPACE_ROOM_ID, source_id: '0/search-turn', revision: 1, text: 'needle legacy' },
+    ];
+    const requests: Array<Record<string, unknown>> = [];
     externalFetch.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      requests.push(JSON.parse(String(init?.body)));
+      requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       return Response.json({ rows });
     });
-    let release = () => {};
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    let entered = 0;
-    const original = WorkstreamObjectClient.prototype.admittedSearchTurns;
-    vi.spyOn(WorkstreamObjectClient.prototype, 'admittedSearchTurns').mockImplementation(async function (this: WorkstreamObjectClient, ids) {
-      if (++entered === 1) await gate;
-      return original.call(this, ids);
+    const contentReads = vi.spyOn(SubstreamAgent.prototype, 'readAdmittedSearchContent');
+    const resourceReads = vi.spyOn(WorkspaceDO.prototype, 'resourceSearchRecords');
+    const searchEnv = { ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' };
+    const response = await searchWorkspacePage(searchEnv, AUTH, { query: 'needle', category: 'all', pageSize: 7 });
+    expect(response.results.map((row) => row.id)).toEqual(['message-0', 'message-1', ...linkIds]);
+    expect(response.complete).toBe(true);
+    expect(response.results[0]).toMatchObject({ title: 'Indexed message-0', excerpt: expect.stringContaining('from the index'),
+      occurredAt: '2026-09-05T00:00:00.000Z', location: { kind: 'message', workstreamId: PERSONAL_ROOM_ID, substreamId: '0',
+        turnId: 'search-turn', transcriptSequence: 1 } });
+    expect(response.results[2]).toMatchObject({ category: 'links', title: 'Page 0', sourceLabel: 'Indexed room',
+      location: { kind: 'link', url: urls[0] } });
+    expect(contentReads).not.toHaveBeenCalled();
+    expect(resourceReads).not.toHaveBeenCalled();
+    expect(requests[0]?.include_attributes).toEqual(expect.arrayContaining(['text', 'title', 'archived', 'transcript_sequence']));
+    expect(JSON.stringify(requests[0])).not.toContain(JSON.stringify(['scope_id', 'In', [PERSONAL_ROOM_ID, WORKSPACE_ROOM_ID]]));
+    // A member outside the personal room is admitted to the open room only, and a
+    // pair the projection has never decided is filled after the response, never inside it.
+    const memberSession = crypto.randomUUID();
+    await env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(memberSession, MEMBER_ID, WORKSPACE_ID).run();
+    const memberAuth = { ...AUTH, userId: MEMBER_ID, sessionId: memberSession };
+    const deferred: Promise<unknown>[] = [];
+    const defer = (work: Promise<unknown>) => { deferred.push(work); };
+    const first = await searchWorkspacePage(searchEnv, memberAuth, { query: 'needle', category: 'all', pageSize: 7 }, undefined, defer);
+    expect(first.results).toEqual([]);
+    expect(first.complete).toBe(false);
+    expect(deferred.length).toBeGreaterThan(0);
+    await Promise.all(deferred);
+    const filled = await searchWorkspacePage(searchEnv, memberAuth, { query: 'needle', category: 'all', pageSize: 7 }, undefined, defer);
+    expect(filled.results.map((row) => row.id)).toEqual(['message-1']);
+    expect(filled.complete).toBe(true);
+    // Archiving through the product commits the index's display intent with the change.
+    await archiveRoom(WORKSPACE_ROOM_ID);
+    await runInDurableObject(conversation(WORKSPACE_ROOM_ID), (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT state FROM durable_outbox WHERE channel = 'search_conversation_v1'`).toArray())
+        .toEqual([{ state: 'pending' }]);
     });
-    const links = vi.spyOn(WorkstreamObjectClient.prototype, 'admittedSearchLinks');
-    const pending = searchWorkspacePage({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
-      { query: 'needle', category: 'all', pageSize: 7 });
-    try {
-      // The second canonical conversation read must start before the first finishes.
-      await vi.waitFor(() => expect(entered).toBe(2));
-      release();
-      const response = await pending;
-      expect(response.results.map((row) => row.id)).toEqual(rows.map((row) => row.id));
-      expect(links).toHaveBeenCalledTimes(1);
-      expect(links.mock.calls[0]?.[0]).toHaveLength(2);
-      expect(JSON.stringify(requests[0])).not.toContain(JSON.stringify(['scope_id', 'In', [PERSONAL_ROOM_ID, WORKSPACE_ROOM_ID]]));
-      const visible = await workspaceStub().searchableWorkstreamIds({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID });
-      expect(visible.items).toContain(WORKSPACE_ROOM_ID);
-      expect(visible.items).not.toContain(PERSONAL_ROOM_ID);
-      const memberSession = crypto.randomUUID();
-      await env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
-        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(memberSession, MEMBER_ID, WORKSPACE_ID).run();
-      const restricted = await searchWorkspacePage({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' },
-        { ...AUTH, userId: MEMBER_ID, sessionId: memberSession }, { query: 'needle', category: 'all', pageSize: 7 });
-      expect(restricted.results.map((row) => row.id)).toEqual(['message-1']);
-      await archiveRoom(WORKSPACE_ROOM_ID);
-      const archived = await searchWorkspacePage({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
-        { query: 'needle', category: 'all', pageSize: 7 });
-      expect(archived.results.map((row) => row.id)).not.toContain('message-1');
-    } finally { release(); await pending.catch(() => {}); }
   });
 
   it('keeps inbound email private through the deployed resource reader', async () => {
@@ -523,19 +528,6 @@ describe("conversation parent contract", () => {
     expect((await access.checkMany(addresses)).map((decision) => decision.status)).toEqual(['allowed', 'allowed']);
     expect(parentReads).toBe(2);
     expect(attachments).toHaveBeenCalledTimes(2);
-    const snapshots = vi.spyOn(WorkspaceDO.prototype, 'resourceSearchRecords');
-    const page = await new ResourceService(readEnv, AUTH).searchTexts(resourceIds);
-    expect(page.complete).toBe(true);
-    expect([...page.records.keys()].sort()).toEqual(resourceIds.sort());
-    for (const id of resourceIds) {
-      expect(page.records.get(id)?.text).toContain('Private email');
-      expect(page.records.get(id)?.revision).toBe(String(await workspaceStub().resourceSearchRevision({
-        workspaceId: WORKSPACE_ID, resourceId: id,
-      })));
-    }
-    expect(snapshots).toHaveBeenCalledTimes(1);
-    expect(parentReads).toBe(3);
-    expect(attachments).toHaveBeenCalledTimes(3);
   });
 
   it("stops resource admission at the first valid attachment location", async () => {
@@ -599,13 +591,17 @@ describe("conversation parent contract", () => {
       await seedParticipantMessage(state, { id: 'hash-turn', sequence: 1, text });
     });
     const generation = await searchContentHash(text);
-    externalFetch.mockImplementation(async () => Response.json({ rows: [{ id: 'hash-candidate', source: 'messages',
-      scope_id: PERSONAL_ROOM_ID, source_id: '0/hash-turn', revision: 1, generation }] }));
-    const digest = crypto.subtle.digest.bind(crypto.subtle);
+    const row = { id: 'hash-candidate', source: 'messages', scope_id: PERSONAL_ROOM_ID, source_id: '0/hash-turn', revision: 1, generation,
+      text, substream_id: '0', title: 'Private room', source_label: 'Private room', archived: false,
+      occurred_at: Date.parse('2026-09-05T00:00:00Z'), transcript_sequence: 1, url: null, mime_type: null };
+    externalFetch.mockImplementation(async () => Response.json({ rows: [row] }));
+    expect(await searchWorkspace({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
+      { query: 'needle', category: 'messages' })).toMatchObject([{ id: 'hash-candidate' }]);
+    // The revocation commits while the next search's index query is in flight. That
+    // request and the one after it still trust the projected decision.
     let revoked = false;
-    vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (algorithm, data) => {
-      const hashed = await digest(algorithm, data);
-      if (!revoked && new TextDecoder().decode(data) === JSON.stringify(text)) {
+    externalFetch.mockImplementation(async () => {
+      if (!revoked) {
         const removal = await post(conversation(PERSONAL_ROOM_ID), '/internal/product', {
           operation: 'remove_participant', auth: AUTH, userId: AUTHOR_ID,
         });
@@ -613,7 +609,7 @@ describe("conversation parent contract", () => {
         await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID));
         revoked = true;
       }
-      return hashed;
+      return Response.json({ rows: [row] });
     });
     expect(await searchWorkspace({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
       { query: 'needle', category: 'messages' })).toMatchObject([{ id: 'hash-candidate' }]);
@@ -741,21 +737,31 @@ describe("conversation parent contract", () => {
     let source = 'messages';
     let includeVerifiedMessage = false;
     let generation: string | undefined;
-    externalFetch.mockImplementation(async () => Response.json({ rows: [{ id: 'search-candidate', source, generation,
-      scope_id: source === 'artifacts' ? WORKSPACE_ID : PERSONAL_ROOM_ID,
-      source_id: source === 'messages' ? `${reserved.substreamId}/search-private-turn` : source === 'conversation_links' ? `${reserved.substreamId}/search-private-turn/${privateLinkId}` : searchResourceId,
-      revision: source === 'artifacts' ? resourceRevision : 1 }, ...(includeVerifiedMessage ? [{ id: 'verified-message', source: 'messages', scope_id: PERSONAL_ROOM_ID,
-        source_id: `${reserved.substreamId}/search-private-turn`, revision: 1 }] : [])] }));
+    // Every rendered field travels with the candidate; the objects are read for admission only.
+    const display = { archived: false, occurred_at: Date.parse('2026-09-05T00:00:00Z'), url: null, mime_type: null };
+    const conversationRow = (id: string) => ({ id, source: 'messages', scope_id: PERSONAL_ROOM_ID, substream_id: reserved.substreamId,
+      source_id: `${reserved.substreamId}/search-private-turn`, revision: 1, text: `private search phrase ${privateUrl}`,
+      title: 'Private room', source_label: 'Private room', transcript_sequence: 1, ...display });
+    const candidate = () => {
+      if (source === 'messages') return { ...conversationRow('search-candidate'), generation };
+      if (source === 'conversation_links') return { ...conversationRow('search-candidate'), generation, source: 'conversation_links',
+        source_id: `${reserved.substreamId}/search-private-turn/${privateLinkId}`, text: `${privateUrl}\n${privateUrl}\nprivate search page`,
+        title: privateUrl, url: privateUrl, transcript_sequence: null, occurred_at: null };
+      return { id: 'search-candidate', source: 'artifacts', generation, scope_id: WORKSPACE_ID, source_id: searchResourceId,
+        revision: resourceRevision, text: 'private search artifact', title: 'private search artifact',
+        source_label: 'private search artifact', transcript_sequence: null, ...display, mime_type: 'text/plain' };
+    };
+    externalFetch.mockImplementation(async () => Response.json({ rows: [candidate(),
+      ...(includeVerifiedMessage ? [conversationRow('verified-message')] : [])] }));
     try {
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' }))
-        .toMatchObject([{ excerpt: `private search phrase ${privateUrl}` }]);
+        .toMatchObject([{ excerpt: expect.stringContaining('private search phrase') }]);
       expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID },
         { query: 'private search', category: 'messages' })).toEqual([]);
-      generation = await searchContentHash(`private search phrase ${privateUrl}`);
-      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' }))
-        .toMatchObject([{ excerpt: `private search phrase ${privateUrl}` }]);
+      // Lexical rows carry no generation hash; one present is not re-validated on the read path.
       generation = await searchContentHash('different private search phrase');
-      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' })).toEqual([]);
+      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'messages' }))
+        .toMatchObject([{ excerpt: expect.stringContaining('private search phrase') }]);
       generation = undefined;
       source = 'conversation_links';
       const participantSession = crypto.randomUUID();
@@ -797,11 +803,9 @@ describe("conversation parent contract", () => {
         .toMatchObject([{ title: 'private search artifact' }]);
       expect(await searchWorkspace(searchEnv, { ...AUTH, userId: PARTICIPANT_ID },
         { query: 'private search', category: 'artifacts' })).toEqual([]);
-      generation = await searchContentHash('private search artifact');
+      generation = await searchContentHash('different private search artifact');
       expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' }))
         .toMatchObject([{ title: 'private search artifact' }]);
-      generation = await searchContentHash('different private search artifact');
-      expect(await searchWorkspace(searchEnv, AUTH, { query: 'private search', category: 'artifacts' })).toEqual([]);
       // Run the actual reference-only backfill, then verify the exact-path reader.
       await workspaceStub().beginAuthorizationBackfill({ workspaceId: WORKSPACE_ID });
       const projection = { type: 'authorization_projection_v1' as const, region: 'global' as const,

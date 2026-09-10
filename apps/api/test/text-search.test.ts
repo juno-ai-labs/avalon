@@ -250,3 +250,42 @@ describe("search namespace identity", () => {
     for (const name of provider.namespaces) expect(name).toMatch(/^[A-Za-z0-9-_.]{1,128}$/u);
   });
 });
+
+describe("index-served display", () => {
+  const index = new TextSearchIndex({ apiKey: "test", region: "gcp-us-west1", namespace: "test" });
+  beforeEach(() => {
+    vi.resetAllMocks();
+    provider.write.mockResolvedValue({});
+  });
+
+  it("writes what a result renders as columns and asks for them back with the text", async () => {
+    await index.upsert([{ id: "m", source: "messages", sourceId: "0/turn", scopeId: "room", substreamId: "0", revision: 1, text: "needle",
+      display: { title: "Room", sourceLabel: "Room", occurredAt: 5, transcriptSequence: 2, url: null, mimeType: null, archived: false } }]);
+    expect(provider.write.mock.calls[0]![0].upsert_rows[0]).toMatchObject({ substream_id: "0", title: "Room", source_label: "Room",
+      occurred_at: 5, transcript_sequence: 2, archived: false, url: null, mime_type: null });
+    await index.upsert([{ id: "t", source: "files", sourceId: "r", scopeId: "ws", revision: 1, text: "" }]);
+    expect(provider.write.mock.calls[1]![0].upsert_rows[0]).toMatchObject({ substream_id: null, title: null, archived: null });
+    provider.query.mockResolvedValue({ rows: [] });
+    await index.queryPage([{ source: "messages", scopeIds: null, load: async () => new Map() }], { query: "needle", mode: "substring", limit: 7 });
+    expect(provider.query.mock.calls[0]![0].include_attributes).toEqual(expect.arrayContaining([
+      "text", "title", "source_label", "archived", "occurred_at", "transcript_sequence", "url", "mime_type", "substream_id"]));
+  });
+
+  it("patches a renamed conversation until no row still shows the old display", async () => {
+    provider.write.mockResolvedValueOnce({ rows_patched: 2 }).mockResolvedValueOnce({ rows_affected: 0 })
+      .mockResolvedValueOnce({ rows_patched: 1 }).mockResolvedValueOnce({});
+    expect(await index.patchConversationDisplay({ scopeId: "room", substreamId: "0" }, { title: "New", archived: false })).toBe(3);
+    expect(provider.write).toHaveBeenCalledTimes(4);
+    const first = provider.write.mock.calls[0]![0];
+    expect(first.patch_by_filter.patch).toEqual({ title: "New", source_label: "New", archived: false });
+    expect(first.patch_by_filter_allow_partial).toBe(true);
+    expect(first.patch_by_filter.filters[1]).toEqual(expect.arrayContaining([
+      ["source", "Eq", "messages"], ["scope_id", "Eq", "room"], ["substream_id", "Eq", "0"], ["deleted", "Eq", false]]));
+    expect(JSON.stringify(first.patch_by_filter.filters)).toContain(JSON.stringify(["title", "NotEq", "New"]));
+    expect(provider.write.mock.calls[2]![0].patch_by_filter.filters[1]).toContainEqual(["source", "Eq", "conversation_links"]);
+    expect(provider.write.mock.calls[2]![0].patch_by_filter.patch).toEqual({ source_label: "New", archived: false });
+    // A namespace that was never written has nothing to patch.
+    provider.write.mockRejectedValueOnce(Object.assign(new Error("missing"), { status: 404 }));
+    expect(await index.patchConversationDisplay({ scopeId: "room", substreamId: "0" }, { title: "New", archived: true })).toBe(0);
+  });
+});

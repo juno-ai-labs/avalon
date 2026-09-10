@@ -95,9 +95,23 @@ export async function prepareResourceSearch(sql: SqlStorage, env: Env, workspace
   for (const source of ['files', 'artifacts', 'links'] as const) {
     const id = await searchDocumentId(source, workspaceId, resourceId);
     if (documentId !== undefined && documentId !== id) continue;
+    const live = source === category && text !== null && row !== undefined;
     documents.push({ id,
       source, sourceId: resourceId, scopeId: workspaceId, revision,
-      text: source === category ? text : null });
+      text: live ? text : null,
+      // The row is the canonical metadata the result used to reload; the index
+      // now carries it so a hit renders without touching this object again.
+      ...(live ? { display: {
+        title: String(row.title ?? ''), sourceLabel: String(row.title ?? ''),
+        occurredAt: resourceDisplayTime(row.updated_at), transcriptSequence: null, url: null,
+        mimeType: typeof row.mime_type === 'string' ? row.mime_type : null, archived: false,
+      } } : {}) });
   }
   return { documents, retry: false };
+}
+
+/** WorkspaceDO keeps ISO strings; the index stores Unix milliseconds or nothing. */
+function resourceDisplayTime(value: unknown): number | null {
+  const parsed = typeof value === 'string' ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }

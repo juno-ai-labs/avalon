@@ -21,7 +21,7 @@ unavailable authority; the desktop labels partial results and offers retry.
   tombstones, retrieval, and canonical result loading.
 - `apps/api/src/services/search-indexing-pipeline.ts`: shared chunk planning and independently retriable batch indexing.
 - `apps/api/src/services/search-indexing-jobs.ts`: reference-only batch contracts and Queue publication.
-- `apps/api/src/services/search-document.ts`: canonical document and deletion contracts.
+- `apps/api/src/services/search-document.ts`: canonical document, display and deletion contracts.
 - `apps/api/src/services/search-embedding.ts`: pinned Qwen tokenizer and embedding integration.
 - `apps/api/src/services/semantic-chunks.ts`: recursive and sliding-window semantic chunks.
 - `apps/api/test/semantic-chunks.test.ts`: coverage, Unicode, overlap, and token budgets.
@@ -47,8 +47,11 @@ embedded chunks. The semantic hash combines the workspace identity with tokenize
 and overlap, so changing chunk policy requires a semantic backfill in a new space.
 Hashing the complete semantic identity once keeps the name within Turbopuffer's
 [published 128-character namespace limit](https://turbopuffer.com/docs/write).
-A document records its source, canonical source ID, scope ID, revision, text,
-and, for semantic records, embedding. `searchDocumentId` hashes the source, scope, and source ID into a
+A document records its source, canonical source ID, scope ID, substream, revision, text,
+the display a result renders (title, source label, time, transcript position, link URL,
+MIME type and archive state), and, for semantic records, embedding. The producing object
+writes the display beside the text from its own tables; a deletion watermark and a row
+written before the display existed carry none. `searchDocumentId` hashes the source, scope, and source ID into a
 stable ID within Turbopuffer's 64-byte string-ID limit. Updates use conditional
 writes. Deletion replaces the document with a content-free revision watermark,
 preventing delayed writes at the same or an older revision from restoring it.
@@ -78,18 +81,30 @@ Requests opt into pagination with `pageSize` and continue with `nextCursor`, the
 last consumed Turbopuffer id boundary (stable hash order, not relevance or
 recency). This deterministic position is never an authorization grant.
 Continuation exposes matching index progress even if the page has no admitted
-results; it does not guarantee a readable match on a subsequent page. Each page obtains
-readable conversation scopes from WorkspaceDO and filters retrieval by those
-scopes. Each source admits its candidate batch through the eventually consistent search authorization projection (`checkMany`), then
-loads canonical content without repeating authorization after asynchronous reads.
-Conversation messages and links are grouped by parent/substream. Resources load
-metadata and revisions in one WorkspaceDO RPC, then load bodies concurrently.
-Canonical revision and content-hash checks still reject stale index candidates.
+results; it does not guarantee a readable match on a subsequent page. The read
+path touches no Durable Object and no R2. Each source admits its candidate batch
+through the projected search decision (`checkMany`: Global reads KV, EU reads the
+WorkspaceDO snapshot table) and renders every result from the attributes the
+candidate came back with: the full text, the title and source label, the time,
+the transcript position, the link URL, the MIME type and the archive state. A
+decision the projection does not hold yet is answered unavailable, the candidate
+is omitted, the page reports `complete: false`, and the fill (registration,
+canonical walk, publication) runs after the response through `waitUntil`, so the
+next search finds it. Conversation messages and links are grouped by
+parent/substream. A row indexed before the display attributes existed, or whose
+conversation is archived, is omitted: not finding something is the safe failure.
+No revision or content-hash check runs against canonical text on the read path;
+the conditional upsert, the deletion watermark and the pipeline's post-write
+fence are what keep the index current. A conversation rename or archive reaches
+its indexed rows through `search_conversation_projection_v1`: one coalesced
+outbox row per conversation, a job that names the conversation only, and a
+`patch_by_filter` pass per source that rewrites the rows still showing the old
+values until none does.
 
 Older clients omit `pageSize` and retain the array response shape with up to 50
 results from one candidate batch. They receive no pagination or timing fields and
 do not trigger hidden refill scans. The 250ms typing debounce, REST, and final
-workspace membership check remain unchanged. Search decisions are cached in regional KV/SQLite and updated by DO mutation pushes through the activity queue. Reads do not trigger refresh, and decisions do not expire by age. No search-result cache is introduced.
+workspace membership check remain unchanged. Search decisions are cached in regional KV/SQLite and updated by DO mutation pushes through the activity queue. A read never waits for a refresh: a miss is filled after the response. Decisions do not expire by age. No search-result cache is introduced.
 
 The user-facing targets are p50 <= 500ms and p90 <= 1000ms from the last
 keystroke to painted results, including debounce. An empty page with continuation
@@ -272,10 +287,13 @@ missing-attribute behavior, and cleanup of legacy rows while retaining new chunk
 
 ### Queue recovery
 
-Source jobs (`search_projection_v1` and `resource_search_projection_v1`) and
+Source jobs (`search_projection_v1` and `resource_search_projection_v1`),
+display jobs (`search_conversation_projection_v1`) and
 embedding children (`search_embedding_batch_v1`) share the regional activity
 Queue with unrelated jobs. Inspect and replay only the failed search messages;
-never purge the whole Queue. Malformed embedding jobs retry and eventually
+never purge the whole Queue. A display job can be replayed unchanged at any
+time: it carries only the conversation address and reads the current title and
+archive state when it runs. Malformed embedding jobs retry and eventually
 dead-letter rather than falling through to the legacy-message acknowledgment. Publish a replacement durably before acknowledging
 or removing its failed predecessor.
 
@@ -290,15 +308,18 @@ existing projection publication obligation; semantic policy/namespace changes
 require a canonical-source backfill. Queue depth and chunk counts alone do not
 establish that all canonical documents have migrated.
 
-Sources provide server-resolved scope IDs and a canonical loader. Search filters
+Sources provide server-resolved scope IDs and an admitting loader. Search filters
 by those grants, validates returned candidate metadata, then invokes each loader
-only for candidates belonging to its source and scopes. The returned text comes
-from those loaders, never from the index.
+only for candidates belonging to its source and scopes. The loader admits through
+the projection and builds results from the candidate's own attributes; nothing is
+reloaded from a canonical source.
 
 ## Invariants
 
 - Search scope enumeration includes archived and system conversations and has its own complete-list contract. Sidebar visibility is not search readability.
-- Scope prefilters are an optimization, never authority. Current canonical authorization decides every returned result.
+- Scope prefilters are an optimization, never authority. The projected search decision decides every returned result; an index attribute never grants access.
+- A row without its display attributes, or with `archived` set, is never returned. Omission is the safe failure; nothing falls back to a canonical reload.
+- Every writer of a conversation's display writes the current state it reads beside the text: the producer at upsert time, the patch job when it runs. A display job names the conversation and never carries a title, so a delayed or redelivered job cannot write an old one, and the pipeline's post-write fence retries an upsert whose display changed underneath it.
 - Public cursors identify consumed candidate positions and never grant access. Fully rejected pages may expose continuation; index-existence concealment is not part of this member-only API.
 
 - One tokenizer is retained per isolate (about 26 MiB after releasing construction
@@ -306,7 +327,7 @@ from those loaders, never from the index.
   frozen. Input fragments must be cleared before every count returns or throws.
 - Chunk offsets use the sorted code-point boundary array directly; do not add
   a per-character Map and its transient construction pairs.
-- Source loaders admit each candidate batch before canonical loading and reject stale index revisions. A new request admits again; an admitted result may finish after a concurrent revocation.
+- Source loaders admit each candidate batch before rendering it. A new request admits again; an admitted result may finish after a concurrent revocation, which reaches the projection within its push delay rather than before the next page.
 - Namespace identity includes the embedding model and dimensions. Mixing spaces
   makes vector distances meaningless.
 - Deleted revisions win against replayed upserts at the same revision. Removing
@@ -324,11 +345,11 @@ All, Messages, Links, Artifacts, and Files tabs use literal case-insensitive
 substring retrieval. BM25 and ANN are available at the shared boundary but are
 not yet exposed through this member endpoint.
 
-Conversation loaders admit the parent/private-child batch before reading canonical
-turns. Resource loaders admit their batch and load canonical metadata and revisions
-in one owner snapshot. Search revision values are parsed as integers; missing or
-renamed columns fail visibly instead of silently discarding every result. The route revalidates the workspace session before returning.
-The index returns candidate identifiers, never trusted display text. Excerpts
+Conversation loaders admit the parent/private-child batch and resource loaders
+admit their batch through the projected decision; neither reads an owner. The
+route revalidates the workspace session before returning. The index returns
+candidate identifiers, the canonical text and the display attributes the owning
+object wrote beside it, trusted for the projection's staleness window. Excerpts
 contain UTF-16 source ranges and excerpt-relative highlight ranges; React renders
 matching spans as text. Selecting a message hydrates its canonical sequence and
 positions the transcript. Selecting a file opens `/search/resources/:id/preview`, which repeats attachment
@@ -348,9 +369,16 @@ retrieval without a query embedding throws `search_embedding_required`. Provider
 write/query failures become content-free errors. The HTTP route returns a generic
 503 rather than exposing provider payloads. A nonexistent namespace is empty
 before its first write; other provider failures are not treated as empty results.
-A malformed canonical resource revision also fails the entire search response with
-503; its content-free diagnostic code is `search_resource_revision_invalid`, so
-operators can distinguish snapshot shape drift from an index/provider failure.
+
+A search never waits for a canonical owner: an undecided candidate is omitted and
+filled after the response. A `search_conversation_projection_v1` job that
+dead-letters leaves a conversation's previous title, or an archived conversation's
+rows, visible to admitted readers until it is redriven; a text rewrite that
+dead-letters leaves its row omitted, because a row carries no display until it is
+rewritten. Edited or deleted text stays findable by admitted readers until its
+rewrite or watermark lands, typically seconds. The team accepted this window,
+with ten minutes as the bound the projection chain is expected to meet and a
+non-empty dead-letter queue as the signal that it did not.
 
 Turbopuffer requires a valid embedding for live documents in a vector-enabled
 namespace. Callers must retain failed projection work for retry. The service does
@@ -386,7 +414,17 @@ drives the Queue consumer through real source RPC and R2 reads, verifies identic
 chunks across messages/files/artifacts/pages, and proves concurrent deletion causes
 generation cleanup and retry. Its only doubles are external APIs/model assets.
 The pinned Qwen tokenizer was separately exercised in workerd with its actual
-public model assets served from a temporary local mirror. Component tests cover tabs, keyboard
+public model assets served from a temporary local mirror. The same pipeline suite
+proves the display attributes each producer writes and the patch passes a renamed
+or archived conversation runs until no row differs; `test-workers/search-projection.test.ts`
+covers the display trigger, its outbox channel and the migration-52 requeue;
+`test-workers/search-authorization.test.ts`, `test-workers/conversation-parent-contract.test.ts`
+and `test/search-route.test.ts` cover deferred fills and index-served rendering
+with no content RPC. A disposable live namespace in gcp-us-west1 verified on
+2026-09-10 that the display attributes can be added to an existing namespace,
+that `text` returns with the row, that `patch_by_filter` reports `rows_patched`
+and matches nothing on its second pass, that a tombstone is untouched, and that
+a row without `archived` does not match `archived Eq false`. Component tests cover tabs, keyboard
 selection, stale responses, and error presentation. The modal was inspected in a
 real Electron window using synthetic results; this is not production end-to-end
 search verification.
@@ -400,6 +438,12 @@ participant turns into `durable_outbox` under `search_projection_v1`. Both use
 existing regional `ACTIVITY_QUEUE` transport with reference-only messages. The
 consumer reloads current source state and conditionally writes its revision.
 Resource watermarks survive deletion; transcript deletes publish tombstones.
+SubstreamAgent migration 52 installs the `workstream` title/archive trigger behind
+the `search_conversation_v1` channel and requeues every committed turn once so its
+lexical row is rewritten with the display attributes; WorkspaceDO migration 47
+marks every resource pending for the same rewrite. A row is omitted from results
+until its rewrite lands, so a workspace's search fills in as its objects wake and
+the Queue drains.
 
 Object alarms dispatch pending references only when the regional Turbopuffer key
 and `OPENROUTER_API_KEY` are present. Otherwise intents remain pending and search
@@ -477,6 +521,35 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-10 — Serve results from the index and keep Durable Objects off the read path
+
+Production traces of member search showed retrieval at about 45ms and the rest
+of a 5 to 47 second response spent reloading each candidate from cold Durable
+Objects, one conversation at a time: a WorkstreamDO read that woke and waited on
+its SubstreamAgent, then a content read from that agent, then WorkspaceDO and R2
+for resources. The team chose read performance over re-validation, accepted
+eventual consistency for what search shows within a ten-minute bound, and kept
+the KV projection as the security layer. The index therefore carries what a
+result renders (title, source label, time, transcript position, link URL, MIME
+type, archive state), written by the owning object beside the text with no
+extra RPC, and the read path renders from those attributes: no Durable Object,
+no R2, no revision or content-hash re-validation. A rename or archive reaches
+the rows through a coalesced `search_conversation_v1` outbox row and a job that
+reads the current display and patches by filter until no row still differs.
+Admission stays on the projected decision; a miss is answered unavailable and
+filled after the response, so a request never waits on an owner. Rows without
+the display attributes are omitted rather than reloaded, which is why migration
+52 requeues every turn and WorkspaceDO migration 47 every resource. The
+alternative of moving readability keys into the index as well was designed and
+rejected for now: the KV projection already exists, little data mutates, and a
+missed result is acceptable where a wrong one is not. `readAdmittedSearchContent`
+and `resourceSearchRecords` stay callable for one release for Workers still
+rolling out; the Worker-side loaders are gone. This reverses the 2026-09-08
+entries below that retained canonical text and revision validation on the read
+path; future changes must keep every display writer writing current state and
+must not reintroduce a canonical reload as a fallback for a row the index has
+not rewritten yet.
 
 ### 2026-09-09 — Remove directory discovery from paginated retrieval
 

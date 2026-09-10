@@ -14,8 +14,13 @@ export const searchRoutes = new Hono<HonoAppEnv>();
 searchRoutes.post('/', zValidator('json', SearchRequestSchema), async (c) => {
   const auth = getAuth(c);
   const started = performance.now();
+  // A missing projected decision is filled after this response, never inside it.
+  const defer = (work: Promise<unknown>) => {
+    try { c.executionCtx.waitUntil(work); }
+    catch { void work.catch(() => undefined); }
+  };
   let results;
-  try { results = await searchWorkspacePage(c.env, auth, c.req.valid('json'), c.req.raw.signal); }
+  try { results = await searchWorkspacePage(c.env, auth, c.req.valid('json'), c.req.raw.signal, defer); }
   catch (error) {
     if (error instanceof ApiError) throw error;
     logWarn(c.env, 'search_workspace_unavailable', {
