@@ -1,5 +1,4 @@
-import type { SidekickAttachment } from '@rally/contracts';
-import { AttachedSidekicks } from './attached-sidekicks';
+import { SidekickSection, type SidekickRow } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
@@ -70,24 +69,13 @@ interface InspectorRailProps {
     surface: SiteResourceDetailProps['surface'];
   };
   workstream?: WorkstreamDetail;
-  attachedSidekicks?: SidekickAttachment[] | undefined;
-  attachedSidekicksError?: string | undefined;
-  onRemoveSidekick?: ((id: string) => void) | undefined;
   /**
-   * The automations this work stream owns, newest first.
-   *
-   * `undefined` is still loading; `[]` is genuinely none. A room's automations
-   * are listed here and nowhere else — the sidebar excludes them — so coercing
-   * a pending fetch to `[]` tells somebody the room owns nothing while the
-   * answer is still on its way.
+   * This work stream's Sidekicks, or `undefined` while the answer is on its
+   * way. Neither state leaves a heading behind: a room with none simply has no
+   * such section, as it has no artifact section until it has produced one.
    */
-  /** Set when the list could not be loaded, so absence is not read as none. */
-  /** Opens one in the automation surface. Absent where there is nowhere to go. */
-  /**
-   * Whether the context lists the automations this parent owns. Only a work
-   * stream owns any; an automation's own conversation shows no such section
-   * rather than an empty one.
-   */
+  sidekicks?: SidekickRow[] | undefined;
+  sidekicksError?: string | undefined;
   onAddParticipant?: () => void;
   onAddResource?: () => void;
   onDetachResource?: (resource: WorkstreamResource) => void | Promise<void>;
@@ -135,14 +123,7 @@ function Section({ title, action, children }: { title: string; action?: React.Re
   );
 }
 
-/**
- * The automations this work stream owns.
- *
- * Three states, kept apart on purpose: still loading, failed to load, and
- * genuinely none. A room's automations appear here and nowhere else, so "none"
- * is a claim about the room rather than about the fetch, and saying it while a
- * request is in flight — or after one failed — is saying something false.
- */
+/** The resources attached to this conversation, sources before artifacts. */
 function ResourceCards({
   resources,
   onToggleWatch,
@@ -196,17 +177,15 @@ function watchLabel(resource: WorkstreamResource): { text: string; name: string 
 
 function ContextContent({
   workstream,
-  attachedSidekicks,
-  attachedSidekicksError,
-  onRemoveSidekick,
+  sidekicks,
+  sidekicksError,
   onAddParticipant,
   onAddResource,
   onToggleWatch,
 }: Pick<InspectorRailProps,
   | 'workstream'
-  | 'attachedSidekicks'
-  | 'attachedSidekicksError'
-  | 'onRemoveSidekick'
+  | 'sidekicks'
+  | 'sidekicksError'
   | 'onAddParticipant'
   | 'onAddResource'
   | 'onToggleWatch'
@@ -279,7 +258,7 @@ function ContextContent({
         )}
       </Section>
 
-      <AttachedSidekicks items={attachedSidekicks} error={attachedSidekicksError} onRemove={onRemoveSidekick} />
+      <SidekickSection items={sidekicks} error={sidekicksError} />
 
       <Section title="Details">
         <dl className="detail-list">
