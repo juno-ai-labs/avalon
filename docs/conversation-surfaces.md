@@ -319,32 +319,32 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
-### 2026-09-10 — Turn to turn is the height of the hover row
+### 2026-09-10 — Turn to turn closes onto the hover row
 
 **What changed:** `sys.space.stack.gap`, the space a turn owns above itself
-when the row before it is also a turn, goes from eight units (32px) to three
-(12px). Nothing else in the rhythm moves: a turn beside an event is still four
-units and event to event two, so turn to turn is now the closer of the two
-turn distances rather than the wider one.
+when the row before it is also a turn, goes from eight units (32px) to one
+(4px). Nothing else in the rhythm moves: a turn beside an event is still four
+units and event to event two, so turn to turn is now the smallest distance in
+the feed.
 
 **Why:** Both kinds of turn keep an action row under themselves that is laid
 out always and painted on hover (Rally's Copy, Speak, Image, PDF and New
-substream strip, and the person's New substream), and it measures about 18px
-tall with 8 above it under an answer and 4 under a bubble. At 32px the row a
-reader hovered floated in the middle of a 58px void between Rally's answer and
-the person's reply, and two people talking in the room sat 54px apart, which
-read as separate conversations rather than one exchange. The number is set
-against the hover row: the strip sits under its turn and the next turn sits
-just under the strip, a little less than the strip's own height, close without
-touching. The first cut added a fifth gap, a closer one for a person's turn
-after a person's turn only, and was withdrawn when the ask turned out to be
-every turn: two tokens at one value would have been a name with no second
-reader. The second cut set it to four units, the hover row's height rounded
-down to the scale, and the screenshots were judged one unit too loose, so it
-is three. That puts turn to turn one unit under the turn-to-event gap. The
-two were tuned separately, each on its own screenshots, and the ordering is
-what those tunings produced rather than a rule; a later tuning of either
-should not assume the other follows.
+substream strip, and the person's New substream), about 18px tall with 8
+above it under an answer and 4 under a bubble. At 32px the row a reader
+hovered floated in the middle of a 58px void between Rally's answer and the
+person's reply, and two people talking in the room sat 54px apart, which read
+as separate conversations rather than one exchange. The gap was tuned in a
+real window, on screenshots of Rally's hovered strip with a person's reply
+under it, and came down in steps: four units, the strip's height rounded down
+to the scale; three, judged one unit too loose; then one. At one unit the
+strip itself is what keeps the next turn off the last, and the gap is only
+the clearance under it. The first cut had added a fifth gap, a closer one for
+a person's turn after a person's turn only, and was withdrawn when the ask
+turned out to be every turn: two tokens at one value would have been a name
+with no second reader. Turn to turn now sits under both the turn-to-event and
+the event-to-event gaps. The three were tuned separately, each on its own
+screenshots, and the ordering is what those tunings produced rather than a
+rule; a later tuning of any of them should not assume the others follow.
 
 ### 2026-09-10 — A seeded conversation shows a connecting card and composes without sending
 
