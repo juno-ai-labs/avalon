@@ -117,17 +117,22 @@ Sidekick remains owned by that workstream.
 ### Conversational publication
 
 Enabled personal and workspace Sidekicks render as a horizontal scrolling strip
-above the account menu in expanded mode. In compact mode they join the vertical
-navigation scroller as 54px square icon buttons with 9px padding and 36px
-artwork, matching the work-stream rows. Enabled means lifecycle
+above the account menu, in both the expanded sidebar and the compact rail. The
+rail keeps the strip where it is and keeps it horizontal: the tiles shed their
+captions and shrink to the work-stream rows' 54px square with 9px padding and
+36px artwork, one tile centred when there is one and the next showing past the
+21px padding when there are more, and the strip scrolls sideways for the rest.
+The tiles change shape over the sidebar's own collapse motion, so they arrive
+with the edge rather than a frame ahead of it. Enabled means lifecycle
 `active`, not a run currently in progress and not the stored `loadable` capability.
 Draft, paused, and workstream-owned Sidekicks are excluded. The strip is absent
 when no entries qualify. Each tile reuses the rounded hexagon, stable identity
 color, centered symbol, and square lifecycle marker introduced for automation
 shortcuts. Selecting a tile opens its detail in the singleton Sidekicks library
 window. Management and execution controls remain on that authorized detail;
-directory summaries alone do not advertise those capabilities. Compact mode
-retains Search and New chat above the scrolling streams.
+directory summaries alone do not advertise those capabilities. Search sits
+above the scrolling streams in both layouts, and the rail adds New chat under
+it; neither scrolls with the list.
 
 The strip follows the installed Grok Bot 0.44.0 pinned layout, inspected on
 2026-09-07 in `Contents/Resources/app.asar`: `index-C6zjACOA.js` and
@@ -556,6 +561,36 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-10 — The rail keeps the Sidekick strip horizontal, at the bottom
+
+**What changed:** In the compact rail the strip stays below the scrolling
+streams and above the account row, and stays a horizontally scrolling row of
+54px tiles, with one tile centred and the next showing past the padding. This
+reverses the 2026-09-08 entry below, which had folded the tiles into the
+vertical navigation scroller.
+
+**Why:** The strip was asked to keep its place and its horizontal scroll in
+the collapsed sidebar, so the Sidekicks are reached at the same spot whichever
+width the sidebar is at and however long the stream list is; folded into the
+scroller they moved with the list and were off screen whenever it was long.
+The clipping the earlier entry set out to avoid came from centring a 54px tile
+in a 54px content box: the rail now gives the strip 21px of padding a side,
+which centres a lone tile in the 96px rail exactly and clips nothing, and
+closes the tiles' gap so the second tile's mark shows past the edge as the
+hint that there is more.
+
+**Considered and rejected:** Keeping the column and pinning it below the list
+with its own scroll, which would have given the rail two vertical scrollers
+one above the other. Widening the peek by shifting a lone tile off centre,
+which would have set it against the rows' 54px seat.
+
+**Consequences:** The strip's spacing is padding rather than a margin in both
+widths, so its tiles scroll to the sidebar's edge; the tiles' shapes are
+transitions on `--sidebar-layout-motion`, per
+[`conversation-surfaces.md`](conversation-surfaces.md), and a rule that gives
+a tile a keyword size in one width cuts. On a platform whose scrollbars take
+space, an overflowing strip in the rail shows a thin scrollbar under the tile.
 
 ### 2026-09-08 — Give Sidekicks a library and dedicated profile layout
 

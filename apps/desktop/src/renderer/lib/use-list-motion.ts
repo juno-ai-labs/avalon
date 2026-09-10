@@ -1,6 +1,8 @@
 import { useLayoutEffect, useRef, type RefObject } from 'react';
 import {
   LIST_MOTION,
+  enterKeyframes,
+  exitKeyframes,
   moverKeyframes,
   planListMotion,
   shifterKeyframes,
@@ -13,11 +15,20 @@ import {
 interface Running {
   animation: Animation;
   from: { x: number; y: number };
+  /**
+   * An entrance travels horizontally only, so a change of layout does not
+   * stale it the way it stales a move measured between slots that no longer
+   * exist; it is the one kind of animation a relayout leaves playing.
+   */
+  entrance: boolean;
 }
 
-/** A row as last measured: where it was, and which element it was. */
+/** A row as last measured: its layout box in the container's content, and which element it was. */
 interface Seen extends ListMotionFrom {
   element: HTMLElement;
+  left: number;
+  width: number;
+  height: number;
 }
 
 /**
@@ -38,13 +49,27 @@ interface Seen extends ListMotionFrom {
  * are looking at. A remounted row with focus is not the reader's doing — the
  * sidebar repairs focus onto a pinned row — and travels.
  *
+ * A row that carries `data-motion-insert` is one whose arrival and departure
+ * are themselves the change: it slides in from the left when it first appears,
+ * and slides out to the left when it is removed, through a stand-in placed
+ * over the slot it left, since React has already taken its element out of the
+ * document. Every other row appears and disappears in place — a page of rows
+ * arriving at once is not a move — and nothing at all plays on the hook's
+ * first commit, whatever the rows carry. The container of a list that marks
+ * rows this way is their positioning context.
+ *
  * A row with no layout — `display: none` — is neither measured nor
  * remembered; it is closer to not being there than to being at the top of the
  * container, which is what its empty rect would say.
  *
  * `layoutKey` names the layout the rows are in. When it changes, every row is
  * measured afresh and nothing plays: the sidebar's compact toggle moves every
- * row's position for a reason that is not a reorder.
+ * row's position for a reason that is not a reorder. `layoutSettling` says the
+ * rows are still travelling to that layout — the sidebar's rows change shape
+ * under CSS transitions for as long as its box's width does — so every render
+ * while it holds measures afresh and plays nothing, as does the first render
+ * after it clears, so that the last mid-flight positions are not the ones the
+ * next change is planned from.
  *
  * The container is the scroll box the rows live in: positions are measured
  * relative to its content, so scrolling between two renders is not read as
@@ -65,10 +90,18 @@ interface Seen extends ListMotionFrom {
  * motion is a row on its way somewhere else. `docs/list-motion.md` owns the
  * design.
  */
-export function useListMotion(containerRef: RefObject<HTMLElement | null>, layoutKey?: unknown): void {
+export function useListMotion(
+  containerRef: RefObject<HTMLElement | null>,
+  layoutKey?: unknown,
+  layoutSettling = false,
+): void {
   const lastSeen = useRef<Map<string, Seen>>(new Map());
   const lastLayoutKey = useRef<unknown>(layoutKey);
+  const lastLayoutSettling = useRef(false);
+  const committed = useRef(false);
   const running = useRef<Map<HTMLElement, Running>>(new Map());
+  /** The exits in flight, each on a stand-in its own settling removes. */
+  const leaving = useRef<Set<Animation>>(new Set());
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -96,6 +129,24 @@ export function useListMotion(containerRef: RefObject<HTMLElement | null>, layou
       entry.animation.cancel();
       return visible.get(element) ?? { x: 0, y: 0 };
     };
+    const play = (
+      element: HTMLElement,
+      from: { fromX: number; fromY: number },
+      { keyframes, options }: { keyframes: Keyframe[]; options: KeyframeAnimationOptions },
+      entrance = false,
+    ): void => {
+      if (typeof element.animate !== 'function') return;
+      const animation = element.animate(keyframes, options);
+      // A cancelled animation settles asynchronously, after the one that
+      // replaced it has been registered; only the animation still on record
+      // clears the record.
+      const settle = (): void => {
+        if (running.current.get(element)?.animation === animation) running.current.delete(element);
+      };
+      animation.onfinish = settle;
+      animation.oncancel = settle;
+      running.current.set(element, { animation, from: { x: from.fromX, y: from.fromY }, entrance });
+    };
 
     // A row whose element has gone was unmounted mid-animation; nothing is left
     // to draw it, and the row's new element, if any, starts from its slot.
@@ -105,7 +156,11 @@ export function useListMotion(containerRef: RefObject<HTMLElement | null>, layou
 
     const previous = lastSeen.current;
     const containerRect = container.getBoundingClientRect();
-    const scrollTop = container.scrollTop;
+    // The content frame: the container's padding box, as scrolled. A stand-in
+    // is placed in it absolutely, so the same numbers that say where a row was
+    // say where its copy goes.
+    const originX = containerRect.left + container.clientLeft - container.scrollLeft;
+    const originY = containerRect.top + container.clientTop - container.scrollTop;
     const rows = [...container.querySelectorAll<HTMLElement>('[data-motion-key]')].flatMap((element) => {
       const rect = element.getBoundingClientRect();
       if (rect.width === 0 && rect.height === 0) return [];
@@ -115,23 +170,51 @@ export function useListMotion(containerRef: RefObject<HTMLElement | null>, layou
       const row: ListMotionRow = {
         key,
         scope,
-        top: rect.top - offset.y - containerRect.top + scrollTop,
+        top: rect.top - offset.y - originY,
         hold: element.hasAttribute('data-motion-hold')
           || (previous.get(key)?.element === element && element.contains(document.activeElement)),
       };
-      return [{ element, row, exitDistance: -(rect.right - offset.x - containerRect.left + LIST_MOTION.exitClearancePx) }];
+      const box = { left: rect.left - offset.x - originX, width: rect.width, height: rect.height };
+      // To the container's visible edge, whatever it is scrolled to.
+      const exitDistance = -(rect.right - offset.x - containerRect.left - container.clientLeft + LIST_MOTION.exitClearancePx);
+      return [{ element, row, box, exitDistance }];
     });
     // Remembered whatever happens next, so a change made while the window was
     // hidden is not replayed when it is shown again.
-    lastSeen.current = new Map(rows.map(({ element, row }) => [row.key, { top: row.top, element }]));
+    lastSeen.current = new Map(rows.map(({ element, row, box }) => [row.key, { top: row.top, element, ...box }]));
 
+    const first = !committed.current;
+    committed.current = true;
     // A new layout is not a move: the rows are where they now are, and what
     // they were playing was measured against a layout that no longer exists.
-    if (lastLayoutKey.current !== layoutKey) {
-      lastLayoutKey.current = layoutKey;
-      for (const element of [...running.current.keys()]) interrupt(element);
-      return;
+    // Nor is a layout still being travelled to one the rows are in yet.
+    const relaid = lastLayoutKey.current !== layoutKey || layoutSettling || lastLayoutSettling.current;
+    lastLayoutKey.current = layoutKey;
+    lastLayoutSettling.current = layoutSettling;
+    if (relaid) {
+      for (const [element, entry] of [...running.current]) {
+        if (!entry.entrance) interrupt(element);
+      }
     }
+
+    const playing = !first
+      && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches !== true
+      && document.visibilityState !== 'hidden';
+
+    // The rows whose arrival and departure are the change. They play through a
+    // relayout, since they are the change the relayout was made for.
+    if (playing) {
+      for (const { element, row, exitDistance } of rows) {
+        if (previous.has(row.key) || !element.hasAttribute('data-motion-insert')) continue;
+        play(element, { fromX: exitDistance, fromY: 0 }, enterKeyframes(exitDistance), true);
+      }
+      for (const [key, seen] of previous) {
+        if (lastSeen.current.has(key) || !seen.element.hasAttribute('data-motion-insert')) continue;
+        leaveThrough(container, seen, leaving.current);
+      }
+    }
+
+    if (relaid) return;
 
     const changed = rows.filter(({ row }) => {
       const seen = previous.get(row.key);
@@ -151,30 +234,10 @@ export function useListMotion(containerRef: RefObject<HTMLElement | null>, layou
       if (seen !== undefined && !before.has(row.key)) before.set(row.key, { top: seen.top });
     }
 
-    if (
-      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
-      || document.visibilityState === 'hidden'
-    ) return;
+    if (!playing) return;
 
     const plan = planListMotion(before, rows.map(({ row }) => row));
     const byKey = new Map(changed.map((entry) => [entry.row.key, entry]));
-    const play = (
-      element: HTMLElement,
-      from: { fromX: number; fromY: number },
-      { keyframes, options }: { keyframes: Keyframe[]; options: KeyframeAnimationOptions },
-    ): void => {
-      if (typeof element.animate !== 'function') return;
-      const animation = element.animate(keyframes, options);
-      // A cancelled animation settles asynchronously, after the one that
-      // replaced it has been registered; only the animation still on record
-      // clears the record.
-      const settle = (): void => {
-        if (running.current.get(element)?.animation === animation) running.current.delete(element);
-      };
-      animation.onfinish = settle;
-      animation.oncancel = settle;
-      running.current.set(element, { animation, from: { x: from.fromX, y: from.fromY } });
-    };
     // A mover the layout did not move — two rows of equal height trading
     // places can read that way — is left where it is rather than sent out.
     for (const mover of plan.movers) {
@@ -190,5 +253,50 @@ export function useListMotion(containerRef: RefObject<HTMLElement | null>, layou
   useLayoutEffect(() => () => {
     for (const entry of running.current.values()) entry.animation.cancel();
     running.current.clear();
+    for (const animation of [...leaving.current]) animation.cancel();
   }, []);
+}
+
+/**
+ * Plays a removed row's exit on a copy of it, placed over the slot it left:
+ * React has taken the row's own element out of the document, and nothing else
+ * is left to draw it. The copy is a picture of the row and nothing more —
+ * inert, hidden from assistive technology, stripped of its ids so the document
+ * keeps one of each, and of its motion attributes so the next render does not
+ * measure it as a row — and it is taken out again the moment the exit finishes
+ * or is cancelled. Where the row cannot be animated at all, it is simply gone.
+ */
+function leaveThrough(container: HTMLElement, seen: Seen, leaving: Set<Animation>): void {
+  const standIn = seen.element.cloneNode(true) as HTMLElement;
+  if (typeof standIn.animate !== 'function') return;
+  for (const node of [standIn, ...standIn.querySelectorAll('*')]) {
+    node.removeAttribute('id');
+    for (const name of node.getAttributeNames()) {
+      if (name.startsWith('data-motion-')) node.removeAttribute(name);
+    }
+  }
+  standIn.setAttribute('aria-hidden', 'true');
+  standIn.setAttribute('inert', '');
+  standIn.setAttribute('data-motion-stand-in', '');
+  Object.assign(standIn.style, {
+    position: 'absolute',
+    top: `${seen.top}px`,
+    left: `${seen.left}px`,
+    width: `${seen.width}px`,
+    height: `${seen.height}px`,
+    margin: '0',
+    boxSizing: 'border-box',
+    pointerEvents: 'none',
+  });
+  container.append(standIn);
+  const exitDistance = -(seen.left + seen.width + LIST_MOTION.exitClearancePx);
+  const { keyframes, options } = exitKeyframes({ fromX: 0, fromY: 0 }, exitDistance);
+  const animation = standIn.animate(keyframes, options);
+  const settle = (): void => {
+    leaving.delete(animation);
+    standIn.remove();
+  };
+  animation.onfinish = settle;
+  animation.oncancel = settle;
+  leaving.add(animation);
 }

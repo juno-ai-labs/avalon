@@ -648,7 +648,27 @@ pre {
   inherits: true;
   initial-value: 280px;
 }
+/* The sidebar's own channel for the same interval: 0 expanded, 1 compact,
+   travelling between them over the collapse motion. Nothing draws from it. It
+   exists so the component can hear, from the platform's own transition
+   events on the aside, when the layout has settled — every row and control
+   inside the sidebar changes shape over the same duration, and the list
+   motion must not plan a move against positions that are still travelling.
+   Registered as a number so it interpolates, and not inherited so a frame of
+   the transition recomputes one element's style rather than every row's. */
+@property --sidebar-compact {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
 .sidebar {
+  /* How long everything inside the sidebar spends travelling between its two
+     layouts: the box's own collapse motion, so the rows arrive with the edge.
+     Stated once here and spent by every rule below that changes shape with
+     the layout, so that a drag — which snaps the edge to the pointer — can
+     turn all of them off with one override. */
+  --sidebar-layout-motion: var(--sidebar-collapse-motion);
+  --sidebar-compact: 0;
   bottom: 0;
   display: flex;
   flex-direction: column;
@@ -658,8 +678,9 @@ pre {
   width: var(--av-cmp-sidebar-width);
   z-index: 30;
 }
+.sidebar.is-compact { --sidebar-compact: 1; }
 
-.sidebar.is-resizing { user-select: none; }
+.sidebar.is-resizing { --sidebar-layout-motion: 0s; user-select: none; }
 /* The navigation's grab handle is the sidebar's, standing in the gap outside its
    trailing edge — the same width as the right sidebar's, and starting below the
    title bar so the window stays draggable by its top edge. How near the pointer
@@ -685,6 +706,16 @@ pre {
   justify-content: flex-end;
   padding: 0 16px;
 }
+/* Hidden by the attribute in the rail, and faded rather than cut: `display`
+   transitions discretely, holding the element until the fade is over, and the
+   starting style fades it back in when the sidebar expands. */
+.sidebar-titlebar > .sidebar-new-button {
+  transition: color 120ms ease, transform 120ms ease, background 120ms ease, opacity var(--sidebar-layout-motion), display var(--sidebar-layout-motion) allow-discrete;
+}
+.sidebar-titlebar > .sidebar-new-button[hidden] { display: none; opacity: 0; }
+@starting-style {
+  .sidebar-titlebar > .sidebar-new-button { opacity: 0; }
+}
 
 .sidebar-scroll {
   flex: 1;
@@ -696,6 +727,7 @@ pre {
   /* GrokBot keeps this rail visually quiet and lets wheel, trackpad, and
      keyboard scrolling move it without exposing a width-taking scrollbar. */
   scrollbar-gutter: auto;
+  transition: padding var(--sidebar-layout-motion);
 }
 
 .sidebar-scroll::-webkit-scrollbar { width: 0; }
@@ -1216,8 +1248,11 @@ pre {
    changed the same panes fade back up over the unchanged backdrop, now showing
    the new workspace. The shell fetches the new workspace before the old one is
    torn down, so no blank "opening" screen sits between the two. */
-.workspace-shell .sidebar,
 .workspace-shell .main-pane { transition: opacity 220ms ease; }
+/* The sidebar's list carries its layout channel too: `transition` is a
+   shorthand, and a second rule for the same element would replace this one
+   rather than add to it. */
+.workspace-shell .sidebar { transition: opacity 220ms ease, --sidebar-compact var(--sidebar-layout-motion); }
 .workspace-shell.is-switching-workspace .sidebar,
 .workspace-shell.is-switching-workspace .main-pane { opacity: 0.55; }
 .workspace-shell.is-switching-workspace .main-pane { pointer-events: none; }
@@ -1228,7 +1263,9 @@ pre {
    brightness and rises — a dip to zero would flash the bare backdrop between. */
 @keyframes workspace-enter { from { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) {
-  .workspace-shell .sidebar,
+  /* The fade goes; the layout channel stays, because the box's width still
+     travels for this reader and the rows have to arrive with it. */
+  .workspace-shell .sidebar { transition-property: --sidebar-compact; }
   .workspace-shell .main-pane { transition: none; }
   .workspace-shell.is-entering-workspace .sidebar,
   .workspace-shell.is-entering-workspace .main-pane { animation: none; }
@@ -5246,9 +5283,19 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    opt-in layer over the existing components: the data and interaction
    contracts stay shared, while the main work-stream surface owns the new
    visual hierarchy. */
+/* Above the scroll box, so search stays at the top however far the list is
+   scrolled. Two tracks: the search row, and under it the slot the rail's New
+   chat row takes. Both tracks are numbers in both layouts so the slot opens
+   and closes over the layout motion rather than the bar growing by a row in
+   the frame React inserts one; the row itself arrives and leaves through the
+   list motion, which draws a removed row's stand-in in this box — hence
+   positioned. */
 .sidebar-commandbar {
-  display: block;
-  margin: 4px 0 12px;
+  display: grid;
+  grid-template-rows: 32px 0px;
+  padding: 4px 12px 12px;
+  position: relative;
+  transition: grid-template-rows var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
 }
 
 .sidebar-new-chat-draft {
@@ -5325,6 +5372,18 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   padding: 0 4px 0 8px;
 }
 
+/* From a labelled pill to a 54px square as the sidebar collapses: the box,
+   the icon and the label each travel over the layout motion. The label is
+   faded and clipped rather than hidden, and its `visibility` rides the same
+   interval so it leaves the accessibility tree when the fade ends. The icon
+   ends 17.5px in — centred in the square by padding, so it never jumps to a
+   different alignment at the end. */
+.sidebar-commandbar .sidebar-search {
+  overflow: hidden;
+  transition: background-color var(--sidebar-layout-motion), box-shadow var(--sidebar-layout-motion), gap var(--sidebar-layout-motion), height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
+}
+.sidebar-commandbar .sidebar-search > svg { height: 14px; transition: height var(--sidebar-layout-motion), width var(--sidebar-layout-motion); width: 14px; }
+.sidebar-commandbar .sidebar-search > span { transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); white-space: nowrap; }
 .sidebar-search:focus-within { box-shadow: inset 0 0 0 .5px var(--av-sys-color-border-strong); }
 .sidebar-search:has(input:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .sidebar-search:has(input) { cursor: text; }
@@ -5531,64 +5590,128 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 /* GrokBot's sidebar does not become a drawer when the conversation gets
    narrow. It becomes a 96px icon rail, either because the saved compact
    preference is on or because the conversation needs its protected 424px.
-   The component owns that calculation; this block owns the resulting rail. */
-.grokbot-shell .sidebar.is-compact .sidebar-titlebar {
-  justify-content: center;
-  padding: 0;
+   The component owns that calculation; this block owns the resulting rail.
+
+   The rail is reached by travelling, not by cutting. The box's width is a
+   transition, and every rule here that changes a shape with it declares the
+   same interval, `--sidebar-layout-motion`, so the rows narrow, the titles
+   fade and the headings close as the edge moves rather than a frame ahead of
+   it. Two consequences shape the rules. Nothing on screen during the toggle
+   is `display: none` in the rail: a hidden title is kept in layout at zero
+   size and faded, with `visibility` carried on the same interval so it
+   leaves the accessibility tree and the hit-test when the fade ends and
+   rejoins them as the reverse begins. And every travelling value is a number
+   in both layouts — `width: 100%` rather than `auto`, a heading's `height`
+   rather than its `min-height` — because a keyword cannot be interpolated,
+   and a rule that reaches for one is a rule that cuts. The one exception is
+   `.sidebar-empty`, which only ever shows over an empty list. */
+.grokbot-shell .sidebar.is-compact .sidebar-empty { display: none; }
+.grokbot-shell .sidebar.is-compact .sidebar-scroll { padding: 0 20.5px 12px; }
+.grokbot-shell .sidebar.is-compact .sidebar-commandbar {
+  grid-template-rows: 54px 54px;
+  padding: 4px 20.5px 0;
 }
-.grokbot-shell .sidebar.is-compact .sidebar-titlebar > .sidebar-new-button,
-.grokbot-shell .sidebar.is-compact .sidebar-commandbar,
-.grokbot-shell .sidebar.is-compact .sidebar-new-chat-draft,
+.grokbot-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search {
+  background: transparent;
+  box-shadow: none;
+  gap: 0;
+  height: 54px;
+  padding: 0 0 0 17.5px;
+}
+.grokbot-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search:hover { background: var(--av-cmp-row-background-hover); }
+.grokbot-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search > span { opacity: 0; visibility: hidden; }
+.grokbot-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search > svg { height: 19px; width: 19px; }
+/* Only ever rendered in the rail, and styled without reference to it: the
+   list motion draws a copy of this row on its way out after the rail's class
+   has already gone, and the copy has to still look like the row. */
+.sidebar-rail-new-button {
+  border-radius: 10px;
+  height: 54px;
+  padding: 9px;
+  width: 54px;
+}
+/* The draft row, the headings and the group gaps close as the rail narrows. */
+.grokbot-shell .sidebar .sidebar-new-chat-draft {
+  height: 44px;
+  overflow: hidden;
+  transition: height var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
+}
+.grokbot-shell .sidebar.is-compact .sidebar-new-chat-draft {
+  height: 0;
+  margin-bottom: 0;
+  min-height: 0;
+  opacity: 0;
+  padding-block: 0;
+  visibility: hidden;
+}
+.grokbot-shell .sidebar .sidebar-section-heading,
+.grokbot-shell .sidebar .sidebar-group-heading {
+  overflow: hidden;
+  transition: height var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
+}
+.grokbot-shell .sidebar .sidebar-group-heading { height: 30px; min-height: 0; }
 .grokbot-shell .sidebar.is-compact .sidebar-section-heading,
-.grokbot-shell .sidebar.is-compact .sidebar-group-heading,
-.grokbot-shell .sidebar.is-compact .sidebar-row-main,
-.grokbot-shell .sidebar.is-compact .sidebar-workstream-timer,
-.grokbot-shell .sidebar.is-compact .sidebar-empty {
-  display: none;
+.grokbot-shell .sidebar.is-compact .sidebar-group-heading {
+  height: 0;
+  opacity: 0;
+  padding-block: 0;
+  visibility: hidden;
 }
-.grokbot-shell .sidebar.is-compact .sidebar-scroll {
-  padding: 4px 20.5px 12px;
-}
+.grokbot-shell .sidebar .sidebar-section,
+.grokbot-shell .sidebar .sidebar-group { transition: margin-top var(--sidebar-layout-motion); }
+/* The first section sits 12px under the search row, which the command bar's
+   own padding provides. A section's top margin is the gap between sections;
+   when the command bar lived inside the scroll box the two collapsed into
+   one, and now that it is above the box they would add. */
+.grokbot-shell .sidebar .sidebar-scroll > .sidebar-section:first-child { margin-top: 0; }
 .grokbot-shell .sidebar.is-compact .sidebar-section,
-.grokbot-shell .sidebar.is-compact .sidebar-group {
-  margin-top: 0;
+.grokbot-shell .sidebar.is-compact .sidebar-group { margin-top: 0; }
+.grokbot-shell .sidebar .pinned-section {
+  border-bottom: 0 solid var(--av-cmp-sidebar-border);
+  transition: border-bottom-width var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), margin-top var(--sidebar-layout-motion), padding-bottom var(--sidebar-layout-motion);
 }
 .grokbot-shell .sidebar.is-compact .pinned-section {
-  border-bottom: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
+  border-bottom-width: var(--av-sys-size-border-hairline);
   margin-bottom: 12px;
   padding-bottom: 12px;
 }
+.grokbot-shell .sidebar .sidebar-list { transition: gap var(--sidebar-layout-motion); }
 .grokbot-shell .sidebar.is-compact .sidebar-list { gap: 0; }
-.grokbot-shell .sidebar.is-compact .sidebar-context-target { width: 54px; }
+/* A row narrows to its 54px mark: the wrapper's width travels, the row's
+   padding and gap with it, and the title column — `minmax(0, 1fr)` — closes
+   to nothing while its copy fades under the clip. The mark itself is 36px in
+   both layouts, so it is the one thing that does not move. */
+.grokbot-shell .sidebar .sidebar-list > .sidebar-context-target {
+  transition: width var(--sidebar-layout-motion);
+  width: 100%;
+}
+.grokbot-shell .sidebar.is-compact .sidebar-list > .sidebar-context-target { width: 54px; }
+.grokbot-shell .sidebar .workstream-row { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .grokbot-shell .sidebar.is-compact .workstream-row {
-  display: flex;
   gap: 0;
-  height: 54px;
-  justify-content: center;
-  min-height: 54px;
   padding: 9px;
-  width: 54px;
 }
-.grokbot-shell .sidebar.is-compact .workstream-row .sidebar-row-icon { flex: 0 0 36px; }
-.grokbot-shell .sidebar.is-compact .sidebar-rail-new-button {
-  border-radius: 10px;
-  flex: 0 0 54px;
-  height: 54px;
-  padding: 9px;
-  margin: 0 auto;
-  width: 54px;
+.grokbot-shell .sidebar .workstream-row .sidebar-row-main {
+  overflow: hidden;
+  transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
 }
-.grokbot-shell .sidebar.is-compact .account-trigger {
-  flex: 0 0 54px;
-  gap: 0;
-  height: 54px;
-  justify-content: center;
-  margin: 0 auto 8px;
-  min-height: 54px;
-  padding: 12px 14px;
-  width: 54px;
+.grokbot-shell .sidebar.is-compact .workstream-row .sidebar-row-main { opacity: 0; visibility: hidden; }
+.grokbot-shell .sidebar .sidebar-workstream-timer {
+  overflow: hidden;
+  transition: margin-left var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion), width var(--sidebar-layout-motion);
 }
-.grokbot-shell .sidebar.is-compact .account-copy { display: none; }
+.grokbot-shell .sidebar.is-compact .sidebar-workstream-timer {
+  margin-left: 0;
+  opacity: 0;
+  visibility: hidden;
+  width: 0;
+}
+/* The account row keeps its avatar and closes its copy. */
+.grokbot-shell .sidebar .account-copy {
+  overflow: hidden;
+  transition: flex-grow var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
+}
+.grokbot-shell .sidebar.is-compact .account-copy { flex-grow: 0; opacity: 0; visibility: hidden; }
 
 /* The work-stream theme rounds the bubble harder than the shared default. It
    restates the corner on the token rather than on the bubble, so the identity
@@ -6733,16 +6856,26 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .sidebar-automation-strip {
   display: flex;
   flex-shrink: 0;
-  margin-inline: 12px;
   min-width: 0;
   gap: 8px;
+  /* The one place a keyword is allowed to travel: a lone tile is sized to its
+     caption, `auto`, and has to reach the rail's 54px from there. */
+  interpolate-size: allow-keywords;
   overflow-x: auto;
   overscroll-behavior-x: contain;
   justify-content: safe center;
-  padding: 14px 0 18px;
+  /* Padding rather than a margin, so the tiles scroll to the sidebar's edge
+     rather than stopping short of it, and so the rail — 21px each side — can
+     centre a lone tile and let the next one show past the padding. */
+  padding: 14px 12px 18px;
   scrollbar-width: thin;
+  transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
 }
-.sidebar-automation-strip > .sidebar-context-target { flex: 0 0 80px; min-width: 0; }
+.sidebar-automation-strip > .sidebar-context-target {
+  flex: 0 0 80px;
+  min-width: 0;
+  transition: flex-basis var(--sidebar-layout-motion), max-width var(--sidebar-layout-motion), min-width var(--sidebar-layout-motion);
+}
 .sidebar-row.automation-tile {
   align-items: center;
   border: 0;
@@ -6752,6 +6885,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   gap: 6px;
   padding: 6px 4px 4px;
   text-align: center;
+  transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
   width: 100%;
 }
 .sidebar-row.automation-tile:hover { background: var(--av-cmp-row-background-hover); }
@@ -6759,9 +6893,9 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .sidebar-row.automation-tile.is-active:hover { background: var(--av-cmp-row-background-selected); }
 .sidebar-row.automation-tile:focus-visible { outline-offset: -2px; }
 .sidebar-automation-strip > .sidebar-context-target:only-child { flex-basis: auto; min-width: 80px; max-width: 100px; }
-.automation-tile-glyph { display: block; height: 60px; position: relative; width: 60px; }
+.automation-tile-glyph { display: block; height: 60px; position: relative; transition: height var(--sidebar-layout-motion), width var(--sidebar-layout-motion); width: 60px; }
 .automation-glyph { color: var(--glyph-ink, var(--av-sys-color-text-on-inverse)); display: block; height: 100%; width: 100%; }
-.automation-tile-name { font-size: 11px; font-weight: 400; letter-spacing: .005em; line-height: 16px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.automation-tile-name { font-size: 11px; font-weight: 400; height: 16px; letter-spacing: .005em; line-height: 16px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; transition: height var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); white-space: nowrap; }
 .automation-tile-state {
   background: var(--av-sys-color-surface-default);
   border-radius: var(--av-sys-size-radius-pill);
@@ -6784,17 +6918,16 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .automation-tile-state.active .status-dot { background: var(--av-sys-color-success-base); }
 .automation-tile-state.paused .status-dot { background: var(--av-sys-color-workstream-stopped); }
 .automation-tile-state.draft .status-dot { background: transparent; border: 1px dashed var(--av-sys-color-text-muted); }
-.grokbot-shell .sidebar.is-compact .sidebar-automation-strip { flex-direction: column; gap: 0; margin: 0; padding: 0; overflow: visible; }
-.grokbot-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target { flex: 0 0 54px; min-width: 54px; max-width: 54px; }
-.grokbot-shell .sidebar.is-compact .automation-tile { height: 54px; min-height: 54px; width: 54px; padding: 9px; gap: 0; justify-content: center; }
+/* The rail keeps the strip where the full sidebar has it — below the list,
+   above the account row — and keeps it a horizontally scrolling row: one 54px
+   tile centred when there is one, and the next showing past the padding when
+   there are more. The tiles shed their captions and shrink to the rows'
+   54px square as the sidebar narrows. */
+.grokbot-shell .sidebar.is-compact .sidebar-automation-strip { gap: 0; padding: 8px 21px 12px; }
+.grokbot-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target { flex-basis: 54px; max-width: 54px; min-width: 54px; }
+.grokbot-shell .sidebar.is-compact .automation-tile { gap: 0; padding: 9px; }
 .grokbot-shell .sidebar.is-compact .automation-tile-glyph { height: 36px; width: 36px; }
-.grokbot-shell .sidebar.is-compact .automation-tile-name { display: none; }
-
-.grokbot-shell .sidebar-rail-actions { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
-.grokbot-shell .sidebar-rail-actions .sidebar-search { width: 54px; height: 54px; padding: 9px; justify-content: center; background: transparent; box-shadow: none; }
-.grokbot-shell .sidebar-rail-actions .sidebar-search > span { display: none; }
-.grokbot-shell .sidebar-rail-actions .sidebar-search > svg { width: 19px; height: 19px; }
-.grokbot-shell .sidebar-rail-actions .sidebar-search:hover { background: var(--av-cmp-row-background-hover); }
+.grokbot-shell .sidebar.is-compact .automation-tile-name { height: 0; opacity: 0; visibility: hidden; }
 /* Sidekick library and profile use the same identity glyph as sidebar tiles. */
 .sidekicks-library { padding: 64px 48px 40px; height: 100%; overflow: auto; scrollbar-gutter: stable; }
 .sidekicks-library-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 40px; }
@@ -6861,10 +6994,13 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .workstream-context-sidebar.is-compact .avatar-overflow { margin-left: -12px; }
 .sidebar-workstream-public { align-items: center; background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); display: flex; height: 17px; justify-content: center; position: absolute; right: -1px; top: -2px; width: 17px; }
 .sidebar-collapse-footer { display: flex; align-items: center; justify-content: flex-end; flex-shrink: 0; gap: 4px; margin-top: auto; padding: 8px 12px; min-height: 62px; }
-.grokbot-shell .sidebar .sidebar-collapse-footer .account-trigger { flex: 1; min-width: 0; width: auto; margin: 0; }
+.grokbot-shell .sidebar .sidebar-collapse-footer { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
+.grokbot-shell .sidebar .sidebar-collapse-footer .account-trigger { flex: 1; height: 40px; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), height var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .grokbot-shell .sidebar.is-compact .sidebar-collapse-footer,
 .workstream-context-sidebar.is-compact .sidebar-collapse-footer { padding: 8px; gap: 0; }
-.grokbot-shell .sidebar.is-compact .sidebar-collapse-footer .account-trigger { height: 38px; min-height: 38px; padding: 6px; }
+/* The avatar is centred by its padding rather than `justify-content`, which
+   would jump it at the start of the travel. */
+.grokbot-shell .sidebar.is-compact .sidebar-collapse-footer .account-trigger { gap: 0; height: 38px; min-height: 38px; padding: 6px 6px 6px 10.5px; }
 .sidebar-collapse-footer > .icon-button { flex-shrink: 0; }
 .sidebar-drag-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--av-sys-color-text-muted); opacity: .25; pointer-events: none; z-index: 100; }
 
