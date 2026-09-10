@@ -39,7 +39,7 @@ exists.
 | `packages/agent-harness/src/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
 | `apps/api/src/services/artifact-open-service.ts` | The identity-bearing door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. Public reads bypass it and remain anonymous. |
 | `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The rail's site detail: the pane it measures and hands over, the actions, the Data view, and the error log. |
-| `apps/desktop/src/main/artifact-viewers.ts` | What the desktop will load into an artifact surface, the preview rectangle's clamp, the shared isolation contract, and the overlay rule. |
+| `apps/desktop/src/main/artifact-viewers.ts` | What the desktop will load into an artifact surface, the preview rectangle's clamp and corner, the shared isolation contract, and the overlay rule. |
 
 ## How it works
 
@@ -479,6 +479,32 @@ compromise of the serving Worker exposes artifact content and viewer sessions
 rather than workspace authority.
 
 ## Changelog
+
+### 2026-09-10 — The site detail wears the shell's design, and the view is rounded
+
+**What changed and why:** The detail drew the pre-rewrite look because it
+renders through a portal, where none of the shell's scoped rules apply: a tab
+strip of outlined buttons, a bordered card per thrown error, and its own copy of
+the resource title under the header that already carried it. It now uses the two
+unscoped primitives (`SegmentedControl`, `InsetSurface`/`InsetList`), carries no
+title of its own, and puts Pop out, Copy public link, and Open in browser in one
+chrome row beside the panel switch instead of a row of buttons under the page,
+where they read as part of the artifact rather than as Rally's. The pane takes
+the whole lightbox body rather than ending halfway down it.
+
+`ArtifactViewHandle` gained `setBorderRadius`, applied once at creation with
+`PREVIEW_CORNER_RADIUS`. A `WebContentsView` composites above the DOM and CSS
+cannot clip it, so the rounded pane was drawing its own corners around a square
+page. The corner is set on the view rather than sent with the bounds because
+bounds are recomputed on every scroll frame and the corner is a property of the
+surface, not of a layout.
+
+**Consequences:** The number lives in two places that cannot import each other,
+the main process and a design token, so `app.css.node.test.ts` pins them
+together; moving one alone fails there rather than showing up as a hairline
+around a page. The panel switch is a group of toggles, not a tab list, so a test
+that queries it by `role="tab"` is querying something this detail no longer
+claims to be.
 
 ### 2026-09-04 — Host site details in the resource lightbox
 

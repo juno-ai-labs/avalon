@@ -1,3 +1,4 @@
+import * as Tooltip from '@radix-ui/react-tooltip';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -65,7 +66,12 @@ function setup(overrides: Partial<SiteResourceDetailProps> = {}) {
     surface: surface(),
     ...overrides,
   };
-  return { props, ...render(<SiteResourceDetail {...props} />) };
+  // The actions are icon buttons, so they carry tooltips, and the application
+  // mounts one provider for all of them at its root.
+  return {
+    props,
+    ...render(<Tooltip.Provider><SiteResourceDetail {...props} /></Tooltip.Provider>),
+  };
 }
 
 describe('showing a live artifact in the rail', () => {
@@ -183,6 +189,14 @@ describe('showing a live artifact in the rail', () => {
     expect(screen.getByText(/Open it in your browser/u)).toBeInTheDocument();
   });
 
+  it('does not say the artifact\u2019s name again under the header that carries it', async () => {
+    // The rail and the lightbox both draw the resource title in their header.
+    // A second copy here made the lightbox open on the same words twice.
+    const { props } = setup();
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    expect(screen.queryByText('Offsite RSVP')).not.toBeInTheDocument();
+  });
+
   it('says so plainly when the artifact could not be opened', async () => {
     setup({ openArtifact: vi.fn(async () => { throw new Error('You can no longer see this work stream.'); }) });
     expect(await screen.findByText('This site could not be opened')).toBeInTheDocument();
@@ -270,7 +284,7 @@ describe('the data a stateful site collected', () => {
   it('shows the tables, and only offers the panel for a site that keeps data', async () => {
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('tab', { name: /Data/u }));
+    fireEvent.click(screen.getByRole('button', { name: /Data/u }));
     expect(await screen.findByText('Ada')).toBeInTheDocument();
     expect(screen.getByText('yes')).toBeInTheDocument();
   });
@@ -283,13 +297,13 @@ describe('the data a stateful site collected', () => {
       })),
     });
     await waitFor(() => expect(screen.getByText('Live page')).toBeInTheDocument());
-    expect(screen.queryByRole('tab', { name: /Data/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Data/u })).not.toBeInTheDocument();
   });
 
   it('shows an empty stored table as such rather than as a broken panel', async () => {
     const { props } = setup({ describeData: vi.fn(async () => ({ tables: [] })) });
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('tab', { name: /Data/u }));
+    fireEvent.click(screen.getByRole('button', { name: /Data/u }));
     expect(await screen.findByText('No data yet')).toBeInTheDocument();
   });
 
@@ -298,7 +312,7 @@ describe('the data a stateful site collected', () => {
     // export a person got from anywhere else.
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('tab', { name: /Data/u }));
+    fireEvent.click(screen.getByRole('button', { name: /Data/u }));
     await screen.findByText('Ada');
     fireEvent.click(screen.getByRole('button', { name: /Copy as CSV/u }));
     await waitFor(() => expect(props.surface.copyText)
@@ -318,7 +332,7 @@ describe('what the site itself threw', () => {
       }]),
     });
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('tab', { name: /Errors/u }));
+    fireEvent.click(screen.getByRole('button', { name: /Errors/u }));
     expect(await screen.findByText('TypeError: rows is not iterable')).toBeInTheDocument();
     expect(screen.getByText('/api/rsvps')).toBeInTheDocument();
   });
@@ -326,7 +340,7 @@ describe('what the site itself threw', () => {
   it('says a healthy site has thrown nothing', async () => {
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('tab', { name: /Errors/u }));
+    fireEvent.click(screen.getByRole('button', { name: /Errors/u }));
     expect(await screen.findByText('No errors')).toBeInTheDocument();
   });
 });

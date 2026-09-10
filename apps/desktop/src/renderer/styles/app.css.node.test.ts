@@ -1713,6 +1713,7 @@ describe('window-control gutter while the sidebar is a drawer', () => {
 });
 
 /**
+/*
  * The search modal is a fixed frame over shifting contents.
  *
  * A reader retries a failed continuation by clicking a button that is only
@@ -1744,5 +1745,38 @@ describe('workspace search modal geometry', () => {
     expect(footer).toContain('flex-shrink: 0;');
     // The other conditional child never occupies flow at all.
     expect(rule('.rally-search-state')).toContain('position: absolute;');
+  });
+});
+
+/*
+ * The live artifact detail is the surface that showed why the GrokBot rules
+ * being scoped to `.app-shell` is a real constraint rather than a tidy detail:
+ * it renders through a Radix portal, which mounts on `document.body`, so it
+ * missed every one of them and drew the pre-rewrite bordered-card family
+ * instead. The grouping primitive it now uses is unscoped for that reason, and
+ * the pane's corner is shared with a native view that CSS cannot reach.
+ */
+describe('the shared shell primitives and the artifact pane', () => {
+  it('leaves the primitives unscoped, so a portal gets them without a shell ancestor', () => {
+    expect(rule('.inset-surface')).not.toBeNull();
+    const scoped = preludes().filter((prelude) => /\.app-shell[^,]*\.inset-surface\b/u.test(prelude));
+    expect(scoped).toEqual([]);
+  });
+
+  it('gives the pane the corner the composited view is told to draw', () => {
+    // CSS cannot clip a `WebContentsView`: the page is painted above the DOM,
+    // so a rounded pane under a square view just shows its own corners around
+    // the artifact. The main process therefore rounds the view itself, and
+    // this is what notices when one of the two numbers moves without the
+    // other. Read from disk for the reason at the top of this file.
+    expect(rule('.site-detail-pane')).toContain('border-radius: var(--av-cmp-surface-radius)');
+
+    const themes = readFileSync(resolve(process.cwd(), 'src/renderer/styles/themes.css'), 'utf8');
+    const token = /--av-cmp-surface-radius:\s*(\d+)px/u.exec(themes)?.[1];
+    const main = readFileSync(resolve(process.cwd(), 'src/main/artifact-viewers.ts'), 'utf8');
+    const applied = /export const PREVIEW_CORNER_RADIUS = (\d+);/u.exec(main)?.[1];
+
+    expect(token).toBeDefined();
+    expect(applied).toBe(token);
   });
 });

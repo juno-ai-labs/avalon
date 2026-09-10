@@ -1,7 +1,15 @@
-import { AlertTriangle, Copy, Database, ExternalLink, Maximize2, RefreshCcw } from 'lucide-react';
+import { AlertTriangle, Check, Copy, Database, ExternalLink, Maximize2, RefreshCcw } from 'lucide-react';
 import React from 'react';
 
-import { Button, EmptyState } from './primitives';
+import {
+  Button,
+  EmptyState,
+  IconButton,
+  InsetList,
+  InsetSurface,
+  SegmentedControl,
+  type SegmentedOption,
+} from './primitives';
 
 /**
  * The rail's detail for a **live artifact**: a published site Rally serves.
@@ -203,27 +211,71 @@ export function SiteResourceDetail({
     };
   }, [measure, previewShown, surface]);
 
+  // A site that keeps no data has no Data panel to offer, so the choice is
+  // built from what this artifact actually is rather than shown and disabled.
+  const panels: SegmentedOption<Panel>[] = [
+    { value: 'preview', label: 'Preview' },
+    ...access?.stateful ? [{ value: 'data' as const, label: <><Database size={14} /> Data</> }] : [],
+    { value: 'errors', label: <><AlertTriangle size={14} /> Errors</> },
+  ];
+
   return (
     <div className="site-detail">
-      <h3>{title}</h3>
-      <p className="site-detail-kind">
-        {access?.mode === 'active'
-          ? access.stateful ? 'Live site · keeps data' : 'Live site'
-          : 'Live page'}
-      </p>
-
-      <div className="site-detail-tabs" role="tablist">
-        <Button aria-selected={panel === 'preview'} onClick={() => setPanel('preview')} role="tab">
-          Preview
-        </Button>
-        {access?.stateful && (
-          <Button aria-selected={panel === 'data'} onClick={() => setPanel('data')} role="tab">
-            <Database size={14} /> Data
-          </Button>
-        )}
-        <Button aria-selected={panel === 'errors'} onClick={() => setPanel('errors')} role="tab">
-          <AlertTriangle size={14} /> Errors
-        </Button>
+      {/*
+        The actions live in this row rather than under the pane: they are
+        chrome, and a row of bordered buttons below the page reads as part of
+        the page. The title is not repeated here at all, because the header
+        this detail renders under already carries it.
+      */}
+      <div className="site-detail-toolbar">
+        <SegmentedControl label="Which part of this site to show" onChange={setPanel} options={panels} value={panel} />
+        <p className="site-detail-kind">
+          {access?.mode === 'active'
+            ? access.stateful ? 'Live site · keeps data' : 'Live site'
+            : 'Live page'}
+        </p>
+        <div className="site-detail-actions">
+          <IconButton
+            disabled={!access}
+            label="Pop out"
+            onClick={() => {
+              if (!access) return;
+              void mintAccess().then(
+                async (navigation) => await surface.popOut({
+                  artifactId: navigation.artifactId,
+                  url: navigation.openUrl,
+                  title,
+                }),
+              );
+            }}
+          >
+            <Maximize2 size={15} />
+          </IconButton>
+          <IconButton
+            disabled={!access}
+            label={copied ? 'Copied' : 'Copy public link'}
+            onClick={() => {
+              if (!access) return;
+              // The canonical public link carries no access code or viewer
+              // identity. Copying it shares the current site with anyone.
+              void surface.copyText(access.canonicalUrl).then(() => {
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1_500);
+              });
+            }}
+          >
+            {copied ? <Check size={15} /> : <Copy size={15} />}
+          </IconButton>
+          <IconButton
+            disabled={!access}
+            label="Open in browser"
+            onClick={() => void mintAccess().then(
+              async (navigation) => await surface.openExternal(navigation.openUrl),
+            )}
+          >
+            <ExternalLink size={15} />
+          </IconButton>
+        </div>
       </div>
 
       {panel === 'preview' && (
@@ -251,46 +303,6 @@ export function SiteResourceDetail({
       {panel === 'errors' && (
         <SiteErrorPanel loadErrors={loadErrors} resourceId={resourceId} />
       )}
-
-      <div className="inspector-detail-actions">
-        <Button
-          disabled={!access}
-          onClick={() => {
-            if (!access) return;
-            void mintAccess().then(
-              async (navigation) => await surface.popOut({
-                artifactId: navigation.artifactId,
-                url: navigation.openUrl,
-                title,
-              }),
-            );
-          }}
-        >
-          <Maximize2 size={14} /> Pop out
-        </Button>
-        <Button
-          disabled={!access}
-          onClick={() => {
-            if (!access) return;
-            // The canonical public link carries no access code or viewer
-            // identity. Copying it shares the current site with anyone.
-            void surface.copyText(access.canonicalUrl).then(() => {
-              setCopied(true);
-              window.setTimeout(() => setCopied(false), 1_500);
-            });
-          }}
-        >
-          <Copy size={14} /> {copied ? 'Copied' : 'Copy public link'}
-        </Button>
-        <Button
-          disabled={!access}
-          onClick={() => void mintAccess().then(
-            async (navigation) => await surface.openExternal(navigation.openUrl),
-          )}
-        >
-          <ExternalLink size={14} /> Open in browser
-        </Button>
-      </div>
     </div>
   );
 }
@@ -337,18 +349,19 @@ function SiteDataPanel({
   const columns = tables.find((table) => table.name === selected)?.columns ?? [];
   return (
     <div className="site-data">
-      <div className="site-data-tables">
-        {tables.map((table) => (
-          <Button
-            aria-selected={table.name === selected}
-            key={table.name}
-            onClick={() => setSelected(table.name)}
-          >
-            {table.name} <small>{table.rowCount}</small>
-          </Button>
-        ))}
-      </div>
-      <div className="site-data-scroll">
+      <SegmentedControl
+        label="Which stored table to show"
+        onChange={setSelected}
+        options={tables.map((table) => ({
+          value: table.name,
+          // The row count reads as part of the name without the screen reader
+          // running the two together as one word.
+          label: <>{table.name} <small>{table.rowCount}</small></>,
+          name: `${table.name}, ${table.rowCount} rows`,
+        }))}
+        value={selected ?? ''}
+      />
+      <InsetSurface className="site-data-scroll">
         <table>
           <thead>
             <tr>{columns.map((column) => <th key={column.name}>{column.name}</th>)}</tr>
@@ -369,8 +382,9 @@ function SiteDataPanel({
             ))}
           </tbody>
         </table>
-      </div>
+      </InsetSurface>
       <Button
+        className="site-data-export"
         onClick={() => {
           if (!selected) return;
           void loadTable(resourceId, selected).then(({ csv }) => surface.copyText(csv));
@@ -404,8 +418,10 @@ function SiteErrorPanel({
   }
   return (
     <div className="site-errors">
-      <Button onClick={() => setReloadKey((key) => key + 1)}><RefreshCcw size={14} /> Refresh</Button>
-      <ul>
+      <Button className="site-errors-refresh" onClick={() => setReloadKey((key) => key + 1)}>
+        <RefreshCcw size={14} /> Refresh
+      </Button>
+      <InsetList>
         {errors.map((entry) => (
           <li key={`${entry.occurredAt}-${entry.requestPath}`}>
             <code>{entry.requestPath}</code>
@@ -414,7 +430,7 @@ function SiteErrorPanel({
             <small>v{entry.version} · {new Date(entry.occurredAt).toLocaleString()}</small>
           </li>
         ))}
-      </ul>
+      </InsetList>
     </div>
   );
 }

@@ -9,6 +9,7 @@ import {
   confineToArtifactOrigin,
   isArtifactUrl,
   loadArtifactInitialUrl,
+  PREVIEW_CORNER_RADIUS,
   type PreviewBounds,
 } from './artifact-viewers';
 
@@ -236,6 +237,7 @@ describe('the rail preview controller', () => {
     const views: {
       url: string | null;
       bounds: PreviewBounds[];
+      radii: number[];
       closed: boolean;
       destroyed: boolean;
     }[] = [];
@@ -254,6 +256,7 @@ describe('the rail preview controller', () => {
         const state = {
           url: null as string | null,
           bounds: [] as PreviewBounds[],
+          radii: [] as number[],
           closed: false,
           destroyed: false,
         };
@@ -263,6 +266,7 @@ describe('the rail preview controller', () => {
           // every view under it, so the fake cannot let one outlive the other.
           destroyed: () => host.destroyed || state.destroyed,
           setBounds: (bounds: PreviewBounds) => state.bounds.push(bounds),
+          setBorderRadius: (radius: number) => state.radii.push(radius),
           loadURL: async (url: string) => {
             state.url = url;
             if (load) return await load(url);
@@ -283,6 +287,17 @@ describe('the rail preview controller', () => {
     expect(views).toHaveLength(1);
     expect(views[0]?.url).toBe(`${ORIGIN}/`);
     expect(views[0]?.bounds.at(-1)).toEqual(bounds);
+  });
+
+  it('rounds the view once, so a scrolling rectangle does not carry the corner', async () => {
+    // The pane the renderer draws is rounded and CSS cannot clip a native
+    // view, so the corner has to be set on the view itself. It belongs to the
+    // surface rather than to a layout: `setBounds` runs on every scroll frame.
+    const { controller, views } = harness();
+    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds })).toBe(true);
+    controller.setBounds({ ...bounds, y: 40 });
+    controller.setBounds({ ...bounds, y: 80 });
+    expect(views[0]?.radii).toEqual([PREVIEW_CORNER_RADIUS]);
   });
 
   it('refuses a URL that is not an artifact, and creates nothing', async () => {
