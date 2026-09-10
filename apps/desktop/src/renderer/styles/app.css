@@ -2978,8 +2978,11 @@ pre {
    event. Rally's answer sits on the work that produced it at the same distance
    its header sits above its body, because it is the same turn finishing; a
    person's reply after an event is a new turn and keeps the turn-to-event
-   distance. */
+   distance. A row after a stretch this client has not loaded takes the seam
+   gap, the widest, whatever its kind: nothing else marks the seam, and the
+   two rows either side of it are not adjacent however they look. */
 .virtual-message-row[data-row-gap='stack'] > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-stack-gap); }
+.virtual-message-row[data-row-gap='seam'] > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-seam-gap); }
 .virtual-message-row[data-row-gap='block'] > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-block-gap); }
 .virtual-message-row[data-row-gap='event'] > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-event-gap); }
 /* The unread divider takes the row's space; the row it labels sits under it. */
