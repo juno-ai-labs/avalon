@@ -24,7 +24,7 @@ ready for a coordinated deployment, not deployed by this change.
 
 ## How it works
 
-The static site obtains a Turnstile token and posts it with an email to Global `POST /access/requests`. Validation trims
+The static site obtains a Turnstile token and posts it with an email to Global `POST /access/requests`. The widget runs invisibly: Cloudflare shows its checkbox only to a visitor it decides has to interact, so most visitors never see a challenge. Validation trims
 and lowercases it. D1 has a unique normalized email: repeated submissions preserve
 the original row, request time, and frozen acknowledgement sender/subject/body. A new or
 failed request sends through the existing Resend service and shared Markdown
@@ -143,7 +143,15 @@ headers) before parsing. Production signup then validates Turnstile server-side,
 requiring success, the submitting origin's hostname, and `access_request` action.
 Missing secrets, missing tokens, expired/replayed tokens, wrong actions/hosts,
 and verifier errors all fail closed. Local development skips the external verifier
-and never sends mail. CSP allows the Cloudflare challenge script and frame. The landing body uses a more specific selector than shared site styling so production CSS chunk order cannot override its dark background and make the copy illegible.
+and never sends mail. CSP allows the Cloudflare challenge script and frame. The landing page renders
+the managed widget with Cloudflare's `interaction-only` appearance: the challenge
+runs without a visible widget, the token still gates the submit button, and
+Cloudflare reveals the checkbox only for a visitor it decides must interact.
+Until then the script keeps the widget frame out of the page flow, so the
+container takes no space; `before-interactive-callback` marks the container
+`data-interactive` at the moment the widget is revealed, which is what restores
+the spacing above the form, and a reset after a failed submission clears the
+marker along with the widget. The landing body uses a more specific selector than shared site styling so production CSS chunk order cannot override its dark background and make the copy illegible.
 
 The authoritative hourly email budget is a conditional update of the singleton
 `access_email_budget` row in Global D1. It counts attempts, including uncertain
@@ -262,7 +270,10 @@ bulk sending in this slice; use provider delivery records and manual suppression
 The managed `Rally early access` Turnstile widget authorizes `rallywith.ai` and,
 by [Cloudflare's hostname inheritance](https://developers.cloudflare.com/turnstile/additional-configuration/hostname-management/),
 its subdomains, including `www.rallywith.ai`. The retired `with-avalon.com`
-domain is intentionally excluded. Its secret is
+domain is intentionally excluded. The widget must stay in Managed mode: the
+landing page asks for the `interaction-only` appearance, which a Non-Interactive
+widget would never reveal and an Invisible widget ignores, and only Managed mode
+can escalate a flagged visitor to a checkbox. Its secret is
 installed as `TURNSTILE_SECRET_KEY` on the Global API. Its public key is configured
 as `RALLY_TURNSTILE_SITE_KEY` in both GitHub `site-production` and `desktop-release`
 environments, since both workflows publish the site. The desktop release's site
@@ -342,6 +353,33 @@ procedure is not a substitute for those controls. Future EU workspace-grant
 privacy operations stay in the owning region; the current slice creates none.
 
 ## Changelog
+
+### 2026-09-10 — Hide the landing-page challenge unless a visitor must interact
+
+**What changed:** The landing page renders the managed Turnstile widget with the
+`interaction-only` appearance instead of the default always-visible one. The
+challenge still runs on page load and still gates the submit button, but no
+widget is shown unless Cloudflare decides the visitor has to complete a check.
+The container reserves its spacing only from `before-interactive-callback`, and a
+reset clears that marker with the widget.
+
+**Why:** The product owner does not want visitors to see a verification widget
+unless they have been flagged and must prove themselves. The server-side proof
+is unchanged, so the abuse controls lose nothing; only the visible widget goes.
+
+**Considered and rejected:** Switching the dashboard widget to Invisible mode
+would remove the checkbox entirely, so a flagged visitor could never pass.
+Running the challenge only on submit (`execution: 'execute'`) would also hide
+the widget but adds a wait to every submission and a larger change to the form
+flow for no visible gain. Hiding the container with `display: none` would keep
+the challenge frame from laying out; Cloudflare's own appearance mode keeps it
+rendered but out of flow.
+
+**Consequences:** The dashboard widget must remain in Managed mode. While the
+token is pending the button is disabled with no widget to explain it, which on a
+normal connection lasts well under a second. Because the widget stays visible
+after an interactive pass, the spacing marker is cleared on reset rather than on
+`after-interactive-callback`.
 
 ### 2026-09-09 — Configure the approved launch limits and Turnstile deployment
 
