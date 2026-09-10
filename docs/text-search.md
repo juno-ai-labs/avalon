@@ -71,13 +71,16 @@ by semantic chunk boundaries. Semantic queries search only chunk records.
 
 The desktop requests seven candidates initially: the 360px results list minus
 16px padding shows six complete 52px two-line rows and part of the seventh,
-with 2px gaps. Additional pages load
-at the bottom of the list or through the keyboard-accessible Load more control.
-Each request consumes one candidate page. An empty page with a continuation
-shows a Load more control instead of automatically scanning more pages. Existing
-rows stay visible while fetching another page; a transient continuation failure
-offers retry, while a failed reauthorization hides them. Query and category
-changes discard old pages.
+with 2px gaps. Additional pages load on their own: a sentinel at the end of the
+list is observed with `IntersectionObserver`, so the next page is requested as
+the end scrolls into view, again whenever a page lands without filling the
+viewport, and when the keyboard highlight reaches the last row. Each request
+consumes one candidate page. An empty page with a continuation keeps scanning
+until a page has a row or the cursor ends. Existing rows stay visible while
+fetching another page, with a "Loading more" line below the list; a transient
+continuation failure stops the scan and offers a retry button, so a broken
+cursor cannot loop, while a failed reauthorization hides the rows. Query and
+category changes discard old pages.
 
 Requests opt into pagination with `pageSize` and continue with `nextCursor`, the
 last consumed Turbopuffer id boundary (stable hash order, not relevance or
@@ -543,6 +546,19 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-10 — Continue pages by scroll position instead of a button
+
+The team asked that a paginated result list never show a button: the next page
+loads as the end of the list comes into view, infinite-scroll style. A sentinel
+inside the scroll container is observed with `IntersectionObserver`, re-observed
+whenever the row count changes so a page that lands without filling the viewport
+loads the next, and the keyboard's last-row move requests a page too. The Load
+more control and the "Continue searching" copy are gone; an empty page with a
+continuation now keeps scanning. A failed continuation is the one case that
+keeps a button, because scrolling past a broken cursor must not loop. The
+time-to-results trace is unchanged: it stays open across the automatic
+continuation exactly as it did across the explicit one.
 
 ### 2026-09-10 — Fence overlapping display deliveries
 
