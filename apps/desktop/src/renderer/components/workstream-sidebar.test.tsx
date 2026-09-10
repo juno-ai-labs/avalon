@@ -160,7 +160,8 @@ describe('WorkstreamSidebar', () => {
       'Go to conversation: Launch preparation', 'Go to substream: Launch risks', 'New substream',
     ]);
     expect(sidebar.querySelectorAll('.tabler-icon-border-corner-pill')).toHaveLength(1);
-    expect(screen.getByRole('button', { name: 'New substream' }).querySelector('.tabler-icon-plus')).not.toBeNull();
+    // The same arrow the main feed's New substream control carries, not an icon.
+    expect(screen.getByRole('button', { name: 'New substream' }).querySelector('.workstream-new-substream-mark')?.textContent).toBe('\u21b3');
     fireEvent.click(screen.getByRole('button', { name: /Launch risks/ }));
     expect(onSelectSubstream).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000099');
     fireEvent.click(screen.getByRole('button', { name: 'New substream' }));
