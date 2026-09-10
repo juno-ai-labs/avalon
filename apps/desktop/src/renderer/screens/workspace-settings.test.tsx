@@ -1752,7 +1752,11 @@ describe('Workspace settings', () => {
     openSettingsSection('Application');
 
     const ludicrous = await screen.findByRole('button', { name: 'Ludicrous speed app icon' });
-    expect(screen.getByRole('button', { name: 'Dark app icon' })).toHaveAttribute('aria-pressed', 'true');
+    // The tiles render immediately, disabled and pressed on the 'light' fallback, and only
+    // become the saved selection once the picker's getApplicationIcon() promise resolves.
+    // Waiting for Dark to be pressed keeps the click off that race, and is also the point
+    // at which the tiles stop being disabled.
+    await screen.findByRole('button', { name: 'Dark app icon', pressed: true });
     fireEvent.click(ludicrous);
 
     expect(ludicrous).toHaveClass('is-jumping');
