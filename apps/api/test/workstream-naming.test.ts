@@ -89,6 +89,43 @@ describe("work-stream naming", () => {
     expect(appearance(database)).toEqual({ icon: "megaphone", color: null });
   });
 
+  it("names a private child with the same pass, and spends no icon on it", async () => {
+    const database = seededDatabase();
+    const requests: Array<Record<string, unknown>> = [];
+    const published: Array<Record<string, unknown>> = [];
+    // The same answer the test above gets, including the icon: the pass is the
+    // work stream's own, and one call answers both halves for either.
+    stubOpenRouter(requests, "Retry budget failures");
+    const env = environment(database, published);
+
+    await nameWorkstream(env, {
+      workspaceId,
+      workstreamId,
+      substreamId: "00000000-0000-7000-8000-0000000000d1",
+      objective,
+      openingMessage: objective,
+      provisionalTitle,
+      userId,
+    });
+
+    // The name is written and published exactly as it is for a work stream…
+    expect(workstreamRow(database)).toMatchObject({
+      title: "Retry budget failures",
+      title_status: "automatic",
+    });
+    // …and the icon half is dropped, in the write and in the event alike.
+    // Nothing draws a child's own appearance — its rows carry the branch line
+    // and its header shows the parent's mark — so an icon written here is a
+    // shared identity nobody asked for, and one published here is a field the
+    // client discards on arrival.
+    expect(published).toEqual([{
+      type: "workstream_renamed",
+      title: "Retry budget failures",
+      titleStatus: "automatic",
+    }]);
+    expect(appearance(database)).toBeNull();
+  });
+
   it("asks the naming agent's own model for a name, with reasoning switched off", async () => {
     const database = seededDatabase();
     const requests: Array<Record<string, unknown>> = [];
