@@ -61,6 +61,13 @@ serves it through `rally-font://`.
 - **There is one design and exactly two resolved appearances.** Adding a named
   theme family would restore UI and state the product no longer supports.
   Account-owned accent color is independent of this light/dark preference.
+- **Seven tokens are the account accent in disguise.** `html[data-personal-color]`
+  rewrites `cmp.row.background-selected` and the six `sys.color.accent.*`, so a
+  rule naming one of them paints in the member's own colour, not in chrome. The
+  neutral grey those tokens hold is the unconfigured case, not the design —
+  reach for them only where the surface is meant to carry identity, and check a
+  screenshot against an account that has a personal colour set before believing
+  one that does not.
 - **`system` is a preference, not a palette.** It must always resolve to light
   or dark before it reaches `data-theme`; otherwise the generated selectors do
   not provide a complete token set.
@@ -165,6 +172,49 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-10 — Recording fills with danger; the microphone stops wearing the account accent
+
+**What changed:** Two rules in `app.css`, no token movement. The composer's
+dictation button while `is-listening` is now a filled danger control —
+`sys.color.danger.base` under the glyph, `sys.color.danger.on` over it, the
+same pairing `.button-danger` uses — replacing a red glyph plus a 4px pulsing
+`::after` dot. At rest in the message capsule it takes
+`cmp.row.background-hover`, the fill its sibling icon buttons already take,
+where it used to take `cmp.row.background-selected`. The capsule's two resting
+paint rules gained `:not(.is-listening)`, and their geometry (radius, 28px box)
+split into a rule that stays unconditional.
+
+**Why:** Two separate faults, one of them only visible to an account with a
+personal colour. `cmp.row.background-selected` is one of the seven tokens
+`html[data-personal-color]` rewrites, so the microphone was the single control
+in the composer painted in the member's own accent — reading as *selected* when
+nothing had selected it, and as personal when it is chrome. Nothing about a
+microphone is a member identity; the sibling attach and mention buttons were
+already on the neutral hover fill and are what it should have matched from the
+start. The recording signal was the second fault: the capsule's fills out-specify
+the state rule by two classes, so `is-listening` lost its red glyph there and a
+recording button was an idle button wearing a dot. Filling is the stronger
+signal at 27–28px anyway, and the dot could not survive the fill — drawn in the
+same danger red on top of it, it is invisible — so it goes rather than being
+recoloured into a white speck.
+
+**Considered and rejected:** Out-specifying the capsule from the state rule, by
+naming `.is-message-capsule.has-submit` inside it. That puts shape knowledge in
+a state rule and grows every time a third composer shape appears; scoping the
+shape rules to `:not(.is-listening)` instead leaves exactly one rule painting a
+recording button, and the shapes describe rest only. Also rejected: a near-white
+ink over the fill in both appearances. `danger.on` is dark in the dark
+appearance because `danger.base` is a light salmon there, and picking the ink by
+hand would be the palette's absolute-ink rule applied to a semantic fill, which
+is not what that rule is for. The consequence a future change has to accept is
+that recording is unmistakably red only in light; dark gets the app's dark-mode
+red, which is the same red every other danger surface uses.
+
+**What a future change has to respect:** a control that is not identity does not
+read `cmp.row.background-selected`, whatever it looks like in a screenshot taken
+by an account with no personal colour set — that token is a personal accent in
+disguise, and its neutral value is the unconfigured case, not the design.
+
 ### 2026-09-10 — The account accent colours marks and controls, and fills no row
 
 **What changed:** `onboarding.css` no longer re-points
@@ -223,6 +273,7 @@ in the generated stylesheet, which is the tint again. Two other keycaps
 (`.new-chat-recipient-shortcut kbd`, `.rally-search-result kbd`) still name
 their own fills and were left as they are; this token is where they should land
 when either is next touched.
+
 ### 2026-09-10 — The turn gap closes onto the hover row
 
 **What changed:** `sys.space.stack.gap` is `{ref.space.unit}` (4px, was
