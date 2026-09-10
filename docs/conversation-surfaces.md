@@ -415,8 +415,8 @@ closure captured at click time still holds the pre-stop draft, and the tail is
 dropped exactly as if it had never been drained. `stop()` resolving is not the
 moment the text exists — the render after it is.
 
-**Found in review:** two defects in the first cut, both caught by the PR's bot
-reviewers. Guarding `submit` on `submitDisabled` before the dictation branch
+**Found in review:** three defects in the first cut, two of them caught by the
+PR's bot reviewers and one by a human reading the same diff. Guarding `submit` on `submitDisabled` before the dictation branch
 made Send unreachable for a recording that had not produced a partial yet —
 which is the whole recording, on a provider that only returns text at the final
 commit. And `void dictation.stop()` discarded a promise that rejects when
@@ -425,6 +425,17 @@ telemetry and was filed as a JavaScript defect. Stopping now comes before the
 empty-draft guard, and one `stopDictation` helper consumes the rejection for
 every fire-and-forget stop in the component, the five that predate this change
 included.
+
+The third was the window those two opened onto. A pending send had no way out
+but the hook settling, and finalization runs to a 60-second completion timeout:
+for that whole window Send spins, Enter returns on the pending flag, and the
+field is read-only because `finalizing` blocks editing. Most of that predates
+this change — stopping from the microphone already left the composer read-only
+while finalizing — but Send became a second entrance to it and Enter stopped
+falling through, so the composer could be wholly unusable for a minute with
+nothing to press. A microphone press now cancels the pending send first,
+leaving the drain to finish on its own, so one control always answers and the
+transcript comes back to the draft rather than being posted.
 
 **What a future change has to respect:** the submit that follows dictation runs
 from an effect keyed on the settled dictation state, not from the click handler.

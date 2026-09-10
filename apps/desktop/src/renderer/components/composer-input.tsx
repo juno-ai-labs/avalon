@@ -335,6 +335,10 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   const dictationEditingBlocked = ['requesting', 'listening', 'finalizing'].includes(dictation.state);
   const messageCapsule = layout === 'message-capsule';
 
+  // Set by `submit` while dictation is running, cleared by the effect below
+  // when it settles, and by the microphone when the user cancels the send.
+  const [sendAfterDictation, setSendAfterDictation] = useState(false);
+
   const startDictation = (): void => {
     dictationBaseRef.current = value;
     void dictation.start();
@@ -351,6 +355,18 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   };
 
   const toggleDictation = (): void => {
+    // A pending send is the first thing the microphone cancels. Finalization
+    // can run to the hook's completion timeout, and for that whole window Send
+    // is spinning, Enter returns on the pending flag, and the field is
+    // read-only because `finalizing` blocks editing — so without this there is
+    // nothing on the composer that answers. Cancelling only the send leaves the
+    // drain to finish on its own: the transcript still lands in the draft, it
+    // simply is not posted, and the user gets their text back rather than a
+    // minute of a spinner.
+    if (sendAfterDictation) {
+      setSendAfterDictation(false);
+      return;
+    }
     if (dictationActive) stopDictation();
     else startDictation();
   };
@@ -365,7 +381,6 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   // handler submits the text as it stood when the click landed. Waiting for
   // dictation to settle and submitting from an effect is that next render, and
   // it is React's ordering rather than a microtask race.
-  const [sendAfterDictation, setSendAfterDictation] = useState(false);
   useEffect(() => {
     if (!sendAfterDictation) return;
     // A failed stop keeps the draft and shows its error; it does not send. So
@@ -411,11 +426,13 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
       aria-pressed={dictationActive}
       className="dictation-button"
       disabled={!api || submitting}
-      label={dictation.state === 'finalizing'
-        ? 'Finalizing dictation'
-        : dictation.state === 'transcribing'
-          ? 'Cancel dictation'
-          : dictationActive ? 'Stop dictation' : idleLabel}
+      label={sendAfterDictation
+        ? 'Cancel sending'
+        : dictation.state === 'finalizing'
+          ? 'Finalizing dictation'
+          : dictation.state === 'transcribing'
+            ? 'Cancel dictation'
+            : dictationActive ? 'Stop dictation' : idleLabel}
       onClick={(event) => {
         if (event.detail === 0) toggleDictation();
       }}
