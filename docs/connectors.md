@@ -367,9 +367,16 @@ page — `page` is indexed in units of the `per_page` actually sent, so requesti
 31 to show 30 makes page 2 begin at item 32 and drops item 31 on every boundary.
 The `Link` header answers it exactly without moving the boundaries, at the cost
 of threading response headers through every request in this adapter, and is the
-move if something ever needs `hasMore` exact. `issues.list` pages on what GitHub
-served rather than what survives its pull-request filter, or a repository whose
-issue numbers are mostly pull requests ends its list early. Parameter descriptions are principle 13 in
+move if something ever needs `hasMore` exact. The two endpoints that answer with
+GitHub's own `total_count` — `actions.list_workflow_runs` and
+`checks.list_for_ref` — are the exception, and take `hasMore` from that total
+exactly; when the total is missing they fall back to the same conservative
+reading rather than standing the page's own length in for it, which would report
+`hasMore: false` for an exactly-full first page, and they omit `totalCount`
+rather than inventing one a caller cannot tell from a real total.
+`issues.list` pages on what GitHub served rather than what survives its
+pull-request filter, or a repository whose issue numbers are mostly pull
+requests ends its list early. Parameter descriptions are principle 13 in
 [`agent-tools.md`](agent-tools.md), and
 `apps/api/test/tool-schema-descriptions.test.ts` holds them.
 
