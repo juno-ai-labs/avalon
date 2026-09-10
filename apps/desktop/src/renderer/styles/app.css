@@ -3680,7 +3680,19 @@ pre {
    scrolls beneath it, so the card floats over the first rows without pushing
    them down and without a layout jump when it goes; a host without a scroller
    makes the slot absolute instead. */
-.connection-card-slot { display: flex; height: 0; justify-content: center; pointer-events: none; position: sticky; top: var(--space-3); z-index: 4; }
+.connection-card-slot {
+  /* Zero height so the card floats over the rows rather than pushing them; the
+     card keeps its own height by starting at the slot's top, not stretching to
+     its zero cross size. */
+  align-items: flex-start;
+  display: flex;
+  height: 0;
+  justify-content: center;
+  pointer-events: none;
+  position: sticky;
+  top: var(--space-3);
+  z-index: 4;
+}
 .connecting-card {
   align-items: center;
   animation: fade-in 160ms ease-out;

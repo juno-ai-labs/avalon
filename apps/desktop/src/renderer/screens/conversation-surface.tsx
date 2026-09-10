@@ -2022,6 +2022,7 @@ export function ConversationSurface({
         {feedFromLocalCache && (
           <div className="connection-card-slot">
             <ConnectingCard
+              detail="Sending is available once Rally connects"
               error={socketConnection.openingError}
               name={detail.titleStatus === 'naming' ? null : detail.title}
               onRetry={socketConnection.retryOpening}
@@ -2136,7 +2137,6 @@ export function ConversationSurface({
             onReorderQueue={reorderQueue}
             queueItems={queueItems}
             sendBlocked={feedFromLocalCache}
-            {...(feedFromLocalCache ? { footerHint: 'Sending is available once Rally connects' } : {})}
             sending={sending}
             uploading={attachmentDraft.uploading}
             key={conversationAddress}

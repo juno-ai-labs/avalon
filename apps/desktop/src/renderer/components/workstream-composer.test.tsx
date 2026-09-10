@@ -102,7 +102,6 @@ describe('WorkstreamComposer over a remembered conversation', () => {
         <WorkstreamComposer
           attachments={[]}
           fileInputRef={createRef<HTMLInputElement>()}
-          footerHint="Sending is available once Rally connects"
           members={[creator]}
           onAttach={() => undefined}
           onOpenAttachment={() => undefined}
@@ -126,7 +125,6 @@ describe('WorkstreamComposer over a remembered conversation', () => {
 
     expect(onSend).not.toHaveBeenCalled();
     expect(composer).toHaveValue('Half a thought');
-    expect(screen.getByText('Sending is available once Rally connects')).toBeInTheDocument();
   });
 });
 
