@@ -161,35 +161,41 @@ export class SubstreamCreationService {
       workspaceId: this.auth.workspaceId, workstreamId: parentId, substreamId: operation.substreamId, operationId,
     });
     await this.parent(parentId);
-    await parent.setPrivateChildTerminalStatus({ ...address, status: "ready", errorCode: null, title });
-    return this.openSubstream(parentId, operation, opening);
+    // Readiness is the publication fence, so it is the last thing that happens:
+    // it is what puts the child in every member's sidebar, and nobody may see
+    // one before the turn that caused it is durable. `POST /workstreams` fences
+    // the same way with its route activation.
+    return this.openSubstream(parentId, operation, opening, () =>
+      parent.setPrivateChildTerminalStatus({ ...address, status: "ready", errorCode: null, title }));
   }
 
   /**
-   * Write the opening turn into a ready child, and name the child from it.
+   * Write the opening turn, publish the child, and seat the people its message
+   * named — in that order, because each step earns the next.
    *
-   * Separate from the provisioning above because readiness is where the two
-   * paths meet: a first confirmation arrives here having just published the
-   * child, and a retry arrives here having found it already published. Both
-   * owe the caller the same answer, and `createMessage` is what makes that
-   * true — it replays the canonical turn for a `clientMessageId` it has
-   * already admitted instead of writing a second one.
+   * A first confirmation arrives here with a provisioned but unpublished child
+   * and hands in the transition that publishes it; a retry arrives here with
+   * one that is already published and hands in nothing. Both owe the caller the
+   * same answer, and `createMessage` is what makes that true — it replays the
+   * canonical turn for a `clientMessageId` it has already admitted instead of
+   * writing a second one.
    */
   private async openSubstream(
     parentId: string,
     operation: PrivateChildPreparationOperation,
     opening: SubstreamOpeningMessage | null,
+    /**
+     * The ready transition, on a confirmation that has not made it yet. Called
+     * once the opening turn is durable: a child published before its message
+     * lands is the empty substream in somebody's sidebar that this whole flow
+     * exists to not produce.
+     */
+    publish?: () => Promise<unknown>,
   ): Promise<SubstreamCreationResult> {
     const title = opening ? provisionalWorkstreamTitle(opening.text, operation.title) : operation.title;
-    if (!opening) return { substreamId: operation.substreamId, title, opening: null };
-    // Membership before the turn. A mention the composer confirmed names
-    // somebody who has to be able to read the message naming them, and child
-    // membership is the parent's to grant — the conversation-local roster the
-    // turn itself would write grants neither discovery nor socket admission.
-    for (const userId of opening.confirmedParticipantUserIds) {
-      await this.changeParticipant(parentId, operation.substreamId, {
-        userId, operationId: `${operation.operationId}:participant:${userId}`,
-      }, true);
+    if (!opening) {
+      await publish?.();
+      return { substreamId: operation.substreamId, title, opening: null };
     }
     const receipt = await new WorkstreamObjectClient(
       this.env, this.auth, parentId, operation.substreamId,
@@ -200,6 +206,17 @@ export class SubstreamCreationService {
       confirmedParticipantUserIds: [],
       attachmentIds: opening.attachmentIds,
     });
+    await publish?.();
+    // Membership after publication, because the parent grants it only for a
+    // child that is ready — and it is the parent's to grant: the
+    // conversation-local roster the turn itself wrote gives neither discovery
+    // nor socket admission. A mention notification is delivered from an outbox
+    // the request does not drain, so it still finds these rows in place.
+    for (const userId of opening.confirmedParticipantUserIds) {
+      await this.changeParticipant(parentId, operation.substreamId, {
+        userId, operationId: `${operation.operationId}:participant:${userId}`,
+      }, true);
+    }
     const naming = nameWorkstream(this.env, {
       workspaceId: this.auth.workspaceId,
       workstreamId: parentId,
