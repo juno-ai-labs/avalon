@@ -718,7 +718,21 @@ reason, and the description refresh's `sidekick_parent` skip reason follow the
 same rule; the user-visible messages behind the renamed codes say Sidekick; and
 the drafting receipt replay selects receipts under both capability
 vocabularies, since a conversation that inspected a plugin before the rename
-holds receipts under `rally.automation.*` and must still count them.
+holds receipts under `rally.automation.*` and must still count them. The
+materialization receipt for a declared memory table is keyed by the Sidekick,
+its revision, and the table's position, and the publication alarm re-applies
+the same revision until every effect has landed; its payload hash carried the
+scope kind and the rationale, so the rename turned every such re-apply into
+`memory_table_mutation_receipt_mismatch` and the alarm into a permanent stall.
+The hash now covers only what the definition declared, and a receipt written
+under the pre-rename hash is asked for once more under that hash before a
+mismatch counts as a defect (`memory-table-materialization-receipts.test.ts`
+seeds one and re-applies). In-run tool-receipt replay for the creator and
+result tools is not shimmed: a receipt written before the deploy differs in
+plugin id and tool surface hash as well as capability, the same situation any
+edit to a built-in tool's definition creates, and the platform's answer is the
+same; `sidekick_post_result` is deduplicated by the room on the run id, and a
+resubmitted `submit_draft` writes the same draft as a revision.
 
 **Consequences:** Receipts and telemetry written from now on carry the new
 capability strings and codes; the runbook's search terms changed with them.
