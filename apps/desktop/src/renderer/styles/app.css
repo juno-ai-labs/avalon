@@ -680,7 +680,17 @@ pre {
 }
 .sidebar.is-compact { --sidebar-compact: 1; }
 
+/* A drag lands the edge on the pointer, so nothing inside may still be
+   travelling. The interval going to `0s` turns off every transition the drag
+   would start; it cannot stop one already running, which keeps the duration
+   it started with. Only losing its property cancels a running transition —
+   the same way the shell drops the box's own width channel for a drag — so
+   the second rule takes the property off everything under either sidebar for
+   as long as the drag lasts, `!important` because it has to beat every
+   travelling rule below whatever that rule's specificity. */
 .sidebar.is-resizing { --sidebar-layout-motion: 0s; user-select: none; }
+.sidebar.is-resizing *,
+.workstream-context-sidebar.is-resizing * { transition-property: none !important; }
 /* The navigation's grab handle is the sidebar's, standing in the gap outside its
    trailing edge — the same width as the right sidebar's, and starting below the
    title bar so the window stays draggable by its top edge. How near the pointer
@@ -2780,7 +2790,9 @@ pre {
    content's own width. */
 .workstream-context-sidebar { --sidebar-layout-motion: var(--sidebar-collapse-motion); background: var(--av-cmp-sidebar-background); border-right: 1px solid var(--av-cmp-sidebar-border); display: flex; flex: 0 0 280px; flex-direction: column; min-height: 0; min-width: 0; position: relative; transition: flex-basis var(--sidebar-collapse-motion); }
 /* As above: a drag tracks the pointer, so the gesture opts its own width out,
-   and its contents snap with the edge. */
+   and its contents snap with the edge — the interval for transitions the drag
+   would start, and the `.is-resizing *` rule beside the navigation's for the
+   ones already running. */
 .workstream-context-sidebar.is-resizing { --sidebar-layout-motion: 0s; transition: none; }
 .workstream-context-resizer:hover > .sidebar-resizer-handle { opacity: 1; }
 .conversation-layout:has(> .workstream-context-sidebar.is-resizing) { cursor: col-resize; user-select: none; }

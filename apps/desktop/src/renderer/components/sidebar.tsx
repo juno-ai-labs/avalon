@@ -1021,13 +1021,31 @@ export function Sidebar({
   // transition off, and under a reader who has asked for less motion. Only the
   // aside's own events count: the rows' transitions bubble through here too.
   const [layoutSettling, setLayoutSettling] = useState(false);
+  const layoutTravelling = useRef(false);
   const trackLayoutTransition = useCallback((event: TransitionEvent<HTMLElement>): void => {
     // From the platform's event rather than React's: React fills in
     // `propertyName` for `transitionend` alone, and leaves it undefined on
     // `transitionrun` and `transitioncancel`.
     if (event.target !== event.currentTarget || event.nativeEvent.propertyName !== '--sidebar-compact') return;
-    setLayoutSettling(event.type === 'transitionrun');
+    layoutTravelling.current = event.type === 'transitionrun';
+    setLayoutSettling(layoutTravelling.current);
   }, []);
+  // The toggle raises the hold itself, ahead of the platform: `transitionrun`
+  // is dispatched with the first frame after the change, and a render landing
+  // before it — a socket update, the reveal clearing itself — would otherwise
+  // plan against rows a frame into their travel. A frame later, once the
+  // platform has had its say, the hold is released if nothing started — a
+  // drag has turned the transitions off, or the layout did not change shape.
+  const lastCompact = useRef(compact);
+  useLayoutEffect(() => {
+    if (lastCompact.current === compact) return undefined;
+    lastCompact.current = compact;
+    setLayoutSettling(true);
+    const frame = requestAnimationFrame(() => {
+      if (!layoutTravelling.current) setLayoutSettling(false);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [compact]);
   /**
    * Ask for the next page as the scroll approaches the end of the list.
    *

@@ -159,7 +159,9 @@ scoped to the new component and do not change global navigation rows.
 The global navigation's contents travel with its edge. Every rule in its
 stylesheet that changes a shape between the expanded sidebar and the 96px rail
 transitions on `--sidebar-layout-motion`, stated once on `.sidebar` as the
-collapse motion and set to `0s` by a drag: the rows narrow to their 36px marks
+collapse motion; a drag sets it to `0s` for the transitions it would start and
+takes the property off everything already travelling, since a running
+transition keeps the duration it began with. The rows narrow to their 36px marks
 while their titles fade under a clip, the headings close to no height, the
 group gaps and the scroll box's padding close, the titlebar's New chat fades,
 the account row keeps its avatar and closes its name, and the Sidekick tiles
@@ -178,7 +180,8 @@ the aside itself to know when the layout has settled, and holds the list
 motion until then.
 
 The work-stream sidebar's contents travel the same way, on the same
-`--sidebar-layout-motion` restated on it and set to `0s` by its own drag: its
+`--sidebar-layout-motion` restated on it and cancelled the same way by its own
+drag: its
 rows narrow to their 36px marks as their copy fades under a clip, the section
 headings close to no height as the section rules and their spacing arrive, the
 substream mark cross-fades from line to initial, the participants' avatars
@@ -275,7 +278,7 @@ prove layout, focus, scroll position, or overlap.
 **What changed:** The work-stream sidebar's rows, copy, section headings and
 rules, empty state, avatars and footer toggle transition between the expanded
 sidebar and the 96px rail over `--sidebar-layout-motion`, restated on that
-sidebar and set to `0s` by its drag, the way the navigation's do in the entry
+sidebar and cancelled by its drag, the way the navigation's are in the entry
 below. A substream's mark now renders both its branch line and its initial,
 stacked in one grid cell, and the stylesheet cross-fades them; the line
 settles its eight-pixel lift as the title goes. Compact centring by
@@ -322,9 +325,10 @@ at the top in both layouts however far the list is scrolled; the rail's New
 chat row is rendered there under it and arrives and leaves through the list
 motion. The Sidekick strip stays below the list in both layouts. The interval
 is stated once on `.sidebar` as `--sidebar-layout-motion`, which a drag sets to
-`0s`, and the aside carries a registered `--sidebar-compact` number on the same
-interval whose transition events tell the component when the layout has
-settled.
+`0s` while also taking the property off everything already travelling, and the
+aside carries a registered `--sidebar-compact` number on the same interval
+whose transition events tell the component when the layout has settled, with
+the toggle raising the hold a frame ahead of them.
 
 **Why:** Collapsing the sidebar was reported as only the edge animating: the
 width glided and every row, heading and control inside it cut to its compact
