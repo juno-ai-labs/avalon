@@ -151,9 +151,11 @@ children; even delayed child jobs check the current parent registry.
 Deployment enables the core member read path for every workspace. There is no
 legacy/shadow mode, activation flag or comparison gate. `backfill` queues parent
 discovery followed by child inventories; `status` reports completion receipts.
-An incomplete attachment lookup automatically schedules missing discovery without
-resetting in-progress jobs, and returns retryable `projection_incomplete` until
-a canonical grant or complete negative evidence can be established. Explicit
+An incomplete attachment lookup automatically schedules missing discovery and
+returns retryable `projection_incomplete` until a canonical grant or complete
+negative evidence can be established. That path re-queues any parent whose
+discovery has not completed, including one already tracked in
+`authorization_backfill`, and leaves completed receipts untouched. Explicit
 backfill can refresh existing receipts. Source mutations also queue inventory
 updates through their transactional outbox.
 
@@ -219,7 +221,9 @@ negative attachment evidence is complete; it cannot silently disappear from the 
 
 A dead-lettered projection after discovery completes can leave a newly shared
 resource denied indefinitely, until that projection is repaired or another source
-mutation republishes it. There is no age-triggered self-heal. Repair the failing
+mutation republishes it. There is no age-triggered self-heal. A parent whose
+discovery never completed is different: the read path re-queues it on every
+`projection_incomplete`, so the repair is retried without operator action. Repair the failing
 consumer or source first, then replay the reference-only authorization jobs from
 the regional activity dead-letter queue. For a workspace-wide rebuild, trusted
 operator tooling can call `AuthorizationControl.execute({ workspaceId, action:
@@ -345,6 +349,29 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-09-10 — Let the read path retry a parent whose discovery never completed
+
+`beginAuthorizationBackfill({ refresh: false })` skipped every parent that had a
+row in `authorization_backfill`, whether or not that row was complete. The 503
+read path is the only caller that passes `refresh: false`, so a parent whose
+projection job died after being tracked was never re-queued: attachment coverage
+is workspace-wide, and one such parent returned
+`authorization_unavailable` for every attachment-gated resource in the workspace,
+for everyone except each resource's own uploader. The guard now matches only
+`completed = 1`, which is what `refresh: false` was meant to express — do not redo
+finished work — rather than do not touch a parent we have seen.
+
+Considered and rejected: adding an age or retry-count trigger to the coverage
+query, which would reintroduce the time-based self-heal this design deliberately
+does not have, and repairing at read time inside the evaluator, which would put a
+write on the read path. Re-queueing through the existing delivery outbox keeps
+repair asynchronous and idempotent, because `enqueueAuthorizationDiscovery`
+upserts on the job key.
+
+A future change must keep the child guard in `registerAuthorizationChildren`
+distinct from this one: a parent job runs with `refreshExisting` enabled, so
+re-queueing the parent already re-registers its children.
 
 ### 2026-09-09 — Make projection recovery write-owned
 

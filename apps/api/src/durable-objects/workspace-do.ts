@@ -8827,8 +8827,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          UNION SELECT automation_id AS parent_id, 'automation' AS parent_kind FROM automation_directory`,
       ).toArray();
       for (const parent of parents) {
+        // refresh:false skips finished work, never a tracked parent whose discovery never landed:
+        // the 503 retry path is the only thing that re-enqueues it.
         if (input.refresh === false && this.state.storage.sql.exec(
-          'SELECT 1 FROM authorization_backfill WHERE parent_id = ?', parent.parent_id,
+          'SELECT 1 FROM authorization_backfill WHERE parent_id = ? AND completed = 1', parent.parent_id,
         ).toArray().length) continue;
         this.state.storage.sql.exec(`INSERT INTO authorization_backfill(parent_id, parent_kind) VALUES (?, ?)
           ON CONFLICT(parent_id) DO UPDATE SET completed = 0`, parent.parent_id, parent.parent_kind);
