@@ -6,8 +6,9 @@ separate drafts; the launch checklist records their prerequisites.
 
 ## Landing page
 
-Stop copy/pasting great AI work into Slack. Rally brings your chats, skills,
+Stop copy/pasting AI work into Slack. Rally brings your chats, skills,
 context, and workflows into one shared place your whole team can build on.
+(Headline amended 2026-09-10: "great" removed at the product owner's request.)
 
 Collaborative Chat. Team Skills. Ready Out of the Box.
 
