@@ -162,14 +162,18 @@ with an explicit retry form; neither expiry nor revocation interrupts an already
 admitted stream. A failed storage lookup can spend a start allowance, but does
 not consume the grant itself.
 
-Four constants in `access-request-limits.ts` remain `LIMIT UNSET` pending the
-team's numerical decision: `MAX_ACCESS_REQUESTS_PER_IP_PER_HOUR`,
-`MAX_PRIVATE_ACCESS_REQUEST_BYTES`, `MAX_ACCESS_EMAILS_PER_HOUR`, and
-`MAX_DOWNLOAD_STARTS_PER_MINUTE`. The proposed values are respectively 10/hour,
-8 KiB, 100/hour (up to 2,400/day), and 5/minute. The proposed pre-database Worker
-binding is 30 requests/IP/minute. These are proposals, not measured capacity or
-installed limits. A shared office can reach the IP limits; a distributed attacker
-can exhaust the acknowledgement budget and delay legitimate email.
+The team approved the launch values on 2026-09-09:
+`MAX_ACCESS_REQUESTS_PER_IP_PER_HOUR` is 10, `MAX_PRIVATE_ACCESS_REQUEST_BYTES`
+is 8 KiB, `MAX_ACCESS_EMAILS_PER_HOUR` is 100, and
+`MAX_DOWNLOAD_STARTS_PER_MINUTE` is 5. The Global Worker's
+`ACCESS_EDGE_RATE_LIMITER` is 30 requests/IP/minute. These are accepted launch
+tolerances, not measured capacity: ten signups allow a small shared office,
+8 KiB leaves room above the documented 2,048-character challenge token and email
+envelope, 100/hour permits up to 2,400 mail attempts/day, and five download starts
+allow an initial transfer plus four restarts. Thirty edge admissions leave room
+for several users restarting and signing up. A larger shared office can reach the
+IP limits; a distributed attacker can exhaust the acknowledgement budget and
+delay legitimate email. Already admitted downloads can outlive the minute window.
 
 The production boundary refuses acquisition until **all four constants are
 finite**, the limiter binding exists, and the Turnstile secret is installed.
@@ -234,7 +238,7 @@ Apply migration 0101 before deploying the Global API and then Ace/site. The Glob
 Worker binds the existing `avalon-desktop-releases` bucket as `DESKTOP_RELEASES`;
 no new bucket or Cloudflare admin credential is needed. Acknowledgements use the
 existing production Resend key. New acknowledgements use the supplied
-`Adam @ Rally <hello@example.com>` From address, frozen alongside the subject/body.
+`Adam @ Rally <hi@rallywith.ai>` From address, frozen alongside the subject/body.
 Non-retryable provider failures are recorded as `review_required`. Ace's Review email panel
 relays recovery through the Global API's existing `DEMO_OPERATORS_JSON` operator
 boundary (`demos` role), never through a browser-held provider key. Supported actions:
@@ -255,18 +259,32 @@ Recovery and revocation emit operator/record/action audit events without email,
 bearer URL, or provider response bodies. There is no automatic bounce webhook or
 bulk sending in this slice; use provider delivery records and manual suppression.
 
-Before launch, provision a managed Turnstile widget restricted to the public
-Rally landing hostnames, install its secret as `TURNSTILE_SECRET_KEY` on the Global
-API, and set its public site key as `RALLY_TURNSTILE_SITE_KEY` in the GitHub
-`site-production` environment variables. The site deployment workflow and its
-production build require this key; normal CI builds can render an unavailable
-verification state without credentials. Supply the approved limiter binding and
-finite constants before deploying. The connected Cloudflare credential refused
-widget creation on 2026-09-09 (`10000 Authentication error`); no widget or secret
-was created by that attempt.
+The managed `Rally early access` Turnstile widget authorizes `rallywith.ai` and,
+by [Cloudflare's hostname inheritance](https://developers.cloudflare.com/turnstile/additional-configuration/hostname-management/),
+its subdomains, including `www.rallywith.ai`. The retired `with-avalon.com`
+domain is intentionally excluded. Its secret is
+installed as `TURNSTILE_SECRET_KEY` on the Global API. Its public key is configured
+as `RALLY_TURNSTILE_SITE_KEY` in both GitHub `site-production` and `desktop-release`
+environments, since both workflows publish the site. The desktop release's site
+step explicitly passes it to the build. Production site builds require the key;
+normal CI builds can render an unavailable verification state without credentials.
+The dashboard was used for provisioning after the local/connector API credentials
+refused widget/secret writes. Deploy the approved limiter binding and finite
+constants before public acquisition is enabled.
 
-Before launch, verify `rally.ai` in Resend and confirm Adam can receive replies
-at `hello@example.com`; the code does not provision DNS or mailboxes. Other transactional
+The Cloudflare Single Redirect rule `Redirect retired public landing hosts to Rally`
+in the `with-avalon.com` zone matches only `with-avalon.com` and
+`www.with-avalon.com`. It returns 301 to `https://rallywith.ai` with the original
+path and query string, before the old hosts can serve an unusable Turnstile form.
+API and download subdomains are excluded from this redirect. The rule lives in
+Cloudflare's `http_request_dynamic_redirect` phase, not `_redirects`: Workers
+Static Assets does not support domain-level redirects there. Rule ID:
+`4bc018c19c794f3fb6c092cf3faf7a1b`.
+
+The team selected `Adam @ Rally <hi@rallywith.ai>` after the Resend dashboard
+confirmed `rallywith.ai` is verified; `rally.ai` is not configured there. Receiving
+replies is explicitly not required. No live acknowledgement was sent during
+configuration verification. The code does not provision DNS or mailboxes. Other transactional
 mail retains its existing sender. Landing copy is compiled
 at build time; changing it requires a site deploy. New email copy affects new
 requests, while retries retain their original sender and content.
@@ -324,6 +342,28 @@ procedure is not a substitute for those controls. Future EU workspace-grant
 privacy operations stay in the owning region; the current slice creates none.
 
 ## Changelog
+
+### 2026-09-09 — Configure the approved launch limits and Turnstile deployment
+
+**What changed:** Set the four application caps to 10 signups/IP/hour, 8 KiB,
+100 mail attempts/hour and five download starts/link/minute, and added the Global
+30 requests/IP/minute binding. Provisioned the Rally-only widget and its keys;
+the desktop-release site step now receives the public key too. The acknowledgement
+sender uses the team's corrected `hi@rallywith.ai` address on the verified domain.
+Configured a Cloudflare redirect for the two retired landing hosts, preserving
+paths and queries while keeping the widget restricted to the current domain.
+
+**Why:** The team accepted these proposed numbers after the unconfigured site
+deployment stopped. The assumptions and tradeoffs are recorded above. Passing
+the key only to the standalone site workflow would still break the next desktop
+release's site build. Incoming mail is not required by the product owner.
+The old site routes still existed; redirecting at the edge prevents a dead
+signup form without reauthorizing the retired domain or adding a site Worker.
+
+**Consequences:** No acquisition caps remain unset. The provider confirms the
+outbound domain, but successful deployment and browser verification remain launch
+prerequisites. Existing requests retain their frozen sender until an operator
+explicitly starts a reconciled generation; this does not silently change retry payloads.
 
 ### 2026-09-09 — Add the launch abuse controls and manual recovery
 
