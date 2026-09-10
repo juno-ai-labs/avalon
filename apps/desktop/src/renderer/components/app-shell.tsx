@@ -546,7 +546,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             workspaces={knownWorkspaces}
           />
         )}
-        automations={automations.data ?? []}
+        automations={automations.data}
         compact={sidebarCompact}
         conversationOnly
         // Not `isLoading`: the first page is not fetched, so there is no
