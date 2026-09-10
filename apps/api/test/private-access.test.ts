@@ -4,9 +4,10 @@ import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { listAccessRequests, issueDownloadGrant, redeemDownloadGrant, downloadGrantUrl } from '@rally/db/private-access';
 import type { Env, HonoAppEnv } from '../src/env';
-import { createPrivateAccessRoutes, privateAccessRoutes } from '../src/routes/private-access';
+import { privateAccessRoutes } from '../src/routes/private-access';
 import { errorHandler } from '../src/middleware/errors';
 import { accessAcknowledgementContent } from '../src/services/access-request-content';
+import { MAX_ACCESS_REQUESTS_PER_IP_PER_HOUR, MAX_PRIVATE_ACCESS_REQUEST_BYTES } from '../src/services/access-request-limits';
 import { createTestEnv } from './helpers/cloudflare-test';
 import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 
@@ -30,32 +31,31 @@ afterEach(() => { sqlite.close(); Object.assign(accessAcknowledgementContent, or
 
 describe('private access against regional migrations', () => {
   it('enforces the configured per-IP rate before saving or emailing another address', async () => {
-    const limited = new Hono<HonoAppEnv>().route('/access', createPrivateAccessRoutes(1)).onError(errorHandler);
+    const limited = app;
     const send = (email: string) => limited.request('https://api.rallywith.ai/access/requests', {
       method: 'POST', headers: { origin: 'https://rallywith.ai', 'content-type': 'application/json', 'cf-connecting-ip': '192.0.2.1' },
       body: JSON.stringify({ email, turnstileToken: 'test-challenge' }),
     }, env);
-    expect((await send('first@example.com')).status).toBe(202);
+    for (let i = 0; i < MAX_ACCESS_REQUESTS_PER_IP_PER_HOUR; i++) expect((await send(`first${i}@example.com`)).status).toBe(202);
     const refused = await send('second@example.com');
     expect(refused.status).toBe(429);
     expect(await refused.json()).toMatchObject({ error: { code: 'access_request_rate_limited' } });
-    expect(provider).toHaveBeenCalledTimes(1);
-    expect(await listAccessRequests(env.DB)).toHaveLength(1);
+    expect(provider).toHaveBeenCalledTimes(MAX_ACCESS_REQUESTS_PER_IP_PER_HOUR);
+    expect(await listAccessRequests(env.DB)).toHaveLength(MAX_ACCESS_REQUESTS_PER_IP_PER_HOUR);
     expect(JSON.stringify(sqlite.prepare('SELECT * FROM access_request_rate_buckets').all())).not.toContain('192.0.2.1');
   });
 
-  it('leaves the default rate guard inert without persisting IP buckets', async () => {
+  it('accepts ordinary requests within the approved per-IP allowance', async () => {
     expect((await submit('first@example.com')).status).toBe(202);
     expect((await submit('second@example.com')).status).toBe(202);
     expect(provider).toHaveBeenCalledTimes(2);
-    expect(sqlite.prepare('SELECT * FROM access_request_rate_buckets').all()).toEqual([]);
+    expect(sqlite.prepare('SELECT count FROM access_request_rate_buckets').all()).toEqual([{ count: 2 }]);
   });
 
   it('rejects an oversized body before parsing or saving when the byte guard is configured', async () => {
-    const limited = new Hono<HonoAppEnv>().route('/access', createPrivateAccessRoutes(Number.POSITIVE_INFINITY, 16)).onError(errorHandler);
-    const response = await limited.request('https://api.rallywith.ai/access/requests', {
+    const response = await app.request('https://api.rallywith.ai/access/requests', {
       method: 'POST', headers: { origin: 'https://rallywith.ai', 'content-type': 'application/json' },
-      body: JSON.stringify({ email: 'person@example.com' }),
+      body: JSON.stringify({ email: 'person@example.com', padding: 'x'.repeat(MAX_PRIVATE_ACCESS_REQUEST_BYTES) }),
     }, env);
     expect(response.status).toBe(413);
     expect(await response.json()).toMatchObject({ error: { code: 'access_body_too_large' } });
@@ -73,7 +73,7 @@ describe('private access against regional migrations', () => {
     expect(requests[0]?.acknowledgedAt).toBeTruthy();
     const message = JSON.parse(String(provider.mock.calls[0]?.[1]?.body));
     expect(message.to).toEqual(['person@example.com']);
-    expect(message.from).toBe('Adam @ Rally <hello@example.com>');
+    expect(message.from).toBe('Adam @ Rally <hi@rallywith.ai>');
     expect(message.subject).toBe('We got your Rally request');
     expect(message.text).toContain('3 things they already want to share or collaborate on');
     expect(message.text).not.toContain('**');
