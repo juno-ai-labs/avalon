@@ -377,6 +377,25 @@ function remarkHtmlBreaks() {
   };
 }
 
+/** Chat input uses newlines as visible breaks, unlike document soft wrapping. */
+function remarkSoftBreaks() {
+  return (tree: unknown) => {
+    const visit = (node: MarkdownRewriteNode): void => {
+      if (!node.children) return;
+      node.children = node.children.flatMap((child) => {
+        if (child.type === 'text' && child.value?.includes('\n')) {
+          return child.value.split('\n').flatMap((value, index) => (
+            index === 0 ? [{ type: 'text', value }] : [{ type: 'break' }, { type: 'text', value }]
+          ));
+        }
+        visit(child);
+        return [child];
+      });
+    };
+    visit(tree as MarkdownRewriteNode);
+  };
+}
+
 function rewriteMarkdownBreaks(node: MarkdownRewriteNode): void {
   if (node.type === 'code' || node.type === 'inlineCode') return;
   const children = node.children;
@@ -761,6 +780,7 @@ function renderIdentity(
 }
 
 const REMARK_PLUGINS = [remarkGfm, remarkHtmlBreaks];
+const HUMAN_REMARK_PLUGINS = [remarkGfm, remarkHtmlBreaks, remarkSoftBreaks];
 /**
  * The same list plus the pending-pill rewrite, for a message that is still
  * growing. Two hoisted constants rather than a memo: both are compared by
@@ -941,6 +961,7 @@ export function MarkdownBody({
   collapseHeadings = false,
   glance = false,
   mentions = NO_MENTIONS,
+  preserveLineBreaks = false,
   still = false,
   streaming = false,
   telemetry,
@@ -969,6 +990,8 @@ export function MarkdownBody({
    */
   glance?: boolean;
   mentions?: MessageMention[];
+  /** Human chat messages keep the visible line breaks entered in the composer. */
+  preserveLineBreaks?: boolean;
   /**
    * This body is being rendered into a picture rather than onto the screen.
    *
@@ -1183,7 +1206,7 @@ export function MarkdownBody({
   }), [dropBorrowedFootnotes, headingComponents]);
   // A streaming body draws the pending pill; a settled one never does, so the
   // literal `[^foo]` of a reference nothing ever defined stays literal.
-  const remarkPlugins = streaming ? STREAMING_REMARK_PLUGINS : REMARK_PLUGINS;
+  const remarkPlugins = preserveLineBreaks ? HUMAN_REMARK_PLUGINS : streaming ? STREAMING_REMARK_PLUGINS : REMARK_PLUGINS;
   const rendered = useMemo(() => {
     const componentsFor = (source: string, extra: MarkdownComponents): {
       resolved: string;
@@ -2491,6 +2514,7 @@ export function MessageBlock({
             <HumanMessageBubble disclosure={rowDisclosure} messageId={message.id} text={message.text}>
               <MarkdownBody
                 mentions={message.mentions}
+                preserveLineBreaks
                 telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
                 verbatim
               >{message.text}</MarkdownBody>
