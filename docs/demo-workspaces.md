@@ -42,7 +42,7 @@ page calls. **Open questions** below says what remains.
 | `packages/contracts/src/demo-operations.ts` | The operation on the wire: the start request, the status Ace renders, the template's cast candidates, and the Workflow's pointer payload. |
 | `packages/contracts/src/demo-seed.ts` | `DemoSeedSchema`: what a seed action carries, and the one field a run's execution context gains. |
 | `packages/db/migrations/0100_demo_workspaces.sql` | The operation's row — which is also the register of published workspaces — its per-phase receipts, and the seeder's receipts. |
-| `packages/db/migrations/0101_demo_seed_sidekicks.sql` | Widens those receipts for an action that is in no room. |
+| `packages/db/migrations/0102_demo_seed_sidekicks.sql` | Widens those receipts for an action that is in no room. |
 
 ## How it works
 
