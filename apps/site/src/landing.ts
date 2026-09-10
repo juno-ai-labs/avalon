@@ -1,3 +1,4 @@
+import { accessChallenge } from './access-challenge';
 import { accessCopy } from './access-copy';
 
 const form = document.querySelector<HTMLFormElement>('#access-request');
@@ -10,11 +11,14 @@ const apiOrigin = location.hostname === 'localhost' || location.hostname === '12
 if (form && email && button && status) {
   // The button starts disabled so no-JavaScript browsers never submit an email
   // into a URL or a static host that cannot process it.
-  button.disabled = false;
   let pending = false;
+  let token: string | null = null;
+  const challenge = accessChallenge((value) => { token = value; button.disabled = pending || !value; }, () => {
+    status.dataset.state = 'error'; status.textContent = 'Verification is unavailable. Please refresh and try again.';
+  });
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    if (pending || !form.reportValidity()) return;
+    if (pending || !token || !form.reportValidity()) return;
     pending = true; button.disabled = true; email.readOnly = true;
     button.textContent = accessCopy.pending; status.textContent = ''; delete status.dataset.state;
     void (async () => {
@@ -22,7 +26,7 @@ if (form && email && button && status) {
       try {
         const response = await fetch(`${apiOrigin}/access/requests`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: email.value.trim() }),
+          body: JSON.stringify({ email: email.value.trim(), turnstileToken: token }),
         });
         if (!response.ok) {
           const body = await response.json().catch(() => null) as { error?: { code?: string } } | null;
@@ -33,6 +37,8 @@ if (form && email && button && status) {
           throw new Error('Request failed');
         }
         form.hidden = true;
+        const widget = document.querySelector<HTMLElement>('#access-challenge');
+        if (widget) widget.hidden = true;
         status.dataset.state = 'success';
         status.textContent = accessCopy.success;
         status.focus();
@@ -40,7 +46,9 @@ if (form && email && button && status) {
         status.dataset.state = 'error';
         status.textContent = failure;
       } finally {
-        pending = false; button.disabled = false; email.readOnly = false;
+        pending = false; email.readOnly = false;
+        if (!form.hidden) challenge.reset();
+        button.disabled = !token;
         button.textContent = accessCopy.button;
       }
     })();

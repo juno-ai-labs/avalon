@@ -58,9 +58,10 @@ export async function sendResendEmail(
     throw new ApiError(503, email.errors.unavailable.code, email.errors.unavailable.message);
   }
 
-  // `retryable: false` means the provider rejected this message and will keep
-  // rejecting it — an invalid recipient rather than a blip. A caller holding a
-  // frozen destination uses it to stop retrying and surface the address.
+  // `retryable: false` requires operator review, not a correction to the
+  // recipient: Resend also uses 4xx for credentials, sender verification and
+  // payload errors. Its documented names do not reliably identify a bad
+  // recipient. https://resend.com/docs/api-reference/errors (2026-09-09).
   const failed = (retryable = true): ApiError =>
     new ApiError(502, email.errors.failed.code, email.errors.failed.message, { retryable });
 
@@ -99,7 +100,13 @@ export async function sendResendEmail(
     throw failed();
   }
   if (body.length > MAX_RESEND_RESPONSE_CHARS) throw failed();
-  if (!response.ok) throw failed(response.status === 429 || response.status >= 500);
+  if (!response.ok) {
+    // Resend documents concurrent_idempotent_requests as safe to retry; the
+    // other 409 (changed payload for a key) is a permanent conflict.
+    let concurrent = false;
+    try { concurrent = (JSON.parse(body) as { name?: unknown }).name === "concurrent_idempotent_requests"; } catch { /* Non-JSON errors retain their HTTP classification. */ }
+    throw failed(response.status === 429 || response.status >= 500 || (response.status === 409 && concurrent));
+  }
   try {
     const parsed = JSON.parse(body) as { id?: unknown };
     if (typeof parsed.id !== "string" || parsed.id.length === 0 || parsed.id.length > 200) {

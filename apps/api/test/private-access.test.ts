@@ -1,6 +1,7 @@
+import { mockAccessMail } from './helpers/access-providers';
 import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { listAccessRequests, issueDownloadGrant, redeemDownloadGrant, downloadGrantUrl } from '@rally/db/private-access';
 import type { Env, HonoAppEnv } from '../src/env';
 import { createPrivateAccessRoutes, privateAccessRoutes } from '../src/routes/private-access';
@@ -11,19 +12,19 @@ import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 
 let sqlite: DatabaseSync;
 let env: Env;
-let provider: MockInstance<typeof fetch>;
+let provider: Mock<typeof fetch>;
 const app = new Hono<HonoAppEnv>().route('/access', privateAccessRoutes).onError(errorHandler);
 const originalContent = { ...accessAcknowledgementContent };
 function submit(email: string, origin = 'https://rallywith.ai') {
   return app.request('https://api.rallywith.ai/access/requests', {
-    method: 'POST', headers: { 'content-type': 'application/json', origin }, body: JSON.stringify({ email }),
+    method: 'POST', headers: { 'content-type': 'application/json', origin }, body: JSON.stringify({ email, turnstileToken: 'test-challenge' }),
   }, env);
 }
 beforeEach(() => {
   sqlite = migratedSqliteDatabase();
   env = createTestEnv({ DB: sqliteD1(sqlite), AVALON_REGION: 'global', APP_ENV: 'production',
-    PUBLIC_API_BASE_URL: 'https://api.rallywith.ai', ALLOWED_ORIGINS: 'https://rallywith.ai', RESEND_API_KEY: 'test-not-a-key', RESEND_FROM_EMAIL: 'Rally <test@example.com>' });
-  provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ id: 'test-email' }));
+    PUBLIC_API_BASE_URL: 'https://api.rallywith.ai', ALLOWED_ORIGINS: 'https://rallywith.ai', TURNSTILE_SECRET_KEY: 'test-turnstile-key', RESEND_API_KEY: 'test-not-a-key', RESEND_FROM_EMAIL: 'Rally <test@example.com>' });
+  provider = mockAccessMail().mockImplementation(async () => Response.json({ id: 'test-email' }));
 });
 afterEach(() => { sqlite.close(); Object.assign(accessAcknowledgementContent, originalContent); vi.restoreAllMocks(); });
 
@@ -32,7 +33,7 @@ describe('private access against regional migrations', () => {
     const limited = new Hono<HonoAppEnv>().route('/access', createPrivateAccessRoutes(1)).onError(errorHandler);
     const send = (email: string) => limited.request('https://api.rallywith.ai/access/requests', {
       method: 'POST', headers: { origin: 'https://rallywith.ai', 'content-type': 'application/json', 'cf-connecting-ip': '192.0.2.1' },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, turnstileToken: 'test-challenge' }),
     }, env);
     expect((await send('first@example.com')).status).toBe(202);
     const refused = await send('second@example.com');
@@ -91,19 +92,26 @@ describe('private access against regional migrations', () => {
     expect(provider.mock.calls[1]?.[1]?.body).toEqual(provider.mock.calls[0]?.[1]?.body);
     expect(provider.mock.calls[1]?.[1]?.headers).toEqual(provider.mock.calls[0]?.[1]?.headers);
     const row = sqlite.prepare('SELECT id FROM access_requests WHERE email = ?').get('retry@example.com') as { id: string };
-    expect(new Headers(provider.mock.calls[0]?.[1]?.headers).get('idempotency-key')).toBe(`rally-access-request/${row.id}`);
+    expect(new Headers(provider.mock.calls[0]?.[1]?.headers).get('idempotency-key')).toBe(`rally-access-request/${row.id}/0`);
     expect(await listAccessRequests(env.DB)).toMatchObject([{ acknowledgementStatus: 'sent' }]);
   });
 
-  it('records permanent provider rejection and never resends it on duplicate intake', async () => {
-    provider.mockResolvedValueOnce(new Response('recipient rejected', { status: 422 }));
+  it.each([
+    [401, 'restricted_api_key'],
+    [403, 'validation_error'],
+    [422, 'missing_required_field'],
+    [409, 'invalid_idempotent_request'],
+  ])('requires operator review for provider %i %s without blaming the recipient or resending', async (status, name) => {
+    provider.mockResolvedValueOnce(Response.json({ name }, { status }));
     for (let attempt = 0; attempt < 2; attempt++) {
       const response = await submit('rejected@example.com');
-      expect(response.status).toBe(502);
-      expect(await response.json()).toMatchObject({ error: { code: 'access_email_rejected' } });
+      expect(response.status).toBe(503);
+      const body = await response.json();
+      expect(body).toMatchObject({ error: { code: 'access_email_review_required' } });
+      expect(body).toMatchObject({ error: { message: expect.not.stringContaining('Check that you entered the right address') } });
     }
     expect(provider).toHaveBeenCalledTimes(1);
-    expect(await listAccessRequests(env.DB)).toMatchObject([{ acknowledgementStatus: 'rejected', acknowledgedAt: null }]);
+    expect(await listAccessRequests(env.DB)).toMatchObject([{ acknowledgementStatus: 'review_required', acknowledgedAt: null }]);
   });
 
   it('rejects invalid addresses and disallowed origins without storing or emailing', async () => {

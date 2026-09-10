@@ -13,12 +13,16 @@ const desktopReleaseValue = JSON.parse(readFileSync(new URL('./release.config.js
 const rootPackage = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
 
 export default defineConfig(async () => {
+  if (process.env.RALLY_RELEASE_DISCOVERY === '1' && !process.env.RALLY_TURNSTILE_SITE_KEY) {
+    throw new Error('RALLY_TURNSTILE_SITE_KEY is required for production site deployment');
+  }
   const desktopRelease = parseDesktopReleaseConfig(desktopReleaseValue);
   const publication = process.env.RALLY_RELEASE_DISCOVERY === '1'
     ? await discoverDesktopRelease(desktopRelease)
     : undefined;
   return {
     define: {
+      __RALLY_TURNSTILE_SITE_KEY__: JSON.stringify(process.env.RALLY_TURNSTILE_SITE_KEY ?? ''),
       __RALLY_SITE_RELEASE__: JSON.stringify(`site+${rootPackage.version}`),
       __RALLY_SITE_BUILD__: JSON.stringify(process.env.CF_PAGES_COMMIT_SHA?.slice(0, 40) ?? rootPackage.version),
     },

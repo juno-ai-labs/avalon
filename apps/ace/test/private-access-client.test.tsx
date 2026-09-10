@@ -12,7 +12,8 @@ afterEach(async () => { await act(async () => root.unmount()); vi.restoreAllMock
 
 it('issues the selected timed grant and keeps its displayed lifetime when the next mode changes', async () => {
   const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
-    if (init?.method !== 'POST') return Response.json({ requests: [] });
+    if (String(_input).includes('/downloads?')) return Response.json({ grants: [], nextCursor: null });
+    if (init?.method !== 'POST') return Response.json({ requests: [], nextCursor: null });
     return Response.json({ id: 'grant', url: `https://rallywith.ai/download/#token=${'a'.repeat(64)}`, expiresAt: JSON.parse(String(init.body)).expiresAt });
   });
   await act(async () => root.render(<AccessView />));

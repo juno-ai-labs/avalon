@@ -1,4 +1,4 @@
-.access-home { min-height: 100svh; display: flex; flex-direction: column; background: #111210; color: #f0efe8; }
+body.access-home { min-height: 100svh; display: flex; flex-direction: column; background: #111210; color: #f0efe8; }
 .access-home .rally-header { border: 0; padding: 32px 5vw; }
 .access-home main { flex: 1; display: grid; place-items: center; padding: 40px 24px 64px; }
 .access-intro { width: 100%; max-width: 850px; text-align: center; }
@@ -33,3 +33,6 @@
 .access-home .rally-header { position: static; background: transparent; }
 .access-home .rally-footer { min-height: 0; grid-template-columns: auto 1fr; }
 .access-home .rally-footer > small { grid-column: 1 / -1; }
+
+.access-challenge { display: flex; justify-content: center; margin: 0 auto 16px; }
+.access-challenge[hidden] { display: none; }

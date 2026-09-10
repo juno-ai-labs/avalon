@@ -1,7 +1,7 @@
 # Private access
 
 Rally's initial private-access implementation captures requests, acknowledges
-receipt, lists them in Ace, and issues single-use or timed bearer downloads. The
+receipt, lists them in Ace, and issues single-use or timed bearer downloads. Launch hardening adds server-verified bot proof, pre-database admission, a coordinated mail budget, bounded parsing, and operator recovery/revocation. Production acquisition fails closed until the configuration and finite limits are set. The
 [product plan](PRDs/2026-09-09_private-access/prd.md) also covers operator invitation
 emails, workspace invitation downloads and closing the old public release paths;
 those follow-up stages are not implemented yet. The landing page replacement is
@@ -24,7 +24,7 @@ ready for a coordinated deployment, not deployed by this change.
 
 ## How it works
 
-The static site posts an email to Global `POST /access/requests`. Validation trims
+The static site obtains a Turnstile token and posts it with an email to Global `POST /access/requests`. Validation trims
 and lowercases it. D1 has a unique normalized email: repeated submissions preserve
 the original row, request time, and frozen acknowledgement sender/subject/body. A new or
 failed request sends through the existing Resend service and shared Markdown
@@ -32,8 +32,7 @@ renderer. Success records provider acceptance; development records `skipped` and
 never calls the provider. An acknowledged duplicate returns the same accepted
 response without sending another message.
 
-Ace reads Global requests from its existing D1 binding and shows their
-acknowledgement states. An operator can generate a standalone download or
+Ace reads Global requests from its existing D1 binding, searches server-side, and keyset-pages 50 rows at a time. It shows acknowledgement state, first-attempt time and request ID for provider reconciliation. Grant history is separately paginated and contains recipient attribution and lifecycle timestamps, never raw tokens. Revocation is a same-origin Access-protected write. An operator can generate a standalone download or
 associate one with a request. This creates a `manual` grant and returns its URL
 once; it does not send mail or mark the person invited. The same exported
 `issueDownloadGrant` accepts `access_invitation` and `workspace_invitation` sources
@@ -41,7 +40,7 @@ for the planned email producers. Source fields are attribution, not authority.
 There is one generator, independent of the UI or any particular email template.
 Its optional `expiresAt` accepts a future ISO timestamp with an explicit offset,
 normalizes it to UTC, and makes the grant repeatable until that instant. Omission
-preserves single-use behavior with no time expiry. Ace lets operators choose an
+preserves single-use behavior with no time expiry. Ace defaults to timed mode and requires operators to choose an
 exact date/time in their displayed local timezone; no default duration is assumed.
 Both standalone and request-linked generation use this choice. The returned
 `expiresAt` is null for single-use links and is displayed with each newly issued
@@ -109,8 +108,7 @@ introduce a new permission to use Rally.
 Malformed emails fail before persistence. A disallowed/missing Origin fails intake before any write. Download admission
 uses the bearer token, including native no-referrer POSTs with `Origin: null`. EU intake returns 404; there is no acquisition-data fallback from EU.
 A provider error leaves the request as failed, and the page says it was saved but
-asks the visitor to retry confirmation. There is no background delivery queue or
-operator resend action yet. A request remaining pending/failed is visible in Ace.
+asks the visitor to retry confirmation. There is no background delivery queue. A quota-deferred request stays pending in Ace, without starting a provider uncertainty window. Operators can retry pending/failed acknowledgements from Ace when capacity returns.
 A process interruption between provider acceptance and status persistence has an
 uncertain outcome. An explicit retry reuses Resend's idempotency key and frozen
 body within the provider's 24-hour window, anchored to the first attempt. Outside
@@ -129,23 +127,54 @@ grant
 stays used and requires a new link. A timed link can restart a full download until
 its deadline. Range/resume requests are not implemented.
 
-The request list is intentionally unpaginated for the seed-stage intake volume.
-No arbitrary retention, TTL, cooldown or request cap has been selected. General
-public-intake anti-abuse controls and age-based retention remain rollout decisions;
-this first slice should not be represented as a fully hardened campaign system.
+The request and grant lists each use a 50-row UI page with a `(created_at, id)` cursor. Search uses bound parameters and literal substring matching. There is no automatic retention schedule or background campaign dispatcher.
 
-### Configurable intake guards
+### Launch abuse controls
 
-`MAX_ACCESS_REQUESTS_PER_IP_PER_HOUR` and `MAX_PRIVATE_ACCESS_REQUEST_BYTES` in
-`access-request-limits.ts` are `LIMIT UNSET` open upper bounds. The first bounds
-new address/mail attempts per edge IP; choose it from the email budget divided
-by active hours, allowing for a whole office sharing an IP. The second bounds
-JSON/form bytes before parsing; choose it from legitimate email/token envelope
-sizes against concurrent Worker memory. Both are +Infinity until the team picks
-values: rate storage and body middleware are skipped in that state. Finite
-values return 429/413 before request persistence or provider calls. This remains
-unprotected against abuse/oversized bodies while open; allowed origins and email
-deduplication are not replacements for those limits.
+`private-access-edge.ts` runs before the Worker authority read. It uses Hono’s path decoder and rejects encoded acquisition paths, wrong
+hosts, regions, methods and origins without D1; browser preflight also stays out
+of D1. A Worker `ACCESS_EDGE_RATE_LIMITER` binding applies a coarse per-IP limit
+before database work. This is a per-Cloudflare-location, eventually consistent
+traffic filter, **not** an exact global allowance. Platform DDoS protection still
+handles network floods; this change does not claim protection against every botnet.
+
+The route counts actual body bytes (including chunked bodies and incorrect length
+headers) before parsing. Production signup then validates Turnstile server-side,
+requiring success, the submitting origin's hostname, and `access_request` action.
+Missing secrets, missing tokens, expired/replayed tokens, wrong actions/hosts,
+and verifier errors all fail closed. Local development skips the external verifier
+and never sends mail. CSP allows the Cloudflare challenge script and frame. The landing body uses a more specific selector than shared site styling so production CSS chunk order cannot override its dark background and make the copy illegible.
+
+The authoritative hourly email budget is a conditional update of the singleton
+`access_email_budget` row in Global D1. It counts attempts, including uncertain
+provider failures and operator retries, across all IPs and Cloudflare locations.
+Full capacity leaves the lead pending instead of dropping it. A retryable provider
+409 (`concurrent_idempotent_requests`) remains failed/retryable; changed-payload
+idempotency conflicts require operator review. Other non-retryable provider errors
+also become `review_required`: Resend's 4xx codes include sender/authentication and
+payload failures, so they cannot establish that the visitor's address is wrong.
+Fixed windows can admit a burst across
+the boundary; this is a cost budget, not a smooth traffic scheduler.
+
+Known download grants atomically count starts per minute before R2 I/O. Random
+invalid tokens never create rate rows. A throttled holder receives a branded 429
+with an explicit retry form; neither expiry nor revocation interrupts an already
+admitted stream. A failed storage lookup can spend a start allowance, but does
+not consume the grant itself.
+
+Four constants in `access-request-limits.ts` remain `LIMIT UNSET` pending the
+team's numerical decision: `MAX_ACCESS_REQUESTS_PER_IP_PER_HOUR`,
+`MAX_PRIVATE_ACCESS_REQUEST_BYTES`, `MAX_ACCESS_EMAILS_PER_HOUR`, and
+`MAX_DOWNLOAD_STARTS_PER_MINUTE`. The proposed values are respectively 10/hour,
+8 KiB, 100/hour (up to 2,400/day), and 5/minute. The proposed pre-database Worker
+binding is 30 requests/IP/minute. These are proposals, not measured capacity or
+installed limits. A shared office can reach the IP limits; a distributed attacker
+can exhaust the acknowledgement budget and delay legitimate email.
+
+The production boundary refuses acquisition until **all four constants are
+finite**, the limiter binding exists, and the Turnstile secret is installed.
+No Infinity value is serialized into Wrangler. The guard machinery can be
+reviewed/tested without silently exposing an unbounded production intake.
 
 ## Testing
 
@@ -206,14 +235,35 @@ Worker binds the existing `avalon-desktop-releases` bucket as `DESKTOP_RELEASES`
 no new bucket or Cloudflare admin credential is needed. Acknowledgements use the
 existing production Resend key. New acknowledgements use the supplied
 `Adam @ Rally <hi@rally.ai>` From address, frozen alongside the subject/body.
-Permanent provider rejection is recorded as `rejected` in Ace and suppresses
-subsequent acknowledgement sends for that request. After resolving a provider
-configuration problem, an operator may reset the affected row to `pending`
-through Global D1; its frozen sender/content must still be valid before retry.
-For `sending` or `review_required`, first reconcile the provider outcome and ensure
-no attempt is in flight. Never reset the first-attempt timestamp automatically to
-extend retry eligibility. Only an explicit, reconciled operator decision to send
-again may clear it; a possibly delivered message is not safe to blindly retry.
+Non-retryable provider failures are recorded as `review_required`. Ace's Review email panel
+relays recovery through the Global API's existing `DEMO_OPERATORS_JSON` operator
+boundary (`demos` role), never through a browser-held provider key. Supported actions:
+
+- Retry pending/failed mail with the existing key and frozen content.
+- Mark provider acceptance confirmed after checking Resend.
+- Start a new send after confirming the prior attempt was not accepted and no
+  send is in flight. This deliberately refreshes sender/copy and increments the
+  generation in the idempotency key; it is not an automatic retry.
+- Suppress further acknowledgements for an address after a complaint or bad
+  recipient. Duplicate public requests cannot remove suppression.
+
+The panel requires an explicit provider-review confirmation and sends the row's
+observed generation. Conditional writes refuse stale recovery actions. Every
+provider completion is generation-fenced so an older attempt cannot overwrite
+operator recovery. A `sending` row is never retried automatically. Explicit recovery requires the operator to reconcile the provider outcome and ensure no send is in flight; there is no arbitrary waiting period substituting for that check. The UI shows the request ID and first-attempt time for lookup.
+Recovery and revocation emit operator/record/action audit events without email,
+bearer URL, or provider response bodies. There is no automatic bounce webhook or
+bulk sending in this slice; use provider delivery records and manual suppression.
+
+Before launch, provision a managed Turnstile widget restricted to the public
+Rally landing hostnames, install its secret as `TURNSTILE_SECRET_KEY` on the Global
+API, and set its public site key as `RALLY_TURNSTILE_SITE_KEY` in the GitHub
+`site-production` environment variables. The site deployment workflow and its
+production build require this key; normal CI builds can render an unavailable
+verification state without credentials. Supply the approved limiter binding and
+finite constants before deploying. The connected Cloudflare credential refused
+widget creation on 2026-09-09 (`10000 Authentication error`); no widget or secret
+was created by that attempt.
 
 Before launch, verify `rally.ai` in Resend and confirm Adam can receive replies
 at `hi@rally.ai`; the code does not provision DNS or mailboxes. Other transactional
@@ -263,7 +313,7 @@ sender, research store or invitation-suppression implementation.
 
 Retain waiting requests while serving that acquisition purpose. Verified
 withdrawal/erasure or closure of the early-access programme triggers the procedure
-above. An unused single-use grant has no hidden time expiry; revoke it explicitly
+above. Manual suppression is retained while needed to prevent unwanted acknowledgement mail; verified erasure removes it with the request and a later submission can therefore send again. Future campaigns need their own consent/suppression lifecycle. An unused single-use grant has no hidden time expiry; revoke it explicitly
 when its associated purpose ends. Delete expired/used/revoked grants after their
 related delivery/support investigation is complete. No automatic age-based sweep
 or numerical retention period is configured.
@@ -274,6 +324,31 @@ procedure is not a substitute for those controls. Future EU workspace-grant
 privacy operations stay in the owning region; the current slice creates none.
 
 ## Changelog
+
+### 2026-09-09 — Add the launch abuse controls and manual recovery
+
+**What changed:** Added server-verified Turnstile, a pre-D1 traffic filter,
+actual-byte parsing guards, a globally coordinated acknowledgement budget,
+per-grant download admission, Ace pagination/search/revocation, and explicit
+email recovery with generation fencing. Timed mode is the Ace default. Provider
+configuration failures require review instead of blaming the recipient's address.
+
+**Why:** Anonymous callers could spend shared email capacity or make the operator
+list unusable; uncertain sends needed recovery without duplicate mail. Interrupted
+downloads need retryable links. Production must refuse rather than silently open
+when the numeric limits or verification configuration are missing.
+
+**Considered and rejected:** A per-location rate binding cannot enforce a global
+mail budget. A background campaign system and account approval add unnecessary
+scope; manual provider reconciliation and bearer links preserve the chosen product.
+
+**Consequences:** The four proposed finite limits and the coarse binding value
+still require the team's decision. Turnstile provisioning and a verified monitored
+sender are external launch prerequisites. This change neither enables bulk mail
+nor retires the existing public installer origins. Recovery changes must preserve
+the provider window on ordinary retries and generation checks on recovery.
+
+PR #637.
 
 ### 2026-09-09 — Contain acknowledgement races and record the abuse audit
 

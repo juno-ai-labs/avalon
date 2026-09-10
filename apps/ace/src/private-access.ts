@@ -1,5 +1,6 @@
-import { DownloadGrantInputSchema } from '@rally/contracts/private-access';
-import { downloadGrantUrl, issueDownloadGrant, listAccessRequests } from '@rally/db/private-access';
+import { regional, relayRegionalError } from './regional-api';
+import { ACCESS_PAGE_SIZE, AccessPageQuerySchema, AccessRecoverySchema, AccessRecoveryResultSchema, DownloadGrantInputSchema } from '@rally/contracts/private-access';
+import { downloadGrantUrl, issueDownloadGrant, listAccessRequests, listDownloadGrants, revokeDownloadGrant } from '@rally/db/private-access';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AccessPrincipal } from './access';
@@ -8,9 +9,39 @@ import type { Env } from './env';
 export const accessRoutes = new Hono<{ Bindings: Env; Variables: { principal: AccessPrincipal } }>();
 accessRoutes.use('*', async (c, next) => {
   c.header('Cache-Control', 'no-store');
+  if (c.req.method === 'POST' && c.req.header('origin') !== new URL(c.req.url).origin) return c.json({ error: 'same_origin_required' }, 403);
   await next();
 });
-accessRoutes.get('/requests', async (c) => c.json({ requests: await listAccessRequests(c.env.GLOBAL_DB) }));
+accessRoutes.get('/requests', async (c) => {
+  const query = AccessPageQuerySchema.safeParse(c.req.query());
+  if (!query.success) return c.json({ error: 'invalid_page' }, 400);
+  const rows = await listAccessRequests(c.env.GLOBAL_DB, query.data.q, query.data.before);
+  return c.json({ requests: rows.slice(0, ACCESS_PAGE_SIZE), nextCursor: rows.length > ACCESS_PAGE_SIZE ? rows[ACCESS_PAGE_SIZE - 1]!.id : null });
+});
+accessRoutes.get('/downloads', async (c) => {
+  const query = AccessPageQuerySchema.safeParse(c.req.query());
+  if (!query.success) return c.json({ error: 'invalid_page' }, 400);
+  const rows = await listDownloadGrants(c.env.GLOBAL_DB, query.data.q, query.data.before);
+  return c.json({ grants: rows.slice(0, ACCESS_PAGE_SIZE), nextCursor: rows.length > ACCESS_PAGE_SIZE ? rows[ACCESS_PAGE_SIZE - 1]!.id : null });
+});
+accessRoutes.post('/downloads/:id/revoke', async (c) => {
+  const id = z.string().uuid().safeParse(c.req.param('id'));
+  if (!id.success) return c.json({ error: 'invalid_grant' }, 400);
+  if (!await revokeDownloadGrant(c.env.GLOBAL_DB, id.data)) return c.json({ error: 'not_found' }, 404);
+  console.log(JSON.stringify({ event: 'ace_download_grant_revoked', actor: c.get('principal').subject, grantId: id.data }));
+  return c.json({ revoked: true });
+});
+accessRoutes.post('/requests/:id/recover', async (c) => {
+  const id = z.string().uuid().safeParse(c.req.param('id'));
+  const input = AccessRecoverySchema.safeParse(await c.req.json().catch(() => null));
+  if (!id.success || !input.success) return c.json({ error: 'invalid_recovery' }, 400);
+  try {
+    const result = await regional(c.env, 'global', `/internal/access/requests/${id.data}/recover`,
+      { method: 'POST', body: input.data }, (value) => AccessRecoveryResultSchema.parse(value));
+    console.log(JSON.stringify({ event: 'ace_access_recovery', actor: c.get('principal').subject, requestId: id.data, action: input.data.action }));
+    return c.json(result);
+  } catch (error) { return relayRegionalError(error); }
+});
 accessRoutes.post('/downloads', async (c) => {
   if (c.req.header('origin') !== new URL(c.req.url).origin) return c.json({ error: 'same_origin_required' }, 403);
   const body = DownloadGrantInputSchema.safeParse(await c.req.json().catch(() => null));

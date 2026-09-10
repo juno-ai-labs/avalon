@@ -23,7 +23,7 @@ describe('Ace private access', () => {
     const token = new URLSearchParams(new URL(grant.url).hash.slice(1)).get('token')!;
     expect(await redeemDownloadGrant(sqliteD1(database), token)).toBe(true);
     expect(await redeemDownloadGrant(sqliteD1(database), token)).toBe(false);
-    expect(await (await request('/requests')).json()).toEqual({ requests: [] });
+    expect(await (await request('/requests')).json()).toEqual({ requests: [], nextCursor: null });
     expect(JSON.stringify(database.prepare('SELECT * FROM download_grants').all())).not.toContain(token);
   });
 
