@@ -255,12 +255,30 @@ describe('WorkstreamSidebar', () => {
 
     fireEvent.focus(edge);
     expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click to collapse');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click or Enter to collapse');
 
     fireEvent.doubleClick(edge);
     fireEvent.blur(edge);
     fireEvent.focus(edge);
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click to expand');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click or Enter to expand');
+  });
+
+  // As in the navigation: the reader most likely to be reading the hint is the
+  // one who cannot double-click, so Enter does what the double-click does and
+  // is refused where the double-click is refused.
+  it('collapses and expands from Enter on the divider, and refuses it in a narrow pane', () => {
+    setup();
+    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+
+    fireEvent.keyDown(edge, { key: 'Enter' });
+    expect(edge).toHaveAttribute('aria-valuenow', '96');
+    fireEvent.keyDown(edge, { key: 'Enter' });
+    expect(edge).toHaveAttribute('aria-valuenow', '280');
+
+    act(() => { width = 703; resized(); });
+    expect(edge).toHaveAttribute('aria-valuenow', '96');
+    fireEvent.keyDown(edge, { key: 'Enter' });
+    expect(localStorage.getItem('rally.workstream-sidebar-collapsed')).toBe('false');
   });
 
   // A pane too narrow for the rail's contents holds it compact and disables the

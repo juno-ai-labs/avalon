@@ -250,16 +250,25 @@ centre-aligned, which lands it beside the pill without either side measuring the
 other. Its two lines are the citation popover's two lines: the subordinate one
 is dimmed to 0.72 and left at the tooltip's own size, which is how a tooltip
 here says *secondary* and the only way it says it. The first line names the
-drag; the second names the double-click in the
+drag; the second names the quick action in the
 direction the next one would go, collapse while expanded and expand while
-compact. That second line is dropped exactly where the gesture would be refused:
+compact. That second line names a key as well as the double-click, and it has
+to: the hint opens on focus as well as on hover, so its most likely reader is
+the one who cannot double-click at all. `Enter` is the key, performing exactly
+what the double-click performs and refused under exactly the same condition,
+which is the action the ARIA authoring practices give a window splitter. That second line is dropped exactly where the gesture would be refused:
 a window too narrow for the navigation's expanded width, or a pane too narrow
 for the work-stream rail's contents, which are the same conditions that disable
 each footer toggle. Keeping the two in step is the point of the hint, so a new
 guard on either double-click adds itself to the hint in the same change. The
 right sidebar's handle takes the same hint from the same primitive, with one
 difference in what it offers: that panel closes from its own header control, so
-its double-click restores `DEFAULT_RAIL_WIDTH` rather than collapsing anything.
+its double-click, and its `Enter`, restore `DEFAULT_RAIL_WIDTH` rather than
+collapsing anything. There the key is the only keyboard route to that width at
+all: the arrows step by a fixed amount, so reaching the default by holding one
+means counting steps to a number nothing on screen shows. Either sidebar's
+arrows do reach its collapsed width, by crossing the collapse threshold, so
+`Enter` there is about the hint being honest rather than about reachability.
 
 The route host, not the feed, owns identity transitions. A new work stream
 begins with local composer keys; after durable admission its adapter rekeys
@@ -362,9 +371,11 @@ on hover or focus: `Drag to resize`, and under it the quick action. That is the
 navigation's handle, the work-stream sidebar's, and the right sidebar's. The two
 sidebars offer the double-click they have always had, named in the direction the
 next one would go, and the right sidebar's handle gained a double-click of its
-own that restores `DEFAULT_RAIL_WIDTH`. The hint is one primitive, `DragHint` in
-`components/primitives.tsx`, and its second line is omitted wherever the
-double-click is already guarded off.
+own that restores `DEFAULT_RAIL_WIDTH`. Each of those three quick actions is
+also on `Enter`, the key the ARIA authoring practices give a window splitter,
+and the hint names the key beside the gesture. The hint is one primitive,
+`DragHint` in `components/primitives.tsx`, and its second line is omitted
+wherever the quick action is already guarded off.
 
 **Why:** The double-click that collapses either sidebar has been in the code
 since the sidebars were, reachable only by guessing, and the grip pill is the
@@ -385,11 +396,14 @@ handle that promises least the one a reader meets in a panel they opened
 deliberately; it has a close control, so resetting the width is the action that
 was missing rather than a collapse.
 
-**Consequences:** The hint is now the only place either double-click is written
-down, so a guard added to one and not the other leaves the tooltip offering an
-action that does nothing. Both sidebars have a test pinning the pairing, the
+**Consequences:** A handle's quick action now has three statements to keep in
+step: the `onDoubleClick`, the `Enter` branch beside it, and the hint that names
+both. A guard added to one and not the others leaves the tooltip offering an
+action that does nothing, or leaves the two routes disagreeing about when they
+work. The hint is also the only place any of it is written down. Both sidebars have a test pinning the pairing, the
 navigation against `forcedCompact` and the work-stream rail against a narrow
-pane, and a third pins the right sidebar's reset. A tooltip mounts a Radix popper on
+pane, and a third pins the right sidebar's reset, each exercising both routes. A
+tooltip mounts a Radix popper on
 every handle, which brings its own `ResizeObserver`: a test that stubs that
 global for a sidebar now needs `unobserve` on the stub, and one that keeps only
 the newest observer callback must narrow the pane before opening a hint rather
