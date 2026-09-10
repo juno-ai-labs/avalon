@@ -31,7 +31,7 @@ page calls. **Open questions** below says what remains.
 | `apps/api/src/services/demo-workspace-register.ts` | The walk's one write into the register: `markDemoWorkspaceRetired` stamps `retired_at` on the operation row. Not an authorization input, and nothing reads through it. |
 | `apps/api/src/services/demo-connection-copy.ts` | Copying template connections into a demo, with credential re-encryption; `SHAREABLE_CONNECTOR_TYPES` is the list of providers whose grant may be shared. |
 | `apps/api/src/services/demo-workspace-visibility.ts` | The template and unpublished-candidate filter, applied in regional discovery and activation. `DEMO_TEMPLATE_WORKSPACE_ID`, the template's UUID, is declared here and nowhere else. |
-| `apps/api/src/services/demo-pack.ts` | The pack schema and its playability rules, the planner that binds a pack to a cast, the default name each role is offered under, and the placeholder pack — its two rooms and its standing Sidekick. |
+| `apps/api/src/services/demo-pack.ts` | The pack schema and its playability rules, the planner that binds a pack to a cast, the default name each role is offered under, and the placeholder pack — its three rooms and its standing Sidekick. |
 | `apps/api/src/services/demo-personas.ts` | The cast who do not exist: minting one regional user per role per operation from the name the operator typed, and proving a cast id is this operation's own persona. |
 | `apps/api/src/services/demo-seeder.ts` | Plays one action at a time through the production write paths, waits for its run to settle as specified, and records the receipt. `sidekickDraft` is the definition a Sidekick step publishes. |
 | `apps/api/src/services/demo-seed-provider.ts` | The `fetch` a seeded run's harness config carries: answers the run's one inference request from the seed and refuses the next. |
@@ -43,6 +43,8 @@ page calls. **Open questions** below says what remains.
 | `packages/contracts/src/demo-seed.ts` | `DemoSeedSchema`: what a seed action carries, and the one field a run's execution context gains. |
 | `packages/db/migrations/0100_demo_workspaces.sql` | The operation's row — which is also the register of published workspaces — its per-phase receipts, and the seeder's receipts. |
 | `packages/db/migrations/0102_demo_seed_sidekicks.sql` | Widens those receipts for an action that is in no room. |
+| `packages/db/migrations/0103_demo_seed_substreams.sql` | A fifth kind of confirmed action, and the conversation each action wrote to. |
+| `apps/api/src/services/substream-creation-service.ts` | Owned by [`substream-creation.md`](substream-creation.md); the seeder calls it with a summary gateway that answers from the pack. |
 
 ## How it works
 
@@ -140,27 +142,51 @@ workspace and leaves its personas behind, seated nowhere.
 ### Seeding a demo from a pack
 
 A pack is versioned data behind a schema: a cast of *roles*, and ordered steps
-that create rooms, say things in them as cast members, attach documents, and
-publish Sidekicks. Roles are bound to real workspace members only when a demo is
-prepared, so the pack never names a user id and one pack serves every demo. What
-Rally says in a room is part of the step that starts the run — `assistant`, a
-single turn that is either prose (`say`) or a question (`ask`). The schema
-refuses, before the first write, a room used before it is created, a line from
-somebody not in the room, a mention of somebody not in the cast, a room that
-carries on after its question, and two Sidekicks under one name. The placeholder
-pack carries the two scenarios the spike settled — the decision memo and the
-multiplayer renewal — and one standing Sidekick, and nothing else.
+that create rooms, open private substreams inside them, say things in either as
+cast members, attach documents, and publish Sidekicks. Roles are bound to real
+workspace members only when a demo is prepared, so the pack never names a user
+id and one pack serves every demo. What Rally says in a room is part of the step
+that starts the run — `assistant`, a single turn that is either prose (`say`) or
+a question (`ask`). The schema refuses, before the first write, a room used
+before it is created, a line from somebody not in the room, a mention of
+somebody not in the cast, a room that carries on after its question, and two
+Sidekicks under one name. The placeholder pack carries the two scenarios the
+spike settled — the decision memo and the multiplayer renewal — a third,
+drafting the announcement of a filing, which is where the pack's document
+versions and its substream live, and one standing Sidekick.
 
-**A Sidekick step is the one step that is in no room.** It is created by
-`createAutomation`, the same call "New Sidekick" makes, and published by
-`saveDefinition`, the same call a drafting conversation makes when a person
-accepts what it wrote — so a demo has a real published Sidekick without
-depending on a live model to have drafted one. The step carries the definition's
-prose, the recurrence, and optionally one `say` turn: the briefing the Sidekick
-has already written. The recurrence always names its zone. A calendar trigger
-may leave that null in general, and it then resolves against the account the
-Sidekick runs for — which here is a persona minted for this demo, with no zone
-of its own. A demo is presented in a zone somebody chose, so the pack states it.
+**A room step addresses a conversation, not a room.** Naming only the room means
+its main conversation; naming a room and a substream means the child. Every rule
+above is applied per conversation, so a question parks the conversation it was
+asked in and the room's other one carries on. Two rules exist only for a child:
+its roster is stated by the pack — a substream opens creator-only and the
+seeder adds the rest — and a mention in one must name somebody already in it,
+because a message cannot add to a roster the parent object owns. The pack also
+carries the child's **starting context** as text, which
+[`substream-creation.md`](substream-creation.md#extending-initial-context)
+explains: creation's one inference is answered from the pack rather than by a
+model, so what a presenter reads there is approved copy and the same pack
+prepares the same demo twice.
+
+**A substream is deliberately invisible to everything downstream of the pack.**
+A private child takes no directory row, and the parent aggregates only its main
+conversation into the row the sidebar and home screen read — so a substream
+changes neither a room's seats, its state, its attachments, nor where it sorts,
+and the readiness barrier below never sees one. This is what lets the pack put
+the presenter in a child of a workspace-scoped room they are not in: it costs
+their home screen nothing, and they find it by opening the room.
+
+**A Sidekick step is the one step that is in no room at all**, and so addresses
+no conversation either. It is created by `createAutomation`, the same call "New
+Sidekick" makes, and published by `saveDefinition`, the same call a drafting
+conversation makes when a person accepts what it wrote — so a demo has a real
+published Sidekick without depending on a live model to have drafted one. The
+step carries the definition's prose, the recurrence, and optionally one `say`
+turn: the briefing the Sidekick has already written. The recurrence always names
+its zone. A calendar trigger may leave that null in general, and it then resolves
+against the account the Sidekick runs for — which here is a persona minted for
+this demo, with no zone of its own. A demo is presented in a zone somebody chose,
+so the pack states it.
 
 That briefing is produced by an ordinary Sidekick run through `runSeeded`, whose
 model bytes come from the seed exactly as a seeded message's do
@@ -173,8 +199,9 @@ the pack's hour, in the pack's zone.
 **Every seeded fact is written by the production path that writes it for a
 person, as the cast member who did it.** A room by the creation service, a line
 by the room's own message admission, a document by the resource upload and
-`attach_resource`, a Sidekick by `createAutomation` and `saveDefinition`, and an
-assistant turn by an ordinary harness run. Nothing in
+`attach_resource`, a substream by `SubstreamCreationService`'s own prepare,
+confirm and participant-add, a Sidekick by `createAutomation` and
+`saveDefinition`, and an assistant turn by an ordinary harness run. Nothing in
 this module writes a transcript row, and none of those paths know they were
 seeding. A cast member acts under the `demo_seed` auth principal: no session,
 because the cast never signs in, and the object verifies their current
@@ -530,8 +557,8 @@ are closed when access ends ([`access-revocation.md`](access-revocation.md)).
 | `apps/api/test-workers/demo-connection-copy.test.ts` | A copy opens under its own identity, and the template is byte-identical afterwards **when its key version is stale** — the only state in which the wrong decrypt helper is visible. A personal connection and a non-Google one are skipped and reported, as `personal_scope` and `shared_grant`, and only the Google copy exists afterwards. |
 | `apps/api/test/demo-workspace-register.test.ts` | The walk's `retired_at` write against the real migration: written once, the first instant kept on a replay, and a workspace this feature never made untouched. |
 | `apps/api/test/demo-workspace-visibility.test.ts` | The template, an unpublished candidate and an abandoned one are withheld; a published one, a retired one, and a customer workspace named like a demo are not; and a member in more workspaces than one statement can name is answered in chunks. |
-| `apps/api/test-workers/demo-seeder.test.ts` | A five-step pack — a scripted room, a document, two unscripted lines, a question — seeds through the real creation service, room object, alarm-driven loop and upload, with the provider double recording no call; and a confirmed or half-confirmed action replays without a second write. Proved to fail with the seam removed (every run fails at the provider) and with the classifier skip removed (a seeded line is refused at admission). |
-| `apps/api/test/demo-pack.test.ts` | The playability rules — including a role token in Rally's own prose that names nobody in the cast — that the planner resolves a mention to the bound member at the offsets of the expanded name and expands `@{role}` in Rally's turn to the cast's names, and that the placeholder pack parses. |
+| `apps/api/test-workers/demo-seeder.test.ts` | A five-step pack — a scripted room, a document, two unscripted lines, a question — seeds through the real creation service, room object, alarm-driven loop and upload, with the provider double recording no call; and a confirmed or half-confirmed action replays without a second write. Proved to fail with the seam removed (every run fails at the provider) and with the classifier skip removed (a seeded line is refused at admission). A second pack opens a substream through the real preparation, confirmation and membership path: the child's roster includes a presenter who is not in its parent, its starting context is the pack's text, it runs its own loop, and the parent's main conversation gains nothing. Proved to fail twice — with the substream routing dropped, every child line lands in the parent; with the summary gateway removed, creation's one inference reaches the provider double. |
+| `apps/api/test/demo-pack.test.ts` | The playability rules — including a role token in Rally's own prose that names nobody in the cast — that the planner resolves a mention to the bound member at the offsets of the expanded name and expands `@{role}` in Rally's turn to the cast's names, and that the placeholder pack parses. The substream rules separately: a child of a room that does not exist, a line from somebody only in the parent, a mention of somebody not in the child, a personal parent that cannot admit an outsider, a question counted per conversation rather than per room — and that a substream's steps leave the room's facts, which is what the barrier waits on, completely unchanged. |
 | `apps/api/test/demo-seed-provider.test.ts` | The streamed wire form for `say` and for `ask` — the latter with arguments the real elicitation schema accepts — and the refusal of a second request; and the seeded route: an unbound model kept with its fallbacks dropped, an Azure-bound primary stepped past to the first unbound fallback, and a fixed unbound id when every routed model is bound. |
 | `apps/api/test/demo-seed-receipts.test.ts` | Against the real migration: the first confirmation wins, a receipt needs a claimed operation, and an outcome the seeder cannot confirm is refused. |
 | `apps/api/test-workers/demo-readiness.test.ts` | With the effect Queue held, a seeded two-room pack is listed but not Ready — the mention, the new marker and the attention count are named as gaps — and delivering the directory effects through the real consumer makes it Ready with no gaps, including the room the presenter can see without being in, and the order. Proved to fail with the mention comparison removed. |
@@ -558,7 +585,7 @@ has to register it the same way or watch the seeding phase fail.
 | Where | Table | Holds |
 | --- | --- | --- |
 | Regional D1 | `demo_operations` | One row per preparation: company, presenter, pack version, cast, the allocated workspace, status, attempt, the failed phase and reason, and the instants the workspace was published and closed. The register of published workspaces is this table. |
-| Regional D1 | `demo_seed_receipts` | One row per confirmed seed action: its kind, the room it was in and the work stream, turn, run and outcome, elicitation, and resource it produced — or, for a Sidekick, which belongs to no room, the Sidekick and the one run seeded for it. A CHECK keeps each kind's identity complete rather than letting a row be half of both. |
+| Regional D1 | `demo_seed_receipts` | One row per confirmed seed action: its kind, the room it was in and — once a room can hold more than one conversation — the substream it wrote to, by the pack's name and by the id creation minted; and the work stream, turn, run and outcome, elicitation, and resource it produced — or, for a Sidekick, which belongs to no room and so to no conversation, the Sidekick and the one run seeded for it. A CHECK keeps each kind's identity complete rather than letting a row be half of both. |
 | Regional D1 | `demo_operation_phases` | One row per phase per operation: status, attempt, a small detail object the page renders, and the error when there is one. |
 | A seeded run's `runs.execution_context_json` | `seed` | The pack version, action id, and the one assistant turn the harness answers the run from. |
 | `SidekickDO` | `runs.seed_json` | The same object, on a seeded Sidekick run, from admission until `provisionRun` puts it in the execution context above. Null on every run production makes. |
@@ -657,6 +684,56 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-09-09 — A pack can open a substream, and the demo has three rooms
+
+**What changed:** Three things, one on top of the next.
+
+A pack step now addresses a *conversation* rather than a room: `create_substream`
+opens a private child of a room the pack already made, and a message or upload
+may name that child instead of the room's main conversation. Every playability
+rule is applied per conversation. Two rules are new and belong only to a child —
+the pack states its roster, because a substream opens creator-only and nothing
+can be inferred from the parent's seats; and a mention in a child must name
+somebody already in it, because a message cannot add to a roster the parent
+object owns.
+
+The seeder plays that step through `SubstreamCreationService` — prepare,
+confirm, then one participant add each, all keyed by ids derived from the demo
+operation and the action so an interrupted attempt finishes the child it started
+rather than opening a second one. It passes a summary gateway that returns the
+pack's own text, so creation's one structured inference is answered from the
+pack. `demo_seed_receipts` gains the conversation each action wrote to, by the
+pack's name for it and by the id creation minted, and `create_substream` as a
+fifth kind — which meant rebuilding the table in `0103`, because SQLite cannot
+widen a CHECK in place.
+
+The placeholder pack gains a third room: three people drafting the announcement
+of a filing through three versions of the document, with a substream where they
+argue about which publication gets it first. The presenter is in that child
+without being in its parent.
+
+**Why:** The pack could show one document and one room's worth of disagreement.
+It could not show a document that goes through versions, and it could not show
+the product's private-conversation feature at all — which meant a demo could not
+open the one place a real team's side argument actually goes.
+
+**What was rejected, and what a future change has to respect.** Counting a
+substream's steps in `packRoomFacts` was the first attempt and it is wrong in a
+way that does not fail loudly: a private child takes no directory row and the
+parent aggregates only its main conversation, so a room whose seats, state,
+recency or attachments came partly from its child would make the readiness
+barrier wait for a projection the platform never produces — a demo stuck in
+**Waiting for workspace** forever, with gaps naming things that were correct.
+The rule is that substreams are invisible to `packRoomFacts`, to the manifest,
+and to `expect`, and a test asserts it directly rather than by implication.
+
+The other rejected option was letting creation's summary come from the live
+model. It is the smaller diff, and it costs the pack its two most important
+properties: what the presenter reads is approved copy, and preparing the same
+pack twice produces the same demo.
+[`substream-creation.md`](substream-creation.md#2026-09-09--the-starting-contexts-prose-is-an-injectable-gateway)
+holds why the seam is a gateway rather than a new context strategy.
 
 ### 2026-09-09 — A demo opens on a Sidekick that has already run
 

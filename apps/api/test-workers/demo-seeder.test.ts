@@ -28,10 +28,12 @@ import {
   type DemoSeedReceipt,
   type DemoSeedSession,
 } from "../src/services/demo-seeder";
+import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { AutomationService } from "../src/services/automation-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import {
   DEMO_BRIEFING_PROSE,
+  DEMO_CHILD_PROSE,
   DEMO_MARCUS_ID,
   DEMO_MEMO_TITLE,
   DEMO_OPENING_PROSE,
@@ -41,6 +43,8 @@ import {
   DEMO_QUESTION,
   DEMO_SIDEKICK_NAME,
   DEMO_SIDEKICK_PACK,
+  DEMO_STARTING_CONTEXT,
+  DEMO_SUBSTREAM_PACK,
   demoRoomStub,
   demoRunStub,
   demoSeedEnv,
@@ -63,8 +67,13 @@ beforeEach(async () => {
   await seedDemoWorkspaceControlPlane();
 }, 30_000);
 
-function roomClient(seed: DemoSeedSession, workstreamId: string, asUser: string): WorkstreamObjectClient {
-  return new WorkstreamObjectClient(demoSeedEnv(), seed.auth.get(asUser)!, workstreamId, "0");
+function roomClient(
+  seed: DemoSeedSession,
+  workstreamId: string,
+  asUser: string,
+  substreamId = "0",
+): WorkstreamObjectClient {
+  return new WorkstreamObjectClient(demoSeedEnv(), seed.auth.get(asUser)!, workstreamId, substreamId);
 }
 
 describe("seeding a pack", () => {
@@ -218,4 +227,63 @@ describe("seeding a pack", () => {
       .toEqual([DEMO_BRIEFING_PROSE]);
     expect(provider.calls).toEqual([]);
   }, 90_000);
+
+  it("opens a substream on the pack's own starting context, with its own roster and its own loop", async () => {
+    const seed = await openDemoTestSession(DEMO_SUBSTREAM_PACK);
+    const receipts: DemoSeedReceipt[] = [];
+    for (const action of seed.actions) receipts.push(await playDemoAction(seed, action));
+
+    // Creation's one inference — the handoff summary a model would write — was
+    // answered from the pack, so nothing about opening this child left the
+    // machine either.
+    expect(provider.calls).toEqual([]);
+
+    const [open, child] = receipts;
+    const workstreamId = open!.workstreamId!;
+    expect(child).toMatchObject({ kind: "create_substream", room: "memo", substream: "aside" });
+    expect(child!.substreamId).not.toBe("0");
+    const substreamId = child!.substreamId!;
+    // Every later action addressed the child by the id creation minted.
+    expect(receipts.slice(2).map((receipt) => [receipt.substream, receipt.substreamId, receipt.runOutcome]))
+      .toEqual([["aside", substreamId, null], ["aside", substreamId, "completed"]]);
+
+    // The child starts from the pack's words, not a model's.
+    const context = await runInDurableObject(demoRoomStub(workstreamId, substreamId), (_instance, state) =>
+      JSON.stringify(new WorkstreamTranscriptStorage(state.storage).initialContext()));
+    expect(context).toContain(DEMO_STARTING_CONTEXT.split("\n")[0]);
+
+    // The presenter is in the child without being in its parent, which is the
+    // shape the shipped pack uses: the private conversation is the only place
+    // a demo's presenter meets this room before they open it.
+    const childDetail = await roomClient(seed, workstreamId, DEMO_MARCUS_ID, substreamId).get();
+    expect(childDetail.participants.map((participant) => participant.user.id).sort())
+      .toEqual([DEMO_PRIYA_ID, DEMO_MARCUS_ID, DEMO_PRESENTER_ID].sort());
+    const parentDetail = await roomClient(seed, workstreamId, DEMO_PRIYA_ID).get();
+    expect(parentDetail.participants.map((participant) => participant.user.id))
+      .not.toContain(DEMO_PRESENTER_ID);
+
+    // The child ran its own loop, and the parent's main conversation did not
+    // hear about any of it: the opening turn and Rally's opening prose, and
+    // nothing after them.
+    const childRuns = await runInDurableObject(demoRoomStub(workstreamId, substreamId), (_instance, state) =>
+      state.storage.sql.exec<{ origin: string; status: string }>(
+        `SELECT origin, status FROM runs ORDER BY created_at`,
+      ).toArray());
+    expect(childRuns).toEqual([{ origin: "demo_seed", status: "completed" }]);
+    const childTurns = await runInDurableObject(demoRoomStub(workstreamId, substreamId), (_instance, state) =>
+      state.storage.sql.exec<{ role: string; author_user_id: string | null; content: string | null }>(
+        `SELECT role, author_user_id, content FROM canonical_conversation_turn_details ORDER BY sequence_number`,
+      ).toArray());
+    expect(childTurns.map((turn) => [turn.role, turn.author_user_id])).toEqual([
+      ["user", DEMO_MARCUS_ID],
+      ["user", DEMO_PRIYA_ID],
+      ["assistant", null],
+    ]);
+    expect(childTurns[2]?.content).toBe(DEMO_CHILD_PROSE);
+    const parentTurns = await runInDurableObject(demoRoomStub(workstreamId), (_instance, state) =>
+      state.storage.sql.exec<{ role: string }>(
+        `SELECT role FROM canonical_conversation_turn_details ORDER BY sequence_number`,
+      ).toArray());
+    expect(parentTurns.map((turn) => turn.role)).toEqual(["user", "assistant"]);
+  }, 60_000);
 });

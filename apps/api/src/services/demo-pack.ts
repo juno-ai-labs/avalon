@@ -2,13 +2,20 @@
  * The conversation pack, and the plan the seeder plays from it.
  *
  * A pack is versioned data behind a schema: a cast of roles, and an ordered
- * list of steps that create rooms, say things in them as cast members, attach
- * documents, and publish Sidekicks. Roles are bound to real accounts only when a
- * demo is prepared, so one pack serves every demo and the pack never names a
- * user id.
- * What Rally says in a seeded room is part of the step that starts the run
- * (`assistant`) — prose that carries its findings itself, with no tool call
- * behind it, because a seeded transcript records nothing Rally did not do.
+ * list of steps that create rooms, open private substreams inside them, say
+ * things in either as cast members, attach documents, and publish Sidekicks.
+ * Roles are bound to real accounts only when a demo is prepared, so one pack
+ * serves every demo and the pack never names a user id. What Rally says in a
+ * seeded room is part of the step that starts the run (`assistant`) — prose
+ * that carries its findings itself, with no tool call behind it, because a
+ * seeded transcript records nothing Rally did not do.
+ *
+ * A room step addresses a *conversation*, not a room: a room's main
+ * conversation by naming the room alone, a substream by naming both. That
+ * distinction is the whole of what substreams cost the rest of this module,
+ * because a private child takes no directory row — `packRoomFacts` says why the
+ * readiness barrier must not see one. A Sidekick step is in no room at all and
+ * addresses no conversation.
  *
  * `planDemoSeed` turns a pack and a cast binding into the actions the seeder
  * applies one at a time: mentions resolved to user ids and offsets, seats
@@ -59,6 +66,12 @@ export function demoCastRoles(roles: readonly DemoPackRole[]): DemoPackRole[] {
  */
 const StepIdSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/u);
 const RoomKeySchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u);
+/**
+ * The pack's own name for a substream, unique across the pack. The main
+ * conversation of a room has no name of its own: creating the room creates it,
+ * and a step that names no substream is a step in it.
+ */
+const SubstreamKeySchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u);
 const MessageTextSchema = z.string().min(1).max(MESSAGE_MAX_CHARACTERS);
 
 /**
@@ -87,10 +100,41 @@ const CreateWorkstreamStepSchema = z.strictObject({
   assistant: DemoSeedTurnSchema,
 });
 
+/**
+ * Open a substream: a private conversation inside a room the pack already
+ * created. Only its participants ever see it — it is not a second work stream,
+ * takes no row in anybody's sidebar, and changes nothing about how the room it
+ * hangs off is listed.
+ *
+ * Two things the production flow decides for a person are the pack's here.
+ * Membership, because a substream opens creator-only and everybody else is
+ * added afterwards, so the pack says who ends up in it rather than leaving a
+ * demo's private room with one person in it. And the starting context, because
+ * Rally normally writes that by summarizing the parent conversation with a
+ * model: scripting it keeps a seeded demo reproducible and keeps one more live
+ * model call out of the minutes an operator spends waiting to present.
+ */
+const CreateSubstreamStepSchema = z.strictObject({
+  kind: z.literal("create_substream"),
+  id: StepIdSchema,
+  /** The room this hangs off, which an earlier step must have created. */
+  room: RoomKeySchema,
+  substream: SubstreamKeySchema,
+  /** Who opens it. A substream is created by one person and starts idle. */
+  as: DemoPackRoleSchema,
+  title: z.string().min(1),
+  /** Everyone else in it, added by the creator once it is ready. */
+  participants: z.array(DemoPackRoleSchema),
+  /** What Rally's starting context says, in place of the summary a model would write. */
+  startingContext: z.string().min(1).max(20_000),
+});
+
 const MessageStepSchema = z.strictObject({
   kind: z.literal("message"),
   id: StepIdSchema,
   room: RoomKeySchema,
+  /** Which conversation of the room. Absent: the main one. */
+  substream: SubstreamKeySchema.optional(),
   as: DemoPackRoleSchema,
   text: MessageTextSchema,
   /** What Rally says when this message starts a run. Absent: it starts none. */
@@ -101,6 +145,8 @@ const UploadStepSchema = z.strictObject({
   kind: z.literal("upload"),
   id: StepIdSchema,
   room: RoomKeySchema,
+  /** Which conversation of the room. Absent: the main one. */
+  substream: SubstreamKeySchema.optional(),
   as: DemoPackRoleSchema,
   title: z.string().min(1),
   fileName: z.string().min(1),
@@ -148,6 +194,7 @@ const SidekickStepSchema = z.strictObject({
 
 export const DemoPackStepSchema = z.discriminatedUnion("kind", [
   CreateWorkstreamStepSchema,
+  CreateSubstreamStepSchema,
   MessageStepSchema,
   UploadStepSchema,
   SidekickStepSchema,
@@ -158,6 +205,32 @@ export type DemoPackStep = z.infer<typeof DemoPackStepSchema>;
 type DemoPackRoomStep = Exclude<DemoPackStep, { kind: "sidekick" }>;
 function isRoomStep(step: DemoPackStep): step is DemoPackRoomStep {
   return step.kind !== "sidekick";
+}
+
+/**
+ * Which conversation a room step writes to, as one key. A room's main
+ * conversation is the room's own key; a substream is the room's key and its
+ * own. Seating, the one-question rule and the planner all address conversations
+ * rather than rooms, because a room now has more than one.
+ *
+ * A Sidekick is in no room and so addresses no conversation, which is why this
+ * takes a room step: `isRoomStep` has to answer first.
+ */
+function conversationKey(step: DemoPackRoomStep): string {
+  if (step.kind === "create_workstream") return step.room;
+  if (step.kind === "create_substream") return `${step.room}/${step.substream}`;
+  return step.substream === undefined ? step.room : `${step.room}/${step.substream}`;
+}
+
+/**
+ * Whether a room step writes to a room's main conversation, which is what the
+ * directory shows. Same reason as above for taking a room step: a Sidekick is
+ * neither a main-conversation step nor a substream one.
+ */
+function isMainConversationStep(step: DemoPackRoomStep): boolean {
+  if (step.kind === "create_workstream") return true;
+  if (step.kind === "create_substream") return false;
+  return step.substream === undefined;
 }
 
 function mentionedRoles(text: string): string[] {
@@ -217,11 +290,20 @@ export interface DemoPackRoomFacts {
  * The rooms a pack builds, from its steps alone. Assumes a pack the schema
  * accepted; the readiness manifest and the schema's own viewer check both read
  * from this so there is one statement of who ends up in a room.
+ *
+ * **Substreams are not rooms and are deliberately invisible here.** A private
+ * child takes no directory row, and the parent object aggregates only its main
+ * conversation into the row the sidebar and the home screen read — so a
+ * substream changes neither the parent's seats, its state, its attachments nor
+ * where it sorts. Counting substream steps would make the barrier expect a
+ * projection the platform never produces, and it would wait forever. A Sidekick
+ * step is skipped for the plainer reason that it is in no room at all;
+ * `packSidekickFacts` is what reads those.
  */
 export function packRoomFacts(steps: readonly DemoPackStep[]): Map<string, DemoPackRoomFacts> {
   const rooms = new Map<string, DemoPackRoomFacts>();
   steps.forEach((step, index) => {
-    if (!isRoomStep(step)) return;
+    if (!isRoomStep(step) || !isMainConversationStep(step)) return;
     const text = step.kind === "create_workstream" ? step.openingMessage : step.kind === "message" ? step.text : "";
     const mentions = mentionedRoles(text);
     if (step.kind === "create_workstream") {
@@ -340,8 +422,17 @@ export const DemoPackSchema = z.strictObject({
     context.addIssue({ code: "custom", path: ["roles"], message: "Roles must be unique" });
   }
   const ids = new Set<string>();
-  /** Who is in each room so far: the creator, the seated, and the mentioned. */
+  /**
+   * Who is in each conversation so far, keyed by `conversationKey`: a room's
+   * main conversation under the room's name, a substream under both. A room
+   * and its substreams have separate rosters — being in the work stream is not
+   * being in its private child, and the parent object says so explicitly.
+   */
   const seated = new Map<string, Set<string>>();
+  /** A room's scope, which is what decides who may be put in its substreams. */
+  const roomScope = new Map<string, "workspace" | "personal">();
+  /** Every substream name the pack has used, and the room it named it in. */
+  const substreams = new Map<string, string>();
   const asked = new Set<string>();
   /** Sidekick names, folded, so two cannot collide in the directory. */
   const sidekickNames = new Set<string>();
@@ -351,7 +442,7 @@ export const DemoPackSchema = z.strictObject({
       context.addIssue({ code: "custom", path: [...path, "id"], message: `Step id "${step.id}" is used twice` });
     }
     ids.add(step.id);
-    const named = [step.as, ...(step.kind === "create_workstream" ? step.participants : [])];
+    const named = [step.as, ...(step.kind === "create_workstream" || step.kind === "create_substream" ? step.participants : [])];
     for (const role of named) {
       if (!roles.has(role)) {
         context.addIssue({ code: "custom", path, message: `Role "${role}" is not in the cast` });
@@ -379,6 +470,8 @@ export const DemoPackSchema = z.strictObject({
       sidekickNames.add(name);
       return;
     }
+    // Everything below is about a conversation, which only a room step has.
+    const conversation = conversationKey(step);
     const text = step.kind === "create_workstream" ? step.openingMessage : step.kind === "message" ? step.text : null;
     const mentions = text === null ? [] : mentionedRoles(text);
     for (const role of mentions) {
@@ -400,6 +493,16 @@ export const DemoPackSchema = z.strictObject({
         context.addIssue({ code: "custom", path: [...path, "assistant"], message: `Rally's turn names role "${role}", which is not in the cast` });
       }
     }
+    // A substream's starting context is Rally's prose too, and it names people
+    // with the same tokens. Unbound there it would throw mid-seed, after the
+    // work stream it hangs off already exists.
+    if (step.kind === "create_substream") {
+      for (const role of mentionedRoles(step.startingContext)) {
+        if (!roles.has(role)) {
+          context.addIssue({ code: "custom", path: [...path, "startingContext"], message: `The starting context names role "${role}", which is not in the cast` });
+        }
+      }
+    }
     if (step.kind === "create_workstream") {
       if (seated.has(step.room)) {
         context.addIssue({ code: "custom", path: [...path, "room"], message: `Room "${step.room}" is created twice` });
@@ -407,28 +510,79 @@ export const DemoPackSchema = z.strictObject({
       if (step.participants.includes(step.as)) {
         context.addIssue({ code: "custom", path: [...path, "participants"], message: "The author is seated already" });
       }
+      roomScope.set(step.room, step.scope);
       seated.set(step.room, new Set([step.as, ...step.participants, ...mentions]));
       return;
     }
-    const room = seated.get(step.room);
-    if (!room) {
-      context.addIssue({ code: "custom", path: [...path, "room"], message: `Room "${step.room}" is used before it is created` });
+    if (step.kind === "create_substream") {
+      const parent = seated.get(step.room);
+      if (!parent) {
+        context.addIssue({ code: "custom", path: [...path, "room"], message: `Room "${step.room}" is used before it is created` });
+        return;
+      }
+      const owner = substreams.get(step.substream);
+      if (owner !== undefined) {
+        context.addIssue({ code: "custom", path: [...path, "substream"], message: `Substream "${step.substream}" is created twice` });
+      }
+      if (step.participants.includes(step.as)) {
+        context.addIssue({ code: "custom", path: [...path, "participants"], message: "The creator is in it already" });
+      }
+      // The parent refuses anybody it would not let read the work stream —
+      // a workspace room lets every member in, a personal one only its own
+      // participants. Refused here rather than at the add, which happens
+      // after the child is already open and half its roster seated.
+      const readable = roomScope.get(step.room) === "workspace";
+      for (const role of new Set([step.as, ...step.participants])) {
+        if (!readable && !parent.has(role)) {
+          context.addIssue({
+            code: "custom",
+            path,
+            message: `Role "${role}" cannot be put in a substream of personal room "${step.room}" without being in it`,
+          });
+        }
+      }
+      substreams.set(step.substream, step.room);
+      seated.set(conversation, new Set([step.as, ...step.participants]));
       return;
     }
-    if (asked.has(step.room)) {
+    const room = seated.get(conversation);
+    if (!room) {
+      if (step.substream !== undefined && substreams.get(step.substream) !== step.room) {
+        context.addIssue({ code: "custom", path: [...path, "substream"], message: `Substream "${step.substream}" is not a substream of room "${step.room}"` });
+      } else {
+        context.addIssue({ code: "custom", path: [...path, "room"], message: `Room "${conversation}" is used before it is created` });
+      }
+      return;
+    }
+    if (asked.has(conversation)) {
       // The `ask` parked its run on a real open elicitation. Anything said in
       // the room after that is said into a question nobody has answered, and
       // the presenter is the one who is meant to answer it.
-      context.addIssue({ code: "custom", path, message: `Room "${step.room}" continues after its question` });
+      context.addIssue({ code: "custom", path, message: `Room "${conversation}" continues after its question` });
     }
     if (!room.has(step.as)) {
       // The production path admits a message from a workspace member who is
       // not in the room only by seating them, which is a fact the pack would
       // be relying on by accident. Say who is in the room instead.
-      context.addIssue({ code: "custom", path: [...path, "as"], message: `Role "${step.as}" is not in room "${step.room}"` });
+      context.addIssue({ code: "custom", path: [...path, "as"], message: `Role "${step.as}" is not in room "${conversation}"` });
     }
-    for (const role of mentions) room.add(role);
-    if (step.kind === "message" && step.assistant?.kind === "ask") asked.add(step.room);
+    for (const role of mentions) {
+      if (step.substream === undefined) {
+        room.add(role);
+        continue;
+      }
+      // A confirmed mention seats somebody in a work stream, but a substream's
+      // roster is the parent object's and a message cannot add to it. The
+      // client adds the person before sending; a pack says so up front.
+      if (!room.has(role)) {
+        context.addIssue({
+          code: "custom",
+          path,
+          message: `Role "${role}" is mentioned in substream "${conversation}" without being in it`,
+        });
+      }
+    }
+    if (step.kind === "message" && step.assistant?.kind === "ask") asked.add(conversation);
   });
   const facts = packRoomFacts(pack.steps);
   const viewers = new Set<string>();
@@ -534,17 +688,33 @@ interface ActionBase {
 /** An action inside a room, which is every action but a Sidekick's. */
 interface RoomActionBase extends ActionBase {
   room: string;
+  /**
+   * The pack's name for the conversation within the room, or `null` for its
+   * main one. The seeder turns this into the substream id the receipts of an
+   * earlier action recorded.
+   */
+  substream: string | null;
 }
 
 export type DemoSeedAction =
   | (RoomActionBase & {
       kind: "create_workstream";
+      substream: null;
       title: string;
       scope: "workspace" | "personal";
       participantUserIds: string[];
       openingMessage: string;
       mentions: Mention[];
       seed: DemoSeed;
+    })
+  | (RoomActionBase & {
+      kind: "create_substream";
+      substream: string;
+      title: string;
+      /** Added by the creator once the child is ready; never includes them. */
+      participantUserIds: string[];
+      /** Rally's starting context, with every role token expanded to a name. */
+      startingContext: string;
     })
   | (RoomActionBase & {
       kind: "message";
@@ -582,6 +752,13 @@ export type DemoSeedAction =
  * cast in is not playable, and that is found here rather than at the message
  * that needed them.
  */
+/**
+ * The actions that happen inside a room, which is every action but a
+ * Sidekick's — the action-side twin of `DemoPackRoomStep`. Only these address a
+ * conversation, so only these carry `room` and `substream`.
+ */
+export type DemoSeedRoomAction = Exclude<DemoSeedAction, { kind: "sidekick" }>;
+
 export function planDemoSeed(pack: DemoPack, cast: DemoCast): DemoSeedAction[] {
   for (const role of pack.roles) {
     if (!(role in cast)) throw new Error(`demo_pack_role_unbound:${role}`);
@@ -600,6 +777,7 @@ export function planDemoSeed(pack: DemoPack, cast: DemoCast): DemoSeedAction[] {
           kind: "create_workstream",
           actionId: step.id,
           room: step.room,
+          substream: null,
           actorUserId: actor.userId,
           title: step.title,
           scope: step.scope,
@@ -614,16 +792,33 @@ export function planDemoSeed(pack: DemoPack, cast: DemoCast): DemoSeedAction[] {
           seed: seed(step, step.assistant),
         };
       }
+      case "create_substream":
+        return {
+          kind: "create_substream",
+          actionId: step.id,
+          room: step.room,
+          substream: step.substream,
+          actorUserId: actor.userId,
+          title: step.title,
+          participantUserIds: [...new Set(step.participants.map((role) => cast[role]!.userId))],
+          startingContext: resolveRoleNames(step.startingContext, cast),
+        };
       case "message": {
         const resolved = resolveMentions(step.text, cast);
         return {
           kind: "message",
           actionId: step.id,
           room: step.room,
+          substream: step.substream ?? null,
           actorUserId: actor.userId,
           text: resolved.text,
           mentions: resolved.mentions,
-          confirmedParticipantUserIds: resolved.mentionedUserIds,
+          // Confirming a participant is what seats a mentioned person in a
+          // work stream. A substream's roster belongs to the parent object and
+          // a message cannot add to it, so the schema has already refused a
+          // mention of anybody who is not in the child, and there is nobody
+          // left for this to seat.
+          confirmedParticipantUserIds: step.substream === undefined ? resolved.mentionedUserIds : [],
           seed: seed(step, step.assistant ?? null),
         };
       }
@@ -632,6 +827,7 @@ export function planDemoSeed(pack: DemoPack, cast: DemoCast): DemoSeedAction[] {
           kind: "upload",
           actionId: step.id,
           room: step.room,
+          substream: step.substream ?? null,
           actorUserId: actor.userId,
           title: step.title,
           fileName: step.fileName,
@@ -658,16 +854,21 @@ export function planDemoSeed(pack: DemoPack, cast: DemoCast): DemoSeedAction[] {
 }
 
 const DECISION_MEMO_TITLE = "Insights pricing — decision memo";
+const PRESS_RELEASE_TITLE = "Announcement — listing";
 
 /**
  * The pack the feature is built and proved against.
  *
  * It carries the two scenarios the spike settled — the decision memo and the
  * multiplayer renewal — plus the standing Sidekick a demo is expected to open
- * with, and nothing else: the spike's onboarding-email room was invented to test
- * a third directory row and is not approved copy. The cast
- * roles, their names, and the third scenario are open inputs the PRD hands to
- * the team; this pack is what runs until they arrive, and swapping it is a
+ * with, and a third room the spike did not settle: drafting the announcement of
+ * a filing, which exists to show two things the first two cannot. A document
+ * that goes through versions, so the room holds three drafts rather than one
+ * attachment. And a substream, so the demo has somewhere the side argument went
+ * that is not the main conversation. It is not the spike's onboarding-email
+ * room, which was invented to test a third directory row and is not approved
+ * copy. The cast roles and their names are open inputs the PRD hands to the
+ * team; this pack is what runs until they arrive, and swapping any of it is a
  * data change behind the schema above.
  *
  * Every assistant turn cites only what the room holds. A seeded run makes no
@@ -902,18 +1103,313 @@ export const PLACEHOLDER_DEMO_PACK = {
         ].join("\n"),
       },
     },
+    {
+      kind: "create_workstream",
+      id: "press-open",
+      room: "press-release",
+      as: "marcus",
+      title: "The going-public announcement",
+      participants: ["priya", "dana"],
+      scope: "workspace",
+      openingMessage: [
+        "We need the announcement written before the filing goes public. The bankers",
+        "want a draft with the syndicate by Thursday, and the filing goes up the",
+        "Tuesday after. Constraints I know about: legal has not cleared the ticker,",
+        "and we are inside the quiet period from the day we file. What I want is a",
+        "release that leads with the business rather than the raise. The numbers I",
+        "would use: ARR crossed $140m last quarter, net revenue retention is 118%, and",
+        "1,900 companies run on us. Draft it, and tell me which of those three I",
+        "should expect to be argued about.",
+      ].join(" "),
+      assistant: {
+        kind: "say",
+        text: [
+          "Here is the shape I would write, and the number I would expect trouble over.",
+          "",
+          "**Lead.** The business, as you asked: 1,900 companies, ARR over $140m,",
+          "retention at 118%. That is a growth story that stands without the listing in",
+          "it, and the listing is one line at the end of the first paragraph.",
+          "",
+          "**Then the filing, flatly.** What was filed, where it will list, and that the",
+          "ticker is not final. Not the date it goes up, which is the bankers' to give",
+          "out, and no price — a range in a press release is a claim about a number",
+          "nobody has set yet.",
+          "",
+          "**The number to expect trouble over is 118%.** ARR and the customer count are",
+          "facts as of a quarter you can name. Net revenue retention is a computed",
+          "figure, and the release will be read against whatever definition the filing",
+          "uses. If the two differ, the release is the one that looks wrong.",
+          "",
+          "One thing I cannot judge from this room: what the quiet period lets you say",
+          "at all. @{dana} should read the draft before the syndicate does.",
+        ].join("\n"),
+      },
+    },
+    {
+      kind: "upload",
+      id: "press-v1",
+      room: "press-release",
+      as: "marcus",
+      title: `${PRESS_RELEASE_TITLE} v1`,
+      fileName: "announcement-v1.md",
+      mimeType: "text/markdown",
+      content: [
+        "# Announcement — draft 1",
+        "",
+        "1,900 companies now run their work on our platform. Annual recurring revenue",
+        "passed $140m last quarter, and net revenue retention stands at 118%.",
+        "",
+        "Today we filed to go public. We expect to list on the Nasdaq; the ticker is",
+        "not yet final.",
+        "",
+        "This is a milestone for our customers more than for us. We are going to keep",
+        "building the same product, on the same roadmap, for the same people.",
+        "",
+      ].join("\n"),
+    },
+    {
+      kind: "message",
+      id: "press-dana-1",
+      room: "press-release",
+      as: "dana",
+      text: [
+        "Three problems, one of them serious. \"We are going to keep building\" is a",
+        "forward-looking statement with no safe-harbour language anywhere near it —",
+        "either it goes or the release carries the disclaimer. \"A milestone for our",
+        "customers\" is puffery and I do not care. The serious one is 118%: the filing",
+        "computes retention on a trailing twelve-month basis and I do not know that",
+        "this number does.",
+      ].join(" "),
+    },
+    {
+      kind: "message",
+      id: "press-priya-1",
+      room: "press-release",
+      as: "priya",
+      text: [
+        "It does not. 118% is the quarterly cohort figure we report internally. On the",
+        "trailing twelve-month basis the filing uses it is 112%. Both are true and they",
+        "are not the same measurement, which is exactly the trap.",
+      ].join(" "),
+    },
+    {
+      kind: "message",
+      id: "press-marcus-1",
+      room: "press-release",
+      as: "marcus",
+      text: [
+        "Rally, take @{dana}'s three and @{priya}'s correction and tell me what the",
+        "second draft has to change. I would rather cut a sentence than carry a",
+        "disclaimer.",
+      ].join(" "),
+      assistant: {
+        kind: "say",
+        text: [
+          "Then cut the sentence. Three changes, in the order they matter.",
+          "",
+          "**Retention becomes 112%, on the trailing twelve months, and says so.** This",
+          "is the only change that is about being wrong rather than about being careful.",
+          "Two defensible numbers under one name is how a release ends up contradicting",
+          "the filing it was written to accompany, and the filing is the one that",
+          "governs.",
+          "",
+          "**The last paragraph goes.** \"We are going to keep building\" is the",
+          "forward-looking statement; without it there is nothing in the draft that needs",
+          "safe-harbour language, and you avoid the disclaimer you did not want.",
+          "",
+          "**\"A milestone for our customers\" goes with it.** Not because it is a legal",
+          "problem — @{dana} said it is not — but because it is the sentence that was",
+          "carrying the paragraph, and the paragraph is gone.",
+          "",
+          "That leaves the release ending on the filing itself, which is the fact you",
+          "are announcing.",
+        ].join("\n"),
+      },
+    },
+    {
+      kind: "upload",
+      id: "press-v2",
+      room: "press-release",
+      as: "marcus",
+      title: `${PRESS_RELEASE_TITLE} v2`,
+      fileName: "announcement-v2.md",
+      mimeType: "text/markdown",
+      content: [
+        "# Announcement — draft 2",
+        "",
+        "1,900 companies now run their work on our platform. Annual recurring revenue",
+        "passed $140m last quarter, and net revenue retention over the trailing twelve",
+        "months stands at 112%.",
+        "",
+        "Today we filed to go public. We expect to list on the Nasdaq; the ticker is",
+        "not yet final.",
+        "",
+      ].join("\n"),
+    },
+    {
+      kind: "message",
+      id: "press-dana-2",
+      room: "press-release",
+      as: "dana",
+      text: [
+        "That clears everything I raised. One thing I did not: \"we expect to list\" is",
+        "itself forward-looking. Say what was filed and where the application was made,",
+        "and let the reader draw the conclusion.",
+      ].join(" "),
+    },
+    {
+      kind: "upload",
+      id: "press-v3",
+      room: "press-release",
+      as: "marcus",
+      title: `${PRESS_RELEASE_TITLE} v3`,
+      fileName: "announcement-v3.md",
+      mimeType: "text/markdown",
+      content: [
+        "# Announcement — draft 3",
+        "",
+        "1,900 companies now run their work on our platform. Annual recurring revenue",
+        "passed $140m last quarter, and net revenue retention over the trailing twelve",
+        "months stands at 112%.",
+        "",
+        "Today we filed a registration statement with the Securities and Exchange",
+        "Commission and applied to list our common stock on the Nasdaq Global Select",
+        "Market. The ticker is not yet final.",
+        "",
+      ].join("\n"),
+    },
+    {
+      kind: "message",
+      id: "press-marcus-2",
+      room: "press-release",
+      as: "marcus",
+      text: "v3 is what goes to the syndicate. Thank you both.",
+    },
+    {
+      kind: "create_substream",
+      id: "press-placement-open",
+      room: "press-release",
+      substream: "placement",
+      as: "marcus",
+      title: "Who gets it first",
+      participants: ["priya", "dana", "presenter"],
+      startingContext: [
+        "**Request.** Draft the announcement of the filing, leading with the business",
+        "rather than the raise, before the draft goes to the syndicate on Thursday.",
+        "",
+        "**Decisions.** Retention is stated as 112% on a trailing twelve-month basis,",
+        "matching the filing, rather than the 118% quarterly cohort figure reported",
+        "internally. The closing paragraph was cut rather than carrying safe-harbour",
+        "language. The release says what was filed and where the listing application",
+        "was made, not what the company expects to happen.",
+        "",
+        "**Done.** Three drafts. v3 is the one going to the syndicate.",
+        "",
+        "**Facts.** 1,900 companies on the platform. ARR over $140m as of last",
+        "quarter. Retention 112% trailing twelve months, 118% quarterly cohort. The",
+        "ticker is not cleared. The quiet period runs from the filing.",
+        "",
+        "**Relevant attachments.** Announcement — listing v1, v2 and v3.",
+        "",
+        "**Open.** Where the announcement is placed, and in what order.",
+      ].join("\n"),
+    },
+    {
+      kind: "message",
+      id: "press-placement-marcus-1",
+      room: "press-release",
+      substream: "placement",
+      as: "marcus",
+      text: [
+        "Placement, away from the drafting. My instinct is one exclusive to a business",
+        "desk an hour ahead of the wire, and everyone else off the wire. The Journal or",
+        "Bloomberg — I would take either.",
+      ].join(" "),
+    },
+    {
+      kind: "message",
+      id: "press-placement-priya-1",
+      room: "press-release",
+      substream: "placement",
+      as: "priya",
+      text: [
+        "An exclusive to a general business desk gets us a story about the raise, which",
+        "is the story we spent three drafts not writing. The trade press is where our",
+        "buyers actually read, and they will cover the product because that is what",
+        "they cover.",
+      ].join(" "),
+    },
+    {
+      kind: "message",
+      id: "press-placement-dana-1",
+      room: "press-release",
+      substream: "placement",
+      as: "dana",
+      text: [
+        "Whoever it is, they get the release and nothing else. An exclusive usually",
+        "comes with a briefing call, and a briefing call inside the quiet period is how",
+        "you end up explaining an unfiled number to a regulator. No call, no background,",
+        "no colour.",
+      ].join(" "),
+    },
+    {
+      kind: "message",
+      id: "press-placement-marcus-2",
+      room: "press-release",
+      substream: "placement",
+      as: "marcus",
+      text: "Rally, we are three for three on different answers. Sort it out.",
+      assistant: {
+        kind: "say",
+        text: [
+          "You are not disagreeing about the same question, which is why it will not",
+          "settle.",
+          "",
+          "@{dana}'s constraint decides the format, not the outlet: no briefing call, no",
+          "background, no colour. That holds whoever gets it. Once it holds, an exclusive",
+          "is worth much less than it usually is — what you are offering is an hour's",
+          "head start on a document, not access — so the case for spending one narrows to",
+          "who you most want writing first.",
+          "",
+          "@{priya}'s point answers that. Your buyers read the trade press, and the trade",
+          "press will write about the product because that is their beat. A general",
+          "business desk will write about the raise, and you have removed everything from",
+          "the release that would help them write anything else.",
+          "",
+          "So: the head start goes to a trade outlet, the wire carries it to everyone",
+          "else at the same moment, and nobody gets a call. The one thing I would not",
+          "decide from this room is which trade outlet — that turns on relationships",
+          "none of you have described here.",
+        ].join("\n"),
+      },
+    },
+    {
+      kind: "message",
+      id: "press-placement-priya-2",
+      room: "press-release",
+      substream: "placement",
+      as: "priya",
+      text: "Agreed. I will put three trade outlets and who we know at each in here tomorrow.",
+    },
   ],
-  // The presenter's view, which is the demo. Both rooms are workspace-scoped,
-  // so both are offered; the presenter is in the renewal room only, by Priya's
-  // mention, and has opened nothing — so that room is unseen and mentioned,
-  // the memo room is merely unread, and the home screen says one thing is
-  // waiting on them, for the mention.
+  // The presenter's view, which is the demo. All three rooms are
+  // workspace-scoped, so all three are offered; the presenter is seated in the
+  // renewal room only, by Priya's mention, and has opened nothing — so that
+  // room is unseen and mentioned, the other two are merely unread, and the home
+  // screen says one thing is waiting on them, for the mention.
+  //
+  // The placement substream is deliberately absent, and its absence is the
+  // point: a private child takes no directory row and contributes nothing to
+  // attention, so the presenter's home screen still counts one. They find it by
+  // opening the press-release room, where they are a participant of the child
+  // without being a participant of its parent.
   expect: [{
     viewer: "presenter",
     attention: { waitingForYou: 1, waitingReason: "mentioned" },
     rooms: {
       "decision-memo": { unseen: false, hasUnread: true, mentioned: false },
       "northgate-renewal": { unseen: true, hasUnread: true, mentioned: true },
+      "press-release": { unseen: false, hasUnread: true, mentioned: false },
     },
   }],
 } satisfies z.input<typeof DemoPackSchema>;
