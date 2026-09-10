@@ -1074,6 +1074,17 @@ pre {
   white-space: nowrap;
 }
 
+/* The second of the card's two lines, and the one a keyboard reader depends on:
+   the globe's own tip is pointer-only, because making a badge inside the row's
+   link focusable would add a tab stop per public row. */
+.sidebar-workstream-preview-scope {
+  color: var(--av-sys-color-text-muted);
+  font-size: 12px;
+  font-weight: 420;
+  line-height: 16px;
+  margin: 0;
+}
+
 @keyframes sidebar-workstream-preview-in {
   from { opacity: 0; transform: translateX(-2px); }
   to { opacity: 1; transform: translateX(0); }

@@ -2147,6 +2147,33 @@ describe('private work streams', () => {
     expect(screen.getByRole('tooltip', { name: /Launch/u })).toBeInTheDocument();
   });
 
+  it('reaches a keyboard reader through the row preview the globe tip cannot', async () => {
+    renderWith([workstream('00000000-4000-4000-8000-00000000003a', 'Launch', 'completed')]);
+    const row = screen.getByRole('link', { name: 'Launch' });
+
+    // Tabbing to the row is the whole keyboard gesture: the globe itself is a
+    // `span` inside this link, and giving it a tab stop would put one on every
+    // public row. The preview opens on focus, so that is where the scope has to
+    // be named for anyone who never touches a pointer.
+    act(() => row.focus());
+    await waitFor(
+      () => expect(screen.getByRole('tooltip', { name: /Launch/u })).toHaveTextContent('Public to workspace'),
+      { timeout: 5_000 },
+    );
+  });
+
+  it('leaves the scope line off a preview for a work stream that is not public', async () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-00000000003b', 'Launch', 'completed'),
+      scope: 'personal',
+    }]);
+    const row = screen.getByRole('link', { name: 'Launch' });
+
+    act(() => row.focus());
+    await waitFor(() => expect(screen.getByRole('tooltip', { name: /Launch/u })).toBeInTheDocument(), { timeout: 5_000 });
+    expect(screen.queryByText('Public to workspace')).not.toBeInTheDocument();
+  });
+
   it('marks a workspace-scoped work stream as public', () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-000000000022', 'Launch', 'completed'),
