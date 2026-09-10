@@ -54,6 +54,25 @@ function open(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function sidekick(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: "sidekick",
+    id: "briefing",
+    as: "priya",
+    scope: "workspace",
+    name: "Morning briefing",
+    description: "Posts a short briefing each weekday morning.",
+    overview: "Every weekday at 9am Pacific it writes one briefing.",
+    instructions: "Write one briefing each weekday morning.",
+    schedule: {
+      rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0;BYSECOND=0",
+      timezone: "America/Los_Angeles",
+      summary: "Every weekday at 9:00am Pacific",
+    },
+    ...overrides,
+  };
+}
+
 function issues(result: ReturnType<typeof pack>): string[] {
   return result.success ? [] : result.error.issues.map((issue) => issue.message);
 }
@@ -67,8 +86,66 @@ describe("the pack schema", () => {
     expect(parsed.success ? [] : parsed.error.issues.map((issue) => issue.message)).toEqual([]);
     const rooms = PLACEHOLDER_DEMO_PACK.steps.filter((step) => step.kind === "create_workstream");
     expect(rooms.map((step) => step.room)).toEqual(["decision-memo", "northgate-renewal"]);
-    const last = PLACEHOLDER_DEMO_PACK.steps.at(-1);
-    expect(last?.kind === "message" && last.assistant?.kind).toBe("ask");
+    // The demo's punchline: the last thing said in a room is a question the
+    // presenter answers, which is the one real run a demo makes.
+    const lastSpoken = PLACEHOLDER_DEMO_PACK.steps.filter((step) => step.kind === "message").at(-1);
+    expect(lastSpoken?.assistant?.kind).toBe("ask");
+    // And one standing Sidekick, published and on a schedule, with one run
+    // already behind it.
+    const sidekicks = PLACEHOLDER_DEMO_PACK.steps.filter((step) => step.kind === "sidekick");
+    expect(sidekicks.map((step) => [step.name, step.scope, step.schedule.timezone, step.firstRun !== undefined]))
+      .toEqual([["Morning briefing", "workspace", "America/Los_Angeles", true]]);
+  });
+
+  it("takes a Sidekick that is in no room, and refuses two under one name", () => {
+    // A Sidekick names no room, and the room rules the other steps live under
+    // do not apply to it — this one is the only step in the pack.
+    expect(issues(pack([sidekick()]))).toEqual([]);
+    expect(issues(pack([sidekick(), sidekick({ id: "briefing-2" })])))
+      .toEqual([`Two Sidekicks are named "Morning briefing"`]);
+    // A different name is two Sidekicks, which is allowed.
+    expect(issues(pack([sidekick(), sidekick({ id: "briefing-2", name: "Evening wrap" })]))).toEqual([]);
+  });
+
+  it("refuses a Sidekick whose own prose names somebody nobody plays", () => {
+    // The tokens are expanded when the cast is bound, which is mid-seeding —
+    // long after the point at which refusing costs nothing.
+    expect(issues(pack([sidekick({ instructions: "Ask @{nobody} before posting." })])))
+      .toEqual([`The Sidekick's prose names role "nobody", which is not in the cast`]);
+    expect(issues(pack([sidekick({ firstRun: { kind: "say", text: "@{nobody} owns this." } })])))
+      .toEqual([`The Sidekick's prose names role "nobody", which is not in the cast`]);
+  });
+
+  it("plans a Sidekick with its prose bound to the cast and its briefing carried as a seed", () => {
+    const planned = planDemoSeed(
+      parsedPack([sidekick({
+        instructions: "Ask @{marcus} before posting.",
+        firstRun: { kind: "say", text: "@{presenter} owns the Northgate call." },
+      })]),
+      CAST,
+    );
+    expect(planned).toEqual([{
+      kind: "sidekick",
+      actionId: "briefing",
+      actorUserId: CAST.priya!.userId,
+      scope: "workspace",
+      definition: expect.objectContaining({
+        name: "Morning briefing",
+        // A bare name, with no mention: Rally's own prose names people the way
+        // a model would, and a Sidekick's instructions seat nobody.
+        instructions: "Ask Marcus Hale before posting.",
+      }),
+      schedule: {
+        rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0;BYSECOND=0",
+        timezone: "America/Los_Angeles",
+        summary: "Every weekday at 9:00am Pacific",
+      },
+      firstRun: {
+        packVersion: "test",
+        actionId: "briefing",
+        assistant: { kind: "say", text: "Adam Presenter owns the Northgate call." },
+      },
+    }]);
   });
 
   it("refuses a pack whose cast cannot be named: a role with no default, one nobody plays, two alike", () => {
