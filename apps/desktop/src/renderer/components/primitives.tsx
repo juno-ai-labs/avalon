@@ -329,6 +329,12 @@ export function SegmentedControl<Value extends string>({
   // reachable rather than dropping out of the tab order entirely.
   const tabStop = selected === -1 ? 0 : selected;
   const move = (event: React.KeyboardEvent<HTMLButtonElement>, index: number): void => {
+    // Unmodified keys only, which is all the radiogroup pattern claims. A
+    // modified arrow belongs to the platform — VoiceOver moves with
+    // Ctrl-Option-Arrow — and taking it here would change the setting under
+    // someone who was trying to move past it, then `preventDefault` the move
+    // they actually asked for.
+    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
     const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1
       : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1
       : event.key === 'Home' ? -index
