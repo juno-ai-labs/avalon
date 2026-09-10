@@ -118,6 +118,32 @@ describe('InspectorRail details', () => {
     expect(useUiStore.getState().railWidth).toBe(360);
   });
 
+  // This handle has no collapse to offer: the panel closes from its own header
+  // control, so the quick action the other two dividers spend on collapsing
+  // gives back the width the sidebar opens at instead. The hint says so, and it
+  // is the only place that says so.
+  it('resets the sidebar to the width it opens at when the divider is double-clicked', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return DOMRect.fromRect({ width: this.classList.contains('rail-resizer-limit') ? 560 : 0 });
+    });
+    useUiStore.setState({ railWidth: 520 });
+    render(<Tooltip.Provider><InspectorRail workstream={workstream} /></Tooltip.Provider>);
+    const handle = screen.getByRole('separator', { name: 'Resize inspector' });
+
+    fireEvent.focus(handle);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click or Enter to reset width');
+
+    fireEvent.doubleClick(handle);
+    expect(useUiStore.getState().railWidth).toBe(320);
+
+    // The arrows step by a fixed amount, so without Enter the width the hint
+    // names is reachable from the keyboard only by counting steps to a number
+    // nothing on screen shows.
+    useUiStore.setState({ railWidth: 520 });
+    fireEvent.keyDown(handle, { key: 'Enter' });
+    expect(useUiStore.getState().railWidth).toBe(320);
+  });
+
   it('starts a pointer drag from the visible width rather than a larger saved width', () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
       return DOMRect.fromRect({ width: this.classList.contains('rail-resizer-limit') ? 560 : 0 });
