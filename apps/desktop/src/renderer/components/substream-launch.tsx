@@ -1,7 +1,7 @@
 import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
 import type { AgentModelOverride } from '../lib/agent-models';
 import { X } from 'lucide-react';
-import { IconBorderCornerPill } from '@tabler/icons-react';
+import { IconCornerDownRight } from '@tabler/icons-react';
 import { type ReactNode, useRef, useState } from 'react';
 import type { RallyApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
@@ -291,7 +291,7 @@ export function SubstreamLaunchSurface({
       <div className="launch-modifiers">
         <div className="substream-launch-banner">
           <span className="substream-launch-label">
-            <IconBorderCornerPill aria-hidden="true" size={20} stroke={1.5} />
+            <IconCornerDownRight aria-hidden="true" size={20} stroke={1.5} />
             <span>{draft.throughTurnId
               ? 'New substream from this message'
               : 'New substream'}</span>

@@ -6393,9 +6393,14 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   grid-column: 1 / -1;
 }
 
+/* Wrapped text spans the controls' own grid row, so the reserve at its foot is
+   what keeps the two apart: the 28px control, the 7px of row padding under it,
+   and 4px of air between the last line and the top of the plus. At 34px the
+   text ended flush with that top edge — legible, but the field read as one
+   block of text with buttons stuck to it. */
 :is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule[data-multiline='true'] :is(textarea, .composer-highlight),
 :is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments :is(textarea, .composer-highlight) {
-  padding: 9px 14px 34px;
+  padding: 9px 14px 39px;
 }
 
 :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-toolbar { display: contents; }
