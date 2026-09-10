@@ -166,11 +166,15 @@ describe('WorkstreamSidebar', () => {
     expect(onSelectSubstream).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000099');
     fireEvent.click(screen.getByRole('button', { name: 'New substream' }));
     expect(onNewSubstream).toHaveBeenCalledOnce();
+    // Compact has no title, so the mark carries the substream's first letter.
+    // Both marks are in the slot in both widths — the stylesheet cross-fades
+    // one into the other as the rail narrows — so the letter is already
+    // there, and the line stays after the toggle.
+    expect(child.querySelector('.workstream-substream-initial')?.textContent).toBe('L');
     fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
     expect(sidebar).toHaveClass('is-compact');
-    // Compact has no title, so the mark carries the substream's first letter.
     expect(screen.getByRole('button', { name: /Launch risks/ }).querySelector('.workstream-substream-initial')?.textContent).toBe('L');
-    expect(sidebar.querySelectorAll('.tabler-icon-border-corner-pill')).toHaveLength(0);
+    expect(sidebar.querySelectorAll('.tabler-icon-border-corner-pill')).toHaveLength(1);
     fireEvent.click(child);
     expect(onSelectSubstream).toHaveBeenLastCalledWith('00000000-0000-7000-8000-000000000099');
     fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }));

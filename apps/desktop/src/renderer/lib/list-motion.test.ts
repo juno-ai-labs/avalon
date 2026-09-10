@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   LIST_MOTION,
   LIST_MOTION_TOTAL_MS,
+  enterKeyframes,
+  exitKeyframes,
   layoutRowAt,
   longestIncreasingRun,
   moverKeyframes,
@@ -149,6 +151,26 @@ describe('keyframes', () => {
     expect(shifterKeyframes({ fromX: 0, fromY: -48 })).toEqual({
       keyframes: [{ transform: 'translate(0px, -48px)' }, { transform: 'translate(0px, 0px)' }],
       options: { duration: LIST_MOTION.shiftMs, easing: LIST_MOTION.shiftEasing, fill: 'backwards' },
+    });
+  });
+
+  // The mover's two halves on their own, for a row that only leaves or only
+  // arrives. The exit is held at its end because a stand-in is removed by the
+  // finish handler, a frame after; the entrance waits the exit and the
+  // stagger so the rows below have opened the gap before it lands.
+  it('exposes the exit held off frame, and the entrance parked for the length of an exit and the stagger', () => {
+    expect(exitKeyframes({ fromX: 4, fromY: 48 }, -300)).toEqual({
+      keyframes: [{ transform: 'translate(4px, 48px)', easing: LIST_MOTION.exitEasing }, { transform: 'translate(-300px, 48px)' }],
+      options: { duration: LIST_MOTION.exitMs, fill: 'forwards' },
+    });
+    const enterStart = (LIST_MOTION.exitMs + LIST_MOTION.enterStaggerMs) / LIST_MOTION_TOTAL_MS;
+    expect(enterKeyframes(-300)).toEqual({
+      keyframes: [
+        { offset: 0, transform: 'translate(-300px, 0px)', easing: 'linear' },
+        { offset: enterStart, transform: 'translate(-300px, 0px)', easing: LIST_MOTION.enterEasing },
+        { offset: 1, transform: 'translate(0px, 0px)' },
+      ],
+      options: { duration: LIST_MOTION_TOTAL_MS, fill: 'backwards' },
     });
   });
 });

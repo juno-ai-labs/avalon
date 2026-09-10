@@ -109,10 +109,12 @@ sidebar's work-stream row — borderless, one 36px leading slot, the same title
 and the same idle/hover/current fills — and only the mark in that slot says
 which conversation it is: the work stream's own icon tinted with its appearance
 colour for the main conversation, the branch line for a substream, and for
-**New substream** the same `↳` the main feed's control carries. Compact swaps a
-substream's branch line for the first character of its title, capitalized,
-because a rail of identical lines with no titles beside them says only that
-these are substreams. The main conversation's
+**New substream** the same `↳` the main feed's control carries. Compact shows
+the first character of a substream's title, capitalized, in place of its branch
+line, because a rail of identical lines with no titles beside them says only
+that these are substreams; both marks are drawn in the slot, stacked, and
+cross-fade over the collapse motion, the line settling the eight pixels it was
+lifted to meet the title. The main conversation's
 mark reads the parent work stream's appearance off its **sidebar row** rather
 than its cached detail, so a colour or icon change moves both rails on the same
 receipt; the header stays on the detail, which is what retires the picker's
@@ -153,6 +155,42 @@ plus the existing 424px conversation reservation. Only that pane is observed,
 so collapse cannot change its own measurement and cause oscillation. All paint
 uses the existing light/dark sidebar, row, text, and focus tokens; selectors are
 scoped to the new component and do not change global navigation rows.
+
+The global navigation's contents travel with its edge. Every rule in its
+stylesheet that changes a shape between the expanded sidebar and the 96px rail
+transitions on `--sidebar-layout-motion`, stated once on `.sidebar` as the
+collapse motion; a drag sets it to `0s` for the transitions it would start and
+takes the property off everything already travelling, since a running
+transition keeps the duration it began with. The rows narrow to their 36px marks
+while their titles fade under a clip, the headings close to no height, the
+group gaps and the scroll box's padding close, the titlebar's New chat fades,
+the account row keeps its avatar and closes its name, and the Sidekick tiles
+shed their captions. Nothing on screen during the toggle is `display: none` in
+the rail — hidden copy is kept in layout at zero size and faded, with
+`visibility` carried on the same interval so it leaves the accessibility tree
+when the fade ends — and every travelling value is a number in both layouts,
+because a keyword cannot be interpolated. Search sits in a command bar between
+the titlebar and the scroll box in both layouts, a grid of two numeric tracks:
+the pill closes to a 54px square in place, and the second track opens for the
+rail's New chat row, which arrives and leaves through
+[`list-motion.md`](list-motion.md)'s insert motion. The aside carries a
+registered `--sidebar-compact` number on the same interval, drawn from by
+nothing; the component listens to the platform's transition events for it on
+the aside itself to know when the layout has settled, and holds the list
+motion until then.
+
+The work-stream sidebar's contents travel the same way, on the same
+`--sidebar-layout-motion` restated on it and cancelled the same way by its own
+drag: its
+rows narrow to their 36px marks as their copy fades under a clip, the section
+headings close to no height as the section rules and their spacing arrive, the
+substream mark cross-fades from line to initial, the participants' avatars
+shrink into the square with their overlap, the empty state closes to its icon,
+and the footer's toggle is carried to the centre by the footer's padding.
+Nothing in it is centred with `justify-content`, which cannot travel: a mark is
+centred by the row's padding, and content of no fixed width — the avatar
+stack, the empty state's icon — by a transform of `calc(18px - 50%)`. It has no
+list motion to hold and so carries no `--sidebar-compact`.
 
 The route host, not the feed, owns identity transitions. A new work stream
 begins with local composer keys; after durable admission its adapter rekeys
@@ -234,6 +272,116 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — The work-stream sidebar's contents travel with its edge too
+
+**What changed:** The work-stream sidebar's rows, copy, section headings and
+rules, empty state, avatars and footer toggle transition between the expanded
+sidebar and the 96px rail over `--sidebar-layout-motion`, restated on that
+sidebar and cancelled by its drag, the way the navigation's are in the entry
+below. A substream's mark now renders both its branch line and its initial,
+stacked in one grid cell, and the stylesheet cross-fades them; the line
+settles its eight-pixel lift as the title goes. Compact centring by
+`justify-content` is gone: marks are centred by the row's padding, the avatar
+stack and the empty state's icon by a `translateX(calc(18px - 50%))` that
+travels, and the footer's toggle by 32.5px of right padding.
+
+**Why:** The same cut the navigation sidebar had, reported as a request to
+animate the centre sidebar with the same care once the navigation's rows
+travelled: only `flex-basis` glided while every row inside cut to its square
+in the first frame, and the substream mark was swapped between two elements by
+the component, which no stylesheet could ease. `justify-content: center` was
+the one rule that could not be carried over, because it is discrete — flipping
+it at the first frame throws the avatar to the middle of a still-wide row and
+slides it back — and the avatar stack's width is a count nobody knows in CSS,
+so a fixed padding could not centre it; a transform in the content's own
+percentage can.
+
+**Considered and rejected:** Keeping the component's swap of the mark and
+fading the whole mark out and in, which reads as the row blinking. Wrapping
+the avatar stack in the 36px mark box for centring, which clips a four-avatar
+stack against the row's edge in the full sidebar. Animating the participant
+limit — four faces to two — which is a count, not a shape, and is left to
+change at the toggle.
+
+**Consequences:** Both substream marks are in the document in both widths,
+under `aria-hidden` on the slot as before; a test that counts branch lines in
+the rail counts one under each initial. A rule that adds compact centring
+here uses padding or a transform, not `justify-content`. The avatar size rule
+restates the presence border's own 180ms fade, because a `transition` on the
+same element replaces it; a change to that fade is made in both places.
+
+Shipped in #648.
+
+### 2026-09-10 — The navigation's contents travel with its edge, and search stays at the top
+
+**What changed:** Everything inside the global navigation that changes shape
+between the expanded sidebar and the 96px rail now transitions between the two
+over the same 240ms the box's width spends: the rows narrow to their 36px
+marks while their titles fade under a clip, the recency headings close to no
+height, the group gaps and the scroll box's padding close, the titlebar's New
+chat fades, the account row keeps its avatar and closes its name, the Sidekick
+tiles shed their captions, and the search pill closes to its icon. The search
+row moved out of the scroll box into a command bar under the titlebar, so it is
+at the top in both layouts however far the list is scrolled; the rail's New
+chat row is rendered there under it and arrives and leaves through the list
+motion. The Sidekick strip stays below the list in both layouts. The interval
+is stated once on `.sidebar` as `--sidebar-layout-motion`, which a drag sets to
+`0s` while also taking the property off everything already travelling, and the
+aside carries a registered `--sidebar-compact` number on the same interval
+whose transition events, counted, tell the component when the layout has
+settled, with the toggle raising the hold a frame ahead of them.
+
+**Why:** Collapsing the sidebar was reported as only the edge animating: the
+width glided and every row, heading and control inside it cut to its compact
+shape in the first frame, so the reader watched an empty box close over rows
+that had already become icons. The 2026-09-09 entry below animated the box and
+left the contents to "re-lay-out rather than animate"; that was the cut.
+Search and New chat cut hardest because the two layouts rendered different
+elements in different places — a pill inside the scroll box, then a square
+inside the scroll box above a second square — and the request was for the
+search row to hold its place at the top in both layouts and for the New chat
+row to use the row insert and remove motion, which
+[`list-motion.md`](list-motion.md) now provides. Two rules follow from
+transitioning the contents. Nothing on screen during the toggle is
+`display: none` in the rail, because `display` cannot travel: hidden copy is
+kept in layout at zero size and faded, with `visibility` on the same interval
+so it leaves the accessibility tree when the fade ends. And every travelling
+value is a number in both layouts — `width: 100%` for a row's wrapper rather
+than `auto`, a heading's `height` rather than its `min-height` — because a
+keyword cannot be interpolated and a rule that reaches one cuts. The command
+bar is a two-track grid with numeric tracks for the same reason: the slot for
+the New chat row opens and closes over the interval rather than the bar
+growing by a row in the frame React inserts one.
+
+**Considered and rejected:** Driving every row shape from the one interpolated
+`--sidebar-compact` number through `calc()`, which puts one source of truth
+under everything but makes each rule an equation nobody can read a width off.
+`interpolate-size: allow-keywords` on the sidebar, which would have let `auto`
+travel and saved the numeric restatements, but changes what every keyword
+inside the sidebar means to a transition; it is used on the strip alone, where
+a lone tile is sized to its caption. `@starting-style` for the rows' hidden
+copy, which would also have faded in the title of every row that mounts. A
+reduced-motion override of its own: the stylesheet's sitewide rule already
+brings every transition to 0.001ms for that reader, the box's width included,
+so the contents snap with the edge there as they always did, and the channel
+is kept in the reduced-motion rule only so its events still bracket the
+change.
+
+**Consequences:** A rule that changes a shape between the two layouts declares
+its transition on `--sidebar-layout-motion`, or that shape cuts; a shape that
+needs a keyword in one width cuts. The titlebar's New chat is hidden by the
+`hidden` attribute in the rail rather than unmounted, and the rail's is
+rendered only in the rail, marked `data-motion-insert`; a test that counts New
+chat links sees one in either layout. `.sidebar-rail-new-button` is styled
+without reference to `.is-compact`, because its stand-in is drawn after the
+class has gone. The first section under the command bar drops its own top
+margin, since the bar's bottom padding is the group gap the collapsed margins
+used to provide. A stand-in overhangs the command bar into the list for 160ms on
+expand, uncut, because the bar does not clip. React fills in `propertyName`
+for `transitionend` alone, so the component reads it from the native event.
+
+Shipped in #648.
 
 ### 2026-09-10 — One glyph for both New substream controls
 
