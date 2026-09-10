@@ -27,6 +27,7 @@ export async function admitAccessRequest(env: Env, address: string, limit: numbe
   const row = await env.DB.prepare(`INSERT INTO access_request_rate_buckets (subject_hash, bucket, count)
     VALUES (?, ?, 1) ON CONFLICT(subject_hash) DO UPDATE SET
     count = CASE WHEN bucket = excluded.bucket THEN count + 1 ELSE 1 END, bucket = excluded.bucket
+    WHERE bucket <= excluded.bucket
     RETURNING count`).bind(subject, bucket).first<{ count: number }>();
   return row !== null && row.count <= limit;
 }

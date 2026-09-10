@@ -16,6 +16,11 @@ export function createPrivateAccessRoutes(
 
   privateAccessRoutes.use('*', async (c, next) => {
     if (c.env.AVALON_REGION !== 'global') throw new ApiError(404, 'not_found', 'Not found');
+    // This new surface has no legacy clients. Keep it off the Worker's API and
+    // webhook aliases so a rule on the canonical host cannot be bypassed there.
+    if (c.env.APP_ENV === 'production' && new URL(c.req.url).origin !== new URL(c.env.PUBLIC_API_BASE_URL).origin) {
+      throw new ApiError(404, 'not_found', 'Not found');
+    }
     c.header('Cache-Control', 'no-store');
     await next();
   });
@@ -35,6 +40,9 @@ export function createPrivateAccessRoutes(
   }));
 
   privateAccessRoutes.post('/requests', async (c) => {
+    if (c.req.header('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/json') {
+      throw new ApiError(400, 'invalid_access_request', 'Send the request as JSON.');
+    }
     const parsed = AccessRequestInputSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) throw new ApiError(400, 'invalid_email', 'Enter a valid email address.');
     if (!await admitAccessRequest(c.env, c.req.header('cf-connecting-ip') ?? 'unattributed', maxRequestsPerIpPerHour)) {
@@ -47,9 +55,13 @@ export function createPrivateAccessRoutes(
   });
 
   privateAccessRoutes.post('/downloads/redeem', async (c) => {
-    const form = await c.req.parseBody();
-    const parsed = DownloadGrantTokenSchema.safeParse(form.token);
     const unavailable = () => downloadErrorPage(410);
+    if (c.req.header('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/x-www-form-urlencoded') return unavailable();
+    // Only the browser's one-field URL-encoded form is supported. Multipart
+    // attachments and repeated fields must never reach the parser or storage.
+    const form = new URLSearchParams(await c.req.text());
+    if (form.getAll('token').length !== 1 || [...form.keys()].some((key) => key !== 'token')) return unavailable();
+    const parsed = DownloadGrantTokenSchema.safeParse(form.get('token'));
     if (!parsed.success || !await availableDownloadGrantExists(c.env.DB, parsed.data)) return unavailable();
     const releases = c.env.DESKTOP_RELEASES;
     if (!releases) return downloadErrorPage(503, parsed.data);

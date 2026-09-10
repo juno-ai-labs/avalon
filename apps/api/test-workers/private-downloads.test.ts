@@ -22,6 +22,24 @@ function redeem(token: string, method = 'POST', origin: string | null = 'null') 
 async function issue() { return issueDownloadGrant(env.DB, { source: 'manual', createdBy: 'test-operator' }); }
 
 describe('private installer download on workerd', () => {
+  it('rejects multipart uploads and ambiguous token fields without reading an installer or consuming a grant', async () => {
+    await env.DESKTOP_RELEASES!.put('stable/darwin/arm64/Rally.dmg', 'installer-fixture');
+    const grant = await issue();
+    const get = vi.spyOn(env.DESKTOP_RELEASES!, 'get');
+    const multipart = new FormData();
+    multipart.set('token', grant.token);
+    multipart.set('upload', new Blob(['unneeded attachment']), 'extra.txt');
+    const bodies: BodyInit[] = [multipart,
+      new URLSearchParams([['token', grant.token], ['token', grant.token]]),
+      new URLSearchParams({ token: grant.token, extra: 'not supported' })];
+    for (const body of bodies) {
+      const response = await privateAccessRoutes.request('/downloads/redeem', { method: 'POST', body }, env);
+      expect(response.status).toBe(410);
+    }
+    expect(get).not.toHaveBeenCalled();
+    expect(await availableDownloadGrantExists(env.DB, grant.token)).toBe(true);
+  });
+
   it('admits valid bearer downloads with opaque, absent and unrelated origins', async () => {
     await env.DESKTOP_RELEASES!.put('stable/darwin/arm64/Rally.dmg', 'installer-fixture');
     for (const origin of ['null', null, 'https://elsewhere.example']) {

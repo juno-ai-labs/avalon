@@ -27,7 +27,8 @@ if (form && email && button && status) {
         if (!response.ok) {
           const body = await response.json().catch(() => null) as { error?: { code?: string } } | null;
           const saved = body?.error?.code === 'access_email_unavailable' || body?.error?.code === 'access_email_failed';
-          failure = body?.error?.code === 'access_email_rejected' ? accessCopy.rejected
+          failure = body?.error?.code === 'access_email_review_required' ? accessCopy.reviewRequired
+            : body?.error?.code === 'access_email_rejected' ? accessCopy.rejected
             : saved ? accessCopy.savedFailure : accessCopy.failure;
           throw new Error('Request failed');
         }

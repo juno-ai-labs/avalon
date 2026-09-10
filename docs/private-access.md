@@ -86,8 +86,10 @@ the same stable alias the release publisher promotes.
 
 Global D1 owns pre-workspace requests; Ace may read them and create attributed
 manual grants through its Access boundary. The API owns public submission and
-redemption. Resend owns delivery; a successful API response means provider
-acceptance, not inbox delivery. The `sent` state is labelled accordingly in Ace.
+redemption. In production these routes accept only the canonical
+`PUBLIC_API_BASE_URL` origin, so legacy aliases cannot bypass host-scoped controls. Resend owns delivery. A successful intake response means the request is accepted;
+a concurrent acknowledgement may still be sending. Only `sent` records provider
+acceptance, not inbox delivery. The state is labelled accordingly in Ace.
 
 The initial implementation does **not** close the public R2 installer and update
 origins. It therefore provides scoped links but cannot yet promise exclusive
@@ -111,8 +113,10 @@ asks the visitor to retry confirmation. There is no background delivery queue or
 operator resend action yet. A request remaining pending/failed is visible in Ace.
 A process interruption between provider acceptance and status persistence has an
 uncertain outcome. An explicit retry reuses Resend's idempotency key and frozen
-body; beyond the provider's deduplication window an acknowledgement can repeat.
-Exactly-once external email delivery is not claimed.
+body within the provider's 24-hour window, anchored to the first attempt. Outside
+that window it becomes `review_required` without another send. One conditional
+claim owns `sending`; concurrent duplicates do not call Resend. A process crash
+can leave `sending` for operator reconciliation. Exactly-once delivery is not claimed.
 
 Invalid, expired, used single-use or revoked links return a branded 410 page.
 A missing installer returns a branded 503 page with an explicit retry form that
@@ -191,6 +195,10 @@ failures can reveal acknowledgement state during a provider outage. A future
 durable acknowledgement dispatcher can remove that distinction without silently
 losing retries.
 
+The [security audit](private-access-security-audit-2026-09-09.md) records unresolved
+launch controls. Do not treat the open guards or default Cloudflare DDoS protection
+as a hardened acquisition system.
+
 ## Operations
 
 Apply migration 0101 before deploying the Global API and then Ace/site. The Global
@@ -202,6 +210,10 @@ Permanent provider rejection is recorded as `rejected` in Ace and suppresses
 subsequent acknowledgement sends for that request. After resolving a provider
 configuration problem, an operator may reset the affected row to `pending`
 through Global D1; its frozen sender/content must still be valid before retry.
+For `sending` or `review_required`, first reconcile the provider outcome and ensure
+no attempt is in flight. Never reset the first-attempt timestamp automatically to
+extend retry eligibility. Only an explicit, reconciled operator decision to send
+again may clear it; a possibly delivered message is not safe to blindly retry.
 
 Before launch, verify `rally.ai` in Resend and confirm Adam can receive replies
 at `hi@rally.ai`; the code does not provision DNS or mailboxes. Other transactional
@@ -262,6 +274,25 @@ procedure is not a substitute for those controls. Future EU workspace-grant
 privacy operations stay in the owning region; the current slice creates none.
 
 ## Changelog
+
+### 2026-09-09 — Contain acknowledgement races and record the abuse audit
+
+**What changed:** Added atomic acknowledgement ownership and the provider-window
+fence, rejected older rate buckets and unsupported/ambiguous request formats, and
+restricted acquisition to the canonical production API host. Recorded a dated
+code and production-configuration audit with unresolved launch controls.
+
+**Why:** Concurrent submissions could multiply provider calls, and an uncertain
+retry could send again after provider deduplication expired. Host aliases would
+bypass canonical-host rules; open limits do not contain abuse or protect D1.
+
+**Considered and rejected:** Automatic recovery of an uncertain sender would risk
+repeat mail. Origin validation alone does not stop bots. Arbitrary finite limits
+were not installed without the team's decision.
+
+**Consequences:** Reconcile interrupted sends in Ace/Global D1. Before launch,
+activate bot proof, finite byte/admission limits, a provider budget and download
+throttling as described in the audit; this code change is not DDoS certification.
 
 ### 2026-09-09 — Introduce early-access intake and reusable downloads
 

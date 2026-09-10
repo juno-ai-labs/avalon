@@ -38,7 +38,9 @@ Migration 0101 adds Global pre-workspace `access_requests` and hashed
 public acquisition writes only in Global. Nullable `expires_at` selects single-use
 admission or repeat downloads until a UTC deadline. `used_at` retains first use.
 Required `acknowledgement_from` freezes the authored sender; permanent provider
-rejection is terminal until operator intervention. The optional rate guard uses
+rejection is terminal until operator intervention. `acknowledgement_first_attempt_at`
+anchors safe retries; `sending` owns one call and `review_required` prevents an
+uncertain retry beyond the provider window. The optional rate guard uses
 `access_request_rate_buckets` only when a finite threshold is configured.
 
 ## Personal work-stream access history
@@ -1009,6 +1011,8 @@ perform the regional audit/control write explicitly through
 **What changed:** Migration `0101_private_access.sql` creates normalized requests
 with frozen acknowledgement sender/content, hashed grants with nullable expiry,
 and an IP-hash rate bucket table populated only when the intake cap is enabled.
+The first acknowledgement-attempt timestamp and sending/review states preserve
+exclusive provider admission and stop uncertain retries after deduplication expires.
 
 **Why:** Intake precedes workspace membership, while retrying email and download
 authorization both need durable state independent of the browser.
