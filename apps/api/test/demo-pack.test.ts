@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DemoPackSchema,
   PLACEHOLDER_DEMO_PACK,
+  demoIdleViewerExpectation,
   packRoomFacts,
   planDemoSeed,
   type DemoCast,
@@ -104,6 +105,44 @@ describe("the pack schema", () => {
     const children = PLACEHOLDER_DEMO_PACK.steps.filter((step) => step.kind === "create_substream");
     expect(children.map((step) => [step.room, step.substream, step.participants]))
       .toEqual([["press-release", "placement", ["priya", "dana", "presenter"]]]);
+  });
+
+  it("expects of the presenter exactly what an idle viewer's flags derive to", () => {
+    // The pack's `expect` block is the one thing in it that no test and no
+    // schema rule can otherwise contradict: a wrong flag parses, plans and
+    // seeds, and then leaves every demo prepared from this pack waiting in
+    // **Waiting for workspace** for a projection the platform will never
+    // produce. The presenter acts in no room, so the flags are derivable, and
+    // this is the comparison that keeps the checked-in pack honest.
+    expect(PLACEHOLDER_DEMO_PACK.expect)
+      .toEqual([demoIdleViewerExpectation(PLACEHOLDER_DEMO_PACK.steps, "presenter")]);
+  });
+
+  it("derives an idle viewer's flags from the steps, and refuses a viewer who acted", () => {
+    const steps = [
+      // Workspace-scoped and the viewer is not in it: offered, unread, and
+      // waiting on nobody however it ends.
+      open({ id: "quiet", room: "quiet", as: "priya", participants: ["marcus"] }),
+      // The viewer is seated by a mention, and the room parks on a question.
+      open({ id: "loud", room: "loud", as: "priya", participants: [], openingMessage: "@{presenter} weigh in." }),
+      {
+        kind: "message", id: "loud-ask", room: "loud", as: "priya", text: "Rally, settle it.",
+        assistant: { kind: "ask", prompt: "Which one?", options: ["This", "That"] },
+      },
+    ];
+    expect(demoIdleViewerExpectation(parsedPack(steps).steps, "presenter")).toEqual({
+      viewer: "presenter",
+      // One seated room, and the mention outranks the unanswered question in it.
+      attention: { waitingForYou: 1, waitingReason: "mentioned" },
+      rooms: {
+        quiet: { unseen: false, hasUnread: true, mentioned: false },
+        loud: { unseen: true, hasUnread: true, mentioned: true },
+      },
+    });
+    // Acting in a room's main conversation opens it, so the flags stop being a
+    // fact about the pack; such a viewer states them by hand.
+    expect(() => demoIdleViewerExpectation(parsedPack(steps).steps, "priya"))
+      .toThrow(/demo_pack_viewer_is_not_idle:priya/u);
   });
 
   it("takes a Sidekick that is in no room, and refuses two under one name", () => {

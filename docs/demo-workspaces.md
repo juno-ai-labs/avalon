@@ -32,6 +32,7 @@ page calls. **Open questions** below says what remains.
 | `apps/api/src/services/demo-connection-copy.ts` | Copying template connections into a demo, with credential re-encryption; `SHAREABLE_CONNECTOR_TYPES` is the list of providers whose grant may be shared. |
 | `apps/api/src/services/demo-workspace-visibility.ts` | The template and unpublished-candidate filter, applied in regional discovery and activation. `DEMO_TEMPLATE_WORKSPACE_ID`, the template's UUID, is declared here and nowhere else. |
 | `apps/api/src/services/demo-pack.ts` | The pack schema and its playability rules, the planner that binds a pack to a cast, the default name each role is offered under, and the placeholder pack — its three rooms and its standing Sidekick. |
+| `.agents/skills/demo-scenario/SKILL.md` | Adding a scenario to the shipped pack from a plain-language description, for an author who does not read the code: what to ask, how Rally has to sound, the files a scenario touches, and the loop that produces the `expect` block. Invoke it as `/demo-scenario`. |
 | `apps/api/src/services/demo-personas.ts` | The cast who do not exist: minting one regional user per role per operation from the name the operator typed, and proving a cast id is this operation's own persona. |
 | `apps/api/src/services/demo-seeder.ts` | Plays one action at a time through the production write paths, waits for its run to settle as specified, and records the receipt. `sidekickDraft` is the definition a Sidekick step publishes. |
 | `apps/api/src/services/demo-seed-provider.ts` | The `fetch` a seeded run's harness config carries: answers the run's one inference request from the seed and refuses the next. |
@@ -271,6 +272,19 @@ from scope and authorship alone — so it is derived rather than stated, and
 `expect` says nothing about them. The schema checks that a viewer's listed rooms are exactly the rooms
 the pack makes visible to them: every workspace-scoped room, and every room they
 were seated in.
+
+**For a viewer who never acts, the flags stop depending on anything and become
+derivable**, and `demoIdleViewerExpectation` derives them: they have opened
+nothing, so *new* is exactly whether the pack seats them, *unread* is every room
+they are offered, *mentioned* is whether a step in the room's main conversation
+names them, and the home screen counts the rooms they are seated in and reports
+the strongest reason across those. That is the presenter in every pack this
+repository has shipped, and the checked-in pack is held to it by test. It does
+not replace `expect` — a pack may verify a cast member, who did act, and states
+their flags by hand — it removes the one part of authoring a scenario where
+being wrong costs an operator a demo rather than a test: a mis-stated flag
+parses, plans and seeds, and then leaves the barrier waiting for a projection
+the platform will never produce.
 
 **The comparison reads as each viewer, through the ordinary surfaces.** The
 directory read the sidebar makes, following pagination until the directory says
@@ -684,6 +698,39 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-09-10 — A scenario is authored against a derived readiness block, and by a skill
+
+**What changed:** `demoIdleViewerExpectation` derives a viewer's whole `expect`
+block from the steps for a viewer who acts in no room, refusing one who does,
+and `demo-pack.test.ts` holds the shipped pack's own block to it. A new skill,
+`.agents/skills/demo-scenario/SKILL.md`, is the workflow that turns a scenario
+described in ordinary words into steps, tests, this document and a pull request.
+
+**Why:** The scenarios are the demo, and the people who know what a scenario
+should say are not the people who read the pack. Authoring one meant knowing
+fifteen playability rules, that Rally may cite only what the room already holds
+because a seeded run makes no tool call, which three assertion lists hard-code
+the pack's contents — and `expect`, which is the one input where being wrong
+is silent. A mis-stated flag parses, plans and seeds; the barrier then compares
+against a projection the platform will never produce and the operator watches
+**Waiting for workspace** until they give up, minutes before a customer call.
+Deriving it is what makes the rest of the workflow safe to hand over.
+
+**Considered and rejected:** Deriving the flags in `demoReadinessManifest` and
+dropping `expect` from the schema — the derivation holds only for a viewer who
+never acts, and a barrier that quietly assumed that would verify the wrong thing
+for a pack that verifies a cast member. Leaving the derivation in the test file
+— it is a statement about what a pack means, and the next authoring tool wants
+it. A script that writes the block into the source — the failing test already
+prints it, and a generator that edits a literal is a second way for the pack to
+be wrong.
+
+**Consequences:** A pack whose presenter speaks in a room's main conversation is
+refused by the derivation rather than silently unverifiable, so keep the
+presenter to mentions; that is now the skill's rule as well. The flags for an
+idle viewer are no longer an author's to reason out — change the derivation and
+the shipped pack's block, or neither.
 
 ### 2026-09-09 — A pack can open a substream, and the demo has three rooms
 
