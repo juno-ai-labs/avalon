@@ -90,6 +90,14 @@ describe('jump to latest', () => {
     return value;
   }
 
+  /** The last value a rule declares for one plain property, or null for none. */
+  function declares(declarations: string, property: string): string | null {
+    return [...declarations.matchAll(/([a-z-]+)\s*:\s*([^;]+)/gu)]
+      .filter(([, declared]) => declared === property)
+      .map(([, , value]) => value!.trim())
+      .at(-1) ?? null;
+  }
+
   /** Every rule with something to say about one edge, and what it leaves there. */
   function settledEdges(rules: { prelude: string; declarations: string }[], edge: Edge): { prelude: string; value: string }[] {
     return rules
@@ -111,6 +119,24 @@ describe('jump to latest', () => {
     expect(settledEdges(anchored, TOP)
       .filter(({ value }) => value !== 'auto')
       .map(({ prelude, value }) => `${prelude} { top: ${value} }`)).toEqual([]);
+  });
+
+  it('stays out of flow, over a dock that is a containing block', () => {
+    // `bottom` addresses a containing block, so two things outside the anchor
+    // itself decide which box it lands on: the control being positioned at all,
+    // and the dock being positioned rather than transparent to the search. Take
+    // either away and the declaration keeps its value and changes its meaning.
+    expect(rulesNaming('jump-bottom')
+      .map(({ prelude, declarations }) => ({ prelude, position: declares(declarations, 'position') }))
+      .filter(({ position }) => position !== null)
+      .map(({ prelude, position }) => `${prelude} { position: ${position!} }`))
+      .toEqual(['.jump-bottom { position: absolute }']);
+
+    const docks = rulesNaming('composer-dock')
+      .map(({ prelude, declarations }) => ({ prelude, position: declares(declarations, 'position') }))
+      .filter(({ position }) => position !== null);
+    expect(docks.length).toBeGreaterThan(1);
+    expect(docks.filter(({ position }) => position === 'static').map(({ prelude }) => prelude)).toEqual([]);
   });
 
   it('keeps the dock edge it measures from the composer\'s own', () => {
