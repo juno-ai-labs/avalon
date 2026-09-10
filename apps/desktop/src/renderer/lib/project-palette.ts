@@ -37,8 +37,9 @@ export function projectColorCells(): (ProjectColorKey | null)[] {
  * The ink to draw a glyph's symbol in, over a palette fill.
  *
  * Follows `PALETTE_INK` rather than one fixed near-white: on the previous darker
- * ramp a single light foreground worked everywhere, and on this one white over
- * `lime` is 1.98:1, under the 3:1 a meaningful graphical object needs. The inks
+ * ramp a single light foreground worked everywhere, and on this one it goes
+ * illegible over the brightest fills — white on `lime` is APCA Lc 42 against
+ * black's Lc 66, and `lime` is one of the three that still take black. The inks
  * are the absolute pair, not the neutral ramp, which inverts with the
  * appearance — a fill does not change with the theme, so its ink must not
  * either. `--glyph-ink` is consumed by `.workstream-glyph` and
