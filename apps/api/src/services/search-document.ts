@@ -25,6 +25,9 @@ export const SearchDocumentSchema = z.strictObject({
   // Conversation documents name their substream so a display change can
   // address one conversation's rows without touching its siblings.
   substreamId: z.string().optional(),
+  // Connector resources name their connection: one projected decision per
+  // (subject, connection) admits every row the connection synced.
+  connectionId: z.string().optional(),
   revision: z.number().int().positive(),
   // Null is a retained deletion watermark; empty text is a live document.
   text: z.string().nullable(),

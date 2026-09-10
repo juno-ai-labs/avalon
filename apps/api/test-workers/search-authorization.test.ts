@@ -5,7 +5,7 @@ import { consumeActivityQueue } from '../src/queues/activity-consumer';
 import { runInDurableObject } from 'cloudflare:test';
 import { flushSearchAuthorizationPush } from '../src/durable-objects/search-authorization-projection';
 import { createCloudflareTestBinding } from '../test/helpers/cloudflare-test';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { asUserId, asWorkspaceId } from '@rally/contracts';
 import { workspaceDOName } from '../src/durable-objects/names';
 import { SearchAuthorizationResolver, searchAuthorizationKey } from '../src/services/search-authorization';
@@ -17,6 +17,11 @@ const resource: Extract<AuthorizationResource, { kind: 'resource' }> = { kind: '
   resourceId: '00000000-0000-7000-8000-000000000b73' };
 const allowed: AuthorizationDecision = { status: 'allowed', evidence: [{ owner: 'fixture', revision: '1', validatedAt: 1 }] };
 
+// A push registers what its target reaches, which starts from the regional member list.
+beforeAll(async () => {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (workspace_id TEXT NOT NULL, user_id TEXT NOT NULL,
+    status TEXT NOT NULL, role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id))`).run();
+});
 afterEach(() => vi.restoreAllMocks());
 
 describe('projected search authorization', () => {

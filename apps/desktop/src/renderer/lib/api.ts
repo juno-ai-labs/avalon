@@ -688,7 +688,7 @@ export class RallyApi {
   }
 
   searchWorkspace(request: SearchRequest, signal?: AbortSignal): Promise<SearchResponse> {
-    return this.request('/search', { method: 'POST', body: { ...request, supportsPartialResults: true }, schema: SearchResponseSchema, signal });
+    return this.request('/search', { method: 'POST', body: request, schema: SearchResponseSchema, signal });
   }
 
   private async request<T>(path: string, options: RequestOptions<T>): Promise<T> {

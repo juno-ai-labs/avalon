@@ -98,6 +98,8 @@ export async function prepareResourceSearch(sql: SqlStorage, env: Env, workspace
     const live = source === category && text !== null && row !== undefined;
     documents.push({ id,
       source, sourceId: resourceId, scopeId: workspaceId, revision,
+      // A connector resource is admitted by its connection's projected decision.
+      ...(live && typeof row.connection_id === 'string' ? { connectionId: row.connection_id } : {}),
       text: live ? text : null,
       // The row is the canonical metadata the result used to reload; the index
       // now carries it so a hit renders without touching this object again.
