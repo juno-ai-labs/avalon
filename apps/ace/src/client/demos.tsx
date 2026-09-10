@@ -224,6 +224,10 @@ function NewDemoForm({ template, onStarted, onFailed, onCancel }: {
   // the page refuses the form when nobody could present, and this is the same
   // dead end one field further in.
   const tooFew = castable.length < roles.length;
+  // The form opens with every part uncast, so this is the state it is in when
+  // it appears. Left unsaid, Start is simply dead on arrival with nothing to
+  // read — and the parts are three dropdowns that look alike.
+  const uncast = roles.filter((role) => (cast[role] ?? '') === '').length;
   const complete = companyName.trim().length > 0 && presenterUserId !== ''
     && roles.every((role) => (cast[role] ?? '') !== '')
     && twice === '' && sharedName === '' && !tooFew;
@@ -266,7 +270,7 @@ function NewDemoForm({ template, onStarted, onFailed, onCancel }: {
       }}>
         {template.members.map((member) => <option key={member.userId} value={member.userId}>{member.name} · {member.email}</option>)}
       </select></Field>
-      {roles.map((role, index) => <Field key={role} label={`User ${index + 1}`}>
+      {roles.map((role, index) => <Field key={role} label={template.pack.roleLabels[role] ?? `User ${index + 1}`}>
         <select value={cast[role] ?? ''} onChange={(event) => setCast((current) => ({ ...current, [role]: event.target.value }))}>
           <option value="">Choose a colleague…</option>
           {castable.map((candidate) => <option key={candidate.userId} value={candidate.userId}>{candidate.name} · {candidate.email}</option>)}
@@ -274,18 +278,34 @@ function NewDemoForm({ template, onStarted, onFailed, onCancel }: {
       </Field>)}
     </div>
     <p className="ace-form-note">Operation <code>{operationId}</code></p>
+    {uncast > 0 && !tooFew && <p className="ace-form-note" role="status">{uncast} {uncast === 1 ? 'part is' : 'parts are'} still uncast. Every part is played by somebody, and by somebody different.</p>}
     {tooFew && <p className="queue-error" role="alert">This pack has {roles.length} parts besides the presenter, and {presenterName || 'the presenter'} leaves {castable.length} {castable.length === 1 ? 'colleague' : 'colleagues'} to cast them. Present it as somebody else, or wait until more of the company has signed in.</p>}
     {twice !== '' && <p className="queue-error" role="alert">{nameOfCandidate(twice) || presenterName} is in this demo twice. Each part is played by a different person.</p>}
     {sharedName !== '' && <p className="queue-error" role="alert">Two people in this demo are called {sharedName}. Nobody watching could tell which of them a mention names, so cast somebody else.</p>}
     {error && <p className="queue-error" role="alert">{error}</p>}
     <div className="ace-form-actions">
-      <Button disabled={!complete || starting} type="submit" variant="primary">{starting ? 'Starting…' : 'Start preparation'}</Button>
+      <Button
+        disabled={!complete || starting}
+        title={complete || starting ? undefined
+          : companyName.trim() === '' ? 'Name the company this demo is for'
+            : tooFew ? 'There are not enough colleagues to cast every part'
+              : uncast > 0 ? `${uncast} ${uncast === 1 ? 'part is' : 'parts are'} still uncast`
+                : 'Two people in this demo are the same person or share a name'}
+        type="submit"
+        variant="primary"
+      >{starting ? 'Starting…' : 'Start preparation'}</Button>
       <Button onClick={onCancel} type="button">Cancel</Button>
     </div>
   </form>;
 }
 
-type TemplateState = { state: 'loading' } | { state: 'ready'; template: DemoTemplate } | { state: 'unavailable'; reason: string };
+type TemplateState =
+  | { state: 'loading' }
+  | { state: 'ready'; template: DemoTemplate }
+  /** The template could not be read; Refresh is the remedy. */
+  | { state: 'unavailable'; reason: string }
+  /** It was read and there is nobody to cast from; Refresh changes nothing. */
+  | { state: 'uncastable'; reason: string };
 
 export function DemosView(): React.JSX.Element {
   const [operations, setOperations] = useState<DemoOperationStatus[]>([]);
@@ -331,13 +351,13 @@ export function DemosView(): React.JSX.Element {
     setTemplate({ state: 'loading' });
     try {
       const template = await responseBody(await fetch('/api/demos/template'), (value) => DemoTemplateSchema.parse(value));
-      // The cast is named rather than chosen, so the one person the form needs
-      // from the template is the presenter: they own the demo and sign into
-      // it. No members at all is the first-run state before `demo-template`
-      // is populated, and a form that can never be submitted is worse than
-      // saying so.
+      // Two ways the form cannot be filled, both worth saying rather than
+      // rendering. No template members is the first-run state before
+      // `demo-template` is populated, and the presenter is cast from those
+      // alone. Fewer colleagues than the pack has parts is a company that
+      // has not signed in yet — nothing about the template, which read fine.
       if (template.members.length === 0) {
-        setTemplate({ state: 'unavailable', reason: 'demo-template has no active members; the presenter is cast from them.' });
+        setTemplate({ state: 'uncastable', reason: 'demo-template has no active members, and the presenter is cast from them.' });
         return;
       }
       // A form whose dropdowns cannot be filled can never be submitted, and
@@ -345,7 +365,7 @@ export function DemosView(): React.JSX.Element {
       const parts = castRolesOf(template).length;
       if (template.castCandidates.length < parts) {
         setTemplate({
-          state: 'unavailable',
+          state: 'uncastable',
           reason: `The pack has ${parts} parts besides the presenter, and only ${template.castCandidates.length} @${template.castEmailDomain} ${template.castCandidates.length === 1 ? 'account has' : 'accounts have'} signed in to this region; each part is played by a different person.`,
         });
         return;
@@ -410,10 +430,11 @@ export function DemosView(): React.JSX.Element {
   return <>
     <aside className="queue-list demo-list"><header><p>Demo workspaces</p><h1>Demos</h1><small>{loading ? 'Reading preparations…' : `${live} live · ${operations.length} ${operations.length === 1 ? 'operation' : 'operations'}`}</small></header>
       <div className="queue-list-actions">
-        <Button disabled={!canCompose} onClick={() => { setComposing(true); setSelectedId(null); }} title={template.state === 'unavailable' ? template.reason : undefined} type="button" variant="primary">New demo</Button>
+        <Button disabled={!canCompose} onClick={() => { setComposing(true); setSelectedId(null); }} title={template.state === 'unavailable' || template.state === 'uncastable' ? template.reason : undefined} type="button" variant="primary">New demo</Button>
         <Button onClick={refresh} type="button">Refresh</Button>
       </div>
       {template.state === 'unavailable' && <p className="queue-error" role="alert">Template unavailable: {template.reason.replace(/\.?$/u, '.')} New demos cannot be started until it can be read; Refresh tries again.</p>}
+      {template.state === 'uncastable' && <p className="queue-error" role="alert">Nobody to cast: {template.reason.replace(/\.?$/u, '.')} The template read fine, so Refresh only helps once that has changed.</p>}
       {offlineSince && <p className="demo-stale" role="status">Offline since {formatClock(offlineSince)}. Showing the state read at {readAt ? formatClock(readAt) : '—'}; the page keeps trying every few seconds, or Refresh now.</p>}
       {listError && !offlineSince && <p className="queue-error" role="alert">{listError}</p>}
       <div className="queues demos">
@@ -422,9 +443,9 @@ export function DemosView(): React.JSX.Element {
           <div><strong>{operation.companyName}-demo</strong><small>{operationHeadline(operation)}{operation.presenterName ? ` · ${operation.presenterName}` : ''} · started {formatClock(operation.createdAt)}</small></div>
           <b aria-hidden="true">›</b>
         </button>)}
-        {!loading && operations.length === 0 && !listError && <EmptyState title="No demos yet" description={template.state === 'ready' ? "Start one with New demo. It is prepared from the template and published when the presenter's view matches the pack." : 'Nothing has been prepared. New demo needs the template, which could not be read.'} />}
+        {!loading && operations.length === 0 && !listError && <EmptyState title="No demos yet" description={template.state === 'ready' ? "Start one with New demo. It is prepared from the template and published when the presenter's view matches the pack." : template.state === 'uncastable' ? 'Nothing has been prepared. New demo needs people to cast, and there are not enough yet.' : 'Nothing has been prepared. New demo needs the template, which could not be read.'} />}
       </div>
-      <footer><span className={connected ? 'healthy-dot' : 'status-dot'} />{offlineSince ? 'Reconnecting…' : listError ? 'Regional API unavailable' : template.state === 'unavailable' ? 'Regional API connected · template unavailable' : 'Regional API connected'}</footer>
+      <footer><span className={connected ? 'healthy-dot' : 'status-dot'} />{offlineSince ? 'Reconnecting…' : listError ? 'Regional API unavailable' : template.state === 'unavailable' ? 'Regional API connected · template unavailable' : template.state === 'uncastable' ? 'Regional API connected · nobody to cast' : 'Regional API connected'}</footer>
     </aside>
     <main className="queue-detail demo-detail">
       {composing && template.state === 'ready' ? <div className="queue-messages"><NewDemoForm template={template.template} onCancel={() => setComposing(false)} onFailed={() => { void load(); }} onStarted={(operation) => {
@@ -475,6 +496,8 @@ export function DemosView(): React.JSX.Element {
             ? <EmptyState title="Reading the template…" description="The template's members are being read from the regional API." />
             : template.state === 'unavailable'
               ? <EmptyState title="The template could not be read" description={<>{template.reason.replace(/\.?$/u, '.')} New demos cannot be started until it can be read; Refresh tries again.{operations.length > 0 ? ' Existing preparations are listed on the left.' : ''}</>} />
+              : template.state === 'uncastable'
+                ? <EmptyState title="There is nobody to cast" description={<>{template.reason.replace(/\.?$/u, '.')} The template itself read fine, so this changes when the people do.{operations.length > 0 ? ' Existing preparations are listed on the left.' : ''}</>} />
               : <EmptyState title="Select a demo" description={operations.length > 0 ? 'Choose a preparation on the left, or start a new one.' : 'Start one with New demo.'} />}
       </div>}
     </main>

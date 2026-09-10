@@ -59,6 +59,7 @@ const template = {
     version: 'placeholder-2026-09',
     roles: ['presenter', 'priya', 'marcus', 'dana'],
     presenterRole: 'presenter',
+    roleLabels: { priya: 'Product', marcus: 'Sales', dana: 'Legal' },
   },
   members: [
     { userId: PRESENTER_ID, name: 'Adam', email: 'adam@rallywith.ai', role: 'owner' },
@@ -203,8 +204,13 @@ describe('the Demos page', () => {
     expect(presenter!.value).toBe(PRESENTER_ID);
     expect(parts.map((select) => select.value)).toEqual(['', '', '']);
     expect(parts[0]!.textContent).toContain('Priya Raman · priya@rallywith.ai');
-    expect(container.textContent).toContain('User 1');
-    expect(container.textContent).toContain('User 3');
+    // Each dropdown says which part it is: a colleague put in the wrong one
+    // has the pack's scripted words attributed to them under their own name.
+    expect(container.textContent).toContain('Product');
+    expect(container.textContent).toContain('Legal');
+    // An uncast part says so rather than leaving Start dead with nothing to read.
+    expect(container.textContent).toContain('3 parts are still uncast');
+    expect(buttonNamed('Start preparation').title).toBe('3 parts are still uncast');
     expect(buttonNamed('Start preparation').disabled).toBe(true);
 
     await act(async () => { choose(parts[0]!, PRIYA_ID); });
@@ -320,7 +326,10 @@ describe('the Demos page', () => {
   it('says why when the template seats nobody to present, instead of a form that cannot be submitted', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(respond([], { template: () => Response.json({ ...template, members: [] }) }));
     await render();
-    expect(container.textContent).toContain('demo-template has no active members; the presenter is cast from them.');
+    expect(container.textContent).toContain('demo-template has no active members, and the presenter is cast from them.');
+    // Not "the template could not be read": it read fine, and Refresh will not change it.
+    expect(container.textContent).toContain('Nobody to cast');
+    expect(container.textContent).not.toContain('Template unavailable');
     expect(buttonNamed('New demo').disabled).toBe(true);
   });
 
@@ -380,6 +389,7 @@ describe('the Demos page', () => {
     }));
     await render();
     expect(container.textContent).toContain('The pack has 3 parts besides the presenter, and only 2 @rallywith.ai accounts have signed in');
+    expect(container.textContent).toContain('Nobody to cast');
     expect(buttonNamed('New demo').disabled).toBe(true);
   });
 });

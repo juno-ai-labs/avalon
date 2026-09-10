@@ -414,6 +414,31 @@ for a model to fabricate tool receipts.
 
 ## Decision log
 
+### 2026-09-10 — The cast is the company's own directory, not invented people
+
+**Decided:** Every part in a pack is played by a colleague with a real account,
+chosen from a dropdown of everyone on the company's email domain who has signed
+in. Personas — the accounts a preparation minted, which could not sign in and
+had addresses under `.invalid` — are deleted, not kept as an option beside them.
+
+**Why:** The team asked for it directly: the invented cast was not being used.
+The demos actually being given are internal and to design partners, where a
+cast of people who do not exist is the thing that reads as fake, and the person
+presenting wants their own colleagues in the room. This overturns the
+2026-09-09 decision below, which was itself a reversal of the agreed model —
+the second time this has moved — so the standing answer is now: real accounts,
+bounded by the email domain rather than by the template's membership.
+
+**Considered and rejected:** Keeping personas and giving them plausible company
+addresses. That makes a fabricated account indistinguishable from a colleague's
+on screen, which is worse than either honest option.
+
+**Changes:** Design decision on casting is superseded for the second time. The
+cast is no longer bounded by template membership either, which the original
+model and the persona model both assumed: it is the whole directory on the
+domain, and that domain is now the security boundary — being cast seats an
+account in a workspace holding copies of the template's connections.
+
 - **September 5: side conversation reaches the model, in the product.** The
   spike found that a human message admitted without starting a run never
   entered the agent's context, and asked whether it should. It should: the

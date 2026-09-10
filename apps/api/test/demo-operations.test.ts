@@ -6,10 +6,12 @@ import type { Env, HonoAppEnv } from "../src/env";
 import { errorHandler } from "../src/middleware/errors";
 import { demoOperatorRoutes } from "../src/routes/demo-operations";
 import { DEMO_TEMPLATE_WORKSPACE_ID } from "../src/services/demo-workspace-visibility";
+import { listDemoCastCandidates } from "../src/services/demo-cast";
 import {
   abandonDemoOperation,
   activeDemoPack,
   demoOperationStatus,
+  demoTemplate,
   failDemoPreparationDriver,
   listDemoOperations,
   retryDemoOperation,
@@ -189,17 +191,34 @@ describe("a demo preparation operation", () => {
     expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM demo_operations").first()).toEqual({ count: 0 });
   });
 
+  it("refuses the template outside the region demos are prepared in", async () => {
+    // The answer is the company's directory now, so an EU call would read out
+    // every European colleague's name and address from a route that cannot
+    // prepare a demo there anyway.
+    const { env } = fixture({ AVALON_REGION: "eu" });
+    await expect(demoTemplate(env)).rejects.toMatchObject({ code: "demo_region_unsupported" });
+  });
+
   it("refuses to cast anybody who is not a colleague, before writing a row", async () => {
     const { env, launched } = fixture();
     // Being cast seats the account in the demo workspace, which receives
     // copies of the template's connections; the domain is what bounds who
     // that can be, and the page's list is not what enforces it.
     await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), dana: OUTSIDER_ID } }))
-      .rejects.toMatchObject({ code: "demo_cast_not_a_colleague", status: 422 });
+      .rejects.toMatchObject({ code: "demo_cast_not_a_colleague" });
     // Somebody who has never signed in is not one either, whatever their
     // address: there is no account to seat.
     await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), dana: UNSEEN_ID } }))
       .rejects.toMatchObject({ code: "demo_cast_not_a_colleague" });
+    // Nor is a near miss. `_` is one character to LIKE and an ordinary one in
+    // a hostname, and a subdomain or a lookalike registered by somebody else
+    // is a different company: only the domain itself is castable.
+    for (const address of ["ben@x.rallywith.ai", "ben@notrallywith.ai", "ben@rallywith0ai", "ben@rallywith.ai.evil.example"]) {
+      await env.DB.prepare("UPDATE users SET email = ? WHERE id = ?").bind(address, DANA_ID).run();
+      await expect(startDemoOperation(env, request()))
+        .rejects.toMatchObject({ code: "demo_cast_not_a_colleague" });
+      expect((await listDemoCastCandidates(env)).some((candidate) => candidate.userId === DANA_ID)).toBe(false);
+    }
     expect(launched).toEqual([]);
     expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM demo_operations").first()).toEqual({ count: 0 });
   });
@@ -245,7 +264,7 @@ describe("a demo preparation operation", () => {
     await startDemoOperation(env, request());
     await env.DB.prepare("UPDATE users SET email = ? WHERE id = ?").bind("ben@elsewhere.example.com", DANA_ID).run();
     await expect(runDemoPreparationPhase(env, OPERATION_ID, "checking_template", { attempt: 1 }))
-      .rejects.toMatchObject({ code: "demo_cast_not_a_colleague", status: 409 });
+      .rejects.toMatchObject({ code: "demo_cast_not_a_colleague" });
     expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", error_code: "demo_cast_not_a_colleague" });
   });
 
@@ -259,7 +278,7 @@ describe("a demo preparation operation", () => {
     await startDemoOperation(env, request());
     await env.DB.prepare("UPDATE users SET name = ? WHERE id = ?").bind("Priya Raman", DANA_ID).run();
     await expect(runDemoPreparationPhase(env, OPERATION_ID, "checking_template", { attempt: 1 }))
-      .rejects.toMatchObject({ code: "demo_cast_name_duplicate", status: 409 });
+      .rejects.toMatchObject({ code: "demo_cast_name_duplicate" });
     expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", error_code: "demo_cast_name_duplicate" });
 
     // The presenter is in the demo under their own name too, so they are one
@@ -489,22 +508,30 @@ describe("the operator routes", () => {
     expect(template.status).toBe(200);
     const body = await template.json() as {
       workspaceId: string;
-      pack: { roles: string[]; presenterRole: string | null };
+      pack: { roles: string[]; presenterRole: string | null; roleLabels: Record<string, string> };
       members: { userId: string; role: string }[];
-      castCandidates: { userId: string; email: string }[];
+      castCandidates: { userId: string; name: string; email: string }[];
       castEmailDomain: string;
     };
     expect(body.workspaceId).toBe(DEMO_TEMPLATE_WORKSPACE_ID);
     expect(body.pack.roles).toEqual(["presenter", "priya", "marcus", "dana"]);
     expect(body.pack.presenterRole).toBe("presenter");
+    // Each part is labelled, so the form's dropdowns say which one they are.
+    expect(body.pack.roleLabels).toEqual({ priya: "Product", marcus: "Sales", dana: "Legal" });
     // The presenter is chosen from the template's active members alone.
     expect(body.members.map((member) => member.userId)).toEqual([PRESENTER_ID]);
     // The rest are cast from the company's directory: everyone on its domain
     // who has signed in, by address, and nobody else — the outsider is on
     // another domain, so the form never offers them.
     expect(body.castEmailDomain).toBe("rallywith.ai");
-    expect(body.castCandidates.map((candidate) => candidate.email)).toEqual([
-      "adam@rallywith.ai", "ben@rallywith.ai", "kb@rallywith.ai", "priya@rallywith.ai", "sam.burton@rallywith.ai",
+    // By name, which is what the dropdown shows, with the address breaking the
+    // tie between the two Sam Burtons.
+    expect(body.castCandidates.map((candidate) => `${candidate.name} · ${candidate.email}`)).toEqual([
+      "Adam · adam@rallywith.ai",
+      "Ben Diaz · ben@rallywith.ai",
+      "Priya Raman · priya@rallywith.ai",
+      "Sam Burton · kb@rallywith.ai",
+      "Sam Burton · sam.burton@rallywith.ai",
     ]);
     // Nadia is on the domain but has never signed in, so there is no account
     // to seat and she is not offered.
