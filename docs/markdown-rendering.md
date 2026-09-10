@@ -712,6 +712,21 @@ The traps, both of which have bitten:
 
 ## Changelog
 
+### 2026-09-10 — The feed's markdown host rule lost its host prefix
+
+**What changed:** The rule the 2026-08-30 entry below counts against,
+`:is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body`,
+is now `.agent-message .markdown-body`, at (0,2,0) rather than (0,3,0), with
+every other feed rule that carried the two-host prefix
+([`conversation-surfaces.md`](conversation-surfaces.md)).
+
+**Why:** The prefix distinguished nothing (no component applies the second
+class, and the work stream is the only surface that renders a feed) and only
+raised the weight every override had to clear. The embed card's preview rule,
+`.citation-card .citation-card-preview div.markdown-body` at (0,3,1), still
+wins, now by a wider margin; the arithmetic in that entry stays as the record
+of why it was written at that weight.
+
 ### 2026-09-09 — Shared media tiles with host-specific layouts
 
 Attachments and embeds share square media and horizontal file cards. Feed media

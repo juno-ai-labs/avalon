@@ -77,9 +77,10 @@ request, and a test fails a description that carries usage language. See
 [`workstream-naming.md`](workstream-naming.md).
 Colors store semantic keys such as `blue` and `purple`, never hex or RGB values.
 Both the swatch and glyph resolve `sys.color.project.<key>` through the current
-appearance. Tune these keys independently in
-`config/design-tokens/themes/light.json` and `dark.json`, then run
-`pnpm tokens:build`. The shared palette also affects projects and personal accents.
+appearance. The keys that resolve to the same colour in both appearances live
+in `config/design-tokens/base.json`; a key that has to differ is set in both
+`themes/light.json` and `dark.json`, never one. Run `pnpm tokens:build` after
+either. The shared palette also affects projects and personal accents.
 
 The picker offers `PROJECT_COLOR_KEYS` — the fourteen-hue ring — while the
 schema parses `PROJECT_COLOR_KEYS_STORABLE`, which is every colour the palette
@@ -147,6 +148,20 @@ cover the common cache path. Inspect the actual Electron popup in light and dark
 including scrolling, and check another connected window and reopening.
 
 ## Changelog
+
+### 2026-09-10 — Project colours live in the base token file
+
+**What changed:** The `sys.color.project.*` keys both appearances set to the
+same value moved from `light.json` and `dark.json` to
+`config/design-tokens/base.json`, with every other token the two files agreed
+on ([`theming.md`](theming.md)). The section above told a reader to tune the
+keys per appearance; it now says where each key lives.
+
+**Why:** Two files carrying identical keys can only ever differ by mistake, and
+the token build now fails an appearance file that sets a token both
+appearances agree on. Following the old instruction would trip that test
+rather than change a colour. A key that has to differ by appearance moves into
+both appearance files in the same edit, which the same test also holds.
 
 ### 2026-09-09 — A bare tinted mark beside the filled glyph, read off the row
 

@@ -16,7 +16,7 @@ import {
   stylesheetPath,
 } from './build-theme-assets.mjs';
 
-const { registry, themes } = readTokenSources();
+const { registry, base, themes } = readTokenSources();
 
 /**
  * The JSON is the source of truth and `themes.css` is its output.
@@ -27,7 +27,7 @@ const { registry, themes } = readTokenSources();
  * through `pnpm test:scripts`.
  */
 test('every committed artefact is what the token JSON produces', () => {
-  for (const { path, contents } of outputs({ registry, themes })) {
+  for (const { path, contents } of outputs({ registry, base, themes })) {
     assert.equal(
       readFileSync(path, 'utf8'),
       contents,
@@ -49,10 +49,10 @@ test('a token path becomes a namespaced custom property', () => {
   * rename has to remember — and when `dark` became `neu` it did not.
   */
 test('one theme declares itself the default, and is emitted as :root', () => {
-  const base = defaultTheme(themes);
+  const fallback = defaultTheme(themes);
 
-  assert.equal(selectorFor(base.id, themes), `:root,\n[data-theme='${base.id}']`);
-  for (const theme of themes.filter((candidate) => candidate.id !== base.id)) {
+  assert.equal(selectorFor(fallback.id, themes), `:root,\n[data-theme='${fallback.id}']`);
+  for (const theme of themes.filter((candidate) => candidate.id !== fallback.id)) {
     assert.equal(selectorFor(theme.id, themes), `[data-theme='${theme.id}']`);
   }
   assert.throws(() => defaultTheme(themes.map((theme) => ({ ...theme, default: false }))), /exactly one/u);
@@ -60,19 +60,19 @@ test('one theme declares itself the default, and is emitted as :root', () => {
 });
 
 test('every theme sets only tokens the registry declares', () => {
-  for (const theme of themes) {
+  for (const theme of [base, ...themes]) {
     const unknown = Object.keys(theme.tokens).filter((path) => !registry.tokens[path]);
-    assert.deepEqual(unknown, [], `${theme.id} sets tokens that are not in the registry`);
+    assert.deepEqual(unknown, [], `${theme.id ?? 'base'} sets tokens that are not in the registry`);
   }
 });
 
 test('every alias points at a token that exists', () => {
-  for (const theme of themes) {
+  for (const theme of [base, ...themes]) {
     for (const [path, value] of Object.entries(theme.tokens)) {
       for (const [, reference] of JSON.stringify(value).matchAll(/\{([a-z0-9.-]+)\}/giu)) {
         assert.ok(
           registry.tokens[reference],
-          `${theme.id}: ${path} aliases ${reference}, which no token declares`,
+          `${theme.id ?? 'base'}: ${path} aliases ${reference}, which no token declares`,
         );
       }
     }
@@ -89,7 +89,9 @@ test('every alias points at a token that exists', () => {
  * would have shown up as an unstyled interface rather than as a failure.
  */
 test('no alias resolves to itself, directly or through a chain', () => {
-  for (const theme of themes) {
+  // The base file is walked as itself: a base token may alias only base tokens
+  // (held below), so a cycle through it can only be inside it.
+  for (const theme of [base, ...themes]) {
     const referencesOf = (path) => [...JSON.stringify(theme.tokens[path] ?? '')
       .matchAll(/\{([a-z0-9.-]+)\}/giu)].map(([, reference]) => reference);
 
@@ -98,7 +100,7 @@ test('no alias resolves to itself, directly or through a chain', () => {
       const queue = referencesOf(path);
       while (queue.length) {
         const next = queue.shift();
-        assert.ok(next !== path, `${theme.id}: ${path} resolves back to itself`);
+        assert.ok(next !== path, `${theme.id ?? 'base'}: ${path} resolves back to itself`);
         if (seen.has(next)) continue;
         seen.add(next);
         queue.push(...referencesOf(next));
@@ -121,26 +123,58 @@ test('every registry group explains at least one token', () => {
 });
 
 /**
- * A theme that omits a colour inherits the dark theme's, because the dark block
- * is also `:root`. That failure is silent and specific to the omitted token: a
- * light theme missing the tooltip's foreground draws near-black on near-black,
- * nothing else looks wrong, and nobody finds it until a person hovers something.
- *
- * Lengths, font stacks and aliases are deliberately inherited — they mean the
- * same thing whatever the theme — so only colours are required.
+ * An appearance file holds only what differs between light and dark; everything
+ * else is `base.json`, merged under every appearance at build time. Three
+ * guards make the split hold: the files partition the registry, both
+ * appearances set the same tokens, and a token both appearances set to the
+ * same value is a base token that has drifted into the appearance files.
+ * Without the third, a size edited in one appearance file and copied into the
+ * other is invisible until the copies disagree.
  */
-test('every theme restates every colour the default theme names', () => {
-  const base = defaultTheme(themes);
-  const required = Object.keys(base.tokens).filter((path) => {
-    const value = base.tokens[path];
-    return registry.tokens[path].$type === 'color' && !String(value).startsWith('{');
-  });
-
-  assert.ok(required.length > 60, 'expected the default theme to name many colours');
-  for (const theme of themes.filter((candidate) => candidate.id !== defaultTheme(themes).id)) {
-    const missing = required.filter((path) => !(path in theme.tokens));
-    assert.deepEqual(missing, [], `${theme.id} inherits colours it should restate`);
+test('base and the appearances partition the registry', () => {
+  const baseKeys = Object.keys(base.tokens);
+  for (const theme of themes) {
+    const overlap = baseKeys.filter((path) => path in theme.tokens);
+    assert.deepEqual(overlap, [], `${theme.id} restates base tokens`);
+    const union = new Set([...baseKeys, ...Object.keys(theme.tokens)]);
+    const missing = Object.keys(registry.tokens).filter((path) => !union.has(path));
+    assert.deepEqual(missing, [], `${theme.id} and base together leave tokens unset`);
   }
+});
+
+test('every appearance sets the same tokens', () => {
+  const [first, ...rest] = themes;
+  const expected = Object.keys(first.tokens).sort();
+  for (const theme of rest) {
+    assert.deepEqual(Object.keys(theme.tokens).sort(), expected, `${theme.id} and ${first.id} set different tokens`);
+  }
+});
+
+test('a token every appearance agrees on is a base token', () => {
+  const [first, ...rest] = themes;
+  // An alias whose target is an appearance token varies with the appearance
+  // however identical its text is: `{ref.color.neutral.14}` is a different
+  // colour in dark. Only a value that resolves the same everywhere is agreed.
+  const resolvesInBase = (value) => [...JSON.stringify(value).matchAll(/\{([a-z0-9.-]+)\}/gu)]
+    .every((match) => match[1] in base.tokens);
+  const agreed = Object.keys(first.tokens).filter((path) =>
+    resolvesInBase(first.tokens[path])
+    && rest.every((theme) => JSON.stringify(theme.tokens[path]) === JSON.stringify(first.tokens[path])));
+  assert.deepEqual(agreed, [], 'these tokens hold one value in every appearance and belong in base.json');
+});
+
+/**
+ * A base token that aliased an appearance token would resolve differently per
+ * appearance while claiming not to vary; the merge makes it work, but the file
+ * would be lying about what it holds.
+ */
+test('a base token aliases only base tokens', () => {
+  const strays = Object.entries(base.tokens).flatMap(([path, value]) =>
+    [...JSON.stringify(value).matchAll(/\{([a-z0-9.-]+)\}/gu)]
+      .map((match) => match[1])
+      .filter((target) => !(target in base.tokens))
+      .map((target) => `${path} -> ${target}`));
+  assert.deepEqual(strays, []);
 });
 
 /**
@@ -191,6 +225,7 @@ const asCss = (value) => {
       groups: { 'sys.backdrop': 'x' },
       tokens: { 'sys.backdrop.image': { $type: 'gradient' } },
     },
+    base: { tokens: {} },
     themes: [{
       id: 'base', name: 'D', description: 'd', appearance: 'dark', default: true,
       tokens: { 'sys.backdrop.image': value },
@@ -292,7 +327,7 @@ test('platform font exceptions do not admit missing or quoted custom families', 
 
 test('UI leading scales with inherited font size rather than fixing all headings at 20px', () => {
   for (const theme of themes) {
-    const tokens = resolvedTokens(theme, themes);
+    const tokens = resolvedTokens(theme, base);
     const leading = Number(tokens['sys.font.leading.base']);
     assert.ok(Number.isFinite(leading) && leading > 1, theme.id);
     assert.ok(Math.abs(leading * parseFloat(tokens['sys.font.size.base']) - 20) < 0.001);
@@ -317,7 +352,7 @@ function luminance(color, backdrop) {
 
 test('keyboard focus contrasts against adjacent surfaces in both appearances', () => {
   for (const theme of themes) {
-    const tokens = resolvedTokens(theme, themes);
+    const tokens = resolvedTokens(theme, base);
     for (const role of ['default', 'quiet']) {
       const focus = luminance(tokens[`sys.color.focus.${role}`]);
       for (const surface of ['canvas', 'default', 'subtle', 'raised', 'raised-hover', 'elevated', 'elevated-hover']) {
@@ -331,13 +366,13 @@ test('keyboard focus contrasts against adjacent surfaces in both appearances', (
 });
 
 test('every custom family a theme names is a face the build emits', () => {
-  const css = generate({ registry, themes });
+  const css = generate({ registry, base, themes });
   const declared = new Set(fontFaces(themes).map((font) => font.family));
 
   assert.ok(declared.size > 0, 'no theme declares a font');
   for (const theme of themes) {
     for (const path of ['sys.font.family.ui', 'sys.font.family.mono']) {
-      const value = resolvedTokens(theme, themes)[path];
+      const value = resolvedTokens(theme, base)[path];
       if (String(value).startsWith('{')) continue;
       assert.ok(
         hasLeadingFontSource(value, declared),
@@ -356,6 +391,7 @@ test('a bundled face points at the file that ships, and a remote one never does'
   const remote = { family: 'Far', src: { url: 'https://fonts.example/far.woff2' } };
   const css = generate({
     registry: { groups: { 'sys.font': 'x' }, tokens: { 'sys.font.family.ui': { $type: 'fontFamily' } } },
+    base: { tokens: {} },
     themes: [{
       id: 'base', name: 'D', description: 'd', appearance: 'dark', default: true,
       fonts: [bundled, remote], tokens: { 'sys.font.family.ui': 'Geist Mono' },
@@ -372,6 +408,7 @@ test('a bundled face points at the file that ships, and a remote one never does'
 test('a bundled font that is not in the repository fails the build', () => {
   assert.throws(() => generate({
     registry: { groups: { 'sys.font': 'x' }, tokens: { 'sys.font.family.ui': { $type: 'fontFamily' } } },
+    base: { tokens: {} },
     themes: [{
       id: 'base', name: 'D', description: 'd', appearance: 'dark', default: true,
       fonts: [{ family: 'Ghost', src: { bundled: 'ghost.woff2' } }],
@@ -384,7 +421,7 @@ test('the main process is told where to fetch a remote font from', () => {
   const remote = { family: 'Far', src: { url: 'https://fonts.example/far.woff2', integrity: 'sha256-AAAA' } };
   const manifest = assetManifest([{
     id: 'base', name: 'D', description: 'd', appearance: 'dark', default: true, fonts: [remote], tokens: {},
-  }]);
+  }], { tokens: {} });
 
   assert.match(manifest, new RegExp(`'${fontCacheId(remote.src.url)}': \\{`, 'u'));
   assert.match(manifest, /url: 'https:\/\/fonts\.example\/far\.woff2'/u);
@@ -404,7 +441,7 @@ test('every theme keeps its markdown headings above its prose', () => {
   const px = (value) => Number.parseFloat(String(value));
 
   for (const theme of themes) {
-    const values = resolvedTokens(theme, themes);
+    const values = resolvedTokens(theme, base);
     const prose = px(values['sys.font.size.prose']);
     const headings = [1, 2, 3, 4].map((level) => px(values[`cmp.markdown.heading-${level}`]));
 
@@ -450,7 +487,7 @@ test('every theme keeps its markdown headings above its prose', () => {
  */
 test('a card composer states its top edge as its frame, and a rule keeps a visible one', () => {
   for (const theme of themes) {
-    const values = resolvedTokens(theme, themes);
+    const values = resolvedTokens(theme, base);
     const token = (name) => values[`cmp.composer.${name}`];
     // `0`, `0px`, `0rem` — a zeroed width is the rule shape however it is spelt.
     const rule = /^0(?:[a-z%]+)?$/u.test(String(token('border-width')));

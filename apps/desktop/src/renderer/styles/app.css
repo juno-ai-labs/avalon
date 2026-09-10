@@ -2927,30 +2927,77 @@ pre {
 
 .transcript-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: auto; scrollbar-gutter: stable; }
 
-.unread-divider { align-items: center; color: var(--av-sys-color-accent-base); display: flex; font-size: 10.5px; font-weight: 620; gap: 9px; margin: 8px 0 14px; }
+.unread-divider { align-items: center; color: var(--av-sys-color-accent-base); display: flex; font-size: 10.5px; font-weight: 620; gap: var(--space-2); margin: 0 0 var(--space-3); }
 .unread-divider::before,
 .unread-divider::after { background: var(--av-sys-color-accent-tint); content: ''; flex: 1; height: 1px; }
 .unread-divider span { flex: 0 0 auto; }
-.transcript-column { margin: 0 auto; max-width: var(--av-cmp-feed-width); min-height: 100%; padding: var(--av-cmp-feed-padding-y) var(--av-cmp-feed-padding-x) 150px; }
+.transcript-column { margin: 0 auto; max-width: var(--av-cmp-feed-width); min-height: 100%; padding: var(--space-8) var(--space-8) 150px; }
 .transcript-history-control {
   align-items: center;
   color: var(--av-sys-color-text-muted);
   display: flex;
   font-size: var(--av-cmp-control-font-size);
-  gap: 7px;
+  gap: var(--space-2);
   justify-content: center;
-  margin-bottom: 18px;
+  margin-bottom: var(--space-4);
   min-height: var(--av-sys-size-control-height);
   text-align: center;
 }
 .transcript-history-control .button { max-width: 100%; white-space: normal; }
 .transcript-history-control svg { flex-shrink: 0; }
-.transcript-history-control + .inline-error { margin-bottom: 18px; }
+.transcript-history-control + .inline-error { margin-bottom: var(--space-4); }
 .virtual-message-row { display: flow-root; }
 .message-arrival-layer { display: flow-root; transform-origin: center bottom; }
+/* The spacing scale, derived from the theme's one unit. Every margin, padding
+   and gap between the feed's rows, inside its turns and on its cards is a step
+   of it, so a theme that wants a looser or tighter feed moves `ref.space.unit`
+   and nothing else; `app.css.node.test.ts` holds that line, and the few values
+   under a step that remain are optical nudges inside inline controls, each
+   exempted there by name. Rule-local rather than eight registry tokens because
+   a theme has no opinion about step five that is not an opinion about the
+   unit. */
+:root {
+  --space-1: var(--av-ref-space-unit);
+  --space-2: calc(var(--av-ref-space-unit) * 2);
+  --space-3: calc(var(--av-ref-space-unit) * 3);
+  --space-4: calc(var(--av-ref-space-unit) * 4);
+  --space-5: calc(var(--av-ref-space-unit) * 5);
+  --space-6: calc(var(--av-ref-space-unit) * 6);
+  --space-7: calc(var(--av-ref-space-unit) * 7);
+  --space-8: calc(var(--av-ref-space-unit) * 8);
+}
+/* The feed's vertical rhythm is one primitive: a row owns the space above it,
+   chosen by what precedes it, and no row sets a bottom margin. Before this,
+   each row kind carried its own bottom margin (58px on a turn, 28 on an event,
+   26 on a timing row, 20 on a system note) and the next row's top margin was
+   added to it, including two negative margins whose only job was to claw back
+   the 58px a turn left under itself when its own work followed. The same
+   system note sat 78px below a bubble and 20px above the answer, and two
+   consecutive tool rows were 1px apart.
+
+   Which gap a row gets is decided by `MessageFeed` from the message list
+   (`feedRowGap`) and stamped on the row as `data-row-gap`, not by a sibling
+   combinator: the feed is windowed, so the first mounted row has no previous
+   sibling whatever its index, and a `+` rule gave it no gap at the window's
+   edge and a different measured height on either side of it. Each row is
+   `flow-root`, so the margin is inside the row's border box and the
+   virtualizer measures it. A turn is a person's `.message-block`, an answer is
+   Rally's, and everything else (a tool row, a timing row, the accordion, a
+   system note, a status pill, the proposal card, an open elicitation) is an
+   event. Rally's answer sits on the work that produced it at the same distance
+   its header sits above its body, because it is the same turn finishing; a
+   person's reply after an event is a new turn and keeps the turn-to-event
+   distance. */
+.virtual-message-row[data-row-gap='stack'] > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-stack-gap); }
+.virtual-message-row[data-row-gap='block'] > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-block-gap); }
+.virtual-message-row[data-row-gap='event'] > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-event-gap); }
+/* The unread divider takes the row's space; the row it labels sits under it. */
+.virtual-message-row > .message-arrival-layer > .unread-divider + * { margin-top: 0; }
 .activity-presence { display: flow-root; transform-origin: left center; }
-.message-block { margin: 0 0 var(--av-sys-space-stack-gap); }
-.message-block > header { align-items: center; display: flex; gap: 8px; margin-bottom: 6px; }
+/* The live timer under the feed is the next event row, drawn by the surface. */
+.activity-presence .agent-work-timing { margin-top: var(--av-sys-space-block-gap); }
+.message-block { margin: 0; }
+.message-block > header { align-items: center; display: flex; gap: var(--space-2); margin-bottom: var(--space-2); }
 /* The header mixes three type sizes, and each one's line box is taller than its
    glyphs by a different amount, so centring the boxes leaves the text looking
    off-centre. Collapsing the children to their glyph height makes the flex
@@ -2975,7 +3022,7 @@ pre {
 .markdown-body h6 {
   color: var(--av-ref-color-neutral-11);
   line-height: var(--av-cmp-markdown-heading-leading);
-  margin: var(--av-cmp-markdown-heading-margin);
+  margin: var(--space-6) 0 var(--space-3);
 }
 /* The scale is a token because `.markdown-body` takes its own size from
    `--av-sys-font-size-prose`. A theme that raises its prose and leaves these
@@ -3002,6 +3049,10 @@ pre {
    the text now, which is what a gutter is, and it lands on the same x as the
    work accordion's above it. */
 .markdown-body > .markdown-collapse:first-child .markdown-collapse-heading { margin-top: 0; }
+/* The trim above and `.markdown-body > :last-child` both stop at the collapse
+   wrapper, so the last block inside the last section kept its prose margin and
+   leaked it under every answer that opened with a heading. */
+.markdown-body > .markdown-collapse:last-child > .markdown-collapse-body > :last-child { margin-bottom: 0; }
 .markdown-collapse-heading { cursor: pointer; position: relative; }
 .markdown-collapse-chevron {
   align-items: center;
@@ -3080,7 +3131,7 @@ pre {
 /* The user bubble is its own role in Grok Bot. Its mention is a wash of the
    bubble's inherited ink, so it remains legible in both light and dark themes
    instead of becoming a light tag with dark text inside a dark bubble. */
-:is(.workstream-screen, .automation-chat-surface) .human-message .mention-chip {
+.human-message .mention-chip {
   background: color-mix(in srgb, currentColor 24%, transparent);
 }
 .mention-chip-connector {
@@ -3137,10 +3188,10 @@ pre {
   border-radius: var(--av-sys-size-radius-lg);
   color: var(--av-sys-color-text-default);
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   margin: var(--av-sys-space-prose-gap) 0;
   max-width: 100%;
-  padding: 10px 12px;
+  padding: var(--space-3);
   text-align: left;
   width: min(100%, 420px);
 }
@@ -3224,7 +3275,7 @@ pre {
    for an image, or one compact file row. The old tall citation tile made sites
    and audio look like empty documents and survived after attachments moved on. */
 .citation-card { color: var(--av-sys-color-text-default); cursor: pointer; font: inherit; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; overflow: hidden; text-align: left; }
-.citation-card.is-file { align-items: center; background: var(--av-cmp-composer-background); border: .5px solid var(--av-cmp-composer-border-color); border-radius: 12px; display: grid; gap: 9px; grid-template-columns: 36px minmax(0, 1fr); min-height: var(--attachment-file-card-height); min-width: min(220px, 100%); padding: 8px; width: min(340px, 100%); }
+.citation-card.is-file { align-items: center; background: var(--av-cmp-composer-background); border: .5px solid var(--av-cmp-composer-border-color); border-radius: 12px; display: grid; gap: var(--space-2); grid-template-columns: 36px minmax(0, 1fr); min-height: var(--attachment-file-card-height); min-width: min(220px, 100%); padding: var(--space-2); width: min(340px, 100%); }
 .citation-card.is-file:hover { background: var(--av-sys-color-surface-elevated-hover); }
 .citation-card-badge { align-items: center; background: color-mix(in srgb, var(--av-sys-color-accent-base) 18%, var(--av-sys-color-surface-raised)); border-radius: 9px; color: var(--av-sys-color-accent-base); display: inline-flex; height: 36px; justify-content: center; width: 36px; }
 .citation-card.is-image { background: var(--av-ref-color-neutral-4); border: 0; border-radius: 12px; box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--av-sys-color-text-default) 15%, transparent); display: block; max-height: 200px; min-height: 64px; padding: 0; position: relative; transition: filter 140ms ease; }
@@ -3308,7 +3359,7 @@ pre {
 /* The footnotes GFM still renders — the definitions the citation grammar did
    not lift. Without a rule they read as an ordinary numbered list inside the
    answer, which is exactly what a footnote is not. */
-.markdown-body .footnotes { border-top: 1px solid var(--av-sys-color-border-subtle); color: var(--av-sys-color-text-muted); font-size: 0.9em; margin-top: 22px; padding-top: 12px; }
+.markdown-body .footnotes { border-top: 1px solid var(--av-sys-color-border-subtle); color: var(--av-sys-color-text-muted); font-size: 0.9em; margin-top: var(--space-6); padding-top: var(--space-3); }
 
 .citation-identity-card { background: color-mix(in srgb, var(--av-sys-color-brand-base) 10%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-brand-base) 24%, transparent); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-brand-ink); display: inline-block; font-size: 0.92em; font-weight: 580; padding: 3px 9px; }
 /* Markers are restated because Tailwind's preflight sets `list-style: none` on
@@ -3332,43 +3383,43 @@ pre {
 .markdown-body :is(ul, ol) :is(ul, ol) ul { list-style: square; }
 .markdown-body ol { list-style: decimal; }
 .markdown-body ul,
-.markdown-body ol { margin: var(--av-cmp-markdown-list-margin); padding-left: var(--av-cmp-markdown-list-indent); }
-.markdown-body li { margin: calc(var(--av-sys-space-prose-gap) / 3) 0; padding-left: 1px; }
-.markdown-body li > p { margin-bottom: 7px; }
+.markdown-body ol { margin: var(--space-3) 0 var(--space-4); padding-left: var(--av-cmp-markdown-list-indent); }
+.markdown-body li { margin: var(--space-1) 0; padding-left: 1px; }
+.markdown-body li > p { margin-bottom: var(--space-1); }
 .markdown-body li::marker { color: var(--av-ref-color-neutral-13); }
 /* Keeps its own `none`: a task list draws checkboxes, and a bullet beside each
    one is what this exception exists to prevent. It carries two classes to the
    marker rules' one, so it survives them. */
-.markdown-body .contains-task-list { list-style: none; padding-left: 4px; }
-.markdown-body .task-list-item { align-items: baseline; display: flex; gap: 9px; }
+.markdown-body .contains-task-list { list-style: none; padding-left: var(--space-1); }
+.markdown-body .task-list-item { align-items: baseline; display: flex; gap: var(--space-2); }
 .markdown-body .task-list-item > input { accent-color: var(--av-sys-color-accent-base); flex: 0 0 auto; margin: 0; transform: translateY(1px); }
-.markdown-inline-code { background: var(--av-ref-color-neutral-4); border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-13); font-size: 0.88em; padding: 2px 4px; }
-.markdown-code-block { background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-xl); margin: 17px 0 18px; overflow: hidden; }
-.markdown-code-block-header { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; gap: 8px; justify-content: space-between; padding: 7px 8px 7px 16px; }
+.markdown-inline-code { background: var(--av-ref-color-neutral-4); border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-13); font-size: 0.88em; padding: 2px var(--space-1); }
+.markdown-code-block { background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-xl); margin: var(--space-4) 0; overflow: hidden; }
+.markdown-code-block-header { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; gap: var(--space-2); justify-content: space-between; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); }
 .markdown-code-language { color: var(--av-ref-color-neutral-9); font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; }
 .markdown-code-block-header button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-11); display: flex; height: 26px; justify-content: center; padding: 0; width: 26px; }
 .markdown-code-block-header button:hover { background: var(--av-ref-color-neutral-4); color: var(--av-ref-color-neutral-13); }
-.markdown-code-block pre { background: transparent !important; font-size: 0.93em; line-height: 1.55; margin: 0; overflow: auto; padding: 14px 18px; tab-size: 2; }
+.markdown-code-block pre { background: transparent !important; font-size: 0.93em; line-height: 1.55; margin: 0; overflow: auto; padding: var(--space-3) var(--space-4); tab-size: 2; }
 .markdown-code-block code { background: none; border-radius: 0; display: block; min-width: max-content; padding: 0; }
 .markdown-code-block code > span { display: block; min-height: 1.55em; }
-.markdown-mermaid-diagram { overflow: auto; padding: 18px; }
+.markdown-mermaid-diagram { overflow: auto; padding: var(--space-4); }
 .markdown-mermaid-svg { margin: 0 auto; }
 /* Mermaid writes a responsive max-width into the generated SVG. The wrapper's
    viewBox width is the scrollable frame; the SVG must fill that frame instead
    of shrinking a wide diagram back to the message width. */
 .markdown-mermaid-svg svg { display: block; height: auto; max-width: none !important; width: 100% !important; }
-.markdown-mermaid-error { color: var(--av-sys-color-danger-soft); font-size: 11px; margin: 0; padding: 10px 18px 0; }
-.markdown-body blockquote { border-left: 2px solid var(--av-ref-color-line-4); color: var(--av-ref-color-neutral-11); margin: var(--av-cmp-markdown-blockquote-margin); padding: 1px 0 1px 15px; }
+.markdown-mermaid-error { color: var(--av-sys-color-danger-soft); font-size: 11px; margin: 0; padding: var(--space-2) var(--space-4) 0; }
+.markdown-body blockquote { border-left: 2px solid var(--av-ref-color-line-4); color: var(--av-ref-color-neutral-11); margin: var(--space-6) 0; padding: 1px 0 1px var(--space-4); }
 .markdown-body blockquote > :last-child { margin-bottom: 0; }
-.markdown-body hr { background: var(--av-ref-color-neutral-5); border: 0; height: 1px; margin: var(--av-cmp-markdown-rule-margin); }
-.markdown-table-scroll { --tw-fade-scrollbar-thumb: var(--av-sys-color-scrollbar-thumb); --tw-fade-scrollbar-width: 9px; margin: 15px -2px 18px; overflow-x: auto; }
+.markdown-body hr { background: var(--av-ref-color-neutral-5); border: 0; height: 1px; margin: var(--space-6) 0; }
+.markdown-table-scroll { --tw-fade-scrollbar-thumb: var(--av-sys-color-scrollbar-thumb); --tw-fade-scrollbar-width: 9px; margin: var(--space-4) -2px; overflow-x: auto; }
 .markdown-body table { border-collapse: separate; border-spacing: 2px; line-height: var(--av-cmp-markdown-table-leading); margin: 0; min-width: max(100%, calc(var(--markdown-table-columns, 1) * 140px)); table-layout: fixed; width: calc(100% - 1px); }
 .markdown-body th,
-.markdown-body td { background: var(--av-sys-color-surface-raised); border: 0; border-radius: var(--av-sys-size-radius-xs); min-width: 120px; padding: var(--av-cmp-markdown-cell-padding); text-align: left; vertical-align: top; }
+.markdown-body td { background: var(--av-sys-color-surface-raised); border: 0; border-radius: var(--av-sys-size-radius-xs); min-width: 120px; padding: var(--space-2) var(--space-3); text-align: left; vertical-align: top; }
 .markdown-body th { background: var(--av-ref-color-neutral-4); color: var(--av-ref-color-neutral-13); font-weight: var(--av-cmp-markdown-strong-weight); }
 .markdown-body del { color: var(--av-ref-color-neutral-10); text-decoration-color: var(--av-ref-color-neutral-9); }
-.markdown-body img { border-radius: var(--av-sys-size-radius-md); display: block; height: auto; margin: 16px 0; max-width: 100%; }
-.agent-message-actions { align-items: center; display: flex; gap: 8px; margin-top: 9px; opacity: 0; transition: opacity 120ms; }
+.markdown-body img { border-radius: var(--av-sys-size-radius-md); display: block; height: auto; margin: var(--space-4) 0; max-width: 100%; }
+.agent-message-actions { align-items: center; display: flex; gap: var(--space-2); opacity: 0; transition: opacity 120ms; }
 .agent-message:hover .agent-message-actions,
 .agent-message:focus-within .agent-message-actions,
 .agent-message-actions.is-speaking { opacity: 1; }
@@ -3377,7 +3428,7 @@ pre {
    appears in both and has to read as the same control. Stating them per row
    instead would put `10px`/`2px`/`4px` in two places, and tuning one row would
    move that control on the agent's turn and leave it behind on the person's. */
-:is(.agent-message-actions, .human-message-actions) button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 10px; gap: 4px; padding: 2px; }
+:is(.agent-message-actions, .human-message-actions) button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 10px; gap: var(--space-1); padding: 2px; }
 :is(.agent-message-actions, .human-message-actions) button:hover { color: var(--av-sys-color-text-default); }
 /* The only thing the substream control needs beyond the row's metrics: it is the
    one two-word label here, and in a tight row it breaks mid-control while its
@@ -3392,7 +3443,7 @@ pre {
    line. The agent's row deliberately does not do this: it is also visible while
    speech is playing and while a save is in flight, so tying its hit-testing to
    hover would take away the Stop speaking it puts there. */
-.human-message-actions { display: flex; margin-top: 4px; opacity: 0; pointer-events: none; transition: opacity 120ms; }
+.human-message-actions { display: flex; margin-top: var(--space-1); opacity: 0; pointer-events: none; transition: opacity 120ms; }
 .human-message:hover .human-message-actions, .human-message:focus-within .human-message-actions { opacity: 1; pointer-events: auto; }
 @media (prefers-reduced-motion: reduce) { :is(.agent-message-actions, .human-message-actions) { transition: none; } }
 /* A save in flight keeps the row visible and stops a second one starting; the
@@ -3401,14 +3452,14 @@ pre {
 .agent-message-actions button:disabled:hover { color: var(--av-sys-color-text-disabled); }
 .agent-message:has(.agent-message-actions button:disabled) .agent-message-actions { opacity: 1; }
 .streaming-caret { animation: active-pulse 0.9s infinite; background: var(--av-sys-color-brand-ink); display: inline-block; height: 13px; margin-left: 2px; vertical-align: text-bottom; width: 2px; }
-.transcript-event { margin: 0 0 var(--av-sys-space-block-gap); }
-.system-message { --system-message-lines: 5; align-items: flex-start; color: var(--av-ref-color-neutral-9); display: flex; font-size: 10.5px; gap: 8px; line-height: 1.55; margin: 20px 0; }
+.transcript-event { margin: 0; }
+.system-message { --system-message-lines: 5; align-items: flex-start; color: var(--av-ref-color-neutral-9); display: flex; font-size: 10.5px; gap: var(--space-2); line-height: 1.55; margin: 0; }
 .system-message-dot { background: var(--av-ref-color-neutral-7); border-radius: 50%; flex: none; height: 4px; margin-top: 6px; width: 4px; }
 .system-message-body { min-width: 0; }
 .system-message-text { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .system-message-text:not([data-expanded]) { -webkit-box-orient: vertical; -webkit-line-clamp: var(--system-message-lines); display: -webkit-box; overflow: hidden; }
 .system-message-text[data-expanded] { max-height: 320px; overflow-y: auto; }
-.system-message-toggle { align-items: center; background: transparent; color: var(--av-ref-color-neutral-10); display: flex; font-size: 10.5px; gap: 2px; margin-top: 3px; padding: 0; }
+.system-message-toggle { align-items: center; background: transparent; color: var(--av-ref-color-neutral-10); display: flex; font-size: 10.5px; gap: 2px; margin-top: var(--space-1); padding: 0; }
 .system-message-toggle:hover { color: var(--av-sys-color-text-subtle); }
 /* The one system row with something to do about it. The action is a real
    control rather than the "show more" affordance the toggle usually is, so it
@@ -3418,8 +3469,8 @@ pre {
   border: 1px solid var(--av-sys-color-border-subtle);
   border-radius: 6px;
   font-size: 11.5px;
-  margin-top: 8px;
-  padding: 4px 10px;
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-3);
 }
 .principal-unavailable-card .system-message-toggle:disabled { opacity: 0.55; }
 /* The proposal card. Same system-row frame — this is still Rally noting
@@ -3429,8 +3480,8 @@ pre {
   border: 1px solid var(--av-sys-color-border-subtle);
   border-radius: 6px;
   font-size: 11.5px;
-  margin-top: 8px;
-  padding: 4px 10px;
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-3);
 }
 .automation-draft-card .system-message-toggle:disabled { opacity: 0.55; }
 .automation-draft-triggers {
@@ -3451,37 +3502,36 @@ pre {
   color: var(--av-sys-color-text-muted);
   display: inline-flex;
   font-size: 10.5px;
-  gap: 5px;
+  gap: var(--space-1);
   line-height: 1.2;
-  margin: 12px 0 18px;
-  padding: 5px 8px;
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
 }
 
 .assistant-turn-status-pill svg { color: var(--av-sys-color-danger-base); flex: none; }
 
-.tool-block { background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-ref-color-line-2); border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); overflow: hidden; }
-.tool-block summary { align-items: center; display: grid; gap: 8px; grid-template-columns: 22px minmax(0, 1fr) auto auto 14px; list-style: none; min-height: 38px; padding: 5px 10px; }
+.tool-block { color: var(--av-sys-color-text-muted); }
+.tool-block summary { align-items: center; display: grid; list-style: none; }
 .tool-block summary::-webkit-details-marker { display: none; }
-.tool-icon { align-items: center; color: var(--av-ref-color-neutral-10); display: flex; justify-content: center; }
-.tool-summary { display: flex; flex-direction: column; min-width: 0; }
-.tool-summary strong { color: var(--av-ref-color-neutral-12); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tool-summary small { color: var(--av-ref-color-neutral-9); font-size: 9.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-icon { align-items: center; display: flex; justify-content: center; }
+.tool-summary { display: flex; min-width: 0; }
+.tool-summary strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-summary small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-state { align-items: center; display: flex; }
-.tool-completed .tool-state { color: var(--av-sys-color-success-base); }
 .tool-failed .tool-state,
 .tool-ambiguous .tool-state { color: var(--av-sys-color-danger-base); }
 .tool-started .tool-state { color: var(--av-sys-color-accent-base); }
 .tool-duration { font-size: 9.5px; }
 .disclosure-chevron { transition: transform 140ms; }
 .tool-block[open] .disclosure-chevron { transform: rotate(90deg); }
-.tool-details { border-top: 1px solid var(--av-sys-color-border-default); display: grid; gap: 12px; padding: 11px 12px; }
-.tool-details h4 { color: var(--av-sys-color-text-muted); font-size: 9px; letter-spacing: 0.06em; margin: 0 0 5px; text-transform: uppercase; }
-.tool-details pre { background: var(--av-sys-color-text-on-inverse); border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-11); font-size: 10px; margin: 0; max-height: 220px; overflow: auto; padding: 9px; white-space: pre-wrap; }
+.tool-details { display: grid; }
+.tool-details h4 { color: var(--av-sys-color-text-muted); font-size: 9px; letter-spacing: 0.06em; margin: 0 0 2px; text-transform: uppercase; }
+.tool-details pre { background: var(--av-sys-color-text-on-inverse); border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-11); font-size: 10px; margin: 0; max-height: 220px; overflow: auto; padding: var(--space-2); white-space: pre-wrap; }
 .tool-warning { color: var(--av-sys-color-danger-soft); font-size: 11px; margin: 0; }
 
 
 
-.agent-work-timing { align-items: center; color: var(--av-ref-color-neutral-9); display: flex; font-size: 11.5px; gap: 7px; margin: 2px 0 26px; min-height: 20px; }
+.agent-work-timing { align-items: center; color: var(--av-ref-color-neutral-9); display: flex; font-size: 11.5px; gap: var(--space-2); margin: 0; min-height: 20px; }
 .agent-work-timing-label { display: inline-block; font-weight: 480; }
 /* The stop positions and `background-size` are load-bearing and duplicated on
    `.plugin-activity.tool-started .tool-summary strong`; change them together and
@@ -3521,7 +3571,7 @@ pre {
    ever wrapped would stretch the box and centre the glyph across both lines,
    where it belongs on the first. Pinning it is what the heading rule does too,
    for the same reason. */
-.work-accordion { display: grid; gap: 12px; }
+.work-accordion { display: grid; gap: var(--space-1); }
 
 .work-accordion-toggle {
   align-items: center;
@@ -3562,12 +3612,11 @@ pre {
 .work-accordion-chevron svg { display: block; transition: transform 140ms ease; }
 .work-accordion-toggle[aria-expanded='true'] .work-accordion-chevron svg { transform: rotate(90deg); }
 
-/* The rows inside carry the feed's own bottom margin, which spaces one row from
-   the next in a column that has nothing else in it. Inside the drawer the grid
-   gap does that job, and the margin would add a run's worth of empty space
-   under the last row. */
-.work-accordion-rows { display: grid; gap: 12px; }
-.work-accordion-rows .agent-work-timing { margin: 0; }
+/* A receipt for work the reader has already read the result of, so its rows
+   sit closer than the live rows above the answer: the drawer is denser than
+   progress. The rows carry no margin of their own; the feed's rhythm is set on
+   the row wrapper, and inside the drawer this gap is the whole of it. */
+.work-accordion-rows { display: grid; gap: var(--space-1); }
 
 .run-failure-notice {
   align-items: flex-start;
@@ -3575,17 +3624,17 @@ pre {
   border: 1px solid color-mix(in srgb, var(--av-sys-color-danger-base) 42%, var(--av-sys-color-border-default));
   border-radius: var(--av-sys-size-radius-lg);
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
   grid-template-columns: auto minmax(0, 1fr) auto;
-  margin: 6px 0 26px;
-  padding: 12px;
+  margin: var(--av-sys-space-block-gap) 0 0;
+  padding: var(--space-3);
 }
 .run-failure-icon { color: var(--av-sys-color-danger-base); display: grid; padding-top: 1px; place-items: center; }
 .run-failure-copy { min-width: 0; }
 .run-failure-copy strong { color: var(--av-sys-color-text-default); display: block; font-size: 12px; margin-bottom: 3px; }
-.run-failure-copy p { color: var(--av-sys-color-text-subtle); font-size: 11px; line-height: 1.45; margin: 0 0 5px; }
+.run-failure-copy p { color: var(--av-sys-color-text-subtle); font-size: 11px; line-height: 1.45; margin: 0 0 var(--space-1); }
 .run-failure-copy code { color: var(--av-sys-color-text-muted); font-size: 10px; }
-.run-failure-actions { align-items: center; display: flex; gap: 7px; }
+.run-failure-actions { align-items: center; display: flex; gap: var(--space-2); }
 .run-failure-actions .button { white-space: nowrap; }
 .run-stopped-notice {
   align-items: flex-start;
@@ -3593,10 +3642,10 @@ pre {
   border: 1px solid color-mix(in srgb, var(--av-sys-color-text-muted) 42%, var(--av-sys-color-border-default));
   border-radius: var(--av-sys-size-radius-lg);
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
   grid-template-columns: auto minmax(0, 1fr) auto;
-  margin: 6px 0 26px;
-  padding: 12px;
+  margin: var(--av-sys-space-block-gap) 0 0;
+  padding: var(--space-3);
 }
 .run-stopped-icon { color: var(--av-sys-color-text-muted); display: grid; padding-top: 1px; place-items: center; }
 .run-stopped-copy { min-width: 0; }
@@ -3606,23 +3655,23 @@ pre {
 .run-stopped-notice {
   border-width: .5px;
   border-radius: 16px;
-  gap: 12px;
+  gap: var(--space-3);
   grid-template-columns: 32px minmax(0, 1fr);
-  padding: 16px;
+  padding: var(--space-4);
 }
 .run-failure-notice { background: var(--av-sys-color-danger-wash); border-color: var(--av-sys-color-danger-edge); }
 .run-stopped-notice { background: var(--av-sys-color-surface-raised); border-color: var(--av-ref-color-line-3); }
 .run-failure-icon,
 .run-stopped-icon { background: var(--av-sys-color-surface-raised-hover); border-radius: 10px; height: 32px; padding: 0; width: 32px; }
 .run-failure-copy strong,
-.run-stopped-copy strong { font-size: 14px; font-weight: 560; margin-bottom: 5px; }
+.run-stopped-copy strong { font-size: 14px; font-weight: 560; margin-bottom: var(--space-1); }
 .run-failure-copy p,
 .run-stopped-copy p { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .run-failure-copy code { display: block; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
-.run-failure-actions { flex-wrap: wrap; gap: 8px; grid-column: 2; }
+.run-failure-actions { flex-wrap: wrap; gap: var(--space-2); grid-column: 2; }
 .run-stopped-notice > .button { grid-column: 2; justify-self: start; }
 .run-failure-actions .button,
-.run-stopped-notice > .button { border-radius: 999px; min-height: 36px; padding: 8px 14px; white-space: normal; }
+.run-stopped-notice > .button { border-radius: 999px; min-height: 36px; padding: var(--space-2) var(--space-3); white-space: normal; }
 .jump-bottom { align-items: center; background: var(--av-sys-color-surface-raised-hover); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-pill); box-shadow: var(--av-sys-elevation-shadow-sm); color: var(--av-sys-color-text-subtle); display: flex; height: 30px; justify-content: center; left: 50%; padding: 0; pointer-events: auto; position: absolute; top: 5px; transform: translateX(-50%); width: 30px; z-index: 4; }
 .jump-bottom:hover { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-ref-color-line-5); color: var(--av-sys-color-text-default); }
 .jump-bottom:focus-visible { border-color: var(--av-sys-color-focus-default); outline: 0; }
@@ -3746,40 +3795,40 @@ pre {
 }
 .elicitation-panel,
 .elicitation-collapsed-bar { background: var(--av-ref-color-neutral-1); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-xl); box-shadow: var(--av-sys-elevation-shadow-md); width: 100%; }
-.elicitation-panel { padding: 14px 14px 13px; }
+.elicitation-panel { padding: var(--space-3); }
 /* GrokBot choice-rows: one inset list, not separate elevated cards. */
-.grokbot-shell .elicitation-panel,
-.grokbot-shell .elicitation-collapsed-bar { background: var(--av-cmp-bubble-background); border: 0; border-radius: 16px; box-shadow: none; padding: 12px; }
-.grokbot-shell .elicitation-panel-header { align-items: center; gap: 8px; min-height: 20px; }
-.grokbot-shell .elicitation-panel-header h3 { color: var(--av-sys-color-text-default); font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; margin: 0; overflow-wrap: anywhere; }
-.grokbot-shell .elicitation-header-actions button { height: 20px; width: 20px; }
-.grokbot-shell .elicitation-options { background: var(--av-cmp-elicitation-option-background); border: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); border-radius: 8px; gap: 0; margin-top: 10px; padding: 0; }
-.grokbot-shell .elicitation-option { background: transparent; border: 0; border-radius: 0; gap: 8px; grid-template-columns: auto minmax(0, 1fr); min-height: 38px; padding: 8px; position: relative; }
-.grokbot-shell .elicitation-option + .elicitation-option { border-top: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); }
-.grokbot-shell .elicitation-option:has(input[type='checkbox']) { grid-template-columns: auto minmax(0, 1fr) auto; }
-.grokbot-shell .elicitation-option:hover { background: var(--av-cmp-row-background-hover); }
-.grokbot-shell .elicitation-option.is-selected,
-.grokbot-shell .elicitation-option.is-selected:hover { background: var(--av-cmp-row-background-selected); }
-.grokbot-shell .elicitation-option:has(input:focus-visible) { outline: 2px solid var(--av-sys-color-text-default); outline-offset: -2px; }
-.grokbot-shell .elicitation-option-copy { grid-column: 2; grid-row: 1; }
-.grokbot-shell .elicitation-option-copy strong { color: var(--av-sys-color-text-default); font-size: 14px; font-weight: 400; line-height: 20px; overflow-wrap: anywhere; }
-.grokbot-shell .elicitation-option > kbd { align-items: center; background: var(--av-cmp-row-background-selected); border: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); border-radius: 4px; display: inline-flex; font-size: 11px; grid-column: 1; grid-row: 1; justify-content: center; line-height: 16px; margin: 0; min-width: 18px; padding: 1px 4px; }
-.grokbot-shell .elicitation-checkbox { grid-column: 3; grid-row: 1; }
-.grokbot-shell .elicitation-option:has(input[type='checkbox']) > kbd { display: inline-flex; }
-.grokbot-shell .elicitation-option.is-selected .elicitation-checkbox { background: var(--av-cmp-bubble-human-background); border-color: var(--av-cmp-bubble-human-background); color: var(--av-cmp-bubble-human-foreground); }
-.grokbot-shell .elicitation-actions .button { border-radius: 8px; }
-.grokbot-shell .elicitation-skip { background: var(--av-cmp-row-background-hover); color: var(--av-sys-color-text-default); }
-.grokbot-shell .elicitation-submit:not(:disabled),
-.grokbot-shell .elicitation-submit:hover:not(:disabled) { background: var(--av-cmp-bubble-human-background); color: var(--av-cmp-bubble-human-foreground); }
-.grokbot-shell .elicitation-submit kbd { color: inherit; }
-.elicitation-panel-header { align-items: flex-start; display: flex; gap: 14px; justify-content: space-between; min-height: 34px; }
+.app-shell .elicitation-panel,
+.app-shell .elicitation-collapsed-bar { background: var(--av-cmp-bubble-background); border: 0; border-radius: 16px; box-shadow: none; padding: var(--space-3); }
+.app-shell .elicitation-panel-header { align-items: center; gap: var(--space-2); min-height: 20px; }
+.app-shell .elicitation-panel-header h3 { color: var(--av-sys-color-text-default); font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; margin: 0; overflow-wrap: anywhere; }
+.app-shell .elicitation-header-actions button { height: 20px; width: 20px; }
+.app-shell .elicitation-options { background: var(--av-cmp-elicitation-option-background); border: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); border-radius: 8px; gap: 0; margin-top: var(--space-2); padding: 0; }
+.app-shell .elicitation-option { background: transparent; border: 0; border-radius: 0; gap: var(--space-3); grid-template-columns: auto minmax(0, 1fr); min-height: 38px; padding: var(--space-2) var(--space-3); position: relative; }
+.app-shell .elicitation-option + .elicitation-option { border-top: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); }
+.app-shell .elicitation-option:has(input[type='checkbox']) { grid-template-columns: auto minmax(0, 1fr) auto; }
+.app-shell .elicitation-option:hover { background: var(--av-cmp-row-background-hover); }
+.app-shell .elicitation-option.is-selected,
+.app-shell .elicitation-option.is-selected:hover { background: var(--av-cmp-row-background-selected); }
+.app-shell .elicitation-option:has(input:focus-visible) { outline: 2px solid var(--av-sys-color-text-default); outline-offset: -2px; }
+.app-shell .elicitation-option-copy { grid-column: 2; grid-row: 1; }
+.app-shell .elicitation-option-copy strong { color: var(--av-sys-color-text-default); font-size: 14px; font-weight: 400; line-height: 20px; overflow-wrap: anywhere; }
+.app-shell .elicitation-option > kbd { align-items: center; background: var(--av-cmp-row-background-selected); border: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); border-radius: 4px; display: inline-flex; font-size: 11px; grid-column: 1; grid-row: 1; justify-content: center; line-height: 16px; margin: 0; min-width: 18px; padding: 1px 4px; }
+.app-shell .elicitation-checkbox { grid-column: 3; grid-row: 1; }
+.app-shell .elicitation-option:has(input[type='checkbox']) > kbd { display: inline-flex; }
+.app-shell .elicitation-option.is-selected .elicitation-checkbox { background: var(--av-cmp-bubble-human-background); border-color: var(--av-cmp-bubble-human-background); color: var(--av-cmp-bubble-human-foreground); }
+.app-shell .elicitation-actions .button { border-radius: 8px; }
+.app-shell .elicitation-skip { background: var(--av-cmp-row-background-hover); color: var(--av-sys-color-text-default); }
+.app-shell .elicitation-submit:not(:disabled),
+.app-shell .elicitation-submit:hover:not(:disabled) { background: var(--av-cmp-bubble-human-background); color: var(--av-cmp-bubble-human-foreground); }
+.app-shell .elicitation-submit kbd { color: inherit; }
+.elicitation-panel-header { align-items: flex-start; display: flex; gap: var(--space-3); justify-content: space-between; min-height: 34px; }
 .elicitation-panel-header > div:first-child { min-width: 0; }
-.elicitation-panel-header h3 { color: var(--av-ref-color-neutral-14); font-size: 15px; font-weight: 590; line-height: 1.38; margin: 4px 0 0; }
+.elicitation-panel-header h3 { color: var(--av-ref-color-neutral-14); font-size: 15px; font-weight: 590; line-height: 1.38; margin: var(--space-1) 0 0; }
 .elicitation-header-actions { display: flex; flex: 0 0 auto; gap: 3px; }
 .elicitation-header-actions button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-11); display: flex; height: 29px; justify-content: center; padding: 0; width: 29px; }
 .elicitation-header-actions button:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 7%, var(--av-sys-color-surface-elevated-hover)); color: var(--av-sys-color-brand-ink); }
-.elicitation-options { border: 0; display: grid; gap: 5px; margin: 11px 0 0; max-height: min(52vh, 540px); overflow-y: auto; padding: 0 1px 0 0; }
-.elicitation-option { align-items: center; background: var(--av-sys-color-surface-raised-hover); border: 1px solid transparent; border-radius: var(--av-sys-size-radius-md); cursor: pointer; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) auto; min-height: 61px; padding: 9px 12px; transition: background-color 120ms ease, border-color 120ms ease; }
+.elicitation-options { border: 0; display: grid; gap: var(--space-1); margin: var(--space-2) 0 0; max-height: min(52vh, 540px); overflow-y: auto; padding: 0 1px 0 0; }
+.elicitation-option { align-items: center; background: var(--av-sys-color-surface-raised-hover); border: 1px solid transparent; border-radius: var(--av-sys-size-radius-md); cursor: pointer; display: grid; gap: var(--space-3); grid-template-columns: minmax(0, 1fr) auto; min-height: 61px; padding: var(--space-2) var(--space-3); transition: background-color 120ms ease, border-color 120ms ease; }
 .elicitation-option:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 7%, var(--av-sys-color-surface-elevated-hover)); border-color: color-mix(in srgb, var(--av-sys-color-brand-base) 28%, transparent); }
 .elicitation-option.is-selected { background: color-mix(in srgb, var(--av-sys-color-brand-base) 8%, var(--av-ref-color-neutral-6)); border-color: color-mix(in srgb, var(--av-sys-color-brand-base) 32%, var(--av-ref-color-line-4)); }
 .elicitation-option.is-selected:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 13%, var(--av-ref-color-neutral-6)); border-color: color-mix(in srgb, var(--av-sys-color-brand-base) 48%, var(--av-ref-color-line-4)); }
@@ -3793,15 +3842,15 @@ pre {
 .elicitation-option:hover .elicitation-checkbox { border-color: var(--av-sys-color-brand-ink); }
 .elicitation-option.is-selected .elicitation-checkbox { background: var(--av-sys-color-brand-base); border-color: var(--av-sys-color-brand-base); }
 .elicitation-other-option { align-items: start; }
-.elicitation-other-option .elicitation-option-copy { gap: 8px; width: 100%; }
+.elicitation-other-option .elicitation-option-copy { gap: var(--space-2); width: 100%; }
 .elicitation-other-option .elicitation-checkbox,
 .elicitation-other-option > kbd { margin-top: 3px; }
-.elicitation-other-option input[type='text'] { background: var(--av-ref-color-neutral-6); border: 0; border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-14); font-size: 13px; height: 38px; outline: 0; padding: 0 10px; width: 100%; }
+.elicitation-other-option input[type='text'] { background: var(--av-ref-color-neutral-6); border: 0; border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-14); font-size: 13px; height: 38px; outline: 0; padding: 0 var(--space-3); width: 100%; }
 .elicitation-other-option input[type='text']::placeholder { color: var(--av-ref-color-neutral-9); }
 .elicitation-other-option input[type='text']:focus { box-shadow: inset 0 0 0 1px var(--av-ref-color-line-6); }
-.elicitation-text-response { background: var(--av-sys-color-surface-raised-hover); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-14); display: block; margin-top: 11px; min-height: 86px; outline: 0; padding: 10px 11px; resize: vertical; width: 100%; }
+.elicitation-text-response { background: var(--av-sys-color-surface-raised-hover); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-14); display: block; margin-top: var(--space-3); min-height: 86px; outline: 0; padding: var(--space-3); resize: vertical; width: 100%; }
 .elicitation-text-response:focus { border-color: var(--av-ref-color-line-6); }
-.elicitation-actions { align-items: center; display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+.elicitation-actions { align-items: center; display: flex; gap: var(--space-2); justify-content: flex-end; margin-top: var(--space-2); }
 .elicitation-actions .inline-error { flex: 1; margin: 0; }
 .elicitation-actions .button { border: 0; font-size: 12px; min-height: 33px; }
 .elicitation-skip { background: var(--av-sys-color-surface-elevated-hover); color: var(--av-ref-color-neutral-12); }
@@ -3811,7 +3860,7 @@ pre {
 .elicitation-submit:disabled { background: var(--av-ref-color-neutral-4); color: var(--av-ref-color-neutral-8); }
 .elicitation-submit:disabled kbd { color: var(--av-ref-color-neutral-7); }
 .elicitation-resolved-answer { color: var(--av-ref-color-neutral-13); font-size: 14px; line-height: 1.45; }
-.elicitation-collapsed-bar { align-items: center; color: var(--av-ref-color-neutral-11); display: grid; gap: 9px; grid-template-columns: auto minmax(0, 1fr) auto; min-height: 48px; padding: 8px 12px; text-align: left; }
+.elicitation-collapsed-bar { align-items: center; color: var(--av-ref-color-neutral-11); display: grid; gap: var(--space-2); grid-template-columns: auto minmax(0, 1fr) auto; min-height: 48px; padding: var(--space-2) var(--space-3); text-align: left; }
 .elicitation-collapsed-bar:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 6%, var(--av-sys-color-surface-raised)); border-color: color-mix(in srgb, var(--av-sys-color-brand-base) 34%, var(--av-ref-color-line-5)); }
 .elicitation-collapsed-bar span { color: var(--av-sys-color-brand-ink); font-size: 9px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
 .elicitation-collapsed-bar strong { color: var(--av-ref-color-neutral-13); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3824,7 +3873,7 @@ pre {
 .composer-attachments > * { flex: 0 0 auto; }
 .composer-attachments .attachment-remove { right: 3px; top: 3px; }
 .composer-attachments .attachment-file-card .attachment-remove { top: 50%; transform: translateY(-50%); }
-.message-attachments { margin: 4px 0 9px; }
+.message-attachments { margin: var(--space-1) 0 var(--space-2); }
 .attachment-tile { background: var(--av-ref-color-neutral-4); border: .5px solid var(--av-ref-color-line-4); border-radius: 12px; height: 50px; overflow: visible; position: relative; width: 50px; }
 .attachment-tile-content { align-items: center; background: transparent; border: 0; border-radius: inherit; color: var(--av-ref-color-neutral-11); display: flex; height: 100%; justify-content: center; overflow: hidden; padding: 0; width: 100%; }
 .attachment-tile-content:not(:disabled) { cursor: zoom-in; }
@@ -3847,7 +3896,7 @@ pre {
 .attachment-progress small { color: var(--av-ref-color-neutral-14); font-size: 9px; font-variant-numeric: tabular-nums; position: relative; }
 .human-message .message-attachments { align-items: flex-end; margin-left: auto; }
 
-.message-attachment-images { display: flex; gap: 6px; max-width: 100%; }
+.message-attachment-images { display: flex; gap: var(--space-2); max-width: 100%; }
 .message-attachment-image-cell { border-radius: 12px; display: block; flex: 1 1 0; min-width: 0; overflow: hidden; position: relative; }
 .message-attachment-image-cell:first-child,
 .message-attachment-image-cell:first-child .message-attachment-image { border-bottom-left-radius: 12px; border-top-left-radius: 12px; }
@@ -3878,17 +3927,17 @@ pre {
   border-radius: 12px;
   color: var(--av-sys-color-text-default);
   display: flex;
-  margin-block: 4px;
+  margin-block: var(--space-1);
   max-width: min(340px, 100%);
   min-height: var(--attachment-file-card-height);
   min-width: min(220px, 100%);
   overflow: visible;
-  padding: 8px;
+  padding: var(--space-2);
   position: relative;
 }
 .attachment-file-card.is-pending { margin-block: 0; width: 220px; }
 .attachment-file-card.is-failed { border-color: var(--av-sys-color-danger-base); }
-.attachment-file-open { align-items: center; background: transparent; display: grid; flex: 1 1 auto; gap: 9px; grid-template-columns: 36px minmax(0, 1fr); min-width: 0; padding: 0; text-align: left; }
+.attachment-file-open { align-items: center; background: transparent; display: grid; flex: 1 1 auto; gap: var(--space-2); grid-template-columns: 36px minmax(0, 1fr); min-width: 0; padding: 0; text-align: left; }
 .attachment-file-open:hover:not(:disabled) .attachment-file-name { text-decoration: underline; text-underline-offset: 2px; }
 .attachment-file-icon { align-items: center; background: color-mix(in srgb, var(--av-sys-color-accent-base) 18%, var(--av-sys-color-surface-raised)); border-radius: 9px; color: var(--av-sys-color-accent-base); display: flex; flex: 0 0 auto; height: 36px; justify-content: center; width: 36px; }
 .attachment-file-details { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
@@ -3907,7 +3956,7 @@ pre {
 .attachment-file-with-player { max-width: 100%; }
 .attachment-inline-audio { display: block; max-width: 100%; width: 280px; }
 .attachment-inline-audio audio { display: block; height: 36px; max-width: 100%; width: 100%; }
-.attachment-inline-audio > button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; gap: 8px; padding: 6px 8px; }
+.attachment-inline-audio > button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; gap: var(--space-2); padding: var(--space-1) var(--space-2); }
 .attachment-inline-audio [role="alert"] { color: var(--av-sys-color-danger-base); display: block; font-size: 12px; }
 .attachment-file-icon.is-audio,
 .attachment-file-icon.is-pdf { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
@@ -4424,7 +4473,6 @@ body:has(.resource-lightbox) .menu-content { z-index: 1004; }
    than a constant: at 60px the composer already covered the
    message above it, and a stop or error row made it worse. */
 .automation-conversation { margin: 20px auto auto; padding-bottom: 132px; width: min(920px, 100%); }
-.automation-chat-surface .agent-work-timing { margin-top: 2px; }
 .automation-summary-card { background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); margin: 31px 0 10px; overflow: hidden; }
 .automation-summary-card > header { align-items: flex-start; border-bottom: 1px solid var(--av-sys-color-border-default); display: flex; gap: 11px; padding: 16px; }
 .automation-summary-card > header > span { align-items: center; background: var(--av-sys-color-warning-wash); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-brand-ink); display: flex; height: 32px; justify-content: center; width: 32px; }
@@ -4606,15 +4654,15 @@ body:has(.resource-lightbox) .menu-content { z-index: 1004; }
 
 @media (max-width: 920px) {
   :root { --av-cmp-sidebar-width: 0px; }
-  .workspace-shell:not(.grokbot-shell) { --av-cmp-sidebar-width: 0px !important; }
-  .workspace-shell:not(.grokbot-shell) .main-pane { margin-left: 0; }
-  .workspace-shell:not(.grokbot-shell) .sidebar { background: var(--av-cmp-sidebar-background-solid); box-shadow: var(--av-sys-elevation-shadow-drawer); transform: translateX(-100%); transition: transform 160ms ease; width: 300px; z-index: 70; }
-  .workspace-shell:not(.grokbot-shell) .sidebar.is-mobile-open { transform: translateX(0); }
-  .workspace-shell:not(.grokbot-shell) .sidebar-scrim { background: var(--av-sys-color-scrim-default); display: block; inset: 0; position: fixed; z-index: 65; }
-  .workspace-shell:not(.grokbot-shell) .mobile-only,
-  .workspace-shell:not(.grokbot-shell) .header-menu-button { display: inline-flex; }
+  .workspace-shell:not(.app-shell) { --av-cmp-sidebar-width: 0px !important; }
+  .workspace-shell:not(.app-shell) .main-pane { margin-left: 0; }
+  .workspace-shell:not(.app-shell) .sidebar { background: var(--av-cmp-sidebar-background-solid); box-shadow: var(--av-sys-elevation-shadow-drawer); transform: translateX(-100%); transition: transform 160ms ease; width: 300px; z-index: 70; }
+  .workspace-shell:not(.app-shell) .sidebar.is-mobile-open { transform: translateX(0); }
+  .workspace-shell:not(.app-shell) .sidebar-scrim { background: var(--av-sys-color-scrim-default); display: block; inset: 0; position: fixed; z-index: 65; }
+  .workspace-shell:not(.app-shell) .mobile-only,
+  .workspace-shell:not(.app-shell) .header-menu-button { display: inline-flex; }
   .mobile-sidebar-trigger { display: none; }
-  .workspace-shell:not(.grokbot-shell) .sidebar-resizer { display: none; }
+  .workspace-shell:not(.app-shell) .sidebar-resizer { display: none; }
   .workspace-shell { --rail-max-slot: calc(100vw - 16px); }
   .automation-composer-wrap,
   .rail-open .automation-composer-wrap { transform: translateX(-50%); width: calc(100% - 50px); }
@@ -4627,7 +4675,12 @@ body:has(.resource-lightbox) .menu-content { z-index: 1004; }
 }
 
 @media (max-width: 760px) {
-  .transcript-column { padding-left: 20px; padding-right: 20px; }
+  /* 24px, because the transcript's two collapse chevrons hang outside the
+     column: 20px of outdent, plus the 3px a `.markdown-collapse-chevron:focus-visible`
+     ring reaches beyond its own box (2px wide at `outline-offset: 1px`), is 23,
+     so anything narrower clips the chevron and the focus ring a keyboard user
+     needs to see. Raise the outdent or the ring and this number moves with them. */
+  .transcript-column { padding-left: var(--space-6); padding-right: var(--space-6); }
   .composer-dock { padding-left: 16px; padding-right: 16px; }
   .workstream-header-actions .participant-header-button { display: none; }
   .automation-overview-layout { display: block; padding: 38px 22px 90px; }
@@ -5055,28 +5108,30 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    quiet tool disclosures, and a low fixed composer. */
 .workstream-screen .transcript-column {
   max-width: var(--av-cmp-feed-width-wide);
-  padding: var(--av-cmp-feed-padding-y) calc(var(--av-cmp-feed-padding-x) + 4px);
+  padding: var(--space-8) var(--space-8);
 }
 
-:is(.workstream-screen, .automation-chat-surface) .message-block {
-  margin-bottom: var(--av-sys-space-stack-gap);
-}
-
-:is(.workstream-screen, .automation-chat-surface) .agent-message {
+.agent-message {
   max-width: min(88%, 640px, calc(100% - 82px));
   min-width: 0;
   width: fit-content;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .agent-message > header {
-  margin-bottom: 8px;
+/* The identity line starts on the same vertical as the prose under it. The
+   theme used to inset it by 18px, which reads as a hanging indent on a turn
+   that has nothing in that gutter: Rally's turn carries no avatar, so the space
+   held nothing and only broke the left edge the body and the action row share.
+   Any future mark to the left of the name belongs in the header as an element,
+   not as padding here. */
+.agent-message > header {
+  margin-bottom: var(--space-2);
   opacity: 0.7;
 }
 
 /* The label over a turn is the same kind of thing as the label over a group of
    navigation rows, so it takes the same four properties: a theme that sets
    letterspaced small capitals there gets them here without saying so twice. */
-:is(.workstream-screen, .automation-chat-surface) .agent-message .message-author {
+.agent-message .message-author {
   color: var(--av-ref-color-neutral-11);
   font-size: var(--av-cmp-feed-author-font-size);
   font-weight: var(--av-cmp-feed-author-font-weight);
@@ -5084,7 +5139,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   text-transform: var(--av-sys-label-transform);
 }
 
-:is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body {
+.agent-message .markdown-body {
   color: var(--av-ref-color-neutral-13);
   font-size: 14.5px;
   line-height: 1.62;
@@ -5096,7 +5151,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    and Rally on the other. Who sent it is carried by the header, never by the
    side: do not add an exception that moves a turn based on its author, or the
    same transcript renders differently for each person reading it. */
-:is(.workstream-screen, .automation-chat-surface) .human-message {
+.human-message {
   /* The bubble's corner, named once and read three times: the bubble draws it,
      and the identity line above and the action row below both stop where it
      begins. Rules that each wrote the number out would drift the first time any
@@ -5109,19 +5164,19 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: fit-content;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .human-message-content {
+.human-message-content {
   align-items: flex-end;
   display: flex;
   flex-direction: column;
   max-width: 100%;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .human-message-bubble {
+.human-message-bubble {
   background: var(--av-cmp-bubble-background);
   border: 1px solid var(--av-cmp-bubble-border);
   border-radius: var(--turn-bubble-radius);
   max-width: 100%;
-  padding: var(--av-cmp-bubble-padding);
+  padding: var(--space-2) var(--space-3);
   width: fit-content;
 }
 
@@ -5130,13 +5185,13 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    roughly three quarters of the viewport, capped at the reference's ~560 CSS
    pixel card; the lower fade and disclosure live inside the bubble rather than
    adding a second action row beneath it. */
-:is(.workstream-screen, .automation-chat-surface) .human-message-bubble:not([data-expanded]) .human-message-bubble-body {
+.human-message-bubble:not([data-expanded]) .human-message-bubble-body {
   max-height: min(72vh, 560px);
   overflow: hidden;
   position: relative;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .human-message-bubble[data-clamped]:not([data-expanded]) .human-message-bubble-body::after {
+.human-message-bubble[data-clamped]:not([data-expanded]) .human-message-bubble-body::after {
   background: linear-gradient(to bottom, transparent, var(--av-cmp-bubble-human-background));
   bottom: 0;
   content: '';
@@ -5154,9 +5209,9 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   display: flex;
   font-size: 12px;
   font-weight: 500;
-  gap: 4px;
+  gap: var(--space-1);
   line-height: 18px;
-  margin-top: 4px;
+  margin-top: var(--space-1);
   padding: 0;
 }
 
@@ -5168,7 +5223,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    flight, or admitted and waiting for the loop. Both are the reader's own words
    already rendered, and both say the same thing about themselves — not landed
    yet — so they say it the same way. */
-:is(.workstream-screen, .automation-chat-surface) :is(.human-message.is-pending-delivery, .human-message.is-sending) {
+:is(.human-message.is-pending-delivery, .human-message.is-sending) {
   opacity: 0.82;
 }
 
@@ -5181,8 +5236,8 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   display: inline-flex;
   font-size: 9.5px;
   line-height: 1;
-  margin-top: 5px;
-  padding: 4px 7px;
+  margin-top: var(--space-1);
+  padding: var(--space-1) var(--space-2);
 }
 
 /* An in-flight turn states no geometry of its own. It is the same bubble, at the
@@ -5198,12 +5253,12 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    admits one and the queue's own stand-in already accounts for it. Scoped to the
    bubble, an attachment-only turn went out with no in-flight cue at all, which
    is less than the box it replaced said. The content wrapper is always there. */
-:is(.workstream-screen, .automation-chat-surface) .human-message.is-sending .human-message-content {
+.human-message.is-sending .human-message-content {
   overflow: hidden;
   position: relative;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .human-message.is-sending .human-message-content::after {
+.human-message.is-sending .human-message-content::after {
   animation: message-sending-shimmer 1.8s ease-in-out infinite;
   background: linear-gradient(105deg, transparent 25%, var(--av-sys-color-shimmer-default) 45%, var(--av-sys-color-shimmer-default) 50%, var(--av-sys-color-shimmer-default) 55%, transparent 75%);
   content: '';
@@ -5226,7 +5281,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    across it: the same tint, stationary, and stated as geometry rather than as an
    animation that has been switched off. */
 @media (prefers-reduced-motion: reduce) {
-  :is(.workstream-screen, .automation-chat-surface) .human-message.is-sending .human-message-content::after {
+  .human-message.is-sending .human-message-content::after {
     background: var(--av-sys-color-shimmer-default);
     transform: none;
   }
@@ -5242,10 +5297,10 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    stated on the trailing edge because that is the edge a turn is aligned to;
    a theme that aligns turns to the leading edge leaves the header flush there,
    which is the same relationship on the other side. */
-:is(.workstream-screen, .automation-chat-surface) .human-message > header {
-  gap: 5px;
+.human-message > header {
+  gap: var(--space-1);
   justify-content: flex-end;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
   padding-inline-end: var(--turn-bubble-radius);
 }
 
@@ -5259,71 +5314,52 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    column's `align-items: flex-end` above, which sizes it to its content, so
    there is no free main-axis space and a `justify-content` here would do
    nothing but look like it was doing the work. */
-:is(.workstream-screen, .automation-chat-surface) .human-message .human-message-actions {
+.human-message .human-message-actions {
   padding-inline-end: var(--turn-bubble-radius);
 }
 
-:is(.workstream-screen, .automation-chat-surface) .human-message .human-message-actions .message-start-substream {
+.human-message .human-message-actions .message-start-substream {
   padding-inline-end: 0;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .human-message .message-author-dot {
+.human-message .message-author-dot {
   background: var(--person-dot, var(--person-accent));
   border-radius: var(--av-sys-size-radius-pill);
   height: 5px;
   width: 5px;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .human-message .message-author {
-  color: var(--person-accent);
-  font-size: 9.5px;
-  font-weight: 600;
-}
-
-:is(.workstream-screen, .automation-chat-surface) .human-message time {
+.human-message time {
   font-size: 8.5px;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .human-message-bubble .markdown-body {
+.human-message-bubble .markdown-body {
   color: var(--av-ref-color-neutral-14);
   font-size: calc(var(--av-sys-font-size-prose) - 0.5px);
   line-height: calc(var(--av-sys-font-leading-prose) - 0.14);
 }
 
-:is(.workstream-screen, .automation-chat-surface) .human-message-bubble .markdown-body p {
-  margin-bottom: 8px;
+.human-message-bubble .markdown-body p {
+  margin-bottom: var(--space-2);
 }
 
-:is(.workstream-screen, .automation-chat-surface) .human-message-bubble .markdown-body p:last-child {
+.human-message-bubble .markdown-body p:last-child {
   margin-bottom: 0;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .transcript-event:has(.tool-block) {
-  margin: -17px 0 18px;
-}
-
-/* `.work-accordion` is named alongside the timing row it wraps because a closed
-   accordion contains no timing row at all, and a transcript event that changed
-   its own outer margin on being opened would shift the answer under it. */
-:is(.workstream-screen, .automation-chat-surface) .transcript-event:is(:has(.agent-work-timing), :has(.work-accordion)) {
-  margin: -12px 0 18px;
-}
-
-.transcript-event > .agent-work-timing { margin: 0; }
-
-:is(.workstream-screen, .automation-chat-surface) .tool-block {
+.tool-block {
   background: transparent;
   border: 0;
   border-radius: 0;
   overflow: visible;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .tool-block summary {
+.tool-block summary {
   cursor: pointer;
-  gap: 7px;
+  gap: var(--space-2);
   grid-template-columns: 17px minmax(0, 1fr) auto auto 14px;
-  min-height: 29px;
-  padding: 3px 0;
+  min-height: 24px;
+  padding: 0;
 }
 
 /* Grok-inspired conversation shell. These rules intentionally live as one
@@ -5578,14 +5614,14 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   background: var(--av-sys-color-surface-elevated-hover);
   color: var(--av-sys-color-text-default);
 }
-.grokbot-shell {
+.app-shell {
   font-family: var(--av-sys-font-family-ui);
   font-size: var(--av-sys-font-size-base);
   font-weight: 420;
   letter-spacing: 0;
   line-height: var(--av-sys-font-leading-base);
 }
-.grokbot-shell .workstream-row {
+.app-shell .workstream-row {
   border-radius: 10px;
   gap: 8px;
   /* The track has to carry the icon this shell actually draws. Left at the
@@ -5598,33 +5634,33 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   min-height: 54px;
   padding: 8px;
 }
-.grokbot-shell .workstream-row .sidebar-row-icon {
+.app-shell .workstream-row .sidebar-row-icon {
   flex: 0 0 36px;
   height: 36px;
   width: 36px;
 }
-.grokbot-shell .workstream-row-status {
+.app-shell .workstream-row-status {
   bottom: 0;
   right: 0;
 }
-.grokbot-shell .workstream-row-status .status-indicator {
+.app-shell .workstream-row-status .status-indicator {
   height: 14px;
   width: 14px;
 }
-.grokbot-shell .workstream-row .workstream-row-status .status-dot {
+.app-shell .workstream-row .workstream-row-status .status-dot {
   height: 8px;
   width: 8px;
 }
-.grokbot-shell .workstream-row.is-active { background: var(--av-cmp-row-background-selected); }
-.grokbot-shell .sidebar-scroll { padding-top: 0; }
-.grokbot-shell .sidebar-group:first-child { margin-top: 0; }
-.grokbot-shell .sidebar-group-heading { min-height: 30px; padding: 8px 8px 6px; }
-.grokbot-shell .workstream-row .sidebar-row-title {
+.app-shell .workstream-row.is-active { background: var(--av-cmp-row-background-selected); }
+.app-shell .sidebar-scroll { padding-top: 0; }
+.app-shell .sidebar-group:first-child { margin-top: 0; }
+.app-shell .sidebar-group-heading { min-height: 30px; padding: 8px 8px 6px; }
+.app-shell .workstream-row .sidebar-row-title {
   font-size: 14px;
   font-weight: 500;
   line-height: 20px;
 }
-.grokbot-shell .sidebar-group h3 {
+.app-shell .sidebar-group h3 {
   color: var(--av-sys-color-text-muted);
   font-size: 12px;
   font-weight: 420;
@@ -5632,7 +5668,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   line-height: 16px;
   text-transform: none;
 }
-.grokbot-shell .sidebar-group-menu-trigger { display: none; }
+.app-shell .sidebar-group-menu-trigger { display: none; }
 
 /* GrokBot's sidebar does not become a drawer when the conversation gets
    narrow. It becomes a 96px icon rail, either because the saved compact
@@ -5652,22 +5688,22 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    rather than its `min-height` — because a keyword cannot be interpolated,
    and a rule that reaches for one is a rule that cuts. The one exception is
    `.sidebar-empty`, which only ever shows over an empty list. */
-.grokbot-shell .sidebar.is-compact .sidebar-empty { display: none; }
-.grokbot-shell .sidebar.is-compact .sidebar-scroll { padding: 0 20.5px 12px; }
-.grokbot-shell .sidebar.is-compact .sidebar-commandbar {
+.app-shell .sidebar.is-compact .sidebar-empty { display: none; }
+.app-shell .sidebar.is-compact .sidebar-scroll { padding: 0 20.5px 12px; }
+.app-shell .sidebar.is-compact .sidebar-commandbar {
   grid-template-rows: 54px 54px;
   padding: 4px 20.5px 0;
 }
-.grokbot-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search {
+.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search {
   background: transparent;
   box-shadow: none;
   gap: 0;
   height: 54px;
   padding: 0 0 0 17.5px;
 }
-.grokbot-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search:hover { background: var(--av-cmp-row-background-hover); }
-.grokbot-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search > span { opacity: 0; visibility: hidden; }
-.grokbot-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search > svg { height: 19px; width: 19px; }
+.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search:hover { background: var(--av-cmp-row-background-hover); }
+.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search > span { opacity: 0; visibility: hidden; }
+.app-shell .sidebar.is-compact .sidebar-commandbar .sidebar-search > svg { height: 19px; width: 19px; }
 /* Only ever rendered in the rail, and styled without reference to it: the
    list motion draws a copy of this row on its way out after the rail's class
    has already gone, and the copy has to still look like the row. */
@@ -5678,12 +5714,12 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   width: 54px;
 }
 /* The draft row, the headings and the group gaps close as the rail narrows. */
-.grokbot-shell .sidebar .sidebar-new-chat-draft {
+.app-shell .sidebar .sidebar-new-chat-draft {
   height: 44px;
   overflow: hidden;
   transition: height var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
 }
-.grokbot-shell .sidebar.is-compact .sidebar-new-chat-draft {
+.app-shell .sidebar.is-compact .sidebar-new-chat-draft {
   height: 0;
   margin-bottom: 0;
   min-height: 0;
@@ -5691,74 +5727,74 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   padding-block: 0;
   visibility: hidden;
 }
-.grokbot-shell .sidebar .sidebar-section-heading,
-.grokbot-shell .sidebar .sidebar-group-heading {
+.app-shell .sidebar .sidebar-section-heading,
+.app-shell .sidebar .sidebar-group-heading {
   overflow: hidden;
   transition: height var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
 }
-.grokbot-shell .sidebar .sidebar-group-heading { height: 30px; min-height: 0; }
-.grokbot-shell .sidebar.is-compact .sidebar-section-heading,
-.grokbot-shell .sidebar.is-compact .sidebar-group-heading {
+.app-shell .sidebar .sidebar-group-heading { height: 30px; min-height: 0; }
+.app-shell .sidebar.is-compact .sidebar-section-heading,
+.app-shell .sidebar.is-compact .sidebar-group-heading {
   height: 0;
   opacity: 0;
   padding-block: 0;
   visibility: hidden;
 }
-.grokbot-shell .sidebar .sidebar-section,
-.grokbot-shell .sidebar .sidebar-group { transition: margin-top var(--sidebar-layout-motion); }
+.app-shell .sidebar .sidebar-section,
+.app-shell .sidebar .sidebar-group { transition: margin-top var(--sidebar-layout-motion); }
 /* The first section sits one group gap under the search row, which the
    command bar's own bottom padding provides. A section's top margin is the
    same gap; when the command bar lived inside the scroll box the two collapsed
    into one, and now that it is above the box they would add. */
-.grokbot-shell .sidebar .sidebar-scroll > .sidebar-section:first-child { margin-top: 0; }
-.grokbot-shell .sidebar.is-compact .sidebar-section,
-.grokbot-shell .sidebar.is-compact .sidebar-group { margin-top: 0; }
-.grokbot-shell .sidebar .pinned-section {
+.app-shell .sidebar .sidebar-scroll > .sidebar-section:first-child { margin-top: 0; }
+.app-shell .sidebar.is-compact .sidebar-section,
+.app-shell .sidebar.is-compact .sidebar-group { margin-top: 0; }
+.app-shell .sidebar .pinned-section {
   border-bottom: 0 solid var(--av-cmp-sidebar-border);
   transition: border-bottom-width var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), margin-top var(--sidebar-layout-motion), padding-bottom var(--sidebar-layout-motion);
 }
-.grokbot-shell .sidebar.is-compact .pinned-section {
+.app-shell .sidebar.is-compact .pinned-section {
   border-bottom-width: var(--av-sys-size-border-hairline);
   margin-bottom: 12px;
   padding-bottom: 12px;
 }
-.grokbot-shell .sidebar .sidebar-list { transition: gap var(--sidebar-layout-motion); }
-.grokbot-shell .sidebar.is-compact .sidebar-list { gap: 0; }
+.app-shell .sidebar .sidebar-list { transition: gap var(--sidebar-layout-motion); }
+.app-shell .sidebar.is-compact .sidebar-list { gap: 0; }
 /* A row narrows to its 54px mark: the wrapper's width travels, the row's
    padding and gap with it, and the title column — `minmax(0, 1fr)` — closes
    to nothing while its copy fades under the clip. The mark itself is 36px in
    both layouts, so it is the one thing that does not move. */
-.grokbot-shell .sidebar .sidebar-list > .sidebar-context-target {
+.app-shell .sidebar .sidebar-list > .sidebar-context-target {
   transition: width var(--sidebar-layout-motion);
   width: 100%;
 }
-.grokbot-shell .sidebar.is-compact .sidebar-list > .sidebar-context-target { width: 54px; }
-.grokbot-shell .sidebar .workstream-row { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
-.grokbot-shell .sidebar.is-compact .workstream-row {
+.app-shell .sidebar.is-compact .sidebar-list > .sidebar-context-target { width: 54px; }
+.app-shell .sidebar .workstream-row { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
+.app-shell .sidebar.is-compact .workstream-row {
   gap: 0;
   padding: 9px;
 }
-.grokbot-shell .sidebar .workstream-row .sidebar-row-main {
+.app-shell .sidebar .workstream-row .sidebar-row-main {
   overflow: hidden;
   transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
 }
-.grokbot-shell .sidebar.is-compact .workstream-row .sidebar-row-main { opacity: 0; visibility: hidden; }
-.grokbot-shell .sidebar .sidebar-workstream-timer {
+.app-shell .sidebar.is-compact .workstream-row .sidebar-row-main { opacity: 0; visibility: hidden; }
+.app-shell .sidebar .sidebar-workstream-timer {
   overflow: hidden;
   transition: margin-left var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion), width var(--sidebar-layout-motion);
 }
-.grokbot-shell .sidebar.is-compact .sidebar-workstream-timer {
+.app-shell .sidebar.is-compact .sidebar-workstream-timer {
   margin-left: 0;
   opacity: 0;
   visibility: hidden;
   width: 0;
 }
 /* The account row keeps its avatar and closes its copy. */
-.grokbot-shell .sidebar .account-copy {
+.app-shell .sidebar .account-copy {
   overflow: hidden;
   transition: flex-grow var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
 }
-.grokbot-shell .sidebar.is-compact .account-copy { flex-grow: 0; opacity: 0; visibility: hidden; }
+.app-shell .sidebar.is-compact .account-copy { flex-grow: 0; opacity: 0; visibility: hidden; }
 
 /* The work-stream theme rounds the bubble harder than the shared default. It
    restates the corner on the token rather than on the bubble, so the identity
@@ -5772,22 +5808,12 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   border-radius: var(--turn-bubble-radius);
   box-shadow: none;
   color: var(--av-cmp-bubble-human-foreground);
-  padding: 8px 12px;
 }
 
 .workstream-screen .human-message-bubble .markdown-body,
 .workstream-screen .human-message-bubble .markdown-body :is(p, strong, em, code, a) { color: var(--av-cmp-bubble-human-foreground); }
-.workstream-screen .human-message > header { margin-bottom: 5px; }
 .workstream-screen .human-message .message-author { color: var(--av-sys-color-text-subtle); font-size: 12px; }
 .workstream-screen .human-message time { color: var(--av-sys-color-text-muted); }
-.workstream-screen .agent-message { padding-left: 2px; }
-/* The identity line starts on the same vertical as the prose under it. The
-   theme used to inset it by 18px, which reads as a hanging indent on a turn
-   that has nothing in that gutter: Rally's turn carries no avatar, so the space
-   held nothing and only broke the left edge the body and the action row share.
-   Any future mark to the left of the name belongs in the header as an element,
-   not as padding here. */
-.workstream-screen .agent-message > header { margin-bottom: 7px; }
 
 /* GrokBot uses four text roles throughout its conversation surfaces rather
    than per-theme typography. Keep Rally's extra author/time labels on the same
@@ -5795,30 +5821,30 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 :is(.workstream-screen, .new-chat-screen) {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
-:is(.workstream-screen, .automation-chat-surface) .agent-message .message-author {
+.agent-message .message-author {
   font-size: 13px;
   font-weight: 500;
   letter-spacing: 0;
   line-height: 18px;
   text-transform: none;
 }
-:is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body,
-:is(.workstream-screen, .automation-chat-surface) .human-message-bubble .markdown-body {
+.agent-message .markdown-body,
+.human-message-bubble .markdown-body {
   font-size: 14px;
   font-weight: 420;
   line-height: 20px;
 }
-:is(.workstream-screen, .automation-chat-surface) .human-message .message-author {
+.human-message .message-author {
   font-size: 12px;
   font-weight: 500;
   line-height: 16px;
 }
-:is(.workstream-screen, .automation-chat-surface) .human-message time {
+.human-message time {
   font-size: 12px;
   font-weight: 420;
   line-height: 16px;
 }
-:is(.workstream-screen, .automation-chat-surface) :is(.agent-work-timing-label, .tool-summary strong) {
+:is(.agent-work-timing-label, .tool-summary strong) {
   font-size: 13px;
   font-weight: 500;
   line-height: 18px;
@@ -5884,7 +5910,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 @keyframes rail-close { from { width: var(--rail-slot); } to { width: 0; } }
 @keyframes rail-content-open { from { opacity: 0; } to { opacity: 1; } }
 @keyframes rail-content-close { from { opacity: 1; } to { opacity: 0; } }
-.grokbot-shell .workstream-row .sidebar-row-activity {
+.app-shell .workstream-row .sidebar-row-activity {
   color: var(--av-sys-color-text-muted);
   font-size: 12px;
   font-weight: 400;
@@ -5895,9 +5921,9 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .rail-section-header h3 { font-size: 14px; font-weight: 400; letter-spacing: 0; text-transform: none; }
 .compact-run-list .run-rail-row { grid-template-columns: auto minmax(0, 1fr) auto; }
 
-:is(.workstream-screen, .automation-chat-surface) .plugin-activity summary {
+.plugin-activity summary {
   grid-template-columns: max-content minmax(0, 1fr) auto auto 14px;
-  min-height: 34px;
+  min-height: 24px;
 }
 
 /* The transcript's mark box: a plugin row's glyph, and the thinking row's brain
@@ -5962,47 +5988,47 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    pins it there. */
 .plugin-face-active { animation: active-pulse 1.8s ease-in-out infinite; }
 
-:is(.workstream-screen, .automation-chat-surface) .tool-icon {
+.tool-icon {
   color: var(--av-ref-color-neutral-9);
 }
 
-:is(.workstream-screen, .automation-chat-surface) .tool-summary {
+.tool-summary {
   align-items: baseline;
   flex-direction: row;
-  gap: 7px;
+  gap: var(--space-2);
 }
 
-:is(.workstream-screen, .automation-chat-surface) .tool-summary strong {
+.tool-summary strong {
   color: var(--av-ref-color-neutral-10);
   font-size: 13px;
   font-weight: 500;
   line-height: 18px;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .tool-summary strong::before {
+.tool-summary strong::before {
   color: var(--av-ref-color-neutral-9);
   content: none;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .plugin-activity .tool-summary strong {
+.plugin-activity .tool-summary strong {
   color: var(--av-ref-color-neutral-11);
   font-size: 13px;
   font-weight: 500;
   line-height: 18px;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .plugin-activity .tool-summary strong::before {
+.plugin-activity .tool-summary strong::before {
   content: none;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .plugin-activity .tool-summary small {
+.plugin-activity .tool-summary small {
   display: none;
 }
 
 /* The stop positions and `background-size` are load-bearing and duplicated on
    `.agent-work-timing-active .agent-work-timing-label`; change them together and
    read the constraint at `@keyframes plugin-activity-shimmer` below first. */
-:is(.workstream-screen, .automation-chat-surface) .plugin-activity.tool-started .tool-summary strong {
+.plugin-activity.tool-started .tool-summary strong {
   animation: plugin-activity-shimmer 1.8s ease-in-out infinite;
   background: linear-gradient(100deg, var(--av-ref-color-neutral-9) 27%, var(--av-ref-color-neutral-13) 45%, var(--av-ref-color-neutral-10) 55%, var(--av-ref-color-neutral-9) 73%);
   background-clip: text;
@@ -6035,32 +6061,33 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   68%, 100% { background-position: 0% 0; }
 }
 
-:is(.workstream-screen, .automation-chat-surface) .tool-summary small {
+.tool-summary small {
   color: var(--av-ref-color-neutral-8);
   font-size: 10px;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .tool-summary small::before {
+.tool-summary small::before {
   content: '\00b7  ';
 }
 
-:is(.workstream-screen, .automation-chat-surface) .tool-duration {
+.tool-duration {
   color: var(--av-ref-color-neutral-8);
 }
 
-:is(.workstream-screen, .automation-chat-surface) .tool-completed .tool-state {
+.tool-completed .tool-state {
   color: var(--av-ref-color-neutral-8);
 }
 
-:is(.workstream-screen, .automation-chat-surface) .tool-details {
+.tool-details {
   border-left: 1px solid var(--av-ref-color-line-2);
   border-top: 0;
-  margin: 3px 0 8px 8px;
-  padding: 8px 0 8px 16px;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 0 var(--space-2);
+  padding: var(--space-1) 0 var(--space-1) var(--space-4);
 }
 
-:is(.workstream-screen, .automation-chat-surface) .agent-message-actions {
-  margin-top: 7px;
+.agent-message-actions {
+  margin-top: var(--space-2);
 }
 
 .workstream-screen .composer-dock {
@@ -6365,15 +6392,12 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 }
 
 @media (max-width: 760px) {
-  /* 24px, not the 18px this used to be, because the transcript's two collapse
-     chevrons hang outside the column: 20px of outdent, plus the 3px a
-     `.markdown-collapse-chevron:focus-visible` ring reaches beyond its own box
-     (2px wide at `outline-offset: 1px`), is 23 — so 18px clipped 2px off every
-     chevron and 5px off the focus ring a keyboard user needs to see. Raise the
-     outdent or the ring and this number moves with them. */
+  /* Restated for the work stream because its own column rule, two classes
+     deep, out-specifies the shared narrow rule above whatever the source
+     order: without this the breakpoint is inert here and the chevron clips. */
   .workstream-screen .transcript-column {
-    padding-left: 24px;
-    padding-right: 24px;
+    padding-left: var(--space-6);
+    padding-right: var(--space-6);
   }
 
   .workstream-screen :is(.human-message, .agent-message) {
@@ -6475,6 +6499,16 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   animation: launch-arrival 240ms cubic-bezier(.32, .72, 0, 1) both;
   animation-delay: calc(var(--arrival-index, 0) * 70ms + 60ms);
 }
+
+/* The launch surfaces draw the feed's rows outside `.virtual-message-row`, so
+   the row rhythm does not reach them and the base rules give a row no margin
+   of its own; they state the same two gaps here. A turn after a turn (the
+   provenance turns, and the opening turn after them) takes the turn gap; a
+   row after the opening turn (the work timer) takes the turn-to-event gap. */
+.substream-branch-context > * + *,
+.launch-arrival + .launch-arrival { margin-top: var(--av-sys-space-block-gap); }
+.substream-branch-context > .message-block + .message-block,
+.substream-branch-context + .launch-arrival { margin-top: var(--av-sys-space-stack-gap); }
 
 @keyframes launch-arrival {
   from { opacity: 0; transform: translateY(7px); }
@@ -6971,11 +7005,11 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    tile centred when there is one, and the next showing past the padding when
    there are more. The tiles shed their captions and shrink to the rows'
    54px square as the sidebar narrows. */
-.grokbot-shell .sidebar.is-compact .sidebar-automation-strip { gap: 0; padding: 8px 21px 12px; }
-.grokbot-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target { flex-basis: 54px; max-width: 54px; min-width: 54px; }
-.grokbot-shell .sidebar.is-compact .automation-tile { gap: 0; padding: 9px; }
-.grokbot-shell .sidebar.is-compact .automation-tile-glyph { height: 36px; width: 36px; }
-.grokbot-shell .sidebar.is-compact .automation-tile-name { height: 0; opacity: 0; visibility: hidden; }
+.app-shell .sidebar.is-compact .sidebar-automation-strip { gap: 0; padding: 8px 21px 12px; }
+.app-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target { flex-basis: 54px; max-width: 54px; min-width: 54px; }
+.app-shell .sidebar.is-compact .automation-tile { gap: 0; padding: 9px; }
+.app-shell .sidebar.is-compact .automation-tile-glyph { height: 36px; width: 36px; }
+.app-shell .sidebar.is-compact .automation-tile-name { height: 0; opacity: 0; visibility: hidden; }
 /* Sidekick library and profile use the same identity glyph as sidebar tiles. */
 .sidekicks-library { padding: 64px 48px 40px; height: 100%; overflow: auto; scrollbar-gutter: stable; }
 .sidekicks-library-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 40px; }
@@ -7047,9 +7081,9 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .workstream-context-sidebar.is-compact .avatar-overflow { margin-left: -12px; }
 .sidebar-workstream-public { align-items: center; background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); display: flex; height: 17px; justify-content: center; position: absolute; right: -1px; top: -2px; width: 17px; }
 .sidebar-collapse-footer { display: flex; align-items: center; justify-content: flex-end; flex-shrink: 0; gap: 4px; margin-top: auto; padding: 8px 12px; min-height: 62px; }
-.grokbot-shell .sidebar .sidebar-collapse-footer { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
-.grokbot-shell .sidebar .sidebar-collapse-footer .account-trigger { flex: 1; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
-.grokbot-shell .sidebar.is-compact .sidebar-collapse-footer { padding: 8px; gap: 0; }
+.app-shell .sidebar .sidebar-collapse-footer { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
+.app-shell .sidebar .sidebar-collapse-footer .account-trigger { flex: 1; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
+.app-shell .sidebar.is-compact .sidebar-collapse-footer { padding: 8px; gap: 0; }
 /* The work-stream sidebar's toggle is carried to the centre by the footer's
    padding — 32.5px on the right leaves a 30px button centred in the 95px
    inside the rail's border — rather than by `justify-content`, which would
@@ -7060,7 +7094,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    would jump it at the start of the travel. The floor travels, not a fixed
    height: the row's content is shorter than either floor, so the floor is
    the height, and a taller copy would grow it rather than be clipped. */
-.grokbot-shell .sidebar.is-compact .sidebar-collapse-footer .account-trigger { gap: 0; min-height: 38px; padding: 6px 6px 6px 10.5px; }
+.app-shell .sidebar.is-compact .sidebar-collapse-footer .account-trigger { gap: 0; min-height: 38px; padding: 6px 6px 6px 10.5px; }
 .sidebar-collapse-footer > .icon-button { flex-shrink: 0; }
 .sidebar-drag-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--av-sys-color-text-muted); opacity: .25; pointer-events: none; z-index: 100; }
 
@@ -7074,12 +7108,8 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .settings-account-actions { display: flex; align-items: center; gap: 10px; justify-content: flex-end; color: var(--av-sys-color-text-muted); }
 
 /* Feed colors follow the sender's live profile, including older loaded turns. */
-.automation-chat-surface .human-message[data-profile-color] .human-message-bubble {
-  background: var(--av-cmp-bubble-human-background);
-  color: var(--av-cmp-bubble-human-foreground);
-}
-:is(.workstream-screen, .automation-chat-surface) .human-message[data-profile-color] .human-message-bubble .markdown-body,
-:is(.workstream-screen, .automation-chat-surface) .human-message[data-profile-color] .human-message-bubble .markdown-body :is(p, strong, em, code, a) {
+.human-message[data-profile-color] .human-message-bubble .markdown-body,
+.human-message[data-profile-color] .human-message-bubble .markdown-body :is(p, strong, em, code, a) {
   color: var(--av-cmp-bubble-human-foreground);
 }
 
@@ -7096,7 +7126,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 /* Media use square cover tiles; every delivered item remains in the wrapping grid. */
 .message-attachments, .citation-card-row {
   display: grid; grid-template-columns: repeat(auto-fit, var(--attachment-media-size));
-  align-items: start; gap: 8px; width: 560px; max-width: 100%;
+  align-items: start; gap: var(--space-2); width: 560px; max-width: 100%;
 }
 .message-attachment-images { display: contents; }
 .message-attachment-image-cell, .attachment-media-tile { aspect-ratio: 1; min-width: 0; width: var(--attachment-media-size); height: var(--attachment-media-size); }
@@ -7105,11 +7135,11 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .attachment-file-with-player, .citation-file-attachment { min-width: 0; width: 100%; }
 .message-attachments .attachment-file-card, .citation-card-row .citation-card.is-file { margin: 0; min-width: 0; width: 100%; max-width: 100%; }
 .attachment-media-tile { border: 1px solid var(--av-sys-color-border-subtle); background: var(--av-sys-color-surface-raised); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; position: relative; }
-.attachment-media-open { align-items: center; background: transparent; color: var(--av-sys-color-text-default); display: flex; flex: 1; flex-direction: column; gap: 12px; justify-content: center; min-height: 0; overflow: hidden; padding: 12px; position: relative; width: 100%; }
+.attachment-media-open { align-items: center; background: transparent; color: var(--av-sys-color-text-default); display: flex; flex: 1; flex-direction: column; gap: var(--space-3); justify-content: center; min-height: 0; overflow: hidden; padding: var(--space-3); position: relative; width: 100%; }
 .attachment-media-open video { height: 100%; inset: 0; object-fit: cover; position: absolute; width: 100%; }
 .attachment-media-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-media-open:has(video) .attachment-media-name { background: var(--av-sys-color-scrim-default); bottom: 8px; color: var(--av-sys-color-text-on-media); left: 8px; position: absolute; right: 8px; }
-.attachment-media-tile .attachment-inline-audio { max-width: 100%; padding: 8px; width: 100%; }
+.attachment-media-tile .attachment-inline-audio { max-width: 100%; padding: var(--space-2); width: 100%; }
 
 .composer-attachments .attachment-tile { height: var(--attachment-media-size); aspect-ratio: 1; width: var(--attachment-media-size); }
 .composer-attachments .attachment-file-card { min-width: 0; width: 100%; }
@@ -7133,10 +7163,10 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .composer-attachments { --attachment-media-size: var(--attachment-file-card-height); display: flex; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; align-items: center; gap: 8px; min-width: 0; padding: 11px 13px 8px; }
 .message-attachments > .attachment-file-with-player, .citation-card-row > .citation-file-attachment { grid-column: span 2; }
 .human-message .message-attachments { justify-content: end; align-items: start; }
-.attachment-media-tile .attachment-media-open { gap: 4px; padding: 6px; }
+.attachment-media-tile .attachment-media-open { gap: var(--space-1); padding: var(--space-1); }
 .attachment-media-tile .attachment-media-open > svg { flex-shrink: 0; height: 22px; width: 22px; }
 .attachment-media-tile .attachment-media-name { font-size: 11px; }
-.attachment-media-tile .attachment-inline-audio { padding: 0 4px 4px; }
+.attachment-media-tile .attachment-inline-audio { padding: 0 var(--space-1) var(--space-1); }
 .attachment-inline-audio audio { display: none; }
 .attachment-inline-audio > button { white-space: nowrap; }
 .attachment-media-download { position: absolute; right: 154px; top: 23px; z-index: 3; }

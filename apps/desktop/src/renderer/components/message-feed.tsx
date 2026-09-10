@@ -95,6 +95,61 @@ export function useMessageFeedVirtualizer(input: {
   });
 }
 
+/**
+ * What a row is to the feed's vertical rhythm.
+ *
+ * Mirrors the row `MessageBlock` draws for the message: a `turn` is a
+ * `.message-block` from a person (a text turn, an answered elicitation), an
+ * `answer` is Rally's own `.message-block`, and everything else is an event
+ * (machinery rows, a system note, the proposal card, an open elicitation, the
+ * oversized-message placeholder). The distinction between a turn and an
+ * answer exists for one gap: an answer sits on the work that produced it.
+ */
+export type FeedRowKind = 'turn' | 'answer' | 'event';
+
+export function feedRowKind(message: Message): FeedRowKind {
+  if (message.blocksOmittedPlaceholder) return 'event';
+  switch (message.messageType) {
+    case 'thought':
+    case 'tool_event':
+    case 'plugin_activity':
+    case 'work_accordion':
+      return 'event';
+    case 'elicitation':
+      if (message.elicitation) return message.elicitation.status === 'answered' ? 'turn' : 'event';
+      break;
+    default:
+      break;
+  }
+  if (message.draftProposed) return 'event';
+  const automation = message.messageType === 'automation_activation';
+  if (!automation && (message.authorType === 'system' || message.messageType === 'system')) return 'event';
+  return message.authorType === 'human' || message.authorType === 'external' ? 'turn' : 'answer';
+}
+
+/**
+ * The space a row owns above itself, named for the token that sets it.
+ *
+ * Decided here from the message list rather than in CSS from a sibling,
+ * because the feed is windowed: only the rows inside the virtualizer's window
+ * are in the DOM, so the first mounted row has no previous sibling whatever
+ * its index. A `+` combinator gave that row no gap while it sat at the
+ * window's edge and a different measured height on either side of it, which
+ * the ledger then chased. A row after a stretch this client has not loaded
+ * has no known predecessor either, and takes the turn gap as the honest
+ * default.
+ */
+export type FeedRowGap = 'none' | 'stack' | 'block' | 'event';
+
+export function feedRowGap(previous: Message | undefined, current: Message): FeedRowGap {
+  if (!previous) return 'none';
+  if (current.precededByTranscriptGap) return 'stack';
+  const before = feedRowKind(previous);
+  const kind = feedRowKind(current);
+  if (before === 'event') return kind === 'turn' ? 'block' : 'event';
+  return kind === 'event' ? 'block' : 'stack';
+}
+
 /** The live border-box height used by the work-stream feed's virtual ledger. */
 export function measureMessageFeedRow(element: Element): number {
   return Math.round(element.getBoundingClientRect().height);
@@ -191,7 +246,7 @@ export function MessageFeed({
     return (
       <div className="virtual-transcript" ref={feed}>
         {messages.map((message, index) => (
-          <div className="virtual-message-row" data-index={index} key={message.id}>
+          <div className="virtual-message-row" data-index={index} data-row-gap={feedRowGap(messages[index - 1], message)} key={message.id}>
             {row(message, index)}
           </div>
         ))}
@@ -212,6 +267,7 @@ export function MessageFeed({
           <div
             className="virtual-message-row"
             data-index={virtualRow.index}
+            data-row-gap={feedRowGap(messages[virtualRow.index - 1], message)}
             key={message.id}
             ref={virtualizer.measureElement}
             style={{
