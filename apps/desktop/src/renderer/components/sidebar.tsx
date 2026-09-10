@@ -71,7 +71,7 @@ import { useListMotion } from '../lib/use-list-motion';
 import { Avatar, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 import { ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup } from './sidebar-skeleton';
-import { AutomationGlyph, HexagonGlyph, WorkstreamGlyph } from './workstream-glyph';
+import { AutomationGlyph, HexagonGlyph, SIDEKICK_RUNNING_MARKER, WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
   onOpenSearch?: () => void;
@@ -422,9 +422,13 @@ function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
  */
 function SidekickStripTile({ active = false, glyph, label, name, onClick, title }: {
   /**
-   * Draws the lifecycle marker. A boolean rather than the state, because
-   * `active` is the only lifecycle the strip renders — the others are excluded
-   * from it — and an action tile has no lifecycle at all.
+   * Says the tile has a lifecycle, for the readers the caption does not reach.
+   * A boolean rather than the state, because `active` is the only lifecycle the
+   * strip renders — the others are excluded from it — and an action tile has no
+   * lifecycle at all. The marker itself is drawn inside `glyph` rather than
+   * here: it is cut out of the hexagon's own fill, which only the hexagon can
+   * do, and passing it separately would leave the two free to disagree about
+   * whether this Sidekick is running.
    */
   active?: boolean;
   glyph: React.ReactNode;
@@ -443,10 +447,7 @@ function SidekickStripTile({ active = false, glyph, label, name, onClick, title 
         onClick={onClick}
         type="button"
       >
-        <span className="automation-tile-glyph" aria-hidden="true">
-          {glyph}
-          {active && <span className="automation-tile-state active"><span className="status-dot" /></span>}
-        </span>
+        <span className="automation-tile-glyph" aria-hidden="true">{glyph}</span>
         <span className="automation-tile-name">{name}</span>
         {active && <span className="sr-only">Active</span>}
       </button>
@@ -459,7 +460,7 @@ function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.
   return (
     <SidekickStripTile
       active
-      glyph={<AutomationGlyph {...(sidekick.appearance ? { appearance: sidekick.appearance } : {})} id={sidekick.id} />}
+      glyph={<AutomationGlyph {...(sidekick.appearance ? { appearance: sidekick.appearance } : {})} id={sidekick.id} marker={SIDEKICK_RUNNING_MARKER} />}
       label={`${sidekick.name}, Active${scopeDescription}`}
       name={sidekick.name}
       onClick={() => void desktopBridge().openSidekicks(sidekick.id)}
