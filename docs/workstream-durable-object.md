@@ -1716,11 +1716,28 @@ the card is always up behind the tip, and one sentence printed twice a
 centimetre apart reads as a bug.
 
 **What a future change has to respect:** a badge tip and the row preview coexist
-only because that preview is controlled. Moving it to an uncontrolled `open`
-puts the two back to taking turns; `sidebar.test.tsx` pins both halves. The
-preview is also the only keyboard route to the badge's meaning, so a change that
-drops its scope line takes the explanation away from anyone not using a
-pointer — pinned by its own test.
+only because that preview is controlled, and that buys both directions rather
+than one. `useControllableState` calls its `onChange` only from an internal
+`setOpen`, so a controlled Root ignores the close request *and* never reaches
+the `document.dispatchEvent(new CustomEvent('tooltip.open'))` branch when its
+own `open` prop flips — which is why the preview does not close the globe's tip
+either. That second half matters because the reverse order is reachable: the
+provider's `skipDelayDuration` opens a tip instantly on a re-entry while the
+preview always pays its own 300ms, so a pointer that leaves the badge and comes
+straight back has the tip up first. Both halves rest on a transitive
+dependency's implementation rather than a documented Radix contract, so a
+version bump is the thing to re-check. Moving the preview to an uncontrolled
+`open` puts the two back to taking turns; `sidebar.test.tsx` pins the direction
+that is testable. The preview is also the only keyboard route to the badge's
+meaning, so a change that drops its scope line takes the explanation away from
+anyone not using a pointer — pinned by its own test.
+
+`Tip` turns Radix's hoverable content off for the same reason it sets a
+collision padding: a tip holds no link and no selectable text, so keeping it
+open while the pointer is inside the popper only leaves a rectangle that
+outlives the hover. Measured here at 27px tall, sitting 6px above a 54px
+sidebar row — which in a stacked list is the bottom half of the row above,
+unhoverable until the pointer leaves and returns.
 
 ### 2026-09-09 — Derived inputs at the settled step, and a ledger that rides the compaction commit
 
