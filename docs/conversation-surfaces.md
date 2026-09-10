@@ -90,7 +90,12 @@ the latest edge; scrolling transfers ownership to the reader until **Jump to
 latest** is selected. Programmatic repositioning is announced before changing
 `scrollTop`. Reduced-motion preference gates arrivals, activity transitions, and
 the jump control. Exiting controls remain mounted but inaccessible until their
-fade completes; changing direction reverses the active animation in place.
+fade completes; changing direction reverses the active animation in place. The
+jump control hangs one spacing step above the composer, anchored from
+underneath to the composer dock's top edge so the gap survives a composer that
+grows; that edge is the composer's own only while the dock states no padding
+above it, which `app.css.node.test.ts` holds for every rule naming either
+class.
 
 The feed's vertical rhythm is one primitive: a row owns the space above it,
 chosen by what precedes it, and no row sets a bottom margin. `MessageFeed`
@@ -330,6 +335,8 @@ it legible there. It depends on the dock stating no padding above the composer:
 give the dock some and the gap grows by that much silently.
 `app.css.node.test.ts` holds both halves, because jsdom lays nothing out and no
 component test can tell the anchors apart.
+
+Shipped in [#662](https://github.com/juno-ai-labs/avalon/pull/662).
 
 ### 2026-09-10 — Multiline composer text spans above its controls
 
