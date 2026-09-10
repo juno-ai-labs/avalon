@@ -245,7 +245,7 @@ wanting one is now load-bearing here. Any future delivery that means "settings i
 the destination" asks the same function; testing the variable directly is the bug
 this entry describes.
 
-Shipped in #TBD.
+Shipped in #673.
 
 ### 2026-09-01 — Connectivity failures give a retryable remedy
 
