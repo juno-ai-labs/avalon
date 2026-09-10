@@ -313,6 +313,9 @@ Expansion and collapse animate the field height and text inset together over
 220ms using the existing composer easing. Interrupted motion starts at the
 current painted position, the initial render does not animate in, and
 reduced-motion preference applies the final layout immediately.
+Wrap measurement also runs beneath the forced attachment layout, preserving
+multiline state when the final attachment is removed rather than briefly
+returning the text to the compact column.
 ### 2026-09-10 — The both-host feed rules are the base rules
 
 **What changed:** The 47 `app.css` rules scoped

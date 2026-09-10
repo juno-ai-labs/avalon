@@ -24,6 +24,8 @@ describe('capsule composer stacking', () => {
     expect(rule('.composer-input-shell')).not.toContain('z-index:');
     expect(rule(':is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule.has-attachments .composer-input-shell'))
       .toContain('grid-column: 1 / -1;');
+    expect(rule(":is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule[data-multiline='true'] .composer-input-shell,\n:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule.has-attachments .composer-input-shell"))
+      .toContain('grid-column: 1 / -1;');
   });
 });
 

@@ -261,11 +261,16 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
     // Measure at the compact width every time, so expanding the text column
     // cannot alternate between wrapped and unwrapped on successive edits.
     if (composer) delete composer.dataset.multiline;
+    // Keep the underlying wrap state current even while attachments force the
+    // expanded layout, so removing the last tile cannot briefly compact it.
+    const hadAttachments = composer?.classList.contains('has-attachments') ?? false;
+    if (hadAttachments) composer?.classList.remove('has-attachments');
     textarea.style.height = 'auto';
-    if (layout === 'message-capsule' && attachments.length === 0 && composer) {
+    if (layout === 'message-capsule' && composer) {
       const singleRowHeight = textarea.clientHeight;
       composer.dataset.multiline = String(textarea.scrollHeight > singleRowHeight);
     }
+    if (hadAttachments) composer?.classList.add('has-attachments');
     if ((nextValue ?? textarea.value).length > 0) {
       textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
     }
