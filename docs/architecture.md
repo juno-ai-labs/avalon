@@ -802,13 +802,15 @@ access and no-egress symbolication.
 
 ## Changelog
 
-### 2026-09-10 — Escape closes any secondary window, not just Settings
+### 2026-09-10 — Escape closes the Sidekicks window, through a gesture Settings no longer owns
 
 **What changed:** The Escape-closes-this-window gesture is now the shared
 `renderer/lib/window-escape.ts` — `escapeClosesWindow` and the
 `useEscapeClosesWindow` hook that installs it — and the Sidekicks window is its
-second caller. The predicate also declines an Escape belonging to an in-flight
-IME composition, which the Settings-only version did not check.
+second caller. The gesture is opt-in per window rather than a property of being
+a window: the meeting and deep-link-error windows do not install the hook and
+still do not answer Escape. The predicate also declines an Escape belonging to
+an in-flight IME composition, which the Settings-only version did not check.
 
 **Why:** The gesture was written once for Settings, with its dialog, modifier,
 `preventDefault`, and unsaved-text reasoning inside a 2,500-line screen. Rally
