@@ -135,9 +135,11 @@ child it always did. The desktop no longer asks for one.
 ### The name a substream is given
 
 A substream is named the way a work stream is, by
-[the naming pass](workstream-naming.md): its provisional title is the first line
-of the opening message, its `title_status` is `naming`, and its header shows the
-same skeleton until the pass answers. Both passes are addressed at the child —
+[the naming pass](workstream-naming.md) — the same code, not a copy of it: its
+provisional title is the first line of the opening message, its `title_status`
+is `naming`, and its header shows the same skeleton until the pass answers. The
+one half of that pass a child does not use is the icon, which is dropped rather
+than written: nothing draws a substream's own appearance. Both passes are addressed at the child —
 `workstreamId` plus `substreamId` through the identity and message ports, and
 the rename event published into the child's own room. The child's rename reaches
 the parent's registry through the ordinary common projection, which is what
