@@ -307,12 +307,36 @@ describe('Sidebar work-stream markers', () => {
 
     fireEvent.focus(edge);
     expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click to collapse');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click or Enter to collapse');
 
     fireEvent.doubleClick(edge);
     fireEvent.blur(edge);
     fireEvent.focus(edge);
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click to expand');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click or Enter to expand');
+  });
+
+  // The hint is read on focus as well as on hover, so the reader most likely to
+  // be looking at it is the one who cannot double-click. Enter is the ARIA
+  // authoring practices' key for a splitter's own action, and it has to do what
+  // the same handle's double-click does, under the same guard.
+  it('collapses and expands from Enter on the divider, and refuses it while the window holds navigation compact', () => {
+    useUiStore.getState().setSidebarCollapsed(false);
+    function Navigation() {
+      const compact = useUiStore((state) => state.sidebarCollapsed);
+      return <Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />;
+    }
+    const view = render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
+    const edge = screen.getByRole('separator', { name: 'Resize navigation' });
+
+    fireEvent.keyDown(edge, { key: 'Enter' });
+    expect(useUiStore.getState().sidebarCollapsed).toBe(true);
+    fireEvent.keyDown(edge, { key: 'Enter' });
+    expect(useUiStore.getState().sidebarCollapsed).toBe(false);
+
+    view.unmount();
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize navigation' }), { key: 'Enter' });
+    expect(useUiStore.getState().sidebarCollapsed).toBe(false);
   });
 
   // A window too narrow to hold the expanded sidebar pins it compact and

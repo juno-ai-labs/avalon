@@ -123,10 +123,12 @@ interface DragHintProps {
   action: string;
   /**
    * The faster route to the same place: the double-click that collapses a
-   * sidebar, or the keys that move what the drag moves. Left out when the
-   * handle has none, and when the window is too narrow for the one it would
-   * otherwise name, because a hint that promises an action which does nothing
-   * is worse than no hint.
+   * sidebar, and the key that does the same thing without a pointer. Name both
+   * where both exist. This line is read on focus as well as on hover, so a
+   * pointer gesture on its own tells a keyboard reader about something they
+   * cannot do. Left out when the handle has no quick action, and when the
+   * window is too narrow for the one it would otherwise name, because a hint
+   * that promises an action which does nothing is worse than no hint.
    */
   shortcut?: string | undefined;
   /** Which way the hint leans off the handle: away from what it resizes. */

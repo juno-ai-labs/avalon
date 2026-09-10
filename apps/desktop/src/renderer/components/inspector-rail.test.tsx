@@ -131,9 +131,16 @@ describe('InspectorRail details', () => {
     const handle = screen.getByRole('separator', { name: 'Resize inspector' });
 
     fireEvent.focus(handle);
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click to reset width');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click or Enter to reset width');
 
     fireEvent.doubleClick(handle);
+    expect(useUiStore.getState().railWidth).toBe(320);
+
+    // The arrows step by a fixed amount, so without Enter the width the hint
+    // names is reachable from the keyboard only by counting steps to a number
+    // nothing on screen shows.
+    useUiStore.setState({ railWidth: 520 });
+    fireEvent.keyDown(handle, { key: 'Enter' });
     expect(useUiStore.getState().railWidth).toBe(320);
   });
 
