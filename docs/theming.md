@@ -167,17 +167,18 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ### 2026-09-10 — The turn gap is fitted to the hover row
 
-**What changed:** `sys.space.stack.gap` is `calc({ref.space.unit} * 4)` (16px,
+**What changed:** `sys.space.stack.gap` is `calc({ref.space.unit} * 3)` (12px,
 was `* 8`), and the `sys.space.stack` group description says what the number
 is fitted to.
 
 **Why:** The rhythm entry of the same date in `conversation-surfaces.md` has
 the measurements: the action row a turn reveals on hover is about 18px tall,
-and the turn after it now sits about that far under it. The token side is only
-that the gap stays a unit multiple rather than a measurement of the row, which
-is not a token, and that it is not an alias of `sys.space.block.gap` even
-though the two now resolve to the same value: they sit between different
-things, and the next tuning of either should not move the other.
+and the turn after it now sits a little less than that under it. The token
+side is only that the gap stays a unit multiple rather than a measurement of
+the row, which is not a token, and that it now sits one unit under
+`sys.space.block.gap` by tuning rather than by relation: the two sit between
+different things and were tuned separately, and the next tuning of either
+should not move the other.
 
 ### 2026-09-10 — The appearance picker gives up its private strip
 
