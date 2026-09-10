@@ -465,6 +465,8 @@ test('the landing site deploys from the tip of main, never from the stale releas
   // silently policed by the site step's own negative assertions.
   const nextStep = workflow.indexOf('\n      - name: ', siteStart);
   const siteStep = workflow.slice(siteStart, nextStep === -1 ? workflow.length : nextStep);
+  assert.match(siteStep, /RALLY_TURNSTILE_SITE_KEY:\s*\$\{\{ vars\.RALLY_TURNSTILE_SITE_KEY \}\}/u,
+    'The release site build needs the production Turnstile site key');
 
   // Each command is looked up as a complete run-block line — anchored by the
   // newline and the block's indent, so a comment quoting it cannot satisfy
