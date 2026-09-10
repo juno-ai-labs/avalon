@@ -160,10 +160,12 @@ local optimistic rows are reconciled by stable client turn IDs.
 Delivered attachments follow the message body and precede its action row. Human
 identity headers render time, optional work summary, optional context label,
 then the person dot and username. The username ends at the bubble-radius inset.
-Rally's header renders its name, an optional context label, the time, and an
-optional work summary, and starts on the same vertical as the response body
-and the action row beneath it: the turn has no avatar, so nothing sits left
-of the name and nothing reserves space for one.
+The assistant header renders the author name (`Rally`, or `Automation` on an
+automation turn), an optional context label, the time, an optional work summary,
+and the collapse-all control when the turn has collapsible headings. It starts on
+the same vertical as the response body and the action row beneath it: the turn
+has no avatar, so nothing sits left of the name and nothing reserves space for
+one.
 
 Finished assistant turns also share the action row. Copy and export remain
 local actions; **Speak** uses the regional authenticated stream documented in
@@ -236,6 +238,9 @@ header` by 18px, so "Rally", the response body and the action row under it all
 begin on the article's own left edge. An invariant in
 `app.css.node.test.ts` holds the header free of a left inset under both its
 selectors, matching on the value rather than on one spelling of the property.
+The human-side check opposite it gained the same widening: both now cover
+`padding-inline`, which is the logical spelling this stylesheet actually uses and
+which set the inset straight through the old patterns.
 
 **Why:** Rally's turn carries no avatar, so nothing ever occupied the gutter
 that padding reserved: the name simply hung 18px right of everything beneath it,
