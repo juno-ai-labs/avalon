@@ -10,7 +10,7 @@ import {
   type ProjectIconKey,
 } from '@rally/contracts';
 
-import { ConnectingCard } from '../components/connecting-card';
+import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { ProjectAppearancePicker, ProjectIcon } from '../components/project-sidebar-section';
 import {
   Avatar,
@@ -150,16 +150,16 @@ export function ProjectSpaceScreen(): React.JSX.Element {
   };
   return (
     <div className="project-space-frame">
-    {directoryFromLocalCache && (
-      <div className="connection-card-slot">
+    <ConnectingCardSlot>
+      {directoryFromLocalCache && (
         <ConnectingCard
           detail={project.status === 'active' ? 'Editing is available once Rally connects' : undefined}
           name={project.name}
           state={workspaceSocket.state === 'unavailable' ? 'offline' : 'connecting'}
           subject="project"
         />
-      </div>
-    )}
+      )}
+    </ConnectingCardSlot>
     <div className="project-space-screen">
       <div className="screen-drag-strip window-drag" />
       <header className="project-space-header window-drag">

@@ -930,6 +930,16 @@ export function useWorkstreamSocket(
           'workstream_socket_open_timeout',
         ));
       }
+      // A seed has no fence to address a command against: the run, the
+      // elicitation, or the queue on screen is what the room said some
+      // launches ago. Every command inherits the gate here, not per control.
+      if (seededFromLocalCache()) {
+        return Promise.reject(new ApiError(
+          'Rally is still connecting to this conversation.',
+          409,
+          'workstream_feed_seeded',
+        ));
+      }
       return new Promise((resolve, reject) => {
         pendingSubstreamCommands.set(command.operationId, { command, resolve, reject });
         sendPendingSubstreamCommands();
@@ -2269,7 +2279,9 @@ export function useWorkstreamSocket(
         parentId,
         substreamId,
         localCacheKeys,
-        () => !closedByEffect,
+        // A hydration still in flight when the reader is shut out must not
+        // repaint what the eviction just removed.
+        () => !closedByEffect && !accessRevoked,
       );
     }
     void connect();

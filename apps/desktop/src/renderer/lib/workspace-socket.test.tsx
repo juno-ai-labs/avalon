@@ -14,7 +14,7 @@ import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 import { WorkspaceSocketProvider, useWorkspaceSocket } from './workspace-socket';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { conversationCacheKey, conversationSlice } from './conversation-cache';
-import { clearAllLocalCache, closeLocalCache } from './local-cache';
+import { clearAllLocalCache } from './local-cache';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
 import { LocalCacheScopeProvider } from './local-cache-scope';
 import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-directory-cache';
@@ -1524,10 +1524,6 @@ describe('the workspace socket over the local cache', () => {
   const remembered = '00000000-0000-7000-8000-000000000002';
   const forgotten = '00000000-0000-7000-8000-000000000003';
 
-  afterEach(() => {
-    closeLocalCache();
-  });
-
   function syncPayload(ids: readonly string[]): Record<string, unknown> {
     return {
       type: 'workspace_sync',
@@ -1638,6 +1634,18 @@ describe('the workspace socket over the local cache', () => {
     expect(socket.readyState).toBe(FakeWebSocket.CONNECTING);
 
     act(() => socket.open());
+    // Page one of a longer directory cannot say the missing row is gone:
+    // it may simply be on a later page. Nothing leaves the disk on it.
+    const pageOne = syncPayload([remembered]);
+    const sidebar = pageOne['sidebar'] as { workstreams: Record<string, unknown> };
+    act(() => socket.message({
+      ...pageOne,
+      sidebar: { ...sidebar, workstreams: { ...sidebar.workstreams, nextCursor: '1755460800000:00000000-0000-7000-8000-0000000000aa' } },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect((await conversationSlice.entries(scope)).map((entry) => entry.key).sort())
+      .toEqual([conversationCacheKey(forgotten, '0'), conversationCacheKey(remembered, '0')].sort());
+
     act(() => socket.message(syncPayload([remembered])));
 
     // The whole directory replaces the seed outright, and the conversation of

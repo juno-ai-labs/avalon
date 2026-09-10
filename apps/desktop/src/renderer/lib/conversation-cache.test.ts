@@ -12,7 +12,7 @@ import {
   retainConversationParents,
   type ConversationCacheKeys,
 } from './conversation-cache';
-import { clearAllLocalCache, closeLocalCache, localCacheScope } from './local-cache';
+import { clearAllLocalCache, closeLocalCache, defineLocalCacheSlice, localCacheScope } from './local-cache';
 import type { WorkstreamDetail } from './types';
 
 const scope = localCacheScope('00000000-0000-7000-8000-0000000000aa', 'global', '00000000-0000-7000-8000-000000000001');
@@ -173,6 +173,21 @@ describe('conversation cache', () => {
 
     expect(queryClient.getQueryData(keys.detail)).toBeUndefined();
     expect(queryClient.getQueryData(keys.feedSource)).toBeUndefined();
+  });
+
+  it('refuses a row whose nested detail lacks a field the screens read', async () => {
+    const raw = defineLocalCacheSlice<unknown>({ kind: 'conversation', version: 1, parse: (value) => value });
+    // A participant written by a build whose people had no email yet.
+    await raw.write(scope, conversationCacheKey(parentId, '0'), {
+      detail: { ...detail(), participants: [{ id: 'person-1', name: 'Someone' }] },
+      transcript: transcript(),
+      initialContext: null,
+      cachedAt: '',
+    }, parentId);
+
+    expect(await conversationSlice.read(scope, conversationCacheKey(parentId, '0'))).toBeNull();
+    await expect(hydrateConversation(new QueryClient(), scope, parentId, '0', keysFor('0'), () => true))
+      .resolves.toBe('missing');
   });
 
   it('reports a missing row, and one written under another workspace', async () => {

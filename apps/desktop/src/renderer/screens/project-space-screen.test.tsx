@@ -251,17 +251,18 @@ describe('project space appearance', () => {
     // The subscribe answer lands: the same record, now the socket's word.
     workspaceSocket.current = { sidebarConnect: { generation: 1 }, state: 'connected' };
     await act(async () => queryClient.setQueryData(['projects'], { waterline: 2, items: [project] }));
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+    await waitFor(() => expect(document.querySelector('.connecting-card')).toBeNull());
     expect(screen.getByRole('button', { name: 'Archive project' })).toBeEnabled();
     fireEvent.doubleClick(screen.getByRole('button', { name: 'Hiring' }));
     expect(screen.getByLabelText('Project name')).toBeInTheDocument();
   });
 
-  it('shows no card once the socket has delivered the directory', () => {
+  it('shows no card once the socket has delivered the directory, and keeps the empty status region', () => {
     workspaceSocket.current = { sidebarConnect: { generation: 1 }, state: 'connected' };
     renderProject();
 
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(document.querySelector('.connecting-card')).toBeNull();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
   });
 
 });

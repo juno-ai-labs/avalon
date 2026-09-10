@@ -119,9 +119,10 @@ describe('WorkstreamComposer over a remembered conversation', () => {
 
     const composer = screen.getByLabelText('Message the work stream');
     fireEvent.change(composer, { target: { value: 'Half a thought' } });
-    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    const send = screen.getByRole('button', { name: 'Send message, available once Rally connects' });
+    expect(send).toBeDisabled();
     fireEvent.keyDown(composer, { key: 'Enter' });
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    fireEvent.click(send);
 
     expect(onSend).not.toHaveBeenCalled();
     expect(composer).toHaveValue('Half a thought');

@@ -19,6 +19,7 @@ import {
   WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY,
 } from './app-session';
 import { clearAllDrafts, readDraftText, writeDraftText } from './draft-cache';
+import { defineLocalCacheSlice, localCacheScope } from './local-cache';
 import { newWorkstreamDraftKey, workstreamDraftKey } from './draft-keys';
 import { useDraftText } from './use-draft-text';
 import { RallyApi } from './api';
@@ -74,6 +75,18 @@ const bridge = vi.hoisted(() => ({
 vi.mock('./platform', () => ({ desktopBridge: () => bridge }));
 
 const futureExpiry = new Date(Date.now() + 60 * 60_000).toISOString();
+
+/**
+ * Any row at all: the wipes go by scope, not by shape, so the shape here is
+ * whatever is simplest to write and read back.
+ */
+const rememberedRows = defineLocalCacheSlice<{ remembered: boolean }>({
+  kind: 'test-remembered',
+  version: 1,
+  parse: (value) => value !== null && typeof value === 'object' && (value as { remembered?: unknown }).remembered === true
+    ? { remembered: true }
+    : null,
+});
 
 const euSession: DesktopSession = {
   accessToken: 'access-token-longer-than-twenty-characters',
@@ -1914,6 +1927,52 @@ describe('draft cache lifetime across a session', () => {
       durationMs: expect.any(Number),
     }));
     expect(workstreamFeedOpenAttemptId(workstreamId)).toBeUndefined();
+  });
+
+  it('drops every remembered conversation when the session ends without going through signOut', async () => {
+    bridge.getSession.mockResolvedValue(euSession);
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    const scope = localCacheScope('user-1', 'eu', 'workspace-eu');
+    await rememberedRows.write(scope, 'ws:0', { remembered: true });
+    await waitFor(() => expect(sessionListener).not.toBeNull());
+
+    act(() => sessionListener?.(null));
+
+    await waitFor(async () => expect(await rememberedRows.read(scope, 'ws:0')).toBeNull());
+  });
+
+  it('drops every remembered conversation when another account takes over the device', async () => {
+    bridge.getSession.mockResolvedValue(euSession);
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    const scope = localCacheScope('user-1', 'eu', 'workspace-eu');
+    await rememberedRows.write(scope, 'ws:0', { remembered: true });
+    await waitFor(() => expect(sessionListener).not.toBeNull());
+
+    act(() => sessionListener?.({
+      ...euSession,
+      user: { ...euSession.user, id: 'user-2', email: 'another@example.com' },
+    }));
+
+    await waitFor(async () => expect(await rememberedRows.read(scope, 'ws:0')).toBeNull());
+  });
+
+  it('forgets a workspace the account is refused when activating it fails, and keeps the active one', async () => {
+    bridge.getSession.mockResolvedValue(euSession);
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    const refused = localCacheScope('user-1', 'global', 'workspace-global');
+    const active = localCacheScope('user-1', 'eu', 'workspace-eu');
+    await rememberedRows.write(refused, 'ws:0', { remembered: true });
+    await rememberedRows.write(active, 'ws:0', { remembered: true });
+    await waitFor(() => expect(observedActivateWorkspace).not.toBeNull());
+    bridge.activateWorkspace.mockRejectedValueOnce(workspaceActivationFailure('workspace_access_denied'));
+
+    await expect(observedActivateWorkspace!('global', 'workspace-global')).rejects.toThrow();
+
+    await waitFor(async () => expect(await rememberedRows.read(refused, 'ws:0')).toBeNull());
+    expect(await rememberedRows.read(active, 'ws:0')).toEqual({ remembered: true });
   });
 
   it('drops every draft when another account takes over the device', async () => {

@@ -48,7 +48,9 @@ them now.
 ### What is stored, and where
 
 Drafts live in an IndexedDB database named `avalon-composer-drafts` in the
-renderer's origin, owned by `lib/draft-cache.ts`. It has two object stores:
+renderer's origin, owned by `lib/draft-cache.ts` and opened through
+`createIndexedDbStore` in `lib/indexeddb-store.ts`, the best-effort, epoch-fenced
+store the local cache shares. It has two object stores:
 
 - `text` — one row per key holding the drafted text and the mentions the user
   picked while writing it. **Writing empty text deletes the row**: a composer the
@@ -253,6 +255,26 @@ signing out deletes all of them. [`security.md`](security.md) owns the boundary 
 sits inside.
 
 ## Changelog
+
+### 2026-09-10 — The store beneath the drafts is shared with the local cache
+
+**What changed:** The database open, the request and transaction awaiting,
+the best-effort `withStores`, the epoch, and the test seam moved out of
+`draft-cache.ts` into `createIndexedDbStore` in `lib/indexeddb-store.ts`.
+The draft cache keeps its two object stores, its keys, its twelve-hour
+lifetime, and its public functions; only the plumbing beneath them moved.
+
+**Why:** The local cache ([`local-cache.md`](local-cache.md)) needed the same
+plumbing and had copied it, comments included. Review of that change named
+the copy: the reusable primitive is the store that resolves to a fallback
+instead of throwing and fences writes with an epoch, and two caches carrying
+their own copy of it is two places for the next fix to miss.
+
+**Consequences:** A fix to how the database is opened, or to the epoch, lands
+for both caches at once. The draft cache's tests are the regression suite for
+the store's behaviour under drafts, and `indexeddb-store.test.ts` covers the
+store alone. `closeDraftCache()` still resets the sort key the drafts keep
+above the store.
 
 ### 2026-09-04 — Keep the established ten-file admission contract
 

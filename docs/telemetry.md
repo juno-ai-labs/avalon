@@ -179,7 +179,9 @@ work-stream-specific send handler installed. It records the addressed substream
 socket state at that point. `connecting` and `reconnecting` are ready states for
 this client milestone because that socket queues idempotent message commands;
 the event does not claim that transport delivery or server
-acknowledgement has completed.
+acknowledgement has completed. A composer over a local-cache seed is not
+ready, whatever its socket state: the milestone waits for the live snapshot
+that lets the composer send ([`local-cache.md`](local-cache.md)).
 
 Every mounted pooled socket owner has a UUIDv7 socket-lease ID shared by its
 control and feed connections for the owner's full retained lifetime.
@@ -731,7 +733,11 @@ meant to produce.
 **Consequences:** A `local_cache` open, like a `feed_cache` one, has no
 detail request to join by design. Percentiles of click-to-painted-feed now
 include paints the socket had no part in; read the source before comparing
-them with earlier weeks.
+them with earlier weeks. `workstream_open_outcome` reports `visible` for a
+seeded paint as well, since the seed satisfies the route's payload check on
+its own, so an open whose socket later fails is `visible` followed by the
+feed's failure rather than a failed open; join on the feed source to tell
+the two apart.
 
 ### 2026-09-10 — The desktop telemetry inspector is withdrawn
 

@@ -10,6 +10,9 @@
   font-family: var(--av-sys-font-family-ui);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  /* The band a screen leaves for the window's title bar to be dragged by.
+     Platform geometry, like the inset below, not a theme token. */
+  --screen-drag-strip-height: 46px;
 
   /* How far into the page the window's own buttons reach. Not an `--av-` token:
      a theme cannot set this and the registry does not declare it — it is the
@@ -1607,7 +1610,7 @@ pre {
 /* Shared screens */
 
 .screen-with-titlebar { height: 100%; position: relative; }
-.screen-drag-strip { height: 46px; left: 0; position: absolute; right: 0; top: 0; }
+.screen-drag-strip { height: var(--screen-drag-strip-height); left: 0; position: absolute; right: 0; top: 0; }
 .screen-error-state { align-items: center; display: flex; height: 100%; justify-content: center; }
 .screen-state-actions { align-items: center; display: flex; gap: 2px; position: absolute; right: 10px; top: 9px; }
 .muted-notice { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
@@ -3715,9 +3718,13 @@ pre {
 .connecting-card-sentence strong { color: var(--av-sys-color-text-default); font-weight: 570; }
 .connecting-card-copy small { color: var(--av-sys-color-text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .connecting-card > .button { flex: 0 0 auto; }
+/* The card floats over rows a person may want to click or select; only its
+   one action takes the pointer. */
+.connecting-card { pointer-events: none; }
+.connecting-card > .button { pointer-events: auto; }
 @media (prefers-reduced-motion: reduce) { .connecting-card, .connecting-card .spin { animation: none; } }
 .project-space-frame { height: 100%; position: relative; }
-.project-space-frame > .connection-card-slot { left: 0; position: absolute; right: 0; top: var(--space-3); }
+.project-space-frame > .connection-card-slot { left: 0; position: absolute; right: 0; top: calc(var(--screen-drag-strip-height) + var(--space-3)); }
 
 /* Composer */
 
