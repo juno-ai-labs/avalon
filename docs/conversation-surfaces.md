@@ -308,7 +308,10 @@ them (`.tool-block`, `.tool-block summary`, `.tool-icon`, `.tool-summary` and it
 `strong` and `small`, `.tool-details`, `.agent-message-actions`);
 `.tool-completed .tool-state`, whose only declaration was overridden, is gone,
 as is a second `.human-message .message-author` rule whose every declaration a
-later rule replaced. `.workstream-screen`-only rules are untouched.
+later rule replaced. `.workstream-screen`-only rules are untouched. Review
+then found that no component applies `.automation-chat-surface` at all, so the
+prefix had in practice named one live host rather than two; the last rule left
+under that class, a profile-coloured bubble, is deleted with the rest.
 
 **Why:** Those two classes are the only hosts that render the feed, so a rule
 scoped to both was a base rule written as an override, and it forced a base rule

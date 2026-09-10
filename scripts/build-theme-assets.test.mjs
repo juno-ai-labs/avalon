@@ -67,12 +67,12 @@ test('every theme sets only tokens the registry declares', () => {
 });
 
 test('every alias points at a token that exists', () => {
-  for (const theme of themes) {
+  for (const theme of [base, ...themes]) {
     for (const [path, value] of Object.entries(theme.tokens)) {
       for (const [, reference] of JSON.stringify(value).matchAll(/\{([a-z0-9.-]+)\}/giu)) {
         assert.ok(
           registry.tokens[reference],
-          `${theme.id}: ${path} aliases ${reference}, which no token declares`,
+          `${theme.id ?? 'base'}: ${path} aliases ${reference}, which no token declares`,
         );
       }
     }
@@ -89,7 +89,9 @@ test('every alias points at a token that exists', () => {
  * would have shown up as an unstyled interface rather than as a failure.
  */
 test('no alias resolves to itself, directly or through a chain', () => {
-  for (const theme of themes) {
+  // The base file is walked as itself: a base token may alias only base tokens
+  // (held below), so a cycle through it can only be inside it.
+  for (const theme of [base, ...themes]) {
     const referencesOf = (path) => [...JSON.stringify(theme.tokens[path] ?? '')
       .matchAll(/\{([a-z0-9.-]+)\}/giu)].map(([, reference]) => reference);
 
@@ -98,7 +100,7 @@ test('no alias resolves to itself, directly or through a chain', () => {
       const queue = referencesOf(path);
       while (queue.length) {
         const next = queue.shift();
-        assert.ok(next !== path, `${theme.id}: ${path} resolves back to itself`);
+        assert.ok(next !== path, `${theme.id ?? 'base'}: ${path} resolves back to itself`);
         if (seen.has(next)) continue;
         seen.add(next);
         queue.push(...referencesOf(next));
@@ -325,7 +327,7 @@ test('platform font exceptions do not admit missing or quoted custom families', 
 
 test('UI leading scales with inherited font size rather than fixing all headings at 20px', () => {
   for (const theme of themes) {
-    const tokens = resolvedTokens(theme, themes, base);
+    const tokens = resolvedTokens(theme, base);
     const leading = Number(tokens['sys.font.leading.base']);
     assert.ok(Number.isFinite(leading) && leading > 1, theme.id);
     assert.ok(Math.abs(leading * parseFloat(tokens['sys.font.size.base']) - 20) < 0.001);
@@ -350,7 +352,7 @@ function luminance(color, backdrop) {
 
 test('keyboard focus contrasts against adjacent surfaces in both appearances', () => {
   for (const theme of themes) {
-    const tokens = resolvedTokens(theme, themes, base);
+    const tokens = resolvedTokens(theme, base);
     for (const role of ['default', 'quiet']) {
       const focus = luminance(tokens[`sys.color.focus.${role}`]);
       for (const surface of ['canvas', 'default', 'subtle', 'raised', 'raised-hover', 'elevated', 'elevated-hover']) {
@@ -370,7 +372,7 @@ test('every custom family a theme names is a face the build emits', () => {
   assert.ok(declared.size > 0, 'no theme declares a font');
   for (const theme of themes) {
     for (const path of ['sys.font.family.ui', 'sys.font.family.mono']) {
-      const value = resolvedTokens(theme, themes, base)[path];
+      const value = resolvedTokens(theme, base)[path];
       if (String(value).startsWith('{')) continue;
       assert.ok(
         hasLeadingFontSource(value, declared),
@@ -439,7 +441,7 @@ test('every theme keeps its markdown headings above its prose', () => {
   const px = (value) => Number.parseFloat(String(value));
 
   for (const theme of themes) {
-    const values = resolvedTokens(theme, themes, base);
+    const values = resolvedTokens(theme, base);
     const prose = px(values['sys.font.size.prose']);
     const headings = [1, 2, 3, 4].map((level) => px(values[`cmp.markdown.heading-${level}`]));
 
@@ -485,7 +487,7 @@ test('every theme keeps its markdown headings above its prose', () => {
  */
 test('a card composer states its top edge as its frame, and a rule keeps a visible one', () => {
   for (const theme of themes) {
-    const values = resolvedTokens(theme, themes, base);
+    const values = resolvedTokens(theme, base);
     const token = (name) => values[`cmp.composer.${name}`];
     // `0`, `0px`, `0rem` — a zeroed width is the rule shape however it is spelt.
     const rule = /^0(?:[a-z%]+)?$/u.test(String(token('border-width')));
