@@ -6221,17 +6221,19 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 
 :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule.has-attachments textarea { min-height: 67px; }
 
+:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule[data-multiline='true'] .composer-input-shell,
 :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule.has-attachments .composer-input-shell {
   grid-column: 1 / -1;
 }
 
+:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule[data-multiline='true'] :is(textarea, .composer-highlight),
 :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule.has-attachments :is(textarea, .composer-highlight) {
   padding: 9px 14px 34px;
 }
 
 :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-toolbar { display: contents; }
 
-/* Attachments expand the positioned input shell across the controls' grid row.
+/* Attachments and multiline text span the input across the controls' grid row.
    Raise the controls above that shell so the textarea cannot intercept clicks. */
 :is(.workstream-screen, .new-chat-screen) .is-message-capsule :is(.composer-tools, .composer-submit-area) {
   position: relative;

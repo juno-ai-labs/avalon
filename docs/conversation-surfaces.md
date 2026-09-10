@@ -299,6 +299,23 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-10 — Multiline composer text spans above its controls
+
+The message capsule now gives wrapped text and explicit newlines the same full
+width input layout as attachments, with bottom padding reserving the plus and
+send row. Keeping multiline text in the middle column left an empty gutter
+above the plus, making the control look misplaced. Measurement uses the compact
+width before applying the expanded layout so the wider text cannot make the
+layout oscillate. Editing, draft restoration, attachment changes, and composer
+width changes remeasure it; short text returns to the compact row. The mention
+highlight layer shares the inset, and controls retain their raised hit targets.
+Expansion and collapse animate the field height and text inset together over
+220ms using the existing composer easing. Interrupted motion starts at the
+current painted position, the initial render does not animate in, and
+reduced-motion preference applies the final layout immediately.
+Wrap measurement also runs beneath the forced attachment layout, preserving
+multiline state when the final attachment is removed rather than briefly
+returning the text to the compact column.
 ### 2026-09-10 — The both-host feed rules are the base rules
 
 **What changed:** The 47 `app.css` rules scoped
