@@ -202,6 +202,17 @@ Submission returns to the conversation loop so the agent can acknowledge the sav
 or ask about missing details. It does not halt the run: successful conversational
 completion still requires a persisted final assistant turn.
 
+A rule may only name a person the drafting agent resolved, and `people_search`
+is where resolution happens. That search is a substring match over member names
+and emails, so it can answer "Sarah" and can never answer "me" — every result
+therefore also carries `you`, the person the run acts for, read under the same
+active-membership predicate as the matches. The set of admissible person ids is
+seeded with that same id before the agent calls anything: the guard exists so a
+rule cannot name someone the agent *invented*, and the execution principal is
+the one id on the run the host supplied itself. `rememberAutomationPeopleSearchResult`
+restores `you` alongside the matches so a resumed run rebuilding the set from
+replayed tool output agrees with a fresh one.
+
 Instruction-only definitions bypass connector binding, schedule preparation,
 email reservation and memory-table creation. Triggered definitions reuse the
 existing validation and execution setup: bindings resolve against WorkspaceDO,
@@ -660,6 +671,34 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-11 — `people_search` can answer "me"
+
+**What changed:** Every `people_search` result carries `you` — the person the
+run acts for, read under the same active-membership predicate as the match list
+— and `resolvedPersonIds` is seeded with the execution principal's id before the
+drafting agent calls anything. `rememberAutomationPeopleSearchResult` records
+`you.id` so the replay path rebuilds the same set.
+
+**Why:** A run asked to send the person who asked a Slack DM searched the
+directory for the literal string `me`. The search is `LIKE '%me%'` over names
+and emails, so it matched nobody, and the run stopped and asked which person
+that was — holding the id in `input.executionPrincipal` the whole time, four
+lines above the query. Two separate things were missing and each one alone
+would have left it stuck: the search had no notion of self, and the submission
+guard would have rejected the id anyway for not having come out of a search.
+
+**Considered and rejected:** Special-casing the pronoun inside the query — it
+guesses at natural language, and gets no better than a list of English words.
+Loosening the guard so any person id may be submitted — the guard is what stops
+a rule naming a hallucinated person, and the fix was to supply the missing id,
+not to stop checking. Returning `you` only when the query matched nothing —
+the query that needs it is precisely the one that cannot match, so making it
+conditional makes it unreliable for no saving.
+
+**What a future change has to respect:** `you` is a convenience over the
+directory, never a way around it — it is read under the membership predicate,
+so a suspended member is absent from `you` exactly as they are from the matches.
 
 ### 2026-09-10 — The stored names follow the model-facing ones
 

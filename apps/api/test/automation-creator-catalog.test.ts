@@ -250,6 +250,45 @@ describe("automation-creator plugin catalog", () => {
     expect(people.some((person) => person.id === suspendedUserId)).toBe(false);
   });
 
+  it("names the run's own person on a search that matches nobody, so \"me\" resolves", async () => {
+    const localDb = localDatabase();
+    localDb.prepare(`INSERT INTO users (id, name, email) VALUES (?, ?, ?)`)
+      .run(USER_ID, "Ada Lovelace", "ada@rally.example");
+    localDb.prepare(
+      `INSERT INTO workspace_members (workspace_id, user_id, role, status)
+       VALUES (?, ?, 'member', 'active')`,
+    ).run(WORKSPACE_ID, USER_ID);
+
+    const peopleSearch = await automationCreatorTool(localDb, workflowInput(), "people_search");
+    // The literal query that produced this: a run asked to notify the person
+    // asking has no name to search for, and "me" is a substring of neither
+    // "Ada Lovelace" nor "ada@rally.example". The match list is empty and must
+    // stay empty — `you` is what carries the answer.
+    const result = await peopleSearch.execute({ query: "me" }, { toolCallId: "people-me" } as never);
+
+    expect(result.output).toMatchObject({
+      you: { id: USER_ID, name: "Ada Lovelace", email: "ada@rally.example" },
+      people: [],
+    });
+  });
+
+  it("omits the run's own person when they are no longer an active member", async () => {
+    const localDb = localDatabase();
+    localDb.prepare(`INSERT INTO users (id, name, email) VALUES (?, ?, ?)`)
+      .run(USER_ID, "Ada Lovelace", "ada@rally.example");
+    localDb.prepare(
+      `INSERT INTO workspace_members (workspace_id, user_id, role, status)
+       VALUES (?, ?, 'member', 'suspended')`,
+    ).run(WORKSPACE_ID, USER_ID);
+
+    const peopleSearch = await automationCreatorTool(localDb, workflowInput(), "people_search");
+    const result = await peopleSearch.execute({ query: "ada" }, { toolCallId: "people-suspended" } as never);
+
+    // The membership predicate is the same one the match list is filtered by:
+    // `you` is a convenience over the directory, never a way around it.
+    expect(result.output).toEqual({ people: [] });
+  });
+
   it("returns resources visible to the run's user with the connection's model plugin id", async () => {
     const localDb = localDatabase();
     localDb.prepare(

@@ -75,7 +75,10 @@ describe("the automations plugin", () => {
     const people = new Set<string>();
     const resources: AutomationCreatorToolHost["resolvedResources"] = new Map();
 
-    rememberAutomationPeopleSearchResult({ people: [{ id: "person-1" }, { id: 42 }] }, people);
+    rememberAutomationPeopleSearchResult(
+      { you: { id: "person-self" }, people: [{ id: "person-1" }, { id: 42 }] },
+      people,
+    );
     rememberAutomationResourceSearchResult({
       resources: [{
         id: "resource-1",
@@ -85,7 +88,10 @@ describe("the automations plugin", () => {
       }],
     }, resources);
 
-    expect(people).toEqual(new Set(["person-1"]));
+    // `you` is the run's own person, and a replayed search has to restore it
+    // alongside the matches: a rule that names the person who asked for it is
+    // rejected as unresolved if a resumed run rebuilds this set without them.
+    expect(people).toEqual(new Set(["person-self", "person-1"]));
     expect(resources).toEqual(new Map([[
       "resource-1",
       {
