@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEVICE_PREFERENCES_STORAGE_KEY } from '../lib/device-preferences';
-import { AvatarStack, RallyMark, DropdownSelect, Modal, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
+import { AvatarStack, RallyMark, DropdownSelect, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state, theme }: { size: number; state: string; theme?: string }) => (
@@ -85,6 +85,66 @@ describe('StatusDot', () => {
     fireEvent.pointerMove(statusIndicator('Needs intervention'), { pointerType: 'mouse' });
 
     expect(screen.queryByText(/the last run failed and stopped/u)).not.toBeInTheDocument();
+  });
+});
+
+function Segmented({ onChange = () => {} }: { onChange?: (value: string) => void }): React.JSX.Element {
+  return (
+    <SegmentedControl
+      ariaLabel="Outbound access"
+      onChange={onChange}
+      options={[
+        { value: 'trusted', label: 'Trusted only' },
+        { value: 'full', label: 'Full internet' },
+        { value: 'none', label: 'Blocked' },
+      ]}
+      value="full"
+    />
+  );
+}
+
+describe('SegmentedControl', () => {
+  it('offers one tab stop and moves the choice with the arrows', () => {
+    const onChange = vi.fn();
+    render(<Segmented onChange={onChange} />);
+
+    const options = screen.getAllByRole('radio');
+    expect(options.map((option) => option.tabIndex)).toEqual([-1, 0, -1]);
+    expect(screen.getByRole('radio', { name: 'Full internet' })).toBeChecked();
+
+    fireEvent.keyDown(options[1]!, { key: 'ArrowRight' });
+    expect(onChange).toHaveBeenCalledWith('none');
+    expect(document.activeElement).toBe(options[2]);
+  });
+
+  it('wraps past the last segment and jumps to an end', () => {
+    const onChange = vi.fn();
+    render(<Segmented onChange={onChange} />);
+    const options = screen.getAllByRole('radio');
+
+    fireEvent.keyDown(options[1]!, { key: 'ArrowLeft' });
+    expect(onChange).toHaveBeenLastCalledWith('trusted');
+    fireEvent.keyDown(options[1]!, { key: 'Home' });
+    expect(onChange).toHaveBeenLastCalledWith('trusted');
+    fireEvent.keyDown(options[1]!, { key: 'End' });
+    expect(onChange).toHaveBeenLastCalledWith('none');
+    // From the first segment ArrowLeft wraps to the last rather than falling
+    // off the strip. Cleared first: a strip that stops at the edge silently
+    // leaves the previous call standing as the last one.
+    onChange.mockClear();
+    fireEvent.keyDown(options[0]!, { key: 'ArrowLeft' });
+    expect(onChange).toHaveBeenCalledExactlyOnceWith('none');
+    expect(document.activeElement).toBe(options[2]);
+  });
+
+  it('leaves keys it does not own to the surrounding form', () => {
+    const onChange = vi.fn();
+    render(<Segmented onChange={onChange} />);
+
+    fireEvent.keyDown(screen.getAllByRole('radio')[1]!, { key: 'Enter' });
+    fireEvent.keyDown(screen.getAllByRole('radio')[1]!, { key: 'a' });
+
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
 

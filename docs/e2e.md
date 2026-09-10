@@ -121,7 +121,7 @@ of backend authorization; [settings search](settings-search.md) owns the contrac
 2. During Google sign-in, confirm the system browser visits `/auth/desktop/`, its address bar is stripped of the fragment, and the **Open Rally** fallback returns the app to the correct regional session. Confirm the renderer never receives a Google code, token, or native PKCE verifier; relaunching the app before ticket redemption must require starting sign-in again.
 3. Open an invitation while signed out and confirm its workspace, email, role, and region preview through the issuing regional API. Complete sign-in and accept it once; reuse must fail.
 4. While signed into a Global workspace, open an EU invitation. Confirm the current session is not retargeted, the preview still uses the EU API, and the app requires sign-out before continuing with the invited account. Closing the invitation must restore the Global session route.
-5. Open **Rally → Settings…** and press **Command-,**. Confirm both paths focus the same Settings window and show account/session, version/platform/API/realtime diagnostics, immutable region, members, and role-appropriate invitation controls.
+5. Open **Rally → Settings…** and press **Command-,**. Confirm both paths focus the same Settings window and show account/session, the app version under **About**, immutable region, members, and role-appropriate invitation controls. Confirm **Internet access** sits indented under **Workspace** and carries the Terminal outbound-access policy, and that **About** lists the version alone — no build, platform, API base URL, or realtime line.
 6. The Developer section is served by the `developer-settings` flag, whose
 targeting rule matches on the account's **email domain**. Start signed in as a
 **non-staff** account and open **Application**: confirm the section is absent
@@ -287,26 +287,20 @@ use a customer dump for this acceptance run.
    confirm the invalidated generation is purged before a new Crashpad handler can
    start. A failure to write the local preference must leave the toggle disabled
    and must not resume upload.
-5. With the staff-only Developer section enabled, open **Telemetry inspector**.
-   Generate accepted, sampled, disabled, and schema-rejected decisions. Confirm it
-   displays only contract decisions and fixed reason codes: no property values,
-   event/person/workspace identifiers, paths, URLs, email, names, or stack text.
-   Turn the developer flag off and confirm the inspector disappears without
-   changing telemetry policy.
-6. For a fresh pre-workspace session, test Cloudflare country inputs at the
+5. For a fresh pre-workspace session, test Cloudflare country inputs at the
    bootstrap boundary. An affirmative EU country must route the anonymous epoch
    immediately to EU and create no native crash generation. A non-EU, absent,
    malformed, failed, or timed-out country signal must route immediately to
    Global. Confirm neither IP nor country is retained and no pending holding row
    exists. Select a different workspace region later and confirm prior events do
    not move or relabel.
-7. Repeat the semantic flow in an explicit EU workspace. Confirm the events are
+6. Repeat the semantic flow in an explicit EU workspace. Confirm the events are
    queryable from the EU internal projection with release/platform/channel and
    operation/session correlation, but no event, profile, exception, dump, or
    aggregate appears in PostHog or Analytics Engine. Confirm the raw dump,
    artifacts, and processor remain in the EU-jurisdiction telemetry bucket and
    EU-pinned compute.
-8. Run `pnpm --filter @rally/desktop test:crashpad` on the supported macOS-arm64
+7. Run `pnpm --filter @rally/desktop test:crashpad` on the supported macOS-arm64
    release host. It must package the pinned Electron version, produce two real
    renderer Crashpad reports, and prove that the first inactive database survives
    whole-directory rotation before the second handler starts. Then exercise the
@@ -318,7 +312,7 @@ use a customer dump for this acceptance run.
    fingerprint, while raw bytes, absolute paths, memory fragments, and source
    excerpts stay internal. In EU, confirm the occurrence and independently
    expiring fingerprint contribution are internal-only.
-9. Configure disposable, different `support` and `security` operator tokens in
+8. Configure disposable, different `support` and `security` operator tokens in
    each region. Confirm unauthenticated and wrong-token requests to
    `/internal/telemetry/status` fail, while each regional token sees only its own
    fixed snapshot. Verify support can retrieve one synthetic dump only with

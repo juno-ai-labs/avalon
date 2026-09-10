@@ -250,9 +250,6 @@ const browserBridge: RallyDesktopBridge = {
   async reportTelemetryProductIntent() {
     // Public-site/browser telemetry is outside this feature's V1 scope.
   },
-  async getTelemetryInspector() {
-    return [];
-  },
   async reportJavascriptError() {
     // Browser telemetry is outside this feature's V1 scope.
   },
