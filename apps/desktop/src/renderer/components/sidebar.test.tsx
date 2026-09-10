@@ -158,6 +158,24 @@ function note(id: string, title: string, lastActivityAt: string): NoteSummary {
   };
 }
 
+function dropTargetProject(...workstreamIds: string[]) {
+  return ProjectSummarySchema.parse({
+    id: '00000000-0000-7000-8000-0000000000f2',
+    name: 'Hiring',
+    iconKey: 'briefcase',
+    colorKey: 'blue',
+    scope: 'personal',
+    status: 'active',
+    presentationRevision: 1,
+    audienceGeneration: 1,
+    lifecycleGeneration: 1,
+    participants: [{ userId: '00000000-0000-7000-8000-0000000000f1', state: 'active', generation: 1 }],
+    createdAt: '2026-08-27T00:00:00.000Z',
+    updatedAt: '2026-08-27T00:00:00.000Z',
+    workstreamIds,
+  });
+}
+
 describe('Sidebar work-stream markers', () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -1748,6 +1766,80 @@ describe('Sidebar work-stream markers', () => {
     expect(reportTelemetryProductIntent).not.toHaveBeenCalledWith(
       expect.objectContaining({ action: 'archive' }),
     );
+  });
+
+  // The submenu that used to sit between Rename and the scope item is gone. The
+  // neighbours are asserted alongside it because an absence on its own also
+  // holds when the menu never opened, which would pass whatever the menu says.
+  it('given a project, when the row menu opens, then it offers no Add to project', async () => {
+    const target = workstream('menu-projects', 'Quarterly planning', 'completed');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            projects={[dropTargetProject()]}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
+    expect(screen.getByRole('menuitem', { name: 'Archive work stream' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Add to project' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Hiring' })).not.toBeInTheDocument();
+  });
+
+  // A drag that cannot be released anywhere is worse than no drag: it draws a
+  // ghost, takes the pointer, and then does nothing. The conversation-only
+  // sidebar draws no project section, so having projects is not enough.
+  it('given a project but no project section, when a row renders, then it is not draggable', () => {
+    const target = workstream('drag-conversation-only', 'Quarterly planning', 'completed');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            conversationOnly
+            onSignOut={vi.fn()}
+            projects={[dropTargetProject()]}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole('heading', { name: 'Projects' })).not.toBeInTheDocument();
+    expect(document.querySelector(`[data-workstream-id="${target.id}"]`)).toHaveAttribute('draggable', 'false');
+  });
+
+  it('given a project section on screen, when a row renders, then it is draggable onto it', () => {
+    const target = workstream('drag-full-sidebar', 'Quarterly planning', 'completed');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            projects={[dropTargetProject()]}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Projects' })).toBeVisible();
+    expect(document.querySelector(`[data-workstream-id="${target.id}"]`)).toHaveAttribute('draggable', 'true');
   });
 
   it('marks work streams unread on the server and renames from the menu', async () => {
