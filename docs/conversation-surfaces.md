@@ -97,6 +97,24 @@ grows; that edge is the composer's own only while the dock states no padding
 above it, which `app.css.node.test.ts` holds for every rule naming either
 class.
 
+The composer's width is the conversation's, not the pane's. A turn is capped at
+`--turn-width-cap` (640px, in `app.css`), and the work stream's composer stack
+takes three quarters of that same cap and centres it, so the field and the
+bubbles it produces read as one column rather than as a full-width row under a
+narrow transcript. The cap is declared once because the composer cannot read it
+from the turns: it sits outside the scroller, in a box the transcript column's
+percentages never reach. Below a 600px pane the field gives the inset up and
+takes the whole row inside the dock's gutters — the dock is an inline-size
+container named `composer-dock`, so that threshold follows the *pane*, which
+narrows when a sidebar expands and widens when one collapses, where a viewport
+media query would have answered for a width nobody is looking at. A size query
+measures the container's content box, so the number in the query is that pane
+width less the dock's two gutters; `app.css.node.test.ts` holds the two to that
+sum. The new-chat launcher keeps its own full-width field, and travels to the
+conversation's measure over the launcher's own interval when `.is-launching`
+lands — which is why that rule states the full row as `100%` rather than as
+`none`: a keyword cannot be travelled to a length.
+
 The feed's vertical rhythm is one primitive: a row owns the space above it,
 chosen by what precedes it, and no row sets a bottom margin. `MessageFeed`
 decides the gap from the message list (`feedRowGap`, over `feedRowKind`) and
@@ -389,6 +407,48 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — The composer is three quarters of the widest turn
+
+**What changed:** The work stream's composer stack is
+`max-width: calc(var(--turn-width-cap) * .75)` — 480px — centred over the
+transcript, instead of running the full width of the pane. `--turn-width-cap` is
+new: the 640px that was written out in each of the three rules capping a turn is
+now declared once and read by all of them and by the composer. Under a 600px
+pane the field takes the whole row again, through an inline-size container on
+`.workstream-screen .composer-dock` and a `@container` query at 568px, that pane
+less the dock's two 16px gutters. The new-chat launcher's own rule states the
+full row as `max-width: 100%` rather than `none` so the width can travel into
+the conversation's measure at launch instead of cutting to it; that screen
+already carries `.workstream-launch-screen`, whose stack transitions
+`max-width`, so nothing else was needed for it.
+
+**Why:** The field ran to both edges of the pane while every message in it
+stopped well short of them, so the one element a person types into was the widest
+thing on screen and belonged to no column. Three quarters of the cap rather than
+the cap itself keeps the field visibly narrower than the turn it becomes; the
+number is the design's, not a derivation. The cap is what both ends read, so it
+is named — the composer cannot arrive at it any other way, sitting as it does
+outside the scroller where the column's percentages do not reach.
+
+**Considered and rejected:** Reconstructing the transcript's *measure* in the
+composer — the pane, less the scrollbar gutter `.transcript-scroll` reserves,
+capped at the feed width, less the column's own padding — and taking three
+quarters of the full `min(88%, cap, 100% - 82px)` over it. It agrees with the
+shipped rule at every pane over ~800px, differing only where the column is
+narrow enough that a turn is capped by the column instead of by 640px, and it
+buys that agreement with an equation nobody can read a width off and a
+dependency on two lengths (the scrollbar gutter, and a column padding that
+changes at another breakpoint) that would drift silently. A viewport media query
+for the narrow branch was rejected outright: the pane is not the viewport here.
+
+**Consequences:** Between a 600 and roughly an 800px pane the field can be a few
+pixels wider than the widest turn, because a turn is capped by the column there
+and the field is not; the narrow branch below 600px is deliberately wider still.
+The composer is centred on the pane while the transcript column is centred
+inside the scroller's gutter, so the two centres differ by half a scrollbar —
+4.5px, as they already did. Every conversation on the shared surface moves with
+this, a Sidekick's included, which is the point: it is one surface.
 
 ### 2026-09-10 — One Sidekicks section, under the people, in both of a room's rails
 

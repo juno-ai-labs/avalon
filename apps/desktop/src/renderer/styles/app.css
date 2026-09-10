@@ -5198,6 +5198,19 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   .plugin-face-active { opacity: 1; }
 }
 
+/* The widest a turn is ever drawn.
+
+   Named because it is read from two places that cannot see each other. A turn
+   caps at this inside the transcript column, and the composer under that column
+   takes a fraction of the same number — and the composer sits outside the
+   scroller, in a box the column's percentages never reach, so it cannot arrive
+   at the cap any other way than by being handed it. The other two terms of a
+   turn's `max-width` stay literal: they are the column's own shape (a share of
+   it, and an inset from its far edge), which nothing outside the column asks
+   about. Rule-local rather than a registry token because it is the feed's
+   layout arithmetic and not an appearance either theme has an opinion about. */
+:root { --turn-width-cap: 640px; }
+
 /* Work-stream conversation refinement: continuous transcript, compact human turns,
    quiet tool disclosures, and a low fixed composer. */
 .workstream-screen .transcript-column {
@@ -5206,7 +5219,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 .agent-message {
-  max-width: min(88%, 640px, calc(100% - 82px));
+  max-width: min(88%, var(--turn-width-cap), calc(100% - 82px));
   min-width: 0;
   width: fit-content;
 }
@@ -5253,7 +5266,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
      thing a screenshot pass looks straight past. */
   --turn-bubble-radius: calc(var(--av-sys-size-radius-xl) + 6px);
   margin-left: auto;
-  max-width: min(88%, 640px, calc(100% - 82px));
+  max-width: min(88%, var(--turn-width-cap), calc(100% - 82px));
   min-width: 0;
   width: fit-content;
 }
@@ -6199,6 +6212,14 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
      became an opaque rectangle cutting the canvas off at the sidebar's edge. */
   background: none;
   bottom: auto;
+  /* The dock is the pane's width, so it is the one box that can tell the
+     composer inside it how much pane there is. A container rather than a media
+     query because the pane is not the viewport: two sidebars and the rail take
+     their room out of it, and a query on the window answers for a width nobody
+     is looking at. Named, so the query below cannot drift onto some future
+     container between here and the stack. Only the inline size is contained —
+     the dock's height is still the composer's, which is the draft's. */
+  container: composer-dock / inline-size;
   left: auto;
   padding: 0 16px 16px;
   pointer-events: none;
@@ -6217,9 +6238,25 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   border-color: var(--av-cmp-composer-border-color);
 }
 
+/* The field is three quarters of the widest a turn is ever drawn, centred over
+   the same column. Full width said nothing about the conversation above it: the
+   composer ran to both edges of the pane while every message in it stopped well
+   short of them, so the one element a person types into was the widest thing on
+   screen. Three quarters rather than the cap itself keeps the field visibly
+   narrower than the turn it becomes. */
 .workstream-screen .composer-stack {
-  max-width: none;
+  max-width: calc(var(--turn-width-cap) * .75);
   width: 100%;
+}
+
+/* Under a pane this narrow the inset stops being a margin and starts being a
+   waste: the field would sit in the middle of a column barely wider than
+   itself. It takes the row instead, inside the dock's own gutters.
+   568px is that 600px pane less those two 16px gutters — a size query reads the
+   container's content box, which is inside them; `app.css.node.test.ts` holds
+   the two numbers to that sum so neither can move alone. */
+@container composer-dock (width < 568px) {
+  .workstream-screen .composer-stack { max-width: none; }
 }
 
 /* A card or a rule, out of the same five values.
@@ -6534,7 +6571,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   }
 
   .workstream-screen :is(.human-message, .agent-message) {
-    max-width: min(88%, 640px, calc(100% - 82px));
+    max-width: min(88%, var(--turn-width-cap), calc(100% - 82px));
   }
 
   .workstream-screen .composer-dock {
@@ -6991,7 +7028,13 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   right: 0;
 }
 
-.new-chat-screen:not(.is-launching) .composer-stack { max-width: none; width: 100%; }
+/* The full row, as a length rather than as `none`. This screen also carries
+   `.workstream-launch-screen`, so its stack already transitions `max-width` —
+   but the moment `.is-launching` lands the field takes the conversation's
+   narrower measure, and a keyword cannot be travelled to a length: the width
+   would cut on the one frame the launch exists to make continuous. `100%` is
+   the same box, and it interpolates. */
+.new-chat-screen:not(.is-launching) .composer-stack { max-width: 100%; width: 100%; }
 .new-chat-screen:not(.is-launching) .launch-composer {
   background: var(--av-cmp-composer-background);
   border: var(--av-cmp-composer-border-width) solid var(--av-cmp-composer-border-color);
