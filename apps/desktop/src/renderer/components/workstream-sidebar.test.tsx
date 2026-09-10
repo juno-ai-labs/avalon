@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamResource } from '../lib/types';
-import { asSubstreamId, asUserId } from '@rally/contracts';
+import { SITE_MANIFEST_MIME_TYPE, asSubstreamId, asUserId } from '@rally/contracts';
 import { WorkstreamSidebar } from './workstream-sidebar';
 
 const artifact: WorkstreamResource = {
@@ -227,6 +227,21 @@ describe('WorkstreamSidebar', () => {
     const tip = await screen.findByRole('tooltip');
     expect(tip).toHaveClass('tooltip');
     expect(tip).toHaveTextContent('Launch draft.md');
+  });
+
+  it('marks a site by what it is, including one still typed as the file it was published from', () => {
+    // `swapPublishedContent` rewrites `mime_type` on an archive\u2192site upgrade and
+    // never `resource_type`, so a live site reaches this rail as a
+    // `generated_file`. Reading the raw type here is what drew it as a sheet of
+    // paper while the row beside it opened a live page.
+    setup({ ...workstream, resources: [
+      { ...artifact, id: 'site-fresh', title: 'Launch dashboard', resourceType: 'generated_site', mimeType: SITE_MANIFEST_MIME_TYPE },
+      { ...artifact, id: 'site-upgraded', title: 'Offsite RSVP', resourceType: 'generated_file', mimeType: SITE_MANIFEST_MIME_TYPE },
+    ] });
+    for (const title of ['Launch dashboard', 'Offsite RSVP']) {
+      const row = screen.getByRole('button', { name: `Open ${title}` });
+      expect(row.querySelector('.tabler-icon-rosette-asterisk'), title).not.toBeNull();
+    }
   });
 
   it('drops the artifact section entirely until a work stream has one', () => {
