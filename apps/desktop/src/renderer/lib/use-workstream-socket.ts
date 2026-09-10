@@ -545,9 +545,8 @@ export function applyHarnessStatus(
  * `latest_mention_attention_ordinal > seen_attention_ordinal` rather than
  * storing it: the write that advances the author's own seen ordinal past a
  * mention clears the flag too. Leaving it set would defeat the point of the
- * rule — `mentioned` outranks `unread` in `MARKER_PRECEDENCE` and puts the row
- * in **Needs attention** — so the reader's own reply would swap one wrongly lit
- * dot for a louder one. Unlike the manual mark this *can* be fenced honestly:
+ * rule — `mentioned` outranks `unread` in `MARKER_PRECEDENCE` — so the reader's
+ * own reply would swap one wrongly lit dot for a louder one. Unlike the manual mark this *can* be fenced honestly:
  * it is cleared only when the arriving turn is the newest attention event this
  * client knows of, so a mention that landed after it survives a replay.
  *
