@@ -46,6 +46,9 @@ import {
 } from './sidebar-list-store';
 import { realtimeSocketTelemetry } from './socket-telemetry';
 import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { retainConversationParents } from './conversation-cache';
+import { useLocalCacheScope } from './local-cache-scope';
+import { hydrateWorkspaceDirectory, mirrorWorkspaceDirectory } from './workspace-directory-cache';
 
 type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
 type WorkspaceSocketApi = Pick<RallyApi, 'getWorkspaceSocketTicket'>;
@@ -191,6 +194,7 @@ export function WorkspaceSocketProvider({
   workspaceId: string;
 }>): React.JSX.Element {
   const queryClient = useQueryClient();
+  const localCacheScope = useLocalCacheScope();
   const [state, setState] = useState<WorkspaceSocketState>('connecting');
   const [topicWaterlines, setTopicWaterlines] = useState<Partial<Record<WorkspaceSyncTopic, number>>>({});
   const [sidebarConnect, setSidebarConnect] = useState<SidebarConnect | null>(null);
@@ -220,6 +224,12 @@ export function WorkspaceSocketProvider({
     let presenceRevision = 0;
     const pendingDirectoryRequests = new Map<string, PendingDirectoryRequest>();
     let subscribed = false;
+    /**
+     * Whether the lists in the query cache are the socket's. Until the first
+     * subscribe answer they may be the local cache's own seed, and the mirror
+     * must not write a seed back over the row it came from.
+     */
+    let directoryLive = false;
     let applicationForegrounded = false;
     let applicationFocusObservation = 0;
     let windowForegrounded = document.visibilityState === 'visible' && document.hasFocus();
@@ -323,6 +333,17 @@ export function WorkspaceSocketProvider({
         sidebar.notes.nextCursor,
       );
       if (sidebar.projects) applyVersionedProjectSnapshot(queryClient, sidebar.projects);
+      directoryLive = true;
+      // The directory is the bound on the conversation cache: a conversation
+      // stays on disk for as long as its parent is a row here. Page one is
+      // the whole of what this payload can vouch for, so a conversation
+      // opened from a later page is forgotten and re-cached on its next open.
+      if (localCacheScope !== null) {
+        void retainConversationParents(localCacheScope, new Set([
+          ...page.items.map((workstream) => workstream.id),
+          ...sidebar.automations.items.map((automation) => automation.id),
+        ]));
+      }
       setSidebarConnect((current) => ({
         generation: (current?.generation ?? 0) + 1,
         nextCursor: page.nextCursor,
@@ -648,9 +669,17 @@ export function WorkspaceSocketProvider({
     };
     window.addEventListener('online', online);
     window.addEventListener('offline', offline);
+    // The sidebar paints from the disk while the ticket and the handshake are
+    // still in flight; the subscribe answer then applies over it through the
+    // ordinary receivers, whose ledgers a seed never touches.
+    const localCacheMirror = localCacheScope === null
+      ? null
+      : mirrorWorkspaceDirectory(queryClient, localCacheScope, { live: () => directoryLive });
+    if (localCacheScope !== null) void hydrateWorkspaceDirectory(queryClient, localCacheScope, () => !stopped);
     void connect();
     return () => {
       stopped = true;
+      localCacheMirror?.stop();
       listWorkstreamsRef.current = () => Promise.reject(new ApiError(
         'The workspace is no longer connected.',
         409,
@@ -673,7 +702,7 @@ export function WorkspaceSocketProvider({
       clearHeartbeat();
       socket?.close();
     };
-  }, [api, onAccessRevoked, queryClient, workspaceId]);
+  }, [api, localCacheScope, onAccessRevoked, queryClient, workspaceId]);
 
   const listWorkstreams = useCallback<WorkspaceSocketContextValue['listWorkstreams']>(
     (input) => listWorkstreamsRef.current(input),

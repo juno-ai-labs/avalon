@@ -3675,6 +3675,38 @@ pre {
 .jump-bottom:focus-visible { border-color: var(--av-sys-color-focus-default); outline: 0; }
 .jump-bottom[aria-hidden="true"] { pointer-events: none; }
 
+/* The card over a screen painted from the local cache while its socket is
+   still opening. The slot is a zero-height sticky row at the top of whatever
+   scrolls beneath it, so the card floats over the first rows without pushing
+   them down and without a layout jump when it goes; a host without a scroller
+   makes the slot absolute instead. */
+.connection-card-slot { display: flex; height: 0; justify-content: center; pointer-events: none; position: sticky; top: var(--space-3); z-index: 4; }
+.connecting-card {
+  align-items: center;
+  animation: fade-in 160ms ease-out;
+  background: var(--av-sys-color-surface-elevated);
+  border: 1px solid var(--av-ref-color-line-4);
+  border-radius: var(--av-sys-size-radius-pill);
+  box-shadow: var(--av-sys-elevation-shadow-md);
+  color: var(--av-sys-color-text-subtle);
+  display: flex;
+  font-size: 12px;
+  gap: var(--space-2);
+  max-width: min(100% - var(--space-8), 440px);
+  padding: 6px 14px 6px 10px;
+  pointer-events: auto;
+}
+.connecting-card-icon { color: var(--av-sys-color-text-muted); display: grid; flex: 0 0 auto; place-items: center; }
+.connecting-card.is-failed .connecting-card-icon { color: var(--av-sys-color-danger-base); }
+.connecting-card-copy { display: grid; min-width: 0; }
+.connecting-card-sentence { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connecting-card-sentence strong { color: var(--av-sys-color-text-default); font-weight: 570; }
+.connecting-card-copy small { color: var(--av-sys-color-text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connecting-card > .button { flex: 0 0 auto; }
+@media (prefers-reduced-motion: reduce) { .connecting-card { animation: none; } }
+.project-space-frame { height: 100%; position: relative; }
+.project-space-frame > .connection-card-slot { left: 0; position: absolute; right: 0; top: var(--space-3); }
+
 /* Composer */
 
 .composer-dock { background: linear-gradient(to bottom, transparent, var(--av-sys-color-surface-default) 18%); bottom: 0; left: 0; padding: 0 16px 16px; position: absolute; right: 0; z-index: 3; }

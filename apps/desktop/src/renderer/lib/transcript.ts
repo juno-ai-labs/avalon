@@ -1425,6 +1425,39 @@ function activitiesForTurns(
 }
 
 /**
+ * The snapshot as an opening would have delivered it: the unread and latest
+ * ranges, and nothing the reader paged into afterwards.
+ *
+ * This is the shape the local cache keeps, and the reason is what happens when
+ * the socket answers. Its first frame is an `initial` snapshot, which replaces
+ * the transcript whole rather than merging — the room has no proof that turns
+ * outside its bounded opening ranges did not change while this client was
+ * away, so paged history is never relabelled under a new fence. A cached
+ * transcript that carried that history would therefore paint three hundred
+ * turns and then collapse to sixteen the moment the live frame arrived. Keeping
+ * only the opening ranges makes the seed and its replacement the same shape,
+ * so the swap is invisible in the common case and never a collapse. Activities
+ * and plugin runs follow the turns they belong to, exactly as a reconcile keeps
+ * them, so the rows that survive still render their timing.
+ */
+export function openingTranscriptSnapshot(
+  snapshot: WorkstreamTranscriptSnapshot,
+): WorkstreamTranscriptSnapshot {
+  const ranges = snapshot.ranges.filter((range) => range.purpose !== 'requested');
+  if (ranges.length === snapshot.ranges.length) return snapshot;
+  const turns = [...ranges.flatMap((range) => range.turns), ...snapshot.activeTurns];
+  const retainedTurnIds = new Set(turns.map((turn) => turn.turnId));
+  const activities = activitiesForTurns(snapshot.activities, turns);
+  return {
+    ...snapshot,
+    ranges,
+    activities,
+    activeActivities: activities.filter((activity) => activity.state === 'active'),
+    pluginRuns: snapshot.pluginRuns.filter((run) => retainedTurnIds.has(run.turnId)),
+  };
+}
+
+/**
  * Apply a fresh canonical snapshot without turning its deliberately bounded
  * opening ranges into a deletion of history this reader already loaded. The
  * new snapshot is authoritative inside its covered intervals; only older

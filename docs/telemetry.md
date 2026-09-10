@@ -161,11 +161,13 @@ inheriting time spent elsewhere. The
 visible outcome accompanies `workstream_feed_visible`, which records exact
 click-to-data-ready and click-to-first-painted-feed milliseconds, the
 pinned/recent section, the detail/transcript cache state, the pooled-socket
-state at click, the feed source (`feed_cache`, `socket_snapshot`, or
-`boot_payload`), and only a count bucket for messages. The normal cold path is
+state at click, the feed source (`feed_cache`, `socket_snapshot`,
+`boot_payload`, or `local_cache`), and only a count bucket for messages. The normal cold path is
 explicitly
 `socket_snapshot`; `boot_payload` identifies manual REST recovery, while
-`feed_cache` identifies an already-present transcript. Each
+`feed_cache` identifies an already-present transcript and `local_cache` a
+transcript the renderer's on-device cache painted before the socket answered
+([`local-cache.md`](local-cache.md)). Each
 detail request keeps a unique
 `x-request-id`, including React Query retries, and carries the click ID separately
 as `x-rally-operation-id`; the Worker's `workstream.detail.read` span records both.
@@ -711,6 +713,24 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-09-10 — Feed telemetry names a paint from the local cache
+
+**What changed:** `workstream_feed_visible.feedSource` accepts `local_cache`,
+reported when the transcript that painted came from the renderer's on-device
+cache rather than a socket frame. The send-ready milestone is not reported
+for that paint, since its composer cannot send until the live snapshot lands.
+
+**Why:** A cached paint is a painted feed, and it is the whole point of the
+cache that it happens before any socket work completes; reporting it as
+`feed_cache` would make the already-resident and the remembered cases
+indistinguishable, and reporting nothing would hide the wins the cache is
+meant to produce.
+
+**Consequences:** A `local_cache` open, like a `feed_cache` one, has no
+detail request to join by design. Percentiles of click-to-painted-feed now
+include paints the socket had no part in; read the source before comparing
+them with earlier weeks.
+
 ### 2026-09-10 — The desktop telemetry inspector is withdrawn
 
 **What changed:** The staff-only **Telemetry inspector** pane in
@@ -735,6 +755,7 @@ name moved instead, so nothing still points at a pane that is gone.
 **Consequences:** Renderer-visible telemetry state is now the **Product
 analytics** preference and its status lines, nothing else. A future debugging
 surface for decisions is a new decision, not a restoration.
+
 
 ### 2026-09-08 — The `demos` credential leaves the telemetry map
 

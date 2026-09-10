@@ -195,6 +195,7 @@ own:
 | The create path a submitted draft becomes | [`workstream-creation.md`](workstream-creation.md) |
 | Draft resources, their upload endpoint, and the 24-hour reaper | [`data-model.md`](data-model.md), [`architecture.md`](architecture.md) |
 | What may be written under `userData` at all | [`security.md`](security.md) |
+| The transcript and directory a screen paints from before its socket answers, which is a separate database with a separate lifetime | [`local-cache.md`](local-cache.md) |
 
 Nothing outside the renderer reads this cache, and nothing in it is authoritative:
 a draft is a convenience over state the server has never been told about.
