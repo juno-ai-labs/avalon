@@ -1,6 +1,7 @@
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { PROJECT_COLOR_RING, type WorkstreamAppearance } from '@rally/contracts';
+import { glyphInk } from '../lib/project-palette';
 import { Plus } from 'lucide-react';
 import { AutomationGlyph, HexagonGlyph, resolveWorkstreamAppearance, WorkstreamGlyph, WorkstreamMark, workstreamAppearance, type ResolvableAppearance } from './workstream-glyph';
 
@@ -99,6 +100,23 @@ describe('HexagonGlyph', () => {
     expect(shape?.getAttribute('d')).toBe(slot.querySelector('.automation-glyph-shape')?.getAttribute('d'));
     expect(shape).toHaveAttribute('fill', 'var(--av-sys-color-project-lime)');
     expect(slot.querySelector('.automation-glyph-shape')).toHaveAttribute('fill', 'none');
+  });
+
+  it('keeps the identity glyph inked and symbolled from its own id across the extraction', () => {
+    // The fill, the ink and the symbol used to be set inline in
+    // `AutomationGlyph`; all three are props threaded through `HexagonGlyph`
+    // now. Dropping or transposing one would leave every existing Sidekick tile
+    // with the wrong icon, or a symbol inked for a fill it is not on, and the
+    // suite would stay green — the tests above only cover the action tile's.
+    const { container } = render(<AutomationGlyph id="launch-room" />);
+    const glyph = container.querySelector<HTMLElement>('.automation-glyph');
+    const { color, colorKey, Icon } = resolveWorkstreamAppearance('launch-room');
+
+    expect(container.querySelector('.automation-glyph-shape')).toHaveAttribute('fill', color);
+    expect(glyph?.style.getPropertyValue('--glyph-ink')).toBe(glyphInk(colorKey));
+    // `lime` takes black ink, so this is the pairing a transposition breaks.
+    expect(glyph?.style.getPropertyValue('--glyph-ink')).toBe('var(--av-sys-color-palette-ink-dark)');
+    expect(container.querySelector('svg svg')).toHaveClass(render(<Icon />).container.querySelector('svg')?.getAttribute('class') ?? '');
   });
 
   it('carries the symbol and the ink it was given, and stays out of the accessibility tree', () => {

@@ -420,13 +420,18 @@ function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
  * lifecycle marker is the part that is not shared: an action has no lifecycle,
  * and `status` is absent rather than neutral for it.
  */
-function SidekickStripTile({ glyph, label, name, onClick, status, title }: {
+function SidekickStripTile({ active = false, glyph, label, name, onClick, title }: {
+  /**
+   * Draws the lifecycle marker. A boolean rather than the state, because
+   * `active` is the only lifecycle the strip renders — the others are excluded
+   * from it — and an action tile has no lifecycle at all.
+   */
+  active?: boolean;
   glyph: React.ReactNode;
   /** What the tile is called to a screen reader, which the caption cannot be: it is truncated. */
   label: string;
   name: string;
   onClick: () => void;
-  status?: { className: string; label: string } | undefined;
   title: string;
 }): React.JSX.Element {
   return (
@@ -440,10 +445,10 @@ function SidekickStripTile({ glyph, label, name, onClick, status, title }: {
       >
         <span className="automation-tile-glyph" aria-hidden="true">
           {glyph}
-          {status && <span className={clsx('automation-tile-state', status.className)}><span className="status-dot" /></span>}
+          {active && <span className="automation-tile-state active"><span className="status-dot" /></span>}
         </span>
         <span className="automation-tile-name">{name}</span>
-        {status && <span className="sr-only">{status.label}</span>}
+        {active && <span className="sr-only">Active</span>}
       </button>
     </div>
   );
@@ -453,11 +458,11 @@ function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.
   const scopeDescription = sidekick.scope === 'workspace' ? ' · Workspace' : '';
   return (
     <SidekickStripTile
+      active
       glyph={<AutomationGlyph id={sidekick.id} />}
       label={`${sidekick.name}, Active${scopeDescription}`}
       name={sidekick.name}
       onClick={() => void desktopBridge().openSidekicks(sidekick.id)}
-      status={{ className: 'active', label: 'Active' }}
       title={`${sidekick.name} · Active${scopeDescription}`}
     />
   );
@@ -1742,7 +1747,11 @@ export function Sidebar({
   // another on every press: the strip would sit there in exactly the state that
   // makes re-firing it cheap, and each press abandons the draft before it.
   const sidekickShortcuts = (standaloneSidekicks.length > 0 || workspaceHasNoSidekicks) && (
-    <section className="sidebar-automation-strip" aria-label="Sidekick shortcuts" onClick={() => setSidebarOpen(false)}>
+    <section
+      aria-label={standaloneSidekicks.length > 0 ? 'Sidekick shortcuts' : 'Sidekicks'}
+      className="sidebar-automation-strip"
+      onClick={() => setSidebarOpen(false)}
+    >
       {standaloneSidekicks.length > 0
         ? standaloneSidekicks.map((sidekick) => <SidekickTile key={sidekick.id} sidekick={sidekick} />)
         : <NewSidekickTile />}

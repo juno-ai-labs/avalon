@@ -96,6 +96,7 @@ import {
 import { logError, logWarn } from '../common/logger';
 import { parseDesktopSettingsSection } from '../common/settings';
 import { parseSidekicksWindowTarget } from '../common/sidekicks';
+import type { SidekicksWindowTarget } from '../common/sidekicks';
 import type { DesktopSettingsSection } from '../common/settings';
 import { fontScheme } from '../common/theme-assets';
 import {
@@ -4183,8 +4184,8 @@ async function createSettingsWindow(section?: DesktopSettingsSection): Promise<v
   await loadRenderer(settingsWindow, rendererUrl('settings', section), 'settings');
 }
 
-/** `requestedTarget` is already parsed: a Sidekick id, or the composer. */
-async function createSidekicksWindow(requestedTarget?: string): Promise<void> {
+/** The branded type is the guarantee: only a parsed target can reach the hash. */
+async function createSidekicksWindow(requestedTarget?: SidekicksWindowTarget): Promise<void> {
   const target = new URL(rendererUrl('sidekicks'));
   if (requestedTarget) target.hash = `/sidekicks/${requestedTarget}`;
   if (sidekicksWindow && !sidekicksWindow.isDestroyed()) {
