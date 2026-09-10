@@ -4154,7 +4154,7 @@ async function createDeepLinkErrorWindow(message: string): Promise<void> {
 }
 
 const settingsWindowController = new SettingsWindowController({
-  createWindow: async (section, callbacks) => {
+  createWindow: (section, callbacks) => {
     const window = new BrowserWindow({
       width: 960,
       height: 720,
@@ -4181,15 +4181,24 @@ const settingsWindowController = new SettingsWindowController({
 
     installWindowDiagnostics(window, 'settings');
     window.setMenuBarVisibility(false);
-    // Both wired before the load starts: a window that fails to load is
-    // destroyed, and `ready-to-show` regularly beats `loadURL`'s promise, so a
-    // listener attached after the await is a listener attached after the event.
+    // Both wired before the load starts, because both can fire during it:
+    // `ready-to-show` regularly beats `loadURL`'s promise, and a window can be
+    // closed before it finishes loading. A listener attached after the load is
+    // a listener attached after the event.
     window.once('ready-to-show', () => callbacks.onReadyToShow());
-    window.on('closed', () => {
+    const handleClosed = (): void => {
       if (settingsWindow === window) settingsWindow = null;
       callbacks.onClosed();
-    });
-    await loadRenderer(window, rendererUrl('settings', section ?? undefined), 'settings');
+    };
+    window.on('closed', handleClosed);
+    const release = (): void => {
+      // Detached first: `destroy()` still emits `closed`, and the controller
+      // already knows this window is finished — letting the callback run would
+      // have it treat a disposal as somebody closing Settings, and rebuild.
+      window.off('closed', handleClosed);
+      if (settingsWindow === window) settingsWindow = null;
+      if (!window.isDestroyed()) window.destroy();
+    };
     return {
       isDestroyed: () => window.isDestroyed(),
       isMinimized: () => window.isMinimized(),
@@ -4197,6 +4206,8 @@ const settingsWindowController = new SettingsWindowController({
       show: () => window.show(),
       focus: () => window.focus(),
       deliverSection: (next) => requestSettingsSection(window, next),
+      load: () => loadRenderer(window, rendererUrl('settings', section ?? undefined), 'settings'),
+      destroy: release,
     };
   },
   // A window is worth having in advance only for somebody who could open it: a

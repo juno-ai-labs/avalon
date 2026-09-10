@@ -3,12 +3,18 @@ import type { DesktopSettingsSection } from '../common/settings';
 /**
  * The window itself, narrowed to what the lifecycle below actually touches.
  *
- * `ready-to-show` and `closed` are not on here: both can fire before the
- * factory's promise resolves — a load that fails destroys the window, and
- * `ready-to-show` routinely beats `loadURL` — so they are handed to the factory
- * as callbacks and wired the moment the window is constructed. A listener this
- * interface let the controller attach afterwards would be a listener attached
- * after the event it is waiting for.
+ * `ready-to-show` and `closed` are not on here: both can fire while the window
+ * is still loading — `ready-to-show` routinely does, and somebody can close a
+ * window before it finishes — so they are handed to the factory as callbacks and
+ * wired the moment the window is constructed. A listener this interface let the
+ * controller attach afterwards would be a listener attached after the event it
+ * is waiting for.
+ *
+ * Loading is a method rather than something the factory has already done,
+ * because a load that fails leaves a real window and a real renderer process
+ * behind and somebody has to dispose of them. That somebody is this controller,
+ * which owns every other part of the window's life — and a handle it never
+ * received is a window it cannot release.
  */
 export interface SettingsWindowHandle {
   isDestroyed(): boolean;
@@ -18,6 +24,15 @@ export interface SettingsWindowHandle {
   focus(): void;
   /** Ask the renderer to move to a section, for a window that already exists. */
   deliverSection(section: DesktopSettingsSection): void;
+  /** Start the renderer load. Rejects when the window could not load. */
+  load(): Promise<void>;
+  /**
+   * Tear down a window that will never be shown, without running `onClosed`.
+   * The controller calls this only when it already knows the window is
+   * finished, so the callback would tell it what it just decided — and the
+   * rebuild that callback triggers would loop on a window that cannot load.
+   */
+  destroy(): void;
 }
 
 export interface SettingsWindowLifecycleCallbacks {
@@ -27,14 +42,15 @@ export interface SettingsWindowLifecycleCallbacks {
 
 export interface SettingsWindowControllerDependencies {
   /**
-   * Builds the window, hidden, wires the two callbacks before loading anything,
-   * and resolves once its renderer has been told to load. `section` is baked
-   * into the URL so a cold open lands on the right pane in its first paint.
+   * Builds the window, hidden, and wires the two callbacks — without loading
+   * anything yet, which the controller starts through the handle. `section` is
+   * baked into the URL so a cold open lands on the right pane in its first
+   * paint.
    */
   createWindow(
     section: DesktopSettingsSection | null,
     callbacks: SettingsWindowLifecycleCallbacks,
-  ): Promise<SettingsWindowHandle>;
+  ): SettingsWindowHandle;
   /** Whether a window may be built before anybody has asked to see one. */
   mayPrewarm(): boolean;
   reportError(error: unknown): void;
@@ -136,7 +152,7 @@ export class SettingsWindowController {
     this.pendingSection = null;
     this.ready = false;
     this.closed = false;
-    const window = await this.dependencies.createWindow(section, {
+    const window = this.dependencies.createWindow(section, {
       onReadyToShow: () => {
         this.ready = true;
         this.revealIfReady();
@@ -149,10 +165,23 @@ export class SettingsWindowController {
         void this.prewarm();
       },
     });
-    // A window destroyed while it loaded has already run `onClosed`. Adopting it
-    // now would leave a destroyed window as the one this controller shows.
-    if (this.closed || window.isDestroyed()) return;
+    // Adopted before the load rather than after it, so that `ready-to-show`
+    // arriving mid-load — which is the normal case — has a window to reveal.
     this.window = window;
+    try {
+      await window.load();
+    } catch (error) {
+      // Nothing else holds this window. Electron does not dispose one whose
+      // load failed, so leaving it here would strand a blank window and its
+      // renderer process for the life of the process, and the next attempt
+      // would strand another.
+      if (this.window === window) this.forget();
+      if (!window.isDestroyed()) window.destroy();
+      throw error;
+    }
+    // Closed while it loaded: `onClosed` has already run and cleared the state
+    // above, so there is nothing left to reveal.
+    if (this.closed || window.isDestroyed()) return;
     this.revealIfReady();
   }
 
