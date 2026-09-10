@@ -1,3 +1,4 @@
+import { ConversationAdmissionProvider } from '../lib/conversation-admission';
 import { AccountProfileEditor } from '../lib/account-profile-editor';
 import { settings } from '../settings/registry';
 import { SettingLabel } from '../settings/setting-label';
@@ -15,6 +16,7 @@ import { OnboardingIntroduction } from '../components/onboarding-introduction';
 import type { Workspace } from '../lib/types';
 import { connectorProviders } from '../lib/connector-catalog';
 
+const AccountLoadingContext = createContext(false);
 const ProfileEditorContext = createContext<AccountProfileEditor | null>(null);
 const AccountContext = createContext<AccountOnboarding | null>(null);
 export function useOnboardingAccount(): AccountOnboarding | null { return useContext(AccountContext); }
@@ -61,7 +63,7 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
     if (account.error) return <OnboardingPage title="Let's pick up where you left off" footer={<><Button onClick={() => void account.refetch()}>Retry</Button><Button onClick={() => void signOut()}>Sign out</Button></>}><InlineError>{account.error.message}</InlineError></OnboardingPage>;
     return <OnboardingPage title="Opening Rally"><RallyMark /></OnboardingPage>;
   }
-  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data ?? null}><ProfileEditorContext.Provider value={account.data ? editor : null}>{account.data?.eligible && !account.data.introduced ? <PlatformIntroduction previewed={previewed} /> : children}</ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
+  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data ?? null}><ProfileEditorContext.Provider value={account.data ? editor : null}><AccountLoadingContext.Provider value={account.isPending || account.isFetching}><ConversationAdmissionProvider allowed={Boolean(account.data ? !account.data.eligible || account.data.introduced : account.error)}>{account.data?.eligible && !account.data.introduced ? <PlatformIntroduction previewed={previewed} /> : children}</ConversationAdmissionProvider></AccountLoadingContext.Provider></ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
 }
 
 export function OnboardingPage({ title, subtitle, children, footer }: { title: string; subtitle?: string; children: ReactNode; footer?: ReactNode }): React.JSX.Element {
@@ -143,6 +145,8 @@ function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> })
 
 function AccountProfileSettings({ profileDetails }: { profileDetails?: (name: string) => ReactNode }): React.JSX.Element {
   const editor = useContext(ProfileEditorContext);
+  const loading = useContext(AccountLoadingContext);
+  if (!editor && loading) return <p role="status">Loading account profile…</p>;
   if (!editor) return <InlineError>Account profile is unavailable.</InlineError>;
   return <AccountProfileFields editor={editor} profileDetails={profileDetails} />;
 }
@@ -167,13 +171,13 @@ function AccountProfileFields({ editor, profileDetails }: { editor: AccountProfi
   </div>;
 }
 
-export function WorkspaceOnboardingJourney({ workspace, children }: { workspace: Workspace; children: ReactNode }): React.JSX.Element {
+export function WorkspaceOnboardingJourney({ workspace, children }: { workspace: Workspace | null; children: ReactNode }): React.JSX.Element {
   const account = useOnboardingAccount();
   const { api, setPendingConnectorOAuth } = useAppSession();
   const queryClient = useQueryClient();
   const openFirstWorkstream = useOpenFirstWorkstream();
-  const key = ['onboarding-journey', workspace.region, workspace.id, workspace.currentUser.id];
-  const journey = useQuery({ queryKey: key, queryFn: () => api!.getOnboardingJourney(), enabled: Boolean(api && account?.eligible) });
+  const key = ['onboarding-journey', workspace?.region, workspace?.id, workspace?.currentUser.id];
+  const journey = useQuery({ queryKey: key, queryFn: () => api!.getOnboardingJourney(), enabled: Boolean(api && workspace && account?.eligible) });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -182,11 +186,11 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   const [connectorScope, setConnectorScope] = useState<'workspace' | 'you'>('workspace');
   const hydratedSelections = useRef<string | null>(null);
   useEffect(() => {
-    if (!journey.data || hydratedSelections.current === workspace.id) return;
+    if (!workspace || !journey.data || hydratedSelections.current === workspace.id) return;
     hydratedSelections.current = workspace.id;
     setSelected(journey.data.connectorIds);
     if (journey.data.connectorIds.some((id) => id.startsWith('you:'))) setConnectorScope('you');
-  }, [journey.data, workspace.id]);
+  }, [journey.data, workspace?.id]);
   const [emails, setEmails] = useState<string[]>([]);
   const [emailDraft, setEmailDraft] = useState('');
   const [sent, setSent] = useState<string[]>([]);
@@ -204,13 +208,15 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     catch (caught) { setError(caught instanceof Error ? caught.message : 'Something went wrong. Try again.'); await journey.refetch(); }
     finally { setBusy(false); }
   };
-  if (!account?.eligible) return <>{children}</>;
+  const content = (allowed: boolean): React.JSX.Element => <ConversationAdmissionProvider allowed={allowed}>{children}</ConversationAdmissionProvider>;
+  if (!workspace) return content(false);
+  if (!account?.eligible) return content(true);
   if (journey.error && !journey.data) return <OnboardingPage title="Resume your setup" footer={<Button onClick={() => void journey.refetch()}>Retry</Button>}><InlineError>{journey.error.message}</InlineError></OnboardingPage>;
   const state = journey.data;
   // A workspace session can render while setup progress loads; only a known
   // unfinished journey interrupts it. Completed users never flash a second gate.
-  if (!state) return <>{children}</>;
-  if (state.stage === 'complete') return <>{children}</>;
+  if (!state) return content(false);
+  if (state.stage === 'complete') return content(true);
   const finishOnboarding = async (): Promise<void> => {
     await advance('complete');
     // A creator's workspace is empty and lands on the composer anyway; a

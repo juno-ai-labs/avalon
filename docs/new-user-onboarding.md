@@ -100,12 +100,17 @@ refresh the appearance draft before another save. A failed identity lookup does
 not lock out a valid regional workspace session. A restored workspace opens
 immediately, including while the first account lookup is pending. Account providers remain mounted as background details arrive, so
 exempt accounts keep their workspace and socket rather than remounting them.
-Account appearance editing is unavailable until the authoritative profile loads.
+Account appearance editing shows a loading status until the authoritative profile
+loads; a settled failure remains an error.
 An identity without a workspace still waits for its introduction status and
 retains the retry/sign-out flow. Eligible accounts still receive their unfinished
 introduction and workspace journey when account details arrive. Workspace journey
 progress also loads without replacing the app with a loading screen; only known
-unfinished setup or a journey failure interrupts the workspace.
+unfinished setup or a journey failure interrupts the workspace. While either
+lookup is pending, nested conversation-admission providers keep warmed feeds
+speculative and message sending disabled. Completion releases admission without
+reconnecting; an unfinished result replaces the workspace without first marking
+its conversations opened.
 Background refetch failures keep cached onboarding state. OAuth is retryable or skippable and callbacks return to
 the onboarding flow that opened them.
 
@@ -139,6 +144,17 @@ inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-r
 Real external OAuth requires configured provider credentials; onboarding no longer starts an agent run.
 
 ## Changelog
+
+### 2026-09-09 — Keep pending onboarding from admitting conversations
+
+Review confirmed that mounting the workspace early also mounted its feed consumer,
+which could mark a conversation opened before an unfinished introduction or
+journey replaced it. Account and workspace-journey gates now compose a separate
+conversation-admission context around the pool. Lookups still run alongside
+workspace rendering and warming, but pending setup cannot mark feeds opened or
+send messages. Completion admits the same sockets. Account settings also shows
+loading rather than an unavailable error while its authoritative profile is pending.
+
 
 ### 2026-09-09 — Open restored workspaces before account details
 
