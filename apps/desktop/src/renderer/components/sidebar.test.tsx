@@ -1294,7 +1294,9 @@ describe('Sidebar work-stream markers', () => {
 
   it.each([false, true])('offers making the first Sidekick where the shortcuts would be (compact=%s)', (compact) => {
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
+    // Named for what it holds: an offer to make one, not shortcuts to any.
+    const strip = screen.getByRole('region', { name: 'Sidekicks' });
+    expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
     // The same tile a Sidekick gets, so it sheds its caption and shrinks to the
     // rail's square with them rather than keeping a shape of its own.
     const create = within(strip).getByRole('button', { name: 'New Sidekick' });
@@ -1309,9 +1311,10 @@ describe('Sidebar work-stream markers', () => {
     expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
   });
 
-  it('drops the new-Sidekick tile once one is enabled', () => {
+  it('drops the new-Sidekick tile once one is enabled, and names the strip for the shortcuts it holds', () => {
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[automation]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     expect(within(screen.getByRole('region', { name: 'Sidekick shortcuts' })).queryByRole('button', { name: 'New Sidekick' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Sidekicks' })).toBeNull();
   });
 
   it('waits for the workspace answer before saying a workspace has no Sidekicks', () => {

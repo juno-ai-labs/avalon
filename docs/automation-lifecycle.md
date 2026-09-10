@@ -661,6 +661,22 @@ and the library's own **New Sidekick** button does the same. Removing the
 persistent sidebar entry point once a draft exists takes away the cheap way to
 accumulate orphans, not the underlying re-entrancy.
 
+The strip's accessible name follows its contents — **Sidekick shortcuts** when it
+holds them, **Sidekicks** when it holds only the offer to make one — because the
+first name describes shortcuts that are not there in the empty case. The
+outline's stroke is `text-muted`, an ink token rather than a `border-*` one: it
+is the whole mark rather than a line beside content, so it answers to the 3:1
+floor for graphical objects, and the border ramp has none of that headroom
+against `surface-default` (`border-strong` measures 1.38:1 light and 1.44:1
+dark, against `text-muted`'s 5.35:1 and 7.99:1).
+
+This entry narrows the 2026-09-08 **Scroll compact Sidekicks with navigation**
+entry's and its successor's "the strip is absent when no entries qualify": that
+is still true of a workspace whose Sidekicks are all paused, drafts, or
+work-stream-owned, and no longer true of one that has none at all.
+
+Shipped in #657.
+
 ### 2026-09-10 — The rail keeps the Sidekick strip horizontal, at the bottom
 
 **What changed:** In the compact rail the strip stays below the scrolling

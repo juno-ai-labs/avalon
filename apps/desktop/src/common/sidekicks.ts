@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { IdSchema } from '@rally/contracts';
 
 /**
@@ -12,6 +13,20 @@ import { IdSchema } from '@rally/contracts';
 export const NEW_SIDEKICK_TARGET = 'new';
 
 /**
+ * What the Sidekicks window may open on: the composer, or one stored Sidekick.
+ *
+ * Branded, so that "this string has been checked" is a fact the compiler holds
+ * rather than a comment the next caller has to notice. `createSidekicksWindow`
+ * takes this type and nothing else, which is what makes the parse below
+ * unskippable rather than merely conventional — the same shape `SubstreamId`
+ * uses for its own literal-or-id union.
+ */
+const SidekicksWindowTargetSchema = z
+  .union([z.literal(NEW_SIDEKICK_TARGET), IdSchema])
+  .brand<'SidekicksWindowTarget'>();
+export type SidekicksWindowTarget = z.infer<typeof SidekicksWindowTargetSchema>;
+
+/**
  * One target the Sidekicks window may open on, or `null` for anything else.
  *
  * A target becomes that window's route, so main parses what a renderer asked
@@ -21,8 +36,7 @@ export const NEW_SIDEKICK_TARGET = 'new';
  * everywhere else: the alternative, loosening the id check to let `new`
  * through, would let any string reach the window's hash.
  */
-export function parseSidekicksWindowTarget(value: unknown): string | null {
-  if (value === NEW_SIDEKICK_TARGET) return NEW_SIDEKICK_TARGET;
-  const sidekickId = IdSchema.safeParse(value);
-  return sidekickId.success ? sidekickId.data : null;
+export function parseSidekicksWindowTarget(value: unknown): SidekicksWindowTarget | null {
+  const target = SidekicksWindowTargetSchema.safeParse(value);
+  return target.success ? target.data : null;
 }

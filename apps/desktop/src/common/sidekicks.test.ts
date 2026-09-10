@@ -12,5 +12,10 @@ describe('parseSidekicksWindowTarget', () => {
     for (const rejected of ['', 'newer', '../settings', 'new/../settings', 'not-a-uuid', 42, null, {}]) {
       expect(parseSidekicksWindowTarget(rejected)).toBeNull();
     }
+    // Control characters and a trailing fragment, which would otherwise ride
+    // into the window's hash on the end of an otherwise valid id.
+    for (const rejected of [`${sidekickId}\n`, `${sidekickId}/../settings`, 'new\u0000']) {
+      expect(parseSidekicksWindowTarget(rejected)).toBeNull();
+    }
   });
 });

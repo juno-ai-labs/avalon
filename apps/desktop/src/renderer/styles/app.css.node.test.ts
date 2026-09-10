@@ -196,6 +196,22 @@ describe('sidebar layout motion', () => {
     expect(slot).not.toMatch(/stroke-width:[^;]*px/u);
     expect(slot).toContain('stroke-dasharray:');
   });
+
+  it('draws that outline in an ink token, because it is the mark rather than a divider', () => {
+    // The border ramp is built for lines beside content and has no headroom for
+    // the 3:1 a graphical object needs: against `surface-default`,
+    // `border-strong` measures 1.38:1 light and 1.44:1 dark, where `text-muted`
+    // is 5.35:1 and 7.99:1. This outline is the entire new-Sidekick mark — at
+    // the rail's 36px it is all that distinguishes the tile — so it takes the
+    // ink token the plus inside it already uses.
+    const slot = rule('.sidekick-new-glyph .automation-glyph-shape');
+    expect(slot).toContain('stroke: var(--av-sys-color-text-muted);');
+    expect(slot).not.toMatch(/stroke:\s*var\(--av-sys-color-border-/u);
+    expect(rule(
+      '.sidebar-row.automation-tile:hover .sidekick-new-glyph .automation-glyph-shape,\n'
+      + '.sidebar-row.automation-tile:focus-visible .sidekick-new-glyph .automation-glyph-shape',
+    )).toContain('stroke: var(--av-sys-color-text-subtle);');
+  });
 });
 
 describe('work-stream context sidebar layout', () => {
