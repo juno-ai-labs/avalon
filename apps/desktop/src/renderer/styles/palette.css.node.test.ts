@@ -264,7 +264,16 @@ describe('project palette', () => {
     // beside an option, none of which anybody chose to paint in a reader's
     // colour. A future accent that wants a row back should give that row a
     // token of its own rather than re-point the one everything shares.
-    expect(onboarding).not.toContain('--av-cmp-row-background-selected');
+    //
+    // Matched as a *declaration*, with comments stripped first. Asserting on
+    // the file text passed only because the comment beside the deleted line
+    // spells the token as a path (`cmp.row.background-selected`) rather than
+    // as the custom property — a distinction the prose is right to draw and
+    // the guard has no business depending on. As written, prose may spell it
+    // either way and only a re-point fails; reading the token through `var()`
+    // stays allowed, because borrowing the fill was never the problem.
+    const declarations = onboarding.replace(/\/\*[\s\S]*?\*\//gu, ' ');
+    expect(declarations).not.toMatch(/--av-cmp-row-background-selected\s*:/u);
   });
 
   it('given the accent ink rules, when onboarding.css is read, then they mirror the ink table', () => {
