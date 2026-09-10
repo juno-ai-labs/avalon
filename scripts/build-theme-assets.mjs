@@ -310,7 +310,7 @@ export function exportSyntaxPalette(themes, base) {
     throw new Error(`expected exactly one dark appearance, found ${darkAppearances.length}`);
   }
   const theme = darkAppearances[0];
-  const values = resolvedTokens(theme, themes, base);
+  const values = resolvedTokens(theme, base);
   return Object.keys(values)
     .filter((path) => path.startsWith('sys.color.syntax.'))
     .map((path) => {
@@ -339,7 +339,7 @@ export function generate({ registry, base, themes }) {
   // costs a few kilobytes and makes `data-theme` mean the same thing anywhere in
   // the tree.
   const blocks = themes.map((theme) => {
-    const values = resolvedTokens(theme, themes, base);
+    const values = resolvedTokens(theme, base);
     const lines = [];
     let lastGroup = null;
     for (const path of order) {
@@ -385,19 +385,20 @@ export function generate({ registry, base, themes }) {
 }
 
 /**
- * A theme's tokens with the default theme's filled in underneath, and the base
- * tokens under both.
+ * A theme's tokens with the base tokens under them.
  *
- * Falling through to `:root` works only while `data-theme` is on the document:
- * an alias declared on `:root` is substituted where it is declared, so a nested
- * element carrying a different `data-theme` inherits the default theme's already
- * resolved colour and redeclaring the ramp beneath it changes nothing. The
- * Settings miniatures are exactly that element.
+ * Nothing falls through to the default appearance: every appearance sets the
+ * same keys (`build-theme-assets.test.mjs` holds that line), so a value
+ * missing here is a defect in the file rather than something to fill from
+ * light. The base is merged under each appearance rather than emitted once on
+ * `:root` because an alias declared on `:root` is substituted where it is
+ * declared, so a nested element carrying a different `data-theme` would inherit
+ * the default theme's already resolved colour and redeclaring the ramp beneath
+ * it would change nothing. The Settings miniatures are exactly that element.
  */
-export function resolvedTokens(theme, themes, base) {
+export function resolvedTokens(theme, base) {
   if (!base?.tokens) throw new Error('resolvedTokens needs the base token file: without it every base token is missing from the output');
-  const inherited = defaultTheme(themes).tokens;
-  return { ...base.tokens, ...inherited, ...theme.tokens };
+  return { ...base.tokens, ...theme.tokens };
 }
 
 /**

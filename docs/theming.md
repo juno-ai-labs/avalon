@@ -77,7 +77,11 @@ serves it through `rally-font://`.
 - **Spacing is one number.** Every feed spacing token is a multiple of
   `ref.space.unit`, and `app.css` derives its `--space-N` steps from the same
   unit. The sidebar's `sys.space.group.gap` is the one spacing token off it,
-  at the 14px its own entry argued for.
+  at the 14px its own entry argued for. The steps are declared on `:root`,
+  which is safe only while the unit is a base token: an alias on `:root`
+  resolves against the default appearance, so a unit set per appearance would
+  leave a nested `data-theme` on the default's steps. The partition test is
+  what keeps the unit in `base.json`.
 - **The shell owns the canvas background.** Repainting the same image or
   gradient on nested panes creates seams when the sidebar and feed differ in
   size.
@@ -169,7 +173,11 @@ value does not change with the appearance (sizes, radii, spacing, type, the
 markdown scale, and the absolute colours: the palette fills, the two inks over
 them, the brand ramp, `text.on-media`, the bubble's foreground and edge);
 `light.json` and `dark.json` hold only what differs, and set the same keys. The
-build merges base under each appearance, so `themes.css` keeps its shape.
+build merges base under each appearance, so `themes.css` keeps its shape, and
+nothing falls through from the default appearance any more: a key one file
+sets and the other does not is a failure, not light's value. `base.schema.json`
+takes the token grammar from `theme.schema.json` by `$ref` rather than
+restating it.
 Twenty-four tokens nothing read are gone: `cmp.turn.align/margin/width`, the
 sixteen `cmp.connector.*` fills, `sys.color.success.on`, `warning.strong`,
 `warning.on`, `sys.space.pane.padding` and `sys.font.family.display`, with their
