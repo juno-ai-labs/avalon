@@ -44,6 +44,7 @@ const USER_INSTALLATION_PAGE_SIZE = 100;
 const USER_INSTALLATION_PAGE_LIMIT = 10;
 const TOOL_REPOSITORY_SCAN_LIMIT = 1_000;
 const TOOL_REPOSITORY_SCAN_PAGE_SIZE = 100;
+const GITHUB_MAX_PER_PAGE = 100;
 const TOOL_TREE_ENTRY_LIMIT = 200;
 const TOOL_TREE_PATH_DEPTH_LIMIT = 32;
 const GITHUB_CONTENTS_DIRECTORY_LIMIT = 1_000;
@@ -243,141 +244,166 @@ export interface VerifyGitHubWebhookInput {
   maxBytes?: number;
 }
 
+/**
+ * Every GitHub tool parameter carries its own `description`, because the wire
+ * schema is the whole of what a model has to reason from and a bare
+ * `{ type: "string", maxLength: 250 }` reads as a field to fill in rather than
+ * a filter to leave alone.
+ *
+ * `pull_requests.list`'s `head` is the measured case. Undescribed, it was
+ * guessed at as a plain branch name; GitHub's filter wants `owner:branch` and
+ * answers anything else with HTTP 200 and `[]` rather than an error, so a
+ * repository with 25 open pull requests was reported as having none, twice,
+ * before the run gave up on the connector and shelled out to `git`. Every
+ * filter below therefore says what omitting it does and that a value matching
+ * nothing comes back empty rather than failing, which is the sentence that
+ * would have ended that run at the first call.
+ *
+ * `docs/agent-tools.md` carries the rule; the guard that holds it for every
+ * tool Rally serves is in `apps/api/test/tool-schema-descriptions.test.ts`.
+ */
+const OWNER_DESCRIPTION = "Repository owner: the account or organization before the slash in `owner/repo`. For `octocat/hello-world` this is `octocat`. Take it from a repositories_list or repositories_search result rather than guessing at it.";
+const REPO_DESCRIPTION = "Repository name: the part after the slash in `owner/repo`, with no owner and no `.git` suffix. For `octocat/hello-world` this is `hello-world`.";
+const PER_PAGE_DESCRIPTION = "How many results to return in one page, from 1 to 100. Omit for the default. Read the first page before asking for a larger one.";
+const PAGE_DESCRIPTION = "Which page of results to return, counting from 1. Omit for the first page. Ask for the next page only after a result came back with `hasMore` set to true.";
+const REF_DESCRIPTION = "Branch name, tag, or full commit SHA to read at, such as `main` or `9fceb02`. Omit to read the repository's default branch.";
+const SORT_DIRECTION_DESCRIPTION = "Order the sorted results are returned in: `desc` for newest or highest first, `asc` for oldest or lowest first. Omit for `desc`.";
+
 const repoIdentitySchema = deferredZodSchema(() => z.strictObject({
-  owner: z.string().trim().min(1).max(100),
-  repo: z.string().trim().min(1).max(100),
+  owner: z.string().trim().min(1).max(100).describe(OWNER_DESCRIPTION),
+  repo: z.string().trim().min(1).max(100).describe(REPO_DESCRIPTION),
 }));
 
 const paginationSchema = deferredZodSchema(() => z.strictObject({
-  perPage: z.number().int().min(1).max(100).default(30),
-  page: z.number().int().min(1).max(1_000).default(1),
+  perPage: z.number().int().min(1).max(100).default(30).describe(PER_PAGE_DESCRIPTION),
+  page: z.number().int().min(1).max(1_000).default(1).describe(PAGE_DESCRIPTION),
 }));
 
 const repositoriesListSchema = deferredZodSchema(() => z.strictObject({
-  perPage: z.number().int().min(1).max(100).default(50),
-  page: z.number().int().min(1).max(1_000).default(1),
+  perPage: z.number().int().min(1).max(100).default(50).describe(PER_PAGE_DESCRIPTION),
+  page: z.number().int().min(1).max(1_000).default(1).describe(PAGE_DESCRIPTION),
 }));
 
 const repositoriesSearchSchema = deferredZodSchema(() => repositoriesListSchema.unwrap().extend({
-  query: z.string().trim().min(1).max(200),
+  query: z.string().trim().min(1).max(200).describe("Text matched, case-insensitively, against the repository name or its full `owner/name`, such as `hello-world` or `octocat/hello-world`. This searches repository names only, not code, issue text, or descriptions. A term matching no authorized repository returns an empty list rather than an error."),
 }).strict());
 
 const repositoryGetSchema = repoIdentitySchema;
 
 const contentsGetSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
-  path: z.string().trim().min(1).max(1_000),
-  ref: z.string().trim().min(1).max(250).optional(),
+  path: z.string().trim().min(1).max(1_000).describe("Path to one file, relative to the repository root, such as `src/index.ts`. Do not include the owner, the repository name, a leading slash, or a branch. Call contents_list first when the exact path is not already known."),
+  ref: z.string().trim().min(1).max(250).optional().describe(REF_DESCRIPTION),
 }).strict());
 
 const contentsListSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
-  path: z.string().trim().max(1_000).default(""),
-  ref: z.string().trim().min(1).max(250).optional(),
-  recursive: z.boolean().default(false),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().min(1).max(TOOL_TREE_ENTRY_LIMIT).default(100),
+  path: z.string().trim().max(1_000).default("").describe("Directory to list, relative to the repository root, such as `src/components`. Omit it, or pass an empty string, for the repository root. Do not include the owner, the repository name, or a leading slash."),
+  ref: z.string().trim().min(1).max(250).optional().describe(REF_DESCRIPTION),
+  recursive: z.boolean().default(false).describe("Set true to return every file beneath `path` in one call instead of only its immediate children. Use it to locate a file whose directory is unknown; when the result comes back with `truncated` set, narrow `path` rather than paging."),
+  offset: z.number().int().nonnegative().default(0).describe("How many entries to skip before the returned page, counting from 0. Omit to start at the beginning. Use it with `limit` to read a large tree a page at a time."),
+  limit: z.number().int().min(1).max(TOOL_TREE_ENTRY_LIMIT).default(100).describe("How many entries to return in one page, from 1 to 200. Omit for the default."),
 }).strict());
 
 const commitsListSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
-  sha: z.string().trim().min(1).max(250).optional(),
-  path: z.string().trim().min(1).max(1_000).optional(),
-  author: z.string().trim().min(1).max(250).optional(),
-  since: z.string().datetime({ offset: true }).optional(),
-  until: z.string().datetime({ offset: true }).optional(),
-  perPage: z.number().int().min(1).max(100).default(30),
-  page: z.number().int().min(1).max(1_000).default(1),
+  sha: z.string().trim().min(1).max(250).optional().describe("Branch name, tag, or commit SHA to list history from, such as `main`. Omit to list from the repository's default branch."),
+  path: z.string().trim().min(1).max(1_000).optional().describe("Optional filter: return only commits that touched this file or directory, such as `src/index.ts`. Omit to list commits across the whole repository. A path no commit has touched returns an empty list rather than an error."),
+  author: z.string().trim().min(1).max(250).optional().describe("Optional filter: return only commits by this GitHub username or email address. Omit to list commits by every author. A name matching no commit returns an empty list rather than an error."),
+  since: z.string().datetime({ offset: true }).optional().describe("Optional filter: return only commits made at or after this moment, as an ISO 8601 timestamp with a zone, such as `2026-01-31T00:00:00Z`. Omit for no lower bound."),
+  until: z.string().datetime({ offset: true }).optional().describe("Optional filter: return only commits made at or before this moment, as an ISO 8601 timestamp with a zone, such as `2026-01-31T00:00:00Z`. Omit for no upper bound."),
+  perPage: z.number().int().min(1).max(100).default(30).describe(PER_PAGE_DESCRIPTION),
+  page: z.number().int().min(1).max(1_000).default(1).describe(PAGE_DESCRIPTION),
 }).strict());
 
 const issuesListSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
-  state: z.enum(["open", "closed", "all"]).default("open"),
-  labels: z.array(z.string().trim().min(1).max(100)).max(20).default([]),
-  since: z.string().datetime({ offset: true }).optional(),
-  sort: z.enum(["created", "updated", "comments"]).default("updated"),
-  direction: z.enum(["asc", "desc"]).default("desc"),
-  perPage: z.number().int().min(1).max(100).default(30),
-  page: z.number().int().min(1).max(1_000).default(1),
+  state: z.enum(["open", "closed", "all"]).default("open").describe("Which issues to return: `open` for the ones still open, `closed` for the ones already closed, or `all` for both. Omit for `open`."),
+  labels: z.array(z.string().trim().min(1).max(100)).max(20).default([]).describe("Optional filter: return only issues carrying every one of these label names, such as `[\"bug\", \"p0\"]`. Omit to list issues whatever their labels. A label the repository does not define returns an empty list rather than an error."),
+  since: z.string().datetime({ offset: true }).optional().describe("Optional filter: return only issues updated at or after this moment, as an ISO 8601 timestamp with a zone, such as `2026-01-31T00:00:00Z`. Omit for no lower bound."),
+  sort: z.enum(["created", "updated", "comments"]).default("updated").describe("Which field the results are ordered by: `updated` for most recently changed, `created` for newest, or `comments` for most discussed. Omit for `updated`."),
+  direction: z.enum(["asc", "desc"]).default("desc").describe(SORT_DIRECTION_DESCRIPTION),
+  perPage: z.number().int().min(1).max(100).default(30).describe(PER_PAGE_DESCRIPTION),
+  page: z.number().int().min(1).max(1_000).default(1).describe(PAGE_DESCRIPTION),
 }).strict());
 
 const issueIdentitySchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
-  issueNumber: z.number().int().positive(),
+  issueNumber: z.number().int().positive().describe("The issue's number as it is written in the repository: `1234` for issue #1234, not its internal id. Issues and pull requests share one numbering sequence, so a number belonging to a pull request is refused here; read that with pull_requests_get instead."),
 }).strict());
 
 const issueCreateSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
-  title: z.string().trim().min(1).max(256),
-  body: z.string().max(65_000).optional(),
-  labels: z.array(z.string().trim().min(1).max(100)).max(50).optional(),
-  assignees: z.array(z.string().trim().min(1).max(100)).max(10).optional(),
+  title: z.string().trim().min(1).max(256).describe("The issue's title, as one plain line."),
+  body: z.string().max(65_000).optional().describe("The issue's body, as GitHub-flavored Markdown. Omit to create the issue with no body."),
+  labels: z.array(z.string().trim().min(1).max(100)).max(50).optional().describe("Label names to attach, such as `[\"bug\"]`. Each one must already exist in the repository. Omit to create the issue unlabelled."),
+  assignees: z.array(z.string().trim().min(1).max(100)).max(10).optional().describe("GitHub usernames to assign, such as `[\"octocat\"]`. Each one must have access to the repository. Omit to leave the issue unassigned."),
 }).strict());
 
 const issueUpdateSchema = deferredZodSchema(() => issueIdentitySchema.unwrap().extend({
-  title: z.string().trim().min(1).max(256).optional(),
-  body: z.string().max(65_000).optional(),
-  state: z.enum(["open", "closed"]).optional(),
-  stateReason: z.enum(["completed", "not_planned", "reopened"]).optional(),
-  labels: z.array(z.string().trim().min(1).max(100)).max(50).optional(),
-  assignees: z.array(z.string().trim().min(1).max(100)).max(10).optional(),
+  title: z.string().trim().min(1).max(256).optional().describe("A new title for the issue. Omit to leave the title unchanged."),
+  body: z.string().max(65_000).optional().describe("A new body for the issue, as GitHub-flavored Markdown. This replaces the whole body rather than appending to it; read the issue first when the existing text is to be kept. Omit to leave the body unchanged."),
+  state: z.enum(["open", "closed"]).optional().describe("Set `closed` to close the issue or `open` to reopen it. Omit to leave its state unchanged."),
+  stateReason: z.enum(["completed", "not_planned", "reopened"]).optional().describe("Why the state changed: `completed` when the work was done, `not_planned` when it will not be, `reopened` when reopening. Only meaningful when `state` is also set."),
+  labels: z.array(z.string().trim().min(1).max(100)).max(50).optional().describe("Replaces the issue's labels with exactly this list, so include the ones being kept as well as the ones being added. Pass an empty array to remove every label. Omit to leave labels unchanged."),
+  assignees: z.array(z.string().trim().min(1).max(100)).max(10).optional().describe("Replaces the issue's assignees with exactly this list of GitHub usernames. Pass an empty array to unassign everyone. Omit to leave assignees unchanged."),
 }).strict().refine((value) => Object.keys(value).some((key) => !["owner", "repo", "issueNumber"].includes(key)), {
   message: "At least one issue field must be updated",
 }));
 
 const issueCommentCreateSchema = deferredZodSchema(() => issueIdentitySchema.unwrap().extend({
-  body: z.string().trim().min(1).max(65_000),
+  body: z.string().trim().min(1).max(65_000).describe("The comment's text, as GitHub-flavored Markdown. It is posted publicly on the issue under the authorizing account."),
 }).strict());
 
 const pullRequestsListSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
-  state: z.enum(["open", "closed", "all"]).default("open"),
-  head: z.string().trim().min(1).max(250).optional(),
-  base: z.string().trim().min(1).max(250).optional(),
-  sort: z.enum(["created", "updated", "popularity", "long-running"]).default("updated"),
-  direction: z.enum(["asc", "desc"]).default("desc"),
-  perPage: z.number().int().min(1).max(100).default(30),
-  page: z.number().int().min(1).max(1_000).default(1),
+  state: z.enum(["open", "closed", "all"]).default("open").describe("Which pull requests to return: `open` for the ones still open, `closed` for merged and closed ones, or `all` for both. Omit for `open`."),
+  head: z.string().trim().min(1).max(250).optional().describe("Optional filter: return only the pull request opened from this source branch, written as `owner:branch`, such as `octocat:my-feature`. Omit it to list pull requests from every branch, which is what listing a repository's open pull requests calls for. A bare branch name, or a branch with no open pull request, returns an empty list rather than an error, so do not set this unless one specific source branch is being asked about."),
+  base: z.string().trim().min(1).max(250).optional().describe("Optional filter: return only pull requests targeting this base branch, such as `main`. Omit to list pull requests against every branch. A branch nothing targets returns an empty list rather than an error."),
+  sort: z.enum(["created", "updated", "popularity", "long-running"]).default("updated").describe("Which field the results are ordered by: `updated` for most recently changed, `created` for newest, `popularity` for most commented, or `long-running` for the ones open longest. Omit for `updated`."),
+  direction: z.enum(["asc", "desc"]).default("desc").describe(SORT_DIRECTION_DESCRIPTION),
+  perPage: z.number().int().min(1).max(100).default(30).describe(PER_PAGE_DESCRIPTION),
+  page: z.number().int().min(1).max(1_000).default(1).describe(PAGE_DESCRIPTION),
 }).strict());
 
 const pullRequestIdentitySchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
-  pullNumber: z.number().int().positive(),
+  pullNumber: z.number().int().positive().describe("The pull request's number as it is written in the repository: `670` for PR #670, not its internal id and not a commit SHA."),
 }).strict());
 
 const pullRequestPageSchema = deferredZodSchema(() => pullRequestIdentitySchema.unwrap().extend(paginationSchema.unwrap().shape).strict());
 
 const pullRequestCreateSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
-  title: z.string().trim().min(1).max(256),
-  head: z.string().trim().min(1).max(250),
-  base: z.string().trim().min(1).max(250),
-  body: z.string().max(65_000).optional(),
-  draft: z.boolean().default(false),
-  maintainerCanModify: z.boolean().default(true),
+  title: z.string().trim().min(1).max(256).describe("The pull request's title, as one plain line."),
+  head: z.string().trim().min(1).max(250).describe("The branch holding the changes, such as `my-feature`. It must already exist and be pushed. For a branch in a fork, write it as `owner:branch`."),
+  base: z.string().trim().min(1).max(250).describe("The branch the changes will merge into, such as `main`. It must already exist in this repository."),
+  body: z.string().max(65_000).optional().describe("The pull request's description, as GitHub-flavored Markdown. Omit to open it with no description."),
+  draft: z.boolean().default(false).describe("Set true to open the pull request as a draft, which signals it is not ready for review and blocks merging. Omit to open it ready for review."),
+  maintainerCanModify: z.boolean().default(true).describe("Whether the base repository's maintainers may push to the source branch. Only meaningful for a branch in a fork. Omit to allow it."),
 }).strict());
 
 const pullRequestReviewCreateSchema = deferredZodSchema(() => pullRequestIdentitySchema.unwrap().extend({
-  body: z.string().max(65_000).optional(),
-  event: z.enum(["COMMENT", "APPROVE", "REQUEST_CHANGES"]),
-  commitId: z.string().trim().min(1).max(100).optional(),
+  body: z.string().max(65_000).optional().describe("The review's text, as GitHub-flavored Markdown. Required for `COMMENT` and `REQUEST_CHANGES`, optional for `APPROVE`. It is posted publicly under the authorizing account."),
+  event: z.enum(["COMMENT", "APPROVE", "REQUEST_CHANGES"]).describe("What the review says: `COMMENT` to leave feedback without a verdict, `APPROVE` to approve the pull request, or `REQUEST_CHANGES` to block it until the feedback is addressed."),
+  commitId: z.string().trim().min(1).max(100).optional().describe("The commit SHA the review applies to, such as `9fceb02`. Omit to review the pull request's latest commit, which is almost always what is wanted."),
 }).strict().refine((value) => value.event === "APPROVE" || Boolean(value.body?.trim()), {
   message: "A review body is required for comments and change requests",
 }));
 
 const workflowRunsListSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
-  branch: z.string().trim().min(1).max(250).optional(),
-  event: z.string().trim().min(1).max(100).optional(),
+  branch: z.string().trim().min(1).max(250).optional().describe("Optional filter: return only runs for this branch, such as `main`. Omit to list runs from every branch. A branch with no runs returns an empty list rather than an error."),
+  event: z.string().trim().min(1).max(100).optional().describe("Optional filter: return only runs started by this event, such as `push`, `pull_request`, or `schedule`. Omit to list runs from every event."),
   status: z.enum([
     "completed", "action_required", "cancelled", "failure", "neutral", "skipped", "stale",
     "success", "timed_out", "in_progress", "queued", "requested", "waiting", "pending",
-  ]).optional(),
-  perPage: z.number().int().min(1).max(100).default(30),
-  page: z.number().int().min(1).max(1_000).default(1),
+  ]).optional().describe("Optional filter: return only runs in this state, such as `failure` for the ones that failed or `in_progress` for the ones still going. Omit to list runs in every state."),
+  perPage: z.number().int().min(1).max(100).default(30).describe(PER_PAGE_DESCRIPTION),
+  page: z.number().int().min(1).max(1_000).default(1).describe(PAGE_DESCRIPTION),
 }).strict());
 
 const workflowRunGetSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
-  runId: z.number().int().positive(),
+  runId: z.number().int().positive().describe("The workflow run's numeric id, copied from the `id` field of an actions_list_workflow_runs result. This is not the run number shown beside a workflow's name."),
 }).strict());
 
 const checksListSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
-  ref: z.string().trim().min(1).max(250),
-  checkName: z.string().trim().min(1).max(250).optional(),
-  status: z.enum(["queued", "in_progress", "completed"]).optional(),
-  filter: z.enum(["latest", "all"]).default("latest"),
-  perPage: z.number().int().min(1).max(100).default(30),
-  page: z.number().int().min(1).max(1_000).default(1),
+  ref: z.string().trim().min(1).max(250).describe("The commit whose checks are wanted, as a full commit SHA, a branch name, or a tag, such as `main`. For a pull request's own checks, pass the head SHA from a pull_requests_get result rather than the branch."),
+  checkName: z.string().trim().min(1).max(250).optional().describe("Optional filter: return only check runs named exactly this, such as `build`. Omit to list every check on the ref. A name matching nothing returns an empty list rather than an error."),
+  status: z.enum(["queued", "in_progress", "completed"]).optional().describe("Optional filter: return only check runs in this state. Omit to list checks in every state; note that a finished check is `completed` whether it passed or failed, and its verdict is in the result's `conclusion`."),
+  filter: z.enum(["latest", "all"]).default("latest").describe("`latest` returns only the most recent run of each check name, which is what reporting a commit's current state calls for. `all` also returns superseded earlier attempts. Omit for `latest`."),
+  perPage: z.number().int().min(1).max(100).default(30).describe(PER_PAGE_DESCRIPTION),
+  page: z.number().int().min(1).max(1_000).default(1).describe(PAGE_DESCRIPTION),
 }).strict());
 
 const githubToolInputSchemas = new Map<string, z.ZodType>();
@@ -388,21 +414,21 @@ export const githubTools: ToolDefinition[] = [
   tool("repository.get", "Read bounded metadata for one accessible GitHub repository.", GitHubCapabilities.metadataRead, "read", repositoryGetSchema),
   tool("contents.list", "List a repository directory or tree before choosing files to read. Set recursive=true for a bounded recursive Git tree; use a narrower path when truncated.", GitHubCapabilities.contentsRead, "read", contentsListSchema),
   tool("contents.get", "Read one text file from an accessible GitHub repository. Directory and binary responses are not returned; only a successful contents.get call counts as code-file evidence.", GitHubCapabilities.contentsRead, "read", contentsGetSchema),
-  tool("commits.list", "List bounded commit metadata from an accessible GitHub repository.", GitHubCapabilities.contentsRead, "read", commitsListSchema),
-  tool("issues.list", "List issues in an accessible GitHub repository.", GitHubCapabilities.issuesRead, "read", issuesListSchema),
+  tool("commits.list", "List bounded commit metadata from an accessible GitHub repository. Returns commits, count, page, perPage, hasMore, and appliedFilters. An empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no commits.", GitHubCapabilities.contentsRead, "read", commitsListSchema),
+  tool("issues.list", "List issues in an accessible GitHub repository. Returns issues, count, page, perPage, hasMore, and appliedFilters. Pull requests are excluded, so this is narrower than the repository's open-issue count, which GitHub counts pull requests in; list those with pull_requests.list. An empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no issues.", GitHubCapabilities.issuesRead, "read", issuesListSchema),
   tool("issues.get", "Read one GitHub issue and its bounded body.", GitHubCapabilities.issuesRead, "read", issueIdentitySchema),
   tool("issues.create", "Create an issue in an accessible GitHub repository.", GitHubCapabilities.issuesWrite, "write", issueCreateSchema),
   tool("issues.update", "Update an issue's title, body, state, labels, or assignees.", GitHubCapabilities.issuesWrite, "write", issueUpdateSchema),
   tool("issue_comments.create", "Create a comment on a GitHub issue.", GitHubCapabilities.issuesWrite, "write", issueCommentCreateSchema),
-  tool("pull_requests.list", "List pull requests in an accessible GitHub repository.", GitHubCapabilities.pullRequestsRead, "read", pullRequestsListSchema),
+  tool("pull_requests.list", "List pull requests in an accessible GitHub repository. Returns pullRequests, count, page, perPage, hasMore, and appliedFilters. To list every open pull request, send only owner and repo: head and base are narrowing filters, and an empty list with either of them in appliedFilters means the filter matched nothing rather than that the repository has no pull requests.", GitHubCapabilities.pullRequestsRead, "read", pullRequestsListSchema),
   tool("pull_requests.get", "Read one GitHub pull request and its bounded body.", GitHubCapabilities.pullRequestsRead, "read", pullRequestIdentitySchema),
-  tool("pull_requests.list_files", "List bounded changed-file metadata and patches for a GitHub pull request.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
-  tool("pull_requests.list_reviews", "List reviews for a GitHub pull request.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
+  tool("pull_requests.list_files", "List bounded changed-file metadata and patches for a GitHub pull request. Returns files, count, page, perPage, and hasMore.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
+  tool("pull_requests.list_reviews", "List reviews for a GitHub pull request. Returns reviews, count, page, perPage, and hasMore. An empty list means nobody has reviewed it yet.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
   tool("pull_requests.create", "Create a pull request from an existing branch.", GitHubCapabilities.pullRequestsWrite, "write", pullRequestCreateSchema),
   tool("pull_requests.create_review", "Submit an overall review on a GitHub pull request.", GitHubCapabilities.pullRequestsWrite, "write", pullRequestReviewCreateSchema),
-  tool("actions.list_workflow_runs", "List GitHub Actions workflow runs in an accessible repository.", GitHubCapabilities.actionsRead, "read", workflowRunsListSchema),
+  tool("actions.list_workflow_runs", "List GitHub Actions workflow runs in an accessible repository. Returns workflowRuns, count, totalCount, page, perPage, hasMore, and appliedFilters. An empty list with filters in appliedFilters means those filters matched nothing, not that the repository has no runs.", GitHubCapabilities.actionsRead, "read", workflowRunsListSchema),
   tool("actions.get_workflow_run", "Read one GitHub Actions workflow run.", GitHubCapabilities.actionsRead, "read", workflowRunGetSchema),
-  tool("checks.list_for_ref", "List check runs for a Git ref.", GitHubCapabilities.checksRead, "read", checksListSchema),
+  tool("checks.list_for_ref", "List check runs for a Git ref. Returns checkRuns, count, totalCount, page, perPage, hasMore, and appliedFilters. A finished check reports its verdict in conclusion, not in status. An empty list means no check has reported on that ref, which is not the same as a passing one.", GitHubCapabilities.checksRead, "read", checksListSchema),
 ];
 
 export const GitHubAgentPluginDescriptor = defineConnectorAgentPlugin({
@@ -430,8 +456,18 @@ function tool(
   schema: z.ZodType,
 ): ToolDefinition {
   githubToolInputSchemas.set(name, schema);
+  // `io: "input"` because this schema describes what the model may *send*, and
+  // the default `"output"` describes what a parse returns. The two disagree on
+  // exactly one thing and it is the one that matters here: a `.default()` field
+  // is always present in the output, so output mode lists it as `required`.
+  // `pull_requests.list` was advertising `state`, `sort`, `direction`,
+  // `perPage`, and `page` as mandatory — five values the executor would have
+  // filled in itself — which is a schema telling the model to populate the
+  // whole parameter block of a tool whose optional filters silently return
+  // nothing when guessed at. Strictness is unaffected: `z.strictObject` still
+  // emits `additionalProperties: false` in either mode.
   const inputSchema = memoizedValue(
-    () => z.toJSONSchema(schema) as Record<string, unknown>,
+    () => z.toJSONSchema(schema, { io: "input" }) as Record<string, unknown>,
   );
   return {
     name,
@@ -1606,10 +1642,13 @@ async function executeGitHubTool(
     const value = await request(connection, signal, "GET", `${repoPath(args)}/commits`, {
       query: {
         sha: args.sha, path: args.path, author: args.author, since: args.since, until: args.until,
-        per_page: args.perPage, page: args.page,
+        per_page: overFetchPerPage(args.perPage), page: args.page,
       },
     });
-    return { output: boundedArray(value, args.perPage), summary: `Listed commits in ${args.owner}/${args.repo}` };
+    const page = githubListPage("commits", value, args, {
+      sha: args.sha, path: args.path, author: args.author, since: args.since, until: args.until,
+    });
+    return { output: page, summary: `Listed ${page.count} commits in ${args.owner}/${args.repo}` };
   }
 
   if (name === "issues.list") {
@@ -1621,14 +1660,19 @@ async function executeGitHubTool(
         since: args.since,
         sort: args.sort,
         direction: args.direction,
-        per_page: args.perPage,
+        per_page: overFetchPerPage(args.perPage),
         page: args.page,
       },
     });
     const issues = Array.isArray(value)
       ? value.filter((candidate) => isRecord(candidate) && !recordValue(candidate, "pull_request"))
       : value;
-    return { output: boundedArray(issues, args.perPage), summary: `Listed issues in ${args.owner}/${args.repo}` };
+    const page = githubListPage("issues", issues, args, {
+      state: args.state,
+      labels: args.labels.length ? args.labels : undefined,
+      since: args.since,
+    }, Array.isArray(value) ? value.length : undefined);
+    return { output: page, summary: `Listed ${page.count} issues in ${args.owner}/${args.repo}` };
   }
 
   if (name === "issues.get") {
@@ -1689,10 +1733,13 @@ async function executeGitHubTool(
     const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls`, {
       query: {
         state: args.state, head: args.head, base: args.base, sort: args.sort, direction: args.direction,
-        per_page: args.perPage, page: args.page,
+        per_page: overFetchPerPage(args.perPage), page: args.page,
       },
     });
-    return { output: boundedArray(value, args.perPage), summary: `Listed pull requests in ${args.owner}/${args.repo}` };
+    const page = githubListPage("pullRequests", value, args, {
+      state: args.state, head: args.head, base: args.base,
+    });
+    return { output: page, summary: `Listed ${page.count} pull requests in ${args.owner}/${args.repo}` };
   }
 
   if (name === "pull_requests.get") {
@@ -1703,14 +1750,16 @@ async function executeGitHubTool(
 
   if (name === "pull_requests.list_files") {
     const args = pullRequestPageSchema.parse(rawArgs);
-    const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/files`, { query: { per_page: args.perPage, page: args.page } });
-    return { output: boundedArray(value, args.perPage), summary: `Listed files on ${args.owner}/${args.repo} pull request #${args.pullNumber}` };
+    const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/files`, { query: { per_page: overFetchPerPage(args.perPage), page: args.page } });
+    const page = githubListPage("files", value, args);
+    return { output: page, summary: `Listed ${page.count} files on ${args.owner}/${args.repo} pull request #${args.pullNumber}` };
   }
 
   if (name === "pull_requests.list_reviews") {
     const args = pullRequestPageSchema.parse(rawArgs);
-    const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/reviews`, { query: { per_page: args.perPage, page: args.page } });
-    return { output: boundedArray(value, args.perPage), summary: `Listed reviews on ${args.owner}/${args.repo} pull request #${args.pullNumber}` };
+    const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/reviews`, { query: { per_page: overFetchPerPage(args.perPage), page: args.page } });
+    const page = githubListPage("reviews", value, args);
+    return { output: page, summary: `Listed ${page.count} reviews on ${args.owner}/${args.repo} pull request #${args.pullNumber}` };
   }
 
   if (name === "pull_requests.create") {
@@ -1749,13 +1798,10 @@ async function executeGitHubTool(
     const value = requiredRecordValue(await request(connection, signal, "GET", `${repoPath(args)}/actions/runs`, {
       query: { branch: args.branch, event: args.event, status: args.status, per_page: args.perPage, page: args.page },
     }), "GitHub did not return workflow runs");
-    return {
-      output: {
-        totalCount: numberValue(value, "total_count") ?? recordArray(value, "workflow_runs").length,
-        workflowRuns: recordArray(value, "workflow_runs").slice(0, args.perPage).map((run) => boundGitHubValue(run)),
-      },
-      summary: `Listed workflow runs in ${args.owner}/${args.repo}`,
-    };
+    const page = githubCountedListPage("workflowRuns", "workflow_runs", value, args, {
+      branch: args.branch, event: args.event, status: args.status,
+    });
+    return { output: page, summary: `Listed ${page.count} workflow runs in ${args.owner}/${args.repo}` };
   }
 
   if (name === "actions.get_workflow_run") {
@@ -1770,13 +1816,10 @@ async function executeGitHubTool(
       query: { check_name: args.checkName, status: args.status, filter: args.filter, per_page: args.perPage, page: args.page },
       accept: "application/vnd.github+json",
     }), "GitHub did not return check runs");
-    return {
-      output: {
-        totalCount: numberValue(value, "total_count") ?? recordArray(value, "check_runs").length,
-        checkRuns: recordArray(value, "check_runs").slice(0, args.perPage).map((run) => boundGitHubValue(run)),
-      },
-      summary: `Listed check runs for ${args.owner}/${args.repo}@${args.ref}`,
-    };
+    const page = githubCountedListPage("checkRuns", "check_runs", value, args, {
+      ref: args.ref, checkName: args.checkName, status: args.status, filter: args.filter,
+    });
+    return { output: page, summary: `Listed ${page.count} check runs for ${args.owner}/${args.repo}@${args.ref}` };
   }
 
   throw new ConnectorError("unsupported_capability", `Unsupported GitHub tool: ${name}`);
@@ -1948,9 +1991,91 @@ function normalizeContentResponse(value: unknown): Record<string, unknown> {
   };
 }
 
-function boundedArray(value: unknown, limit: number): unknown[] {
-  if (!Array.isArray(value)) throw new ConnectorError("provider_error", "GitHub did not return the expected list");
-  return value.slice(0, Math.min(limit, 100)).map((item) => boundGitHubValue(item));
+interface GitHubListPage extends Record<string, unknown> {
+  count: number;
+  page: number;
+  perPage: number;
+  hasMore: boolean;
+  appliedFilters: Record<string, unknown>;
+}
+
+/**
+ * Ask GitHub for one item beyond the page the caller wants.
+ *
+ * `hasMore` has to be observed rather than inferred: a page that comes back
+ * exactly full is otherwise indistinguishable from the last page, and a model
+ * reading `hasMore: false` off a full page stops paging one page early. The
+ * extra item is dropped before the page is returned. GitHub's own ceiling is
+ * 100, so a caller asking for all 100 leaves no room for it and the full-page
+ * heuristic is the only signal available there.
+ */
+function overFetchPerPage(perPage: number): number {
+  return Math.min(perPage + 1, GITHUB_MAX_PER_PAGE);
+}
+
+/**
+ * The one page shape every GitHub list tool returns.
+ *
+ * A bare array was the earlier shape, and what it could not express is the
+ * difference between "this repository has no open pull requests" and "the
+ * filters you sent matched nothing". Those read identically as `[]`, and a run
+ * that hit the second concluded the first, twice, and then stopped trusting the
+ * connector. So `appliedFilters` echoes back exactly what narrowed the query —
+ * present even when empty, because "nothing narrowed this" is the more useful
+ * half of the answer — and `count` states the size rather than leaving it to be
+ * counted.
+ *
+ * `repositories.list` and `contents.list` already answered in this shape. The
+ * rest of the family now does too, so a model that learns one list tool here
+ * can read the next one without a second round of trial and error.
+ */
+function githubListPage(
+  key: string,
+  fetched: unknown,
+  args: { perPage: number; page: number },
+  appliedFilters: Record<string, unknown> = {},
+  // `issues.list` drops every pull request GitHub returned, so the page it
+  // shows is shorter than the page GitHub served. Paging has to follow what
+  // GitHub served, or the last full page of a repository whose issues are
+  // mostly pull requests reads as the end of the list.
+  providerCount?: number,
+): GitHubListPage {
+  if (!Array.isArray(fetched)) throw new ConnectorError("provider_error", "GitHub did not return the expected list");
+  const items = fetched.slice(0, args.perPage);
+  return {
+    [key]: items.map((item) => boundGitHubValue(item)),
+    count: items.length,
+    page: args.page,
+    perPage: args.perPage,
+    hasMore: (providerCount ?? fetched.length) >= overFetchPerPage(args.perPage),
+    appliedFilters: definedValues(appliedFilters),
+  };
+}
+
+/**
+ * The same page shape for the two endpoints that answer with an object holding
+ * a named array and GitHub's own `total_count`, which makes `hasMore` exact
+ * without over-fetching.
+ */
+function githubCountedListPage(
+  key: string,
+  providerKey: string,
+  value: Record<string, unknown>,
+  args: { perPage: number; page: number },
+  appliedFilters: Record<string, unknown> = {},
+): GitHubListPage {
+  const all = recordArray(value, providerKey);
+  const items = all.slice(0, args.perPage);
+  const totalCount = numberValue(value, "total_count") ?? all.length;
+  return {
+    [key]: items.map((item) => boundGitHubValue(item)),
+    count: items.length,
+    totalCount,
+    page: args.page,
+    perPage: args.perPage,
+    hasMore: args.page * args.perPage < totalCount,
+    appliedFilters: definedValues(appliedFilters),
+  };
 }
 
 function boundGitHubValue(value: unknown, depth = 0, key = ""): unknown {
