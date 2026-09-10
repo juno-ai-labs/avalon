@@ -136,7 +136,7 @@ export const statusLabel: Record<WorkstreamMarkerStatus, string> = {
  * Each sentence opens with the label itself, so rewording one carries here. */
 export const statusDescription: Record<WorkstreamMarkerStatus, string> = {
   scheduled: `${statusLabel.scheduled} — the next run has not started yet.`,
-  running: `${statusLabel.running} — the agent is working on it now.`,
+  running: `${statusLabel.running} — the agent is on it.`,
   needs_input: `${statusLabel.needs_input} — the agent is waiting on an answer.`,
   completed: `${statusLabel.completed} — nothing is running now.`,
   failed: `${statusLabel.failed} — the last run failed and stopped.`,
@@ -145,6 +145,27 @@ export const statusDescription: Record<WorkstreamMarkerStatus, string> = {
   mentioned: `${statusLabel.mentioned} — somebody named you in a message you have not read.`,
   unseen: `${statusLabel.unseen} — you were added to this work stream and have not opened it yet.`,
 };
+
+/**
+ * The marker a work stream's own run draws as.
+ *
+ * `scheduled` folds into `running`, so a work stream whose next run is queued
+ * is presented as one that is already working. The distinction is real in the
+ * data and worth nothing to somebody scanning a list: either way the agent has
+ * the work and nobody is being asked for anything, and a person cannot act on
+ * the difference between "started" and "about to start". Drawn separately it
+ * was a marker of its own on a work stream that had done nothing yet — and on
+ * a schedule-driven work stream, the state it sits in most of the time.
+ *
+ * Every surface that turns a run's status into a marker goes through here, so
+ * the sidebar and the work-stream header cannot disagree. `scheduled` survives
+ * in `WorkstreamMarkerStatus` for the Sidekick run history, which lists runs
+ * rather than work streams and where a pending run is exactly what somebody
+ * opened the list to find.
+ */
+export function harnessMarkerStatus(status: HarnessStatus): WorkstreamMarkerStatus {
+  return status === 'scheduled' ? 'running' : status;
+}
 
 /**
  * The one ranking, most urgent first.
@@ -172,37 +193,18 @@ const MARKER_PRECEDENCE: readonly WorkstreamMarkerStatus[] = [
  *
  * The single answer every surface asks for, so the sidebar and the home screen
  * cannot disagree about which of a work stream's states is the one worth
- * showing. Surfaces may omit that result — see `workstreamMarkerIsQuiet`.
- * `scheduled` has no personal state to lose to and is not in the
- * ranking; it falls through as the run's own status.
+ * showing. Surfaces may omit that result: the sidebar hides `completed`. The
+ * run's own status arrives through `harnessMarkerStatus`, so `scheduled` is
+ * ranked as `running` and never reaches the list under its own name.
  */
 export function workstreamMarkerStatus(
   workstream: { harnessStatus: HarnessStatus; hasUnread?: boolean; unseen?: boolean; youAreMentioned?: boolean },
 ): WorkstreamMarkerStatus {
-  const active = new Set<WorkstreamMarkerStatus>([workstream.harnessStatus]);
+  const active = new Set<WorkstreamMarkerStatus>([harnessMarkerStatus(workstream.harnessStatus)]);
   if (workstream.unseen === true) active.add('unseen');
   if (workstream.youAreMentioned === true) active.add('mentioned');
   if (workstream.hasUnread === true) active.add('unread');
-  return MARKER_PRECEDENCE.find((status) => active.has(status)) ?? workstream.harnessStatus;
-}
-
-/**
- * The markers that say nothing is happening, which a list may leave undrawn.
- *
- * A dot earns its place by reporting that something is under way or that
- * somebody is owed an answer. `completed` and `scheduled` report neither: one
- * run has finished and the next has not begun, which is the resting condition
- * of every work stream a person is not currently watching. Drawn on a list,
- * they mark the ordinary as though it were news.
- *
- * This is a predicate rather than a condition inside a component so the two
- * quiet states cannot drift apart surface by surface, the same reason
- * `MARKER_PRECEDENCE` is a single array. A surface still decides whether to
- * honour it: the work-stream header names the run's state in words, and there
- * a resting run is exactly what somebody opened the header to read.
- */
-export function workstreamMarkerIsQuiet(status: WorkstreamMarkerStatus): boolean {
-  return status === 'completed' || status === 'scheduled';
+  return MARKER_PRECEDENCE.find((status) => active.has(status)) ?? harnessMarkerStatus(workstream.harnessStatus);
 }
 
 /**
