@@ -1021,14 +1021,20 @@ export function Sidebar({
   // transition off, and under a reader who has asked for less motion. Only the
   // aside's own events count: the rows' transitions bubble through here too.
   const [layoutSettling, setLayoutSettling] = useState(false);
-  const layoutTravelling = useRef(false);
+  // How many transitions of the channel are running: a count rather than the
+  // last event seen, because a toggle reversed mid-flight cancels the running
+  // transition and starts another in one style change, and nothing pins the
+  // order those two events arrive in. Counted, cancel-then-run and
+  // run-then-cancel both leave one running. Clamped at zero for a component
+  // that mounts partway through a transition and sees its end alone.
+  const layoutRuns = useRef(0);
   const trackLayoutTransition = useCallback((event: TransitionEvent<HTMLElement>): void => {
     // From the platform's event rather than React's: React fills in
     // `propertyName` for `transitionend` alone, and leaves it undefined on
     // `transitionrun` and `transitioncancel`.
     if (event.target !== event.currentTarget || event.nativeEvent.propertyName !== '--sidebar-compact') return;
-    layoutTravelling.current = event.type === 'transitionrun';
-    setLayoutSettling(layoutTravelling.current);
+    layoutRuns.current = Math.max(0, layoutRuns.current + (event.type === 'transitionrun' ? 1 : -1));
+    setLayoutSettling(layoutRuns.current > 0);
   }, []);
   // The toggle raises the hold itself, ahead of the platform: `transitionrun`
   // is dispatched with the first frame after the change, and a render landing
@@ -1042,7 +1048,7 @@ export function Sidebar({
     lastCompact.current = compact;
     setLayoutSettling(true);
     const frame = requestAnimationFrame(() => {
-      if (!layoutTravelling.current) setLayoutSettling(false);
+      if (layoutRuns.current === 0) setLayoutSettling(false);
     });
     return () => cancelAnimationFrame(frame);
   }, [compact]);
@@ -1670,11 +1676,17 @@ export function Sidebar({
           </IconButton>
           {/* Hidden rather than unmounted in the rail, so it can fade out with
               the layout instead of vanishing a frame ahead of it; the row that
-              takes its place is the one under the search row below. */}
+              takes its place is the one under the search row below. The
+              fade holds `display` for its length, so the link leaves the
+              accessibility tree and the tab order by attribute at once
+              rather than when the fade ends, or the rail would offer two New
+              chat links for a quarter of a second. */}
           <NavLink
+            aria-hidden={compact}
             aria-label="New chat"
             className={({ isActive }) => clsx('sidebar-new-button window-no-drag', isActive && 'is-active')}
             hidden={compact}
+            tabIndex={compact ? -1 : undefined}
             onClick={() => markSurfaceEntrypoint('sidebar_new')}
             state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
             to="/workstreams/new"

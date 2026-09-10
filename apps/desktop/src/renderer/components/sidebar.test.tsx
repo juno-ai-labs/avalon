@@ -2598,6 +2598,37 @@ describe('pinned work streams', () => {
       expect(playedOn('workstream:ws-today')?.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
     });
 
+    // A toggle reversed mid-flight cancels the running transition and starts
+    // another in one style change, and nothing pins which event arrives
+    // first. The hold counts runs rather than trusting the last event.
+    it('keeps the hold through a reversal whichever order its cancel and run arrive in', () => {
+      const today = workstream('ws-today', 'Roadmap review', 'completed', '2026-08-01T09:00:00.000Z');
+      const yesterday = workstream('ws-yesterday', 'Quarterly planning', 'completed', '2026-07-31T09:00:00.000Z');
+      const view = (streams: WorkstreamSummary[]): React.JSX.Element => (
+        <MemoryRouter><Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
+        </Tooltip.Provider></MemoryRouter>
+      );
+      const layoutEvent = (type: string): Event => {
+        const event = new Event(type, { bubbles: true });
+        Object.defineProperty(event, 'propertyName', { value: '--sidebar-compact' });
+        return event;
+      };
+      const { rerender } = render(view([today, yesterday]));
+      const aside = screen.getByRole('complementary', { name: 'Rally navigation' });
+      fireEvent(aside, layoutEvent('transitionrun'));
+      // The reversal's new run lands before the old transition's cancel.
+      fireEvent(aside, layoutEvent('transitionrun'));
+      fireEvent(aside, layoutEvent('transitioncancel'));
+      const touched = { ...yesterday, lastActivityAt: '2026-08-01T11:00:00.000Z' };
+      rerender(view([today, touched]));
+      expect(animate).not.toHaveBeenCalled();
+      // The surviving transition's end is what releases it.
+      fireEvent(aside, layoutEvent('transitionend'));
+      rerender(view([today, yesterday]));
+      expect(playedOn('workstream:ws-yesterday')).toBeDefined();
+    });
+
     // `transitionrun` arrives with the first frame after the toggle, and a
     // render can land before it. The toggle raises the hold itself, and a
     // frame later — jsdom runs no transitions, so nothing is travelling — the
