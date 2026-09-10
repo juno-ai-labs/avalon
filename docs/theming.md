@@ -165,6 +165,30 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-10 — The turn gap closes onto the hover row
+
+**What changed:** `sys.space.stack.gap` is `{ref.space.unit}` (4px, was
+`calc({ref.space.unit} * 8)`), written the way `sys.space.row.gap` is. The
+registry gains `sys.space.seam.gap` (`* 8`, 32px) for the row after a stretch
+of transcript this client has not loaded, which had been taking the turn gap
+as its default. The `sys.space.stack` description says only what the token
+sits between, the way its siblings do, rather than carrying the value and its
+rationale.
+
+**Why:** The rhythm entry of the same date in `conversation-surfaces.md` has
+the measurements and the steps the tuning took. The token side is three
+things. The turn gap stays on the unit rather than becoming a measurement of
+the hover row, which is not a token. It now sits under `sys.space.event.gap`
+and `sys.space.block.gap` by tuning rather than by relation: the three sit
+between different things and were tuned separately, and the next tuning of
+any of them should not move the others. And the seam is its own token rather
+than a reuse of the block gap, because it sits between two rows that are not
+adjacent, which is not what any other gap means; it keeps the value the turn
+gap had so that a seam reads as it did before this change. The stack
+description was trimmed on review: a group description that states the
+current value goes stale the first time the number moves, and the changelogs
+already hold the rationale.
+
 ### 2026-09-10 — The appearance picker gives up its private strip
 
 **What changed:** `ThemePicker` renders `SegmentedControl` instead of its own
