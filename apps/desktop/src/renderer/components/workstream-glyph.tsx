@@ -205,7 +205,12 @@ const MARKER_ORIGIN = 69;
 /**
  * How wide the knockout is stroked, in the marker's own 24-unit box. A stroke
  * is centred on the outline it traces, so the gap this leaves around the
- * painted symbol is half of it.
+ * painted symbol is half of it — but only because the knockout copy below
+ * carries `overflow="visible"`. A Lucide icon is a nested `<svg>`, which
+ * establishes its own viewport, and the UA stylesheet clips one to it. `Play`
+ * fills its box to about 3 units from the top and 21 from the left, so any
+ * dilation past 3 is cut off square at three edges — the shape-accurate gap
+ * flattening into a box corner exactly where the marker crosses the hexagon.
  */
 const MARKER_KNOCKOUT = 7;
 
@@ -256,9 +261,15 @@ export function HexagonGlyph({ className, fill, ink, marker, symbol: Icon }: {
           */}
           <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
             <rect width="100" height="100" fill="white" />
+            {/*
+              `overflow="visible"` is load-bearing, not tidying: without it the
+              nested viewport clips the dilating stroke and the gap squares off
+              at the box edge. See `MARKER_KNOCKOUT`.
+            */}
             <marker.symbol
-              className="automation-glyph-knockout" fill="black" size={MARKER_BOX} stroke="black"
-              strokeLinejoin="round" strokeWidth={MARKER_KNOCKOUT} x={MARKER_ORIGIN} y={MARKER_ORIGIN}
+              className="automation-glyph-knockout" fill="black" overflow="visible" size={MARKER_BOX}
+              stroke="black" strokeLinejoin="round" strokeWidth={MARKER_KNOCKOUT}
+              x={MARKER_ORIGIN} y={MARKER_ORIGIN}
             />
           </mask>
         </defs>
