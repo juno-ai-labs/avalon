@@ -488,6 +488,12 @@ pre {
   background: var(--av-sys-color-text-disabled);
   border-radius: var(--av-sys-size-radius-pill);
   display: inline-block;
+  /* A flex item in `.status-indicator`, so without this the dot is the thing
+     that gives way when the label does not fit its track. Four of the labels
+     in `statusLabel` outgrew the project row's first column, and the dot
+     absorbed all four — shrunk to nothing under the widest two, so those rows
+     showed no marker at all. */
+  flex: 0 0 auto;
   height: 7px;
   width: 7px;
 }
@@ -2666,36 +2672,42 @@ pre {
 
 /* New work stream */
 
-.waiting-workstreams { margin-top: 48px; }
-.waiting-workstreams h2 { color: var(--av-sys-color-text-muted); font-size: 11px; font-weight: 520; margin: 0 0 10px; }
 .waiting-workstream-list { display: grid; gap: 5px; }
 /* Every row keeps all six tracks, including an empty project slot. Optional
    project icons and automation source text therefore change only their own
    tracks; they cannot consume the title, time, or chevron columns. The final
    fixed track puts every chevron on the same right edge. */
-.waiting-workstream-row { align-items: center; background: var(--av-sys-color-surface-subtle); border: 1px solid transparent; border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); display: grid; gap: 10px; grid-template-columns: 112px auto minmax(0, 1fr) auto auto 15px; min-height: 44px; padding: 7px 10px; text-decoration: none; transition: background 130ms ease, border-color 130ms ease; }
+.waiting-workstream-row { align-items: center; background: var(--av-sys-color-surface-subtle); border: 1px solid transparent; border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); display: grid; gap: 10px; grid-template-columns: 130px auto minmax(0, 1fr) auto auto 15px; min-height: 44px; padding: 7px 10px; text-decoration: none; transition: background 130ms ease, border-color 130ms ease; }
 .waiting-workstream-row:hover { background: var(--av-sys-color-surface-raised); border-color: var(--av-ref-color-line-2); }
 .waiting-workstream-row:focus-visible { border-color: var(--av-sys-color-focus-default); outline: 0; }
-/* The row carries whichever marker the work stream is in, so the label beside
-   the dot takes its colour from the same state rather than from the one state
-   this section used to hold.
+/* The label beside the dot is deliberately not coloured by state: the dot
+   carries the marker here, exactly as it does in the sidebar.
 
-   Three states can reach a row, and only three: the membership rule is unseen,
-   mentioned, or needs-input, and the first two outrank everything in the
-   ranking while the third *is* the run's own state. A colour here for `running`
-   or `unread` would be a rule nothing can select — widening
-   `workstreamNeedsAttention` is what would earn them back.
+   These rows were built for the home screen's Needs attention section, whose
+   membership rule admitted only unseen, mentioned, and needs-input — so a
+   colour for each of those three was a complete set. The project space now
+   reuses the rows with the full `workstreamMarkerStatus` ranking, where it was
+   three loud rows among five quiet ones, and the amber needs-input label was
+   the least legible text in the list. Colouring the other five instead would be
+   five more decisions to keep in step with the tokens. See
+   `docs/workstream-markers.md`.
 
-   Every row used to say "Needs input", so the first column was the same width
-   in all of them for free. With three labels a per-row `auto` column gives each
-   one its own width — a ragged left edge down a section whose whole value is
-   that it can be scanned. The fixed track fits the widest label that can land
-   here ("You were mentioned"); a longer one would push its own row out again,
-   so a label added to `statusLabel` is a reason to come back and re-measure. */
+   The first column is a fixed track so every title starts on the same edge
+   whatever marker precedes it, which is what a per-row `auto` column cannot do:
+   each row is its own grid, so `auto` and `max-content` size to that row alone
+   and leave a ragged edge down a list whose whole value is that it can be
+   scanned.
+
+   130px is the widest label `statusLabel` holds — "Latest run completed", the
+   indicator measuring 125.5px with its dot and gap — plus slack, because that
+   measurement is this platform's font and the shipped client runs on others.
+   Four labels overflowed the 112px this used to be, by 13.5, 8, 1.2 and 0.2px;
+   the dot absorbed all four and vanished under the widest two. The ellipsis
+   below is the backstop for the next label that outgrows the track: it clips
+   visibly rather than sliding under the title, which is the failure somebody
+   can see. A label added to `statusLabel` is still a reason to re-measure. */
 .waiting-workstream-row .status-indicator { font-size: 10.5px; min-width: 0; }
-.waiting-workstream-row .status-needs_input { color: var(--av-sys-color-workstream-needs-input); }
-.waiting-workstream-row .status-mentioned { color: var(--av-sys-color-workstream-mentioned); }
-.waiting-workstream-row .status-unseen { color: var(--av-sys-color-workstream-unseen); }
+.waiting-workstream-row .status-indicator > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .waiting-workstream-projects { align-items: center; display: flex; min-width: 20px; }
 .waiting-workstream-copy { align-items: baseline; display: flex; gap: 8px; min-width: 0; }
 .waiting-workstream-copy strong { color: var(--av-sys-color-text-subtle); flex: 0 1 auto; font-size: 12px; font-weight: 530; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
