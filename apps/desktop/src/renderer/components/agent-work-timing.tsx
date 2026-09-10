@@ -74,21 +74,10 @@ export function AgentCompactionIndicator(): React.JSX.Element {
 /**
  * The label opens a row's own line, so it opens with a capital.
  *
- * The verbs reach this component from two kinds of producer and only one was
- * writing them that way. A plugin group names itself and reads as a sentence
- * already — "Used Slack for 5s" — while the thought rows carry bare English
- * words, and "thought for 7s" sitting under "Worked for 8s" reads as a
- * fragment of some other sentence rather than as the row it is.
- *
- * Casing here rather than at each producer is what keeps the fix from costing
- * something elsewhere: `activeVerb` is not only wording, it is the identifier
- * `isThinkingEvent` and `foldSettledWorkIntoMessages` compare a thought row's
- * scope with, and capitalizing it at the source would have made a row's
- * appearance and its identity the same string to keep in step. This component
- * owns the sentence it prints, so it is where the sentence is shaped.
- *
- * Already-capitalized verbs pass through unchanged, so a producer that names
- * itself keeps saying exactly what it says.
+ * Here rather than at each producer because a producer's verb is also the
+ * identity that routes the row — see the invariant in
+ * `docs/plugin-activity-rows.md`. Already-capitalized verbs pass through
+ * unchanged, so a producer that names itself keeps saying exactly what it says.
  */
 function sentenceCase(label: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
@@ -138,11 +127,12 @@ export function AgentWorkTiming({
   const duration = durationMs === null
     ? null
     : formatDuration(durationMs + activeDuration) ?? '0ms';
-  const label = sentenceCase(durationMs === null
+  const phrase = durationMs === null
     ? verb
     : timingAccuracy === 'upper_bound' && !active
       ? `${verb} for at most ${duration}`
-      : `${verb} for ${duration}`);
+      : `${verb} for ${duration}`;
+  const label = sentenceCase(phrase);
   // The elapsed time changes ten times a second, so a live region carrying it
   // would read the row out continuously; `activeName` is the stable stand-in.
   const accessibleLabel = active ? activeName : label;
