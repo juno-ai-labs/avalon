@@ -125,6 +125,11 @@ describe('sidebar layout motion', () => {
     expect(rule('.sidebar')).toContain('--sidebar-compact: 0;');
     expect(rule('.sidebar.is-compact')).toContain('--sidebar-compact: 1;');
     expect(rule('.workspace-shell .sidebar')).toContain('--sidebar-compact var(--sidebar-layout-motion)');
+    // Under reduced motion the fade goes and the channel stays — as the whole
+    // shorthand, since `transition-property` alone would pair the channel
+    // with the fade's 220ms and end the signal before the layout has.
+    const reduced = stylesheet.slice(stylesheet.indexOf('@media (prefers-reduced-motion: reduce) {\n  /* The fade goes'));
+    expect(reduced.slice(0, reduced.indexOf('}\n}'))).toContain('.workspace-shell .sidebar { transition: --sidebar-compact var(--sidebar-layout-motion); }');
   });
 
   // The titles are faded and clipped rather than hidden, so they can travel;

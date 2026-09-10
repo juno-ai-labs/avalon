@@ -327,8 +327,8 @@ motion. The Sidekick strip stays below the list in both layouts. The interval
 is stated once on `.sidebar` as `--sidebar-layout-motion`, which a drag sets to
 `0s` while also taking the property off everything already travelling, and the
 aside carries a registered `--sidebar-compact` number on the same interval
-whose transition events tell the component when the layout has settled, with
-the toggle raising the hold a frame ahead of them.
+whose transition events, counted, tell the component when the layout has
+settled, with the toggle raising the hold a frame ahead of them.
 
 **Why:** Collapsing the sidebar was reported as only the edge animating: the
 width glided and every row, heading and control inside it cut to its compact
