@@ -40,7 +40,7 @@ apart: the work stream's own tinted icon for the main conversation, a Tabler
 arrow is the same shape the main feed's **New substream** control draws as a
 text `↳`, but the rail and the feed no longer mean the same thing by it: in the
 rail it says *is* a substream, on a turn it says *start* one. The launch
-banner's own `border-corner-pill` is untouched.
+banner draws that same `corner-down-right` arrow, in the feed's sense of it.
 Compact hides the titles and swaps a child's arrow for the first character
 of its title. It retains the existing sidebar colors, row sizing, drag width and
 icon-only collapse. A completed
@@ -434,6 +434,29 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-10 — The launch banner carries the substream arrow
+
+**What changed:** The mark beside **New substream** in the launch banner is the
+Tabler `corner-down-right` arrow, the same glyph the rail draws on a substream
+row and the feed draws as a text `↳` on the control that starts one. It was
+`border-corner-pill`.
+
+**Why:** Asked for by the product owner: the pill was the app's only use of that
+glyph, so the one surface that is entirely about substreams was marked with a
+shape that says "substream" nowhere else. This answers the product question the
+2026-09-10 ↳ entry below deliberately left open — that entry kept the pill
+because it was legible in `text-default` where the rail's was not, and said
+whether a creation surface should carry a different mark was a separate
+question about a different surface. It is the same arrow the feed's own **New
+substream** control already uses, so the banner now reads in the feed's sense of
+it — *start* one — rather than in the rail's — *is* one.
+
+**Consequences:** `border-corner-pill` is no longer drawn anywhere in the
+product. The rail's "is a substream" arrow and this banner's "start one" arrow
+are now the same glyph in two senses, which is the reading the ↳ entry below
+already accepted between the rail and the feed's action row; a change to either
+still has to keep both readable.
 
 ### 2026-09-10 — The launch field is the conversation's field
 
