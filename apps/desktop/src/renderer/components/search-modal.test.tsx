@@ -61,6 +61,8 @@ describe('workspace search modal', () => {
     fireEvent.change(input, { target: { value: 'danil' } });
     const option = await screen.findByRole('option');
     expect(option.querySelector('strong')).toHaveTextContent('Danil');
+    // Rows carry no ⌘-number badge; the excerpt and its source own the row.
+    expect(option.querySelector('kbd')).toBeNull();
     expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'messages', pageSize: 7 }, expect.any(AbortSignal));
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(onSelect).toHaveBeenCalledWith(result);
