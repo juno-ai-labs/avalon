@@ -5314,8 +5314,13 @@ async function loadRunPromptContext(
       ])}`,
     ));
   }
-  const recallsMemoryAtAdmission = automationContext !== undefined
-    || !MESSAGE_ORIGIN_REASONS_WITHOUT_ADMISSION_RECALL.has(input.reason);
+  // A seeded run reaches no provider but its own seam, and admission recall
+  // would embed the query through the real embedding endpoint outside it. The
+  // reason set covers a seeded *message*, whose reason is `demo_seed`; a seeded
+  // Sidekick run's reason is its trigger's, so the seed itself is the gate.
+  const recallsMemoryAtAdmission = input.seed === undefined
+    && (automationContext !== undefined
+      || !MESSAGE_ORIGIN_REASONS_WITHOUT_ADMISSION_RECALL.has(input.reason));
   const memoryQueryParts: string[] = recallsMemoryAtAdmission
     ? [workstream.title, workstream.objective]
     : [];

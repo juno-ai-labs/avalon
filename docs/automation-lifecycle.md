@@ -74,7 +74,7 @@ not export a Cloudflare class from the Worker entrypoint.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/durable-objects/sidekick-do.ts` | The object: its v1 schema, `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setOwningRoomArchived`, `runNow`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, the parent contract, the schedule and run-provisioning alarms, and the sidebar row it enqueues. |
+| `apps/api/src/durable-objects/sidekick-do.ts` | The object: its v1 schema, `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setOwningRoomArchived`, `runNow`, `runSeeded`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, the parent contract, the schedule and run-provisioning alarms, and the sidebar row it enqueues. |
 | `apps/api/src/durable-objects/automation-do-protocol.ts` | The request schemas the Worker and the Queue consumer send it, and the two alarm kinds `automation_schedule` and `automation_run`. |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The parent half it inherits: child registry, projections, receipts, aggregation, the outbox and its drain. See [`workstream-durable-object.md`](workstream-durable-object.md). |
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through, which resolves whether the caller is in the owning room before asking the object. |
@@ -477,14 +477,15 @@ siblings in `test-workers/helpers/conversation-effects.ts`.
 
 ## Data model
 
-`SidekickDO` SQLite retains the namespace renamed from `AutomationDO`, with five
+`SidekickDO` SQLite retains the namespace renamed from `AutomationDO`, with six
 ordered object migrations: `automation`, `definition_revisions`,
 `schedules`, `runs`, `inbound_email_receipts`, the shared parent tables,
 `_internal_durable_alarms`, and the `object_retirement` tombstone
 ([`workspace-retirement.md`](workspace-retirement.md)). [`workstream-durable-object.md`](workstream-durable-object.md#automationdo)
 catalogs the columns; the occurrence keys and run states are in the tables
 above. `run_id` is the child substream id, and `harness_run_id` is unique per
-run.
+run. Migration 6 adds `runs.seed_json`, null on every run but one a demo
+seeded.
 
 `WorkspaceDO` migration 32 rebuilt `automation_directory` (automation id,
 workspace, author, `source_version`, hash, lifecycle, scope, owning work stream,
@@ -594,6 +595,35 @@ a tile a keyword size in one width cuts. On a platform whose scrollbars take
 space, an overflowing strip in the rail shows a thin scrollbar under the tile.
 
 Shipped in #648.
+
+### 2026-09-09 — A Sidekick can run from a script, so a demo can ship one that has already run
+
+**What changed:** `SidekickDO` gains `runSeeded`, a second way to admit a run.
+It takes a demo pack's seed, stores it on the run row (object migration 6,
+`runs.seed_json`), and `provisionRun` puts it in the run's execution context
+beside the trigger. The harness then answers that run's provider requests from
+the seed instead of reaching OpenRouter, which is the same seam a seeded message
+already used. Everything else about the run — admission, provisioning, the Bind
+loop, the tool surface, settlement, the run history row — is the ordinary path.
+`AutomationService` gains `saveDefinition` and `runSeeded` so the demo seeder can
+publish a definition and start that run without a drafting model.
+
+**Why:** A demo workspace is meant to open on a Sidekick that has already done
+something, not one that is merely configured. Producing that briefing with a
+live model would make preparation depend on inference nobody can replay, and
+writing the run's rows directly would be history claiming Rally did something it
+did not. Reusing the run path with a scripted provider is the only version where
+the briefing in the demo is a real run.
+
+**Consequences:** `runSeeded` is deliberately a separate method from `runNow`
+rather than an optional field on it. `runNow` is what `POST /sidekicks/:id/run`
+reaches, and a seed on that request shape would be one deserialization away from
+letting a member script their own Sidekick's output and keep it as history. A
+future change must keep the two request shapes apart. The trigger a seeded run
+records is `manual`, naming the author: the schedule did not fire it, and
+recording that it did would be the fabricated history the demo feature refuses
+everywhere else. `docs/demo-workspaces.md` owns the pack step and the seeding
+rules.
 
 ### 2026-09-08 — Give Sidekicks a library and dedicated profile layout
 
