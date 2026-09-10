@@ -817,6 +817,38 @@ describe('global reduced-motion kill switch', () => {
  * app laid out a digest brief in full with a decorative "more" beside it.
  */
 /**
+ * A keycap is a label, not a selection.
+ *
+ * It got its own fill because `onboarding.css` re-pointed
+ * `cmp.row.background-selected` at the reader's account accent, which printed
+ * A, B, C, D on pale blue chips. That re-point is gone now and the two tokens
+ * hold the same value, so this no longer guards a colour — it guards the
+ * coupling. `cmp.row.background-selected` is the fill a *selection* takes, and
+ * the registry's own entry says a theme may set it to `transparent` and mark
+ * selection with the marker alone. A keycap that followed it would disappear
+ * on that theme, having never been a selection in the first place. Naming the
+ * rejected token as well as the required one is what makes a revert fail here
+ * rather than in somebody's window.
+ */
+describe('option keycaps', () => {
+  it('fills the letter from the keycap token, not the selected row', () => {
+    const keycap = rule('.app-shell .elicitation-option > kbd');
+    expect(keycap).toContain('background: var(--av-cmp-keycap-background);');
+    expect(keycap).not.toContain('var(--av-cmp-row-background-selected)');
+  });
+
+  /**
+   * And the row underneath still draws from the selection fill. Lifting the
+   * keycap off that token is a split, not a removal; a change that took the
+   * whole panel off it would pass the assertion above on its own.
+   */
+  it('leaves the selected option itself drawn in the selection fill', () => {
+    expect(rule('.app-shell .elicitation-option.is-selected,\n.app-shell .elicitation-option.is-selected:hover'))
+      .toContain('background: var(--av-cmp-row-background-selected);');
+  });
+});
+
+/**
  * The feed's spacing is one scale. A literal that slips back into a feed rule
  * renders correctly and stays invisible until somebody moves `ref.space.unit`
  * and one gap does not move with it, which is how the feed accumulated every
