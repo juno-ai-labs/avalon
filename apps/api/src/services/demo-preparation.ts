@@ -39,7 +39,7 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { logInfo, logWarn } from "../observability/logger";
 import { copyTemplateConnections } from "./demo-connection-copy";
 import { DEMO_PRESENTER_ROLE, DemoPackSchema, PLACEHOLDER_DEMO_PACK, demoCastRoles, type DemoPack } from "./demo-pack";
-import { DEMO_CAST_EMAIL_DOMAIN, listDemoCastCandidates, readDemoCast } from "./demo-cast";
+import { DEMO_CAST_EMAIL_DOMAIN, assertDemoCastNamesDistinct, listDemoCastCandidates, readDemoCast } from "./demo-cast";
 import { checkDemoReadiness, demoReadinessManifest } from "./demo-readiness";
 import {
   applyDemoSeedAction,
@@ -428,16 +428,13 @@ export async function startDemoOperation(
   if (new Set(seated).size !== seated.length) {
     throw new ApiError(422, "demo_cast_duplicate", "Each pack role must be played by a different person");
   }
-  // Two people under one name in one workspace: a mention resolves to a user
-  // id, but nobody watching the demo can tell which of them was named, and the
-  // presenter reading their own name on somebody else's message is worse.
-  const spoken = [
-    ...Object.values(people).map((person) => person.name),
-    ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? [presenter.name] : []),
-  ].map((name) => name.toLowerCase());
-  if (new Set(spoken).size !== spoken.length) {
-    throw new ApiError(422, "demo_cast_name_duplicate", "Two people in this demo have the same name; cast somebody else");
-  }
+  assertDemoCastNamesDistinct({
+    names: [
+      ...Object.values(people).map((person) => person.name),
+      ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? [presenter.name] : []),
+    ],
+    status: 422,
+  });
   const at = nowIso();
   const inserted = await env.DB.prepare(
     `INSERT INTO demo_operations
@@ -782,10 +779,20 @@ async function phaseBody(
         `SELECT id FROM users WHERE id = ? AND platform_user_id IS NOT NULL`,
       ).bind(record.presenter_user_id).first<{ id: string }>();
       if (!presenter) throw new ApiError(409, "demo_presenter_unknown", "The presenter is not a signed-in member of this region");
-      await assertTemplatePresenter(env, record.presenter_user_id);
-      await readDemoCast(env, {
+      const presenterMember = await assertTemplatePresenter(env, record.presenter_user_id);
+      const people = await readDemoCast(env, {
         cast,
         presenterRole: pack.roles.includes(DEMO_PRESENTER_ROLE) ? DEMO_PRESENTER_ROLE : null,
+        status: 409,
+      });
+      // Against the directory as it reads now, not as the start request found
+      // it: everybody's name is rewritten from their platform identity each
+      // time they sign in, and this operation may be a retry days later.
+      assertDemoCastNamesDistinct({
+        names: [
+          ...Object.values(people).map((person) => person.name),
+          ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? [presenterMember.name] : []),
+        ],
         status: 409,
       });
       const connections = await workspaceRuntimeDatabase(env, DEMO_TEMPLATE_WORKSPACE_ID).prepare(
