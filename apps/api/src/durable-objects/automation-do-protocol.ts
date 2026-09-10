@@ -7,6 +7,7 @@ import {
   UserIdSchema,
   WorkspaceExternalEventSchema,
   WorkspaceIdSchema,
+  WorkstreamAppearancePatchSchema,
 } from "@rally/contracts";
 import { z } from "zod";
 
@@ -62,6 +63,20 @@ export const AutomationActorRequestSchema = z.strictObject({
   actor: AutomationActorSchema,
 });
 export type AutomationActorRequest = z.infer<typeof AutomationActorRequestSchema>;
+
+/**
+ * A partial icon/colour choice for the Sidekick itself.
+ *
+ * A patch rather than a whole appearance, for the reason the work stream's
+ * command is one: two people picking at once change a field each, and sending
+ * the pair would let the second one silently undo the first's colour.
+ */
+export const AutomationSetAppearanceRequestSchema = z.strictObject({
+  ...Addressed,
+  actor: AutomationActorSchema,
+  appearance: WorkstreamAppearancePatchSchema,
+});
+export type AutomationSetAppearanceRequest = z.infer<typeof AutomationSetAppearanceRequestSchema>;
 
 export const AutomationRunNowRequestSchema = z.strictObject({
   ...Addressed,

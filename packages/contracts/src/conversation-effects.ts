@@ -82,6 +82,13 @@ export const WorkstreamDirectoryUserEffectSchema = z.strictObject({
 export const AutomationDirectoryEffectSchema = z.strictObject({
   kind: z.literal("directory_automation"),
   loadable: z.boolean().optional(),
+  /**
+   * The chosen icon and colour, absent until somebody picks one — and absent
+   * from every effect an object queued before this field existed, which is why
+   * it is optional rather than nullable. A row with no appearance renders the
+   * mark derived from the automation's id, exactly as it did before.
+   */
+  appearance: WorkstreamAppearanceSchema.optional(),
   automationId: IdSchema,
   authorUserId: IdSchema,
   lifecycle: z.enum(["draft", "active", "paused", "deleted"]),

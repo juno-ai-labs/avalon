@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import type { WorkstreamAppearancePatch } from '@rally/contracts';
+import type { AutomationDetail } from '../lib/types';
 import { SidekickDetailLayout } from '../components/sidekick-detail-layout';
 import { AutomationHeader, type AutomationHeaderAction } from '../components/automation-header';
 import { Button, EmptyState, OpeningState } from '../components/primitives';
@@ -103,6 +105,43 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
       refresh();
     },
   });
+  // Not part of `act`: that mutation is one-at-a-time and drives the header's
+  // busy state, while a person picking a colour and then an icon fires twice in
+  // a second and must not disable Pause between them. The picker owns its own
+  // pending state; what it needs from here is the committed Sidekick, which the
+  // response carries — so the detail cache is written directly rather than
+  // invalidated, and everyone else's window is updated by the directory row the
+  // write enqueues.
+  //
+  // One at a time all the same, because each response is a whole Sidekick and
+  // the cache takes the last one to arrive. Two picks in flight together can
+  // land in either order, and the loser would put the earlier Sidekick — the
+  // one without the second choice — back on the screen, with nothing to correct
+  // it until the directory push seconds later. The object merges them correctly
+  // whatever order it sees; this is about which answer the screen keeps. The
+  // chain is a ref so it survives a re-render, and a rejected link is caught
+  // out of it so one refusal does not strand every later pick.
+  //
+  // The chain orders these requests against each other and nothing else, which
+  // is why the write below is also guarded. A pause, a resume, or the workspace
+  // socket's `automations` push all refresh this same entry while a pick is in
+  // flight, and an older full response landing afterwards would put that whole
+  // Sidekick back — a stale lifecycle, not just a stale icon — with the
+  // notification that would have corrected it already spent. `updatedAt` is the
+  // object's own clock and every mutation there bumps it, so a response older
+  // than what is cached is a response with nothing left to say: whatever wrote
+  // that newer entry read this appearance too.
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const setAppearance = (patch: WorkstreamAppearancePatch): Promise<void> => {
+    const result = queue.current.then(async () => {
+      const updated = await api!.setAutomationAppearance(id, patch);
+      queryClient.setQueryData<AutomationDetail>(['automation', id], (cached) =>
+        cached && cached.updatedAt > updated.updatedAt ? cached : updated);
+      void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
+    });
+    queue.current = result.catch(() => undefined);
+    return result;
+  };
   if (automation.error) {
     return (
       <div className="screen-error-state screen-with-titlebar">
@@ -121,6 +160,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
     <SidekickDetailLayout key={id} overview={<AutomationHeader
       automation={detail}
       error={act.error?.message}
+      onAppearanceChange={setAppearance}
       onDelete={() => act.mutateAsync('delete').then(() => undefined)}
       onPause={() => act.mutate('pause')}
       onResume={() => act.mutate('resume')}

@@ -113,6 +113,12 @@ export type AutomationScope = 'you' | 'workspace' | 'workstream';
 
 export interface AutomationSummary {
   loadable?: boolean;
+  /**
+   * The chosen icon and colour, from the same catalog a work stream picks
+   * from. Absent until somebody chooses, which is when the glyph falls back to
+   * the mark derived from the Sidekick's id.
+   */
+  appearance?: WorkstreamAppearance;
   id: string;
   name: string;
   description: string;

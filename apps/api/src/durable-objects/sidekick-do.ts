@@ -10,6 +10,8 @@ import {
   AutomationRunSchema,
   AutomationSetEvaluatorRulesInputV1Schema,
   DemoSeedSchema,
+  WorkstreamAppearanceSchema,
+  WorkstreamAppearancePatchSchema,
   automationAcceptanceSelections,
   sidekickLoadable,
   sidekickReceivesEmail,
@@ -91,6 +93,7 @@ import {
   AutomationRunNowRequestSchema,
   AutomationRunRequestSchema,
   AutomationRunSeededRequestSchema,
+  AutomationSetAppearanceRequestSchema,
   AutomationSubmitDefinitionRequestSchema,
   type AutomationActor,
   type AutomationActorRequest,
@@ -101,6 +104,7 @@ import {
   type AutomationRunNowRequest,
   type AutomationRunRequest,
   type AutomationRunSeededRequest,
+  type AutomationSetAppearanceRequest,
   type AutomationSubmitDefinitionRequest,
 } from "./automation-do-protocol";
 import {
@@ -202,6 +206,8 @@ interface AutomationRow extends Record<string, SqlStorageValue> {
    */
   applied_effects_revision: number | null;
   loadable: number;
+  /** The chosen icon and colour as `WorkstreamAppearance` JSON; null until picked. */
+  appearance_json: string | null;
   authority_generation: number;
   created_at: number;
   updated_at: number;
@@ -361,6 +367,17 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     // the schedule, and `provisionRun` hands it to the loop the same way it
     // hands over the trigger.
     `ALTER TABLE runs ADD COLUMN seed_json TEXT CHECK (seed_json IS NULL OR json_valid(seed_json))`,
+  ],
+}, {
+  version: 7,
+  description: "the Sidekick's chosen icon and colour",
+  statements: [
+    // Null means nobody has chosen, which is not the same as choosing the
+    // default: the mark derived from the automation's id is what a null
+    // renders, and it moves if the catalog is ever reordered. A stored value
+    // is a person's decision and never moves.
+    `ALTER TABLE automation ADD COLUMN appearance_json TEXT
+       CHECK (appearance_json IS NULL OR json_valid(appearance_json))`,
   ],
 }];
 
@@ -725,6 +742,45 @@ export class SidekickDO extends ConversationParentDurableObject {
     });
     await this.armNextAlarm();
     return { loadable };
+  }
+
+  /**
+   * Choose the Sidekick's icon or colour.
+   *
+   * A parent-owned mutation, so it arrives over REST rather than on the
+   * authoring conversation's socket: this object owns the Sidekick's identity
+   * the way it owns its name and lifecycle, and the conversation underneath is
+   * a child that happens to be open. Everyone else finds out the way they find
+   * out about a rename — through the directory row this enqueues, which
+   * WorkspaceDO pushes to every connected client.
+   *
+   * The patch merges over what is stored, so a colour choice cannot undo
+   * somebody's icon; the caller gets the merged value back, which is the whole
+   * detail rather than a receipt, so the person who picked never has to wait
+   * for the projection to come back round.
+   */
+  async setAppearance(input: AutomationSetAppearanceRequest): Promise<AutomationDetail> {
+    await this.initialized;
+    const request = AutomationSetAppearanceRequestSchema.parse(input);
+    const row = this.assertAutomation(request.workspaceId, request.automationId);
+    this.assertManager(row, request.actor);
+    if (row.lifecycle === "deleted") throw new ApiError(404, "automation_not_found", "This automation was deleted");
+    const patch = WorkstreamAppearancePatchSchema.parse(request.appearance);
+    const current = row.appearance_json
+      ? WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json))
+      : { icon: null, color: null };
+    const appearance = WorkstreamAppearanceSchema.parse({ ...current, ...patch });
+    const now = Date.now();
+    this.state.storage.transactionSync(() => {
+      this.state.storage.sql.exec(
+        `UPDATE automation SET appearance_json = ?, updated_at = ? WHERE id = 1`,
+        JSON.stringify(appearance),
+        now,
+      );
+      this.enqueueDirectory(now);
+    });
+    await this.armNextAlarm();
+    return this.detail();
   }
 
   async pause(input: AutomationActorRequest): Promise<void> {
@@ -1950,6 +2006,9 @@ export class SidekickDO extends ConversationParentDurableObject {
     ))?.created_at ?? null;
     return AutomationDetailSchema.parse({
       id: row.automation_id,
+      ...(row.appearance_json
+        ? { appearance: WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json)) }
+        : {}),
       name: row.title || "New Sidekick",
       loadable: row.loadable === 1,
       description: row.description,
@@ -2007,6 +2066,9 @@ export class SidekickDO extends ConversationParentDurableObject {
     const effect: ParentEffect = {
       kind: "directory_automation",
       loadable: row.loadable === 1,
+      ...(row.appearance_json
+        ? { appearance: WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json)) }
+        : {}),
       automationId: row.automation_id,
       authorUserId: row.author_user_id,
       lifecycle: row.lifecycle,

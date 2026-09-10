@@ -190,14 +190,17 @@ export function HexagonGlyph({ className, fill, ink, symbol: Icon }: {
   );
 }
 
-/** Scales the shape and symbol together to the containing automation tile. */
-export function AutomationGlyph({ id }: { id: string }): React.JSX.Element {
-  const appearance = workstreamAppearance(id);
-  return (
-    <HexagonGlyph
-      fill={`var(--av-sys-color-project-${appearance.color})`}
-      ink={glyphInk(appearance.color)}
-      symbol={WORKSTREAM_ICONS[appearance.iconIndex] ?? Sparkles}
-    />
-  );
+/**
+ * A Sidekick's identity in that hexagon, scaled to its containing tile.
+ *
+ * The third treatment over {@link resolveWorkstreamAppearance}, and it reads
+ * the same stored appearance the other two do: a Sidekick's icon and colour are
+ * chosen from the same catalog, through the same picker, so resolving them here
+ * a second way is how the hexagon and the glyph would come to disagree about
+ * one choice. The shape itself stays `HexagonGlyph`'s — this supplies only what
+ * the identity decides, which is the fill, its ink, and the symbol.
+ */
+export function AutomationGlyph({ id, appearance: saved }: { id: string; appearance?: SavedAppearance }): React.JSX.Element {
+  const { Icon, color, colorKey } = resolveWorkstreamAppearance(id, saved);
+  return <HexagonGlyph fill={color} ink={glyphInk(colorKey)} symbol={Icon} />;
 }
