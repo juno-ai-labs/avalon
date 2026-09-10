@@ -72,7 +72,13 @@ describe('new-account learning paths', () => {
     expect(state.saveAccount).toHaveBeenCalledWith({ expectedRevision: 0, presentation: { color: 'rose', avatar: 'circle', displayName: 'Person', initials: 'P' } });
     expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'complete' });
     // The finished journey is replaced by the landing, not left behind for Back.
-    expect(screen.getByTestId('route')).toHaveTextContent('REPLACE /');
+    // Awaited rather than read straight away: `finishOnboarding` completes the
+    // journey and *then* navigates, so the stage flipping to `complete` is what
+    // renders "Ordinary workspace" above — one commit before the navigation this
+    // asserts on. Reading it synchronously raced that second commit and failed
+    // as `POP /onboarding` under a loaded machine. This still fails if the
+    // journey pushes instead of replacing, or never leaves at all.
+    await waitFor(() => expect(screen.getByTestId('route')).toHaveTextContent('REPLACE /'));
   });
   it('retains personal setup when the account save fails', async () => {
     state.saveAccount.mockRejectedValue(new Error('Profile changed in another session')); show();
