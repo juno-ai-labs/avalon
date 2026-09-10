@@ -221,9 +221,11 @@ function WorkspaceApp(): React.JSX.Element {
       {/* Commit route changes atomically so a new hash never labels an old feed. */}
       {mainSurface ? <HashRouter useTransitions={false}>
         <WorkstreamSocketResumeProvider scope={scope}>
-          <WorkspaceWorkstreamSockets api={workspace.error ? null : api}>
-            {content}
-          </WorkspaceWorkstreamSockets>
+          <WorkspaceOnboardingJourney workspace={workspace.error ? null : workspace.data ?? null}>
+            <WorkspaceWorkstreamSockets api={workspace.error ? null : api}>
+              {content}
+            </WorkspaceWorkstreamSockets>
+          </WorkspaceOnboardingJourney>
         </WorkstreamSocketResumeProvider>
       </HashRouter> : content}
     </WorkspaceSocketProvider>
@@ -276,7 +278,6 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
   return (
     <SpeechPlaybackProvider api={api!}>
       <TelemetryRouteObserver />
-      <WorkspaceOnboardingJourney key={`${workspace.region}:${workspace.id}:${workspace.currentUser.id}`} workspace={workspace}>
         <AppShell workspace={workspace}>
           <Routes>
             <Route element={<WorkstreamLandingScreen />} path="/" />
@@ -292,7 +293,6 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
             <Route element={<NotFoundScreen />} path="*" />
           </Routes>
         </AppShell>
-      </WorkspaceOnboardingJourney>
     </SpeechPlaybackProvider>
   );
 }
