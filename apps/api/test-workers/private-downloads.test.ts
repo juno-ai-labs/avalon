@@ -3,7 +3,8 @@ import { env } from 'cloudflare:workers';
 import { reset } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { issueDownloadGrant, availableDownloadGrantExists } from '@rally/db/private-access';
-import { createPrivateAccessRoutes, privateAccessRoutes } from '../src/routes/private-access';
+import { privateAccessRoutes } from '../src/routes/private-access';
+import { MAX_DOWNLOAD_STARTS_PER_MINUTE } from '../src/services/access-request-limits';
 import migration from '../../../packages/db/migrations/0101_private_access.sql?raw';
 
 beforeEach(async () => {
@@ -148,15 +149,17 @@ describe('private installer download on workerd', () => {
 
 describe('bounded installer starts on workerd', () => {
   it('refuses extra timed starts before R2 and allows a retry in the next minute', async () => {
-    const routes = createPrivateAccessRoutes(Number.POSITIVE_INFINITY, 8192, 1);
+    const routes = privateAccessRoutes;
     await env.DESKTOP_RELEASES!.put('stable/darwin/arm64/Rally.dmg', 'installer-fixture');
     const grant = await issueDownloadGrant(env.DB, { source: 'manual', createdBy: 'test', expiresAt: '2026-09-10T12:00:00Z' });
     const get = vi.spyOn(env.DESKTOP_RELEASES!, 'get');
     const start = () => routes.request('/downloads/redeem', { method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: grant.token }) }, env);
-    const first = await start(); expect(first.status).toBe(200); await first.text();
+    for (let i = 0; i < MAX_DOWNLOAD_STARTS_PER_MINUTE; i++) {
+      const first = await start(); expect(first.status).toBe(200); await first.text();
+    }
     const second = await start(); expect(second.status).toBe(429);
-    expect(await second.text()).toContain('Try download again'); expect(get).toHaveBeenCalledTimes(1);
+    expect(await second.text()).toContain('Try download again'); expect(get).toHaveBeenCalledTimes(MAX_DOWNLOAD_STARTS_PER_MINUTE);
     vi.setSystemTime(new Date('2026-09-09T12:01:00Z'));
     const later = await start(); expect(later.status).toBe(200); await later.text();
   });
