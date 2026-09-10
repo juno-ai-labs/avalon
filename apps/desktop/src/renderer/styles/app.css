@@ -3665,7 +3665,17 @@ pre {
 .run-stopped-notice > .button { grid-column: 2; justify-self: start; }
 .run-failure-actions .button,
 .run-stopped-notice > .button { border-radius: 999px; min-height: 36px; padding: var(--space-2) var(--space-3); white-space: normal; }
-.jump-bottom { align-items: center; background: var(--av-sys-color-surface-raised-hover); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-pill); box-shadow: var(--av-sys-elevation-shadow-sm); color: var(--av-sys-color-text-subtle); display: flex; height: 30px; justify-content: center; left: 50%; padding: 0; pointer-events: auto; position: absolute; top: 5px; transform: translateX(-50%); width: 30px; z-index: 4; }
+/* The control rests above the composer, never in it. Both edges of the dock are
+   candidates for anchoring it and only one is stable: the dock's height is the
+   composer's, which grows with the draft, a queue above it or an error under it,
+   so a `top` offset measured down from that edge put the control further into a
+   field the taller that field got, which is the state it was hardest to reach
+   in. Anchoring the control's own bottom edge to that same edge holds the gap
+   whatever the composer does, and costs the dock no layout: it overhangs the
+   transcript, which is what a control that says "you are not at the end" is for.
+   This depends on the dock having no padding above the composer; give it some
+   and the gap here grows by that much. */
+.jump-bottom { align-items: center; background: var(--av-sys-color-surface-raised-hover); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-pill); bottom: calc(100% + var(--space-2)); box-shadow: var(--av-sys-elevation-shadow-sm); color: var(--av-sys-color-text-subtle); display: flex; height: 30px; justify-content: center; left: 50%; padding: 0; pointer-events: auto; position: absolute; transform: translateX(-50%); width: 30px; z-index: 4; }
 .jump-bottom:hover { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-ref-color-line-5); color: var(--av-sys-color-text-default); }
 .jump-bottom:focus-visible { border-color: var(--av-sys-color-focus-default); outline: 0; }
 .jump-bottom[aria-hidden="true"] { pointer-events: none; }
