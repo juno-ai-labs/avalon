@@ -87,12 +87,16 @@ export class SearchAuthorizationResolver implements AuthorizationResolver {
       // KV caches negative lookups too. A miss is not evidence that the durable projection is absent.
       if (this.env.AVALON_REGION === 'global' && this.env.AUTHORIZATION_CACHE) {
         try {
-          const stored = await (await authorizationWorkspace(this.env, subject.workspaceId)).readSearchAuthorizationSnapshots({
-            subject, resources: pending.map((index) => resources[index]!),
-          });
+          const workspace = await authorizationWorkspace(this.env, subject.workspaceId);
+          const stored = await workspace.readSearchAuthorizationSnapshots({ subject, resources: pending.map((index) => resources[index]!) });
           for (const [offset, snapshot] of stored.entries()) {
             if (snapshot) resolved.set(pending[offset]!, snapshot.decision);
           }
+          // Put the durable decision back into KV, under its generation fence,
+          // so the next search reads it there instead of missing again. A
+          // failed put is already queued for retry by the object.
+          const republish = stored.filter((snapshot) => snapshot !== null);
+          if (republish.length) await workspace.writeSearchAuthorizationSnapshots(republish).catch(() => undefined);
         } catch {
           // An unavailable projection store must not trigger a more expensive authority walk.
           for (const index of pending) resolved.set(index, unavailable());

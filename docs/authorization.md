@@ -83,7 +83,9 @@ without reporting it, and resolves canonical authority once after the response
 (`waitUntil`), storing allowed, denied or not-found decisions; other callers
 resolve the miss inline. A miss is the exception, not the first-search norm:
 every push job first registers the pairs its target reaches (see below), so the
-decision a search needs exists before the search.
+decision a search needs exists before the search. A KV miss whose decision the
+durable projection already holds is answered from there and republished to KV
+under its generation fence, so a cached negative lookup does not keep missing.
 Global reads only KV on the request; EU reads the WorkspaceDO snapshot table, one
 warm object, on the request. Cache hits never recheck owners or schedule work.
 There is no TTL, age-based denial, or periodic/demand-driven refresh. Relevant
@@ -373,6 +375,17 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-09-10 — Republish a durable decision after a cached KV miss
+
+Review found that the deferred fill, on finding the decision in the WorkspaceDO
+snapshot table after a KV miss, kept it only for the request that had already
+answered unavailable; KV caches negative lookups, so the next search missed
+again and read the object again, indefinitely. The fill now writes the stored
+snapshots back through `writeSearchAuthorizationSnapshots`, which keeps the
+generation fence and queues the existing retry when the put fails. A failed
+republish is ignored by the fill because the object has already recorded the
+retry intent.
 
 ### 2026-09-10 — Register the projection from mutations and drop the completeness flag
 
