@@ -717,6 +717,36 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-09-10 — `settings_application` is reported when the window is shown
+
+**What changed:** The settings surface no longer reports `surface_viewed` when
+its renderer mounts. It waits for `settings:revealed`, which main sends the first
+time that window is put on screen.
+
+**Why:** The settings window is now built hidden ahead of being asked for, so its
+renderer mounts once per signed-in session whether or not anybody opens Settings.
+Mounting used to *be* opening it. Left alone, the prewarm would have fired the
+only `surface_viewed` that window ever produces — spending
+`consumeSurfaceEntrypoint()` on nobody and latching `lastSurfacePath`, so the
+open a person actually performed would report nothing at all. The metric would
+not merely have inflated; opens would have disappeared from it and been replaced
+by one mis-attributed event per session.
+
+**Considered and rejected:** Gating the report in the renderer on
+`document.visibilityState`, which is the obvious fix and needs no IPC. It is not
+reliable: a `show: false` window reported `visible` under Xvfb with no window
+manager while this change was being verified, so the renderer cannot use it to
+tell a hidden window from a shown one. Only main knows, so main says.
+
+**Consequences:** One `surface_viewed` per settings window that is actually
+revealed; raising a window already on screen does not report again, which matches
+what the pre-prewarm code did (it did not remount). Any future surface built
+before it is shown has the same problem and needs the same treatment — the
+renderer cannot detect this condition for itself.
+`settings-window.md` owns the reveal signal.
+
+Shipped in #673.
+
 ### 2026-09-10 — Feed telemetry names a paint from the local cache
 
 **What changed:** `workstream_feed_visible.feedSource` accepts `local_cache`,
@@ -763,7 +793,6 @@ name moved instead, so nothing still points at a pane that is gone.
 **Consequences:** Renderer-visible telemetry state is now the **Product
 analytics** preference and its status lines, nothing else. A future debugging
 surface for decisions is a new decision, not a restoration.
-
 
 ### 2026-09-08 — The `demos` credential leaves the telemetry map
 
