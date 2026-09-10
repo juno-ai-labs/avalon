@@ -21,11 +21,13 @@ export async function searchWorkspace(env: Env, auth: AuthContext, request: Sear
 
 /**
  * One candidate page, admitted through the projected search decisions and
- * rendered from the index's own attributes. Nothing here reads a Durable
- * Object or R2: a decision the projection does not hold yet is filled after
- * the response (`defer`), and a row indexed before the display attributes
- * existed is omitted until its queued rewrite lands. Not finding something is
- * the safe failure; the next search finds it.
+ * rendered from the index's own attributes. Nothing here reads a content
+ * owner (WorkstreamDO, SubstreamAgent) or R2; admission reads KV in Global and
+ * the WorkspaceDO snapshot table in EU, one warm object. A decision the
+ * projection does not hold yet is filled after the response (`defer`), and a
+ * row indexed before the display attributes existed is omitted until its
+ * queued rewrite lands. Not finding something is the safe failure; the next
+ * search finds it.
  */
 export async function searchWorkspacePage(env: Env, auth: AuthContext, request: SearchRequest, signal?: AbortSignal,
   defer?: DeferredWork) {
