@@ -192,6 +192,25 @@ actively misleads whoever reads it next, and this repository has a document
 about exactly that kind of stale name. The CSS moved for the same reason and no
 other; the rules themselves are untouched.
 
+**Three names deliberately did not move, and the reasoning is the same argument
+reaching its limit.** `WorkstreamAppearance` and `WorkstreamAppearancePatch` are
+now the stored shape and the request body of `POST /sidekicks/:id/appearance`,
+and this document's own filename still says work stream while its contents cover
+chosen identity generally. All three are misleading in exactly the way the
+component's name was. They stayed because the blast radius is different in kind:
+the two contract types are exported across every package and named in schemas a
+Durable Object parses on each read, and a document's filename is linked from the
+index and from a dozen other documents. Neither is hard, both are wide, and
+neither belongs in a change about Sidekick icons. Recorded here so the third
+caller does not have to work out whether it was considered.
+
+**One click is one directory effect, one `registration_generation` bump and one
+re-push of the workspace's `automations` list to every subscribed socket.**
+Clicking across the ring is that many. It is fine at present scale and gets no
+guard now, per
+[`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md),
+but it is the first place to look if that sidebar push ever feels chatty.
+
 `AutomationGlyph` reading the palette itself was the older half of the same
 problem, and the entry below already predicted it — "a future surface wanting a
 third treatment should add it here rather than reading `workstreamAppearance`
