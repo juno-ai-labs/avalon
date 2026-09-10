@@ -516,7 +516,7 @@ describe("scoped agent memory", () => {
     const scopes = await resolveMemoryAccess(routedEnv(env, runInput), runInput);
     expect(scopes.map((scope) => [scope.kind, scope.ownerId, scope.writable])).toEqual([
       ["workspace", WORKSPACE_ID, true],
-      ["automation", AUTOMATION_ONE, true],
+      ["sidekick", AUTOMATION_ONE, true],
     ]);
     // A work-stream run keeps the shape it had: the person's scope and the
     // work stream's, on top of the workspace's.
@@ -530,7 +530,7 @@ describe("scoped agent memory", () => {
       toolContext(runInput, "add-user-under-automation"),
     )).rejects.toMatchObject({
       code: "memory_scope_not_available",
-      message: expect.stringContaining("Its scopes are: automation, workspace"),
+      message: expect.stringContaining("Its scopes are: sidekick, workspace"),
     });
   });
 
@@ -539,7 +539,7 @@ describe("scoped agent memory", () => {
     const first = input("owner", 1);
     const second = input("workspace", 2);
     await memoryTool(env, first, "add").execute(
-      { scopeKind: "automation", text: "Use the crimson summary template", rationale: "Future runs need this" },
+      { scopeKind: "sidekick", text: "Use the crimson summary template", rationale: "Future runs need this" },
       toolContext(first, "add-automation-one"),
     );
     await memoryTool(env, first, "add").execute(
@@ -549,9 +549,9 @@ describe("scoped agent memory", () => {
     // The second automation's scope is its own, keyed by the automation and
     // not by the workspace both belong to.
     expect((await resolveMemoryAccess(routedEnv(env, second), second)).map((scope) => [scope.kind, scope.ownerId]))
-      .toEqual([["workspace", WORKSPACE_ID], ["automation", AUTOMATION_TWO]]);
+      .toEqual([["workspace", WORKSPACE_ID], ["sidekick", AUTOMATION_TWO]]);
     expect((await memorySearch(routedEnv(env, first), first, "crimson summary")).results)
-      .toEqual([expect.objectContaining({ scopeKind: "automation" })]);
+      .toEqual([expect.objectContaining({ scopeKind: "sidekick" })]);
     expect((await memorySearch(routedEnv(env, second), second, "crimson summary")).results).toEqual([]);
     expect((await memorySearch(routedEnv(env, second), second, "release Thursday")).results)
       .toEqual([expect.objectContaining({ scopeKind: "workspace" })]);

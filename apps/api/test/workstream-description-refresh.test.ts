@@ -415,7 +415,7 @@ describe("work-stream description refresh", () => {
     addQualifyingConversation(objectStore);
 
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
-      .toEqual({ status: "skipped", reason: "automation_parent" });
+      .toEqual({ status: "skipped", reason: "sidekick_parent" });
     expect(prompts).toHaveLength(0);
   });
 

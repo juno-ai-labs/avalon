@@ -109,6 +109,9 @@ const AUTOMATIONS_GROUP: PluginGroup = {
  * its icon is pinned to its canonical id rather than mutable display-name text.
  */
 const GROUPED_PLUGIN_IDS = new Map<string, PluginGroup>([
+  ['rally:sidekicks', AUTOMATIONS_GROUP],
+  // The id a transcript recorded before the Sidekick rename; a stored row
+  // keeps it, so it keeps its glyph.
   ['rally:automations', AUTOMATIONS_GROUP],
   ['rally:core', RALLY_GROUP],
   ['rally:discovery', RALLY_GROUP],

@@ -1368,8 +1368,8 @@ export function automationAcceptanceSelections(draft: AutomationDraft): {
 
 /** Why a draft could not be accepted as written, in the object's own vocabulary. */
 export type AutomationDraftAcceptanceBlocker =
-  | "automation_evaluator_rules_required"
-  | "automation_activity_source_unbound";
+  | "sidekick_evaluator_rules_required"
+  | "sidekick_activity_source_unbound";
 
 /**
  * What would stop this draft being accepted, decided from the draft alone.
@@ -1392,7 +1392,7 @@ export function automationDraftAcceptanceBlocker(
 ): AutomationDraftAcceptanceBlocker | null {
   const external = draft.triggers.filter(isExternalEventTrigger);
   if (external.length > 0 && (rules?.evaluators.length ?? 0) === 0) {
-    return "automation_evaluator_rules_required";
+    return "sidekick_evaluator_rules_required";
   }
   // Every evaluator has to name a binding the triggers actually declare.
   // Triggers and rules are written by two separate tool calls, so this is the
@@ -1402,7 +1402,7 @@ export function automationDraftAcceptanceBlocker(
   for (const evaluator of rules?.evaluators ?? []) {
     const bound = activitySourcePluginIds[evaluator.source.sourceBindingKey];
     if (!bound || bound !== evaluator.source.suggestedSourcePluginId) {
-      return "automation_activity_source_unbound";
+      return "sidekick_activity_source_unbound";
     }
   }
   return null;

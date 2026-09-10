@@ -127,8 +127,8 @@ let submitDraftOnNextTurn = false;
 const provider = useOpenRouterDouble((call) => {
   if (submitDraftOnNextTurn) {
     submitDraftOnNextTurn = false;
-    expect(call.toolNames).toContain("automation_submit_draft");
-    return { callTool: { name: "automation_submit_draft", arguments: { ...DEFINITION, triggers: [] } } };
+    expect(call.toolNames).toContain("sidekick_submit_draft");
+    return { callTool: { name: "sidekick_submit_draft", arguments: { ...DEFINITION, triggers: [] } } };
   }
   if (loadSkillOnNextTurn) {
     loadSkillOnNextTurn = false;
@@ -691,7 +691,7 @@ describe("AutomationDO", () => {
         audienceUserIds: [],
         audienceKind: "workspace",
       },
-    })).toEqual({ admitted: true, outcomeCode: "automation_occurrence_admitted" });
+    })).toEqual({ admitted: true, outcomeCode: "sidekick_occurrence_admitted" });
     const [admitted] = await runRows();
     const run = await settledChildRun(admitted!.run_id);
     expect(run).toMatchObject({ status: "completed", error_json: null });
@@ -708,7 +708,7 @@ describe("AutomationDO", () => {
       ...DEFINITION,
       recommendedPlugins: [{ pluginId: "plugin_absent", recommendedTools: [], reason: "Needed" }],
     });
-    await expect(apply()).rejects.toMatchObject({ code: "automation_plugin_unavailable" });
+    await expect(apply()).rejects.toMatchObject({ code: "sidekick_plugin_unavailable" });
     expect((await automationRow()).lifecycle).toBe("draft");
   });
 
@@ -767,7 +767,7 @@ describe("AutomationDO", () => {
     expect(await activeRegistrations()).toBe(0);
     await expect(runInDurableObject(automationStub(), (instance: AutomationDO) =>
       instance.runNow({ ...addressed(), actor: actor(), idempotencyKey: "pause-run-0002" })))
-      .rejects.toThrow("Only an active automation can run");
+      .rejects.toThrow("Only an active Sidekick can run");
 
     await automationStub().resume({ ...addressed(), actor: actor() });
 
@@ -797,13 +797,13 @@ describe("AutomationDO", () => {
     expect((await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID })).items)
       .toEqual([]);
     await expect(runInDurableObject(automationStub(), (instance: AutomationDO) =>
-      instance.readDetail({ ...addressed(), actor: actor() }))).rejects.toThrow("This automation was deleted");
+      instance.readDetail({ ...addressed(), actor: actor() }))).rejects.toThrow("This Sidekick was deleted");
   });
 
   it("refuses management by a member who is neither author nor principal", async () => {
     await activeAutomation();
     await expect(runInDurableObject(automationStub(), (instance: AutomationDO) =>
-      instance.pause({ ...addressed(), actor: actor(OUTSIDER_ID) }))).rejects.toThrow("You cannot manage this automation");
+      instance.pause({ ...addressed(), actor: actor(OUTSIDER_ID) }))).rejects.toThrow("You cannot manage this Sidekick");
     expect((await automationRow()).lifecycle).toBe("active");
   });
 
@@ -867,7 +867,7 @@ describe("AutomationDO", () => {
 
     // The archive holds until the room comes back; `resume` refuses with this
     // code, and apply now answers the same instead of walking around it.
-    await expect(apply()).rejects.toMatchObject({ code: "automation_room_archived" });
+    await expect(apply()).rejects.toMatchObject({ code: "sidekick_room_archived" });
     expect(await automationRow()).toMatchObject({ lifecycle: "paused", paused_by: "room_archive", accepted_definition_revision: 1 });
   });
 
@@ -903,8 +903,8 @@ describe("AutomationDO", () => {
           WHERE t.invalidated_at IS NULL ORDER BY t.name`,
       ).toArray());
     expect(await tables()).toEqual([
-      { name: "Deploys", kind: "automation", owner_id: AUTOMATION_ID, columns: 2 },
-      { name: "Rollbacks", kind: "automation", owner_id: AUTOMATION_ID, columns: 1 },
+      { name: "Deploys", kind: "sidekick", owner_id: AUTOMATION_ID, columns: 2 },
+      { name: "Rollbacks", kind: "sidekick", owner_id: AUTOMATION_ID, columns: 1 },
     ]);
 
     // A second revision declaring the same tables reopens them; nothing is
@@ -1074,13 +1074,13 @@ describe("AutomationDO", () => {
     };
 
     expect(await automationStub().admitExternalEvent({ ...admission, event }))
-      .toEqual({ admitted: true, outcomeCode: "automation_occurrence_admitted" });
+      .toEqual({ admitted: true, outcomeCode: "sidekick_occurrence_admitted" });
     expect(await automationStub().admitExternalEvent({ ...admission, event }))
-      .toEqual({ admitted: true, outcomeCode: "automation_occurrence_replayed" });
+      .toEqual({ admitted: true, outcomeCode: "sidekick_occurrence_replayed" });
     expect(await automationStub().admitExternalEvent({
       ...admission,
       event: { ...event, id: earlierEventId, eventSequence: 1 },
-    })).toEqual({ admitted: false, outcomeCode: "automation_event_before_activation_boundary" });
+    })).toEqual({ admitted: false, outcomeCode: "sidekick_event_before_activation_boundary" });
     expect((await runRows()).map((run) => run.occurrence_key)).toEqual([`external:${event.id}`]);
     // The run gets to read the event that woke it: without this it knew only
     // the event's type, and a rule on `channel` produced a run that could not
@@ -1133,7 +1133,7 @@ describe("AutomationDO", () => {
       ...email,
       resendEmailId: "resend-email-0003",
       emailAddress: "somebody-else@mail.rallywithai.com",
-    })).toEqual({ admitted: false, duplicate: false, outcomeCode: "automation_email_route_mismatch", runId: null });
+    })).toEqual({ admitted: false, duplicate: false, outcomeCode: "sidekick_email_route_mismatch", runId: null });
     expect((await runRows()).map((run) => run.occurrence_key)).toEqual(["inbound_email:resend-email-0001"]);
     const receipts = await runInDurableObject(automationStub(), (_instance, state) =>
       state.storage.sql.exec<{ resend_email_id: string; outcome_code: string }>(
@@ -1142,7 +1142,7 @@ describe("AutomationDO", () => {
     expect(receipts).toEqual([
       { resend_email_id: "resend-email-0001", outcome_code: "admitted" },
       { resend_email_id: "resend-email-0002", outcome_code: "email_sender_not_authorized" },
-      { resend_email_id: "resend-email-0003", outcome_code: "automation_email_route_mismatch" },
+      { resend_email_id: "resend-email-0003", outcome_code: "sidekick_email_route_mismatch" },
     ]);
   });
 

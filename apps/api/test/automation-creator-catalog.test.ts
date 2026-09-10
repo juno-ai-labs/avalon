@@ -133,7 +133,7 @@ async function automationCreatorTool(
   name: string,
 ): Promise<Awaited<ReturnType<typeof __integrationTesting.loadHarnessTools>>["tools"][number]> {
   const selected = await __integrationTesting.loadHarnessTools(env(localDb), input);
-  const plugin = selected.plugins.find((candidate) => candidate.canonicalId === "rally:automations");
+  const plugin = selected.plugins.find((candidate) => candidate.canonicalId === "rally:sidekicks");
   if (!plugin) throw new Error("automations_plugin_missing");
   const tool = plugin.tools.find((candidate) => candidate.definition.name === name);
   if (!tool) throw new Error(`automation_creator_tool_missing:${name}`);

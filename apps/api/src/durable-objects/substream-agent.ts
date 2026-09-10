@@ -1855,7 +1855,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return { outcome: "refused", code: "workstream_destination_mismatch" };
     }
     if (this.messages.messageByClientId({ clientMessageId })) {
-      return { outcome: "replayed", code: "automation_draft_card_replayed" };
+      return { outcome: "replayed", code: "sidekick_draft_card_replayed" };
     }
     const prepared = await this.messages.prepareMessage({
       messageId: uuidV7(request.occurredAt),
@@ -1885,8 +1885,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return {
         outcome: appended.outcome === "replayed" ? "replayed" as const : "appended" as const,
         code: appended.outcome === "replayed"
-          ? "automation_draft_card_replayed"
-          : "automation_draft_card_appended",
+          ? "sidekick_draft_card_replayed"
+          : "sidekick_draft_card_appended",
       };
     }, true);
   }
@@ -1965,13 +1965,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return {
         outcome: result.inserted ? "appended" : "replayed",
         code: result.inserted
-          ? "automation_activation_appended"
-          : "automation_activation_replayed",
+          ? "sidekick_activation_appended"
+          : "sidekick_activation_replayed",
       };
     } catch (error) {
       return {
         outcome: "refused",
-        code: error instanceof Error ? error.message : "automation_activation_failed",
+        code: error instanceof Error ? error.message : "sidekick_activation_failed",
       };
     }
   }

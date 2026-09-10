@@ -30,15 +30,15 @@ async function respond(thrown: unknown): Promise<Response> {
 
 describe("an ApiError thrown inside a Durable Object", () => {
   it("keeps its status and code once it crosses the RPC boundary", async () => {
-    const response = await respond(crossedRpc(404, "automation_not_found", "This automation was deleted"));
+    const response = await respond(crossedRpc(404, "sidekick_not_found", "This Sidekick was deleted"));
     expect(response.status).toBe(404);
     expect(await response.json()).toMatchObject({
-      error: { code: "automation_not_found", message: "This automation was deleted" },
+      error: { code: "sidekick_not_found", message: "This Sidekick was deleted" },
     });
   });
 
   it("carries its details through as well", async () => {
-    const response = await respond(crossedRpc(409, "automation_definition_not_ready", "Not ready", { revision: 2 }));
+    const response = await respond(crossedRpc(409, "sidekick_definition_not_ready", "Not ready", { revision: 2 }));
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: { details: { revision: 2 } } });
   });
