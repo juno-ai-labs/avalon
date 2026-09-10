@@ -256,6 +256,17 @@ describe('project palette', () => {
     expect(app).toContain(`.appearance-picker-colors { grid-template-columns: repeat(${PROJECT_COLOR_COLUMNS}, minmax(0, 1fr)); }`);
   });
 
+  it('given an accent, when onboarding.css is read, then it colours marks and controls but fills no row', () => {
+    // The accent may re-point what it likes in `sys.color.accent.*`; what it
+    // may not re-point is `cmp.row.background-selected`. That token is a fill,
+    // and only about half its readers are selections — the rest are an inline
+    // mention chip, a resting dictation button, two hovers and the letter
+    // beside an option, none of which anybody chose to paint in a reader's
+    // colour. A future accent that wants a row back should give that row a
+    // token of its own rather than re-point the one everything shares.
+    expect(onboarding).not.toContain('--av-cmp-row-background-selected');
+  });
+
   it('given the accent ink rules, when onboarding.css is read, then they mirror the ink table', () => {
     // `accent-on` is paired with `accent-base`, a mix toward `text-default`, so
     // it follows the appearance rather than the accent — one rule, no per-hue
