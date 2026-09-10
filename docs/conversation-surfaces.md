@@ -134,13 +134,15 @@ state as the conversation. Every conversation row in it is the navigation
 sidebar's work-stream row — borderless, one 36px leading slot, the same title
 and the same idle/hover/current fills — and only the mark in that slot says
 which conversation it is: the work stream's own icon tinted with its appearance
-colour for the main conversation, the branch line for a substream, and for
-**New substream** the same `↳` the main feed's control carries. Compact shows
-the first character of a substream's title, capitalized, in place of its branch
-line, because a rail of identical lines with no titles beside them says only
-that these are substreams; both marks are drawn in the slot, stacked, and
-cross-fade over the collapse motion, the line settling the eight pixels it was
-lifted to meet the title. The main conversation's
+colour for the main conversation, a Tabler `corner-down-right` arrow for a
+substream, and a Tabler `plus` for **New substream**. That arrow is the same
+shape the feed's control draws as a text `↳`, and the two deliberately no
+longer mean the same thing: in this rail the arrow says a row *is* a substream,
+while on a settled turn it says *start* one. Compact shows the first character of a substream's
+title, capitalized, in place of its arrow, because a rail of identical arrows
+with no titles beside them says only that these are substreams; both marks
+are drawn in the slot, stacked, and cross-fade over the collapse motion. The
+main conversation's
 mark reads the parent work stream's appearance off its **sidebar row** rather
 than its cached detail, so a colour or icon change moves both rails on the same
 receipt; the header stays on the detail, which is what retires the picker's
@@ -210,7 +212,7 @@ The work-stream sidebar's contents travel the same way, on the same
 drag: its
 rows narrow to their 36px marks as their copy fades under a clip, the section
 headings close to no height as the section rules and their spacing arrive, the
-substream mark cross-fades from line to initial, the participants' avatars
+substream mark cross-fades from arrow to initial, the participants' avatars
 shrink into the square with their overlap, the empty state closes to its icon,
 and the footer's toggle is carried to the centre by the footer's padding.
 Nothing in it is centred with `justify-content`, which cannot travel: a mark is
@@ -499,7 +501,37 @@ for `transitionend` alone, so the component reads it from the native event.
 
 Shipped in #648.
 
+### 2026-09-10 — The ↳ marks a substream's row; New substream is a plus
+
+The product owner looked at the rail and asked for the swap: the Tabler
+`border-corner-pill` on each substream row, drawn in the 10% sidebar-border
+token, read as a grey smudge, while the `↳` on **New substream** read as an
+"enter" arrow that belonged on the rows that are substreams. Each substream row
+now draws a Tabler `corner-down-right` — the icon form of the same `↳` — in
+muted text, and **New substream** went back to a Tabler `plus`. The eight-pixel
+lift and the vertical flip the branch line needed went with it, and so did the
+`.workstream-new-substream-mark` glyph sizing, since both marks are icons again
+and take a `size` prop. The entry below is superseded: the sidebar's creation
+row and the feed's `↳ New substream` control are no longer one glyph, and the
+arrow's meaning in the rail is "this is a substream", not "start one". A change
+that puts the arrow back on the creation row has to give the substream rows a
+different mark first.
+
+**Rejected:** keeping the single glyph and only recolouring the branch line off
+the 10% token. It answers the contrast half of the complaint and leaves the
+meaning half — an arrow on the one row that is not a branch — exactly as it was.
+
+The launch banner's `border-corner-pill` is deliberately not part of this: it is
+drawn in `--av-sys-color-text-default`, so it is legible where the rail's was
+not, and whether a creation surface should carry the plus is a separate product
+question about a different surface.
+
+Shipped in #656.
+
 ### 2026-09-10 — One glyph for both New substream controls
+
+Superseded by the entry above: the arrow moved to the substream rows and the
+creation row went back to a plus.
 
 The sidebar's **New substream** row drew a Tabler `plus`; the control on a
 settled turn draws a literal `↳`. Two marks for the one act, creating a branch,
