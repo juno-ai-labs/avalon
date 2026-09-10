@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEVICE_PREFERENCES_STORAGE_KEY } from '../lib/device-preferences';
-import { AvatarStack, RallyMark, DropdownSelect, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
+import { AvatarStack, RallyMark, DropdownSelect, InsetList, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state, theme }: { size: number; state: string; theme?: string }) => (
@@ -566,5 +566,20 @@ describe('DropdownSelect', () => {
     expect(trigger).toHaveClass('dropdown-select-trigger-secondary');
     fireEvent.click(trigger);
     expect(screen.getByRole('option', { name: 'Pacific time' })).toBeVisible();
+  });
+});
+
+describe('InsetList', () => {
+  it('draws one box around the rows rather than a card around each', () => {
+    const { container } = render(
+      <InsetList>
+        <li>First</li>
+        <li>Second</li>
+      </InsetList>,
+    );
+
+    const list = container.querySelector('ul');
+    expect(list).toHaveClass('inset-surface', 'inset-list');
+    expect(container.querySelectorAll('li.inset-surface')).toHaveLength(0);
   });
 });
