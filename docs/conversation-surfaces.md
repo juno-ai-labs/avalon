@@ -372,6 +372,39 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-10 — Send is permanent chrome, not a control the first keystroke summons
+
+**What changed:** The capsule composer's Send button renders whether or not
+there is anything to send, `disabled` when there is not. `showSubmit` and the
+`has-submit` class it drove are gone from `composer-input.tsx`, and with them
+the CSS branch that gave the microphone the filled send treatment in an empty
+composer: Send keeps that fill permanently, and the microphone is neutral
+chrome at rest in every state. No host changed — both already passed
+`submitDisabled` for an empty draft, so the disabled state is the one they
+were computing all along. This reverses the "a non-empty draft adds Send" half
+of the 2026-09-01 capsule entry; the rest of that entry stands.
+
+**Why:** An empty composer had no visible way to send. Enter still submitted and
+the affordance appeared with the first character, which is fine for someone who
+already knows and useless for someone looking for it — the one moment a reader
+scans for a Send button is before they have typed. It also moved the microphone
+sideways mid-keystroke, so the control under the cursor changed identity while
+the pointer was on it.
+
+**Considered and rejected:** Keeping Send hidden and teaching the empty state
+some other way (a hint, a tooltip on the microphone). That trades a control for
+prose in the surface where space was the original constraint, and prose does not
+answer "where do I click". Also rejected: hiding Send but reserving its box, so
+the microphone would not move. That keeps the invisible-affordance problem and
+adds a permanent gap next to it, which is the cost of the button with none of
+its use.
+
+**What a future change has to respect:** every host of `ComposerInput` must keep
+passing a `submitDisabled` that is true for an empty draft. It is now the only
+thing standing between a visible Send button and a request to send nothing —
+`submit()` guards on the same prop, so a host that stops computing it correctly
+breaks the button and its guard together rather than one of them loudly.
+
 ### 2026-09-10 — The capsule shows the model control again, as a pill
 
 **What changed:** The message capsule renders the developer-mode model control
@@ -400,6 +433,7 @@ attachment button plus its 7px padding either side is exactly the 42px the
 column was fixed at. One with a control spends its label's width out of the text
 column. Both were checked in a real window, on the launcher, an existing work
 stream, and a substream.
+
 
 ### 2026-09-10 — The dividers say what they are, and what a double-click does
 
@@ -461,6 +495,7 @@ every handle, which brings its own `ResizeObserver`: a test that stubs that
 global for a sidebar now needs `unobserve` on the stub, and one that keeps only
 the newest observer callback must narrow the pane before opening a hint rather
 than after.
+
 ### 2026-09-10 — Artifact rows take the renderer's tooltip, through a shared `Tip`
 
 **What changed:** An artifact row in the work-stream sidebar no longer carries a
