@@ -1706,9 +1706,21 @@ the common gesture to tidy the rare one. Also rejected: a native `title` on the
 globe, for the reason the 2026-08-30 entry below gives — a second tooltip
 language the rest of the row does not speak.
 
+The tip is the pointer half only. Its trigger is a `span` inside the row's link,
+so it never takes focus, and giving it a tab stop would add one to every public
+row between the link and the next. The keyboard half is the row's preview, which
+already opens on focus: it now names the scope as **Public to workspace**, the
+words the visibility menu and a note's own screen already use. The two registers
+differ on purpose — resting on the badge means already resting on the row, so
+the card is always up behind the tip, and one sentence printed twice a
+centimetre apart reads as a bug.
+
 **What a future change has to respect:** a badge tip and the row preview coexist
 only because that preview is controlled. Moving it to an uncontrolled `open`
-puts the two back to taking turns; `sidebar.test.tsx` pins both halves.
+puts the two back to taking turns; `sidebar.test.tsx` pins both halves. The
+preview is also the only keyboard route to the badge's meaning, so a change that
+drops its scope line takes the explanation away from anyone not using a
+pointer — pinned by its own test.
 
 ### 2026-09-09 — Derived inputs at the settled step, and a ledger that rides the compaction commit
 

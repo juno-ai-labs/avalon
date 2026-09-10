@@ -516,6 +516,27 @@ interface PinnedRowDrag {
 
 
 /**
+ * What the globe badge means, at the two granularities the two surfaces want.
+ *
+ * The badge's own tip is a pointer affordance and cannot be anything else: its
+ * trigger is a `span` inside the row's link, and making it focusable would put
+ * a tab stop on every public row between the link and the next one. So the
+ * row's preview — which opens on focus as well as hover — names the scope too,
+ * and a reader who never touches a pointer gets the answer by tabbing to the
+ * row.
+ *
+ * They are not the same string, because the pointer path shows both at once:
+ * resting on the badge means already resting on the row, so the card is always
+ * up behind the tip, and one sentence printed twice a centimetre apart reads as
+ * a bug. The card names the state in the words the rest of the app uses for it
+ * — the visibility menu offers **Make public to workspace**, and a note's own
+ * screen labels itself **Public to workspace** — and the tip, which is what a
+ * reader points at the badge to get, spells out what that means.
+ */
+const PUBLIC_SCOPE_LABEL = 'Public to workspace';
+const PUBLIC_SCOPE_EXPLANATION = 'Public — everyone in the workspace can see this work stream.';
+
+/**
  * The row itself gets deliberately terse when the sidebar becomes an icon
  * rail. GrokBot keeps the missing context one hover away with the same card in
  * both sidebar forms, so resizing never changes what hovering a person means.
@@ -536,6 +557,9 @@ function WorkstreamHoverPreview({
           {formatSidebarActivityTime(workstream.lastActivityAt)}
         </time>}
       </div>
+      {workstream.scope === 'workspace' && (
+        <p className="sidebar-workstream-preview-scope">{PUBLIC_SCOPE_LABEL}</p>
+      )}
     </div>
   );
 }
@@ -893,6 +917,9 @@ function PrivacyMarker({ label }: { label: string }): React.JSX.Element {
  * sentence — because the two badges sit on the same glyph and answering the
  * same question two different ways is what makes a row need decoding.
  *
+ * This tip is the pointer half of the answer; `PUBLIC_SCOPE_EXPLANATION` says
+ * where the keyboard half lives and why it is not simply a `tabIndex` here.
+ *
  * The row's own preview stays open behind it: the tip is a line above a badge
  * at the sidebar's left edge and the preview is a card off the row's right, so
  * the two never share the space. Radix would close one for the other, but the
@@ -903,7 +930,7 @@ function PublicMarker(): React.JSX.Element {
     <Tip
       collisionPadding={8}
       delayDuration={300}
-      label="Public — everyone in the workspace can see this work stream."
+      label={PUBLIC_SCOPE_EXPLANATION}
       side="top"
       sideOffset={8}
     >
