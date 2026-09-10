@@ -5,6 +5,7 @@
     "cmp.elicitation": "The inset choice list within an agent question, distinct from its surrounding message surface.",
     "ref.color.neutral": "The neutral ramp, ordered by contrast against the surface rather than by lightness, so a step means the same thing whichever way round a theme runs. Fills at the faint end, text at the strong end.",
     "ref.color.line": "The line ramp. Borders are not faint fills: a theme that draws with space needs to flatten its lines without erasing the fills that share a contrast level with them.",
+    "ref.space": "The spacing unit. Every margin, padding and gap in the feed is a whole multiple of it, derived in the stylesheet, and the semantic spacing tokens are multiples of it too, so a theme that wants a looser or tighter feed moves one number.",
     "sys.backdrop": "The window's backdrop: one painted layer behind every pane, so a theme's light runs unbroken beneath a translucent sidebar and the feed beside it rather than being repainted per pane and showing a seam at the join. Each token is a CSS `background-*` longhand under its own name, so a theme declares a backdrop the way a stylesheet would and the browser's own sizing, centring and tiling rules apply unchanged. `image` also accepts `{\"svg\": \"<svg …>\"}` for artwork drawn in the theme file and `{\"url\": \"https://…\"}` for one fetched over the network, and an array for layers.",
     "sys.color.surface": "The named surfaces. Declared outright by each theme because their relationship inverts between light and dark — a dark theme makes a control recede by darkening it, a light theme by greying it.",
     "sys.color.text": "Text tones, strongest to faintest.",
@@ -29,11 +30,11 @@
     "sys.size.radius": "The corner scale.",
     "sys.size.border": "Border widths.",
     "sys.size.control": "The height of a control.",
-    "sys.space.pane": "Padding around a pane of content.",
-    "sys.space.stack": "Between message blocks in the feed.",
+    "sys.space.stack": "Between one turn and the next in the feed.",
     "sys.space.row": "Between rows in a list.",
     "sys.space.group": "Between one group of rows and the next.",
-    "sys.space.block": "Between events in the feed.",
+    "sys.space.block": "Between a turn and an event row in the feed, in either direction: a turn and the work that follows it, or an event and the person's reply.",
+    "sys.space.event": "Between one event row and the next, and between a run's work and the answer it produced.",
     "sys.space.prose": "Between paragraphs.",
     "sys.font.family": "System sans-serif for application UI, including secondary windows and portals. Bundled Geist Mono remains available for code and technical content.",
     "sys.font.size": "The sizes the interface sets, as against the document size a theme inherits.",
@@ -47,12 +48,10 @@
     "cmp.group-label": "The band a group's label sits in.",
     "cmp.bubble": "The fill behind a person's turn. A theme with one continuous ground can set all three to nothing and let the message sit on the page as plain text.",
     "cmp.composer": "The message composer's frame. A theme builds either shape out of the same five values: a card sets a background, a border and a radius; a rule sets them to nothing and gives `rule-color` a hairline instead, so the composer reads as a line the page rests on rather than as a box floating over it. `rule-color-focus` is what that line does when the field has focus, which is the only feedback left once the border is gone. `send-background` and `send-radius` are the send control's own frame, which follows the composer: a flat composer with a raised button on it reads as two different surfaces.",
-    "cmp.turn": "Where a person's own turn sits. The three move together: a turn left-aligned but still capped reads as text that wraps early for no reason.",
-    "cmp.feed": "The reading column, and the label over a turn in it.",
-    "cmp.markdown": "Rendered markdown. Its colours were already tokens; its *measurements* were not, which is why Air's headings were smaller than the prose beneath them — `.markdown-body` scaled with `sys.font.size.prose` and the headings it contained stayed at a fixed 18/16/14.5/14. A theme that moves its prose size has to be able to move the scale above it, and the rhythm with it. The `article-*` values are the note detail's own scale: a note is read as a document rather than as a turn in a transcript, so its headings run larger than the feed's.",
+    "cmp.feed": "The reading column's width, and the label over a turn in it.",
+    "cmp.markdown": "Rendered markdown. Its colours were already tokens; its *measurements* were not, which is why Air's headings were smaller than the prose beneath them — `.markdown-body` scaled with `sys.font.size.prose` and the headings it contained stayed at a fixed 18/16/14.5/14. A theme that moves its prose size has to be able to move the scale above it, and the rhythm with it. The `article-*` values are the note detail's own scale: a note is read as a document rather than as a turn in a transcript, so its headings run larger than the feed's. Its margins are not tokens: they are the stylesheet's spacing steps, which follow `ref.space.unit`.",
     "cmp.tooltip": "A surface that deliberately opposes the theme: light on a dark theme and dark on a light one, so it cannot be a ramp step in either.",
     "cmp.toggle": "A switch. The knob is white on a grey track in a light theme, which is about two to one; the lift from `sys.elevation.shadow.sm` is what makes the off state read as a control.",
-    "cmp.connector": "Connector faces. Each keeps enough of the provider's own colour to be recognised at 20px, on a block the theme can still sit behind.",
     "cmp.button": "Neutral primary actions, separate from brand identity and semantic danger or success states.",
     "cmp.control": "Shared secondary controls, independent of message and sidebar geometry.",
     "cmp.surface": "Shared secondary cards, dialogs and menus, independent of message bubbles."
@@ -126,6 +125,9 @@
     },
     "ref.color.line.6": {
       "$type": "color"
+    },
+    "ref.space.unit": {
+      "$type": "dimension"
     },
     "sys.backdrop.color": {
       "$type": "color"
@@ -274,13 +276,7 @@
     "sys.color.success.edge": {
       "$type": "color"
     },
-    "sys.color.success.on": {
-      "$type": "color"
-    },
     "sys.color.warning.base": {
-      "$type": "color"
-    },
-    "sys.color.warning.strong": {
       "$type": "color"
     },
     "sys.color.warning.soft": {
@@ -290,9 +286,6 @@
       "$type": "color"
     },
     "sys.color.warning.edge": {
-      "$type": "color"
-    },
-    "sys.color.warning.on": {
       "$type": "color"
     },
     "sys.color.danger.base": {
@@ -529,9 +522,6 @@
     "sys.size.control.height": {
       "$type": "dimension"
     },
-    "sys.space.pane.padding": {
-      "$type": "dimension"
-    },
     "sys.space.stack.gap": {
       "$type": "dimension"
     },
@@ -547,10 +537,10 @@
     "sys.space.prose.gap": {
       "$type": "dimension"
     },
-    "sys.font.family.ui": {
-      "$type": "fontFamily"
+    "sys.space.event.gap": {
+      "$type": "dimension"
     },
-    "sys.font.family.display": {
+    "sys.font.family.ui": {
       "$type": "fontFamily"
     },
     "sys.font.family.mono": {
@@ -679,9 +669,6 @@
     "cmp.bubble.border": {
       "$type": "color"
     },
-    "cmp.bubble.padding": {
-      "$type": "dimension"
-    },
     "cmp.composer.background": {
       "$type": "color"
     },
@@ -718,25 +705,10 @@
     "cmp.composer.send-foreground": {
       "$type": "color"
     },
-    "cmp.turn.align": {
-      "$type": "string"
-    },
-    "cmp.turn.margin": {
-      "$type": "string"
-    },
-    "cmp.turn.width": {
-      "$type": "dimension"
-    },
     "cmp.feed.width": {
       "$type": "dimension"
     },
     "cmp.feed.width-wide": {
-      "$type": "dimension"
-    },
-    "cmp.feed.padding-y": {
-      "$type": "dimension"
-    },
-    "cmp.feed.padding-x": {
       "$type": "dimension"
     },
     "cmp.feed.author.font-size": {
@@ -763,29 +735,14 @@
     "cmp.markdown.heading-leading": {
       "$type": "number"
     },
-    "cmp.markdown.heading-margin": {
-      "$type": "dimension"
-    },
     "cmp.markdown.strong-weight": {
       "$type": "fontWeight"
-    },
-    "cmp.markdown.list-margin": {
-      "$type": "dimension"
     },
     "cmp.markdown.list-indent": {
       "$type": "dimension"
     },
-    "cmp.markdown.blockquote-margin": {
-      "$type": "dimension"
-    },
-    "cmp.markdown.rule-margin": {
-      "$type": "dimension"
-    },
     "cmp.markdown.table-leading": {
       "$type": "number"
-    },
-    "cmp.markdown.cell-padding": {
-      "$type": "dimension"
     },
     "cmp.markdown.article-heading-1": {
       "$type": "dimension"
@@ -809,54 +766,6 @@
       "$type": "color"
     },
     "cmp.toggle.knob-off": {
-      "$type": "color"
-    },
-    "cmp.connector.github.background": {
-      "$type": "color"
-    },
-    "cmp.connector.github.foreground": {
-      "$type": "color"
-    },
-    "cmp.connector.google.background": {
-      "$type": "color"
-    },
-    "cmp.connector.google.foreground": {
-      "$type": "color"
-    },
-    "cmp.connector.drive.background": {
-      "$type": "color"
-    },
-    "cmp.connector.drive.foreground": {
-      "$type": "color"
-    },
-    "cmp.connector.slack.background": {
-      "$type": "color"
-    },
-    "cmp.connector.slack.foreground": {
-      "$type": "color"
-    },
-    "cmp.connector.linear.background": {
-      "$type": "color"
-    },
-    "cmp.connector.linear.foreground": {
-      "$type": "color"
-    },
-    "cmp.connector.webhook.background": {
-      "$type": "color"
-    },
-    "cmp.connector.webhook.foreground": {
-      "$type": "color"
-    },
-    "cmp.connector.search.background": {
-      "$type": "color"
-    },
-    "cmp.connector.search.foreground": {
-      "$type": "color"
-    },
-    "cmp.connector.plug.background": {
-      "$type": "color"
-    },
-    "cmp.connector.plug.foreground": {
       "$type": "color"
     },
     "cmp.button.primary-background": {

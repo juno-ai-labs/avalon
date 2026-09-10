@@ -636,6 +636,19 @@ projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
 
+### 2026-09-10 — The connector fill tokens are gone
+
+**What changed:** The sixteen `cmp.connector.*` background and foreground
+tokens that the "Tool calls collapse into one row per plugin" entry left
+declared are removed from the registry.
+
+**Why:** That entry kept them because the vocabulary was still a valid one for
+a connector chip elsewhere. No chip arrived, and the token set now holds the
+line that every declared token has a reader (`themes.css.node.test.ts`), which
+a vocabulary held in reserve cannot pass. A chip that wants a connector's
+colour adds the tokens back in the same change as the rule that reads them;
+[`theming.md`](theming.md) records the removal.
+
 ### 2026-09-10 — The row's label opens with a capital
 
 **What changed:** `AgentWorkTiming` sentence-cases the label it prints, so a
