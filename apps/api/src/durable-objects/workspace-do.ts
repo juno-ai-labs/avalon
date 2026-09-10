@@ -2875,10 +2875,20 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
      UNION ALL SELECT 'resource', id, 1, 0, NULL, 'workspace_mutation' FROM resources WHERE connection_id IS NULL
      ON CONFLICT(kind, target_id) DO UPDATE SET revision = revision + 1`,
   ],
+}, {
+  version: 49,
+  description: "project the Sidekick's chosen icon and colour",
+  statements: [
+    // Nullable and never backfilled: a Sidekick nobody has chosen for renders
+    // the mark derived from its id, which is what every row here holds today.
+    `ALTER TABLE automation_directory ADD COLUMN appearance_json TEXT
+       CHECK (appearance_json IS NULL OR json_valid(appearance_json))`,
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
   loadable: number | null;
+  appearance_json: string | null;
   automation_id: string;
   lifecycle: "draft" | "active" | "paused";
   scope: "personal" | "workspace" | "workstream";
@@ -2893,6 +2903,9 @@ function automationSummary(row: AutomationDirectoryRow): AutomationSummary {
   return {
     id: row.automation_id,
     loadable: row.loadable === 1,
+    ...(row.appearance_json
+      ? { appearance: WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json)) }
+      : {}),
     name: row.title || "New Sidekick",
     description: row.description,
     emailAddress: null,
@@ -4410,8 +4423,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.state.storage.sql.exec(
         `INSERT INTO automation_directory
            (automation_id, workspace_id, author_user_id, source_version, payload_hash,
-            lifecycle, scope, owning_workstream_id, title, description, next_run_at, projected_at, loadable)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            lifecycle, scope, owning_workstream_id, title, description, next_run_at, projected_at, loadable,
+            appearance_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(automation_id) DO UPDATE SET
            author_user_id = excluded.author_user_id,
            source_version = excluded.source_version,
@@ -4423,7 +4437,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            description = excluded.description,
            next_run_at = excluded.next_run_at,
            projected_at = excluded.projected_at,
-           loadable = excluded.loadable`,
+           loadable = excluded.loadable,
+           appearance_json = excluded.appearance_json`,
         effect.automationId,
         request.workspaceId,
         effect.authorUserId,
@@ -4437,6 +4452,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         epoch(effect.nextRunAt),
         Date.now(),
         effect.loadable === undefined ? null : effect.loadable ? 1 : 0,
+        effect.appearance ? JSON.stringify(effect.appearance) : null,
       );
       this.state.storage.sql.exec(
         `UPDATE workspace_sidebar_list_state
@@ -4542,8 +4558,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       throw new ApiError(403, "automation_directory_access_denied", "You cannot list this room's automations");
     }
     const rows = this.state.storage.sql.exec<AutomationDirectoryRow>(
-      `SELECT automation_id, loadable, lifecycle, scope, owning_workstream_id, title, description,
-              next_run_at, projected_at
+      `SELECT automation_id, loadable, appearance_json, lifecycle, scope, owning_workstream_id, title,
+              description, next_run_at, projected_at
          FROM automation_directory
         WHERE owning_workstream_id = ? AND lifecycle <> 'deleted'
         ORDER BY projected_at DESC, automation_id
@@ -4556,6 +4572,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         return {
           id: summary.id,
           loadable: summary.loadable,
+          ...(summary.appearance ? { appearance: summary.appearance } : {}),
           name: summary.name,
           description: summary.description,
           emailAddress: summary.emailAddress,
@@ -9403,8 +9420,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private listSidebarAutomations(workspaceId: string, userId: string, limit = SIDEBAR_LIST_LIMIT): AutomationSummary[] {
     return this.state.storage.sql.exec<AutomationDirectoryRow>(
-      `SELECT automation_id, loadable, lifecycle, scope, owning_workstream_id, title, description,
-              next_run_at, projected_at
+      `SELECT automation_id, loadable, appearance_json, lifecycle, scope, owning_workstream_id, title,
+              description, next_run_at, projected_at
          FROM automation_directory
         WHERE workspace_id = ? AND lifecycle <> 'deleted'
           AND owning_workstream_id IS NULL

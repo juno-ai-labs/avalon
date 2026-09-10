@@ -8,7 +8,7 @@ import { serpentineRows } from './grid-layout';
  * `rose` at the far end. Both seams meet and there is no empty cell.
  *
  * `app.css` sets the same number on `.project-color-grid` and
- * `.workstream-appearance-colors`; changing one without the other puts the
+ * `.appearance-picker-colors`; changing one without the other puts the
  * swatches in an order nobody chose.
  */
 export const PROJECT_COLOR_COLUMNS = 7;

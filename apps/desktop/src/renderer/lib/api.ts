@@ -71,6 +71,7 @@ import {
   type ProjectSummary,
   type UpdateProjectPresentationRequest,
   type UpdateProjectAudienceRequest,
+  type WorkstreamAppearancePatch,
 } from '@rally/contracts';
 import { socketTicketProtocols, socketUrlWithoutTicket } from '@rally/contracts/socket-tickets';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
@@ -484,6 +485,7 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
   return {
     id: automation.id,
     loadable: automation.loadable,
+    ...(automation.appearance ? { appearance: automation.appearance } : {}),
     name: automation.name,
     description: automation.description,
     ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
@@ -509,6 +511,7 @@ export function mapWorkstreamAutomationSummary(
   return {
     id: automation.id,
     loadable: automation.loadable,
+    ...(automation.appearance ? { appearance: automation.appearance } : {}),
     name: automation.name,
     description: automation.description,
     ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
@@ -994,6 +997,23 @@ export class RallyApi {
   async setAutomationStatus(id: string, action: 'pause' | 'resume'): Promise<AutomationDetail> {
     await this.requestVoid(`/sidekicks/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
     return this.getAutomation(id);
+  }
+
+  /**
+   * Choose the Sidekick's icon or colour.
+   *
+   * A partial patch, so a colour choice cannot undo somebody's icon, and the
+   * response is the committed Sidekick rather than an acknowledgement: the
+   * caller writes it straight into the detail cache instead of waiting for the
+   * directory push that tells everybody else.
+   */
+  async setAutomationAppearance(id: string, appearance: WorkstreamAppearancePatch): Promise<AutomationDetail> {
+    const raw = await this.request(`/sidekicks/${encodeURIComponent(id)}/appearance`, {
+      method: 'POST',
+      body: appearance,
+      schema: WireAutomationDetailSchema,
+    });
+    return mapAutomationDetail(raw);
   }
 
   async deleteAutomation(id: string): Promise<void> {
