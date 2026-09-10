@@ -867,6 +867,20 @@ describe('feed spacing is a step of the scale', () => {
     expect(rule('.substream-branch-context > .message-block + .message-block,\n.substream-branch-context + .launch-arrival')).toContain('margin-top: var(--av-sys-space-stack-gap);');
   });
 
+  /**
+   * The feed keys each row's margin on the gap `MessageFeed` stamps, and each
+   * stamped gap reaches its own token. The seam is the one to watch: a
+   * stamped row with no rule takes no margin at all, which would look like a
+   * tightening rather than a missing rule, and the seam is exactly the row
+   * that must not read as tight.
+   */
+  it('keys every stamped row gap on its own token', () => {
+    for (const gap of ['stack', 'seam', 'block', 'event']) {
+      expect(rule(`.virtual-message-row[data-row-gap='${gap}'] > .message-arrival-layer > :first-child`))
+        .toContain(`margin-top: var(--av-sys-space-${gap}-gap);`);
+    }
+  });
+
   it('carries no literal spacing of a step or more in a feed rule', () => {
     const offenders = preludes()
       .filter((prelude) => FEED.test(prelude) && !NOT_FEED.test(prelude) && !(prelude in EXEMPT))

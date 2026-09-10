@@ -30,7 +30,8 @@
     "sys.size.radius": "The corner scale.",
     "sys.size.border": "Border widths.",
     "sys.size.control": "The height of a control.",
-    "sys.space.stack": "Between one turn and the next in the feed. One unit: the action row a turn reveals on hover is laid out under it always, and it is that row, not this gap, that keeps the next turn off the last.",
+    "sys.space.stack": "Between one turn and the next in the feed: the space under the action row a turn lays out beneath itself.",
+    "sys.space.seam": "Between a row and the row before it when a stretch of transcript this client has not loaded lies between them. Nothing else marks the seam, so the distance is what says the two rows are not adjacent.",
     "sys.space.row": "Between rows in a list.",
     "sys.space.group": "Between one group of rows and the next.",
     "sys.space.block": "Between a turn and an event row in the feed, in either direction: a turn and the work that follows it, or an event and the person's reply.",
@@ -524,6 +525,9 @@
       "$type": "dimension"
     },
     "sys.space.stack.gap": {
+      "$type": "dimension"
+    },
+    "sys.space.seam.gap": {
       "$type": "dimension"
     },
     "sys.space.row.gap": {
