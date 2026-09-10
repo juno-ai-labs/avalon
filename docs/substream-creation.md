@@ -79,7 +79,9 @@ Nothing is reserved while the surface is open: no operation, no child id, no
 model call. Leaving it is a `setState`, and the draft stays under its own
 composer key. This is why there is no cancellation to make — the flow that
 prepared on open, and cancelled what it had reserved on the way out, was the
-modal one.
+modal one. After submit there is nothing to cancel either, for the opposite
+reason: the operation has been claimed, so the control that leaves the surface
+is disabled rather than dropping a creation that would carry on without it.
 
 On submit the surface draws the typed turn and the work timer, and the
 substream is created behind them: `POST …/substreams/prepare` freezes and
