@@ -1965,13 +1965,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return {
         outcome: result.inserted ? "appended" : "replayed",
         code: result.inserted
-          ? "automation_activation_appended"
-          : "automation_activation_replayed",
+          ? "sidekick_activation_appended"
+          : "sidekick_activation_replayed",
       };
     } catch (error) {
       return {
         outcome: "refused",
-        code: error instanceof Error ? error.message : "automation_activation_failed",
+        code: error instanceof Error ? error.message : "sidekick_activation_failed",
       };
     }
   }

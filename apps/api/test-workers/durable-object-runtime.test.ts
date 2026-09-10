@@ -6365,11 +6365,11 @@ describe("Durable Objects in the Workers runtime", () => {
       };
 
       expect(await stub.appendAutomationActivation(request))
-        .toEqual({ outcome: "appended", code: "automation_activation_appended" });
+        .toEqual({ outcome: "appended", code: "sidekick_activation_appended" });
       // The delivery loop retries after a crash; the room must not be told
       // twice, and the idempotency is the delivery's own id.
       expect(await stub.appendAutomationActivation(request))
-        .toEqual({ outcome: "replayed", code: "automation_activation_replayed" });
+        .toEqual({ outcome: "replayed", code: "sidekick_activation_replayed" });
 
       await runInDurableObject(stub, async (_instance, state) => {
         // An activation is loop input, not a canonical turn: it becomes one

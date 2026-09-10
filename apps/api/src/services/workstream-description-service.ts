@@ -406,7 +406,7 @@ async function evaluate(
   // definition, and rewriting it here would put this loop in an argument with
   // the automation that owns it. The loop already skips this refresh for an
   // automation parent; this is the same rule at the service's own door.
-  if (workstream.parent_kind === "automation") return { status: "skipped", reason: "automation_parent" };
+  if (workstream.parent_kind === "automation") return { status: "skipped", reason: "sidekick_parent" };
 
   // Gate 1: the clock. A work stream that has not rested is not looked at,
   // whatever happened in it.
