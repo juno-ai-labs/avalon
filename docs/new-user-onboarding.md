@@ -97,10 +97,15 @@ regional workspace credentials can update only their own eligible journey.
 
 Failed saves preserve the current screen and offer retry. Competing revisions
 refresh the appearance draft before another save. A failed identity lookup does
-not lock out a valid regional workspace session. That fallback remains active
-while the account lookup retries, so initial socket sync cannot unmount the
-workspace by returning it to Opening Rally. A first lookup still waits for its
-result, and an identity without a workspace retains the retry/sign-out flow.
+not lock out a valid regional workspace session. A restored workspace opens
+immediately, including while the first account lookup is pending. Account providers remain mounted as background details arrive, so
+exempt accounts keep their workspace and socket rather than remounting them.
+Account appearance editing is unavailable until the authoritative profile loads.
+An identity without a workspace still waits for its introduction status and
+retains the retry/sign-out flow. Eligible accounts still receive their unfinished
+introduction and workspace journey when account details arrive. Workspace journey
+progress also loads without replacing the app with a loading screen; only known
+unfinished setup or a journey failure interrupts the workspace.
 Background refetch failures keep cached onboarding state. OAuth is retryable or skippable and callbacks return to
 the onboarding flow that opened them.
 
@@ -134,6 +139,19 @@ inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-r
 Real external OAuth requires configured provider credentials; onboarding no longer starts an agent run.
 
 ## Changelog
+
+### 2026-09-09 — Open restored workspaces before account details
+
+Returning users were stuck at Opening Rally while the Global account lookup and
+its credential refresh or retries completed. An existing workspace session now
+admits the workspace immediately and refreshes account details in the background.
+Keeping the provider tree stable avoids reconnecting the workspace when the
+lookup succeeds; profile editing waits for authoritative data to avoid saving a
+placeholder profile. We removed the initial network dependency instead of adding
+a timeout. Accounts without a workspace still wait for introduction status, and
+known incomplete introductions and workspace journeys remain enforced. Journey
+progress also loads in the background so completed eligible accounts do not flash
+a second loading gate.
 
 ### 2026-09-09 — Keep workspace access stable through identity retries
 

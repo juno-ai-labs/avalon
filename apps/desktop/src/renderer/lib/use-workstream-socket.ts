@@ -1948,8 +1948,7 @@ export function useWorkstreamSocket(
           canonicalResyncTarget = null;
           canonicalResyncActiveStreams = [];
         }
-        const speculative = initialReasonRef.current === 'hover_warmup'
-          && !openCommittedRef.current;
+        const speculative = !openCommittedRef.current;
         // Called directly rather than through `trace.step`: the socket-ticket
         // lint rule recognizes a ticket only when the awaited call is the
         // declarator's own initializer, and a `mark` on the next line closes

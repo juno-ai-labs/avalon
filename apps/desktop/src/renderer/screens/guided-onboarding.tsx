@@ -54,13 +54,14 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
     return () => { delete root.dataset['personalColor']; };
   }, [account.data?.presentation, profileState, session, updateCurrentUserName]);
   if (!session) return previewed ? <>{children}</> : <OnboardingIntroduction busy={false} error={null} onComplete={() => setPreviewed(true)} />;
-  // Refetch clears `error`, but errorUpdatedAt records a prior failure across
-  // retries. Keep workspace access through its socket's initial profile sync;
-  // successful data exits this fallback even though the timestamp remains set.
-  if (account.errorUpdatedAt > 0 && !account.data && session.workspace) return <>{children}</>;
-  if (account.error && !account.data) return <OnboardingPage title="Let's pick up where you left off" footer={<><Button onClick={() => void account.refetch()}>Retry</Button><Button onClick={() => void signOut()}>Sign out</Button></>}><InlineError>{account.error.message}</InlineError></OnboardingPage>;
-  if (!account.data) return <OnboardingPage title="Opening Rally"><RallyMark /></OnboardingPage>;
-  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data}><ProfileEditorContext.Provider value={editor}>{account.data.eligible && !account.data.introduced ? <PlatformIntroduction previewed={previewed} /> : children}</ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
+  // A restored workspace can open while identity-owned details load. Keep the
+  // providers in place so a background result does not remount its socket/feed.
+  // Accounts without a workspace still finish their introduction before setup.
+  if (!session.workspace && !account.data) {
+    if (account.error) return <OnboardingPage title="Let's pick up where you left off" footer={<><Button onClick={() => void account.refetch()}>Retry</Button><Button onClick={() => void signOut()}>Sign out</Button></>}><InlineError>{account.error.message}</InlineError></OnboardingPage>;
+    return <OnboardingPage title="Opening Rally"><RallyMark /></OnboardingPage>;
+  }
+  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data ?? null}><ProfileEditorContext.Provider value={account.data ? editor : null}>{account.data?.eligible && !account.data.introduced ? <PlatformIntroduction previewed={previewed} /> : children}</ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
 }
 
 export function OnboardingPage({ title, subtitle, children, footer }: { title: string; subtitle?: string; children: ReactNode; footer?: ReactNode }): React.JSX.Element {
@@ -206,7 +207,9 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   if (!account?.eligible) return <>{children}</>;
   if (journey.error && !journey.data) return <OnboardingPage title="Resume your setup" footer={<Button onClick={() => void journey.refetch()}>Retry</Button>}><InlineError>{journey.error.message}</InlineError></OnboardingPage>;
   const state = journey.data;
-  if (!state) return <OnboardingPage title="Opening your workspace"><RallyMark /></OnboardingPage>;
+  // A workspace session can render while setup progress loads; only a known
+  // unfinished journey interrupts it. Completed users never flash a second gate.
+  if (!state) return <>{children}</>;
   if (state.stage === 'complete') return <>{children}</>;
   const finishOnboarding = async (): Promise<void> => {
     await advance('complete');

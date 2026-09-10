@@ -29,6 +29,8 @@ import {
 import { watchSystemAppearance, watchThemeBroadcast } from './lib/theme';
 import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
 import { WorkspaceSocketProvider } from './lib/workspace-socket';
+import { WorkspaceWorkstreamSockets } from './lib/workspace-workstream-sockets';
+import type { Workspace } from './lib/types';
 import { AutomationScreen } from './screens/automation';
 import { DeepLinkErrorScreen } from './screens/deep-link-error';
 import { MeetingNotesScreen } from './screens/meeting-notes';
@@ -205,94 +207,93 @@ function WorkspaceApp(): React.JSX.Element {
     endSessionFor(workspace.error, { signOut, signOutIfCredentialCleared, surrenderActiveWorkspace });
   }, [signOut, signOutIfCredentialCleared, surrenderActiveWorkspace, workspace.error]);
 
-  if (workspace.isLoading || !workspace.error && !workspace.data) return <LoadingState label="Opening workspace…" />;
-  if (workspace.error) return <ServiceSetupState error={workspace.error} onRetry={() => void workspace.refetch()} />;
-  if (!workspace.data) return <LoadingState label="Opening workspace…" />;
+  const surface = new URLSearchParams(window.location.search).get('surface');
+  const mainSurface = surface !== 'settings' && surface !== 'sidekicks' && surface !== 'meeting';
+  const scope = `${session!.user.email}:${desktopWorkspaceIdentityKey(session!.workspace!.region, session!.workspace!.id)}`;
+  const content = workspace.error
+    ? <ServiceSetupState error={workspace.error} onRetry={() => void workspace.refetch()} />
+    : workspace.data ? <WorkspaceAppContent workspace={workspace.data} />
+      : <LoadingState label="Opening workspace…" />;
+  return (
+    <WorkspaceSocketProvider key={scope} api={api!} onAccessRevoked={surrenderActiveWorkspace} workspaceId={session!.workspace!.id}>
+      {/* The directory connection and profile request start together. Keep this
+          tree mounted when the profile arrives so prepared sockets survive. */}
+      {/* Commit route changes atomically so a new hash never labels an old feed. */}
+      {mainSurface ? <HashRouter useTransitions={false}>
+        <WorkstreamSocketResumeProvider scope={scope}>
+          <WorkspaceWorkstreamSockets api={workspace.error ? null : api}>
+            {content}
+          </WorkspaceWorkstreamSockets>
+        </WorkstreamSocketResumeProvider>
+      </HashRouter> : content}
+    </WorkspaceSocketProvider>
+  );
+}
 
+function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX.Element {
+  const { api } = useAppSession();
   const settingsSurface = new URLSearchParams(window.location.search).get('surface') === 'settings';
   if (settingsSurface) {
     return (
-      <WorkspaceSocketProvider api={api!} onAccessRevoked={surrenderActiveWorkspace} workspaceId={workspace.data.id}>
-        <HashRouter>
-          <TelemetryRouteObserver />
-          <Routes>
-            <Route element={<WorkspaceSettingsScreen standaloneWindow workspace={workspace.data} />} path="/settings" />
-            <Route element={<Navigate replace to="/settings" />} path="*" />
-          </Routes>
-        </HashRouter>
-      </WorkspaceSocketProvider>
+      <HashRouter>
+        <TelemetryRouteObserver />
+        <Routes>
+          <Route element={<WorkspaceSettingsScreen standaloneWindow workspace={workspace} />} path="/settings" />
+          <Route element={<Navigate replace to="/settings" />} path="*" />
+        </Routes>
+      </HashRouter>
     );
   }
 
   if (new URLSearchParams(window.location.search).get('surface') === 'sidekicks') {
     return (
-      <WorkspaceSocketProvider api={api!} onAccessRevoked={surrenderActiveWorkspace} workspaceId={workspace.data.id}>
-        <SpeechPlaybackProvider api={api!}>
-          <HashRouter useTransitions={false}>
-            <Routes>
-              <Route element={<SidekicksLibraryScreen />} path="/sidekicks" />
-                <Route element={<AutomationScreen />} path="/sidekicks/:id" />
-              <Route element={<AutomationScreen />} path="/automations/:id" />
-              <Route element={<Navigate replace to="/sidekicks" />} path="*" />
-            </Routes>
-          </HashRouter>
-        </SpeechPlaybackProvider>
-      </WorkspaceSocketProvider>
+      <SpeechPlaybackProvider api={api!}>
+        <HashRouter useTransitions={false}>
+          <Routes>
+            <Route element={<SidekicksLibraryScreen />} path="/sidekicks" />
+            <Route element={<AutomationScreen />} path="/sidekicks/:id" />
+            <Route element={<AutomationScreen />} path="/automations/:id" />
+            <Route element={<Navigate replace to="/sidekicks" />} path="*" />
+          </Routes>
+        </HashRouter>
+      </SpeechPlaybackProvider>
     );
   }
 
   const meetingSurface = new URLSearchParams(window.location.search).get('surface') === 'meeting';
   if (meetingSurface) {
     return (
-      <WorkspaceSocketProvider api={api!} onAccessRevoked={surrenderActiveWorkspace} workspaceId={workspace.data.id}>
-        <HashRouter>
-          <TelemetryRouteObserver />
-          <Routes>
-            <Route element={<MeetingNotesScreen />} path="/meeting" />
-            <Route element={<Navigate replace to="/meeting" />} path="*" />
-          </Routes>
-        </HashRouter>
-      </WorkspaceSocketProvider>
+      <HashRouter>
+        <TelemetryRouteObserver />
+        <Routes>
+          <Route element={<MeetingNotesScreen />} path="/meeting" />
+          <Route element={<Navigate replace to="/meeting" />} path="*" />
+        </Routes>
+      </HashRouter>
     );
   }
 
   return (
-    <WorkspaceSocketProvider api={api!} onAccessRevoked={surrenderActiveWorkspace} workspaceId={workspace.data.id}>
-      <SpeechPlaybackProvider api={api!}>
-        {/*
-          A declarative router otherwise wraps its history listener in
-          startTransition. The hash and active sidebar row move first while the
-          previous work-stream screen remains visible, which can put the wrong
-          transcript under the newly selected row. This route tree is small and
-          local; commit its navigation atomically, then let each screen show its
-          own opening state while keyed data arrives.
-        */}
-        <HashRouter useTransitions={false}>
-          <TelemetryRouteObserver />
-          <WorkstreamSocketResumeProvider
-            scope={`${session?.user.email ?? 'unknown'}:${desktopWorkspaceIdentityKey(workspace.data.region, workspace.data.id)}`}
-          >
-            <WorkspaceOnboardingJourney key={`${workspace.data.region}:${workspace.data.id}:${workspace.data.currentUser.id}`} workspace={workspace.data}>
-            <AppShell workspace={workspace.data}>
-              <Routes>
-                <Route element={<WorkstreamLandingScreen />} path="/" />
-                <Route element={<NewWorkstreamScreen workspace={workspace.data} />} path="/workstreams/new" />
-                <Route element={<ProjectSpaceScreen />} path="/projects/:projectId" />
-                <Route element={<NewWorkstreamScreen workspace={workspace.data} projectId="route" />} path="/projects/:projectId/workstreams/new" />
-                <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
-                <Route element={<NoteDetailScreen />} path="/notes/:id" />
-                <Route element={<AutomationScreen />} path="/automations/:id" />
-                <Route element={<SidekicksWindowRedirect />} path="/sidekicks" />
-                <Route element={<AutomationScreen />} path="/sidekicks/:id" />
-                <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
-                <Route element={<NotFoundScreen />} path="*" />
-              </Routes>
-            </AppShell>
-            </WorkspaceOnboardingJourney>
-          </WorkstreamSocketResumeProvider>
-        </HashRouter>
-      </SpeechPlaybackProvider>
-    </WorkspaceSocketProvider>
+    <SpeechPlaybackProvider api={api!}>
+      <TelemetryRouteObserver />
+      <WorkspaceOnboardingJourney key={`${workspace.region}:${workspace.id}:${workspace.currentUser.id}`} workspace={workspace}>
+        <AppShell workspace={workspace}>
+          <Routes>
+            <Route element={<WorkstreamLandingScreen />} path="/" />
+            <Route element={<NewWorkstreamScreen workspace={workspace} />} path="/workstreams/new" />
+            <Route element={<ProjectSpaceScreen />} path="/projects/:projectId" />
+            <Route element={<NewWorkstreamScreen workspace={workspace} projectId="route" />} path="/projects/:projectId/workstreams/new" />
+            <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
+            <Route element={<NoteDetailScreen />} path="/notes/:id" />
+            <Route element={<AutomationScreen />} path="/automations/:id" />
+            <Route element={<SidekicksWindowRedirect />} path="/sidekicks" />
+            <Route element={<AutomationScreen />} path="/sidekicks/:id" />
+            <Route element={<WorkspaceSettingsScreen workspace={workspace} />} path="/settings" />
+            <Route element={<NotFoundScreen />} path="*" />
+          </Routes>
+        </AppShell>
+      </WorkspaceOnboardingJourney>
+    </SpeechPlaybackProvider>
   );
 }
 
