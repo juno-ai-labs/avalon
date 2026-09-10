@@ -2048,12 +2048,13 @@ const automationDraftSubmissionJsonSchema = {
       type: ["string", "null"],
       description: "The id of a Sidekick this conversation already owns, from sidekicks_list, to replace its definition with this draft. Null creates a new Sidekick. In a Sidekick's own conversation the draft always goes to that Sidekick."
     },
-    name: { type: "string" },
-    description: { type: "string" },
-    overview: { type: "string" },
-    instructions: { type: "string" },
+    name: { type: "string", description: "A short name for the automation as it appears in the person's list, for example \"Weekly release notes\"." },
+    description: { type: "string", description: "One sentence saying what the automation does, for the list beside its name." },
+    overview: { type: "string", description: "A few sentences for the person approving it: what it watches, what it does each time, and where the result goes. This is what somebody reads to decide whether to accept the draft." },
+    instructions: { type: "string", description: "What each run should actually do, written for a run that cannot see this conversation. Name the steps, the tools, and what finishing looks like. A result meant to reach an inbox, a channel, or a document is only sent if a step here says to send it." },
     triggers: {
       type: "array",
+      description: "What starts a run, one entry per trigger. Every field of an entry is required, so set the ones the chosen type does not use to null.",
       items: {
         type: "object",
         additionalProperties: false,
@@ -2061,19 +2062,20 @@ const automationDraftSubmissionJsonSchema = {
         properties: {
           type: {
             type: "string",
-            enum: ["manual", "inbound_email", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook"]
+            enum: ["manual", "inbound_email", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook"],
+            description: "What starts a run: `manual` when a person asks, `inbound_email` on mail to the automation's address, `calendar` on a recurrence rule, `interval` every so many seconds, `connector_activity` on a connector event matched by deterministic filters, `semantic_activity` on a connector event that also passes a written condition, `resource_watch` when one named resource changes, `webhook` on an inbound HTTP call."
           },
-          rrule: { type: ["string", "null"] },
+          rrule: { type: ["string", "null"], description: "For a `calendar` trigger, the recurrence as an iCalendar RRULE, for example `FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0`. Null for every other type." },
           timezone: {
             type: ["string", "null"],
             description: "The IANA timezone a calendar recurrence's wall-clock time is read in, when the person named one. Use null for every other trigger, and for a calendar trigger whose zone nobody named — Rally then reads it in the applicable scheduling default."
           },
-          summary: { type: ["string", "null"] },
-          intervalSeconds: { type: ["integer", "null"], minimum: 60 },
-          connectorType: { type: ["string", "null"] },
-          sourceBindingKey: { type: ["string", "null"] },
-          suggestedSourcePluginId: { type: ["string", "null"] },
-          eventTypes: { type: ["array", "null"], items: { type: "string" } },
+          summary: { type: ["string", "null"], description: "One line saying when this trigger fires, in the person's own terms, for example \"Every Monday at 9am\". Null when the type makes it obvious." },
+          intervalSeconds: { type: ["integer", "null"], minimum: 60, description: "For an `interval` trigger, how many seconds between runs, at least 60 — 3600 is hourly. Null for every other type." },
+          connectorType: { type: ["string", "null"], description: "For a `connector_activity` or `semantic_activity` trigger, which connector the events come from, for example `slack`. Null for every other type." },
+          sourceBindingKey: { type: ["string", "null"], description: "For a `connector_activity` or `semantic_activity` trigger, the connector's own key for the thing being watched — a channel, a mailbox, a repository — taken from plugin_inspect or resources_search rather than composed. Null when the trigger watches the whole connector, and for every other type." },
+          suggestedSourcePluginId: { type: ["string", "null"], description: "For a `connector_activity` or `semantic_activity` trigger, the plugin whose events these are, as a `pluginId` from plugins_list or plugins_search. Null for every other type." },
+          eventTypes: { type: ["array", "null"], items: { type: "string" }, description: "For a `connector_activity` trigger, which of the plugin's declared event types to listen for, spelled exactly as plugin_inspect reports them, for example [\"message.created\"]. An event type the plugin does not declare simply never fires rather than being reported as wrong. Null for every other type." },
           deterministicFilters: {
             type: ["string", "null"],
             description: "A JSON-encoded object of deterministic connector filters."
@@ -2087,8 +2089,8 @@ const automationDraftSubmissionJsonSchema = {
             // semantic trigger being submitted without it.
             description: "A JSON-encoded object of deterministic filters applied before semantic classification. A ready semantic_activity trigger must name exactly one declared event type from the plugin in suggestedSourcePluginId, as {\"eventType\": \"the.event.type\"}, optionally alongside that event's declared deterministic filter fields."
           },
-          condition: { type: ["string", "null"] },
-          resourceId: { type: ["string", "null"] }
+          condition: { type: ["string", "null"], description: "For a `semantic_activity` trigger, the plain-language test each matching event has to pass before a run starts, for example \"the message asks for a design review\". Write it so it can be judged from the event alone. Null for every other type." },
+          resourceId: { type: ["string", "null"], description: "For a `resource_watch` trigger, the one resource to watch, as an id from resources_search. Null for every other type." }
         },
         required: [
           "type",
@@ -2107,19 +2109,24 @@ const automationDraftSubmissionJsonSchema = {
         ]
       }
     },
-    expectedOutputs: { type: "array", items: { type: "string" } },
+    expectedOutputs: {
+      type: "array",
+      items: { type: "string" },
+      description: "What each run should produce, one entry per output, for example [\"A summary posted to the work stream\"]. These are what a person checks the automation against, so write observable results rather than steps.",
+    },
     defaultBehavior: {
       type: "string",
       description: "A JSON-encoded object of default behavior settings; use {} when none are needed."
     },
     recommendedPlugins: {
       type: "array",
+      description: "The connector plugins each run will need, with why. Inspect a plugin before recommending it; use [] when the automation needs none.",
       items: {
         type: "object",
         additionalProperties: false,
         properties: {
-          pluginId: { type: "string", pattern: "^plugin_[a-z][a-z0-9_]{0,62}$" },
-          recommendedTools: { type: "array", items: { type: "string" } },
+          pluginId: { type: "string", pattern: "^plugin_[a-z][a-z0-9_]{0,62}$", description: "The plugin, as a `pluginId` from plugins_list or plugins_search, for example `plugin_slack`. A connector's display name is not a plugin id." },
+          recommendedTools: { type: "array", items: { type: "string" }, description: "The tools this automation actually needs from that plugin, named exactly as plugin_inspect reports them. Use [] when the whole plugin is needed rather than particular tools." },
           reason: { type: "string" }
         },
         required: ["pluginId", "recommendedTools", "reason"]
@@ -2132,26 +2139,27 @@ const automationDraftSubmissionJsonSchema = {
         type: "object",
         additionalProperties: false,
         properties: {
-          name: { type: "string" },
-          description: { type: "string" },
-          usageInstructions: { type: "string" },
+          name: { type: "string", description: "A short name for the table, for example \"Seen pull requests\"." },
+          description: { type: "string", description: "What the table holds and why the automation needs it across runs." },
+          usageInstructions: { type: "string", description: "How each run should use the table: when to insert, when to update, and what the unusual columns mean. Write it for a run that has never seen this table." },
           columns: {
             type: "array",
             minItems: 1,
+            description: "The table's columns, at least one. Columns cannot be added or renamed after the automation is accepted.",
             items: {
               type: "object",
               additionalProperties: false,
               properties: {
-                name: { type: "string" },
-                description: { type: "string" },
-                type: { type: "string", enum: ["string", "url", "number", "integer", "boolean", "datetime", "date"] },
+                name: { type: "string", description: "The column's name as every run will spell it, for example pull_request_url." },
+                description: { type: "string", description: "What this column holds, written for a run that has only the schema to go on." },
+                type: { type: "string", enum: ["string", "url", "number", "integer", "boolean", "datetime", "date"], description: "The column's type, which decides how filters compare it. Use datetime for an ISO 8601 timestamp and date for a plain calendar date." },
                 required: { type: "boolean" },
                 searchable: { type: "boolean" }
               },
               required: ["name", "description", "type", "required", "searchable"]
             }
           },
-          keyColumns: { type: "array", minItems: 1, items: { type: "string" } }
+          keyColumns: { type: "array", minItems: 1, items: { type: "string" }, description: "The columns that together identify one real thing, for example [\"pull_request_url\"]. Rows deduplicate on them, which is what stops a second run re-recording what the first already saw, so choose values a later run can rebuild from the outside world." }
         },
         required: ["name", "description", "usageInstructions", "columns", "keyColumns"]
       }
@@ -2895,7 +2903,13 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { query: { type: "string", minLength: 1 } },
+      properties: {
+        query: {
+          type: "string",
+          minLength: 1,
+          description: "What the plugin would let this automation do, in plain words, for example `post a Slack message`. It matches plugin ids, names, aliases, descriptions, and tool names. Nothing matching comes back as an empty list rather than an error.",
+        },
+      },
       required: ["query"],
     },
   },
@@ -2908,7 +2922,12 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { pluginId: { type: "string" } },
+      properties: {
+        pluginId: {
+          type: "string",
+          description: "The plugin to inspect, as a `pluginId` from plugins_list or plugins_search, for example `plugin_slack`. A connector's display name is not a plugin id.",
+        },
+      },
       required: ["pluginId"],
     },
   },
@@ -2921,7 +2940,13 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { query: { type: "string", minLength: 1 } },
+      properties: {
+        query: {
+          type: "string",
+          minLength: 1,
+          description: "A person's name, partial name, or email address, for example `Dana` or `dana@example.com`. It searches this workspace's own people, so somebody who is not a member here is absent rather than reported as missing.",
+        },
+      },
       required: ["query"],
     },
   },
@@ -2934,7 +2959,13 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { query: { type: "string", minLength: 1 } },
+      properties: {
+        query: {
+          type: "string",
+          minLength: 1,
+          description: "What the resource is, in plain words, for example `the design channel` or `acme/site`. It searches the resources this workspace's connections expose; the result carries each one's canonical id, source plugin, and how it binds.",
+        },
+      },
       required: ["query"],
     },
   },
@@ -2984,7 +3015,13 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { query: { type: "string", minLength: 1 } },
+      properties: {
+        query: {
+          type: "string",
+          minLength: 1,
+          description: "What you need to be able to do, in plain words, for example `send a Slack message` or `read a spreadsheet`. It matches plugin ids, names, aliases, and descriptions. Nothing matching comes back as an empty list rather than an error, so try a different word for the same capability before concluding this run has no plugin for it.",
+        },
+      },
       required: ["query"],
     },
   },
@@ -3000,7 +3037,12 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { pluginId: { type: "string" } },
+      properties: {
+        pluginId: {
+          type: "string",
+          description: "The plugin to load, as a `pluginId` from list_plugins or search_plugins, for example `plugin_slack`. A connector's display name is not a plugin id. Its tools appear only after it is loaded.",
+        },
+      },
       required: ["pluginId"],
     },
   },

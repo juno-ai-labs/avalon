@@ -199,8 +199,10 @@ export const DraftExternalEventEvaluatorV1Schema = z.strictObject({
 });
 
 export const AutomationSetEvaluatorRulesInputV1Schema = z.strictObject({
-  schemaVersion: z.literal(1),
-  evaluators: z.array(DraftExternalEventEvaluatorV1Schema),
+  schemaVersion: z.literal(1)
+    .describe("Always 1. It fixes how the rules below are read, so a rule set written for a later shape is refused rather than half-understood."),
+  evaluators: z.array(DraftExternalEventEvaluatorV1Schema)
+    .describe("The complete set of rules deciding which external events wake this automation. It replaces every rule the draft currently has rather than adding to it, so send the whole set each time and send [] to clear it. Each rule needs a `evaluatorKey` unique within the set."),
 }).superRefine((value, context) => {
   const keys = new Set<string>();
   value.evaluators.forEach((evaluator, index) => {

@@ -951,8 +951,17 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
           type: "object",
           additionalProperties: false,
           properties: {
-            query: { type: "string", minLength: 1, maxLength: MEMORY_RECALL_QUERY_LIMIT },
-            memoryItemId: { type: "string", format: "uuid" },
+            query: {
+              type: "string",
+              minLength: 1,
+              maxLength: MEMORY_RECALL_QUERY_LIMIT,
+              description: "What the remembered fact would be about, in plain words, for example \"which deploy tool this team uses\". It searches every scope this run is authorized for at once, so do not try to name a scope here. Nothing remembered on the subject comes back as an empty result rather than an error. Send this or `memoryItemId`, never both.",
+            },
+            memoryItemId: {
+              type: "string",
+              format: "uuid",
+              description: "Reread one exact memory, as the `memoryItemId` an earlier search returned, for example `a1b2c3d4-e5f6-4789-a012-3456789abcde`. Use it to pick up a current revision before an update. Send this or `query`, never both.",
+            },
           },
           // Exclusivity is stated in the description and enforced by
           // `SearchInputSchema`; a `oneOf` of bare `required` branches does not
@@ -990,10 +999,23 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
           type: "object",
           additionalProperties: false,
           properties: {
-            scopeKind: { type: "string", enum: MEMORY_SCOPE_KINDS },
-            text: { type: "string", minLength: 1, maxLength: 16_000 },
-            expiresAt: { type: "string", format: "date-time" },
-            rationale: { type: "string", minLength: 1, maxLength: 2_000 },
+            scopeKind: {
+              type: "string",
+              enum: MEMORY_SCOPE_KINDS,
+              description: "How widely the fact should be remembered, narrowest first: `workstream` for this work stream alone, `automation` for future runs of this installed automation, `user` for one person's durable preferences, `workspace` for shared organizational knowledge. Not every run authorizes every kind; a refusal names the ones this run does have, so retry with the narrowest of those.",
+            },
+            text: {
+              type: "string",
+              minLength: 1,
+              maxLength: 16_000,
+              description: "The fact itself, written as a standalone sentence a later run can act on without this conversation, for example \"Dana prefers release notes as a bulleted summary, not prose.\" A pronoun or a \"that\" pointing at something said here is unreadable later.",
+            },
+            expiresAt: {
+              type: "string",
+              format: "date-time",
+              description: "When the fact stops being true, as an ISO 8601 timestamp, for example 2026-12-31T00:00:00Z. Omit it for a fact with no known end. A time already past is accepted and the memory is expired the moment it is written, which reads as never having been stored.",
+            },
+            rationale: { type: "string", minLength: 1, maxLength: 2_000, description: "Why this is worth remembering, in one or two sentences, for the person reviewing what the run did." },
           },
           required: ["scopeKind", "text", "rationale"],
         },
@@ -1011,15 +1033,19 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
           type: "object",
           additionalProperties: false,
           properties: {
-            memoryItemId: { type: "string", format: "uuid" },
+            memoryItemId: { type: "string", format: "uuid", description: "The memory to replace, copied exactly from the latest memory_search result." },
             expectedRevision: {
               type: "integer",
               minimum: 1,
               description: "Copy revision exactly from memory_search for this memoryItemId.",
             },
-            text: { type: "string", minLength: 1, maxLength: 16_000 },
-            expiresAt: { type: "string", format: "date-time" },
-            rationale: { type: "string", minLength: 1, maxLength: 2_000 },
+            text: { type: "string", minLength: 1, maxLength: 16_000, description: "The memory's complete new text. It replaces the old text rather than adding to it, so restate anything from the original that still holds." },
+            expiresAt: {
+              type: "string",
+              format: "date-time",
+              description: "When the fact stops being true, as an ISO 8601 timestamp, for example 2026-12-31T00:00:00Z. Omitting it clears any expiry the memory had rather than keeping it.",
+            },
+            rationale: { type: "string", minLength: 1, maxLength: 2_000, description: "Why the memory is changing, in one or two sentences, for the person reviewing what the run did." },
           },
           required: ["memoryItemId", "expectedRevision", "text", "rationale"],
         },
@@ -1037,13 +1063,13 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
           type: "object",
           additionalProperties: false,
           properties: {
-            memoryItemId: { type: "string", format: "uuid" },
+            memoryItemId: { type: "string", format: "uuid", description: "The memory to invalidate, copied exactly from the latest memory_search result." },
             expectedRevision: {
               type: "integer",
               minimum: 1,
               description: "Copy revision exactly from memory_search for this memoryItemId.",
             },
-            reason: { type: "string", minLength: 1, maxLength: 2_000 },
+            reason: { type: "string", minLength: 1, maxLength: 2_000, description: "Why the fact no longer holds, in one or two sentences. Invalidation is reversible, so say what changed rather than only that it is wrong." },
           },
           required: ["memoryItemId", "expectedRevision", "reason"],
         },
