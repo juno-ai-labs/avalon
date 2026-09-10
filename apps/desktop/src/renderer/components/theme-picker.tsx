@@ -3,6 +3,7 @@ import { SettingLabel } from '../settings/setting-label';
 import {
   appearanceModeDescriptions,
 } from '../../common/themes';
+import { SegmentedControl } from './primitives';
 import { persistThemeChoice, useTheme } from '../lib/theme';
 
 /**
@@ -22,21 +23,16 @@ export function ThemePicker(): React.JSX.Element {
         </span>
       </div>
 
-      <div aria-label="Appearance" className="settings-theme-modes" role="radiogroup">
-        {appearanceModeDescriptions.map((mode) => (
-          <button
-            aria-checked={choice === mode.id}
-            className="settings-theme-mode"
-            key={mode.id}
-            onClick={() => persistThemeChoice(mode.id)}
-            role="radio"
-            title={mode.description}
-            type="button"
-          >
-            {mode.label}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        ariaLabel="Appearance"
+        onChange={persistThemeChoice}
+        options={appearanceModeDescriptions.map((mode) => ({
+          value: mode.id,
+          label: mode.label,
+          title: mode.description,
+        }))}
+        value={choice}
+      />
 
       <p aria-live="polite" className="settings-theme-status">
         {choice === 'system'

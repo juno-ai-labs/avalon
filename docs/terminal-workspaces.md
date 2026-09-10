@@ -24,7 +24,7 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/scripts/build-terminal-snapshot.ts` | Builds the Rally-owned snapshot by baking the runtime bootstrap into the image, so the four managed capabilities are preinstalled rather than installed per sandbox. Does not adopt it; the acceptance probe above is still the gate. |
 | `.github/workflows/rebuild-terminal-snapshot.yml` | The weekly rebuild that bounds how stale an owned snapshot may become against Daytona's managed base, proves each rebuild with the acceptance probe, and opens the labelled adoption pull request. Owning a snapshot is only safe with this running. |
 | `apps/api/src/observability/terminal-platform-observability.ts`, `scripts/report-terminal-analytics.mjs` | Content-free Daytona phase measurements in Analytics Engine and their human-readable decision report. |
-| `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network and GitHub connector policy controls plus participant-visible work-stream state. |
+| `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network and GitHub connector policy controls plus participant-visible work-stream state. The network policy is the whole of the **Internet access** page, a child of Workspace in the settings navigation. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Authoritative per-work-stream Terminal tables. Migration `0075_terminal_workspaces.sql` is the frozen pre-cutover D1 source. |
 | `apps/api/src/durable-objects/workstream-terminal-storage.ts`, `workstream-terminal-protocol.ts` | The only reader and writer of those tables, and the operation contract derived from it. |
 | `apps/api/src/services/terminal/object-port.ts` | The Worker-side handle every Terminal service holds instead of a database. |
@@ -674,6 +674,29 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-10 — The network policy gets its own settings page
+
+**What changed:** **Terminal network access** left the Workspace preferences
+pane for an **Internet access** page indented under it. The `internet-access`
+section owns the four Terminal definitions, and the
+`terminal-workspace-settings` read is gated on that section rather than on
+`workspace`.
+
+**Why:** Choosing **Full internet** and confirming it stops every running
+sandbox in the workspace. That flow had been sitting between the default
+timezone dropdown and the invitation form, where a reader scrolling for
+something else meets it by accident and where its own review-and-confirm step
+reads as one more preference row.
+
+**Considered and rejected:** A sub-heading inside the Workspace pane, which
+leaves the destructive control one scroll from the invite form and keeps the
+Terminal read firing for anyone opening Workspace to change a timezone.
+
+**Consequences:** The policy is deep-linkable on its own
+(`?section=internet-access`), and its read no longer runs when Workspace opens.
+Anything else that becomes a workspace-wide network decision belongs on this
+page rather than back in preferences.
 
 ### 2026-09-09 — A checkout's own instructions are read without being asked
 

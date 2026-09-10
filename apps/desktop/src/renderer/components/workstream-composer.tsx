@@ -71,7 +71,6 @@ interface WorkstreamComposerProps {
   onRemoveAttachment: (localId: string) => void;
   onRetryAttachment: (localId: string) => void;
   onStop: () => Promise<void>;
-  onTeachTask?: () => void;
   queueItems?: ComposerQueueItem[];
   onReorderQueue?: (inputIds: string[]) => Promise<void>;
 }
@@ -118,7 +117,6 @@ export function WorkstreamComposer({
   onRemoveAttachment,
   onRetryAttachment,
   onStop,
-  onTeachTask,
   queueItems = [],
   onReorderQueue,
 }: WorkstreamComposerProps): React.JSX.Element {
@@ -460,7 +458,6 @@ export function WorkstreamComposer({
         onRetryAttachment={onRetryAttachment}
         onSelect={() => refreshOpenMentionQuery(text)}
         onSubmit={send}
-        onTeachTask={onTeachTask}
         onValueChange={updateText}
         placeholder={placeholder}
         ref={textareaRef}

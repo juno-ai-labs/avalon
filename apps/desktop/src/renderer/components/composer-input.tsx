@@ -1,6 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
-import { ArrowUp, AtSign, Check, ChevronDown, CircleDot, LoaderCircle, Mic, Paperclip, Plus } from 'lucide-react';
+import { ArrowUp, AtSign, Check, ChevronDown, LoaderCircle, Mic, Paperclip, Plus } from 'lucide-react';
 import {
   forwardRef,
   Fragment,
@@ -136,8 +136,6 @@ interface ComposerInputProps {
    * that move.
    */
   onSelect?: () => void;
-  /** GrokBot-style task teaching action shown beside file attachment in the capsule menu. */
-  onTeachTask?: () => void;
   onOpenAttachment: (preview: AttachmentPreview) => void;
   onRemoveAttachment: (localId: string) => void;
   onRetryAttachment: (localId: string) => void;
@@ -195,7 +193,6 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   onRemoveAttachment,
   onRetryAttachment,
   onSelect,
-  onTeachTask,
   onSubmit,
   onValueChange,
   placeholder,
@@ -530,12 +527,6 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                         ))}
                       </DropdownMenu.RadioGroup>
                     </>}
-                    {onTeachTask && (
-                      <DropdownMenu.Item className="menu-item composer-action-menu-item" onSelect={onTeachTask}>
-                        <CircleDot aria-hidden="true" className="composer-teach-task-icon" />
-                        <span>Teach a task</span>
-                      </DropdownMenu.Item>
-                    )}
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>

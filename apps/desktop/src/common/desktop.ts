@@ -263,16 +263,6 @@ export type DesktopTelemetryProductIntent =
   }
   | DesktopTelemetrySemanticIntent;
 
-export interface DesktopTelemetryInspectorEntry {
-  name: string;
-  schemaVersion: number;
-  policyClass: 'essential' | 'product' | 'diagnostic';
-  propertyNames: string[];
-  route: RallyRegion;
-  validation: 'accepted' | 'suppressed' | 'rejected' | 'delivered' | 'retrying' | 'terminal';
-  queueState: 'none' | 'queued' | 'delivered' | 'retrying' | 'removed';
-}
-
 export interface DesktopJavascriptErrorCandidate {
   process: 'preload' | 'renderer';
   errorCode: 'type_error' | 'range_error' | 'unhandled_rejection' | 'react_boundary' | 'network_error' | 'unknown';
@@ -402,7 +392,6 @@ export interface RallyDesktopBridge {
   setProductAnalyticsEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   reportTelemetryScreen: (screen: DesktopTelemetryScreen) => Promise<void>;
   reportTelemetryProductIntent: (intent: DesktopTelemetryProductIntent) => Promise<void>;
-  getTelemetryInspector: () => Promise<DesktopTelemetryInspectorEntry[]>;
   reportJavascriptError: (candidate: DesktopJavascriptErrorCandidate) => Promise<void>;
   onApplicationSettingsChanged: (listener: (settings: DesktopApplicationSettings) => void) => () => void;
   getApplicationIcon: () => Promise<DesktopApplicationIconState>;
