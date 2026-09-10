@@ -39,9 +39,17 @@ import { isComposingKeyEvent } from './ime';
  * invitation or API key has nowhere to come from once the window is gone. The
  * Sidekicks window passes nothing: its one writing surface is a conversation
  * composer, whose text and attachments are cached on the device and restored on
- * the next visit (see `docs/composer-drafts.md`), so a sweep there would buy no
- * protection and would leave Escape permanently dead in every conversation that
- * holds a draft.
+ * the next visit (see `docs/composer-drafts.md`), so a sweep there would buy
+ * almost nothing and would leave Escape permanently dead in every conversation
+ * that holds a draft.
+ *
+ * *Almost* nothing, and the gap is worth stating rather than implying. The cache
+ * debounces its write by 250ms and commits the rest on React unmount, which a
+ * closing window does not run, so an edit newer than that debounce does not
+ * survive the close. That is true of Command-W and the traffic light too — it
+ * belongs to the draft cache's teardown, not to this keystroke. A sweep would
+ * not close it either, because a sweep reads the DOM and the loss is in the
+ * cache, so it is a reason to fix the flush rather than a reason to sweep here.
  */
 export function escapeClosesWindow(event: KeyboardEvent, unsavedTextScope: Element | null = null): boolean {
   if (event.key !== 'Escape' || event.defaultPrevented || isComposingKeyEvent(event)) return false;
