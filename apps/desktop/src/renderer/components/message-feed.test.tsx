@@ -43,7 +43,8 @@ describe('MessageFeed', () => {
    * DOM sibling: in the windowed feed the first mounted row has no sibling
    * whatever its index, so a sibling-based rule gave it no gap at the window's
    * edge. Index 0 is the only row with none; a row after an unloaded stretch
-   * has no known predecessor and takes the turn gap.
+   * has no known predecessor and takes the seam gap whatever its kind, since
+   * nothing else marks the seam and the turn gap is now the closest distance.
    */
   it('stamps each row with the gap its predecessor decides', () => {
     const human = message({ id: 'turn-1', authorType: 'human', author: { id: 'user-1', name: 'Adam' }, text: 'Look into it.' });
@@ -52,13 +53,19 @@ describe('MessageFeed', () => {
     const answer = message({ id: 'answer', text: 'Found it.' });
     const reply = message({ id: 'turn-2', authorType: 'human', author: { id: 'user-1', name: 'Adam' }, text: 'Thanks.' });
     const afterGap = message({ id: 'turn-3', text: 'Later.', precededByTranscriptGap: true });
-    render(<MessageFeed messages={[human, note, tool, answer, reply, afterGap]} onAnswerElicitation={answer_} />);
+    const eventAfterGap = message({ id: 'tool-2', messageType: 'tool_event', text: undefined, toolEvent: { id: 't2', name: 'Search', status: 'completed' }, precededByTranscriptGap: true });
+    render(<MessageFeed messages={[human, note, tool, answer, reply, afterGap, eventAfterGap]} onAnswerElicitation={answer_} />);
 
     const gaps = [...document.querySelectorAll('.virtual-message-row')].map((row) => row.getAttribute('data-row-gap'));
-    expect(gaps).toEqual(['none', 'block', 'event', 'event', 'stack', 'stack']);
+    expect(gaps).toEqual(['none', 'block', 'event', 'event', 'stack', 'seam', 'seam']);
     // Rally's answer sits on its work; a person's reply after an event does not.
     expect(feedRowGap(tool, answer)).toBe('event');
     expect(feedRowGap(tool, reply)).toBe('block');
+    // The seam wins over the kinds on either side of it: a turn after a turn
+    // and an event after a turn both take it when the stretch between them is
+    // unloaded, so neither reads as the tightest pair on screen.
+    expect(feedRowGap(reply, afterGap)).toBe('seam');
+    expect(feedRowGap(afterGap, eventAfterGap)).toBe('seam');
   });
 
   it('renders every message when the adapter does not window the list', () => {

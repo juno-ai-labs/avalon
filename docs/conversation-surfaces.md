@@ -109,16 +109,21 @@ an answered elicitation), an answer is Rally's, and everything else (a tool
 row, a timing row, the work accordion, a system note, a status pill, the
 proposal card, an open elicitation, the oversized-message placeholder) is an
 event; index 0 owns no space, and a row after a stretch this client has not
-loaded takes the turn gap because its predecessor is unknown. The two launch
+loaded takes the seam gap whatever its kind, because nothing else marks the
+seam. The two launch
 surfaces draw the same rows outside the feed wrapper and state the same gaps
 for themselves on `.launch-arrival` and the branch context, because a base
-rule gives a row no margin of its own. Four cases cover the feed: turn after turn takes
+rule gives a row no margin of its own. Five cases cover the feed: turn after turn takes
 `sys.space.stack.gap`, a turn beside an event in either direction takes
-`sys.space.block.gap`, event after event takes `sys.space.event.gap`, and
+`sys.space.block.gap`, event after event takes `sys.space.event.gap`,
 Rally's answer after the work that produced it also takes `sys.space.event.gap`,
-because it is the same turn finishing rather than a new one. The surface's own
+because it is the same turn finishing rather than a new one, and a row after an
+unloaded stretch takes `sys.space.seam.gap`, the widest, whatever its kind. The surface's own
 trailing rows, the live timer and the run notices, take `sys.space.block.gap`
-above them for the same reason. Every other margin, padding and gap in the feed
+above them for the same reason. Turn after turn is one unit, and what keeps the
+next turn off a bubble is the action slot every person's turn lays out under
+itself, painted on hover and held at its height where the surface has no
+control to put in it; Rally's answer carries its own row once it has settled. Every other margin, padding and gap in the feed
 is a step of the `--space-N` scale `app.css` derives from `ref.space.unit`; a
 value off that scale is either a sub-unit optical nudge inside an inline
 control or a bleed derived from something else, and says which in a comment.
@@ -318,6 +323,56 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — Turn to turn closes onto the hover row
+
+**What changed:** `sys.space.stack.gap`, the space a turn owns above itself
+when the row before it is also a turn, goes from eight units (32px) to one
+(4px). Nothing else in the rhythm moves: a turn beside an event is still four
+units and event to event two, so turn to turn is now the smallest distance in
+the feed.
+
+**Why:** Both kinds of turn keep an action row under themselves that is laid
+out always and painted on hover (Rally's Copy, Speak, Image, PDF and New
+substream strip, and the person's New substream), about 18px tall with 8
+above it under an answer and 4 under a bubble. At 32px the row a reader
+hovered floated in the middle of a 58px void between Rally's answer and the
+person's reply, and two people talking in the room sat 54px apart, which read
+as separate conversations rather than one exchange. The gap was tuned in a
+real window, on screenshots of Rally's hovered strip with a person's reply
+under it, and came down in steps: four units, the strip's height rounded down
+to the scale; three, judged one unit too loose; then one. At one unit the
+strip itself is what keeps the next turn off the last, and the gap is only
+the clearance under it. The first cut had added a fifth gap, a closer one for
+a person's turn after a person's turn only, and was withdrawn when the ask
+turned out to be every turn: two tokens at one value would have been a name
+with no second reader. Turn to turn now sits under both the turn-to-event and
+the event-to-event gaps. The three were tuned separately, each on its own
+screenshots, and the ordering is what those tunings produced rather than a
+rule; a later tuning of any of them should not assume the others follow.
+
+**Review then found** that the clearance was not the turn's own everywhere:
+the person's action row was rendered only where the turn could start a
+substream, so on an automation's conversation, a substream other than the main
+one, the launch provenance, an answered elicitation, and a turn still in
+flight, the next turn sat 4px under the bubble itself. The slot is now laid out
+on every person's turn, with the control inside it only where one exists, and
+holds its height (`min-height` at the 20px step) when empty, so the one-unit
+gap means the same thing on every surface that reads the token and a turn's
+footprint no longer depends on which screen draws it. Rally's answer already
+carried its row on every surface once settled.
+
+**Review also found** that the row after a stretch of transcript this client
+has not loaded took the turn gap as its default, whatever kind of row it was,
+and that default had just become the closest distance in the feed: two rows
+with an unseen stretch between them, an event row included, would have drawn
+tighter than two consecutive tool rows, and nothing else marks the seam. The
+seam has its own gap now, `sys.space.seam.gap`, at the eight units the turn
+gap used to be, and `feedRowGap` returns it for any row carrying
+`precededByTranscriptGap` before it looks at the kinds on either side. It is
+a token rather than a reuse of the block gap because the seam is not a turn
+beside an event: it is two rows that are not adjacent, and the distance is
+the only thing on screen that says so.
 
 ### 2026-09-10 — A seeded conversation shows a connecting card and composes without sending
 
