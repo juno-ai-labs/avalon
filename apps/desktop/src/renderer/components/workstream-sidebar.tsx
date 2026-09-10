@@ -2,7 +2,7 @@ import type { SidekickAttachment } from '@rally/contracts';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { AttachedSidekicks } from './attached-sidekicks';
 import { Archive, FileBox, GripVertical, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
-import { IconBorderCornerPill } from '@tabler/icons-react';
+import { IconCornerDownRight, IconPlus } from '@tabler/icons-react';
 import { Fragment, useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { WorkstreamDetail } from '../lib/types';
@@ -129,9 +129,9 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
         </button>
         <div className="workstream-substream-list">
           {workstream.privateChildren?.map((child) => {
-            // Compact hides the title, and a rail of identical branch lines
-            // says only that these are substreams, not which is which. The
-            // first letter is the only part of the title a 36px mark can hold.
+            // Compact hides the title, and a rail of identical arrows says
+            // only that these are substreams, not which is which. The first
+            // letter is the only part of the title a 36px mark can hold.
             const initial = [...child.title.trim()][0]?.toUpperCase();
             const row = (
               <button
@@ -143,11 +143,11 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
                 type="button"
               >
                 {/* Both marks, stacked in the one slot: the stylesheet
-                    cross-fades the branch line into the initial as the rail
+                    cross-fades the arrow into the initial as the rail
                     narrows, rather than this swapping one element for the
                     other, which would cut a frame ahead of the edge. */}
                 <span aria-hidden="true" className="workstream-context-mark">
-                  <IconBorderCornerPill className="workstream-substream-connector" size={24} stroke={1.5} />
+                  <IconCornerDownRight className="workstream-substream-arrow" size={22} stroke={1.5} />
                   {initial && <span className="workstream-substream-initial">{initial}</span>}
                 </span>
                 <span className="workstream-context-copy"><span>{child.title}</span></span>
@@ -172,7 +172,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
               title="New substream"
               type="button"
             >
-              <span aria-hidden="true" className="workstream-context-mark workstream-new-substream-mark">↳</span>
+              <span aria-hidden="true" className="workstream-context-mark"><IconPlus size={22} stroke={1.5} /></span>
               <span className="workstream-context-copy"><span>New substream</span></span>
             </button>
           )}

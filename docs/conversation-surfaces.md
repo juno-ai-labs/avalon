@@ -134,13 +134,13 @@ state as the conversation. Every conversation row in it is the navigation
 sidebar's work-stream row — borderless, one 36px leading slot, the same title
 and the same idle/hover/current fills — and only the mark in that slot says
 which conversation it is: the work stream's own icon tinted with its appearance
-colour for the main conversation, the branch line for a substream, and for
-**New substream** the same `↳` the main feed's control carries. Compact shows
-the first character of a substream's title, capitalized, in place of its branch
-line, because a rail of identical lines with no titles beside them says only
-that these are substreams; both marks are drawn in the slot, stacked, and
-cross-fade over the collapse motion, the line settling the eight pixels it was
-lifted to meet the title. The main conversation's
+colour for the main conversation, a Tabler `corner-down-right` arrow — the `↳`
+the main feed's control is drawn with — for a substream, and a Tabler `plus`
+for **New substream**. Compact shows the first character of a substream's
+title, capitalized, in place of its arrow, because a rail of identical arrows
+with no titles beside them says only that these are substreams; both marks
+are drawn in the slot, stacked, and cross-fade over the collapse motion. The
+main conversation's
 mark reads the parent work stream's appearance off its **sidebar row** rather
 than its cached detail, so a colour or icon change moves both rails on the same
 receipt; the header stays on the detail, which is what retires the picker's
@@ -498,6 +498,22 @@ expand, uncut, because the bar does not clip. React fills in `propertyName`
 for `transitionend` alone, so the component reads it from the native event.
 
 Shipped in #648.
+
+### 2026-09-10 — The ↳ marks a substream's row; New substream is a plus
+
+The product owner looked at the rail and asked for the swap: the Tabler
+`border-corner-pill` on each substream row, drawn in the 10% sidebar-border
+token, read as a grey smudge, while the `↳` on **New substream** read as an
+"enter" arrow that belonged on the rows that are substreams. Each substream row
+now draws a Tabler `corner-down-right` — the icon form of the same `↳` — in
+muted text, and **New substream** went back to a Tabler `plus`. The eight-pixel
+lift and the vertical flip the branch line needed went with it, and so did the
+`.workstream-new-substream-mark` glyph sizing, since both marks are icons again
+and take a `size` prop. The entry below is superseded: the sidebar's creation
+row and the feed's `↳ New substream` control are no longer one glyph, and the
+arrow's meaning in the rail is "this is a substream", not "start one". A change
+that puts the arrow back on the creation row has to give the substream rows a
+different mark first.
 
 ### 2026-09-10 — One glyph for both New substream controls
 

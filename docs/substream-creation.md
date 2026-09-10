@@ -36,9 +36,9 @@ The middle sidebar puts the main conversation first, then one full-width row per
 child, then **New substream**. Every row is the navigation sidebar's work-stream
 row — borderless, one 36px leading mark slot — and the mark is what tells them
 apart: the work stream's own tinted icon for the main conversation, a Tabler
-`border-corner-pill` branch line for a child, and for creation the `↳` the
-main feed's **New substream** control is drawn with.
-Compact hides the titles and swaps a child's branch line for the first character
+`corner-down-right` arrow (the `↳` the main feed's **New substream** control is
+drawn with) for a child, and a Tabler `plus` for creation.
+Compact hides the titles and swaps a child's arrow for the first character
 of its title. It retains the existing sidebar colors, row sizing, drag width and
 icon-only collapse. A completed
 main-feed message also offers **New substream** with that message as the cutoff:
@@ -399,6 +399,19 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-10 — A substream's row carries the ↳, and the creation row a plus
+
+Asked for by the product owner on seeing the rail: the faint `border-corner-pill`
+branch line on each substream row read as a stray grey curve, not as a mark, and
+the `↳` sitting on **New substream** alone put the "this is a branch" arrow on
+the one row that is not one. The arrow now marks each existing substream, in
+muted text rather than the sidebar-border token so it can be seen, and the
+creation row went back to a Tabler `plus`. This supersedes the entry below: the
+sidebar's creation mark and the feed's `↳ New substream` control no longer share
+a glyph, and the arrow is now the rail's "is a substream" mark rather than its
+"start one" mark, so a change to either has to keep that reading. See
+[conversation-surfaces.md](conversation-surfaces.md) for the row itself.
 
 ### 2026-09-10 — The sidebar's creation mark matches the feed's
 
