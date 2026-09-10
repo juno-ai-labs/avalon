@@ -85,14 +85,14 @@ describe('MessageBlock model timing', () => {
     };
     const { container, rerender } = render(<MessageBlock {...actions} message={activeMessage} />);
 
-    expect(screen.getByText('working for 1m 22s')).toBeInTheDocument();
+    expect(screen.getByText('Working for 1m 22s')).toBeInTheDocument();
     expect(container.querySelector('.agent-work-timing')).toHaveClass('agent-work-timing-active');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-state', 'solving');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-size', '20');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'false');
 
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
-    expect(screen.getByText('working for 1m 23s')).toBeInTheDocument();
+    expect(screen.getByText('Working for 1m 23s')).toBeInTheDocument();
 
     rerender(
       <MessageBlock
@@ -103,7 +103,7 @@ describe('MessageBlock model timing', () => {
         }}
       />,
     );
-    expect(screen.getByText('worked for 1m 23s')).toBeInTheDocument();
+    expect(screen.getByText('Worked for 1m 23s')).toBeInTheDocument();
     expect(container.querySelector('.agent-work-timing')).not.toHaveClass('agent-work-timing-active');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'true');
   });
@@ -131,7 +131,7 @@ describe('MessageBlock model timing', () => {
     });
     const { container, rerender } = render(<MessageBlock {...actions} message={thinkingRow('started')} />);
 
-    expect(screen.getByText('thinking for 50s')).toBeVisible();
+    expect(screen.getByText('Thinking for 50s')).toBeVisible();
     expect(container.querySelector('.agent-work-timing')).toHaveClass('agent-work-timing-active');
     // The mark replaces the spinner rather than joining it.
     expect(screen.queryByTestId('thinking-orb')).toBeNull();
@@ -139,7 +139,7 @@ describe('MessageBlock model timing', () => {
     expect(container.querySelector('.plugin-face')).toHaveClass('plugin-face-active');
 
     rerender(<MessageBlock {...actions} message={thinkingRow('completed')} />);
-    expect(screen.getByText('thought for 50s')).toBeVisible();
+    expect(screen.getByText('Thought for 50s')).toBeVisible();
     expect(container.querySelector('.agent-work-timing')).not.toHaveClass('agent-work-timing-active');
     // The mark is a mark, not a spinner: it stays once the row settles, and
     // only its pulse stops.
@@ -1726,14 +1726,14 @@ describe('MessageBlock work accordion', () => {
     const toggle = screen.getByRole('button', { name: 'Worked for 41m 17s' });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     // Closed is closed: the receipt is one line, not one line plus the rows.
-    expect(screen.queryByText('thought for 50s')).toBeNull();
+    expect(screen.queryByText('Thought for 50s')).toBeNull();
 
     fireEvent.click(toggle);
 
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
     // Each row keeps the wording and the mark it had in the feed, because the
     // drawer draws them through the same components.
-    expect(screen.getByText('thought for 50s')).toBeVisible();
+    expect(screen.getByText('Thought for 50s')).toBeVisible();
     expect(screen.getByText('Used Web for 7s')).toBeVisible();
     expect(screen.getByRole('img', { name: 'Plugin: Web' })).toBeVisible();
 
