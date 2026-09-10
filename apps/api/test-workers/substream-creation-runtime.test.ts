@@ -4,7 +4,7 @@ import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type UserId } from "@rally/contracts";
 import type { AuthContext, Env } from "../src/env";
 import { conversationObjectName, workstreamDOName, workspaceDOName } from "../src/durable-objects/names";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
@@ -416,6 +416,161 @@ describe("substream preparation on workerd", () => {
       expect(transcript.transcriptThrough()).toBe(0);
       expect(transcript.pendingTranscriptInputs()).toEqual([]);
       expect(state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM runs`).one().count).toBe(0);
+    });
+  });
+
+  it("creates the child with the message that started it, named from it and waiting on nothing else", async () => {
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000ce40";
+    // No title: the launch surface has no field for one, and this is the whole
+    // of what the desktop sends.
+    await service.prepare(WORKSTREAM_ID, { operationId, throughTurnId: "source-turn-1" });
+    const created = await service.confirm(WORKSTREAM_ID, operationId, {
+      clientMessageId: "opening-instruction",
+      text: "Compare the pricing page\nwith last quarter",
+      mentions: [],
+      attachmentIds: [],
+      confirmedParticipantUserIds: [],
+    });
+
+    expect(created.opening?.turnId).toEqual(expect.any(String));
+    // The first line of the message, not the placeholder preparation reserved
+    // the child under, and in `naming` so its header shows a skeleton rather
+    // than a name nobody chose.
+    expect(created.title).toBe("Compare the pricing page");
+    await runInDurableObject(conversation(created.substreamId), (_instance, state) => {
+      // `automatic` rather than `naming` because this caller has no deferral,
+      // so the first naming pass is awaited inside the confirmation. Reaching
+      // it at all is the assertion: the pass advances `naming` -> `automatic`
+      // with a compare-and-set, so a child provisioned settled, or a pass
+      // addressed at the parent as it used to be, both leave this untouched.
+      expect(state.storage.sql.exec<{ title: string; title_status: string; description: string }>(
+        `SELECT title, title_status, description FROM workstream WHERE id = 1`,
+      ).one()).toMatchObject({
+        title: "Compare the pricing page",
+        title_status: "automatic",
+        // The opening line, not the whole message: a description is what a
+        // sidebar shows and what every run starts from.
+        description: "Compare the pricing page",
+      });
+      // The turn is durable and the child's loop has been asked to run: an
+      // opening message that reached the transcript without waking the loop
+      // would sit there with nobody working on it.
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM canonical_conversation_turn_details WHERE client_message_id = 'opening-instruction'`,
+      ).one().count).toBe(1);
+    });
+    // And the work stream it branched out of keeps its own name: naming a child
+    // is addressed at the child.
+    await runInDurableObject(conversation(), (_instance, state) => {
+      expect(state.storage.sql.exec<{ title: string }>(
+        `SELECT title FROM workstream WHERE id = 1`,
+      ).one().title).toBe("Source");
+    });
+    // The row every member's sidebar reads carries the same title as the child
+    // itself, in the write that made it visible.
+    expect((await parent().listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID,
+    })).children.find((child) => child.substreamId === created.substreamId))
+      .toMatchObject({ title: "Compare the pricing page" });
+
+    // A retry of the same confirmation replays the turn rather than saying it
+    // twice: the response is lost far more often than the write is.
+    const replay = await service.confirm(WORKSTREAM_ID, operationId, {
+      clientMessageId: "opening-instruction",
+      text: "Compare the pricing page\nwith last quarter",
+      mentions: [],
+      attachmentIds: [],
+      confirmedParticipantUserIds: [],
+    });
+    expect(replay.opening?.turnId).toBe(created.opening?.turnId);
+    await runInDurableObject(conversation(created.substreamId), (_instance, state) => {
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM canonical_conversation_turn_details`,
+      ).one().count).toBe(1);
+    });
+  });
+
+  it("refuses a mention of somebody the work stream has not admitted before creating anything", async () => {
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000ce42";
+    await service.prepare(WORKSTREAM_ID, { operationId, throughTurnId: "source-turn-1" });
+    // Somebody who is not in the workspace at all, and then somebody who is but
+    // whom this work stream does not admit. The composer offers a roster wider
+    // than the child's own participants, so either is an ordinary mistake.
+    const stranger = "00000000-0000-7000-8000-0000000000ff";
+    const opening = (userId: UserId) => ({
+      clientMessageId: "opening-with-a-stranger",
+      text: "@Somebody take a look",
+      mentions: [{ type: "person" as const, userId, connectorType: null, startOffset: 0, endOffset: 9 }],
+      attachmentIds: [],
+      confirmedParticipantUserIds: [userId],
+    });
+    await expect(service.confirm(WORKSTREAM_ID, operationId, opening(asUserId(stranger))))
+      .rejects.toMatchObject({ code: "workspace_member_not_found" });
+    // A work stream nobody but its participants can read. `OTHER_ID` is an
+    // active member of the workspace and not a participant here, which is the
+    // case the seating refuses and this check has to reach first.
+    await runInDurableObject(parent(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE workstream_metadata SET scope = 'personal' WHERE id = 1`);
+    });
+    await expect(service.confirm(WORKSTREAM_ID, operationId, opening(asUserId(OTHER_ID))))
+      .rejects.toMatchObject({ code: "substream_member_needs_workstream_access" });
+    await runInDurableObject(parent(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE workstream_metadata SET scope = 'workspace' WHERE id = 1`);
+    });
+
+    // The refusal costs nothing: it lands before the child is provisioned, so
+    // there is no substream, no turn and no summary spent on one.
+    expect((await parent().listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID,
+    })).children).toEqual([]);
+    await runInDurableObject(conversation(), (_instance, state) => {
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM canonical_conversation_turn_details WHERE client_message_id = 'opening-with-a-stranger'`,
+      ).one().count).toBe(0);
+    });
+  });
+
+  it("publishes no child until its opening turn is durable, and completes that child on retry", async () => {
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000ce41";
+    await service.prepare(WORKSTREAM_ID, { operationId, throughTurnId: "source-turn-1" });
+    // A message the child's own product refuses: no text and no attachment.
+    // Provisioning and the context install have already happened by the time
+    // it is admitted, which is exactly the window this test is about.
+    await expect(service.confirm(WORKSTREAM_ID, operationId, {
+      clientMessageId: "opening-that-failed",
+      text: "",
+      mentions: [],
+      attachmentIds: [],
+      confirmedParticipantUserIds: [],
+    })).rejects.toThrow();
+
+    // Nothing in anybody's sidebar: readiness is the publication fence, so a
+    // creation that failed to write its message leaves no empty substream
+    // behind for somebody to find and wonder about.
+    expect((await parent().listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID,
+    })).children).toEqual([]);
+
+    // And the operation is still the same operation: retrying it — which is
+    // what the composer invites, with the words still in it — completes the
+    // child that was already provisioned rather than reserving another.
+    const created = await service.confirm(WORKSTREAM_ID, operationId, {
+      clientMessageId: "opening-that-failed",
+      text: "Compare the retry budget",
+      mentions: [],
+      attachmentIds: [],
+      confirmedParticipantUserIds: [],
+    });
+    expect((await parent().listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID,
+    })).children.map((child) => child.substreamId)).toEqual([created.substreamId]);
+    await runInDurableObject(conversation(created.substreamId), (_instance, state) => {
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM canonical_conversation_turn_details`,
+      ).one().count).toBe(1);
     });
   });
 

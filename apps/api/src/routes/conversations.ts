@@ -1,6 +1,6 @@
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono } from "hono";
-import { zValidator } from "../middleware/validation";
+import { requireSendableMessageLength, zValidator } from "../middleware/validation";
 import {
   IdSchema,
   UpdateWorkstreamRequestSchema,
@@ -16,7 +16,11 @@ import { requestFlowSpan } from "../observability/tracing";
 import { ConversationService } from "../services/conversation-service";
 import { telemetryOperationId } from "../telemetry/api-emitter";
 import { SubstreamCreationService } from "../services/substream-creation-service";
-import { SubstreamPreparationPreviewSchema } from "@rally/contracts/substream-creation";
+import {
+  SubstreamCreationResultSchema,
+  SubstreamOpeningMessageSchema,
+  SubstreamPreparationPreviewSchema,
+} from "@rally/contracts/substream-creation";
 import { asSubstreamId, asWorkstreamId } from "@rally/contracts";
 import { MutatePrivateChildParticipantResultSchema } from "@rally/contracts/conversation-parent";
 
@@ -40,7 +44,6 @@ const SocketTicketQuerySchema = z.object({
   afterSequence: z.coerce.number().int().nonnegative().optional(),
   speculative: z.literal("true").transform(() => true).optional(),
 });
-const SubstreamConfirmationSchema = z.strictObject({ substreamId: IdSchema });
 
 /**
  * One parent's conversations, whichever kind of parent it is.
@@ -52,7 +55,11 @@ const SubstreamConfirmationSchema = z.strictObject({ substreamId: IdSchema });
 export const conversationRoutes = new Hono<HonoAppEnv>();
 conversationRoutes.post("/:parentId/substreams/prepare", zValidator("param", parentParam), zValidator("json", z.strictObject({
   operationId: IdSchema,
-  title: z.string().trim().min(1).max(500),
+  // Optional because the launch surface has no title field: a substream is
+  // named from the message that starts it, and the placeholder the parent
+  // reserves it under is replaced at confirmation. A caller that has a title
+  // of its own may still say so.
+  title: z.string().trim().min(1).max(500).optional(),
   throughTurnId: z.string().min(1).nullable(),
 })), async (c) => {
   const auth = getAuth(c);
@@ -71,13 +78,16 @@ conversationRoutes.post("/:parentId/substreams/prepare", zValidator("param", par
     },
   }));
 });
-conversationRoutes.post("/:parentId/substreams/confirm", zValidator("param", parentParam), zValidator("json", z.strictObject({
+conversationRoutes.post("/:parentId/substreams/confirm", requireSendableMessageLength("opening.text"), zValidator("param", parentParam), zValidator("json", z.strictObject({
   operationId: IdSchema,
+  /** The instruction the substream is created with, where the caller sent one. */
+  opening: SubstreamOpeningMessageSchema.nullish(),
 })), async (c) => {
-  const result = await new SubstreamCreationService(c.env, getAuth(c)).confirm(
-    c.req.valid("param").parentId, c.req.valid("json").operationId,
+  const body = c.req.valid("json");
+  const result = await new SubstreamCreationService(c.env, getAuth(c), requestDeferral(c)).confirm(
+    c.req.valid("param").parentId, body.operationId, body.opening ?? null,
   );
-  return c.json(SubstreamConfirmationSchema.parse(result));
+  return c.json(SubstreamCreationResultSchema.parse(result));
 });
 const childParticipantBody = z.strictObject({ userId: IdSchema, operationId: IdSchema });
 conversationRoutes.post("/:parentId/substreams/cancel", zValidator("param", parentParam), zValidator("json", z.strictObject({
