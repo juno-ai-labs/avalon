@@ -109,10 +109,12 @@ sidebar's work-stream row — borderless, one 36px leading slot, the same title
 and the same idle/hover/current fills — and only the mark in that slot says
 which conversation it is: the work stream's own icon tinted with its appearance
 colour for the main conversation, the branch line for a substream, and for
-**New substream** the same `↳` the main feed's control carries. Compact swaps a
-substream's branch line for the first character of its title, capitalized,
-because a rail of identical lines with no titles beside them says only that
-these are substreams. The main conversation's
+**New substream** the same `↳` the main feed's control carries. Compact shows
+the first character of a substream's title, capitalized, in place of its branch
+line, because a rail of identical lines with no titles beside them says only
+that these are substreams; both marks are drawn in the slot, stacked, and
+cross-fade over the collapse motion, the line settling the eight pixels it was
+lifted to meet the title. The main conversation's
 mark reads the parent work stream's appearance off its **sidebar row** rather
 than its cached detail, so a colour or icon change moves both rails on the same
 receipt; the header stays on the detail, which is what retires the picker's
@@ -174,6 +176,18 @@ registered `--sidebar-compact` number on the same interval, drawn from by
 nothing; the component listens to the platform's transition events for it on
 the aside itself to know when the layout has settled, and holds the list
 motion until then.
+
+The work-stream sidebar's contents travel the same way, on the same
+`--sidebar-layout-motion` restated on it and set to `0s` by its own drag: its
+rows narrow to their 36px marks as their copy fades under a clip, the section
+headings close to no height as the section rules and their spacing arrive, the
+substream mark cross-fades from line to initial, the participants' avatars
+shrink into the square with their overlap, the empty state closes to its icon,
+and the footer's toggle is carried to the centre by the footer's padding.
+Nothing in it is centred with `justify-content`, which cannot travel: a mark is
+centred by the row's padding, and content of no fixed width — the avatar
+stack, the empty state's icon — by a transform of `calc(18px - 50%)`. It has no
+list motion to hold and so carries no `--sidebar-compact`.
 
 The route host, not the feed, owns identity transitions. A new work stream
 begins with local composer keys; after durable admission its adapter rekeys
@@ -255,6 +269,44 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — The work-stream sidebar's contents travel with its edge too
+
+**What changed:** The work-stream sidebar's rows, copy, section headings and
+rules, empty state, avatars and footer toggle transition between the expanded
+sidebar and the 96px rail over `--sidebar-layout-motion`, restated on that
+sidebar and set to `0s` by its drag, the way the navigation's do in the entry
+below. A substream's mark now renders both its branch line and its initial,
+stacked in one grid cell, and the stylesheet cross-fades them; the line
+settles its eight-pixel lift as the title goes. Compact centring by
+`justify-content` is gone: marks are centred by the row's padding, the avatar
+stack and the empty state's icon by a `translateX(calc(18px - 50%))` that
+travels, and the footer's toggle by 32.5px of right padding.
+
+**Why:** The same cut the navigation sidebar had, reported as a request to
+animate the centre sidebar with the same care once the navigation's rows
+travelled: only `flex-basis` glided while every row inside cut to its square
+in the first frame, and the substream mark was swapped between two elements by
+the component, which no stylesheet could ease. `justify-content: center` was
+the one rule that could not be carried over, because it is discrete — flipping
+it at the first frame throws the avatar to the middle of a still-wide row and
+slides it back — and the avatar stack's width is a count nobody knows in CSS,
+so a fixed padding could not centre it; a transform in the content's own
+percentage can.
+
+**Considered and rejected:** Keeping the component's swap of the mark and
+fading the whole mark out and in, which reads as the row blinking. Wrapping
+the avatar stack in the 36px mark box for centring, which clips a four-avatar
+stack against the row's edge in the full sidebar. Animating the participant
+limit — four faces to two — which is a count, not a shape, and is left to
+change at the toggle.
+
+**Consequences:** Both substream marks are in the document in both widths,
+under `aria-hidden` on the slot as before; a test that counts branch lines in
+the rail counts one under each initial. A rule that adds compact centring
+here uses padding or a transform, not `justify-content`. The avatar size rule
+restates the presence border's own 180ms fade, because a `transition` on the
+same element replaces it; a change to that fade is made in both places.
 
 ### 2026-09-10 — The navigation's contents travel with its edge, and search stays at the top
 

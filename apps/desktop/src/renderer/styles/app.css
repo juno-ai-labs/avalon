@@ -2768,16 +2768,27 @@ pre {
   inherits: true;
   initial-value: 0px;
 }
-.workstream-context-sidebar { background: var(--av-cmp-sidebar-background); border-right: 1px solid var(--av-cmp-sidebar-border); display: flex; flex: 0 0 280px; flex-direction: column; min-height: 0; min-width: 0; position: relative; transition: flex-basis var(--sidebar-collapse-motion); }
-/* As above: a drag tracks the pointer, so the gesture opts its own width out. */
-.workstream-context-sidebar.is-resizing { transition: none; }
+/* Its contents travel with its edge, as the navigation sidebar's do: every
+   rule below that changes a shape between the two widths declares the same
+   interval, `--sidebar-layout-motion`, restated here so a drag can turn all
+   of them off at once. The same two consequences hold — nothing on screen
+   during the toggle is `display: none` in the rail, and every travelling
+   value is a number in both layouts — and one more: nothing is centred with
+   `justify-content`, which cannot travel and would jump at the first frame.
+   A mark is centred by the row's padding, and content of no fixed width by a
+   transform of `calc(18px - 50%)`, half the 36px content box less half the
+   content's own width. */
+.workstream-context-sidebar { --sidebar-layout-motion: var(--sidebar-collapse-motion); background: var(--av-cmp-sidebar-background); border-right: 1px solid var(--av-cmp-sidebar-border); display: flex; flex: 0 0 280px; flex-direction: column; min-height: 0; min-width: 0; position: relative; transition: flex-basis var(--sidebar-collapse-motion); }
+/* As above: a drag tracks the pointer, so the gesture opts its own width out,
+   and its contents snap with the edge. */
+.workstream-context-sidebar.is-resizing { --sidebar-layout-motion: 0s; transition: none; }
 .workstream-context-resizer:hover > .sidebar-resizer-handle { opacity: 1; }
 .conversation-layout:has(> .workstream-context-sidebar.is-resizing) { cursor: col-resize; user-select: none; }
 .workstream-context-sidebar.is-compact { flex-basis: 96px; }
 .workstream-context-toolbar { align-items: center; display: flex; flex: 0 0 44px; justify-content: space-between; padding: 0 12px; }
-.workstream-context-section h2 { color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 400; line-height: 18px; }
-.workstream-context-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 8px 12px 16px; }
-.workstream-context-row { align-items: center; background: transparent; border: 0; border-radius: 10px; color: var(--av-sys-color-text-default); display: flex; font: inherit; gap: 8px; height: 54px; padding: 8px; position: relative; text-align: left; width: 100%; }
+.workstream-context-section h2 { color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 400; height: 18px; line-height: 18px; overflow: hidden; transition: height var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
+.workstream-context-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 8px 12px 16px; transition: padding var(--sidebar-layout-motion); }
+.workstream-context-row { align-items: center; background: transparent; border: 0; border-radius: 10px; color: var(--av-sys-color-text-default); display: flex; font: inherit; gap: 8px; height: 54px; padding: 8px; position: relative; text-align: left; transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), width var(--sidebar-layout-motion); width: 100%; }
 .workstream-context-row:hover { background: var(--av-cmp-row-background-hover); }
 .workstream-context-row.is-current { background: var(--av-cmp-row-background-selected); }
 /* Every row in this rail is the navigation sidebar's work-stream row: same
@@ -2786,10 +2797,13 @@ pre {
    branch line for a substream. */
 .workstream-substream-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .workstream-substream-list:empty { display: none; }
-.workstream-context-mark { align-items: center; display: flex; flex: 0 0 36px; height: 36px; justify-content: center; }
+/* A grid rather than a flex row so that a substream's two marks — its branch
+   line and its initial — stack in the one cell and can cross-fade. */
+.workstream-context-mark { display: grid; flex: 0 0 36px; height: 36px; place-items: center; }
+.workstream-context-mark > * { grid-area: 1 / 1; }
 /* Tabler's right endpoint is y=4: after flipping the 24px icon it sits 8px
    below center, so the curve meets the title rather than the slot's floor. */
-.workstream-substream-connector { color: var(--av-cmp-sidebar-border); transform: translateY(-8px) scaleY(-1); }
+.workstream-substream-connector { color: var(--av-cmp-sidebar-border); transform: translateY(-8px) scaleY(-1); transition: opacity var(--sidebar-layout-motion), transform var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
 .workstream-new-substream { color: var(--av-sys-color-text-muted); }
 /* The same character the main feed's New substream control is drawn with, so
    the two ways into a substream read as one act; a Tabler plus made the rail's
@@ -2798,7 +2812,7 @@ pre {
    keeps the connector's muted weight beside it rather than the feed row's 10px. */
 .workstream-new-substream-mark { font-size: 22px; line-height: 1; }
 .workstream-context-row:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
-.workstream-context-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.workstream-context-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; overflow: hidden; transition: flex-grow var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
 /* The navigation sidebar's row title, so the two rails read as one list. */
 .workstream-conversation-row .workstream-context-copy > span,
 .workstream-new-substream .workstream-context-copy > span { font-size: 14px; font-weight: 500; line-height: 20px; }
@@ -2807,25 +2821,37 @@ pre {
 .workstream-context-copy > small { color: var(--av-sys-color-text-muted); font-size: 13px; line-height: 18px; }
 .workstream-context-resource-icon { align-items: center; color: var(--av-sys-color-text-muted); display: flex; flex: 0 0 36px; height: 36px; justify-content: center; }
 .workstream-context-resource-icon > svg { height: 20px; width: 20px; }
-.workstream-context-section { margin-top: 20px; }
+.workstream-context-section { border-top: 0 solid var(--av-cmp-sidebar-border); margin-top: 20px; transition: border-top-width var(--sidebar-layout-motion), margin-top var(--sidebar-layout-motion), padding-top var(--sidebar-layout-motion); }
 .workstream-context-section h2 { margin: 0 8px 6px; }
-.workstream-context-empty { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; gap: 8px; padding: 8px; }
-.workstream-context-empty svg { flex-shrink: 0; }
+.workstream-context-empty { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; gap: 8px; height: 36px; overflow: hidden; padding: 8px; transition: gap var(--sidebar-layout-motion), height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), width var(--sidebar-layout-motion); width: 100%; }
+.workstream-context-empty svg { flex-shrink: 0; transition: transform var(--sidebar-layout-motion); }
+.workstream-context-empty > span { transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); white-space: nowrap; }
 .workstream-context-presence { background: var(--av-sys-color-success-base); border-radius: 50%; flex: 0 0 6px; height: 6px; }
-.workstream-context-sidebar.is-compact .workstream-context-toolbar { justify-content: center; }
 /* Compact drops the title, so the eight-pixel lift has nothing left to meet;
-   centre the curve in the square instead. It only shows for a substream whose
-   title has no first character to stand in for it. */
+   the curve settles to the centre of the square as the title goes. It stays
+   the mark only for a substream whose title has no first character; under an
+   initial it fades out while the initial fades in, both drawn in the one
+   cell so neither is swapped for the other. */
 .workstream-context-sidebar.is-compact .workstream-substream-connector { transform: scaleY(-1); }
+.workstream-context-sidebar.is-compact .workstream-context-mark:has(> .workstream-substream-initial) > .workstream-substream-connector { opacity: 0; visibility: hidden; }
 /* The trim centres the cap height rather than the line box: an uppercase
    letter carries no descender and would otherwise sit a pixel high. */
-.workstream-substream-initial { font-size: 17px; font-weight: 600; text-box: trim-both cap alphabetic; }
-.workstream-context-sidebar.is-compact .workstream-context-copy,
-.workstream-context-sidebar.is-compact .workstream-context-section h2,
-.workstream-context-sidebar.is-compact .workstream-context-empty span { display: none; }
-.workstream-context-sidebar.is-compact .workstream-context-row,
-.workstream-context-sidebar.is-compact .workstream-context-empty { justify-content: center; }
-.workstream-context-sidebar.is-compact .workstream-context-section { border-top: 1px solid var(--av-cmp-sidebar-border); margin-top: 14px; padding-top: 14px; }
+.workstream-substream-initial { font-size: 17px; font-weight: 600; opacity: 0; text-box: trim-both cap alphabetic; transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); visibility: hidden; }
+.workstream-context-sidebar.is-compact .workstream-substream-initial { opacity: 1; visibility: visible; }
+/* Copy, headings and the empty state's label close to nothing and fade; the
+   section rule and its spacing arrive over the same interval. */
+.workstream-context-sidebar.is-compact .workstream-context-copy { flex-grow: 0; opacity: 0; visibility: hidden; }
+.workstream-context-sidebar.is-compact .workstream-context-section h2 { height: 0; margin-bottom: 0; opacity: 0; visibility: hidden; }
+.workstream-context-sidebar.is-compact .workstream-context-empty > span { opacity: 0; visibility: hidden; }
+.workstream-context-sidebar.is-compact .workstream-context-section { border-top-width: 1px; margin-top: 14px; padding-top: 14px; }
+/* Content of no fixed width — the participants' avatars, the empty state's
+   icon — is carried to the centre of the 36px content box by a transform that
+   travels, not by `justify-content`, which cannot. */
+.workstream-context-sidebar .workstream-context-row > .avatar-stack,
+.workstream-context-sidebar .workstream-context-row > svg { transition: transform var(--sidebar-layout-motion); }
+.workstream-context-sidebar.is-compact .workstream-context-row > .avatar-stack,
+.workstream-context-sidebar.is-compact .workstream-context-row > svg,
+.workstream-context-sidebar.is-compact .workstream-context-empty > svg { transform: translateX(calc(18px - 50%)); }
 .workstream-context-sidebar.is-compact .workstream-context-presence { bottom: 8px; position: absolute; right: 10px; width: 6px; }
 .workstream-screen { display: grid; grid-template-rows: 55px minmax(0, 1fr) auto; height: 100%; min-width: 0; position: relative; }
 .workstream-header { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; gap: 12px; justify-content: space-between; min-width: 0; padding: 6px 10px 6px 16px; }
@@ -6987,7 +7013,12 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 /* The two navigation rails share square controls and symmetric gutters. */
 .workstream-context-sidebar.is-compact .workstream-context-scroll { padding-left: 20.5px; padding-right: 20.5px; }
 .workstream-context-sidebar.is-compact .workstream-context-row,
-.workstream-context-sidebar.is-compact .workstream-context-empty { flex: 0 0 auto; width: 54px; height: 54px; padding: 9px; gap: 0; }
+.workstream-context-sidebar.is-compact .workstream-context-empty { width: 54px; height: 54px; padding: 9px; gap: 0; }
+/* The avatars shrink into the square with their overlap; the presence
+   border's own fade is restated so the size rule does not replace it. */
+.workstream-context-sidebar .avatar-stack .avatar { transition: border-color 180ms ease, font-size var(--sidebar-layout-motion), height var(--sidebar-layout-motion), width var(--sidebar-layout-motion); }
+.workstream-context-sidebar .avatar-overflow { transition: font-size var(--sidebar-layout-motion), height var(--sidebar-layout-motion), margin-left var(--sidebar-layout-motion), width var(--sidebar-layout-motion); }
+.workstream-context-sidebar .avatar-stack-item + .avatar-stack-item { transition: margin-left var(--sidebar-layout-motion); }
 .workstream-context-sidebar.is-compact .avatar-stack .avatar,
 .workstream-context-sidebar.is-compact .avatar-overflow { width: 20px; height: 20px; font-size: 8px; }
 .workstream-context-sidebar.is-compact .avatar-stack-item + .avatar-stack-item,
@@ -6996,15 +7027,18 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .sidebar-collapse-footer { display: flex; align-items: center; justify-content: flex-end; flex-shrink: 0; gap: 4px; margin-top: auto; padding: 8px 12px; min-height: 62px; }
 .grokbot-shell .sidebar .sidebar-collapse-footer { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .grokbot-shell .sidebar .sidebar-collapse-footer .account-trigger { flex: 1; height: 40px; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), height var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
-.grokbot-shell .sidebar.is-compact .sidebar-collapse-footer,
-.workstream-context-sidebar.is-compact .sidebar-collapse-footer { padding: 8px; gap: 0; }
+.grokbot-shell .sidebar.is-compact .sidebar-collapse-footer { padding: 8px; gap: 0; }
+/* The work-stream sidebar's toggle is carried to the centre by the footer's
+   padding — 32.5px on the right leaves a 30px button centred in the 95px
+   inside the rail's border — rather than by `justify-content`, which would
+   jump it there at the first frame. */
+.workstream-context-sidebar .sidebar-collapse-footer { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
+.workstream-context-sidebar.is-compact .sidebar-collapse-footer { gap: 0; padding: 8px 32.5px 8px 8px; }
 /* The avatar is centred by its padding rather than `justify-content`, which
    would jump it at the start of the travel. */
 .grokbot-shell .sidebar.is-compact .sidebar-collapse-footer .account-trigger { gap: 0; height: 38px; min-height: 38px; padding: 6px 6px 6px 10.5px; }
 .sidebar-collapse-footer > .icon-button { flex-shrink: 0; }
 .sidebar-drag-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--av-sys-color-text-muted); opacity: .25; pointer-events: none; z-index: 100; }
-
-.workstream-context-sidebar.is-compact .sidebar-collapse-footer { justify-content: center; }
 
 .settings-account-profile { display: grid; gap: 12px; }
 .settings-account-profile .settings-profile-card { border-radius: 0; }

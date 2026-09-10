@@ -135,6 +135,31 @@ describe('sidebar layout motion', () => {
     expect(rule('.grokbot-shell .sidebar .workstream-row .sidebar-row-main')).toContain('visibility var(--sidebar-layout-motion)');
   });
 
+  // The work-stream sidebar restates the interval and travels the same way,
+  // with the substream's two marks stacked in one cell so they can cross-fade
+  // and nothing centred by `justify-content`, which cannot travel.
+  it('travels the work-stream sidebar\'s contents on the same interval', () => {
+    expect(rule('.workstream-context-sidebar')).toContain('--sidebar-layout-motion: var(--sidebar-collapse-motion);');
+    expect(rule('.workstream-context-sidebar.is-resizing')).toContain('--sidebar-layout-motion: 0s;');
+    for (const selector of [
+      '.workstream-context-scroll',
+      '.workstream-context-row',
+      '.workstream-context-copy',
+      '.workstream-context-section',
+      '.workstream-context-section h2',
+      '.workstream-substream-connector',
+      '.workstream-substream-initial',
+      '.workstream-context-sidebar .sidebar-collapse-footer',
+    ]) {
+      expect(rule(selector), selector).toContain('var(--sidebar-layout-motion)');
+    }
+    expect(rule('.workstream-context-mark > *')).toContain('grid-area: 1 / 1;');
+    expect(rule('.workstream-context-sidebar.is-compact .workstream-context-mark:has(> .workstream-substream-initial) > .workstream-substream-connector')).toContain('visibility: hidden;');
+    expect(rule('.workstream-context-sidebar.is-compact .workstream-context-copy')).not.toContain('display: none');
+    expect(rule('.workstream-context-sidebar.is-compact .workstream-context-row,\n.workstream-context-sidebar.is-compact .workstream-context-empty')).not.toContain('justify-content');
+    expect(rule('.workstream-context-sidebar.is-compact .sidebar-collapse-footer')).toContain('padding: 8px 32.5px 8px 8px;');
+  });
+
   // The strip stays a horizontally scrolling row in the rail: a column inside
   // the scroll box was the earlier answer, and it took the strip away from the
   // bottom where the full sidebar keeps it.
