@@ -56,13 +56,15 @@ through the ordinary common projection rather than a second write.
 [`substream-creation.md`](substream-creation.md) owns how that child is created;
 this document owns what happens to its title afterwards.
 
-The icon half of the answer is dropped for a child. The pass still asks for one
-— it is the work stream's own pass, and one call answers both halves — but
-`advanceTitle` sends `null` to the child's `rename`, so no appearance is written
-and none is published. Nothing draws a substream's own appearance: its rows
-carry the branch line, and its header shows the parent's mark. An icon written
-there would be a shared identity nobody chose, on an object whose `rename`
-treats the first icon it stores as final.
+The icon is stored for a child as it is for a work stream: the same call
+answers both halves, the child's own row has somewhere to put it, and there is
+no conditional here at all. Nothing draws it today — a substream's sidebar rows
+carry the branch line, its compact mark carries the first character of its
+title, and its header shows the parent's icon — and the directory payload those
+rows are built from has no appearance field to carry one. So this is a value
+kept where it belongs rather than a value on screen; a surface that ever wants
+a substream's own icon will find one already chosen, and until then the rail
+looks like what it is.
 
 ### The two passes
 
@@ -467,8 +469,9 @@ ordinary work-stream update and belongs to the object's product service.
 identity port, the message port and the rename publication, and
 `publishWorkstreamEvent` takes one too. The first pass is called for a private
 substream by its creation service; `settleAgentRun` now passes the substream its
-run belongs to instead of dropping it. The name half of a pass is used for
-either; the icon half is dropped for a child.
+run belongs to instead of dropping it. A child stores the icon its pass chose
+like any other conversation; no surface draws it, and the sidebar keeps the
+branch line.
 
 **Why the pass is shared rather than copied:** a substream is named from an
 opening message exactly as a work stream is, so a second implementation would be
