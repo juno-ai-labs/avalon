@@ -1,0 +1,55 @@
+import type { ReactNode } from 'react';
+
+import { RelativeTime } from './relative-time';
+
+/**
+ * The identity line over every turn in a feed: who said it, and when.
+ *
+ * One component for Rally's turn, a colleague's, the reader's own, and a
+ * settled elicitation answer, so the name and the time take one colour, one
+ * size, and one order everywhere rather than four headers that agree by
+ * accident. The line reads outward from the edge the turn is aligned to — the
+ * name on the edge, the time inward — so the same parts are laid down in
+ * reverse for a turn on the trailing edge. That is done in the markup, not
+ * with CSS ordering: what a screen reader announces is what a sighted person
+ * sees, and an optional label stays beside the name in both.
+ */
+export function MessageByline({
+  align,
+  author,
+  children,
+  contextLabel,
+  createdAt,
+  dot = false,
+  workSummary,
+}: {
+  /** The edge of the feed the turn is aligned to. The name sits on it. */
+  align: 'start' | 'end';
+  author: string;
+  /** Controls that follow the line whichever way it reads. */
+  children?: ReactNode;
+  /** Why the turn reads the way it does, beside the name it is attributed to. */
+  contextLabel?: string | undefined;
+  /** An ISO-8601 instant. */
+  createdAt: string;
+  /** Draw the person-accent dot before the name. A person's turn carries it; Rally's does not. */
+  dot?: boolean;
+  /** A settled response's total, already worded. */
+  workSummary?: string | undefined;
+}): React.JSX.Element {
+  const parts: ReactNode[] = [
+    <span className="message-author" key="author">
+      {dot && <span aria-hidden="true" className="message-author-dot" />}
+      {author}
+    </span>,
+    contextLabel ? <span className="message-context-label" key="context">{contextLabel}</span> : null,
+    <RelativeTime key="time" value={createdAt} />,
+    workSummary ? <span className="message-work-summary" key="summary">{workSummary}</span> : null,
+  ];
+  return (
+    <header>
+      {align === 'end' ? [...parts].reverse() : parts}
+      {children}
+    </header>
+  );
+}

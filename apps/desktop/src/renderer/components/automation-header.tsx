@@ -6,8 +6,9 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { DeleteAutomationDialog } from './delete-automation-dialog';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import type { AutomationDetail, AutomationRun } from '../lib/types';
-import { formatRelative, statusLabel } from '../lib/format';
+import { statusLabel } from '../lib/format';
 import { Badge, Button, IconButton, InlineError, Modal, StatusDot } from './primitives';
+import { RelativeTime } from './relative-time';
 
 export type AutomationHeaderAction = 'pause' | 'resume' | 'delete' | 'run';
 
@@ -155,7 +156,7 @@ export function AutomationHeader({
         {(automation.triggerSummaries.length > 0 || automation.nextRunAt) && (
           <section className="sidekick-profile-section"><h2>When to expect it</h2>{automation.triggerSummaries.length > 0 && <ul aria-label="Triggers" className="automation-header-triggers">
             {automation.triggerSummaries.map((summary) => <li key={summary}>{summary}</li>)}
-          </ul>}{automation.nextRunAt && <p className="automation-runs-next">Next {formatRelative(automation.nextRunAt)}</p>}</section>
+          </ul>}{automation.nextRunAt && <p className="automation-runs-next">Next <RelativeTime value={automation.nextRunAt} /></p>}</section>
         )}
         <section className="sidekick-profile-section sidekick-guidance">
           <h2>Make it work for you</h2>
@@ -178,8 +179,8 @@ export function AutomationHeader({
                     <small>
                       {run.resultSummary
                         ?? (run.status === 'running'
-                          ? `Running ${formatRelative(run.startedAt ?? run.createdAt)}`
-                          : formatRelative(run.completedAt ?? run.startedAt ?? run.plannedFor ?? run.createdAt))}
+                          ? <>Running <RelativeTime value={run.startedAt ?? run.createdAt} /></>
+                          : <RelativeTime value={run.completedAt ?? run.startedAt ?? run.plannedFor ?? run.createdAt} />)}
                     </small>
                   </span>
                   <Badge>{statusLabel[runStatus(run)]}</Badge>

@@ -314,7 +314,6 @@
   --av-sys-font-size-hint: 11px;
   --av-sys-font-size-action: 14.5px;
   --av-sys-font-size-meta: 10.5px;
-  --av-sys-font-size-author: 12.5px;
   --av-sys-font-size-title: 15px;
 
   /* Line height. */
@@ -424,11 +423,12 @@
   --av-cmp-composer-send-radius: var(--av-sys-size-radius-pill);
   --av-cmp-composer-send-foreground: #fcfcfc;
 
-  /* The reading column's width, and the label over a turn in it. */
+  /* The reading column's width, and the identity line over a turn in it. */
   --av-cmp-feed-width: 880px;
   --av-cmp-feed-width-wide: 940px;
-  --av-cmp-feed-author-font-size: 12px;
-  --av-cmp-feed-author-font-weight: 470;
+  --av-cmp-feed-byline-font-size: 12px;
+  --av-cmp-feed-byline-author-weight: 500;
+  --av-cmp-feed-byline-time-weight: 420;
 
   /* Rendered markdown. Its colours were already tokens; its *measurements*
    * were not, which is why Air's headings were smaller than the prose beneath
@@ -690,7 +690,6 @@
   --av-sys-font-size-hint: 11px;
   --av-sys-font-size-action: 14.5px;
   --av-sys-font-size-meta: 10.5px;
-  --av-sys-font-size-author: 12.5px;
   --av-sys-font-size-title: 15px;
 
   --av-sys-font-leading-prose: 1.85;
@@ -754,8 +753,9 @@
 
   --av-cmp-feed-width: 880px;
   --av-cmp-feed-width-wide: 940px;
-  --av-cmp-feed-author-font-size: 12px;
-  --av-cmp-feed-author-font-weight: 470;
+  --av-cmp-feed-byline-font-size: 12px;
+  --av-cmp-feed-byline-author-weight: 500;
+  --av-cmp-feed-byline-time-weight: 420;
 
   --av-cmp-markdown-diagram-line: var(--av-ref-color-line-6);
   --av-cmp-markdown-heading-1: 25px;
