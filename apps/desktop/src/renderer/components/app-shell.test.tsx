@@ -1,3 +1,5 @@
+import { backgroundRealtimeWorkstreamIds } from '../lib/workspace-workstream-sockets';
+import { openWorkstreamId } from '../lib/workstream-landing';
 import { QueryClient } from '@tanstack/react-query';
 import { ProjectSummarySchema } from '@rally/contracts';
 import { describe, expect, it } from 'vitest';
@@ -7,9 +9,7 @@ import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import {
   applyPinnedWorkstreams,
   applyPinnedWorkstreamsIfCurrent,
-  backgroundRealtimeWorkstreamIds,
   invitationAccountMismatch,
-  openWorkstreamId,
   showsAutomation,
   upsertProjectDirectory,
   windowControlsShellClass,

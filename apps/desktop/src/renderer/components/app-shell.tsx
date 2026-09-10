@@ -5,7 +5,7 @@ import { AttachmentLightbox } from './attachment-lightbox';
 import type { AttachmentPreview } from './attachments';
 import { useContext } from 'react';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PropsWithChildren } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { CreateProjectRequest, ProjectDirectory, ProjectSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
@@ -29,7 +29,7 @@ import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useProjectDirectories } from '../lib/use-project-directories';
 import { useNotesQuery } from '../lib/use-notes-query';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
-import { WorkstreamSocketPool } from '../lib/workstream-socket-pool';
+import { openWorkstreamId } from '../lib/workstream-landing';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import {
@@ -47,8 +47,6 @@ interface AppShellProps extends PropsWithChildren {
   workspace: Workspace;
 }
 
-export const PROACTIVE_RECENT_WORKSTREAM_COUNT = 5;
-
 /** Upsert a mutation response without duplicating an earlier socket push. */
 export function upsertProjectDirectory(
   current: ProjectDirectory | undefined,
@@ -64,27 +62,6 @@ export function upsertProjectDirectory(
   };
 }
 
-export function backgroundRealtimeWorkstreamIds(
-  activeWorkstreamId: string | null,
-  workstreams: WorkstreamSummary[] | undefined,
-): string[] {
-  const candidates = (workstreams ?? []).filter((workstream) => workstream.id !== activeWorkstreamId);
-  const recentUnpinned = new Set(candidates
-    .filter((workstream) => workstream.pinPosition === null)
-    .sort((left, right) => {
-      const activityOrder = Date.parse(right.lastActivityAt) - Date.parse(left.lastActivityAt);
-      return activityOrder || left.id.localeCompare(right.id);
-    })
-    .slice(0, PROACTIVE_RECENT_WORKSTREAM_COUNT)
-    .map((workstream) => workstream.id));
-  return candidates.flatMap((workstream) => (
-    workstream.harnessStatus === 'running'
-      || workstream.pinPosition !== null
-      || recentUnpinned.has(workstream.id)
-      ? [workstream.id]
-      : []
-  ));
-}
 
 /**
  * Whether the screen at this route is showing the named automation, and would
@@ -110,21 +87,6 @@ export function windowControlsShellClass(platform: string | undefined): string {
   return platform === 'darwin' ? 'has-overlay-window-controls' : '';
 }
 
-export function openWorkstreamId(pathname: string): string | null {
-  const id = /^\/workstreams\/([^/]+)$/.exec(pathname)?.[1];
-  if (id === undefined || id === 'new') return null;
-  try {
-    return decodeURIComponent(id);
-  } catch {
-    // This runs during the shell's render, where a throw takes the whole window
-    // to the error boundary rather than just the route — and the segment is
-    // reachable by hand-edited hash or deep link, so `/workstreams/%` must not
-    // be able to do that. Falling back to the raw segment is also what React
-    // Router does when it decodes a param, which keeps the id this returns
-    // equal to the one the screen keys its detail query by.
-    return id;
-  }
-}
 
 export function invitationAccountMismatch(invitationEmail: string, accountEmail: string): string | null {
   if (invitationEmail.toLocaleLowerCase('en-US') === accountEmail.toLocaleLowerCase('en-US')) return null;
@@ -482,10 +444,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   useEffect(() => {
     return () => setForegroundWorkstreamId(null);
   }, [setForegroundWorkstreamId]);
-  const backgroundRealtimeIds = useMemo(
-    () => backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams.data),
-    [activeWorkstreamId, workstreams.data],
-  );
+
 
   // One custom property carries the right sidebar's width, so the panel in the
   // slot, the grab handle beside it, and the room the main pane leaves for it
@@ -499,11 +458,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   } as CSSProperties;
 
   return (
-    <WorkstreamSocketPool
-      activeWorkstreamId={activeWorkstreamId}
-      api={api}
-      backgroundWorkstreamIds={backgroundRealtimeIds}
-    >
+    <>
       <div className={shellClassName} style={shellStyle}>
       <Sidebar
         onOpenSearch={api ? () => setSearchOpen(true) : undefined}
@@ -850,6 +805,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           }
         }} />}
       <AttachmentLightbox key={searchIdentity} preview={searchPreview?.identity === searchIdentity ? searchPreview.preview : null} onClose={() => setSearchPreview(null)} />
-    </WorkstreamSocketPool>
+    </>
   );
 }

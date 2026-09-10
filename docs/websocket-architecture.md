@@ -25,8 +25,9 @@ protocol inside each Durable Object.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/components/app-shell.tsx` | Selects the active work stream, every pinned work stream, the five most recently active unpinned work streams, and any additional running work stream for proactive connection. |
+| `apps/desktop/src/renderer/lib/workspace-workstream-sockets.tsx` | Selects the active work stream, every pinned work stream, the five most recently active unpinned work streams, and any additional running work stream for proactive connection. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Owns the singleton native Chromium WorkspaceDO socket, workspace subscription, directory paging, replay, and outbound message-command queue. |
+| `apps/desktop/src/renderer/lib/conversation-admission.tsx` | Composes account and workspace-journey readiness independently of connection warming. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns one WorkstreamDO/substream `0` pair per selected work stream above the route, retains recently viewed pairs for five minutes, and supports presence-free pair warming on deliberate hover. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Owns the WorkstreamDO metadata protocol, ticket request, snapshot application, heartbeat, and reconnect state machine. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Owns the SubstreamAgent feed protocol, ticket request, snapshot/replay application, heartbeat, pagination, and reconnect state machine. |
@@ -99,7 +100,7 @@ brokered by this module and are not part of the proactive work-stream swarm.
 
 ### Selecting the swarm
 
-`AppShell` derives one background set from the current WorkspaceDO-owned
+`WorkspaceWorkstreamSockets` derives one background set from the current WorkspaceDO-owned
 directory. The first workspace sync includes every visible running row in
 addition to its 250-row recent page, so an old active run cannot fall outside
 the client's candidate set:
@@ -113,6 +114,26 @@ running, and recently active work stream still owns exactly one control/feed
 pair. Pin order affects the sidebar but does not sequence connection attempts.
 There is no separate guessed connection ceiling: the product-selected set is
 the set the pool opens.
+
+Cold startup mounts the workspace socket alongside the workspace profile query,
+using the restored session's workspace identity. The main window's pool mounts
+at the same time, above the profile loading state and inside the onboarding
+admission boundary. Its
+first directory snapshot can therefore start the opening conversation while the
+profile request is still pending. On the root route, the pool adds the same
+pin-then-viewer-recency candidate that the landing will choose, including one
+outside the five recently active rows. Explicit conversation links warm their
+own target; the New route does not become a landing. Secondary windows do not
+mount this pool.
+
+The pool and resume state remain mounted when the profile resolves. Its directory
+observer only subscribes to cache writes: it registers no query function or
+independent pagination state. A route
+alone does not mark a feed opened: the conversation's mounted consumer must admit
+it, and pending account/journey lookups must also permit conversation admission.
+Until then, tickets remain speculative and sending stays disabled. Profile failures disable the pool's API, and changing the account/workspace
+scope replaces the workspace connection and every pooled owner. Each connection
+still obtains its own authorized ticket; starting earlier bypasses no access check.
 
 When a work stream leaves the active route, its exact pair remains mounted for
 five minutes. It stays longer when it still qualifies as pinned, recent, or
@@ -456,6 +477,32 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-09 — Separate cache observation and onboarding admission from warming
+
+The startup selector used a second stateful paging hook, which could replace a
+fully paged directory with its own first-page refetch. It now observes only the
+shared cache, leaving pagination with its existing owners. Review also confirmed
+that mounting a feed while onboarding was unknown could mark it opened before
+setup took over. A composed conversation-admission context now reaches the pool
+and direct feeds; unresolved setup keeps tickets speculative and sending disabled,
+while successful completion promotes the same sockets. The speculative flag does
+not omit transcript data: it suppresses viewing effects, so background freshness
+still uses the normal snapshot path.
+
+
+### 2026-09-09 — Overlap cold-open workspace and conversation admission
+
+Workspace details previously blocked the workspace socket, and the shell then
+blocked the conversation pool. Startup now mounts those existing owners before
+the profile finishes, retaining them through the loading-to-content transition.
+The root's warming candidate and landing share one ordering function so viewer
+recency cannot leave the opening row outside the activity-based warm set. We
+reused the pool instead of adding another ticket cache or speculative transport.
+A mounted feed consumer, rather than a route alone, now admits viewing, so an
+opening deep link cannot mark unread work viewed behind a loading/onboarding
+screen. Account/workspace changes still tear down the complete connection scope.
+
 
 ### 2026-09-08 — Ignore protocol additions at every receive boundary
 

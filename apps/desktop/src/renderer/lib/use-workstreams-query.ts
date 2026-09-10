@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useDebugEnabled } from './use-debug-enabled';
 import { useWorkspaceSocket } from './workspace-socket';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
@@ -17,6 +17,14 @@ import type { WorkstreamSummary } from './types';
  * fetcher asks for, never where the answer is stored.
  */
 export { WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+
+/** Observe directory pushes without registering another pager or query function. */
+export function useCachedWorkstreams(): WorkstreamSummary[] | undefined {
+  const client = useQueryClient();
+  const subscribe = useCallback((onChange: () => void) => client.getQueryCache().subscribe(onChange), [client]);
+  const snapshot = useCallback(() => client.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY), [client]);
+  return useSyncExternalStore(subscribe, snapshot, snapshot);
+}
 
 const WORKSTREAM_PAGE_SIZE = 250;
 
