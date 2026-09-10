@@ -265,7 +265,7 @@ describe('Sidebar work-stream markers', () => {
 
   it('preserves the expanded preference while navigation is forced compact', () => {
     useUiStore.getState().setSidebarCollapsed(false);
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact constrained conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     const toggle = screen.getByRole('button', { name: 'Expand navigation' });
     expect(toggle).toBeDisabled();
     fireEvent.click(toggle);
@@ -290,6 +290,107 @@ describe('Sidebar work-stream markers', () => {
     expect(useUiStore.getState().sidebarCollapsed).toBe(true);
     fireEvent.doubleClick(edge);
     expect(useUiStore.getState().sidebarCollapsed).toBe(false);
+  });
+
+  // The divider is the only control in the sidebar with no words on it, and the
+  // double-click that collapses it has been reachable only by guessing. The
+  // hint is where both are written down, so which of collapse and expand it
+  // names has to follow the state the next double-click would leave behind.
+  it('names the drag and the double-click on the divider, in the direction the next one goes', () => {
+    useUiStore.getState().setSidebarCollapsed(false);
+    function Navigation() {
+      const compact = useUiStore((state) => state.sidebarCollapsed);
+      return <Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />;
+    }
+    render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
+    const edge = screen.getByRole('separator', { name: 'Resize navigation' });
+
+    fireEvent.focus(edge);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click or Enter to collapse');
+
+    fireEvent.doubleClick(edge);
+    fireEvent.blur(edge);
+    fireEvent.focus(edge);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click or Enter to expand');
+  });
+
+  // The hint is read on focus as well as on hover, so the reader most likely to
+  // be looking at it is the one who cannot double-click. Enter is the ARIA
+  // authoring practices' key for a splitter's own action, and it has to do what
+  // the same handle's double-click does, under the same guard.
+  it('collapses and expands from Enter on the divider, and refuses it while the window holds navigation compact', () => {
+    useUiStore.getState().setSidebarCollapsed(false);
+    function Navigation() {
+      const compact = useUiStore((state) => state.sidebarCollapsed);
+      return <Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />;
+    }
+    const view = render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
+    const edge = screen.getByRole('separator', { name: 'Resize navigation' });
+
+    fireEvent.keyDown(edge, { key: 'Enter' });
+    expect(useUiStore.getState().sidebarCollapsed).toBe(true);
+    fireEvent.keyDown(edge, { key: 'Enter' });
+    expect(useUiStore.getState().sidebarCollapsed).toBe(false);
+
+    view.unmount();
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact constrained conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize navigation' }), { key: 'Enter' });
+    expect(useUiStore.getState().sidebarCollapsed).toBe(false);
+  });
+
+  // `compact` is `collapsed || constrained`, so it cannot say which of the two
+  // is holding the sidebar in the rail. Somebody who collapsed navigation and
+  // then narrowed the window is held by both, and expanding is impossible: the
+  // hint must not offer it, and the toggle must not quietly rewrite the saved
+  // preference to expanded for a widening that may never come.
+  it('does not offer to expand, or discard the saved preference, while the window holds an already-collapsed sidebar compact', () => {
+    useUiStore.getState().setSidebarCollapsed(true);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact constrained conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+
+    expect(screen.getByRole('button', { name: 'Expand navigation' })).toBeDisabled();
+
+    const edge = screen.getByRole('separator', { name: 'Resize navigation' });
+    fireEvent.focus(edge);
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent('Double-click');
+
+    fireEvent.doubleClick(edge);
+    fireEvent.keyDown(edge, { key: 'Enter' });
+    expect(useUiStore.getState().sidebarCollapsed).toBe(true);
+  });
+
+  // Same as the work-stream divider: the press must not open what the hover
+  // delay has not yet opened. A hint riding beside the edge for the length of
+  // the drag covers the transcript the drag is revealing.
+  it('keeps the hint shut through a grab that never waited for it', () => {
+    useUiStore.getState().setSidebarCollapsed(false);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const edge = screen.getByRole('separator', { name: 'Resize navigation' });
+    edge.setPointerCapture = vi.fn();
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.pointerDown(edge, { button: 0, clientX: 300, pointerId: 9 });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.pointerMove(window, { clientX: 340, pointerId: 9 });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.pointerUp(window, { pointerId: 9 });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  // A window too narrow to hold the expanded sidebar pins it compact and
+  // disables the footer toggle, and the double-click on the divider is guarded
+  // by the same condition. The hint is the only place that shortcut is written
+  // down, so it has to stop offering what the handle would refuse to do.
+  it('stops naming the double-click while the window holds navigation compact', () => {
+    useUiStore.getState().setSidebarCollapsed(false);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact constrained conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+
+    fireEvent.focus(screen.getByRole('separator', { name: 'Resize navigation' }));
+
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent('Double-click');
   });
 
   // The width animates because the width itself is transitioned, and a drag

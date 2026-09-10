@@ -548,6 +548,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         )}
         automations={automations.data}
         compact={sidebarCompact}
+        constrained={sidebarConstrained}
         conversationOnly
         // Not `isLoading`: the first page is not fetched, so there is no
         // in-flight request to report. The sidebar is waiting exactly while it
