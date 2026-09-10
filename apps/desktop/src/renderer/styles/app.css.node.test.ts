@@ -868,6 +868,22 @@ describe('message header meta typography', () => {
     expect(rule('.workstream-screen .human-message > header'))
       .not.toMatch(/padding(-right|-inline-end)?:/u);
   });
+
+  /**
+   * Rally's turn has no avatar, so nothing occupies a gutter left of its name.
+   * The theme inset that header by 18px anyway, which put the identity line on
+   * its own vertical while the prose and the action row under it shared the
+   * article's own edge — a hanging indent over an empty gutter. Held on the
+   * value rather than on one spelling, for the same reason as the human rule
+   * above: `padding-inline-start` is the file's usual spelling and would slip
+   * past a check that only banned `padding-left`.
+   */
+  it('starts the assistant identity line on the same vertical as its prose', () => {
+    expect(rule('.workstream-screen .agent-message > header'))
+      .not.toMatch(/padding(-left|-inline-start)?:/u);
+    expect(rule(':is(.workstream-screen, .automation-chat-surface) .agent-message > header'))
+      .not.toMatch(/padding(-left|-inline-start)?:/u);
+  });
 });
 
 describe('inspector resource document chrome', () => {
