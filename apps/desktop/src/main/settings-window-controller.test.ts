@@ -14,6 +14,7 @@ interface FakeWindow extends SettingsWindowHandle {
   restored: number;
   readonly delivered: DesktopSettingsSection[];
   destroyed: number;
+  announced: number;
   close(): void;
   minimize(): void;
   settleLoad(): void;
@@ -39,6 +40,7 @@ function fakeWindow(
     focused: 0,
     restored: 0,
     destroyed: 0,
+    announced: 0,
     delivered: [],
     isDestroyed: () => destroyed,
     isMinimized: () => minimized,
@@ -53,6 +55,9 @@ function fakeWindow(
       window.focused += 1;
     },
     deliverSection: (next) => window.delivered.push(next),
+    announceRevealed: () => {
+      window.announced += 1;
+    },
     load: () => loading,
     // The real factory detaches its `closed` listener before destroying, so a
     // disposal never reaches `onClosed`. The fake models that by not calling it.
@@ -372,6 +377,44 @@ describe('SettingsWindowController', () => {
     expect(test.latest().destroyed).toBe(1);
     // Released, not recycled: rebuilding here would re-block the exit.
     expect(test.createWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the window it is on screen once, however often it is raised', async () => {
+    const test = harness();
+    const prewarmed = test.controller.prewarm();
+    await test.finishLoad();
+    await prewarmed;
+    test.latest().callbacks.onReadyToShow();
+    // Built, loaded and mounted, and nobody has looked at it. Anything the
+    // renderer does "on arrival at Settings" must not have happened yet.
+    expect(test.latest().announced).toBe(0);
+
+    await test.controller.open();
+    expect(test.latest().announced).toBe(1);
+
+    // Raising a window already on screen is not somebody arriving at Settings;
+    // before prewarming it did not even remount the renderer.
+    await test.controller.open('digest');
+    expect(test.latest().announced).toBe(1);
+    expect(test.latest().shown).toBe(2);
+  });
+
+  it('tells each rebuilt window separately', async () => {
+    const test = harness();
+    const opened = test.controller.open();
+    await test.finishLoad();
+    test.latest().callbacks.onReadyToShow();
+    await opened;
+    expect(test.latest().announced).toBe(1);
+
+    test.latest().close();
+    await test.finishLoad();
+    const replacement = test.latest();
+    replacement.callbacks.onReadyToShow();
+    expect(replacement.announced).toBe(0);
+
+    await test.controller.open();
+    expect(replacement.announced).toBe(1);
   });
 
   it('keeps a settings window somebody actually opened', async () => {
