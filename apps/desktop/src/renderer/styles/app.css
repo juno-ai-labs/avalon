@@ -6997,7 +6997,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .rally-search-result-source { color: var(--av-sys-color-text-subtle); }
 .rally-search-result-excerpt strong { font-weight: 650; }
 .rally-search-sentinel { flex-shrink: 0; height: 1px; }
-.rally-search-footer { flex-shrink: 0; border-top: 1px solid var(--av-sys-color-border-subtle); display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 12px; color: var(--av-sys-color-text-subtle); font-size: 13px; }
+.rally-search-footer { flex-shrink: 0; border-top: 1px solid var(--av-sys-color-border-default); display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 12px; color: var(--av-sys-color-text-subtle); font-size: 13px; }
 .rally-search-state { position: absolute; top: 126px; left: 16px; right: 16px; color: var(--av-sys-color-text-subtle); font-size: 13px; text-align: center; pointer-events: none; }
 
 /* Grok Bot 0.44.0 pinned-tile metrics; see automation-lifecycle.md.

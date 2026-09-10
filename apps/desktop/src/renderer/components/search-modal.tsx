@@ -14,7 +14,8 @@ const TABS: Array<{ id: SearchCategory; label: string }> = [
   { id: 'links', label: 'Links' }, { id: 'artifacts', label: 'Artifacts' },
   { id: 'files', label: 'Files' },
 ];
-// 360px list minus 16px padding, divided by a 52px two-line row plus 2px gap.
+// The 360px body minus 16px padding, divided by a 52px two-line row plus 2px
+// gap. The list is the whole body until a pagination footer takes part of it.
 const SEARCH_VISIBLE_PAGE_SIZE = Math.ceil((360 - 16) / (52 + 2));
 const ICONS = { messages: MessageSquare, links: Link, artifacts: Shapes, files: File };
 
@@ -145,9 +146,13 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
     return () => observer.disconnect();
   }, [canContinue, continuationFailed, results.length]);
   const active = Math.min(selected, Math.max(0, results.length - 1));
+  // Also when the footer opens or closes: it takes its room from the list, and
+  // the state that opens it is one the reader reaches without moving the
+  // highlight — the last row is what asks for the next page — so `active` alone
+  // would leave that row clipped, or gone, under the footer that just arrived.
   useEffect(() => {
     list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
-  }, [active]);
+  }, [active, response.isFetchingNextPage, continuationFailed]);
   const choose = (index: number) => {
     const result = results[index];
     if (!result) return;

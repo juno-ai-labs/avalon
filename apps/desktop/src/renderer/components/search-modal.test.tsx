@@ -114,6 +114,27 @@ describe('workspace search modal', () => {
     expect(screen.queryByText('Loading more…')).not.toBeInTheDocument();
   });
 
+  it('brings the highlighted row back under a footer that just took its room', async () => {
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
+    const second = { ...result, id: 'message-2', excerpt: 'Second result', highlights: [] };
+    const search = vi.fn<React.ComponentProps<typeof SearchModal>['search']>()
+      .mockResolvedValueOnce({ results: [result, second], nextCursor: 'next' })
+      .mockImplementationOnce(() => new Promise(() => {}));
+    setup(search);
+    const input = screen.getByRole('combobox');
+    fireEvent.change(input, { target: { value: 'danil' } });
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2));
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    await waitFor(() => expect(screen.getByRole('option', { selected: true })).toHaveTextContent('Second result'));
+    // Reaching the last row is what asks for the next page, and it leaves the
+    // highlight where it is, so nothing but the footer's arrival can restore it.
+    scrollIntoView.mockClear();
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    await screen.findByText('Loading more…');
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    expect(scrollIntoView.mock.instances.at(-1)).toHaveAttribute('aria-selected', 'true');
+  });
+
   it('loads the next page when the keyboard reaches the last row', async () => {
     const search = vi.fn<React.ComponentProps<typeof SearchModal>['search']>()
       .mockResolvedValueOnce({ results: [result], nextCursor: 'next' })
@@ -138,6 +159,9 @@ describe('workspace search modal', () => {
     await reachEndOfList();
     const retry = await screen.findByRole('button', { name: 'Retry loading more results' });
     expect(screen.getByRole('listbox')).not.toContainElement(retry);
+    // Outside the listbox but inside the fixed body: that is what makes the
+    // footer take its room from the list rather than from the modal.
+    expect(retry.closest('.rally-search-body')).not.toBeNull();
     expect(screen.getAllByRole('option')).toHaveLength(1);
     // A failed cursor is not retried by scrolling; only the button asks again.
     await reachEndOfList();
