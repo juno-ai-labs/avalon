@@ -259,8 +259,10 @@ Recovery and revocation emit operator/record/action audit events without email,
 bearer URL, or provider response bodies. There is no automatic bounce webhook or
 bulk sending in this slice; use provider delivery records and manual suppression.
 
-The managed `Rally early access` Turnstile widget is restricted to `rallywith.ai`;
-the retired `with-avalon.com` domain is intentionally excluded. Its secret is
+The managed `Rally early access` Turnstile widget authorizes `rallywith.ai` and,
+by [Cloudflare's hostname inheritance](https://developers.cloudflare.com/turnstile/additional-configuration/hostname-management/),
+its subdomains, including `www.rallywith.ai`. The retired `with-avalon.com`
+domain is intentionally excluded. Its secret is
 installed as `TURNSTILE_SECRET_KEY` on the Global API. Its public key is configured
 as `RALLY_TURNSTILE_SITE_KEY` in both GitHub `site-production` and `desktop-release`
 environments, since both workflows publish the site. The desktop release's site
@@ -269,6 +271,15 @@ normal CI builds can render an unavailable verification state without credential
 The dashboard was used for provisioning after the local/connector API credentials
 refused widget/secret writes. Deploy the approved limiter binding and finite
 constants before public acquisition is enabled.
+
+The Cloudflare Single Redirect rule `Redirect retired public landing hosts to Rally`
+in the `with-avalon.com` zone matches only `with-avalon.com` and
+`www.with-avalon.com`. It returns 301 to `https://rallywith.ai` with the original
+path and query string, before the old hosts can serve an unusable Turnstile form.
+API and download subdomains are excluded from this redirect. The rule lives in
+Cloudflare's `http_request_dynamic_redirect` phase, not `_redirects`: Workers
+Static Assets does not support domain-level redirects there. Rule ID:
+`4bc018c19c794f3fb6c092cf3faf7a1b`.
 
 The team selected `Adam @ Rally <hi@rallywith.ai>` after the Resend dashboard
 confirmed `rallywith.ai` is verified; `rally.ai` is not configured there. Receiving
@@ -339,11 +350,15 @@ privacy operations stay in the owning region; the current slice creates none.
 30 requests/IP/minute binding. Provisioned the Rally-only widget and its keys;
 the desktop-release site step now receives the public key too. The acknowledgement
 sender uses the team's corrected `hi@rallywith.ai` address on the verified domain.
+Configured a Cloudflare redirect for the two retired landing hosts, preserving
+paths and queries while keeping the widget restricted to the current domain.
 
 **Why:** The team accepted these proposed numbers after the unconfigured site
 deployment stopped. The assumptions and tradeoffs are recorded above. Passing
 the key only to the standalone site workflow would still break the next desktop
 release's site build. Incoming mail is not required by the product owner.
+The old site routes still existed; redirecting at the edge prevents a dead
+signup form without reauthorizing the retired domain or adding a site Worker.
 
 **Consequences:** No acquisition caps remain unset. The provider confirms the
 outbound domain, but successful deployment and browser verification remain launch

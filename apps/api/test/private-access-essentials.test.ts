@@ -106,6 +106,9 @@ describe('launch acquisition essentials', () => {
     expect(admissions.filter(Boolean)).toHaveLength(MAX_ACCESS_EMAILS_PER_HOUR);
     expect(await admitAccessEmail(env, MAX_ACCESS_EMAILS_PER_HOUR, start + 3_600_000)).toBe(true);
     expect(await admitAccessEmail(env, MAX_ACCESS_EMAILS_PER_HOUR, start)).toBe(false);
+    const nextHourAdmissions = await Promise.all(Array.from({ length: MAX_ACCESS_EMAILS_PER_HOUR + 1 }, () => admitAccessEmail(env, MAX_ACCESS_EMAILS_PER_HOUR, start + 3_600_000)));
+    expect(nextHourAdmissions.filter(Boolean)).toHaveLength(MAX_ACCESS_EMAILS_PER_HOUR - 1);
+    expect(await admitAccessEmail(env, MAX_ACCESS_EMAILS_PER_HOUR, start + 3_600_000)).toBe(false);
   });
 
   it('retains quota-deferred requests without starting their uncertainty clock, then retries after capacity returns', async () => {
