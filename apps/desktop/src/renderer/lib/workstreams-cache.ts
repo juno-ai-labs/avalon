@@ -42,6 +42,13 @@ function assertWorkstreamList(value: unknown): asserts value is WorkstreamSummar
  * invariant catches a cast or other type escape at the corrupting write rather
  * than at a later `.map` or `.filter` in the sidebar.
  */
+/**
+ * One page of the sidebar's list, as the subscribe answer and every later
+ * `list_workstreams` request size it. The local cache persists this many rows
+ * of the flat list, whatever browsing has appended past them.
+ */
+export const WORKSTREAM_PAGE_SIZE = 250;
+
 export function setCachedWorkstreams(
   queryClient: QueryClient,
   update: WorkstreamsCacheUpdate,

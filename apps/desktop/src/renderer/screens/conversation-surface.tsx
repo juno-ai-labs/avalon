@@ -71,7 +71,7 @@ import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
 import { useTranscriptHistory } from '../lib/use-transcript-history';
-import { useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
+import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { ActivityPresence, JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
@@ -863,9 +863,7 @@ export function ConversationSurface({
     messageCount: ReturnType<typeof telemetryCountBucket>;
   } | null>(() => {
     if (!routedDetail || !orderedTranscript.data) return null;
-    const resolvedFeedSource = initialFeedCacheState === 'feed_cached'
-      ? 'feed_cache'
-      : feedSource.data;
+    const resolvedFeedSource = resolveFeedOpenSource(initialFeedCacheState, feedSource.data);
     if (!resolvedFeedSource) return null;
     return {
       feedSource: resolvedFeedSource,

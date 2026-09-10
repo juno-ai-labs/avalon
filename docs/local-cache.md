@@ -43,9 +43,12 @@ socket hooks' first frame.
 
 The store is one object store of rows `{ scope, kind, key, subject, version,
 updatedAt, value }` with a compound primary key of `[scope, kind, key]`. A
-*scope* is `desktopWorkspaceIdentityKey(region, workspaceId)`, so one
-workspace's rows are one key range and leaving that workspace deletes exactly
-them. A *kind* names the slice that owns the row's shape. The *subject* is what
+*scope* is the account's user id followed by
+`desktopWorkspaceIdentityKey(region, workspaceId)`, so one account's rows for
+one workspace are one key range, leaving that workspace deletes exactly them,
+and two accounts on one device that share a workspace never read each other's
+rows, whatever order a wipe and a hydration run in. A *kind* names the slice
+that owns the row's shape. The *subject* is what
 the row is about, for removal by identity rather than by key: every
 conversation under one work stream carries the work stream's id, so losing the
 work stream drops them all in one index scan. Two indexes, `[kind, subject]`
@@ -122,11 +125,13 @@ telemetry, set to `local_cache`. It is the one signal everything else keys on:
   would over empty caches, the room is subscribed from sequence zero, and a
   socket that never answers still ends in the terminal failure after three
   attempts instead of being read as recovered from the seed.
-- The first `snapshot` the room sends replaces the seed whatever its
-  `eventSequence` says. The ordinary fence, which drops a snapshot older than
-  the transcript on screen, is skipped for a seed, because the seed's numbers
-  are what the room said some launches ago and a room rebuilt since then can
-  legitimately answer with lower ones. A seed is never merged with the snapshot
+- The first `snapshot` the room sends replaces the seed whatever its numbers
+  say. Both ordinary fences are skipped for a seed: the transcript's
+  `eventSequence`, which drops a snapshot older than the one on screen, and the
+  resume registry's room sequence, which outlives the query entries and would
+  otherwise hold a sequence from an earlier visit against the seeded one. The
+  seed's numbers are what the room said some launches ago, and a room rebuilt
+  since then can legitimately answer with lower ones. A seed is never merged with the snapshot
   either, for the reason the reconciliation merge is reserved for a still
   contiguous socket: nothing proves turns outside the opening ranges did not
   change while the device was away.
@@ -179,6 +184,15 @@ gate lifts when the live snapshot lands, not when the socket opens: a message
 admitted against a seed's transcript would position its optimistic row against
 a fence the room has not confirmed.
 
+A project painted from the seed is read-only until the directory is live.
+Every project edit sends the whole record back, so a rename made against the
+seed would carry an icon, a colour, or an audience another client changed
+since the row was written. The rename, the appearance picker, the audience,
+the participants, archive and restore, and the default resources are disabled
+while `directoryFromLocalCache` holds, the card's second line says editing is
+available once Rally connects, and the work stream links and the **New work
+stream** plus still navigate.
+
 ### What leaves the cache
 
 The bound on this cache is membership, not a number or an age:
@@ -187,10 +201,15 @@ The bound on this cache is membership, not a number or an age:
   conversations whose parent is a row in the page it carries or an automation
   in its list, and removes the rest for that scope. Page one is the whole of
   what the payload can vouch for, so a conversation opened from a later page is
-  forgotten and re-cached on its next open.
+  forgotten and re-cached on its next open. The directory row itself holds one
+  page of the flat list, `WORKSTREAM_PAGE_SIZE` rows, however many pages the
+  sidebar has loaded, so the next launch paints what a fresh subscribe answer
+  would carry and the live answer replaces it without a visible collapse.
 - **The control socket prunes children.** A work stream's metadata frame names
   the private children this reader may still open; a cached child that left
-  that roster is removed. The main conversation always stays.
+  that roster is removed. The roster followed is the one the version guard
+  accepted into the query cache, so a stale frame the cache rejects prunes
+  nothing. The main conversation always stays.
 - **Eviction forgets the disk.** `evictCachedWorkstream` removes every row
   under the parent in every scope, and `evictCachedSubstream` one child, so an
   access revocation or an archive never leaves a transcript on disk that the
@@ -200,7 +219,9 @@ The bound on this cache is membership, not a number or an age:
   is wiped. The store carries an epoch for the same race the drafts carry one
   for: a coalesced write scheduled before the wipe states the epoch its content
   belongs to and is dropped when the wipe has moved it on, so nothing in flight
-  at sign-out restores what the wipe removed.
+  at sign-out restores what the wipe removed. Hydration reads the epoch before
+  its row and seeds nothing if a wipe moved it meanwhile, so a row on its way
+  off the disk never paints.
 
 Nothing else evicts, and nothing expires.
 
@@ -211,8 +232,12 @@ Nothing else evicts, and nothing expires.
   answers is read as recovered from the seed, the deadline stops counting
   attempts, and the card never reports the failure.
 - **The first live snapshot replaces a seed whatever its numbers say, and is
-  never merged with it.** Break the fence bypass and a room rebuilt since the
-  row was written is dropped as older than the seed for the rest of the session.
+  never merged with it.** Break either fence bypass, the transcript's or the
+  resume registry's, and a room rebuilt since the row was written is dropped as
+  older than the seed for the rest of the session.
+- **A remembered project is read-only until the directory is live.** Break it
+  and a rename made under the card writes the seed's icon, colour, or audience
+  over what another client changed while the device was away.
 - **Only socket-delivered state is persisted.** The conversation mirror writes
   only while the feed source is `socket_snapshot`; the directory mirror only
   after the first subscribe answer. Break it and a seed, or a launch surface's
@@ -233,8 +258,10 @@ Nothing else evicts, and nothing expires.
 - **No provider, no cache.** Outside a `LocalCacheScopeProvider` every consumer
   behaves as before the cache existed, which is what keeps every standalone
   screen test and embedding on the old path.
-- **Every row is written under its workspace scope.** A row written under
-  another key cannot be removed when that membership ends.
+- **Every row is written under its account and workspace scope.** A row
+  written under another key cannot be removed when that membership ends, and a
+  row written without the account would be readable by the next account on
+  the device before the wipe reached it.
 
 ## Boundary
 
@@ -277,7 +304,7 @@ shape and could share a module; they do not share rows, keys, or lifetimes.
   no longer see never gets further than the transcript it had already been
   shown before.
 - **A room rebuilt with lower sequence numbers:** the seed is replaced, because
-  the fence is skipped for a seed.
+  both fences are skipped for a seed, the resume registry's included.
 - **The seed's run state and unread marks are stale until the snapshot lands.**
   A work stream that was running when the row was written paints as running
   for the second or two the socket takes. The card is what says so.
@@ -365,7 +392,12 @@ IndexedDB from the query cache after each live socket frame, and read back
 into it, marked as a seed, before the next socket answers. A floating card
 names the room the live connection is being made to and, over a conversation,
 says that sending waits for it, and the composer accepts a draft but does not
-send until the live snapshot has replaced the seed.
+send until the live snapshot has replaced the seed. Review of the change added
+the account to every row's scope, made hydration refuse a row a wipe overtook,
+let a seed skip the resume registry's fence as well as the transcript's,
+bounded the directory row to one page, made a remembered project read-only
+until its directory is live, followed the accepted child roster when pruning,
+and gave the seed marker precedence in the open-latency event.
 
 **Why:** Opening a work stream, a substream, or a project on a cold client
 showed a spinner until the socket ticket, the handshake, the subscribe, and
@@ -388,7 +420,14 @@ that follows from what the cache is, and it is not a number anyone has to
 guess. Letting the composer send over a seed with the existing queue-and-resend
 semantics. The optimistic row would be positioned against a fence the room had
 not confirmed, and the person would be told a message was sent into a
-conversation whose live state they had not seen. SQLite for the store. The
+conversation whose live state they had not seen. Gating the workspace tree on
+the account-change wipe instead of scoping rows by account. The wipe stays as
+the privacy measure; the scope is what makes the order of a wipe and a
+hydration irrelevant, and it is the same rule the draft cache keys by. Patching
+only the edited field of a project instead of keeping a seeded project
+read-only. That moves the fix into the API for every field a project has;
+disabling the edits for the second or two the directory takes is the cheaper
+thing to reverse. SQLite for the store. The
 renderer is sandboxed with no Node integration, so SQLite would live in the
 main process behind a new IPC surface, as a native module or `node:sqlite`,
 and every read, write, and wipe would cross it; the cache's access pattern is
@@ -404,5 +443,6 @@ stripped in the mirror's snapshot the way presence is. The feed-source entry
 carries a third value, `local_cache`, which the open-latency telemetry reports
 and which every path that reads against the room's fence has to treat as not
 live. A future surface that should paint before its socket answers defines a
-slice and hydrates and mirrors through it; it does not touch the store. The
-draft cache and this cache remain two databases with two lifetimes.
+slice and hydrates and mirrors through it; it does not touch the store. A new
+project mutation reads `directoryFromLocalCache` the way the existing ones do.
+The draft cache and this cache remain two databases with two lifetimes.

@@ -151,7 +151,8 @@ are canonical storage services, not authorization layers.
   last first page of the workspace directory and, for every conversation the
   directory still lists that the reader opened or the socket pool warmed, its
   detail and opening transcript ranges, in a second unencrypted IndexedDB
-  database keyed by workspace. It is bounded by membership rather than time:
+  database keyed by account and workspace, so a second account on the device
+  never reads the first's rows. It is bounded by membership rather than time:
   the live directory and child rosters retire rows the device missed, an
   access revocation or archive removes them at once, leaving removes that
   workspace's scope, and signing out or another account taking over removes
@@ -790,9 +791,9 @@ does not own the subsystems on either side of them:
   bounded by a 12-hour expiry and deleted on sign-out. No credential is ever
   written there.
 - **The local cache of directory rows and opening transcript ranges is workspace
-  content stored unencrypted** under `userData`, bounded by membership rather
-  than time, deleted per workspace on leaving and entirely on sign-out. No
-  credential is ever written there.
+  content stored unencrypted** under `userData`, keyed by the account that
+  wrote it, bounded by membership rather than time, deleted per workspace on
+  leaving and entirely on sign-out. No credential is ever written there.
 - **A packaged helper carrying a restricted `com.apple.developer.*` entitlement is
   killed by AMFI only after the app reaches another machine.** The release verifier
   exists because that failure is invisible on the build host.
