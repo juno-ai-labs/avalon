@@ -126,7 +126,10 @@ positions measured mid-flight are not the ones the next change is planned
 from. The sidebar raises the flag in the render that changes the layout, and
 then follows the platform's own transition events for `--sidebar-compact` on
 the aside: `transitionrun` keeps it raised, `transitionend` and
-`transitioncancel` clear it, and a frame after the change — once those events
+`transitioncancel` clear it — counted rather than last-event-wins, because a
+toggle reversed mid-flight cancels one transition and starts another in the
+same style change and nothing pins which event arrives first — and a frame
+after the change — once those events
 have had their chance — the sidebar clears it itself if no transition started,
 as under a drag, which turns them off. The toggle raises it first because
 `transitionrun` is dispatched with the first frame after the change, and a
@@ -343,7 +346,12 @@ step.
 - **A stand-in exits from the row's slot, not from where it was drawn.** The
   offset an animation was applying is read per connected element, and a
   removed element has no computed style; a marked row removed mid-shift
-  restarts from its slot.
+  restarts from its slot, and one removed mid-entrance — the rail's New chat
+  row takes 420ms to arrive, and a toggle reversed inside that window, a
+  double-click on the collapse control, removes it while it is still parked
+  off frame or part-way in — appears at its arrived slot for a frame before
+  leaving. Reading the offset off the entrance's own timing would need the
+  easing curve evaluated by hand, and the case is a fast double-toggle.
 - **A row that loses its layout counts as gone.** `display: none` and
   unmounting look the same to the hook, so a marked row hidden by a stylesheet
   plays its exit through a stand-in while its own element stays in the

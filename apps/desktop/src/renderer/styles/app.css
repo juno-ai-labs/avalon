@@ -1274,8 +1274,11 @@ pre {
 @keyframes workspace-enter { from { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) {
   /* The fade goes; the layout channel stays, because the box's width still
-     travels for this reader and the rows have to arrive with it. */
-  .workspace-shell .sidebar { transition-property: --sidebar-compact; }
+     travels for this reader and the rows have to arrive with it. The whole
+     shorthand, not `transition-property` alone: the longhand would keep the
+     rule's duration and easing lists and pair the one remaining property with
+     the fade's 220ms `ease`, ending the signal before the layout has. */
+  .workspace-shell .sidebar { transition: --sidebar-compact var(--sidebar-layout-motion); }
   .workspace-shell .main-pane { transition: none; }
   .workspace-shell.is-entering-workspace .sidebar,
   .workspace-shell.is-entering-workspace .main-pane { animation: none; }
@@ -6896,8 +6899,9 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   flex-shrink: 0;
   min-width: 0;
   gap: 8px;
-  /* The one place a keyword is allowed to travel: a lone tile is sized to its
-     caption, `auto`, and has to reach the rail's 54px from there. */
+  /* The one subtree in which a keyword is allowed to travel — the property
+     inherits — because a lone tile is sized to its caption, `auto`, and has
+     to reach the rail's 54px from there. */
   interpolate-size: allow-keywords;
   overflow-x: auto;
   overscroll-behavior-x: contain;
