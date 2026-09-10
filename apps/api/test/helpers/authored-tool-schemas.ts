@@ -5,6 +5,7 @@ import {
 } from "@rally/agent-harness";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { __integrationTesting } from "../../src/services/integrations";
+import { createAvalonMultimodalGenerationPlugin } from "../../src/services/multimodal-generation/plugin";
 import { TERMINAL_TOOL_DEFINITIONS } from "../../src/services/terminal/contract";
 import { createTestEnv } from "./cloudflare-test";
 import { createTestConnectorRegistry, unconfiguredConnectorTypes } from "./connector-registry";
@@ -46,6 +47,7 @@ const workflowInput = (): WorkstreamWorkflowInput => ({
  */
 export const EXPECTED_TOOLS = [
   "memory.search:search",
+  "multimodal.generate:generate_image",
   "rally.plugins.list:list_plugins",
   "rally.skills.load:load_skill",
   "web.search:search",
@@ -85,13 +87,25 @@ export function everyAuthoredToolSchema(): AuthoredToolSchema[] {
   ].map((definition) => ({ name: label(definition), schema: definition.inputSchema }));
   const terminal = TERMINAL_TOOL_DEFINITIONS
     .map((definition) => ({ name: `terminal.${definition.name}`, schema: definition.inputSchema }));
+  // Built by hand and with its credentials supplied, because the factory
+  // returns `null` without the Azure inference pair — so an environment that
+  // does not carry one drops three served tools out of a walk claiming to cover
+  // everything, which is how they went unchecked until a review noticed. It is
+  // the same conditional-surface trap `FIRECRAWL_API_KEY` is set for above, and
+  // the `EXPECTED_TOOLS` sentinel is what stops it recurring quietly.
+  const multimodalEnv = createTestEnv({
+    AZURE_INFERENCE_ENDPOINT: "https://azure.test/inference",
+    AZURE_INFERENCE_API_KEY: "test-azure-key",
+  });
+  const multimodal = (createAvalonMultimodalGenerationPlugin(multimodalEnv, workflowInput())?.tools ?? [])
+    .map((tool) => ({ name: label(tool.definition), schema: tool.definition.inputSchema }));
   const registry = createTestConnectorRegistry();
   const connectors = registry.list().flatMap((manifest) =>
     registry.get(manifest.type).agentPlugin.tools.map((definition) => ({
       name: `${manifest.type}.${definition.name}`,
       schema: definition.inputSchema,
     })));
-  const walked = [...core, ...discovery, ...terminal, ...connectors]
+  const walked = [...core, ...discovery, ...terminal, ...multimodal, ...connectors]
     .map((entry) => ({ name: entry.name, schema: entry.schema as Record<string, unknown> }));
 
   // Thrown here rather than asserted in one `it`, so no check can run against a

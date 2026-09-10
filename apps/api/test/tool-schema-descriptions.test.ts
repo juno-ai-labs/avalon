@@ -31,11 +31,17 @@ import { everyAuthoredToolSchema, toolSurface } from "./helpers/authored-tool-sc
  *   is how the two undescribed filters beside them came to be filled in too.
  *
  * The second is a mechanical defect with one right answer, so it is asserted at
- * zero. The first is prose somebody has to write, and 227 parameters across six
- * connectors are still owed it — so it is asserted per surface, exactly. A
+ * zero. The first is prose somebody has to write, and 239 parameters across
+ * eleven surfaces are still owed it — so it is asserted per surface, exactly. A
  * ratchet rather than a floor: a surface at 0 can never regress, a surface with
  * debt can only pay it down, and a new tool has to state which it is. Both are
  * `docs/agent-tools.md` rules; this is where they are held.
+ *
+ * The map is also what makes a *missing* surface visible. `multimodal` reached
+ * it only after a review noticed the walk never built the plugin — it returns
+ * `null` without the Azure inference pair — so its three served tools and their
+ * twelve undescribed parameters passed both guards by not being looked at.
+ * `EXPECTED_TOOLS` in the helper now carries a sentinel for it.
  */
 describe("tool schema parameter descriptions", () => {
   it("demands no parameter it already supplies a default for", () => {
@@ -78,6 +84,7 @@ describe("tool schema parameter descriptions", () => {
       granola: 8,
       linear: 24,
       memory: 12,
+      multimodal: 12,
       notion: 19,
       rally: 18,
       slack: 39,
