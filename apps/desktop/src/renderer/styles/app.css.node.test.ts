@@ -629,7 +629,20 @@ describe('sidebar group breaks follow the group-gap token', () => {
   });
 });
 
-describe('Needs attention row geometry', () => {
+// These rows were built for the home screen's Needs attention section and are
+// now the project space's, which renders three of the six tracks. The project
+// and source rules below are dead until something fills those tracks again; the
+// geometry is asserted whole because the template is what keeps the chevrons on
+// one right edge. See docs/workstream-markers.md.
+describe('Work-stream row geometry', () => {
+  it('keeps the marker dot at its size when a label fills the first track', () => {
+    // The dot is a flex item beside the label. Without this it is what gives
+    // way when a label is wider than the row's fixed first column, and the
+    // longest two ("You were mentioned", "Latest run completed") shrank it to
+    // nothing — a row showing no marker at all. See docs/workstream-markers.md.
+    expect(rule('.status-dot')).toContain('flex: 0 0 auto;');
+  });
+
   it('reserves a project slot and pins time and chevron to stable columns', () => {
     expect(rule('.waiting-workstream-row')).toContain(
       'grid-template-columns: 112px auto minmax(0, 1fr) auto auto 15px;',
