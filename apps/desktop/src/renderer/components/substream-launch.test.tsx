@@ -13,17 +13,23 @@ vi.mock('../lib/platform', () => ({
   }),
 }));
 
+/** The staged files a submit leases, so a test can see which way the lease went. */
+const attachments = vi.hoisted(() => ({
+  commitLease: vi.fn(),
+  restoreLease: vi.fn(),
+}));
+
 vi.mock('../lib/use-file-attachments', () => ({
   useFileAttachments: () => ({
     addFiles: vi.fn(),
     attachments: [],
-    commitLease: vi.fn(),
+    commitLease: attachments.commitLease,
     consume: vi.fn(),
     error: undefined,
     leaseReady: vi.fn(async () => ({ leaseId: 'lease', attachments: [] })),
     ready: [],
     removeAttachment: vi.fn(),
-    restoreLease: vi.fn(),
+    restoreLease: attachments.restoreLease,
     retryAttachment: vi.fn(),
     uploading: false,
   }),
@@ -102,7 +108,7 @@ const composer = (): HTMLElement =>
   screen.getByRole('textbox', { name: 'What should this substream work on?' });
 
 describe('substream launch surface', () => {
-  beforeEach(() => clearAllDrafts());
+  beforeEach(() => { clearAllDrafts(); vi.clearAllMocks(); });
   afterEach(cleanup);
 
   it('shows the branch point above the composer and hands enter the words that were typed', async () => {
@@ -167,5 +173,20 @@ describe('substream launch surface', () => {
     fireEvent.change(composer(), { target: { value: 'Look at the invoice' } });
     fireEvent.keyDown(composer(), { key: 'Enter' });
     await waitFor(() => expect(composer()).toHaveValue('Look at the invoice'));
+  });
+
+  it('gives the staged files back on a failure and spends them only on a send', async () => {
+    // Which way the lease goes is what a failed creation costs somebody: files
+    // committed for a message that never landed are gone, and they are the one
+    // part of a draft that cannot be typed again.
+    const { onCreate } = renderSurface();
+    onCreate.mockRejectedValueOnce(new Error('The substream could not be created.'));
+    fireEvent.change(composer(), { target: { value: 'Look at the invoice' } });
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+    await waitFor(() => expect(attachments.restoreLease).toHaveBeenCalledWith('lease'));
+    expect(attachments.commitLease).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+    await waitFor(() => expect(attachments.commitLease).toHaveBeenCalledWith('lease'));
   });
 });

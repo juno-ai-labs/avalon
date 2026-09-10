@@ -617,13 +617,20 @@ export function WorkstreamScreen(): React.JSX.Element {
           confirmedParticipantUserIds: opening.confirmedParticipantUserIds,
         },
       ));
-      if (creationRef.current !== attempt) { trace.end({ outcome: 'superseded' }); return; }
-      trace.annotate({ workstreamId: attempt.parentId });
+      const current = creationRef.current === attempt;
+      if (!current) trace.end({ outcome: 'superseded' });
+      else trace.annotate({ workstreamId: attempt.parentId });
       const parentDetail = queryClient.getQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, '0'));
       const creator = workspaceMemberFromSession(session);
       // Seeded before the navigation, both of them: the child's screen shows
       // its full-screen opening state while *either* the detail or the
       // transcript is missing, so one without the other still flashes it.
+      //
+      // Seeded even for an attempt abandoned mid-flight — by selecting another
+      // conversation, the one way out left once submission has begun. That
+      // substream exists and is working on the message that created it, so the
+      // screen it is eventually opened on should paint what this response
+      // already knows rather than load it again.
       if (parentDetail && creator && created.opening) {
         const detail = launchedSubstreamDetail(parentDetail, {
           creator,
@@ -643,6 +650,9 @@ export function WorkstreamScreen(): React.JSX.Element {
           }, creator),
         );
       }
+      // Nothing else is this attempt's to do: it is not the one on screen, so
+      // it neither clears that surface nor navigates anybody.
+      if (!current) return;
       trace.mark('cache_seed');
       holdCreationTraceUntilSendReady(
         trace,
@@ -654,12 +664,17 @@ export function WorkstreamScreen(): React.JSX.Element {
       selectSubstream(created.substreamId);
     } catch (error) {
       trace.end({ outcome: 'failed', workstreamId: attempt.parentId });
-      if (creationRef.current !== attempt) return;
       // Back to the composer with the words still in it. The optimistic turn
       // stood for a substream that does not exist, so it cannot stay on screen
-      // next to an error about why it never will.
-      setLaunching(null);
-      setCreationError(error instanceof Error ? error.message : 'The substream could not be created.');
+      // next to an error about why it never will. Only the surface's own state
+      // is skipped for an attempt that was abandoned mid-flight; the rejection
+      // is not, because that is what puts the draft and its attachments back —
+      // swallowing it would report a send that never happened, and take the
+      // words with it.
+      if (creationRef.current === attempt) {
+        setLaunching(null);
+        setCreationError(error instanceof Error ? error.message : 'The substream could not be created.');
+      }
       throw error;
     }
   };

@@ -114,16 +114,19 @@ or replace the child's creator-only conversation membership.
    Completed parts are durably checkpointed. The summary adapter has no tools
    or fallback model and records requested/resolved model and token usage.
 5. Confirmation claims the operation and provisions the same child, titled from
-   the first line of the opening message and in `title_status = 'naming'`. It
-   installs the immutable seed, mirrors the roster, and marks the child ready —
-   carrying that title, so the registry row every sidebar reads and the child
-   object agree in the write that makes it visible. Retrying confirmation
-   resumes the same operation, not another child.
-6. The opening message is then admitted through the child's own product
+   the first line of the opening message and in `title_status = 'naming'`, then
+   installs the immutable seed. None of this is visible to anybody yet.
+6. The opening message is admitted through the child's own product
    `create_message`, which writes the canonical turn and wakes the child's
-   persistent loop, and the first naming pass is deferred against it. A
-   confirmation retried with the same `clientMessageId` replays that turn rather
-   than saying it twice.
+   persistent loop. **Only then** is the child marked ready — carrying that
+   title, so the registry row every sidebar reads and the child object agree in
+   the write that makes it visible. Readiness is the publication fence: a
+   creation that fails to write its message leaves nothing behind for anybody
+   to find. The people a confirmed mention named are seated after it, because
+   the parent grants membership only for a ready child, and the first naming
+   pass is deferred. Retrying confirmation resumes the same operation, not
+   another child, and replays the turn for a `clientMessageId` it already
+   admitted rather than saying it twice.
 7. The parent's existing control socket publishes viewer-filtered ready
    children. The child's socket supplies its own transcript and initial context.
    Nothing else is sent on the creator's behalf: the substream is working on the
@@ -216,6 +219,11 @@ the first model context without becoming executable historical work.
   one turn a new substream holds is the message its creator typed, admitted
   through the ordinary product path after the child is ready — installation and
   instruction stay separate mechanisms even though one request carries both.
+- **Readiness is the publication fence.** The opening turn is durable before
+  the child is published, exactly as a work stream's route is activated only
+  once its own opening turn and run are committed. A child published first is a
+  visible empty substream whenever the message behind it fails, which is the
+  state this flow exists to not produce.
 - Creation is idempotent under retry in both halves: the operation resumes
   rather than making a second child, and the opening turn replays by
   `clientMessageId` rather than being said twice. A confirmation whose response
@@ -223,7 +231,14 @@ the first model context without becoming executable historical work.
   keeps the two ids, so the launch surface mints them when it opens and holds
   them until the substream exists or the surface is left — the composer hands
   the words back on a failure and the obvious next thing is to press enter
-  again, which fresh ids would turn into a second substream.
+  again, which fresh ids would turn into a second substream. A retry after a
+  failed admission completes the child that was already provisioned.
+- **An abandoned attempt is not a successful one.** Leaving the surface while a
+  creation is in flight — selecting another conversation, the one exit left
+  once submission has begun — does not swallow its failure: the rejection is
+  what gives the staged files back, and a resolved one would report a message
+  that never landed. A creation that succeeds after its surface was left still
+  seeds the caches for the substream it made; it simply navigates nobody.
 - An opening message over the ceiling is refused as `message_too_long`, with the
   sentence the composer would have shown, before the confirmation reserves
   anything. It travels one level down in the body, which is where a bound

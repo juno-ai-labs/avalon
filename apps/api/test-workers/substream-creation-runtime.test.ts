@@ -485,6 +485,48 @@ describe("substream preparation on workerd", () => {
     });
   });
 
+  it("publishes no child until its opening turn is durable, and completes that child on retry", async () => {
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000ce41";
+    await service.prepare(WORKSTREAM_ID, { operationId, throughTurnId: "source-turn-1" });
+    // A message the child's own product refuses: no text and no attachment.
+    // Provisioning and the context install have already happened by the time
+    // it is admitted, which is exactly the window this test is about.
+    await expect(service.confirm(WORKSTREAM_ID, operationId, {
+      clientMessageId: "opening-that-failed",
+      text: "",
+      mentions: [],
+      attachmentIds: [],
+      confirmedParticipantUserIds: [],
+    })).rejects.toThrow();
+
+    // Nothing in anybody's sidebar: readiness is the publication fence, so a
+    // creation that failed to write its message leaves no empty substream
+    // behind for somebody to find and wonder about.
+    expect((await parent().listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID,
+    })).children).toEqual([]);
+
+    // And the operation is still the same operation: retrying it — which is
+    // what the composer invites, with the words still in it — completes the
+    // child that was already provisioned rather than reserving another.
+    const created = await service.confirm(WORKSTREAM_ID, operationId, {
+      clientMessageId: "opening-that-failed",
+      text: "Compare the retry budget",
+      mentions: [],
+      attachmentIds: [],
+      confirmedParticipantUserIds: [],
+    });
+    expect((await parent().listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, userId: CREATOR_ID,
+    })).children.map((child) => child.substreamId)).toEqual([created.substreamId]);
+    await runInDurableObject(conversation(created.substreamId), (_instance, state) => {
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM canonical_conversation_turn_details`,
+      ).one().count).toBe(1);
+    });
+  });
+
   it("does not let another parent member confirm or a cancelled preparation become ready", async () => {
     const operationId = "00000000-0000-7000-8000-00000000ce21";
     const creator = new SubstreamCreationService(TEST_ENV, creatorAuth);
