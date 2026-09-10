@@ -1,9 +1,12 @@
 # Substream creation
 
-Substreams are private conversations inside an existing work stream. Creation
-freezes an initial context from its main conversation (`0`), shows that context
-for review, then opens an idle child. It does not create another work stream,
-copy running work, or send an instruction on the creator's behalf.
+Substreams are private conversations inside an existing work stream. Starting
+one looks like starting a work stream: a composer, and the message typed into it
+is the substream's first instruction. On the keystroke that submits it, creation
+freezes an initial context from the main conversation (`0`), writes the child,
+installs that context, admits the turn and wakes the child's loop. It does not
+create another work stream, copy running work, or send an instruction on the
+creator's behalf.
 
 The platform currently uses summary-based context with
 `google/gemini-2.5-flash-lite` and creator-only membership. These are shared
@@ -21,7 +24,10 @@ platform policies, not controls offered to the user.
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Frozen source export and immutable inert child seed. |
 | `apps/api/src/durable-objects/substream-context-transfer.ts` | Frame-sized initial-context snapshot transfer. |
 | `apps/api/src/services/substream-initial-context.ts` | Inert seed to model-context conversion. |
-| `apps/desktop/src/renderer/screens/workstream.tsx` | Main/child navigation, creation flow, rename and archive dialogs. |
+| `apps/desktop/src/renderer/screens/workstream.tsx` | Main/child navigation, the creation state machine and its cache seeding, rename and archive dialogs. |
+| `apps/desktop/src/renderer/components/substream-launch.tsx` | The launch surface: branch provenance, the composer that starts a substream, and the optimistic turn while one is being created. |
+| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Renders that surface in place of the conversation's own three rows, and `branchProvenance`, which chooses the turns it fades. |
+| `apps/desktop/src/renderer/lib/launched-conversation.ts` | The optimistic opening transcript and the child detail both launchers seed. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Authoritative baseline, initial-context assembly and readiness. |
 
 ## How it works
@@ -43,7 +49,46 @@ asked to do. [Conversation surfaces](conversation-surfaces.md) owns the rows
 themselves.
 
 The sidebar row and the message control enter the same creation flow; there is no
-context-strategy picker.
+context-strategy picker, no title field and no preview step.
+
+### The launch surface
+
+Both entry points replace the conversation's three rows — header, transcript,
+composer dock — with the launch surface, inside the same column. The work
+stream's sidebar, inspector and retained parent socket do not move, because the
+work stream has not been left; only its middle column has something else in it.
+
+The geometry is `.workstream-launch-screen`, shared with the work-stream
+launcher and described in [`workstream-creation.md`](workstream-creation.md):
+while composing, the launcher's own dock padding and raised composer; on submit,
+`is-launching` lands and every value settles on the conversation's own, so the
+composer travels into the dock rather than being replaced by it.
+
+What sits above that composer is the difference between the two entry points:
+
+- **From a message** — the turn that was branched from and the four before it,
+  faded out upward under a gradient mask and inert to the pointer. They say what
+  is being branched out of. They are not what the substream inherits: the
+  platform still freezes a summary of the conversation through that cutoff, and
+  the created child shows it under **Context from the main conversation**.
+- **From the sidebar** — nothing, exactly as the work-stream launcher's body is
+  empty. A substream started there branches from wherever the conversation has
+  reached, so there is no particular moment to be looking at.
+
+Nothing is reserved while the surface is open: no operation, no child id, no
+model call. Leaving it is a `setState`, and the draft stays under its own
+composer key. This is why there is no cancellation to make — the flow that
+prepared on open, and cancelled what it had reserved on the way out, was the
+modal one.
+
+On submit the surface draws the typed turn and the work timer, and the
+substream is created behind them: `POST …/substreams/prepare` freezes and
+summarizes, then `POST …/substreams/confirm` carries the message. The response
+names the canonical turn, which is seeded into the child's transcript with the
+child's detail before the navigation, so the child's screen paints the same turn
+in the same place rather than showing its opening state. A creation that fails
+takes the optimistic turn back off the screen and puts the words back in the
+composer.
 
 Every section of the center sidebar belongs to the parent work stream. Switching
 substreams changes the conversation, not the sidebar's artifact inventory,
@@ -53,25 +98,54 @@ title bar; a child title bar manages only that child. The parent socket remains 
 direct child links. This shared chrome does not publish private child resources
 or replace the child's creator-only conversation membership.
 
-1. The renderer assigns one operation ID and freezes its title and optional
-   message cutoff. Retrying the same attempt keeps that ID.
+1. The renderer assigns one operation ID and freezes the optional message
+   cutoff. Retrying the same attempt keeps that ID.
 2. WorkstreamDO reserves one child ID and pins the resolved context recipe and
    membership initializer receipt. Reserved children are not discoverable or
-   readable as conversations.
+   readable as conversations. The title it reserves them under is a placeholder:
+   preparation is about the context, and the message that names the substream
+   has not been sent yet.
 3. The source SubstreamAgent captures a completed main-conversation prefix in
    a synchronous storage transaction. Subsequent messages and edits do not
    change this operation's capture. An explicit unfinished cutoff is rejected.
 4. The coordinator runs the pinned recipe outside the storage transaction.
    Completed parts are durably checkpointed. The summary adapter has no tools
    or fallback model and records requested/resolved model and token usage.
-5. The creator reviews the selected context. The preview is read-only and does
-   not return the unselected source capture. Cancellation prevents publication.
-6. Confirmation claims the operation, provisions the same child, installs its
-   immutable seed, mirrors its roster and marks it ready. Retrying confirmation
+5. Confirmation claims the operation and provisions the same child, titled from
+   the first line of the opening message and in `title_status = 'naming'`. It
+   installs the immutable seed, mirrors the roster, and marks the child ready —
+   carrying that title, so the registry row every sidebar reads and the child
+   object agree in the write that makes it visible. Retrying confirmation
    resumes the same operation, not another child.
+6. The opening message is then admitted through the child's own product
+   `create_message`, which writes the canonical turn and wakes the child's
+   persistent loop, and the first naming pass is deferred against it. A
+   confirmation retried with the same `clientMessageId` replays that turn rather
+   than saying it twice.
 7. The parent's existing control socket publishes viewer-filtered ready
    children. The child's socket supplies its own transcript and initial context.
-   The child is idle until the creator sends a new instruction.
+   Nothing else is sent on the creator's behalf: the substream is working on the
+   instruction it was created with, and on nothing else.
+
+Confirmation still answers without an opening message, and creates the idle
+child it always did. The desktop no longer asks for one.
+
+### The name a substream is given
+
+A substream is named the way a work stream is, by
+[the naming pass](workstream-naming.md): its provisional title is the first line
+of the opening message, its `title_status` is `naming`, and its header shows the
+same skeleton until the pass answers. Both passes are addressed at the child —
+`workstreamId` plus `substreamId` through the identity and message ports, and
+the rename event published into the child's own room. The child's rename reaches
+the parent's registry through the ordinary common projection, which is what
+converges every sidebar's row.
+
+Before this, children were provisioned `settled` and no pass ever ran on one; a
+run settling in a child called the refresh pass with the parent's address and
+its own dropped, which found the parent's own title and, in the overwhelming
+case of a settled work stream, did nothing. That is fixed rather than preserved:
+`settleAgentRun` passes the substream it ran in.
 
 ### Membership, rename, archive and notifications
 
@@ -132,14 +206,28 @@ the first model context without becoming executable historical work.
   participants cannot enumerate or open someone else's private child; adding a
   child member does not grant parent or sibling access.
 - One operation pins one capture, recipe, child ID and membership receipt.
-  Replanning a retry would silently change the context the creator reviewed.
+  Replanning a retry would silently change the context that operation froze.
 - Context installation writes no live transcript turn, pending input or run.
-  Treating inherited text as a new instruction could execute old requests.
+  Treating inherited text as a new instruction could execute old requests. The
+  one turn a new substream holds is the message its creator typed, admitted
+  through the ordinary product path after the child is ready — installation and
+  instruction stay separate mechanisms even though one request carries both.
+- Creation is idempotent under retry in both halves: the operation resumes
+  rather than making a second child, and the opening turn replays by
+  `clientMessageId` rather than being said twice. A confirmation whose response
+  is lost is the common case, not the rare one.
+- Nothing is reserved while the launch surface is open. A composer somebody
+  closes must not leave a reserved child, a spent summary call, or an operation
+  for a later request to conflict with.
 - Feed and model use the same installed selected parts. The complete source
   capture is preparation provenance, not a second hidden model-context source.
 - Child membership versions fence signed admission and live commands. Removing
   a participant must invalidate an existing socket as well as future tickets.
   Re-adding them does not revive an old ticket: its version must match exactly.
+- A substream is named from its own transcript, into its own room. Both naming
+  passes and the rename publication carry the substream address; addressed at
+  the parent, as they were before children were named at all, they answer for
+  the work stream the person is not looking at.
 - Child events do not overwrite main-conversation title, activity or roster.
   Child navigation must retain the parent shell while addressing all draft,
   transcript and pending-input state by the selected conversation.
@@ -171,19 +259,20 @@ controls are not exposed inside child previews.
 
 ## Failure modes and limits
 
-An inference failure leaves the operation and capture available for retry. A
-completed part is reused rather than intentionally regenerated. No automatic
-strategy/model fallback changes the reviewed meaning. A lost response can be
-retried with the same operation ID; mismatched title or cutoff is a conflict.
+An inference failure leaves the operation and capture available for retry, and
+reaches the person as an error under the composer with their message still in
+it. A completed part is reused rather than intentionally regenerated. No
+automatic strategy/model fallback changes the frozen meaning. A lost response
+can be retried with the same operation ID; a mismatched cutoff is a conflict.
 Confirmation cannot be cancelled after its durable claim; it can be resumed.
 
 Source access is checked before capture and again after preparation. Reserved,
 failed or incompletely installed children never become readable. Membership
 mirroring must complete before readiness is published, including deliveries
 deferred for retry. The parent rechecks authority without an intervening await
-at the prepared-context commit and confirmation transitions. The title is locked
-while a request is pending; editing after failure clears the error and cancels
-the prior attempt once. Cancellation accepts the endpoint's empty 204 response.
+at the prepared-context commit and confirmation transitions. Cancellation
+accepts the endpoint's empty 204 response, and is now only the API's to make:
+the launch surface reserves nothing to cancel.
 
 Context snapshot frames respect the existing realtime frame-byte limit, rather
 than imposing a new product history cap. Missing or partial baseline data is
@@ -202,8 +291,11 @@ summary-only P50 1,861 ms and P90 2,221 ms; this is not a production percentile
 or an end-to-end success claim, and already misses the combined target.
 The chosen model was retained at the user's instruction. See
 [performance tracing](performance-tracing.md) for preparation and confirmation
-timers, operation correlation and system-wait measurement excluding only the
-human review interval. Instrumented targets are not asserted achievements.
+timers and operation correlation. The interval those timers cover is now the
+whole of creation — there is no human review step to exclude from it, and the
+opening turn is written inside the confirmation — so the same numbers describe
+more work than they did. What a person waits in front of is neither: the launch
+surface has already drawn their turn.
 
 ## Testing
 
@@ -216,10 +308,20 @@ human review interval. Instrumented targets are not asserted achievements.
   immutable installation. Mutation proof removes the cutoff turn.
 - `apps/api/test-workers/substream-creation-runtime.test.ts`: real workerd
   parent/source/child prepare-confirm with provider HTTP doubled;
-  duplicate confirmation, creator-only access, cancellation and no initial run.
-  Mutation proof skips target seed installation. The first-instruction test
-  reaches a provider double through the real loop, checks the frozen seed and
-  new child instruction, and excludes a later conflicting Main message.
+  duplicate confirmation, creator-only access, cancellation and no initial run
+  where no message was sent. Mutation proof skips target seed installation. The
+  first-instruction test reaches a provider double through the real loop, checks
+  the frozen seed and new child instruction, and excludes a later conflicting
+  Main message. Creation-with-a-message covers the provisional title, the
+  registry row it converges, the durable turn, the unchanged parent title and
+  the replay a retried confirmation gets; its mutation proof addresses the
+  naming pass at the parent, which leaves the child in `naming`.
+- `apps/desktop/src/renderer/components/substream-launch.test.tsx`: the branch
+  turns above the composer, the words enter hands to creation, the optimistic
+  turn and skeleton while it runs, and the draft coming back on a failure.
+  `workstream-open.test.tsx` covers the flow through the screen — the two
+  requests, both halves of the destination's cache, and the error path — and
+  `workstream.test.tsx` covers which turns `branchProvenance` chooses.
 - `apps/api/test-workers/conversation-parent-contract.test.ts`: private child
   readiness, membership and authority fences. Mutation proof removes readiness
   from admission.
@@ -233,6 +335,54 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-10 — A substream is started from a composer, not from two modals
+
+**What changed:** The title dialog and the context-preview dialog are gone. Both
+entry points now open a launch surface inside the work stream's own column: the
+branch point and the four turns before it faded above one composer, or an empty
+body when the substream was started from the sidebar. The message typed there is
+the substream's first instruction — `POST …/substreams/confirm` carries it,
+writes the canonical turn through the child's product path and wakes its loop —
+and the child is titled from that message's first line, in `title_status =
+'naming'`, so [the naming pass](workstream-naming.md) replaces it exactly as it
+does for a work stream. Preparation no longer takes a title.
+
+**Why:** Starting a substream and starting a work stream are the same act, and
+only one of them looked like it. The modal flow asked for a title before there
+was anything to title it after, then asked the person to review a summary they
+had no way to change — a decision presented as a choice, twice, before they
+could say what they wanted. Meanwhile the thing they came to do, sending the
+first instruction, happened *after* creation, in a second surface, so an
+abandoned substream was an ordinary outcome rather than an anomaly.
+
+**What was rejected, and why it matters to the next change:**
+
+- **Preparing when the surface opens, to hide the summary latency behind the
+  typing.** It buys perhaps a second, and costs a reserved child, a spent
+  Gemini call and a live operation every time somebody opens the composer and
+  changes their mind — plus the cancellation path that has to clean all three
+  up, which is what the modal flow spent its complexity on. Everything now
+  happens on the keystroke that submits, and the optimistic surface is what
+  covers the wait. If that wait is ever measured as the problem, prepare early
+  *and* bring back cancellation together; one without the other leaks children.
+- **Sending the opening message from the client after confirmation, over the
+  child's socket.** It is the path an ordinary message takes, but a new child
+  has no socket yet, so it would mean opening one and holding the message
+  across a navigation — two failures to reconcile where creation has one, and
+  an empty substream on screen whenever the second half lost. The message rides
+  the confirmation instead, which also hands the client the canonical `turnId`
+  it seeds the destination with.
+- **Making the faded turns the substream's context.** They are provenance: what
+  the child inherits is still the platform's summary policy through the cutoff,
+  and the child's feed shows it. Changing what is inherited is a policy change
+  under **Extending initial context**, not a side effect of what a surface
+  draws.
+
+**What a future change has to respect:** nothing may be reserved while the
+launch surface is open; the opening turn stays idempotent by `clientMessageId`;
+and a substream's name is written through the child's address, never the
+parent's.
 
 ### 2026-09-09 — Move the message cutoff into the turn's action row
 

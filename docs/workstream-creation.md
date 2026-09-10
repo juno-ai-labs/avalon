@@ -18,7 +18,8 @@ attempt at the opposite that the changelog records.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/screens/new-workstream.tsx` | Both states of the screen, the `launching` state that switches between them, the create mutation, and `launchedWorkstreamDetail` — the one place a launched work stream's cached detail is built. |
-| `apps/desktop/src/renderer/styles/app.css` | The `.workstream-launch-screen` block at the end of the file: every geometry difference between the two states, and the two keyframes. |
+| `apps/desktop/src/renderer/lib/launched-conversation.ts` | `optimisticOpeningTranscript`, the one place either launcher's optimistic turn is built, and the detail a launched substream is seeded with. |
+| `apps/desktop/src/renderer/styles/app.css` | The `.workstream-launch-screen` block at the end of the file: every geometry difference between the two states, and the two keyframes. Shared with the substream launcher, which renders the same three rows inside a work stream's own column ([`substream-creation.md`](substream-creation.md)). |
 | `apps/desktop/src/renderer/components/composer-input.tsx` | `ComposerInput`, the single composer element the hand-off is built around. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MessageBlock`, which renders the optimistic opening turn exactly as the work-stream screen will render the persisted one. |
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | `AgentWorkTiming`, the work timer the optimistic surface starts and the created work stream keeps counting from. |
@@ -383,6 +384,28 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
+
+### 2026-09-10 — The launch geometry and the optimistic turn are shared with substreams
+
+**What changed:** `optimisticOpeningTranscript` moved out of this screen into
+`lib/launched-conversation.ts`, unchanged, and `.workstream-launch-screen` gained
+`grid-template-columns: minmax(0, 1fr)`. Starting a substream now renders the
+same three rows through the same block; [`substream-creation.md`](substream-creation.md)
+owns that surface.
+
+**Why:** The substream launcher needed exactly this screen's optimistic turn —
+the same revision, coverage and identity, because the same socket upsert
+replaces it — and a second copy would have been a second answer to what those
+are, with the copy that drifted being the one whose surface flickers at the
+swap. The column track is the bug that sharing found: the rows alone left an
+implicit `auto` column, which is max-content, so the first unbreakable line
+placed in one of them sized all three wider than the pane and hung the dock off
+its side. This screen never showed it because nothing in it declares `nowrap`.
+
+**What a future change has to respect:** a rule written under
+`.workstream-launch-screen` now dresses two surfaces. Anything true only of the
+new-work-stream screen belongs under `.new-chat-screen`, which is what that class
+is for.
 
 ### 2026-09-09 — The launcher is reached only by an explicit New action
 

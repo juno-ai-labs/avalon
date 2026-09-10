@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { SubstreamIdSchema, UserIdSchema, WorkspaceIdSchema, WorkstreamIdSchema } from "./identifiers";
 import { TranscriptAttachmentSchema, TranscriptMentionSchema, TranscriptTurnIdSchema } from "./workstream-transcript";
 
@@ -138,3 +139,60 @@ export const SubstreamPreparationPreviewSchema = z.strictObject({
   context: SubstreamInitialContextSchema,
 });
 export type SubstreamPreparationPreview = z.infer<typeof SubstreamPreparationPreviewSchema>;
+
+/**
+ * The first instruction a substream is created with.
+ *
+ * Creation and the opening turn are one request because they are one act: the
+ * person pressed enter on a composer, exactly as they do to start a work
+ * stream, and a child that exists without the message that caused it is a
+ * state nobody asked for and every caller would have to clean up. It is
+ * optional because the API can still create an idle child — the desktop no
+ * longer does.
+ */
+export const SubstreamOpeningMessageSchema = z.strictObject({
+  /** The sender's identity for this turn, and what makes a retried confirm replay rather than repeat. */
+  clientMessageId: z.string().min(1).max(120),
+  // Both of these come from leaf modules rather than from `index`: this module
+  // is imported by the parent-object contract, which `index` imports in turn,
+  // so reaching back through it would close a cycle and leave whichever schema
+  // was evaluated first undefined. The transcript's mention shape is the same
+  // five fields the wire carries anyway.
+  text: z.string().max(MESSAGE_MAX_CHARACTERS),
+  mentions: z.array(TranscriptMentionSchema).default([]),
+  attachmentIds: z.array(z.string().uuid()).max(10).default([]),
+  /**
+   * People the composer's mention confirmation named. They are added to the
+   * child's parent-owned membership before the turn is written, because a
+   * mention that reached the text with nobody attached to it names somebody
+   * who cannot read it.
+   */
+  confirmedParticipantUserIds: z.array(UserIdSchema).default([]),
+}).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0, {
+  message: "An opening message must include text or an attachment",
+});
+export type SubstreamOpeningMessage = z.infer<typeof SubstreamOpeningMessageSchema>;
+
+/**
+ * What confirmation answers with.
+ *
+ * The turn identity is the canonical one, so the optimistic turn the launch
+ * surface is already showing is replaced by identity when the child's socket
+ * delivers it rather than by two rows having equal text.
+ */
+export const SubstreamCreationResultSchema = z.strictObject({
+  substreamId: SubstreamIdSchema,
+  /**
+   * The title the child was created under. Provisional where the naming pass
+   * is still running against the opening message, and the reason the caller
+   * does not have to derive one of its own: two answers to what a first line
+   * is would disagree the moment either changed.
+   */
+  title: z.string().min(1).max(500),
+  opening: z.strictObject({
+    turnId: TranscriptTurnIdSchema,
+    clientMessageId: z.string().min(1).max(120),
+    createdAt: z.string().datetime({ offset: true }),
+  }).nullable(),
+});
+export type SubstreamCreationResult = z.infer<typeof SubstreamCreationResultSchema>;

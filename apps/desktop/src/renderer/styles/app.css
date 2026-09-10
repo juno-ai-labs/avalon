@@ -6239,6 +6239,12 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    rest the two resolve to the same 55px. */
 .workstream-launch-screen {
   display: grid;
+  /* The column is stated because the rows alone leave an implicit `auto` one,
+     which is max-content: any single unbreakable line inside — a nowrap label,
+     a long word — then sizes all three rows wider than the pane, and the dock
+     they are in hangs off the side of it. `minmax(0, 1fr)` is the pane's own
+     width in both states. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
   min-width: 0;
@@ -6369,6 +6375,78 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 
 .workstream-launch-screen:not(.is-launching) .launch-composer .composer-hint {
   color: var(--av-ref-color-neutral-9);
+}
+
+/* A substream is started inside the conversation it branches out of, so its
+   launch surface is the block above, rendered into the work stream's own
+   column. Only the two things a work stream's launcher has no equivalent of
+   are stated here: what the substream branches from, and the row that says so.
+
+   The composer sits where the conversation's composer sits, so the turns above
+   it are pushed to the bottom of the body rather than filling it from the top:
+   what is being branched from is the thing nearest the words about to be
+   written. */
+.substream-launch-column {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 100%;
+}
+
+/* The fade is the whole statement: these turns are where this came from, not
+   what this is. A mask rather than an opacity ramp per row, because the turns
+   are different heights and a per-row ramp would step — and because the top of
+   the oldest turn has to reach zero wherever it happens to be cut off by the
+   scroll.
+
+   `pointer-events: none` for the same reason: a copy button or a New substream
+   control on a turn nobody is reading here would act on the main conversation,
+   from a surface that has already left it. */
+.substream-branch-context {
+  /* `currentColor` is the opaque stop rather than a colour: a mask spends only
+     the alpha channel, and this file names tokens rather than writing colours
+     down — `themes.css` is where a colour is allowed to be. */
+  mask-image: linear-gradient(to bottom, transparent 0, currentColor 72%);
+  opacity: .72;
+  pointer-events: none;
+}
+
+/* Says what pressing enter will do, and offers the one way out that is not
+   navigating somewhere else. It rides `.launch-modifiers`, so it leaves on the
+   keystroke that submits rather than staying above a substream being created —
+   the same exit the work-stream launcher's participant row makes. */
+.substream-launch-banner {
+  align-items: center;
+  /* The dock a conversation lays out is `pointer-events: none` so the
+     transcript behind it stays reachable; each thing in it that can be clicked
+     takes them back. Without this the Cancel control is visible and inert. */
+  pointer-events: auto;
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  gap: 8px;
+  margin: 0 auto;
+  max-width: 690px;
+  min-width: 0;
+  padding: 0 2px 6px;
+  width: 100%;
+}
+
+.substream-launch-label {
+  align-items: center;
+  color: var(--av-sys-color-text-default);
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+/* The first thing to go when the window is narrow: the label beside it names
+   the surface, and this only explains it. */
+.substream-launch-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* New chat follows GrokBot's recipient-first composition surface. The chips

@@ -1,5 +1,6 @@
 import { asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
 import { PrivateChildPreparationOperationSchema, type PrivateChildPreparationOperation } from "@rally/contracts/conversation-parent";
+import type { SubstreamCreationResult, SubstreamOpeningMessage } from "@rally/contracts/substream-creation";
 import type { AuthContext, Env } from "../env";
 import { conversationObjectName, workstreamDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -12,11 +13,33 @@ import {
   SUBSTREAM_MEMBERSHIP_POLICY,
 } from "./substream-context";
 import { createSubstreamContextTransformServices } from "./substream-context-summary";
+import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
+import { WorkstreamObjectClient } from "./workstream-object-client";
 import { bootstrapConversationChildRuntime, provisionWorkstreamObject } from "./workstream-runtime-database";
+
+/**
+ * The title preparation reserves a child under.
+ *
+ * Preparation runs before the opening message exists — it is about the context,
+ * not the words — so this is a placeholder in the parent's registry rather than
+ * a name anybody sees: confirmation replaces it with the message's first line,
+ * and the naming pass replaces that.
+ */
+export const RESERVED_SUBSTREAM_TITLE = "New substream";
 
 /** One parent-owned operation survives preparation, preview, confirmation and retries. */
 export class SubstreamCreationService {
-  constructor(private readonly env: Env, private readonly auth: AuthContext) {}
+  constructor(
+    private readonly env: Env,
+    private readonly auth: AuthContext,
+    /**
+     * How the naming pass is kept off the caller's clock. Routes hand in a
+     * `waitUntil`-backed deferral; a caller with none gets the pass awaited
+     * rather than dropped, which is what the work-stream create path does for
+     * the same reason.
+     */
+    private readonly defer?: (task: Promise<unknown>) => void,
+  ) {}
 
   private async parent(parentId: string) {
     const parent = await new ConversationService(this.env, this.auth).authorizeViewer(parentId);
@@ -27,12 +50,13 @@ export class SubstreamCreationService {
       workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(parentId)));
   }
 
-  async prepare(parentId: string, input: { operationId: string; title: string; throughTurnId: string | null }): Promise<PrivateChildPreparationOperation> {
+  async prepare(parentId: string, input: { operationId: string; title?: string | undefined; throughTurnId: string | null }): Promise<PrivateChildPreparationOperation> {
+    const reservedTitle = input.title ?? RESERVED_SUBSTREAM_TITLE;
     const parent = await this.parent(parentId);
     const address = { workspaceId: this.auth.workspaceId, parentId, operationId: input.operationId };
     // Look up first: a retry after a deployment keeps its old policy revision.
     const prior = PrivateChildPreparationOperationSchema.nullable().parse(await parent.readPrivateChildPreparation(address));
-    if (prior && (prior.creatorUserId !== this.auth.userId || prior.title !== input.title
+    if (prior && (prior.creatorUserId !== this.auth.userId || prior.title !== reservedTitle
       || prior.sourceThroughTurnId !== input.throughTurnId)) {
       throw new ApiError(409, "substream_operation_conflict", "This creation request already has different inputs.");
     }
@@ -45,7 +69,7 @@ export class SubstreamCreationService {
         config: membershipConfig,
       });
       operation = PrivateChildPreparationOperationSchema.parse(await parent.beginPrivateChildPreparation({
-        ...address, creatorUserId: this.auth.userId, title: input.title, sourceSubstreamId: "0",
+        ...address, creatorUserId: this.auth.userId, title: reservedTitle, sourceSubstreamId: "0",
         sourceThroughTurnId: input.throughTurnId, recipe: substreamContextPipeline.plan(SUBSTREAM_CONTEXT_POLICY),
         membershipInitializer: { ...SUBSTREAM_MEMBERSHIP_POLICY, memberUserIds: [...memberUserIds] },
       }));
@@ -74,7 +98,22 @@ export class SubstreamCreationService {
     return PrivateChildPreparationOperationSchema.parse(await parent.savePreparedPrivateChildContext({ ...address, preparedContext }));
   }
 
-  async confirm(parentId: string, operationId: string): Promise<{ substreamId: string }> {
+  /**
+   * Create the child and, in the same request, write the instruction that
+   * caused it.
+   *
+   * The opening message is what a person pressing enter on the launch composer
+   * sends, and it is not a second call: a child that exists without it is a
+   * state the desktop would have to reconcile — an empty substream on screen
+   * beside an error about the message that did not land. Everything after the
+   * child is ready is idempotent by `clientMessageId`, so a retried confirm
+   * replays the same turn rather than saying it twice.
+   */
+  async confirm(
+    parentId: string,
+    operationId: string,
+    opening: SubstreamOpeningMessage | null = null,
+  ): Promise<SubstreamCreationResult> {
     const parent = await this.parent(parentId);
     const address = { workspaceId: this.auth.workspaceId, parentId, operationId };
     const existing = PrivateChildPreparationOperationSchema.nullable().parse(await parent.readPrivateChildPreparation(address));
@@ -95,14 +134,22 @@ export class SubstreamCreationService {
       }
       throw error;
     }
-    if (operation.status === "ready") return { substreamId: operation.substreamId };
+    if (operation.status === "ready") {
+      return this.openSubstream(parentId, operation, opening);
+    }
     if (operation.status !== "confirming" || !operation.preparedContext) {
       throw new ApiError(409, "substream_context_not_prepared", "Prepare the starting context first.");
     }
+    // A child created with an instruction is named from it, exactly as a work
+    // stream is: the first line stands while the naming pass runs, and
+    // `naming` is what puts the skeleton in its header. A child created
+    // without one keeps the title its caller reserved and is settled, because
+    // nothing will ever arrive to name it from.
+    const title = opening ? provisionalWorkstreamTitle(opening.text, operation.title) : operation.title;
     await bootstrapConversationChildRuntime(this.env, this.auth.workspaceId, "workstream", parentId, operation.substreamId);
     await provisionWorkstreamObject(this.env, {
       workspaceId: this.auth.workspaceId, workstreamId: parentId, substreamId: operation.substreamId,
-      title: operation.title, titleStatus: "settled", objective: "", scope: "personal",
+      title, titleStatus: opening ? "naming" : "settled", objective: opening?.text ?? "", scope: "personal",
       createdByUserId: this.auth.userId,
       participantUserIds: operation.membershipInitializer.memberUserIds,
       harnessStatus: "idle",
@@ -114,8 +161,56 @@ export class SubstreamCreationService {
       workspaceId: this.auth.workspaceId, workstreamId: parentId, substreamId: operation.substreamId, operationId,
     });
     await this.parent(parentId);
-    await parent.setPrivateChildTerminalStatus({ ...address, status: "ready", errorCode: null });
-    return { substreamId: operation.substreamId };
+    await parent.setPrivateChildTerminalStatus({ ...address, status: "ready", errorCode: null, title });
+    return this.openSubstream(parentId, operation, opening);
+  }
+
+  /**
+   * Write the opening turn into a ready child, and name the child from it.
+   *
+   * Separate from the provisioning above because readiness is where the two
+   * paths meet: a first confirmation arrives here having just published the
+   * child, and a retry arrives here having found it already published. Both
+   * owe the caller the same answer, and `createMessage` is what makes that
+   * true — it replays the canonical turn for a `clientMessageId` it has
+   * already admitted instead of writing a second one.
+   */
+  private async openSubstream(
+    parentId: string,
+    operation: PrivateChildPreparationOperation,
+    opening: SubstreamOpeningMessage | null,
+  ): Promise<SubstreamCreationResult> {
+    const title = opening ? provisionalWorkstreamTitle(opening.text, operation.title) : operation.title;
+    if (!opening) return { substreamId: operation.substreamId, title, opening: null };
+    // Membership before the turn. A mention the composer confirmed names
+    // somebody who has to be able to read the message naming them, and child
+    // membership is the parent's to grant — the conversation-local roster the
+    // turn itself would write grants neither discovery nor socket admission.
+    for (const userId of opening.confirmedParticipantUserIds) {
+      await this.changeParticipant(parentId, operation.substreamId, {
+        userId, operationId: `${operation.operationId}:participant:${userId}`,
+      }, true);
+    }
+    const receipt = await new WorkstreamObjectClient(
+      this.env, this.auth, parentId, operation.substreamId,
+    ).createMessage({
+      text: opening.text,
+      clientMessageId: opening.clientMessageId,
+      mentions: opening.mentions,
+      confirmedParticipantUserIds: [],
+      attachmentIds: opening.attachmentIds,
+    });
+    const naming = nameWorkstream(this.env, {
+      workspaceId: this.auth.workspaceId,
+      workstreamId: parentId,
+      substreamId: operation.substreamId,
+      userId: this.auth.userId,
+      objective: opening.text,
+      openingMessage: opening.text,
+      provisionalTitle: title,
+    });
+    if (this.defer) this.defer(naming); else await naming;
+    return { substreamId: operation.substreamId, title, opening: receipt.turn };
   }
 
   async changeParticipant(parentId: string, substreamId: string, input: {
