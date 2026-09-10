@@ -64,6 +64,14 @@ export interface SubstreamLaunchProps {
   error?: string | undefined;
   onCancel: () => void;
   /**
+   * How a turn drawn here fetches an attachment's bytes. `MessageBlock` shows
+   * an attachment row only when it has both this and `onOpenAttachment`, so
+   * without it a message with files renders as text alone — on the branch
+   * turns, and on the optimistic turn whose whole job is to be what the
+   * created substream will draw.
+   */
+  loadAttachmentContent?: ((id: string, signal?: AbortSignal) => Promise<Blob>) | undefined;
+  /**
    * Create the substream with this message. Rejects when creation failed, which
    * is what puts the words back in the composer: the draft is cleared before
    * this is awaited, exactly as an ordinary send clears it.
@@ -99,6 +107,7 @@ export function SubstreamLaunchSurface({
   draft,
   launching,
   error,
+  loadAttachmentContent,
   onCancel,
   onCreate,
   onOpenAttachment,
@@ -211,6 +220,7 @@ export function SubstreamLaunchSurface({
                 <MessageBlock
                   {...(currentUser ? { currentUserId: currentUser.id } : {})}
                   key={message.id}
+                  {...(loadAttachmentContent ? { loadAttachmentContent } : {})}
                   message={message}
                   onAnswerElicitation={async () => undefined}
                   onOpenAttachment={onOpenAttachment}
@@ -222,6 +232,7 @@ export function SubstreamLaunchSurface({
             <div className="launch-arrival" style={{ '--arrival-index': 0 } as React.CSSProperties}>
               <MessageBlock
                 {...(currentUser ? { currentUserId: currentUser.id } : {})}
+                {...(loadAttachmentContent ? { loadAttachmentContent } : {})}
                 message={openingTurn}
                 onAnswerElicitation={async () => undefined}
                 onOpenAttachment={onOpenAttachment}
@@ -230,8 +241,12 @@ export function SubstreamLaunchSurface({
           )}
           {launching && (
             <div className="launch-arrival" style={{ '--arrival-index': 1 } as React.CSSProperties}>
-              {/* The run has not been admitted yet, but it is about to be, and
-                  the created substream keeps counting from this same instant. */}
+              {/* What the wait is: the substream is being created and its
+                  first instruction admitted. The created child starts its own
+                  timer when its room reports the run — an opening message
+                  leaves a pending input rather than a run id, so there is
+                  nothing here to hand across, and `launchedSubstreamDetail`
+                  says why at the field that would carry it. */}
               <AgentWorkTiming active durationMs={0} startedAt={launching.startedAt} />
             </div>
           )}

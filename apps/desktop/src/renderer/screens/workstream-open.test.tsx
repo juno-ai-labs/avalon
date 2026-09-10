@@ -406,6 +406,28 @@ describe('socket-first work-stream open', () => {
     expect(screen.queryByRole('region', { name: 'Branching from' })).not.toBeInTheDocument();
   });
 
+  it('releases a reserved child when the surface is left after a failed submit', async () => {
+    // Nothing is reserved while the surface is merely open, but a submit that
+    // got past `prepare` leaves a child id and a spent summary behind it, and
+    // the surface stays open over them. Leaving is what gives them back.
+    api.prepareSubstream.mockResolvedValue({
+      operationId: 'op', substreamId: '00000000-0000-7000-8000-000000000674', title: 'New substream', context: { parts: [] },
+    });
+    api.confirmSubstream.mockRejectedValue(new Error('The substream could not be created.'));
+    api.cancelSubstream.mockResolvedValue(undefined);
+    openConversation(1);
+    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
+    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.change(composer, { target: { value: 'Look at the invoice' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await screen.findByText('The substream could not be created.');
+    expect(api.cancelSubstream).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel new substream' }));
+    await waitFor(() => expect(api.cancelSubstream)
+      .toHaveBeenCalledWith(workstreamId, api.prepareSubstream.mock.calls[0]![1].operationId));
+  });
+
   it('retries a lost creation under the same identity rather than making a second substream', async () => {
     const childId = '00000000-0000-7000-8000-000000000673';
     // The failure this covers: the response is lost after the server committed.
