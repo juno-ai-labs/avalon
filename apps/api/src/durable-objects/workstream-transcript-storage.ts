@@ -3816,14 +3816,18 @@ export class WorkstreamTranscriptStorage {
                 providerUserId: turn.externalActor.providerUserId,
               },
             }
-          : { type: "human" },
+          : {
+              type: "human",
+              userId: turn.authorUserId,
+              displayName: turn.authorSnapshot?.displayName ?? null,
+            },
         text: text.text,
         mentions: (text.mentions ?? []).map((mention) => ({
           type: mention.type,
           userId: mention.userId,
           displayName: null,
         })),
-        overheard: { authorDisplayName: turn.authorSnapshot?.displayName ?? null },
+        overheard: true,
       });
       if (!message) continue;
       const transition: ProtocolUserTransition = {

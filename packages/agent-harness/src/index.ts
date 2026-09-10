@@ -2905,7 +2905,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "people_search",
-    description: "Search authorized workspace people and return canonical person IDs for evaluator rules.",
+    description: "Search authorized workspace people and return canonical person IDs for evaluator rules. Every result also carries `you`: the person this run acts for, so \"me\", \"my\", and \"I\" resolve without guessing at a name.",
     capability: "rally.sidekick.people.search",
     mode: "read",
     idempotency: "safe",
