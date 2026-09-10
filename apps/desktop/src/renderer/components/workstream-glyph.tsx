@@ -139,10 +139,25 @@ export function WorkstreamGlyph({ id, size = 32, appearance: saved }: { id: stri
       className="workstream-glyph"
       style={{ height: size, width: size, '--glyph-ink': glyphInk(colorKey) } as React.CSSProperties}
     >
-      <span
-        className="workstream-glyph-shape"
-        style={{ background: `linear-gradient(145deg, color-mix(in srgb, ${color} 78%, var(--av-sys-color-surface-default)), ${color})` }}
-      />
+      {/*
+        The raw fill, flat. This used to be a 145deg gradient whose far stop
+        mixed 22% of `surface-default` into the fill, and that put a second
+        colour under the symbol that `PALETTE_INK` had never been computed
+        against. Because the mix target follows the appearance while the fill
+        and its ink deliberately do not, it always moved contrast the losing
+        way — lightening under white ink in the light theme, darkening under
+        black ink in the dark one — and cost up to 19 Lc, dropping five fills
+        under the readable floor at that stop.
+
+        Painting the raw token is what makes the floor in `PALETTE_INK`
+        provable rather than approximate: there is exactly one colour behind
+        the symbol, and it is the one the table was computed from.
+        `AutomationGlyph` already worked this way. The alternative was to keep
+        the sheen and shade away from each fill's own ink instead, which also
+        cleared the floor; the flat fill won because a guarantee that needs no
+        second surface to reason about is worth more here than the depth.
+      */}
+      <span className="workstream-glyph-shape" style={{ background: color }} />
       <Icon className="workstream-glyph-icon" size={Math.max(12, Math.round(size * 0.5))} strokeWidth={1.9} />
     </span>
   );
