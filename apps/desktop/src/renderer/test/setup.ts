@@ -48,3 +48,13 @@ class ResizeObserverStub implements ResizeObserver {
   disconnect(): void {}
 }
 globalThis.ResizeObserver ??= ResizeObserverStub;
+
+/**
+ * jsdom implements no `scrollIntoView` either, and a component that keeps a
+ * highlighted row under the reader calls it. Left undefined, the call throws
+ * rather than doing nothing, so a test covering that component fails on the
+ * environment instead of on the behaviour. Assigned here for the same reason as
+ * the observer above; jsdom lays nothing out, so a test asserts that the call
+ * was made, never where it landed.
+ */
+Element.prototype.scrollIntoView ??= function scrollIntoView(): void {};

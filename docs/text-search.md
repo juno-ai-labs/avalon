@@ -69,18 +69,24 @@ by semantic chunk boundaries. Semantic queries search only chunk records.
 
 ### Interactive response latency
 
-The desktop requests seven candidates initially: the 360px results list minus
+The desktop requests seven candidates initially: the 360px results body minus
 16px padding shows six complete 52px two-line rows and part of the seventh,
-with 2px gaps. Additional pages load on their own: a sentinel at the end of the
-list is observed with `IntersectionObserver`, so the next page is requested as
-the end scrolls into view, again whenever a page lands without filling the
-viewport, and when the keyboard highlight reaches the last row. Each request
-consumes one candidate page. An empty page with a continuation keeps scanning
-until a page has a row or the cursor ends. Existing rows stay visible while
-fetching another page, with a "Loading more" line below the list; a transient
-continuation failure stops the scan and offers a retry button, so a broken
-cursor cannot loop, while a failed reauthorization hides the rows. Query and
-category changes discard old pages.
+with 2px gaps. That body is the modal's only variable region and its height is
+fixed, so the modal is the same size in every state: the list and the pagination
+footer divide the 360px between them, and the footer takes its room from the
+list rather than from the box. Additional pages load on their own: a sentinel at
+the end of the list is observed with `IntersectionObserver`, so the next page
+is requested as the end scrolls into view, again whenever a page lands without
+filling the viewport, and when the keyboard highlight reaches the last row.
+Each request consumes one candidate page. An empty page with a continuation
+keeps scanning until a page has a row or the cursor ends. Existing rows stay
+visible while fetching another page, with a "Loading more" line pinned under the
+list; a transient continuation failure stops the scan and offers a retry button
+in that same place, so a broken cursor cannot loop, while a failed
+reauthorization hides the rows. Either footer takes its room from the list, so
+the highlighted row is scrolled back into view whenever one opens or closes.
+Query and category changes discard old pages. A row shows its excerpt and source
+only; ⌘1-9 still opens the nth row, unadvertised.
 
 Requests opt into pagination with `pageSize` and continue with `nextCursor`, the
 last consumed Turbopuffer id boundary (stable hash order, not relevance or
@@ -546,6 +552,46 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-10 — Hold the search modal at one size, and unlabel row shortcuts
+
+The modal grew and shrank under the reader: the "Loading more" line and the
+failed-continuation retry button were flow children of the modal, so arriving at
+the end of a list resized the box, moved its centred position and its shadow,
+and shifted the retry button while the pointer was travelling toward it. The
+list and that footer now divide one fixed 360px body, the list taking whatever
+the footer does not, so the box is the same height in every state: the opening
+prompt, loading, no results, a failure and a retry. Making the footer an
+overlay over the last rows was rejected: it would cover the retry button's own
+row and put a control under scrolling content. Sizing the modal to its contents
+instead, so it grows with the footer, is the behaviour being removed. The footer
+carries a top border because the list now scrolls under it and clipped text
+against status text read as a glitch. Two tests hold the shape between them,
+because neither can hold it alone: `app.css.node.test.ts` asserts the division,
+since jsdom lays nothing out and no component test can tell a footer that
+divides a fixed body from one that extends the modal, and the component test
+asserts the containment the division depends on, which is the half that does
+live in the DOM.
+
+Taking the room out of the list moved a second problem rather than removing it.
+The row the reader is on is the last one, since reaching it is what asks for the
+next page, and it was left 12 of its 52px visible under the loading line and
+none at all under the retry button (measured in the running client). The
+highlight is therefore re-anchored whenever either footer opens or closes, not
+only when it moves. That is also the honest difference from the rejected
+overlay, which was turned down for covering the rows beneath it: this clips them
+instead, and only the re-anchoring makes that the smaller cost rather than an
+equal one.
+
+Result rows also lost the ⌘1-9 badges on their right edge, as asked: the row is
+now its excerpt and its source label. The key handler stays, so the shortcut
+still works for anyone who knew it, but nothing advertises it. The next change
+here should either restore an affordance or drop the handler rather than leave a
+third state.
+
+A fixed body is the reusable half of this: any modal whose contents change state
+under the reader can hold its own size the same way, by giving the variable
+region one height and letting its children divide it.
 
 ### 2026-09-10 — Continue pages by scroll position instead of a button
 
