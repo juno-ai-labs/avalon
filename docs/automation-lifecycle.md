@@ -127,11 +127,18 @@ captions and shrink to the work-stream rows' 54px square with 9px padding and
 The tiles change shape over the sidebar's own collapse motion, so they arrive
 with the edge rather than a frame ahead of it. Enabled means lifecycle
 `active`, not a run currently in progress and not the stored `loadable` capability.
-Draft, paused, and workstream-owned Sidekicks are excluded. When nothing
-qualifies the strip holds one **New Sidekick** tile instead, which opens the
-library window on `/sidekicks/new`; it goes as soon as one Sidekick qualifies,
-and the strip is absent only while the workspace answer that carries the
-Sidekicks has not arrived. Each tile reuses the rounded hexagon, stable identity
+Draft, paused, and workstream-owned Sidekicks are excluded. A workspace that has
+**no Sidekick of any kind** gets one **New Sidekick** tile in the strip instead,
+which opens the library window on `/sidekicks/new`. That is a stricter test than
+"nothing qualifies for the strip", deliberately: `/sidekicks/new` creates a draft
+as it opens, so a tile keyed on the strip being empty would still be on screen
+afterwards and would create another draft on every press, and it would also tell
+somebody whose Sidekicks are all paused that they have none. A workspace with
+only drafts, paused, or workstream-owned Sidekicks therefore sees no strip at
+all, as it did before the tile existed; those are reached from the library. The
+strip is likewise absent while the workspace answer carrying the Sidekicks has
+not arrived, which the list itself reports by being `undefined` rather than
+empty. Each tile reuses the rounded hexagon, stable identity
 color, centered symbol, and square lifecycle marker introduced for automation
 shortcuts; the New Sidekick tile is the same tile and the same hexagon, outlined
 and dashed with a plus in it rather than filled, and carries no lifecycle
@@ -572,12 +579,13 @@ production inspection paths.
 
 ### 2026-09-10 — The empty strip makes the first Sidekick
 
-**What changed:** With no Sidekick enabled, the sidebar's strip holds a single
+**What changed:** With no Sidekick of any kind, the sidebar's strip holds a single
 **New Sidekick** tile — the same tile shape, with the same hexagon drawn as a
 dashed outline around a plus — instead of being absent. It opens the singleton
-Sidekicks window on the composer. The tile goes once one Sidekick qualifies, and
-the strip stays absent while the workspace socket answer that carries the
-Sidekicks is still in flight, because an unloaded list is not an empty
+Sidekicks window on the composer. The tile goes once the workspace has any Sidekick — a
+draft counts — and the strip stays absent while the workspace socket answer that
+carries the Sidekicks is still in flight, which `automations` now reports by
+being `undefined` rather than empty, because an unloaded list is not an empty
 workspace. `AutomationGlyph`'s hexagon is now a `HexagonGlyph` primitive taking
 a fill, an ink, and a symbol, and the strip's tile shape is a
 `SidekickStripTile` both tiles render through. `openSidekicks` takes a target
@@ -601,7 +609,22 @@ step with rules it did not share. Main parses a window target rather than an id
 because `new` is not one and loosening `IdSchema` to admit it would let any
 string reach the window's hash.
 
-**Considered and rejected:** A filled hexagon in a palette colour, which reads
+Both the strictness of that test and the removal of the entrypoint mark below
+came from review on the pull request rather than from the first cut, which keyed
+the tile on the strip being empty and would have created a draft per press.
+
+**Considered and rejected:** Keying the tile on no *active* Sidekick, which is
+the strip's own predicate and was the first cut: it reads a paused workspace as
+an empty one and, because `/sidekicks/new` creates a draft on arrival, leaves
+the tile up in precisely the state where pressing it again is cheap. Making
+`/sidekicks/new` idempotent for an untouched draft, or routing the tile to an
+existing draft instead of the composer, either of which would fix the
+re-entrancy itself rather than removing its amplifier — both are changes to the
+creation route that the library's button shares, and belong with it rather than
+with a sidebar tile. Showing a Sidekicks affordance that opens the library when
+paused or draft Sidekicks exist, which is a different feature — a way to reach
+non-active Sidekicks from the sidebar — and not the discovery problem this
+solves. A filled hexagon in a palette colour, which reads
 as an existing Sidekick — the dashed outline is the same thing the draft
 lifecycle dot says, and at the rail's 36px the outline is what distinguishes it.
 Keeping the tile alongside the shortcuts once Sidekicks exist, which would put a
@@ -624,14 +647,19 @@ the pull request; it predates this change on the Sidekick tile, and came out of
 both rather than being left inconsistent in a strip whose two tiles are
 otherwise the same tile.
 
-**Consequences:** The strip is no longer proof that a workspace has a Sidekick,
-so a test or a rule that read its presence that way has to read its tiles. A
-`loading` sidebar shows no strip at all; that prop is the work-stream list's
-wait, and it is the right signal only because the socket answers the
-subscription with the work streams, the automations, and the notes together — if
-the Sidekicks ever arrive separately this needs their own wait instead.
-`openSidekicks` now refuses a target that is neither a UUID nor `new` with
-`Invalid Sidekicks window target` rather than a Zod parse error.
+**Consequences:** The strip is no longer proof that a workspace has an active
+Sidekick, and the create tile is proof that it has none at all — a rule that
+read either the old way has to read the tiles. `Sidebar`'s `automations` prop is
+now `AutomationSummary[] | undefined`, where `undefined` is the wait; a caller
+that collapses that with `?? []` puts the tile on a cold sidebar, which is why
+the distinction lives in the prop rather than in a separate flag a caller can
+forget. `openSidekicks` now refuses a target that is neither a UUID nor `new`
+with `Invalid Sidekicks window target` rather than a Zod parse error.
+
+`/sidekicks/new` itself is still not idempotent: it creates a draft per arrival,
+and the library's own **New Sidekick** button does the same. Removing the
+persistent sidebar entry point once a draft exists takes away the cheap way to
+accumulate orphans, not the underlying re-entrancy.
 
 ### 2026-09-10 — The rail keeps the Sidekick strip horizontal, at the bottom
 

@@ -1293,7 +1293,7 @@ describe('Sidebar work-stream markers', () => {
   });
 
   it.each([false, true])('offers making the first Sidekick where the shortcuts would be (compact=%s)', (compact) => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[{ ...automation, status: 'paused' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
     // The same tile a Sidekick gets, so it sheds its caption and shrinks to the
     // rail's square with them rather than keeping a shape of its own.
@@ -1315,8 +1315,28 @@ describe('Sidebar work-stream markers', () => {
   });
 
   it('waits for the workspace answer before saying a workspace has no Sidekicks', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[]} loading onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    // The array itself carries the wait, so no caller has to remember a flag.
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={undefined} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
+  });
+
+  // `/sidekicks/new` creates a draft as it opens, and a draft is not active. A
+  // tile that keyed on "no active Sidekick" would therefore still be sitting
+  // there afterwards, and every further press would create another draft and
+  // abandon the one before it.
+  it.each([
+    ['a draft', 'draft'],
+    ['a paused Sidekick', 'paused'],
+  ] as const)('offers nothing rather than a second draft once the workspace has %s', (_label, status) => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, status }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    expect(screen.queryByRole('button', { name: 'New Sidekick' })).toBeNull();
+    // And no empty strip left behind where the tile used to be.
+    expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
+  });
+
+  it('leaves a work-stream-owned Sidekick to the library rather than offering to make a first one', () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, scope: 'workstream' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    expect(screen.queryByRole('button', { name: 'New Sidekick' })).toBeNull();
   });
 
   it('manages Sidekicks through the library instead of listing them in the sidebar', () => {

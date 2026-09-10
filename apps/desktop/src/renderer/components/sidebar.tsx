@@ -80,7 +80,17 @@ interface SidebarProps {
   /** The responsive or manually selected GrokBot icon rail. */
   compact?: boolean;
   workspace: Workspace;
-  automations: AutomationSummary[];
+  /**
+   * Every Sidekick the person can see, or `undefined` while the workspace
+   * answer that carries them has not arrived.
+   *
+   * The distinction is the prop's to carry rather than a caller's to remember:
+   * an empty array means an empty workspace, and that is what the strip offers
+   * to make the first Sidekick from. Collapsing the two at the call site with
+   * `?? []` is what made a separate loading flag necessary, and a flag a caller
+   * can forget is a flag that reads "empty workspace" on a cold sidebar.
+   */
+  automations: AutomationSummary[] | undefined;
   notes?: NoteSummary[];
   projects?: ProjectSummary[];
   inactiveProjects?: ProjectSummary[];
@@ -1165,7 +1175,11 @@ export function Sidebar({
   const batchPreviewGeneration = useRef(0);
   const visibleWorkstreams = workstreams;
   const visibleNotes = useMemo(() => conversationOnly ? [] : notes, [conversationOnly, notes]);
-  const standaloneSidekicks = useMemo(() => automations.filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'active'), [automations]);
+  const standaloneSidekicks = useMemo(() => (automations ?? []).filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'active'), [automations]);
+  // Never had a Sidekick, rather than none running right now. A draft, a paused
+  // one, and a work-stream's own all mean this person has met the concept, and
+  // all three are reached from the library rather than from here.
+  const workspaceHasNoSidekicks = automations?.length === 0;
   // A pinned work stream leaves the recent list entirely rather than appearing
   // twice: the section it moves to is the one whose order the reader controls,
   // and a row in both places would take its order from whichever they saw last.
@@ -1715,13 +1729,19 @@ export function Sidebar({
   useListMotion(scrollRef, compact, layoutSettling);
   useListMotion(commandRef, compact, layoutSettling);
 
-  // The strip holds the new-Sidekick tile while a workspace has none, so the
-  // place Sidekicks are reached from is also where the first one is made. It
-  // waits for `loading` rather than reading an empty list as an empty
-  // workspace: the Sidekicks arrive in the same socket answer the work streams
-  // do, so an unloaded list would show the action for a moment and then replace
-  // it with the tiles it claimed were absent.
-  const sidekickShortcuts = (standaloneSidekicks.length > 0 || loading !== true) && (
+  // Shortcuts when there are any, the offer to make the first Sidekick when this
+  // workspace has never had one, and nothing at all otherwise — which is what a
+  // workspace whose Sidekicks are all paused or still drafts sees, exactly as it
+  // did before the tile existed.
+  //
+  // The offer is keyed on having no Sidekick rather than no *active* one for two
+  // reasons. It would otherwise tell somebody with three paused Sidekicks that
+  // they have none, and invite a fourth instead of pointing at the three they
+  // paused on purpose. And because `/sidekicks/new` creates a draft on arrival,
+  // a tile that stayed up while that draft was not yet active would create
+  // another on every press: the strip would sit there in exactly the state that
+  // makes re-firing it cheap, and each press abandons the draft before it.
+  const sidekickShortcuts = (standaloneSidekicks.length > 0 || workspaceHasNoSidekicks) && (
     <section className="sidebar-automation-strip" aria-label="Sidekick shortcuts" onClick={() => setSidebarOpen(false)}>
       {standaloneSidekicks.length > 0
         ? standaloneSidekicks.map((sidekick) => <SidekickTile key={sidekick.id} sidekick={sidekick} />)
