@@ -682,10 +682,10 @@ the status badge. Both badges have a surface-colored cutout and stay attached
 to the glyph in expanded and collapsed navigation. Check public and private
 rows, selected and hovered rows, and light and dark appearances.
 
-In collapsed navigation, Search and New chat are the first two items inside
-the same vertical scroller as work streams and Sidekicks. Scroll a long list
-and confirm both move out of view while the account and collapse controls
-stay fixed at the bottom.
+In collapsed navigation, Search and New chat sit in the command bar above
+the work-stream scroller. Scroll a long list and confirm both stay put at the
+top, that the Sidekick strip stays put below the list, and that the account
+and collapse controls stay fixed at the bottom.
 
 Hover a public stream icon and then move onto its globe in both appearances.
 The globe stays visible and only the stream preview opens; the public badge

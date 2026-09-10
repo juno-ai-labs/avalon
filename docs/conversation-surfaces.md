@@ -311,6 +311,8 @@ here uses padding or a transform, not `justify-content`. The avatar size rule
 restates the presence border's own 180ms fade, because a `transition` on the
 same element replaces it; a change to that fade is made in both places.
 
+Shipped in #648.
+
 ### 2026-09-10 — The navigation's contents travel with its edge, and search stays at the top
 
 **What changed:** Everything inside the global navigation that changes shape
@@ -359,10 +361,12 @@ under everything but makes each rule an equation nobody can read a width off.
 travel and saved the numeric restatements, but changes what every keyword
 inside the sidebar means to a transition; it is used on the strip alone, where
 a lone tile is sized to its caption. `@starting-style` for the rows' hidden
-copy, which would also have faded in the title of every row that mounts.
-Suppressing the contents' transitions under `prefers-reduced-motion`, which
-would have brought the cut back for exactly those readers, since the box's
-width still travels for them.
+copy, which would also have faded in the title of every row that mounts. A
+reduced-motion override of its own: the stylesheet's sitewide rule already
+brings every transition to 0.001ms for that reader, the box's width included,
+so the contents snap with the edge there as they always did, and the channel
+is kept in the reduced-motion rule only so its events still bracket the
+change.
 
 **Consequences:** A rule that changes a shape between the two layouts declares
 its transition on `--sidebar-layout-motion`, or that shape cuts; a shape that
@@ -376,6 +380,8 @@ margin, since the bar's bottom padding is the group gap the collapsed margins
 used to provide. A stand-in overhangs the command bar into the list for 160ms on
 expand, uncut, because the bar does not clip. React fills in `propertyName`
 for `transitionend` alone, so the component reads it from the native event.
+
+Shipped in #648.
 
 ### 2026-09-10 — One glyph for both New substream controls
 
