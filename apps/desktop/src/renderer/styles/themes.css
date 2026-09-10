@@ -274,10 +274,14 @@
   /* The height of a control. */
   --av-sys-size-control-height: 36px;
 
-  /* Between one turn and the next in the feed. One unit: the action row a turn
-   * reveals on hover is laid out under it always, and it is that row, not this
-   * gap, that keeps the next turn off the last. */
+  /* Between one turn and the next in the feed: the space under the action row
+   * a turn lays out beneath itself. */
   --av-sys-space-stack-gap: var(--av-ref-space-unit);
+
+  /* Between a row and the row before it when a stretch of transcript this
+   * client has not loaded lies between them. Nothing else marks the seam, so
+   * the distance is what says the two rows are not adjacent. */
+  --av-sys-space-seam-gap: calc(var(--av-ref-space-unit) * 8);
 
   /* Between rows in a list. */
   --av-sys-space-row-gap: var(--av-ref-space-unit);
@@ -654,6 +658,8 @@
   --av-sys-size-control-height: 36px;
 
   --av-sys-space-stack-gap: var(--av-ref-space-unit);
+
+  --av-sys-space-seam-gap: calc(var(--av-ref-space-unit) * 8);
 
   --av-sys-space-row-gap: var(--av-ref-space-unit);
 
