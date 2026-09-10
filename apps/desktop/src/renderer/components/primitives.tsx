@@ -66,19 +66,50 @@ export function ConnectorMark({ className, mark }: {
  * Slot string-merges `className`, so an element whose class is a callback (a
  * `NavLink`) needs a plain wrapper to be the trigger instead.
  */
-export function Tip({ align, children, delayDuration = 450, label, side = 'bottom', sideOffset = 6 }: {
+export function Tip({
+  align,
+  children,
+  className,
+  delayDuration = 450,
+  disableHoverableContent,
+  label,
+  onOpenChange,
+  open,
+  side = 'bottom',
+  sideOffset = 6,
+}: {
   align?: 'start' | 'center' | 'end';
   children: React.ReactNode;
+  /** A modifier beside `.tooltip`, for a shape the base rule does not cover. */
+  className?: string;
   delayDuration?: number;
+  /**
+   * Whether the pointer may travel into the tooltip and keep it open. Off for a
+   * tooltip hanging off something small that the pointer is aiming at rather
+   * than reading.
+   */
+  disableHoverableContent?: boolean;
   label: React.ReactNode;
+  /**
+   * Pass both to take the answer over: Radix still decides *when* to open, and
+   * reports it here, but the caller renders `open`. Leave both out and it stays
+   * uncontrolled, which is what almost every caller wants.
+   */
+  onOpenChange?: (open: boolean) => void;
+  open?: boolean;
   side?: 'top' | 'right' | 'bottom' | 'left';
   sideOffset?: number;
 }): React.JSX.Element {
   return (
-    <Tooltip.Root delayDuration={delayDuration}>
+    <Tooltip.Root
+      delayDuration={delayDuration}
+      disableHoverableContent={disableHoverableContent}
+      onOpenChange={onOpenChange}
+      open={open}
+    >
       <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
       <Tooltip.Portal>
-        <Tooltip.Content align={align} className="tooltip" side={side} sideOffset={sideOffset}>
+        <Tooltip.Content align={align} className={clsx('tooltip', className)} side={side} sideOffset={sideOffset}>
           {label}
           <Tooltip.Arrow className="tooltip-arrow" />
         </Tooltip.Content>
@@ -144,7 +175,8 @@ interface DragHintProps {
 }
 
 /**
- * The hint a drag handle shows on hover. A grip is the one control here that
+ * The hint a drag handle shows on hover: a `Tip` with two lines and a veto.
+ * A grip is the one control here that
  * carries no words of its own, so nothing on screen said that the dividers
  * could be dragged at all, or that double-clicking one collapses the sidebar
  * beside it. That shortcut has been in the code the whole time and was
@@ -167,21 +199,25 @@ export function DragHint({ action, children, shortcut, side = 'right', suppresse
   if (open && suppressed) setOpen(false);
 
   return (
-    // `disableHoverableContent`, alone among this app's tooltips: the others
-    // hang off controls with room around them, while this one hangs off a 12px
-    // divider with the transcript immediately beside it. Letting the pointer
-    // travel into the hint would keep it open over the thing the handle is
-    // there to reveal, and a two-line hint has nothing in it to travel for.
-    <Tooltip.Root delayDuration={450} disableHoverableContent onOpenChange={setOpen} open={open}>
-      <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
-      <Tooltip.Portal>
-        <Tooltip.Content className="tooltip tooltip-hint" side={side} sideOffset={8}>
-          <span>{action}</span>
-          {shortcut !== undefined && <small>{shortcut}</small>}
-          <Tooltip.Arrow className="tooltip-arrow" />
-        </Tooltip.Content>
-      </Tooltip.Portal>
-    </Tooltip.Root>
+    // `disableHoverableContent`, where the rest of the app leaves it on: those
+    // tooltips hang off controls with room around them, while this one hangs
+    // off a 12px divider with the transcript immediately beside it. Letting the
+    // pointer travel into the hint would hold it open over the thing the handle
+    // is there to reveal, and a two-line hint has nothing in it to travel for.
+    // `sideOffset` is 8 rather than `Tip`'s 6 because the grip pill overhangs
+    // its pointer target by 2px on each side, so 8 leaves the same air.
+    <Tip
+      className="tooltip-hint"
+      disableHoverableContent
+      label={<>
+        <span>{action}</span>
+        {shortcut !== undefined && <small>{shortcut}</small>}
+      </>}
+      onOpenChange={setOpen}
+      open={open}
+      side={side}
+      sideOffset={8}
+    >{children}</Tip>
   );
 }
 
