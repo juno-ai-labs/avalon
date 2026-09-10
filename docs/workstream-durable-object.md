@@ -1678,14 +1678,13 @@ directory write at all.
 
 ## Changelog
 
-### 2026-09-10 — The public globe answers for itself, through one tooltip primitive
+### 2026-09-10 — The public globe answers for itself
 
 **What changed:** The sidebar's public badge carries a tip again — `Public —
 everyone in the workspace can see this work stream.`, shaped like the status
-dot's on the same glyph. A `Tip` primitive in `primitives.tsx` now states
-Radix's Root/Trigger/Portal/Content/Arrow subtree once, and the globe, the
-row's timer, `StatusDot`, `IconButton`, `SocketStatusIndicator` and each face
-in an `AvatarStack` compose it.
+dot's on the same glyph. The globe and the row's timer badge now compose the
+`Tip` primitive rather than hand-rolling Radix's subtree; both opt out of
+hoverable content, and `Tip` gained the `collisionPadding` the globe needed.
 
 **Why:** the badge is 17px and wordless, and it is the one thing on a row whose
 meaning cannot be worked out by looking; an `aria-label` answers a screen reader
@@ -1694,10 +1693,16 @@ with the row's hover preview — holds only for a tip that takes the preview's
 place, and this one does not. Radix asks every other open tooltip to close when
 one opens, but the preview drives its own `open` and ignores the request, and
 the two never share space: the tip is a line above a badge at the sidebar's left
-edge, the preview a card off the row's right. The primitive came with it because
-the timer badge beside the globe was already the fourth hand-written copy of the
-same five tags, which is how one of them ends up with a different delay or no
-arrow.
+edge, the preview a card off the row's right.
+
+This branch grew its own `Tip` for the same reason two other branches were
+landing one on `main` — the timer badge beside the globe was the fourth
+hand-written copy of the same five tags. `main`'s reached the trunk first
+(#675) and then gained `className` and `disableHoverableContent` (#674), so
+the rebase kept all of that and deleted this branch's half of it. What
+survived is `collisionPadding` and the two call sites that ask for it and for
+hoverable content off — both found by looking at the thing in a window rather
+than by reading it.
 
 **Considered and rejected:** closing the preview while the pointer is on the
 badge. One popper at a time, but a pointer crossing the badge on its way into
@@ -1732,12 +1737,14 @@ that is testable. The preview is also the only keyboard route to the badge's
 meaning, so a change that drops its scope line takes the explanation away from
 anyone not using a pointer — pinned by its own test.
 
-`Tip` turns Radix's hoverable content off for the same reason it sets a
-collision padding: a tip holds no link and no selectable text, so keeping it
-open while the pointer is inside the popper only leaves a rectangle that
-outlives the hover. Measured here at 27px tall, sitting 6px above a 54px
-sidebar row — which in a stacked list is the bottom half of the row above,
-unhoverable until the pointer leaves and returns.
+Both badges pass `disableHoverableContent`, which is what a tooltip hanging off
+something the pointer aims at rather than reads wants: Radix otherwise keeps the
+popper open while the pointer is inside it, and a tip holds no link and no
+selectable text, so that only leaves a rectangle outliving the hover. Measured
+here at 27px tall, sitting 6px above a 54px sidebar row — which in a stacked
+list is the bottom half of the row above, unhoverable until the pointer leaves
+and returns. `collisionPadding` is the same kind of finding: at Radix's zero the
+globe's tip sat flush against the window's left edge and read as clipped.
 
 ### 2026-09-09 — Derived inputs at the settled step, and a ledger that rides the compaction commit
 
