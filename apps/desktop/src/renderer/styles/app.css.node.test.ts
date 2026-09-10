@@ -876,13 +876,17 @@ describe('message header meta typography', () => {
    * article's own edge — a hanging indent over an empty gutter. Held on the
    * value rather than on one spelling, for the same reason as the human rule
    * above: `padding-inline-start` is the file's usual spelling and would slip
-   * past a check that only banned `padding-left`.
+   * past a check that only banned `padding-left`. `padding-inline` is in the
+   * pattern for the same reason, and is the easiest of the three to reach for
+   * by accident: `padding-inline: 18px 0` reads as a horizontal pair rather
+   * than as a leading inset, and sets one. A trailing inset is deliberately
+   * still allowed, since `padding-inline-end` is what the human header uses.
    */
   it('starts the assistant identity line on the same vertical as its prose', () => {
     expect(rule('.workstream-screen .agent-message > header'))
-      .not.toMatch(/padding(-left|-inline-start)?:/u);
+      .not.toMatch(/padding(?:-left|-inline(?:-start)?)?:/u);
     expect(rule(':is(.workstream-screen, .automation-chat-surface) .agent-message > header'))
-      .not.toMatch(/padding(-left|-inline-start)?:/u);
+      .not.toMatch(/padding(?:-left|-inline(?:-start)?)?:/u);
   });
 });
 
