@@ -340,7 +340,13 @@ export class TextSearchIndex {
     const authorized = sources.filter((source) => source.scopeIds === null || source.scopeIds.length > 0);
     if (authorized.length === 0) return { results: [], nextCursor: null };
     const filters: Filter = ["And", [["deleted", "Eq", false],
-      ["record_type", "Eq", options.mode === "semantic" ? "chunk" : "document"], ["Or", authorized.map((source): Filter => ["And", [
+      ["record_type", "Eq", options.mode === "semantic" ? "chunk" : "document"],
+      // Member search renders from the row, and an archived row or one written
+      // before the display attributes existed is never rendered. Excluding them
+      // here keeps them from consuming the candidate page; a null `archived`
+      // does not match `Eq false`, so pre-rewrite rows are excluded too.
+      ...(options.mode === "substring" ? [["archived", "Eq", false] as Filter] : []),
+      ["Or", authorized.map((source): Filter => ["And", [
       ["source", "Eq", source.source],
       ...(source.scopeIds === null ? [] : [["scope_id", "In", [...source.scopeIds]] as Filter]),
     ]])]]];
@@ -368,6 +374,10 @@ export class TextSearchIndex {
     }).catch((error: unknown) => {
       // A namespace does not exist until its first write.
       if (error instanceof Error && "status" in error && error.status === 404) return { rows: [] };
+      // A namespace with no write since the display attributes shipped has no
+      // `archived` column, and none of its rows carry a display to render.
+      if (options.mode === "substring" && error instanceof Error && "status" in error && error.status === 400
+        && error.message.includes('attribute "archived" not found in schema')) return { rows: [] };
       throw new Error("search_index_query_failed");
     });
     options.signal?.throwIfAborted();
