@@ -416,23 +416,22 @@ function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
  *
  * Shared by the Sidekicks and by the new-Sidekick action below, so the action
  * is the same tile that sheds its caption and shrinks to the rail's 54px square
- * with them rather than a second shape to keep in step with this one. A
- * lifecycle marker is the part that is not shared: an action has no lifecycle,
- * and `status` is absent rather than neutral for it.
+ * with them rather than a second shape to keep in step with this one.
+ *
+ * The tile knows nothing about lifecycle. A Sidekick's state reaches the screen
+ * as the marker cut into `glyph`, and reaches assistive technology inside
+ * `label`; the action tile has neither, and needs no third way to say so. This
+ * used to carry an `active` flag as well, which rendered a visually hidden
+ * "Active" — dead markup, because `aria-label` on the button replaces its
+ * contents in the accessible name, and the label already said it.
  */
-function SidekickStripTile({ active = false, glyph, label, name, onClick, title }: {
-  /**
-   * Says the tile has a lifecycle, for the readers the caption does not reach.
-   * A boolean rather than the state, because `active` is the only lifecycle the
-   * strip renders — the others are excluded from it — and an action tile has no
-   * lifecycle at all. The marker itself is drawn inside `glyph` rather than
-   * here: it is cut out of the hexagon's own fill, which only the hexagon can
-   * do, and passing it separately would leave the two free to disagree about
-   * whether this Sidekick is running.
-   */
-  active?: boolean;
+function SidekickStripTile({ glyph, label, name, onClick, title }: {
   glyph: React.ReactNode;
-  /** What the tile is called to a screen reader, which the caption cannot be: it is truncated. */
+  /**
+   * What the tile is called to a screen reader, which the caption cannot be: it
+   * is truncated. The whole name, state included — this is the accessible name,
+   * not an addition to one, so anything the contents say is not read.
+   */
   label: string;
   name: string;
   onClick: () => void;
@@ -449,7 +448,6 @@ function SidekickStripTile({ active = false, glyph, label, name, onClick, title 
       >
         <span className="automation-tile-glyph" aria-hidden="true">{glyph}</span>
         <span className="automation-tile-name">{name}</span>
-        {active && <span className="sr-only">Active</span>}
       </button>
     </div>
   );
@@ -459,7 +457,6 @@ function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.
   const scopeDescription = sidekick.scope === 'workspace' ? ' · Workspace' : '';
   return (
     <SidekickStripTile
-      active
       glyph={<AutomationGlyph {...(sidekick.appearance ? { appearance: sidekick.appearance } : {})} id={sidekick.id} marker={SIDEKICK_RUNNING_MARKER} />}
       label={`${sidekick.name}, Active${scopeDescription}`}
       name={sidekick.name}
