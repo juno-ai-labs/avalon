@@ -107,9 +107,9 @@ describe('sidebar layout motion', () => {
     // already running keep their duration unless they lose their property.
     expect(rule('.sidebar.is-resizing *,\n.workstream-context-sidebar.is-resizing *')).toContain('transition-property: none !important;');
     for (const selector of [
-      '.grokbot-shell .sidebar .sidebar-list > .sidebar-context-target',
-      '.grokbot-shell .sidebar .workstream-row',
-      '.grokbot-shell .sidebar .sidebar-group-heading',
+      '.app-shell .sidebar .sidebar-list > .sidebar-context-target',
+      '.app-shell .sidebar .workstream-row',
+      '.app-shell .sidebar .sidebar-group-heading',
       '.sidebar-commandbar .sidebar-search',
       '.sidebar-automation-strip',
     ]) {
@@ -143,11 +143,11 @@ describe('sidebar layout motion', () => {
   // `visibility` on the same interval is what takes them out of the
   // accessibility tree when the fade ends.
   it('keeps the rail\'s hidden copy in layout and takes it out of the tree by visibility', () => {
-    const title = rule('.grokbot-shell .sidebar.is-compact .workstream-row .sidebar-row-main');
+    const title = rule('.app-shell .sidebar.is-compact .workstream-row .sidebar-row-main');
     expect(title).toContain('opacity: 0;');
     expect(title).toContain('visibility: hidden;');
     expect(title).not.toContain('display: none');
-    expect(rule('.grokbot-shell .sidebar .workstream-row .sidebar-row-main')).toContain('visibility var(--sidebar-layout-motion)');
+    expect(rule('.app-shell .sidebar .workstream-row .sidebar-row-main')).toContain('visibility var(--sidebar-layout-motion)');
   });
 
   // The work-stream sidebar restates the interval and travels the same way,
@@ -181,9 +181,9 @@ describe('sidebar layout motion', () => {
   // the scroll box was the earlier answer, and it took the strip away from the
   // bottom where the full sidebar keeps it.
   it('keeps the Sidekick strip horizontal and below the list in the rail', () => {
-    expect(rule('.grokbot-shell .sidebar.is-compact .sidebar-automation-strip')).not.toContain('flex-direction');
+    expect(rule('.app-shell .sidebar.is-compact .sidebar-automation-strip')).not.toContain('flex-direction');
     expect(rule('.sidebar-automation-strip')).toContain('overflow-x: auto;');
-    expect(rule('.grokbot-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target')).toContain('flex-basis: 54px;');
+    expect(rule('.app-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target')).toContain('flex-basis: 54px;');
   });
 });
 
@@ -304,7 +304,7 @@ describe('GrokBot sidebar header geometry', () => {
     expect(commandbar).toContain('grid-template-rows: 32px 0px;');
     // The list motion draws a removed row's stand-in in this box.
     expect(commandbar).toContain('position: relative;');
-    expect(rule('.grokbot-shell .sidebar.is-compact .sidebar-commandbar')).toContain('grid-template-rows: 54px 54px;');
+    expect(rule('.app-shell .sidebar.is-compact .sidebar-commandbar')).toContain('grid-template-rows: 54px 54px;');
     expect(create).toContain('background: transparent;');
     expect(search).toContain('border-radius: 8px;');
     expect(search).toContain('height: 32px;');
@@ -338,7 +338,7 @@ describe('Grok Bot mention-chip geometry', () => {
   it('uses the inserted-chip metrics and the user-turn ink wash', () => {
     const chip = rule('.mention-chip');
     const userChip = rule(
-      ':is(.workstream-screen, .automation-chat-surface) .human-message .mention-chip',
+      '.human-message .mention-chip',
     );
 
     expect(chip).not.toBeNull();
@@ -656,6 +656,68 @@ describe('global reduced-motion kill switch', () => {
  * rather than check it, and deleting it would leave every test green while the
  * app laid out a digest brief in full with a decorative "more" beside it.
  */
+/**
+ * The feed's spacing is one scale. A literal that slips back into a feed rule
+ * renders correctly and stays invisible until somebody moves `ref.space.unit`
+ * and one gap does not move with it, which is how the feed accumulated every
+ * integer from 1px to 18px before the scale existed. Values under a step are
+ * allowed: they are optical nudges inside inline controls, not gaps.
+ */
+describe('feed spacing is a step of the scale', () => {
+  const FEED = /message-block|transcript-event|human-message|agent-message|tool-|work-accordion|agent-work-timing|elicitation|system-message|markdown|attachment|citation|transcript-column|unread-divider|virtual-message|activity-presence|run-failure|run-stopped|assistant-turn|message-delivery-pill|message-attachments|plugin-/u;
+  // Not the feed: the lightbox over it, the composer under it, the automation
+  // overview and the document surfaces that host `.markdown-body` too.
+  const NOT_FEED = /lightbox|gallery|composer|pending-attachment|automation-|note-|meeting-|sidekick|settings|inspector|onboarding|new-chat-screen|message-delivery-controls/u;
+  // Values that are not gaps, each with the reason it stays literal.
+  const EXEMPT: Record<string, string> = {
+    '.transcript-column': 'the 150px is clearance under an overlaid composer, a height rather than a gap',
+    '.system-message-dot': 'centres a 4px dot on the cap height of the line beside it',
+    // Inline chips: their padding sizes the chip to the line it sits in.
+    '.citation-chip': 'inline chip',
+    '.citation-identity-card': 'inline identity chip',
+    '.markdown-body .citation-connector-status': 'inline status pill on a connector card',
+    '.app-shell .elicitation-option > kbd': 'the key cap beside an option',
+  };
+
+  /**
+   * The narrow breakpoint has to out-specify the work stream's own column rule,
+   * which is two classes deep; a shared `.transcript-column` rule inside the
+   * media query is inert on that screen however late it sits. The step is the
+   * 24px one: the collapse chevrons hang 20px outside the column and their
+   * focus ring reaches 3px further, so anything under 23px clips them.
+   */
+  it('keeps the narrow column padding on the work stream at the 24px step', () => {
+    // Anchored on the rule's own comment: the work stream's column rule outside
+    // the media query shares the selector, and matching by selector alone finds
+    // that one first.
+    const narrow = stylesheet.match(/Restated for the work stream[\s\S]*?\.workstream-screen \.transcript-column \{([^}]*)\}/u)?.[1];
+    expect(narrow).toContain('padding-left: var(--space-6);');
+    expect(narrow).toContain('padding-right: var(--space-6);');
+    expect(stylesheet).toContain('--space-6: calc(var(--av-ref-space-unit) * 6);');
+  });
+
+  /**
+   * The two launch surfaces render `MessageBlock` and `AgentWorkTiming`
+   * outside `.virtual-message-row`, where the row rhythm cannot reach them
+   * and the base rules now give a row no margin. Review found their rows
+   * stacked flush; these are the gaps they state for themselves.
+   */
+  it('spaces the launch surfaces\' rows, which sit outside the feed wrapper', () => {
+    expect(rule('.substream-branch-context > * + *,\n.launch-arrival + .launch-arrival')).toContain('margin-top: var(--av-sys-space-block-gap);');
+    expect(rule('.substream-branch-context > .message-block + .message-block,\n.substream-branch-context + .launch-arrival')).toContain('margin-top: var(--av-sys-space-stack-gap);');
+  });
+
+  it('carries no literal spacing of a step or more in a feed rule', () => {
+    const offenders = preludes()
+      .filter((prelude) => FEED.test(prelude) && !NOT_FEED.test(prelude) && !(prelude in EXEMPT))
+      .flatMap((prelude) => [...(rule(prelude) ?? '').matchAll(/(?:margin|padding|gap|row-gap|column-gap)[a-z-]*\s*:\s*([^;]*)/gu)]
+        .filter(([, value]) => [...value!.matchAll(/(-?\d+(?:\.\d+)?)px/gu)].some(([, px]) => Math.abs(Number(px)) >= 4))
+        .map(([declaration]) => `${prelude} { ${declaration.trim()} }`));
+
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe('system message clamp', () => {
   it('clamps a closed system row to the line count the row declares', () => {
     const row = rule('.system-message');
@@ -857,7 +919,7 @@ describe('markdown list markers', () => {
     expect(rule('.meeting-notes-body .markdown-body :is(h1, h2, h3, h4, h5, h6)')).toContain(
       'font-size: 15px',
     );
-    expect(rule(':is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body'))
+    expect(rule('.agent-message .markdown-body'))
       .toContain('14.5px');
   });
 });
@@ -972,13 +1034,13 @@ describe('message header meta typography', () => {
    * what a screenshot pass looks past.
    */
   it('insets the human identity line and action row by the bubble corner they are named once for', () => {
-    const block = rule(':is(.workstream-screen, .automation-chat-surface) .human-message');
+    const block = rule('.human-message');
     expect(block).toContain('--turn-bubble-radius:');
-    expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message-bubble'))
+    expect(rule('.human-message-bubble'))
       .toContain('border-radius: var(--turn-bubble-radius);');
-    expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message > header'))
+    expect(rule('.human-message > header'))
       .toContain('padding-inline-end: var(--turn-bubble-radius);');
-    expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message .human-message-actions'))
+    expect(rule('.human-message .human-message-actions'))
       .toContain('padding-inline-end: var(--turn-bubble-radius);');
   });
 
@@ -993,12 +1055,11 @@ describe('message header meta typography', () => {
     const themed = rule('.workstream-screen .human-message');
     expect(themed).not.toBeNull();
     expect(themed).toContain('--turn-bubble-radius:');
-    // The two token declarations tie on specificity — `:is()` takes its most
-    // specific argument — so source order is what makes the theme's value win.
-    // Without this, moving the theme rule above the shared one keeps every
-    // assertion here green while restoring the 4px drift they exist to prevent.
+    // The theme rule out-specifies the base rule now that the base is
+    // un-scoped, but it is still asserted to follow it: a base rule that moved
+    // below the theme's would read as the override and be edited as one.
     expect(stylesheet.indexOf('.workstream-screen .human-message {'))
-      .toBeGreaterThan(stylesheet.indexOf(':is(.workstream-screen, .automation-chat-surface) .human-message {'));
+      .toBeGreaterThan(stylesheet.search(/^\.human-message \{/mu));
     expect(rule('.workstream-screen .human-message-bubble'))
       .toContain('border-radius: var(--turn-bubble-radius);');
     // On the value, not one spelling of the property: a literal creeping back
@@ -1007,8 +1068,14 @@ describe('message header meta typography', () => {
     // `padding-inline` is in the pattern for the same reason: it sets the
     // trailing inset as surely as either, and it is the logical spelling the
     // stylesheet actually reaches for.
-    expect(rule('.workstream-screen .human-message > header'))
-      .not.toMatch(/padding(?:-right|-inline(?:-end)?)?:/u);
+    // The theme no longer restates anything on the header: the one
+    // declaration it carried, a margin a pixel off the shared rule's, went
+    // with the feed's move to one spacing scale. A theme rule on the header is
+    // where a literal inset would creep back in, so its absence is what is
+    // asserted, and the shared rule is checked to carry the inset by token.
+    expect(rule('.workstream-screen .human-message > header')).toBeNull();
+    expect(rule('.human-message > header'))
+      .not.toMatch(/padding(?:-right|-inline(?:-end)?)?:\s*\d/u);
   });
 
   /**
@@ -1025,9 +1092,10 @@ describe('message header meta typography', () => {
    * is what the human header opposite uses.
    */
   it('starts the assistant identity line on the same vertical as its prose', () => {
-    expect(rule('.workstream-screen .agent-message > header'))
-      .not.toMatch(/padding(?:-left|-inline(?:-start)?)?:/u);
-    expect(rule(':is(.workstream-screen, .automation-chat-surface) .agent-message > header'))
+    // Same shape as the human rule above: the theme's header rule carried only
+    // a margin that disagreed with the shared one by a pixel, and is gone.
+    expect(rule('.workstream-screen .agent-message > header')).toBeNull();
+    expect(rule('.agent-message > header'))
       .not.toMatch(/padding(?:-left|-inline(?:-start)?)?:/u);
   });
 });

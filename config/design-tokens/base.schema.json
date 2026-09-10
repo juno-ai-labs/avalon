@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Rally base tokens",
+  "description": "The appearance-independent half of the token set: values for registry paths that light and dark share. The token grammar is the theme schema's, referenced rather than restated, without the theme metadata.",
+  "type": "object",
+  "required": [
+    "tokens"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "tokens": {
+      "$ref": "theme.schema.json#/properties/tokens"
+    }
+  }
+}

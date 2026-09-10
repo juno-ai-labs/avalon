@@ -92,6 +92,32 @@ latest** is selected. Programmatic repositioning is announced before changing
 the jump control. Exiting controls remain mounted but inaccessible until their
 fade completes; changing direction reverses the active animation in place.
 
+The feed's vertical rhythm is one primitive: a row owns the space above it,
+chosen by what precedes it, and no row sets a bottom margin. `MessageFeed`
+decides the gap from the message list (`feedRowGap`, over `feedRowKind`) and
+stamps it on `.virtual-message-row` as `data-row-gap`; `app.css` keys the
+margin on that attribute. It cannot come from a sibling: the feed is windowed,
+so the first mounted row has no previous sibling whatever its index. Each row
+is `flow-root`, so the margin is inside the row's border box and the
+virtualizer measures it. A turn is a person's `.message-block` (a text turn,
+an answered elicitation), an answer is Rally's, and everything else (a tool
+row, a timing row, the work accordion, a system note, a status pill, the
+proposal card, an open elicitation, the oversized-message placeholder) is an
+event; index 0 owns no space, and a row after a stretch this client has not
+loaded takes the turn gap because its predecessor is unknown. The two launch
+surfaces draw the same rows outside the feed wrapper and state the same gaps
+for themselves on `.launch-arrival` and the branch context, because a base
+rule gives a row no margin of its own. Four cases cover the feed: turn after turn takes
+`sys.space.stack.gap`, a turn beside an event in either direction takes
+`sys.space.block.gap`, event after event takes `sys.space.event.gap`, and
+Rally's answer after the work that produced it also takes `sys.space.event.gap`,
+because it is the same turn finishing rather than a new one. The surface's own
+trailing rows, the live timer and the run notices, take `sys.space.block.gap`
+above them for the same reason. Every other margin, padding and gap in the feed
+is a step of the `--space-N` scale `app.css` derives from `ref.space.unit`; a
+value off that scale is either a sub-unit optical nudge inside an inline
+control or a bleed derived from something else, and says which in a comment.
+
 Sharing stops at product semantics. Work streams retain participants, unread,
 resource, run, and steering controls. The in-flight pending queue is one of
 those: it attaches to the work-stream composer, not to the shared
@@ -272,6 +298,79 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — The both-host feed rules are the base rules
+
+**What changed:** The 47 `app.css` rules scoped
+`:is(.workstream-screen, .automation-chat-surface)` are un-scoped, and the
+declarations they had been overriding are removed from the base rules under
+them (`.tool-block`, `.tool-block summary`, `.tool-icon`, `.tool-summary` and its
+`strong` and `small`, `.tool-details`, `.agent-message-actions`);
+`.tool-completed .tool-state`, whose only declaration was overridden, is gone,
+as is a second `.human-message .message-author` rule whose every declaration a
+later rule replaced. `.workstream-screen`-only rules are untouched. Review
+then found that no component applies `.automation-chat-surface` at all, so the
+prefix had in practice named one live host rather than two; the last rule left
+under that class, a profile-coloured bubble, is deleted with the rest.
+
+**Why:** Those two classes are the only hosts that render the feed, so a rule
+scoped to both was a base rule written as an override, and it forced a base rule
+to exist underneath for it to beat. Twelve base rules had every declaration
+shadowed that way, and the ordering hazards this stylesheet's tests keep
+warning about (two rules tying on specificity, source order deciding) were
+mostly this pattern. A scan before un-scoping found one place where the change
+would have altered which rule won, the human author line, where the
+work-stream theme's own rule already carried the winning value; the duplicate
+was deleted rather than re-ordered. Shell-scoped and work-stream-scoped rules
+stay as overrides because they are ones: the shell has a second sidebar form
+and the work stream has a bubble the automation surface does not.
+
+### 2026-09-10 — The feed's spacing is one scale and one rhythm
+
+**What changed:** Every margin, padding and gap in the feed is now a whole
+multiple of `ref.space.unit` (4px), through the `--space-1` to `--space-8`
+steps `app.css` derives from it, and the space between rows is set in one place:
+each row owns the space above it, keyed on what precedes it, through the
+`data-row-gap` `MessageFeed` computes from the message list. Turn to turn is 32px, a turn beside an
+event is 16, event to event is 8, and Rally's answer sits 8 above the work that
+produced it. The per-row bottom margins (`.message-block` 58, `.transcript-event`
+28, `.agent-work-timing` 26, `.system-message` 20, the status pill 12/18, the
+notices 26) are gone, as are the two negative-margin rules that clawed a turn's
+58 back when a tool or timing row followed it, the work-stream theme's second
+header margins (7 and 5 against the shared 8 and 4), its `padding-left: 2px`
+on the agent turn, and its `+ 4px` on the column padding. Prose tightened with
+it: paragraphs 16, headings `24 0 12`, lists `12 0 16` with 4 between items,
+blockquote and rule 24, code and table 16, and the answer's last block is trimmed
+inside the heading collapse, which had been leaking a full paragraph gap under
+every heading-led answer. The tool disclosure sits on a 24px row with no padding
+and details at `4 0 4 16`, the accordion's rows are 4 apart, the elicitation
+panel is 12 with 8 above its options and actions, the column is 32 on all sides
+(24 below 760px, the chevron outdent's floor), and the bubble's `8px 12px` moved
+from a literal on the theme rule into the shared bubble rule as `--space-2
+--space-3` (by way of `cmp.bubble.padding`, which had been 0 and which the
+entry above retires: a token read once was a name with no second reader).
+
+**Why:** A measured pass over the live feed found 184 spacing declarations
+using every integer from 1px to 18px, three tokens covering three of them, and a
+vertical rhythm that was the *sum* of each row's bottom margin and the next row's
+top margin. The sums were the visible defect: the same system note sat 78px below
+a bubble and 20px above the answer, two consecutive tool rows were 1px apart, a
+status pill had 70 above and 38 below, and the author line had five different
+gaps under it (6, 8, 7, 4, 5) set in four places. The negative margins existed
+only because a turn set a bottom margin that its own work then had to undo. A
+row that owns the space above it makes every gap one number with one owner; it
+was preferred over a `gap` on the column, which the virtualizer's absolute rows
+cannot use. The first cut decided the gap in CSS with a sibling combinator and
+`:has()`, and review caught why that cannot work in a windowed feed: only the
+rows in the virtualizer's window are in the DOM, so the first mounted row has
+no sibling whatever its index, took no gap at the window's edge, and measured
+a different height on either side of it, which the ledger then chased. The gap
+is computed from the message list instead. The numbers themselves were
+tuned in a real window across six candidates, with machinery rows and the drawer
+compressed hardest because a receipt for work the reader has already read the
+result of should read denser than progress. One unit token rather than eight
+scale tokens because a theme has no opinion about step five that is not an
+opinion about the unit. `docs/theming.md` records the token side.
 
 ### 2026-09-10 — The work-stream sidebar's contents travel with its edge too
 
