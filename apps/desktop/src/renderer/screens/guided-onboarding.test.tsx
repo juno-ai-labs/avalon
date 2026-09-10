@@ -1,3 +1,4 @@
+import { useConversationAdmission } from '../lib/conversation-admission';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -25,11 +26,15 @@ function Route(): React.JSX.Element {
   const location = useLocation();
   return <div data-testid="route">{`${useNavigationType()} ${location.pathname}`}</div>;
 }
+function WorkspaceView(): React.JSX.Element {
+  const allowed = useConversationAdmission();
+  return <><div>Ordinary workspace</div><output data-testid="admission">{allowed ? 'allowed' : 'blocked'}</output></>;
+}
 function show() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   // The journey renders inside the app's HashRouter and leaves through it, so
   // the harness gives it a router and reports where it went.
-  render(<MemoryRouter initialEntries={['/onboarding']}><QueryClientProvider client={client}><AccountOnboardingGate><WorkspaceOnboardingJourney workspace={workspace}><div>Ordinary workspace</div></WorkspaceOnboardingJourney></AccountOnboardingGate></QueryClientProvider><Route /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/onboarding']}><QueryClientProvider client={client}><AccountOnboardingGate><WorkspaceOnboardingJourney workspace={workspace}><WorkspaceView /></WorkspaceOnboardingJourney></AccountOnboardingGate></QueryClientProvider><Route /></MemoryRouter>);
   return client;
 }
 beforeEach(() => {
@@ -85,15 +90,74 @@ describe('new-account learning paths', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
     await waitFor(() => expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'profile' }));
   });
-  it('waits for the first account lookup before admitting an authenticated workspace', async () => {
-    let rejectLookup!: (error: Error) => void;
-    state.getAccount.mockImplementation(() => new Promise((_resolve, reject) => { rejectLookup = reject; }));
+  it('opens a restored workspace before account lookup and keeps it mounted when details arrive', async () => {
+    let resolveLookup!: (account: typeof state.account) => void;
+    state.getAccount.mockImplementation(() => new Promise((resolve) => { resolveLookup = resolve; }));
+    const client = show();
+    const workspaceElement = screen.getByText('Ordinary workspace');
+    expect(screen.getByTestId('admission')).toHaveTextContent('blocked');
+    expect(screen.queryByRole('heading', { name: 'Opening Rally' })).not.toBeInTheDocument();
+    expect(state.getAccount).toHaveBeenCalledTimes(1);
+    await act(async () => { resolveLookup({ ...state.account, eligible: false }); });
+    await waitFor(() => expect(client.getQueryState(['account-onboarding', 'person@example.com'])?.status).toBe('success'));
+    expect(screen.getByText('Ordinary workspace')).toBe(workspaceElement);
+    await waitFor(() => expect(screen.getByTestId('admission')).toHaveTextContent('allowed'));
+  });
+  it('keeps a returning workspace mounted while journey progress loads and completes', async () => {
+    let resolveJourney!: (journey: { path: string; stage: string; revision: number; connectorIds: string[] }) => void;
+    state.journey.mockImplementation(() => new Promise((resolve) => { resolveJourney = resolve; }));
+    const client = show();
+    const workspaceElement = screen.getByText('Ordinary workspace');
+    await waitFor(() => expect(state.journey).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('Ordinary workspace')).toBe(workspaceElement);
+    expect(screen.queryByRole('heading', { name: 'Opening your workspace' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('admission')).toHaveTextContent('blocked');
+    await act(async () => { resolveJourney({ path: 'member', stage: 'complete', revision: 1, connectorIds: [] }); });
+    await waitFor(() => expect(client.getQueryState(['onboarding-journey', 'global', 'workspace-1', 'user-1'])?.status).toBe('success'));
+    expect(screen.getByText('Ordinary workspace')).toBe(workspaceElement);
+    await waitFor(() => expect(screen.getByTestId('admission')).toHaveTextContent('allowed'));
+  });
+  it('keeps a new identity gated until its introduction status arrives', async () => {
+    state.hasWorkspace = false;
+    let resolveLookup!: (account: typeof state.account) => void;
+    state.getAccount.mockImplementation(() => new Promise((resolve) => { resolveLookup = resolve; }));
     show();
     expect(screen.getByRole('heading', { name: 'Opening Rally' })).toBeInTheDocument();
     expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
-    expect(state.getAccount).toHaveBeenCalledTimes(1);
-    await act(async () => { rejectLookup(new Error('Identity unavailable')); });
-    expect(await screen.findByText('Ordinary workspace')).toBeInTheDocument();
+    await act(async () => { resolveLookup({ ...state.account, introduced: false }); });
+    expect(await screen.findByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).toBeInTheDocument();
+    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
+  });
+  it('still introduces an eligible workspace account when its background lookup completes', async () => {
+    let resolveLookup!: (account: typeof state.account) => void;
+    state.getAccount.mockImplementation(() => new Promise((resolve) => { resolveLookup = resolve; }));
+    show();
+    expect(screen.getByText('Ordinary workspace')).toBeInTheDocument();
+    expect(screen.getByTestId('admission')).toHaveTextContent('blocked');
+    await act(async () => { resolveLookup({ ...state.account, introduced: false }); });
+    expect(await screen.findByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).toBeInTheDocument();
+    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
+  });
+  it('withholds admission when pending journey progress resolves to unfinished setup', async () => {
+    let finishJourney!: (value: { path: string; stage: string; revision: number; connectorIds: string[] }) => void;
+    state.journey.mockImplementation(() => new Promise((resolve) => { finishJourney = resolve; }));
+    show();
+    await waitFor(() => expect(state.journey).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId('admission')).toHaveTextContent('blocked');
+    await act(async () => { finishJourney({ path: 'member', stage: 'profile', revision: 0, connectorIds: [] }); });
+    expect(await screen.findByRole('heading', { name: 'This is you in Rally' })).toBeInTheDocument();
+    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
+  });
+  it('shows account profile loading without a false error or editable placeholders', async () => {
+    let finishAccount!: (value: typeof state.account) => void;
+    state.getAccount.mockImplementation(() => new Promise((resolve) => { finishAccount = resolve; }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><AccountOnboardingGate><PersonalSetup variant="settings" /></AccountOnboardingGate></QueryClientProvider>);
+    expect(screen.getByRole('status')).toHaveTextContent('Loading account profile…');
+    expect(screen.queryByText('Account profile is unavailable.')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
+    await act(async () => { finishAccount({ ...state.account, eligible: false }); });
+    expect(await screen.findByLabelText('Name')).toHaveValue('Person');
   });
   it('keeps an identity without a workspace gated after a failed lookup and during retry', async () => {
     state.hasWorkspace = false;

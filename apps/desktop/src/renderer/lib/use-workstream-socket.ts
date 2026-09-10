@@ -1,3 +1,4 @@
+import { useConversationAdmission } from './conversation-admission';
 import { safeParseSocketEvent } from "@rally/contracts";
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import {
@@ -704,17 +705,21 @@ export function useWorkstreamSocket(
   // is not mounted for it.
   parentKind: ConversationParentKind = 'workstream',
 ): WorkstreamSocketConnection {
+  const admissionAllowed = useConversationAdmission();
+  const effectiveOpenCommitted = openCommitted && admissionAllowed;
+  const admissionAllowedRef = useRef(admissionAllowed);
+  admissionAllowedRef.current = admissionAllowed;
   const queryClient = useQueryClient();
   const [generatedSocketLeaseId] = useState(() => socketLeaseId ?? uuidV7());
   const resolvedSocketLeaseId = socketLeaseId ?? generatedSocketLeaseId;
   const initialReasonRef = useRef(initialReason);
   initialReasonRef.current = initialReason;
-  const openCommittedRef = useRef(openCommitted);
-  openCommittedRef.current = openCommitted;
+  const openCommittedRef = useRef(effectiveOpenCommitted);
+  openCommittedRef.current = effectiveOpenCommitted;
   const markOpenedRef = useRef<() => void>(() => undefined);
   useEffect(() => {
-    if (openCommitted) markOpenedRef.current();
-  }, [openCommitted]);
+    if (effectiveOpenCommitted) markOpenedRef.current();
+  }, [effectiveOpenCommitted]);
   useWorkstreamControlSocket(
     api,
     parentId,
@@ -1016,6 +1021,7 @@ export function useWorkstreamSocket(
     let openTrace: PerfTrace | null = null;
 
     createMessageRef.current = async (input): Promise<AcceptedWorkstreamTurn> => {
+      if (!admissionAllowedRef.current) throw new ApiError('Workspace setup is still loading.', 409, 'workspace_setup_pending');
       // The operation id correlates the private receipt; the client message id
       // remains the durable write's idempotency key and tracing identity.
       const operationId = uuidV7();
@@ -1948,8 +1954,7 @@ export function useWorkstreamSocket(
           canonicalResyncTarget = null;
           canonicalResyncActiveStreams = [];
         }
-        const speculative = initialReasonRef.current === 'hover_warmup'
-          && !openCommittedRef.current;
+        const speculative = !openCommittedRef.current;
         // Called directly rather than through `trace.step`: the socket-ticket
         // lint rule recognizes a ticket only when the awaited call is the
         // declarator's own initializer, and a `mark` on the next line closes
@@ -2299,7 +2304,7 @@ export function useWorkstreamSocket(
       state,
       ...(openingError ? { openingError } : {}),
       retryOpening,
-      sendReady,
+      sendReady: sendReady && admissionAllowed,
       workspaceSocketState,
       activeCompaction,
       answerElicitation,
@@ -2312,6 +2317,7 @@ export function useWorkstreamSocket(
       setAppearance,
     }),
     [
+      admissionAllowed,
       activeCompaction,
       answerElicitation,
       createMessage,
