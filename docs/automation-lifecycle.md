@@ -110,7 +110,12 @@ The window closes on **Escape**, through the shared
 unsaved: the only writing surface it hosts is a Sidekick's conversation composer,
 whose text and attachments are cached on the device and restored on the next
 visit (see [`composer-drafts.md`](composer-drafts.md)), so closing costs no
-sentence. The keystroke still stops at anything with a nearer claim on it — an
+sentence the cache has already written. It debounces that write by 250 ms and
+commits the remainder on React unmount, which no closing window runs, so an edit
+newer than the debounce is lost — by Escape, by Command-W, and by the traffic
+light alike. That belongs to the draft cache's teardown rather than to this
+keystroke, and a sweep here would not recover it, because the sweep reads the DOM
+and the loss is in the cache. The keystroke still stops at anything with a nearer claim on it — an
 IME composition, the run-history or delete dialog, a model menu, the composer's
 own mention and command lists, and the library's search box while it still holds
 a filter.
