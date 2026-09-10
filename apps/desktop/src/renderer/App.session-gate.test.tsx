@@ -49,7 +49,14 @@ vi.mock('./screens/meeting-notes', () => ({ MeetingNotesScreen: () => <div>meeti
 vi.mock('./screens/note-detail', () => ({ NoteDetailScreen: () => <div>note detail</div> }));
 vi.mock('./screens/workstream', () => ({ WorkstreamScreen: () => <div>workstream</div> }));
 vi.mock('./screens/automation', () => ({ AutomationScreen: () => <div>automation</div> }));
-vi.mock('./screens/workspace-settings', () => ({ WorkspaceSettingsScreen: () => <div>settings</div> }));
+vi.mock('./screens/workspace-settings', () => ({
+  WorkspaceSettingsScreen: ({ workspace }: { workspace: { name: string; timezone: string } }) => (
+    <>
+      <div>settings</div>
+      <div data-testid="settings-workspace">{`${workspace.name} / ${workspace.timezone}`}</div>
+    </>
+  ),
+}));
 
 const identitySession: DesktopSession = {
   accessToken: 'access-token-longer-than-twenty-characters',
@@ -57,6 +64,24 @@ const identitySession: DesktopSession = {
   apiBaseUrl: 'https://api.rallywith.ai',
   user: { id: 'user-1', email: 'adam@example.com', name: 'Adam' },
   workspace: null,
+};
+
+/**
+ * A session as `stored-session.ts` actually persists one: both timezones
+ * present, so the renderer can describe the workspace without asking the API.
+ * `identitySession` deliberately keeps the older, thinner shape — the desktop
+ * type still allows it, and it is the case that must keep waiting for the read.
+ */
+const completeWorkspaceSession: DesktopSession = {
+  ...identitySession,
+  user: { ...identitySession.user, timezone: 'America/Los_Angeles' },
+  workspace: {
+    id: 'workspace-1',
+    name: 'Rally Studio',
+    region: 'global',
+    role: 'owner',
+    timezone: 'Europe/London',
+  },
 };
 
 function renderGate(): QueryClient {
@@ -145,6 +170,55 @@ describe('SessionGate identity-first ordering', () => {
     expect(sessionState.api.getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
     expect(sessionState.api.getSocketTicket).toHaveBeenCalledTimes(6);
     expect(sessionState.api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(6);
+  });
+
+  it('draws the settings surface on the session while the workspace read is still in flight', async () => {
+    window.history.replaceState({}, '', '/?surface=settings#/settings');
+    sessionState.session = completeWorkspaceSession;
+    sessionState.api.getWorkspace.mockImplementationOnce(() => new Promise(() => {}));
+    renderGate();
+
+    // Nothing here has come back from the API. Settings used to sit behind
+    // `Opening workspace…` for a whole round trip before its own reads could
+    // even start, on a profile the session already held.
+    expect(await screen.findByText('settings')).toBeVisible();
+    expect(screen.queryByText('Opening workspace…')).not.toBeInTheDocument();
+    expect(screen.getByTestId('settings-workspace')).toHaveTextContent('Rally Studio / Europe/London');
+  });
+
+  it('replaces the session view of the workspace with the server answer', async () => {
+    window.history.replaceState({}, '', '/?surface=settings#/settings');
+    sessionState.session = completeWorkspaceSession;
+    const renamed = {
+      id: 'workspace-1',
+      name: 'Rally Labs',
+      region: 'global',
+      timezone: 'America/New_York',
+      currentUser: { id: 'user-1', email: 'adam@example.com', name: 'Adam', role: 'owner' },
+    };
+    let finishProfile!: (value: typeof renamed) => void;
+    sessionState.api.getWorkspace.mockImplementationOnce(() => new Promise((resolve) => { finishProfile = resolve; }));
+    renderGate();
+    expect(await screen.findByTestId('settings-workspace')).toHaveTextContent('Rally Studio / Europe/London');
+
+    await act(async () => { finishProfile(renamed); });
+
+    expect(screen.getByTestId('settings-workspace')).toHaveTextContent('Rally Labs / America/New_York');
+  });
+
+  it('still waits for the read when the session cannot describe the workspace', async () => {
+    window.history.replaceState({}, '', '/?surface=settings#/settings');
+    // No timezones: a placeholder built from this would be inventing two of the
+    // five fields, so the surface waits exactly as it did before.
+    sessionState.session = {
+      ...identitySession,
+      workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
+    };
+    sessionState.api.getWorkspace.mockImplementationOnce(() => new Promise(() => {}));
+    renderGate();
+
+    expect(await screen.findByText('Opening workspace…')).toBeVisible();
+    expect(screen.queryByText('settings')).not.toBeInTheDocument();
   });
 
   it.each([

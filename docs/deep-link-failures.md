@@ -34,6 +34,14 @@ the active workspace through the native guard, whose session-change broadcast
 then clears/remounts Settings. Sending it to both would run that foreground
 transition twice and could raise two meeting-change prompts.
 
+"The settings window" there means one somebody has asked to see, which
+`sendDeepLink` gets from `revealedSettingsWindow()` rather than from
+`settingsWindow` being non-null. A settings window is now built hidden ahead of
+being wanted, so one exists for most of a signed-in session; routing to it on
+existence alone would deliver a connector result to a window nobody opened, and
+raise it in front of the person to do so. [`settings-window.md`](settings-window.md)
+owns that lifecycle.
+
 That makes any in-renderer treatment of a failure wrong in two different ways at
 once. The settings window renders `WorkspaceSettingsScreen` and no application
 shell, so a message drawn there has nowhere to go. The main window has a shell,
@@ -216,6 +224,28 @@ links at all. The desktop trust boundary that admits these IPC calls is owned by
   and confirm the button is still on screen.
 
 ## Changelog
+
+### 2026-09-10 — A connector result goes to a settings window somebody asked for
+
+**What changed:** `sendDeepLink` picks its settings destination with
+`revealedSettingsWindow()` instead of testing `settingsWindow` for null. The
+routing rule is otherwise unchanged.
+
+**Why:** The settings window is now prewarmed — built hidden before anybody opens
+it, so that opening Settings costs a `show()` rather than a renderer boot. That
+makes `settingsWindow` non-null for most of a signed-in session, and the previous
+test read that as "settings is open". A connector authorized from the onboarding
+journey in the main window would have had its completion delivered to a hidden
+window instead, which `sendDeepLink` would then have raised and focused — a
+window the person never opened appearing over the one they were working in, with
+the result they were waiting for inside it.
+
+**Consequences:** The distinction between a settings window existing and somebody
+wanting one is now load-bearing here. Any future delivery that means "settings is
+the destination" asks the same function; testing the variable directly is the bug
+this entry describes.
+
+Shipped in #TBD.
 
 ### 2026-09-01 — Connectivity failures give a retryable remedy
 

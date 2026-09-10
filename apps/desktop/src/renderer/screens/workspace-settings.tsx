@@ -449,11 +449,17 @@ export function WorkspaceSettingsScreen({
     [userTimezone, workspaceTimezone],
   );
   const isAdmin = workspace.currentUser.role === 'owner' || workspace.currentUser.role === 'admin';
+  // `staleTime` rather than `refetchOnMount: 'always'`, and the difference is a
+  // whole round trip: `App.tsx` holds this same key at `staleTime: Infinity` for
+  // the shell's own use, so opening Settings always found data this observer had
+  // to force past. Staleness is per observer, so 30s here already refetches a
+  // list the shell has been sitting on — what `'always'` added was a second
+  // `/workspace/members` for a list fetched milliseconds earlier by the boot
+  // this screen is mounting inside of.
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
     enabled: Boolean(api),
-    refetchOnMount: 'always',
     staleTime: 30_000,
   });
   const leavingClosesWorkspace = members.data?.length === 1;
@@ -467,11 +473,19 @@ export function WorkspaceSettingsScreen({
     enabled: Boolean(api && isAdmin),
     staleTime: 10_000,
   });
+  // Refetched when this window is focused, because authorizing a connector
+  // happens in a browser and returning here is the moment the answer exists.
+  // `true` and not `'always'`: `'always'` ignores `staleTime`, and this window
+  // is *shown* rather than created now — a prewarmed window's reveal raises
+  // `visibilitychange`, as does the reveal right after a cold create, so
+  // `'always'` spent a second `/connections` on data the mount had just read.
+  // Five seconds is long enough to cover that reveal and far shorter than any
+  // trip out to a provider and back.
   const connections = useQuery({
     queryKey: ['connections'],
     queryFn: ({ signal }) => api!.getConnections(signal),
     enabled: Boolean(api),
-    refetchOnWindowFocus: 'always',
+    refetchOnWindowFocus: true,
     staleTime: 5_000,
   });
   const githubSettingsConnections = useMemo(
