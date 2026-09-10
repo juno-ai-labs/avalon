@@ -77,14 +77,16 @@ footer divide the 360px between them, and the footer takes its room from the
 list rather than from the box. Additional pages load on their own: a sentinel at
 the end of the list is observed with `IntersectionObserver`, so the next page
 is requested as the end scrolls into view, again whenever a page lands without
-filling the viewport, and when the keyboard highlight reaches the last row. Each request
-consumes one candidate page. An empty page with a continuation keeps scanning
-until a page has a row or the cursor ends. Existing rows stay visible while
-fetching another page, with a "Loading more" line pinned under the list; a
-transient continuation failure stops the scan and offers a retry button in that
-same place, so a broken cursor cannot loop, while a failed reauthorization hides
-the rows. Query and category changes discard old pages. A row shows its excerpt
-and source only; ⌘1-9 still opens the nth row, unadvertised.
+filling the viewport, and when the keyboard highlight reaches the last row.
+Each request consumes one candidate page. An empty page with a continuation
+keeps scanning until a page has a row or the cursor ends. Existing rows stay
+visible while fetching another page, with a "Loading more" line pinned under the
+list; a transient continuation failure stops the scan and offers a retry button
+in that same place, so a broken cursor cannot loop, while a failed
+reauthorization hides the rows. Either footer takes its room from the list, so
+the highlighted row is scrolled back into view whenever one opens or closes.
+Query and category changes discard old pages. A row shows its excerpt and source
+only; ⌘1-9 still opens the nth row, unadvertised.
 
 Requests opt into pagination with `pageSize` and continue with `nextCursor`, the
 last consumed Turbopuffer id boundary (stable hash order, not relevance or
@@ -551,7 +553,7 @@ budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
 
-### 2026-09-10 — Hold the search modal at one size, and unlabel the row shortcuts
+### 2026-09-10 — Hold the search modal at one size, and unlabel row shortcuts
 
 The modal grew and shrank under the reader: the "Loading more" line and the
 failed-continuation retry button were flow children of the modal, so arriving at
@@ -564,9 +566,22 @@ overlay over the last rows was rejected: it would cover the retry button's own
 row and put a control under scrolling content. Sizing the modal to its contents
 instead, so it grows with the footer, is the behaviour being removed. The footer
 carries a top border because the list now scrolls under it and clipped text
-against status text read as a glitch. `app.css.node.test.ts` asserts the
-division, since jsdom lays nothing out and no component test can tell a footer
-that divides a fixed body from one that extends the modal.
+against status text read as a glitch. Two tests hold the shape between them,
+because neither can hold it alone: `app.css.node.test.ts` asserts the division,
+since jsdom lays nothing out and no component test can tell a footer that
+divides a fixed body from one that extends the modal, and the component test
+asserts the containment the division depends on, which is the half that does
+live in the DOM.
+
+Taking the room out of the list moved a second problem rather than removing it.
+The row the reader is on is the last one, since reaching it is what asks for the
+next page, and it was left 12 of its 52px visible under the loading line and
+none at all under the retry button (measured in the running client). The
+highlight is therefore re-anchored whenever either footer opens or closes, not
+only when it moves. That is also the honest difference from the rejected
+overlay, which was turned down for covering the rows beneath it: this clips them
+instead, and only the re-anchoring makes that the smaller cost rather than an
+equal one.
 
 Result rows also lost the ⌘1-9 badges on their right edge, as asked: the row is
 now its excerpt and its source label. The key handler stays, so the shortcut
