@@ -82,9 +82,11 @@ last consumed Turbopuffer id boundary (stable hash order, not relevance or
 recency). This deterministic position is never an authorization grant.
 Continuation exposes matching index progress even if the page has no admitted
 results; it does not guarantee a readable match on a subsequent page. The read
-path touches no Durable Object and no R2. Each source admits its candidate batch
-through the projected search decision (`checkMany`: Global reads KV, EU reads the
-WorkspaceDO snapshot table) and renders every result from the attributes the
+path reads no content owner (WorkstreamDO, SubstreamAgent, WorkspaceDO resource
+rows) and no R2. Each source admits its candidate batch through the projected
+search decision (`checkMany`: Global reads KV; EU, which has no KV binding, reads
+the WorkspaceDO snapshot table, the one Durable Object read left on the EU
+request path) and renders every result from the attributes the
 candidate came back with: the full text, the title and source label, the time,
 the transcript position, the link URL, the MIME type and the archive state. A
 decision the projection does not hold yet is answered unavailable, the candidate
@@ -522,7 +524,7 @@ budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
 
-### 2026-09-10 — Serve results from the index and keep Durable Objects off the read path
+### 2026-09-10 — Serve results from the index and keep content owners off the read path
 
 Production traces of member search showed retrieval at about 45ms and the rest
 of a 5 to 47 second response spent reloading each candidate from cold Durable
@@ -533,8 +535,9 @@ eventual consistency for what search shows within a ten-minute bound, and kept
 the KV projection as the security layer. The index therefore carries what a
 result renders (title, source label, time, transcript position, link URL, MIME
 type, archive state), written by the owning object beside the text with no
-extra RPC, and the read path renders from those attributes: no Durable Object,
-no R2, no revision or content-hash re-validation. A rename or archive reaches
+extra RPC, and the read path renders from those attributes: no content owner,
+no R2, no revision or content-hash re-validation (EU admission still reads the
+WorkspaceDO snapshot table, one warm object, because EU has no KV binding). A rename or archive reaches
 the rows through a coalesced `search_conversation_v1` outbox row and a job that
 reads the current display and patches by filter until no row still differs.
 Admission stays on the projected decision; a miss is answered unavailable and
@@ -545,8 +548,11 @@ already in retry backoff keeps its `not_before`; an upgrade does not reset a
 committed retry schedule). Review of the first revision found that archived and
 pre-rewrite rows still filled the provider's page and were discarded only
 afterwards, leaving a page sparse or empty ahead of live matches, so member
-retrieval now filters `archived Eq false` and a namespace without that column
-yet, which has nothing renderable, answers with an empty page. The
+retrieval now filters `archived Eq false`. A namespace with no write since the
+attributes shipped refuses both the filter and the `include_attributes` with a
+400 (both messages verified live); it has nothing renderable, so it answers
+with an empty page rather than failing the search until an unrelated write
+extends its schema. The
 alternative of moving readability keys into the index as well was designed and
 rejected for now: the KV projection already exists, little data mutates, and a
 missed result is acceptable where a wrong one is not. `readAdmittedSearchContent`

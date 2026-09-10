@@ -36,6 +36,9 @@ it('upgrades populated v37 without losing resources and seeks only pending searc
     const sql = state.storage.sql;
     expect(sql.exec('SELECT COUNT(*) AS n FROM resources').one().n).toBe(2000);
     expect(sql.exec('PRAGMA foreign_key_check').toArray()).toEqual([]);
+    // Migration 47 requeues every resource for its display rewrite, due immediately.
+    expect(nextResourceSearchDueAt(sql)).toBe(0);
+    sql.exec('UPDATE resource_search_versions SET pending = 0');
     const spy = vi.spyOn(sql, 'exec');
     try {
       expect(nextResourceSearchDueAt(sql)).toBeNull();
