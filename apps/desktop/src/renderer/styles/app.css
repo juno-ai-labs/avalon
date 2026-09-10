@@ -5510,7 +5510,13 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 /* Chosen identity: fixed palette above an independently scrolling catalog.
    One picker; a work stream's header and a Sidekick's profile both open it. */
 .appearance-picker-trigger { display: inline-flex; align-items: center; justify-content: center; padding: 4px; border: 0; border-radius: var(--av-cmp-control-radius); background: transparent; cursor: pointer; flex-shrink: 0; }
-.appearance-picker-trigger:hover { background: var(--av-sys-color-surface-raised-hover); }
+/* The row hover, not a surface one. The same hexagon in the sidebar hovers on
+   `--av-cmp-row-background-hover`, and a mark that fills differently depending
+   on which rail you found it in reads as two controls. It is also the correct
+   *weight*: `surface.raised-hover` is opaque in dark and, in light, is the
+   value `cmp.row.background-selected` holds — so the old fill announced a
+   selected row on something nothing had selected. */
+.appearance-picker-trigger:hover { background: var(--av-cmp-row-background-hover); }
 .appearance-picker-popup { width: 288px; max-width: calc(100vw - 24px); max-height: var(--radix-dropdown-menu-content-available-height); display: flex; flex-direction: column; padding: 12px; }
 .appearance-picker-label { color: var(--av-sys-color-text-subtle); font-size: var(--av-cmp-control-font-size); font-weight: 600; padding: 0 2px 8px; }
 .appearance-picker-colors, .appearance-picker-icons { display: grid; gap: 4px; }
