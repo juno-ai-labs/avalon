@@ -157,7 +157,11 @@ uses `useCitations.openPreview` to open the artifact lightbox, including an
 explicit unavailable-preview state rather than an inspector fallback; arrival
 of an artifact never opens a panel. Generated sites open the existing isolated
 native viewer inside a resource lightbox, not the file conversion endpoint.
-Generated artifacts has no **Manage resources** button or resource-list popup.
+**Artifacts** is absent, not empty, until the work stream has one — the way the
+Sidekick strip below it already is — because a heading over a placeholder row
+spends rail height saying a conversation has produced nothing yet, which is
+every conversation's opening state. It has no **Manage resources** button or
+resource-list popup.
 File previews still offer individual **Resource details**; their lightbox retains
 refresh, watch, archive and version history, but no navigation to a resource list.
 Changing conversations closes both lightboxes and pending resource dialogs.
@@ -305,6 +309,34 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — The artifact section is named Artifacts and appears only when full
+
+**What changed:** The work-stream sidebar's second section is headed
+**Artifacts** rather than **Generated artifacts**, on both its `aria-label` and
+its `h2`, and the whole `<section>` — heading included — is dropped while the
+work stream has no `artifact`-direction resource. Its placeholder row and the
+`.workstream-context-empty` rules that dressed it are gone with it.
+
+**Why:** "Generated" was doing no work in the rail. Every resource under that
+heading is one the work stream produced; the word only distinguished them from
+sources, which this section never shows, so it said nothing to a reader while
+being the half of the label that got truncated away in a 280px rail. Absence
+follows the same reasoning: an empty conversation is the ordinary opening state,
+and a heading plus a "No generated artifacts yet" row spent 60px of a rail
+shared with substreams and participants to report it. `AttachedSidekicks` had
+already settled that question one section down by returning `null`.
+
+**Considered and rejected:** Keeping the heading and hiding only the placeholder
+row. That leaves a heading with nothing under it, which reads as a load failure
+rather than as an honest empty. Also rejected: keeping the empty state and
+shortening only the label, which fixes the smaller half of the problem.
+
+**What a future change has to respect:** The section is the artifact list's own
+element, so anything added beside it — a count, a control, a filter — arrives
+inside that guard or it resurrects the empty heading. `.workstream-context-empty`
+no longer exists; a section that wants an empty state defines its own rather
+than reaching for that name.
 
 ### 2026-09-10 — Jump to latest hangs above the composer, whatever its height
 
