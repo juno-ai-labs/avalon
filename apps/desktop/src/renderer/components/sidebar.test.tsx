@@ -694,7 +694,7 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByRole('region', { name: 'Get started with Rally' })).not.toBeInTheDocument();
   });
 
-  it('hides only completed ranked markers and preserves personal attention', () => {
+  it('hides resting ranked markers and preserves personal attention', () => {
     render(
       <MemoryRouter initialEntries={['/workstreams/input']}>
         <Tooltip.Provider>
@@ -712,6 +712,7 @@ describe('Sidebar work-stream markers', () => {
               workstream('completed-unread', 'Completed unread', 'completed', undefined, { hasUnread: true }),
               workstream('completed-mentioned', 'Completed mention', 'completed', undefined, { youAreMentioned: true }),
               workstream('completed-unseen', 'Completed unseen', 'completed', undefined, { unseen: true }),
+              workstream('scheduled-unread', 'Scheduled unread', 'scheduled', undefined, { hasUnread: true }),
             ]}
           />
         </Tooltip.Provider>
@@ -721,13 +722,14 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.getByRole('link', { name: /Board decision/u }).querySelector('.status-needs_input .status-dot')).not.toBeNull();
     expect(screen.getByRole('link', { name: /Pricing restructure/u }).querySelector('.status-running .status-dot')).not.toBeNull();
     expect(screen.getByRole('link', { name: /Missing sidebar row/u }).querySelector('.workstream-row-status')).toBeNull();
-    expect(screen.getByRole('link', { name: /Monday review/u }).querySelector('.status-scheduled .status-dot')).not.toBeNull();
+    expect(screen.getByRole('link', { name: /Monday review/u }).querySelector('.workstream-row-status')).toBeNull();
     expect(screen.getByRole('link', { name: /PostHog follow-up/u }).querySelector('.workstream-row-status')).toBeNull();
     expect(screen.getByRole('link', { name: /Missing sidebar row/u }).querySelector('.status-dot')).toBeNull();
     expect(screen.getByRole('link', { name: /PostHog follow-up/u }).querySelector('.status-dot')).toBeNull();
     expect(screen.getByRole('link', { name: 'Completed unread' }).querySelector('.status-unread .status-dot')).not.toBeNull();
     expect(screen.getByRole('link', { name: 'Completed mention' }).querySelector('.status-mentioned .status-dot')).not.toBeNull();
     expect(screen.getByRole('link', { name: 'Completed unseen' }).querySelector('.status-unseen .status-dot')).not.toBeNull();
+    expect(screen.getByRole('link', { name: /Scheduled unread/u }).querySelector('.status-unread .status-dot')).not.toBeNull();
     expect(document.querySelector('.sidebar-automation-marker')).toBeNull();
     expect(screen.queryByRole('img', { name: /Automation-generated/u })).not.toBeInTheDocument();
     expect(document.querySelector('.brand-lockup')).toBeNull();
