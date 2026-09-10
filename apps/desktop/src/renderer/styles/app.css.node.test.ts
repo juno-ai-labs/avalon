@@ -154,20 +154,27 @@ describe('jump to latest', () => {
 
 /**
  * The composer is measured from the conversation above it, not from the pane it
- * sits in: it is three quarters of the widest a turn is ever drawn, so the
- * field and the bubbles it produces read as one column. Nothing in a component
- * test can see that — jsdom lays nothing out, and both numbers render correctly
- * whatever they are. What can be checked here is that the two rules are still
- * reading one number, and that the pane width at which the field gives up the
- * inset is still the one the design states rather than whatever is left after
- * somebody retunes the dock's gutters.
+ * sits in: it is three quarters of the widest a turn is ever drawn, so the field
+ * and the bubbles it produces read as one column. One width serves the settled
+ * conversation and both launchers that become one, because the element is the
+ * same element across that handoff — it never unmounts, and a width that changes
+ * across it moves under the person typing.
+ *
+ * Nothing in a component test can see any of this: jsdom lays nothing out, and
+ * every one of these numbers renders correctly whatever it is. What can be
+ * checked here is that the rules are still reading one number rather than four
+ * copies of it, and that the row width at which the field gives up its inset is
+ * still the pane the design states rather than whatever is left after somebody
+ * retunes a dock's gutters.
  */
 describe('composer width', () => {
   /** The pane width below which the field takes the whole row. */
   const NARROW_PANE = 600;
 
   it('takes three quarters of the same cap a turn is drawn to', () => {
-    expect(rule('.workstream-screen .composer-stack')).toContain('max-width: calc(var(--turn-width-cap) * .75);');
+    expect(rule(':is(.workstream-screen, .workstream-launch-screen) .composer-stack'))
+      .toContain('max-width: var(--composer-width);');
+    expect(stylesheet).toContain('--composer-width: calc(var(--turn-width-cap) * .75);');
 
     // One declaration of the cap, and every turn rule reading it. A literal
     // copied back into any of them is a width that stops moving with the field,
@@ -178,12 +185,35 @@ describe('composer width', () => {
       .toEqual(['var(--turn-width-cap)', 'var(--turn-width-cap)', 'var(--turn-width-cap)']);
   });
 
+  /**
+   * The two rows a launcher stacks over its field — the substream banner and
+   * the participant chips — are centred siblings of the stack rather than
+   * children of it, so each states the measure for itself. That is how the
+   * launcher's old 690px came to be written out three times, and how its field
+   * came to be a different width from the one the same draft landed in a
+   * keystroke later.
+   */
+  it('gives the rows above the field the same measure', () => {
+    for (const selector of ['.substream-launch-banner', '.new-workstream-modifiers']) {
+      expect(rule(selector)).toContain('max-width: var(--composer-width);');
+    }
+
+    const capped = preludes()
+      .flatMap((prelude) => [...(rule(prelude) ?? '').matchAll(/max-width:\s*([^;]*)/gu)]
+        .filter(([, value]) => /\b690px\b/u.test(value!))
+        .map(([declaration]) => `${prelude} { ${declaration.trim()} }`));
+
+    expect(capped).toEqual([]);
+  });
+
   it('gives the row back to the field below a 600px pane', () => {
     const dock = rule('.workstream-screen .composer-dock');
 
     // The query below resolves against the nearest named container, so it is
-    // inert — silently, and only at narrow widths — without this.
-    expect(dock).toContain('container: composer-dock / inline-size;');
+    // inert — silently, and only at narrow widths — without this. The launchers
+    // reach it through the same rule, which is why it names both screens.
+    expect(rule(':is(.workstream-screen, .workstream-launch-screen) .composer-dock'))
+      .toContain('container: composer-dock / inline-size;');
 
     const gutter = Number(dock?.match(/padding: 0 (\d+)px \d+px;/u)?.[1]);
     const threshold = Number(stylesheet.match(/@container composer-dock \(width < (\d+)px\)/u)?.[1]);
@@ -193,8 +223,13 @@ describe('composer width', () => {
     expect(gutter).toBeGreaterThan(0);
     expect(threshold + 2 * gutter).toBe(NARROW_PANE);
 
-    expect(stylesheet.match(/@container composer-dock \([^)]*\) \{([\s\S]*?)\n\}/u)?.[1])
-      .toContain('.workstream-screen .composer-stack { max-width: none; }');
+    // And the rows above the field come with it, or they stop lining up on the
+    // one width where the field is not the box it was centred in.
+    const narrow = stylesheet.match(/@container composer-dock \([^)]*\) \{([\s\S]*?)\n\}/u)?.[1];
+    for (const selector of ['.composer-stack', '.substream-launch-banner', '.new-workstream-modifiers']) {
+      expect(narrow).toContain(selector);
+    }
+    expect(narrow).toContain('max-width: none;');
   });
 });
 
