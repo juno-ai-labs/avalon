@@ -98,3 +98,30 @@ it('requires a verified browser token, resets it on failure, and submits only th
   expect(JSON.parse(String(http.mock.calls[1]![1]!.body))).toEqual({ email: 'team@example.com', turnstileToken: 'fresh-proof' });
   expect(document.querySelector<HTMLElement>('#access-challenge')!.hidden).toBe(true);
 });
+
+it('runs the challenge invisibly and reserves room for the widget only while Cloudflare requires an interaction', async () => {
+  vi.stubGlobal('location', new URL('https://rallywith.ai/'));
+  vi.stubGlobal('__RALLY_TURNSTILE_SITE_KEY__', 'test-site-key');
+  document.body.innerHTML = '<div id="access-challenge"></div>';
+  let options: Parameters<NonNullable<typeof window.turnstile>['render']>[1] | undefined;
+  const reset = vi.fn();
+  window.turnstile = { render: (_container, value) => { options = value; return 'widget'; }, reset };
+  const { accessChallenge } = await import('../src/access-challenge');
+  const onChange = vi.fn();
+  const onError = vi.fn();
+  const challenge = accessChallenge(onChange, onError);
+  document.head.querySelector('script[src*="challenges.cloudflare.com"]')!.dispatchEvent(new Event('load'));
+  const container = document.querySelector<HTMLElement>('#access-challenge')!;
+  expect(options).toMatchObject({ appearance: 'interaction-only', action: 'access_request' });
+  expect(container.dataset.interactive).toBeUndefined();
+  options!['before-interactive-callback']();
+  expect(container.dataset.interactive).toBe('');
+  options!.callback('proof');
+  expect(onChange).toHaveBeenLastCalledWith('proof');
+  expect(container.dataset.interactive).toBe('');
+  challenge.reset();
+  expect(container.dataset.interactive).toBeUndefined();
+  expect(reset).toHaveBeenCalledWith('widget');
+  expect(onChange).toHaveBeenLastCalledWith(null);
+  expect(onError).not.toHaveBeenCalled();
+});
