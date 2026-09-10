@@ -386,6 +386,21 @@ function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
 }
 
 /**
+ * Neither tile marks a surface entrypoint, and that is deliberate.
+ *
+ * `markSurfaceEntrypoint` writes a module-local marker that
+ * `TelemetryRouteObserver` consumes on the *next route change in this
+ * renderer*. Both tiles open the Sidekicks window instead, which is a separate
+ * renderer with its own copy of that module — and whose surface in `App.tsx`
+ * mounts no observer at all — so a marker set here could never reach the visit
+ * it was meant to describe. What it did instead was sit in the main window
+ * until its next unmarked navigation consumed it, reporting that navigation as
+ * `sidebar_automation`. Attributing the Sidekicks window's own visits needs the
+ * entrypoint carried across the window boundary and an observer mounted there;
+ * that is a telemetry change, not this one.
+ */
+
+/**
  * One tile in the Sidekick strip: a hexagon over a caption, inside the wrapper
  * the strip sizes and the rail shrinks.
  *
@@ -431,10 +446,7 @@ function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.
       glyph={<AutomationGlyph id={sidekick.id} />}
       label={`${sidekick.name}, Active${scopeDescription}`}
       name={sidekick.name}
-      onClick={() => {
-        markSurfaceEntrypoint('sidebar_automation');
-        void desktopBridge().openSidekicks(sidekick.id);
-      }}
+      onClick={() => void desktopBridge().openSidekicks(sidekick.id)}
       status={{ className: 'active', label: 'Active' }}
       title={`${sidekick.name} · Active${scopeDescription}`}
     />
@@ -457,10 +469,7 @@ function NewSidekickTile(): React.JSX.Element {
       glyph={<HexagonGlyph className="sidekick-new-glyph" fill="none" ink="var(--av-sys-color-text-muted)" symbol={Plus} />}
       label="New Sidekick"
       name="New Sidekick"
-      onClick={() => {
-        markSurfaceEntrypoint('sidebar_automation');
-        void desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET);
-      }}
+      onClick={() => void desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET)}
       title="New Sidekick"
     />
   );
