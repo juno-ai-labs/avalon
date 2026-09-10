@@ -6500,6 +6500,16 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   animation-delay: calc(var(--arrival-index, 0) * 70ms + 60ms);
 }
 
+/* The launch surfaces draw the feed's rows outside `.virtual-message-row`, so
+   the row rhythm does not reach them and the base rules give a row no margin
+   of its own; they state the same two gaps here. A turn after a turn (the
+   provenance turns, and the opening turn after them) takes the turn gap; a
+   row after the opening turn (the work timer) takes the turn-to-event gap. */
+.substream-branch-context > * + *,
+.launch-arrival + .launch-arrival { margin-top: var(--av-sys-space-block-gap); }
+.substream-branch-context > .message-block + .message-block,
+.substream-branch-context + .launch-arrival { margin-top: var(--av-sys-space-stack-gap); }
+
 @keyframes launch-arrival {
   from { opacity: 0; transform: translateY(7px); }
 }
