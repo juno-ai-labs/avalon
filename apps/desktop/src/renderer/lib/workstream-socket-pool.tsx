@@ -137,7 +137,9 @@ function RetainedWorkstreamSocket({
     true,
     initialReason,
     socketLeaseId,
-    active || admitted,
+    // Routing can precede the workspace profile. Only the mounted feed admits
+    // viewing; speculative startup connections must not mark a room opened.
+    admitted,
   );
   useLayoutEffect(() => {
     if (active || admitted) onConnection(workstreamId, connection);

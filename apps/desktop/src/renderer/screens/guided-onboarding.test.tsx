@@ -85,15 +85,48 @@ describe('new-account learning paths', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
     await waitFor(() => expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'profile' }));
   });
-  it('waits for the first account lookup before admitting an authenticated workspace', async () => {
-    let rejectLookup!: (error: Error) => void;
-    state.getAccount.mockImplementation(() => new Promise((_resolve, reject) => { rejectLookup = reject; }));
+  it('opens a restored workspace before account lookup and keeps it mounted when details arrive', async () => {
+    let resolveLookup!: (account: typeof state.account) => void;
+    state.getAccount.mockImplementation(() => new Promise((resolve) => { resolveLookup = resolve; }));
+    const client = show();
+    const workspaceElement = screen.getByText('Ordinary workspace');
+    expect(screen.queryByRole('heading', { name: 'Opening Rally' })).not.toBeInTheDocument();
+    expect(state.getAccount).toHaveBeenCalledTimes(1);
+    await act(async () => { resolveLookup({ ...state.account, eligible: false }); });
+    await waitFor(() => expect(client.getQueryState(['account-onboarding', 'person@example.com'])?.status).toBe('success'));
+    expect(screen.getByText('Ordinary workspace')).toBe(workspaceElement);
+  });
+  it('keeps a returning workspace mounted while journey progress loads and completes', async () => {
+    let resolveJourney!: (journey: { path: string; stage: string; revision: number; connectorIds: string[] }) => void;
+    state.journey.mockImplementation(() => new Promise((resolve) => { resolveJourney = resolve; }));
+    const client = show();
+    const workspaceElement = screen.getByText('Ordinary workspace');
+    await waitFor(() => expect(state.journey).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('Ordinary workspace')).toBe(workspaceElement);
+    expect(screen.queryByRole('heading', { name: 'Opening your workspace' })).not.toBeInTheDocument();
+    await act(async () => { resolveJourney({ path: 'member', stage: 'complete', revision: 1, connectorIds: [] }); });
+    await waitFor(() => expect(client.getQueryState(['onboarding-journey', 'global', 'workspace-1', 'user-1'])?.status).toBe('success'));
+    expect(screen.getByText('Ordinary workspace')).toBe(workspaceElement);
+  });
+  it('keeps a new identity gated until its introduction status arrives', async () => {
+    state.hasWorkspace = false;
+    let resolveLookup!: (account: typeof state.account) => void;
+    state.getAccount.mockImplementation(() => new Promise((resolve) => { resolveLookup = resolve; }));
     show();
     expect(screen.getByRole('heading', { name: 'Opening Rally' })).toBeInTheDocument();
     expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
-    expect(state.getAccount).toHaveBeenCalledTimes(1);
-    await act(async () => { rejectLookup(new Error('Identity unavailable')); });
-    expect(await screen.findByText('Ordinary workspace')).toBeInTheDocument();
+    await act(async () => { resolveLookup({ ...state.account, introduced: false }); });
+    expect(await screen.findByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).toBeInTheDocument();
+    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
+  });
+  it('still introduces an eligible workspace account when its background lookup completes', async () => {
+    let resolveLookup!: (account: typeof state.account) => void;
+    state.getAccount.mockImplementation(() => new Promise((resolve) => { resolveLookup = resolve; }));
+    show();
+    expect(screen.getByText('Ordinary workspace')).toBeInTheDocument();
+    await act(async () => { resolveLookup({ ...state.account, introduced: false }); });
+    expect(await screen.findByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).toBeInTheDocument();
+    expect(screen.queryByText('Ordinary workspace')).not.toBeInTheDocument();
   });
   it('keeps an identity without a workspace gated after a failed lookup and during retry', async () => {
     state.hasWorkspace = false;
