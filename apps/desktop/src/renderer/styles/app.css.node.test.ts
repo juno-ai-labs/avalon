@@ -330,6 +330,48 @@ describe('overscroll containment on the shared rail and sidebar scrollers', () =
   });
 });
 
+/**
+ * `sys.space.group.gap` exists so one value decides every break between one
+ * group of navigation rows and the next. It stopped meaning that once each
+ * consumer was handed a literal of its own, and the way that failed is the
+ * point: `.pinned-section` was left holding a retired theme's 60px while every
+ * rule around it had quietly been tuned down to the low teens, so the only
+ * break nobody had overridden was the one nobody had looked at. A fresh
+ * literal here is that same move, and it fails rather than accumulates.
+ *
+ * `0` stays allowed — the compact rail hides the headings these gaps space, so
+ * zero there is a different decision, not an escape from the token. The
+ * shorthand is checked alongside the longhand because `.sidebar-primary-actions`
+ * is the standing proof that a `margin` shorthand later in the file silently
+ * shadows a `margin-top` that names the token.
+ */
+describe('sidebar group breaks follow the group-gap token', () => {
+  const GROUPED = ['.pinned-section', '.workstreams-section', '.projects-section', '.sidebar-group'];
+
+  it('gives no grouped sidebar section a margin-top literal of its own', () => {
+    const offenders: string[] = [];
+
+    for (const [, selector = '', body = ''] of stylesheet.matchAll(/([^{}]+)\{([^{}]*)\}/gu)) {
+      if (!GROUPED.some((name) => selector.includes(name))) continue;
+
+      for (const [, value = ''] of body.matchAll(/margin-top:\s*([^;]+)/gu)) {
+        const top = value.trim();
+        if (top === '0' || top === 'var(--av-sys-space-group-gap)') continue;
+        offenders.push(`${selector.trim()} { margin-top: ${top} }`);
+      }
+
+      // A shorthand's first value is its top margin.
+      for (const [, value = ''] of body.matchAll(/(?:^|;)\s*margin:\s*([^;]+)/gu)) {
+        const top = value.trim().split(/\s+/u)[0] ?? '';
+        if (top === '0' || top === 'var(--av-sys-space-group-gap)') continue;
+        offenders.push(`${selector.trim()} { margin: ${value.trim()} }`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe('Needs attention row geometry', () => {
   it('reserves a project slot and pins time and chevron to stable columns', () => {
     expect(rule('.waiting-workstream-row')).toContain(
