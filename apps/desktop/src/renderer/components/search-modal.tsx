@@ -14,7 +14,8 @@ const TABS: Array<{ id: SearchCategory; label: string }> = [
   { id: 'links', label: 'Links' }, { id: 'artifacts', label: 'Artifacts' },
   { id: 'files', label: 'Files' },
 ];
-// 360px list minus 16px padding, divided by a 52px two-line row plus 2px gap.
+// The 360px body minus 16px padding, divided by a 52px two-line row plus 2px
+// gap. The list is the whole body until a pagination footer takes part of it.
 const SEARCH_VISIBLE_PAGE_SIZE = Math.ceil((360 - 16) / (52 + 2));
 const ICONS = { messages: MessageSquare, links: Link, artifacts: Shapes, files: File };
 
@@ -145,9 +146,13 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
     return () => observer.disconnect();
   }, [canContinue, continuationFailed, results.length]);
   const active = Math.min(selected, Math.max(0, results.length - 1));
+  // Also when the footer opens or closes: it takes its room from the list, and
+  // the state that opens it is one the reader reaches without moving the
+  // highlight — the last row is what asks for the next page — so `active` alone
+  // would leave that row clipped, or gone, under the footer that just arrived.
   useEffect(() => {
     list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
-  }, [active]);
+  }, [active, response.isFetchingNextPage, continuationFailed]);
   const choose = (index: number) => {
     const result = results[index];
     if (!result) return;
@@ -193,32 +198,35 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
               event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('button')[next]?.focus();
             }}>{tab.label}</button>)}
         </div>
-        <div className="rally-search-results" ref={list} id={listId} role="listbox" aria-label="Results" aria-busy={response.isFetching}
-          onScroll={(event) => {
-            const element = event.currentTarget;
-            if (element.scrollTop + element.clientHeight >= element.scrollHeight - 1) loadMore();
-          }}>
-          {results.map((result, index) => {
-            const Icon = ICONS[result.category];
-            return <div key={result.id} id={`${listId}-${index}`} role="option" aria-selected={index === active}
-              className="rally-search-result" onMouseMove={() => setSelected(index)}
-              onMouseDown={(event) => event.preventDefault()} onClick={() => choose(index)}>
-              <span className={`rally-search-result-icon is-${result.category}`}><Icon size={18} aria-hidden="true" /></span>
-              <div className="rally-search-result-copy">
-                <div className="rally-search-result-excerpt"><HighlightedExcerpt result={result} /></div>
-                <div className="rally-search-result-source">{result.sourceLabel || result.title}{result.occurredAt && <> · {formatRelative(result.occurredAt)}</>}</div>
-              </div>
-              {index < 9 && <kbd aria-hidden="true">⌘{index + 1}</kbd>}
-            </div>;
-          })}
-          {canContinue && <div ref={sentinel} className="rally-search-sentinel" aria-hidden="true" />}
+        {/* One fixed-height body: the list and the pagination footer divide it, so
+            no state either of them enters can resize the modal around the reader. */}
+        <div className="rally-search-body">
+          <div className="rally-search-results" ref={list} id={listId} role="listbox" aria-label="Results" aria-busy={response.isFetching}
+            onScroll={(event) => {
+              const element = event.currentTarget;
+              if (element.scrollTop + element.clientHeight >= element.scrollHeight - 1) loadMore();
+            }}>
+            {results.map((result, index) => {
+              const Icon = ICONS[result.category];
+              return <div key={result.id} id={`${listId}-${index}`} role="option" aria-selected={index === active}
+                className="rally-search-result" onMouseMove={() => setSelected(index)}
+                onMouseDown={(event) => event.preventDefault()} onClick={() => choose(index)}>
+                <span className={`rally-search-result-icon is-${result.category}`}><Icon size={18} aria-hidden="true" /></span>
+                <div className="rally-search-result-copy">
+                  <div className="rally-search-result-excerpt"><HighlightedExcerpt result={result} /></div>
+                  <div className="rally-search-result-source">{result.sourceLabel || result.title}{result.occurredAt && <> · {formatRelative(result.occurredAt)}</>}</div>
+                </div>
+              </div>;
+            })}
+            {canContinue && <div ref={sentinel} className="rally-search-sentinel" aria-hidden="true" />}
+          </div>
+          {canContinue && (continuationFailed || response.isFetchingNextPage) && <div className="rally-search-footer" role="status">
+            {continuationFailed
+              ? <><div>More results could not be loaded. Please try again.</div>
+                <Button type="button" onClick={loadMore} onMouseDown={(event) => event.preventDefault()}>Retry loading more results</Button></>
+              : <div>Loading more…</div>}
+          </div>}
         </div>
-        {canContinue && (continuationFailed || response.isFetchingNextPage) && <div className="rally-search-footer" role="status">
-          {continuationFailed
-            ? <><div>More results could not be loaded. Please try again.</div>
-              <Button type="button" onClick={loadMore} onMouseDown={(event) => event.preventDefault()}>Retry loading more results</Button></>
-            : <div>Loading more…</div>}
-        </div>}
         {results.length === 0 && !(canContinue && continuationFailed) && <div className="rally-search-state" role="status">
           {!normalized ? 'Search messages, links, artifacts, and files'
             : (response.isFetching || settledQuery !== normalized || canContinue) ? 'Searching…'

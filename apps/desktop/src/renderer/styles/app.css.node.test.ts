@@ -1446,3 +1446,38 @@ describe('window-control gutter while the sidebar is a drawer', () => {
     expect(shell).toContain('windowControlsShellClass(runtime?.platform)');
   });
 });
+
+/**
+ * The search modal is a fixed frame over shifting contents.
+ *
+ * A reader retries a failed continuation by clicking a button that is only
+ * there because the continuation failed. If that footer adds to the modal's
+ * flow height, the modal grows under the pointer as the message arrives and
+ * shrinks again when the retry succeeds, moving the box, its shadow and its
+ * centred position while the reader is aiming at it. jsdom lays nothing out,
+ * so no component test can tell a footer that divides a fixed body from one
+ * that extends the modal; both render the same DOM.
+ */
+describe('workspace search modal geometry', () => {
+  it('divides one fixed body between the list and its pagination footer', () => {
+    const body = rule('.rally-search-body');
+    const results = rule('.rally-search-results');
+    const footer = rule('.rally-search-footer');
+
+    expect(body).not.toBeNull();
+    expect(body).toContain('height: 360px;');
+    expect(body).toContain('display: flex;');
+    expect(body).toContain('flex-direction: column;');
+    // The list gives the footer its room rather than the modal finding more.
+    expect(results).toContain('flex: 1;');
+    // Either of these lets it shrink below its rows: a scroll container's
+    // automatic minimum size is already zero, and `min-height` says so outright.
+    // Both are pinned, so a change has to mean to drop the pair.
+    expect(results).toContain('overflow-y: auto;');
+    expect(results).toContain('min-height: 0;');
+    expect(results).not.toMatch(/(?<![-\w])height:/u);
+    expect(footer).toContain('flex-shrink: 0;');
+    // The other conditional child never occupies flow at all.
+    expect(rule('.rally-search-state')).toContain('position: absolute;');
+  });
+});
