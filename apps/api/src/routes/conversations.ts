@@ -2,6 +2,7 @@ import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono } from "hono";
 import { requireSendableMessageLength, zValidator } from "../middleware/validation";
 import {
+  AgentModelOverrideSchema,
   IdSchema,
   UpdateWorkstreamRequestSchema,
   WorkstreamResourceSchema,
@@ -82,10 +83,24 @@ conversationRoutes.post("/:parentId/substreams/confirm", requireSendableMessageL
   operationId: IdSchema,
   /** The instruction the substream is created with, where the caller sent one. */
   opening: SubstreamOpeningMessageSchema.nullish(),
+  /**
+   * Pins every run of this substream to one model, ahead of the
+   * `agent-model-workstream` flag, exactly as `POST /workstreams` pins a work
+   * stream. Sent only by the launch composer's developer-mode selector.
+   *
+   * A sibling of `opening` rather than a field inside it: the pin belongs to
+   * the child being created, not to the turn that starts it, and a substream
+   * created without an opening message can carry one just the same.
+   *
+   * It is not inherited from the parent. A substream of a pinned work stream
+   * that names nothing here is unpinned and follows the flag, which is what
+   * every substream created before this field existed already does.
+   */
+  modelOverride: AgentModelOverrideSchema.optional(),
 })), async (c) => {
   const body = c.req.valid("json");
   const result = await new SubstreamCreationService(c.env, getAuth(c), requestDeferral(c)).confirm(
-    c.req.valid("param").parentId, body.operationId, body.opening ?? null,
+    c.req.valid("param").parentId, body.operationId, body.opening ?? null, body.modelOverride ?? null,
   );
   return c.json(SubstreamCreationResultSchema.parse(result));
 });
