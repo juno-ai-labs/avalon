@@ -226,6 +226,68 @@ function admitsNull(declaration: Record<string, unknown>): boolean {
   return branches.some((branch) => isPlainObject(branch) && admitsNull(branch));
 }
 
+/**
+ * Parameters a model is asked to fill in with nothing to fill them in from.
+ *
+ * A tool's wire schema is the whole of what a model knows about a parameter, so
+ * `{ type: "string", minLength: 1, maxLength: 250 }` is a field with a name, a
+ * shape, and no meaning. The name carries less than it looks like it does.
+ * GitHub's `pull_requests.list` takes a `head`, which is neither the head
+ * commit nor a branch but the filter expression `owner:branch`, and which
+ * GitHub answers with HTTP 200 and an empty list — never an error — when it is
+ * anything else. Undescribed, it read as a field to fill in: a run listing a
+ * repository's open pull requests filled it in with a branch name, twice, and
+ * reported a repository holding 25 of them as having none, then stopped
+ * trusting the connector and shelled out to `git`.
+ *
+ * That is the same failure the cursor rule in `docs/agent-tools.md` already
+ * names, and the reason this is a report over every parameter rather than over
+ * the paginating ones: what makes a parameter dangerous to guess at is not its
+ * name but that guessing wrong is silent, and that is a property of the
+ * provider behind it, which no walk here can see.
+ *
+ * Reports `property: undescribed`, at the root only. A nested object's
+ * properties are the same rule one level down, and a walk that went there could
+ * not tell a parameter from a `$defs` entry or an `items` shape without a
+ * dialect it does not have. The root is where a caller decides what to send.
+ */
+export function undescribedParameters(schema: Record<string, unknown>): string[] {
+  const properties = isPlainObject(schema.properties) ? schema.properties : {};
+  return Object.entries(properties)
+    .filter(([, declaration]) => !isPlainObject(declaration)
+      || typeof declaration.description !== "string"
+      || declaration.description.trim() === "")
+    .map(([name]) => `${name}: undescribed`);
+}
+
+/**
+ * Parameters the schema supplies a default for and demands anyway.
+ *
+ * This is `z.toJSONSchema`'s default `io: "output"` reaching a surface that
+ * needed `io: "input"`. Output mode describes what a parse *returns*, where a
+ * `.default()` field is always present and therefore required; input mode
+ * describes what a caller may *send*, where it is exactly the field that may be
+ * left out. A tool schema is the second thing.
+ *
+ * The cost is not only the wasted tokens. GitHub's `pull_requests.list` was
+ * advertising `state`, `sort`, `direction`, `perPage`, and `page` as mandatory,
+ * and a schema demanding five values the executor would have chosen itself
+ * reads as an instruction to populate the parameter block — next to two
+ * optional filters whose wrong values come back as an empty list rather than an
+ * error. The two defects compounded; this is the mechanical half.
+ *
+ * Reports `property: defaulted but required`.
+ */
+export function defaultedRequiredParameters(schema: Record<string, unknown>): string[] {
+  const properties = isPlainObject(schema.properties) ? schema.properties : {};
+  const required = new Set(requiredNames(schema));
+  return Object.entries(properties)
+    .filter(([name, declaration]) => required.has(name)
+      && isPlainObject(declaration)
+      && "default" in declaration)
+    .map(([name]) => `${name}: defaulted but required`);
+}
+
 export function weakenedCompositionBranches(schema: Record<string, unknown>): string[] {
   const found: string[] = [];
   walkPair(schema, sanitizeToolSchema(schema), "", 0, found);
