@@ -7,13 +7,18 @@ real web events. EU traffic stays in Rally's EU Cloudflare resources and is
 page-scoped: the site does not read or write a persistent analytics identifier
 for an affirmative EU route.
 
+The request-only landing submits its email solely to `/access/requests`; neither
+email values nor submission bodies enter telemetry. `/download/` deliberately
+skips telemetry initialization so its bearer fragment cannot reach analytics.
+The former landing download/CTA click listeners were removed with the public hero.
+
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
 | `apps/site/src/telemetry.ts` | Cloudflare route lookup, region-dependent anonymous identity, capability bootstrap, closed envelopes, page/action/handoff reporting, and failure isolation. |
 | `apps/site/src/site-entry.ts` | Initializes page-view and page-leave reporting on every built HTML entry. |
-| `apps/site/src/landing.ts` | Reports bounded download, CTA, and support selections. |
+| `apps/site/src/landing.ts` | Sends the access-request form to its API; emits no telemetry or email content. |
 | `apps/site/src/*-handoff.ts`, `desktop-open.ts`, `invite.ts`, `slack-link.ts`, `workstream-link.ts` | Report presented, automatic, and manual browser-to-desktop handoff attempts after each page has validated its own target. |
 | `apps/site/vite.config.ts` | Injects the shared telemetry entry and immutable release/build context into every site page. |
 | `apps/api/src/routes/telemetry.ts` | Exposes the content-free Cloudflare route decision and the capability-bound anonymous ingest. |
@@ -59,7 +64,7 @@ visible-duration bucket. Global maps these observations one-for-one to PostHog
 already validated site context. Electron screen events never impersonate web
 page events.
 
-`site_action_selected` reports only a closed action and placement on landing,
+`site_action_selected` retains the legacy closed action and placement contract for landing,
 download, or support pages. `desktop_handoff_attempted` reports the handoff type,
 whether it was merely presented or actually attempted, and whether the local
 target parser considered it valid. Handoff query strings, URL fragments,
@@ -197,6 +202,20 @@ avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
 ## Changelog
+
+### 2026-09-09 — Keep request addresses and grant tokens out of site telemetry
+
+**What changed:** The request form sends email only to the access API; the download
+page skips telemetry initialization. The old hero's action listeners are removed.
+
+**Why:** Address input and bearer fragments are credentials/acquisition content,
+not analytics dimensions.
+
+**Considered and rejected:** Adding generic form/DOM capture could export this
+content. The legacy action contract remains readable for historical events.
+
+**Consequences:** Landing emits no `site_action_selected` events now. Other page
+and handoff telemetry remains bounded to the existing closed vocabulary.
 
 ### 2026-09-02 — Public policies move under one Trust Center route
 

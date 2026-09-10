@@ -19,6 +19,7 @@ test('the hosted-resource inventory comes from both regional Wrangler files', as
   const buckets = await configuredR2Buckets();
 
   assert.deepEqual(buckets, [
+    { region: 'global', binding: 'DESKTOP_RELEASES', name: 'avalon-desktop-releases', jurisdiction: 'default' },
     { region: 'global', binding: 'PAYLOADS', name: 'avalon-global-payloads', jurisdiction: 'default' },
     { region: 'global', binding: 'TELEMETRY_PAYLOADS', name: 'avalon-global-telemetry', jurisdiction: 'default' },
     { region: 'eu', binding: 'PAYLOADS', name: 'avalon-eu-payloads', jurisdiction: 'eu' },
@@ -41,12 +42,13 @@ test('checks and logs every configured bucket with its regional jurisdiction', a
   await checkRequiredR2Buckets({ environment, fetchImpl, log: (line) => lines.push(line) });
 
   assert.deepEqual(calls, [
+    { name: 'avalon-desktop-releases', jurisdiction: null },
     { name: 'avalon-global-payloads', jurisdiction: null },
     { name: 'avalon-global-telemetry', jurisdiction: null },
     { name: 'avalon-eu-payloads', jurisdiction: 'eu' },
     { name: 'avalon-eu-telemetry', jurisdiction: 'eu' },
   ]);
-  assert.equal(lines.length, 4);
+  assert.equal(lines.length, 5);
   assert.match(lines.at(-1), /eu\/TELEMETRY_PAYLOADS.*avalon-eu-telemetry.*eu/u);
 });
 

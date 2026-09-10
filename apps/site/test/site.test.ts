@@ -60,41 +60,14 @@ function unpublishedReleaseFixture(): Record<string, unknown> {
 }
 
 describe('public Rally site', () => {
-  it('presents Rally as a desktop product without exposing an app sign-in surface', () => {
+  it('offers an email access request instead of a public installer', () => {
     const page = readProjectFile('index.html');
-
-    expect(page).toContain('Live private preview');
-    expect(page).toContain('Apple silicon');
-    expect(page).not.toMatch(/<form\b/i);
-    expect(page).not.toMatch(/sign[ -]?in/i);
-    expect(page).toContain('<script type="module" src="/src/landing.ts"></script>');
-  });
-
-  it('ships the convergence hero with the multiplayer thesis on the Rally palette', () => {
-    const page = readProjectFile('index.html');
-    const styles = readProjectFile('src/styles.css');
-    expect(page).toContain('Docs went multiplayer.<br />Design went multiplayer.<br /><em>AI is next.</em>');
-    expect(page).toContain('class="rally-merge reveal"');
-    expect(styles).toContain('--paper:#f0efe8');
-    expect(styles).toContain('--blue:#47c7fc');
-    expect(styles).toContain('--volt:#ccff00');
-    expect(styles).toContain('--orange:#ff6337');
-    expect(page).not.toContain('data-theme-select');
-  });
-
-  it('keeps content visible without scripts and hides the decorative workspace mock', () => {
-    const page = readProjectFile('index.html');
-    const styles = readProjectFile('src/styles.css');
-
-    expect(styles).toContain('.reveal { opacity: 1; transform: none; }');
-    expect(styles).toContain('html.js .reveal { opacity: 0;');
-    expect(styles).toContain('html.js .reveal.is-visible { opacity: 1;');
-    expect(page.indexOf('<script src="/landing-init.js"></script>')).toBeLessThan(
-      page.indexOf('<link rel="stylesheet" href="/src/styles.css" />'),
-    );
-    expect(readProjectFile('public/landing-init.js')).toContain(
-      "document.documentElement.classList.add('js');",
-    );
+    expect(page).toContain('id="access-request"');
+    expect(page).toContain('type="email"');
+    expect(page).not.toContain('href="#download"');
+    expect(page).not.toContain('rally-desktop-release:start');
+    expect(page).not.toContain('rally-merge');
+    expect(page).toContain('<noscript>');
   });
 
   it('defines responsive behavior for every public surface', () => {
@@ -133,14 +106,6 @@ describe('public Rally site', () => {
     expect(styles).toContain('.legal-nav a{align-items:center;display:flex;min-height:40px}');
   });
 
-  it('keeps Rally inherent instead of presenting it as a removable participant', () => {
-    const page = readProjectFile('index.html');
-
-    expect(page).toContain('4 people + Rally');
-    expect(page).not.toContain('5 people');
-    expect(page).not.toContain('rally-chip');
-  });
-
   it('uses the canonical brand mark and current brand palette on every public surface', () => {
     const pages = [
       readProjectFile('index.html'),
@@ -170,7 +135,6 @@ describe('public Rally site', () => {
 
     expect(pages[0]).toContain('class="rally-symbol"');
     expect(pages[0]).toContain('/brand/rally-mark.svg');
-    expect(pages[0]).toContain('/brand/rally-mark-small.svg');
     // The lime cut at header size belongs to the dark homepage alone; every
     // light-surfaced page renders the ink cut so the mark keeps its contrast.
     for (const page of pages.slice(1)) {
@@ -245,10 +209,9 @@ describe('public Rally site', () => {
   });
 
   it('uses the official black Apple logo in the primary macOS call to action', () => {
-    const page = readProjectFile('index.html');
+    const page = '<!-- rally-desktop-release:start --><!-- rally-desktop-release:end -->';
 
-    expect(page).toContain('src="/brand/apple-logo.svg"');
-    expect(page).not.toContain('<span class="apple-mark"');
+    expect(renderDesktopRelease(page, unpublishedReleaseFixture())).toContain('src="/brand/apple-logo.svg"');
     expect(existsSync(new URL('../public/brand/apple-logo.svg', import.meta.url))).toBe(true);
     const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
     expect(renderDesktopRelease(page, release)).toContain(
@@ -256,8 +219,8 @@ describe('public Rally site', () => {
     );
   });
 
-  it('publishes the verified installer while keeping the source template free of stale release links', () => {
-    const page = readProjectFile('index.html');
+  it('renders the legacy release component from the verified release configuration', () => {
+    const page = '<!-- rally-desktop-release:start --><!-- rally-desktop-release:end -->';
     const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
 
     expect(release.published).toBe(true);
@@ -271,14 +234,13 @@ describe('public Rally site', () => {
     expect(desktopDmgUrl(release)).toBe(
       'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg',
     );
-    expect(page).not.toMatch(/href="[^"]+\.(?:dmg|zip)"/i);
-    expect(page).toContain('Downloads opening soon');
+    expect(renderDesktopRelease(page, unpublishedReleaseFixture())).toContain('Downloads opening soon');
     expect(renderDesktopRelease(page, release)).toContain('Download Rally for macOS');
     expect(renderDesktopRelease(page, release)).not.toContain('Preview 0.1.0');
   });
 
   it('renders the immutable DMG object only after a release is published', () => {
-    const page = readProjectFile('index.html');
+    const page = '<!-- rally-desktop-release:start --><!-- rally-desktop-release:end -->';
     const base = unpublishedReleaseFixture();
     const { dmg } = base.files as { dmg: string };
     const release = parseDesktopReleaseConfig({
@@ -304,7 +266,7 @@ describe('public Rally site', () => {
   });
 
   it('rediscovers a promoted canonical release during later site deployments', async () => {
-    const page = readProjectFile('index.html');
+    const page = '<!-- rally-desktop-release:start --><!-- rally-desktop-release:end -->';
     const release = parseDesktopReleaseConfig(unpublishedReleaseFixture());
     const fetchRelease: typeof fetch = async (input, init) => {
       const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);

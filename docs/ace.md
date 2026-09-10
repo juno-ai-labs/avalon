@@ -10,6 +10,16 @@ the primary model and ordered fallback array for every model-using agent role.
 New internal tools extend the same Hono application and Ace-owned component
 library instead of creating another operator site or visual language.
 
+The **Access** page lists Global pre-workspace email requests and their
+acknowledgement state. It also generates ad hoc single-use or timed downloads, optionally
+associated with a request, through the shared database issuer. Ace now writes
+`download_grants` in Global D1; it still does not modify workspace identity or
+membership. It sends no invitation email yet. [Private access](private-access.md)
+owns that lifecycle and the remaining distribution work.
+
+Timed links use an operator-chosen local date/time and permit repeat downloads
+until that deadline. Both generation actions share the current lifetime choice, defaulting to timed mode. Requests and grant history are searched server-side and paged in groups of 50. Access-protected same-origin actions revoke grants and relay acknowledgement recovery to the Global operator API. The existing `demos` role also authorizes these acquisition recovery actions; it does not authorize telemetry administration.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -234,7 +244,9 @@ active Queue dead letters. Flagship owns flag configuration, evaluation, and
 its changelog.
 Cloudflare Queues owns queue configuration, backlog metrics, message retention,
 and peek semantics. Regional D1 owns identity, membership, and workspace lookup
-data; Ace reads it directly and writes none of it. Regional API Workers own
+data; Ace reads that identity/membership data without writing it. The Access
+page separately issues `download_grants` in Global D1, through its existing
+operator authentication and same-origin write boundary. Regional API Workers own
 their Durable Object namespaces and the socket protocol.
 
 Ace does not manage the Control Tower cadence or targeted model-rollout
@@ -388,9 +400,9 @@ session, because the directory it searches does not know.
 ## Operations
 
 A merge to `main` starts `deploy-ace.yml` when it changes Ace runtime or
-configuration, the reused Access verifier, a shared runtime contract, dependency
+configuration, the reused Access verifier, shared runtime contracts or DB code, dependency
 resolution, the shared TypeScript configuration, or one of the deployment-time
-scripts. Test-only changes under Ace, shared contracts, or the Queue provisioner
+scripts. Test-only changes under Ace, shared contracts/DB, or the Queue provisioner
 remain CI-only and do not redeploy production. The workflow validates the
 repository, creates all declared Queues, clones the migration Access policy,
 ensures all Enabled-named flags and all eleven JSON model flags exist from their
@@ -430,7 +442,35 @@ When a save succeeds but clients do not change, inspect in order:
 5. A reconnect, which must receive current values on the private subscribe
    response even if a live notification was lost.
 
+Shared DB runtime sources and package exports are deployment inputs alongside
+contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only changes
+do not publish a new Ace bundle.
+
 ## Changelog
+
+### 2026-09-09 — Bound and recover early-access operations
+
+**What changed:** The Access page now searches and pages requests and grant history, labels generated links with recipients, and supports revocation and explicit acknowledgement recovery. Recovery uses the existing Global operator credential and reports pending/failed/uncertain mail so an operator can reconcile it without raw SQL. Timed mode is the default; no default duration is invented.
+
+**Why:** Public acquisition needs predictable failure and recoverable operator actions before launch, without imposing account approval or building a campaign system.
+
+**Consequences:** [Private access](private-access.md) owns configuration, undecided numerical limits, and recovery procedures. PR #637.
+
+### 2026-09-09 — Add access intake review and download issuance
+
+**What changed:** Added Access request review and manual single-use/timed grant
+issuance through the shared issuer, with operator audit events. The deployment
+filter follows shared DB runtime changes so issuer fixes cannot leave Ace stale.
+
+**Why:** Operators need to track early-access interest and supply downloads
+without coupling the UI to a future invitation sender.
+
+**Considered and rejected:** A separate Ace-only token generator would duplicate
+download authority. New workspace/EU write privileges are outside this slice.
+
+**Consequences:** Ace writes Global `download_grants` only; identity and membership
+remain read-only. Generation sends no mail. [Private access](private-access.md)
+owns the grant lifecycle and operator erasure/revocation procedure.
 
 ### 2026-09-09 — New demo names its cast
 
