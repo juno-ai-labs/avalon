@@ -332,7 +332,6 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   const dictationBlocking = ['requesting', 'listening'].includes(dictation.state);
   const dictationEditingBlocked = dictationBlocking || dictation.state === 'finalizing';
   const messageCapsule = layout === 'message-capsule';
-  const showSubmit = submitting || value.trim().length > 0 || attachments.length > 0;
 
   const startDictation = (): void => {
     dictationBaseRef.current = value;
@@ -410,7 +409,6 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
           drop.dragging && 'is-file-dragging',
           messageCapsule && 'is-message-capsule',
           messageCapsule && attachments.length > 0 && 'has-attachments',
-          messageCapsule && showSubmit && 'has-submit',
         )}
         onDragEnter={drop.onDragEnter}
         onDragLeave={drop.onDragLeave}
@@ -634,11 +632,16 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 {dictationButton('Start voice input')}
               </div>
             )}
-            {(!messageCapsule || showSubmit) && (
-              <button aria-label={submitLabel} className="composer-send" disabled={dictationBlocking || submitDisabled} onClick={() => void submit()} type="button">
-                {submitting ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
-              </button>
-            )}
+            {/* Send stays in place whether or not there is anything to send. It
+                used to appear with the first character, which moved the
+                microphone under the cursor mid-keystroke and left the empty
+                composer with no visible way to send at all — the affordance a
+                first-time reader looks for is the one that was missing. Every
+                host already passes `submitDisabled` for an empty draft, so the
+                disabled state is the one it always computed. */}
+            <button aria-label={submitLabel} className="composer-send" disabled={dictationBlocking || submitDisabled} onClick={() => void submit()} type="button">
+              {submitting ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
+            </button>
           </div>
         </div>
       </div>

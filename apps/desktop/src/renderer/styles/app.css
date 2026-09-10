@@ -6400,7 +6400,11 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   width: 28px;
 }
 
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule :is(.composer-send, .microphone-control:not(.is-listening) .dictation-button) {
+/* Send is the composer's one filled action, and it is always present, so it
+   paints alone. The microphone shared this fill back when Send appeared only
+   with the first character and something had to look like the primary action
+   in an empty composer; nothing does now. */
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-send {
   background: var(--av-cmp-composer-send-background);
   color: var(--av-cmp-composer-send-foreground);
 }
@@ -6410,8 +6414,9 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    the account's own accent, so the microphone was the one control in the
    composer wearing the member's colour and reading as selected when nothing
    had selected it. Recording speaks with the danger token; at rest the button
-   is chrome. */
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule.has-submit .microphone-control:not(.is-listening) .dictation-button {
+   is chrome, in both appearances — the tokens resolve per theme, so there is
+   no dark rule restating this one. */
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .microphone-control:not(.is-listening) .dictation-button {
   background: var(--av-cmp-row-background-hover);
   color: var(--av-sys-color-text-muted);
 }
@@ -6451,10 +6456,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 [data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .icon-button {
   background: var(--av-cmp-row-background-hover);
   box-shadow: inset 0 0 0 .5px var(--av-sys-color-border-highlight);
-  color: var(--av-sys-color-text-muted);
-}
-[data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .is-message-capsule.has-submit .microphone-control:not(.is-listening) .dictation-button {
-  background: var(--av-cmp-row-background-hover);
   color: var(--av-sys-color-text-muted);
 }
 [data-theme='dark'] .composer-action-menu {

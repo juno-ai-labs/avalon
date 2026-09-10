@@ -182,7 +182,11 @@ same pairing `.button-danger` uses — replacing a red glyph plus a 4px pulsing
 `cmp.row.background-hover`, the fill its sibling icon buttons already take,
 where it used to take `cmp.row.background-selected`. The capsule's two resting
 paint rules gained `:not(.is-listening)`, and their geometry (radius, 28px box)
-split into a rule that stays unconditional.
+split into a rule that stays unconditional. Send and the microphone no longer
+share a paint rule: Send keeps `cmp.composer-send.*` and the microphone is
+neutral at rest in both appearances, so the `[data-theme='dark']` rule that
+restated the microphone's fill is gone rather than duplicating tokens that
+already resolve per appearance.
 
 **Why:** Two separate faults, one of them only visible to an account with a
 personal colour. `cmp.row.background-selected` is one of the seven tokens
@@ -199,7 +203,7 @@ same danger red on top of it, it is invisible — so it goes rather than being
 recoloured into a white speck.
 
 **Considered and rejected:** Out-specifying the capsule from the state rule, by
-naming `.is-message-capsule.has-submit` inside it. That puts shape knowledge in
+naming the capsule's own classes inside it. That puts shape knowledge in
 a state rule and grows every time a third composer shape appears; scoping the
 shape rules to `:not(.is-listening)` instead leaves exactly one rule painting a
 recording button, and the shapes describe rest only. Also rejected: a near-white

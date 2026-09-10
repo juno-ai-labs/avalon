@@ -887,7 +887,9 @@ describe('New work-stream home', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove notes.txt' }));
     fireEvent.change(composer, { target: { value: '' } });
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Create work stream' })).not.toBeInTheDocument());
+    // Send stays on screen now and goes disabled instead of unmounting, which
+    // is the same signal that the composer has registered the emptying.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create work stream' })).toBeDisabled());
     cleanup();
 
     renderScreen();
