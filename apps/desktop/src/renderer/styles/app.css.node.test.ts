@@ -867,6 +867,20 @@ describe('feed spacing is a step of the scale', () => {
     expect(rule('.substream-branch-context > .message-block + .message-block,\n.substream-branch-context + .launch-arrival')).toContain('margin-top: var(--av-sys-space-stack-gap);');
   });
 
+  /**
+   * The feed keys each row's margin on the gap `MessageFeed` stamps, and each
+   * stamped gap reaches its own token. The seam is the one to watch: a
+   * stamped row with no rule takes no margin at all, which would look like a
+   * tightening rather than a missing rule, and the seam is exactly the row
+   * that must not read as tight.
+   */
+  it('keys every stamped row gap on its own token', () => {
+    for (const gap of ['stack', 'seam', 'block', 'event']) {
+      expect(rule(`.virtual-message-row[data-row-gap='${gap}'] > .message-arrival-layer > :first-child`))
+        .toContain(`margin-top: var(--av-sys-space-${gap}-gap);`);
+    }
+  });
+
   it('carries no literal spacing of a step or more in a feed rule', () => {
     const offenders = preludes()
       .filter((prelude) => FEED.test(prelude) && !NOT_FEED.test(prelude) && !(prelude in EXEMPT))
@@ -1175,6 +1189,17 @@ describe('message header meta typography', () => {
     expect(rule('.message-start-substream')).not.toContain('opacity');
     expect(rule('.agent-message-actions')).toContain('opacity: 0;');
     expect(rule('.human-message-actions')).toContain('opacity: 0;');
+  });
+
+  /**
+   * The person's slot holds its height with nothing in it. It is laid out on
+   * every person's turn, control or not, because the one-unit turn gap relies
+   * on it to keep the next turn off the bubble; an empty flex row is 0px tall,
+   * and a turn without the control would otherwise hand the next turn a 4px
+   * clearance on the surfaces that cannot start a substream.
+   */
+  it('holds the person’s action slot at its height when it is empty', () => {
+    expect(rule('.human-message-actions')).toContain('min-height: var(--space-5);');
   });
 
   it('gives both action rows one set of button metrics', () => {

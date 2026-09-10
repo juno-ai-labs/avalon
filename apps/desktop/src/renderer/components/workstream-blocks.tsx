@@ -2427,6 +2427,10 @@ export function MessageBlock({
               elicitation={message.elicitation}
               onAnswer={(answer, customResponse) => onAnswerElicitation(message.elicitation!.id, answer, customResponse)}
             />
+            {/* The same slot every person's turn ends with — see the authored
+                row below. An answer is never a cutoff, so it is always empty
+                here, and it is the clearance the next turn sits under. */}
+            <footer className="human-message-actions" />
           </div>
         </article>
       );
@@ -2543,11 +2547,17 @@ export function MessageBlock({
             />
           ) : null}
           {pendingLabel && <span className="message-delivery-pill">{pendingLabel}</span>}
-          {startSubstream && (
-            <footer className="human-message-actions">
-              <StartSubstreamButton onStart={startSubstream} />
-            </footer>
-          )}
+          {/* The slot, whether or not there is a control to put in it. It is
+              laid out always and painted on hover, and the turn after this one
+              sits one unit under it — so it is the slot, not the gap, that
+              keeps the next turn off this bubble. A surface that cannot start
+              a substream (an automation's conversation, a substream other than
+              the main one, the launch provenance) still needs that clearance,
+              and so does a turn that is not yet a cutoff; leaving the slot out
+              there handed the next turn a 4px clearance on the bubble itself. */}
+          <footer className="human-message-actions">
+            {startSubstream && <StartSubstreamButton onStart={startSubstream} />}
+          </footer>
         </div>
       ) : (
         <>

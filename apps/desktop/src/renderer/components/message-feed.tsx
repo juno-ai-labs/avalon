@@ -136,14 +136,16 @@ export function feedRowKind(message: Message): FeedRowKind {
  * its index. A `+` combinator gave that row no gap while it sat at the
  * window's edge and a different measured height on either side of it, which
  * the ledger then chased. A row after a stretch this client has not loaded
- * has no known predecessor either, and takes the turn gap as the honest
- * default.
+ * has no known predecessor, and takes the seam gap whatever its kind: nothing
+ * else marks the seam, and the turn gap it used to take as the honest default
+ * is now the closest distance in the feed, which would draw two rows with an
+ * unseen stretch between them as the tightest pair on screen.
  */
-export type FeedRowGap = 'none' | 'stack' | 'block' | 'event';
+export type FeedRowGap = 'none' | 'stack' | 'block' | 'event' | 'seam';
 
 export function feedRowGap(previous: Message | undefined, current: Message): FeedRowGap {
   if (!previous) return 'none';
-  if (current.precededByTranscriptGap) return 'stack';
+  if (current.precededByTranscriptGap) return 'seam';
   const before = feedRowKind(previous);
   const kind = feedRowKind(current);
   if (before === 'event') return kind === 'turn' ? 'block' : 'event';
