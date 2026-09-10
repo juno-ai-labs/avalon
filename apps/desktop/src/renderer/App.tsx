@@ -219,7 +219,7 @@ function WorkspaceApp(): React.JSX.Element {
   return (
     // Named above the socket provider so the directory it seeds and the
     // conversations every feed hook below it seeds belong to this workspace.
-    <LocalCacheScopeProvider scope={localCacheScope(session!.workspace!.region, session!.workspace!.id)}>
+    <LocalCacheScopeProvider scope={localCacheScope(session!.user.id, session!.workspace!.region, session!.workspace!.id)}>
     <WorkspaceSocketProvider key={scope} api={api!} onAccessRevoked={surrenderActiveWorkspace} workspaceId={session!.workspace!.id}>
       {/* The directory connection and profile request start together. Keep this
           tree mounted when the profile arrives so prepared sockets survive. */}

@@ -3715,7 +3715,7 @@ pre {
 .connecting-card-sentence strong { color: var(--av-sys-color-text-default); font-weight: 570; }
 .connecting-card-copy small { color: var(--av-sys-color-text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .connecting-card > .button { flex: 0 0 auto; }
-@media (prefers-reduced-motion: reduce) { .connecting-card { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .connecting-card, .connecting-card .spin { animation: none; } }
 .project-space-frame { height: 100%; position: relative; }
 .project-space-frame > .connection-card-slot { left: 0; position: absolute; right: 0; top: var(--space-3); }
 

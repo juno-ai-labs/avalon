@@ -167,7 +167,9 @@ explicitly
 `socket_snapshot`; `boot_payload` identifies manual REST recovery, while
 `feed_cache` identifies an already-present transcript and `local_cache` a
 transcript the renderer's on-device cache painted before the socket answered
-([`local-cache.md`](local-cache.md)). Each
+([`local-cache.md`](local-cache.md)); the seed marker outranks the
+already-present reading, since the pool seeds a conversation before its
+surface mounts. Each
 detail request keeps a unique
 `x-request-id`, including React Query retries, and carries the click ID separately
 as `x-rally-operation-id`; the Worker's `workstream.detail.read` span records both.

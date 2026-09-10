@@ -373,8 +373,11 @@ never registers a login item. See [`menu-bar.md`](menu-bar.md).
    beneath it. Type into the composer and confirm the send button is disabled
    and Enter keeps the text where it is.
 2. Open the substream and the project space the same way and confirm each
-   paints with its own card. Confirm no `list_workstreams` or detail request is
-   made for what painted.
+   paints with its own card. Under the project's card confirm the rename,
+   icon, audience, participants, archive, and resource controls are disabled
+   and the work stream links still open, then confirm they enable when the
+   card goes. Confirm no `list_workstreams` or detail request is made for what
+   painted.
 3. Raise the hold past the three opening attempts (about seventy seconds) and
    confirm the card turns into `Rally could not connect to <title>.` with the
    timeout reason and a **Retry**, while the remembered transcript stays

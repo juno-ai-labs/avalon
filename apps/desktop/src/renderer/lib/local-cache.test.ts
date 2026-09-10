@@ -20,8 +20,10 @@ const notes = defineLocalCacheSlice<Note>({ kind: 'test-notes', version: 1, pars
 const notesNextShape = defineLocalCacheSlice<Note>({ kind: 'test-notes', version: 2, parse: parseNote });
 const strictNotes = defineLocalCacheSlice<Note>({ kind: 'test-notes', version: 1, parse: () => null });
 
-const global1 = localCacheScope('global', '00000000-0000-7000-8000-000000000001');
-const eu1 = localCacheScope('eu', '00000000-0000-7000-8000-000000000001');
+const USER = '00000000-0000-7000-8000-0000000000aa';
+const OTHER_USER = '00000000-0000-7000-8000-0000000000bb';
+const global1 = localCacheScope(USER, 'global', '00000000-0000-7000-8000-000000000001');
+const eu1 = localCacheScope(USER, 'eu', '00000000-0000-7000-8000-000000000001');
 
 async function settle(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -69,10 +71,24 @@ describe('local cache store', () => {
     await notes.write(global1, 'a', { text: 'global' });
     await notes.write(eu1, 'a', { text: 'eu' });
 
-    await clearWorkspaceLocalCache('global', '00000000-0000-7000-8000-000000000001');
+    await clearWorkspaceLocalCache(USER, 'global', '00000000-0000-7000-8000-000000000001');
 
     expect(await notes.read(global1, 'a')).toBeNull();
     expect(await notes.read(eu1, 'a')).toEqual({ text: 'eu' });
+  });
+
+  it('keeps two accounts\' rows for one workspace apart, and clears only the leaving account\'s', async () => {
+    const otherAccount = localCacheScope(OTHER_USER, 'global', '00000000-0000-7000-8000-000000000001');
+    await notes.write(global1, 'a', { text: 'first account' });
+    await notes.write(otherAccount, 'a', { text: 'second account' });
+
+    expect(await notes.read(global1, 'a')).toEqual({ text: 'first account' });
+    expect(await notes.read(otherAccount, 'a')).toEqual({ text: 'second account' });
+
+    await clearWorkspaceLocalCache(USER, 'global', '00000000-0000-7000-8000-000000000001');
+
+    expect(await notes.read(global1, 'a')).toBeNull();
+    expect(await notes.read(otherAccount, 'a')).toEqual({ text: 'second account' });
   });
 
   it('lists a scope and removes by subject and by key across scopes', async () => {

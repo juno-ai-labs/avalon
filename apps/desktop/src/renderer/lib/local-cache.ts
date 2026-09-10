@@ -91,9 +91,15 @@ export function localCacheEpoch(): number {
   return epoch;
 }
 
-/** The scope every row of one regional workspace is written under. */
-export function localCacheScope(region: RallyRegion, workspaceId: string): string {
-  return desktopWorkspaceIdentityKey(region, workspaceId);
+/**
+ * The scope every row is written under: the account that saw it, then the
+ * regional workspace it belongs to. Two accounts on one device that share a
+ * workspace therefore never read each other's rows, whatever order a wipe and
+ * a hydration run in; the wipe is what takes the rows off the disk, the scope
+ * is what keeps them apart while they are on it.
+ */
+export function localCacheScope(userId: string, region: RallyRegion, workspaceId: string): string {
+  return `${userId}:${desktopWorkspaceIdentityKey(region, workspaceId)}`;
 }
 
 function openDatabase(): Promise<IDBDatabase | null> {
@@ -260,10 +266,10 @@ export async function clearAllLocalCache(): Promise<void> {
   }, undefined);
 }
 
-/** Leaving one workspace removes only the rows written under its scope. */
-export async function clearWorkspaceLocalCache(region: RallyRegion, workspaceId: string): Promise<void> {
+/** An account leaving one workspace removes only the rows it wrote under that scope. */
+export async function clearWorkspaceLocalCache(userId: string, region: RallyRegion, workspaceId: string): Promise<void> {
   epoch += 1;
-  const scope = localCacheScope(region, workspaceId);
+  const scope = localCacheScope(userId, region, workspaceId);
   await withEntries('readwrite', async (store) => {
     store.delete(prefixRange([scope]));
   }, undefined);

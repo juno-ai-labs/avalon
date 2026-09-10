@@ -1,10 +1,10 @@
 import { NoteSummarySchema, ProjectDirectorySchema, type ProjectDirectory } from '@rally/contracts';
 import { notifyManager, type QueryClient } from '@tanstack/react-query';
-import { defineLocalCacheSlice } from './local-cache';
+import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
 import { mirrorQueriesToLocalCache, queryKeyIsOneOf, type QueryMirror } from './local-cache-mirror';
 import { SIDEBAR_LIST_QUERY_KEYS } from './sidebar-list-store';
 import type { AutomationSummary, NoteSummary, WorkstreamSummary } from './types';
-import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { setCachedWorkstreams, WORKSTREAM_PAGE_SIZE, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
 /**
  * What the sidebar and the project space paint from before the workspace
@@ -111,8 +111,12 @@ export async function hydrateWorkspaceDirectory(
   scope: string,
   stillWanted: () => boolean,
 ): Promise<boolean> {
+  const epoch = localCacheEpoch();
   const cached = await workspaceDirectorySlice.read(scope, DIRECTORY_CACHE_KEY);
   if (!cached || !stillWanted()) return false;
+  // A wipe that began while the row was in flight is taking it off the disk;
+  // a row on its way out is not a seed.
+  if (localCacheEpoch() !== epoch) return false;
   // The directory is seeded as a unit or not at all. The first live payload
   // writes every list at once, so one of them being present means all of them
   // are newer than this row.
@@ -159,7 +163,10 @@ export function mirrorWorkspaceDirectory(
       const workstreams = queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY);
       if (!workstreams) return null;
       return {
-        workstreams,
+        // The flat list grows with every page the sidebar loads; the row keeps
+        // what a fresh subscribe answer would carry, so the next launch paints
+        // page one and the live answer replaces it without a visible collapse.
+        workstreams: workstreams.slice(0, WORKSTREAM_PAGE_SIZE),
         automations: queryClient.getQueryData<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations) ?? [],
         notes: queryClient.getQueryData<NoteSummary[]>(SIDEBAR_LIST_QUERY_KEYS.notes) ?? [],
         projects: queryClient.getQueryData<ProjectDirectory>(PROJECTS_QUERY_KEY) ?? null,

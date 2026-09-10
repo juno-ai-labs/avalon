@@ -4607,6 +4607,73 @@ describe('useWorkstreamSocket over the local cache', () => {
     }, { timeout: LOCAL_CACHE_WRITE_COALESCE_MS + 2_000 });
   });
 
+  it('lets a rebuilt room replace the seed even when the resume registry remembers a higher sequence', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-0000000007a3';
+    await remember(workstreamId, 'Remembered title');
+    const queryClient = new QueryClient();
+    const getSocketTicket = vi.fn(async (...args: Parameters<WorkstreamSocketApi['getSocketTicket']>) => {
+      void args;
+      return {
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      };
+    });
+    const api = socketApiWith({ getSocketTicket });
+    // The shared registry the shell provides: it outlives the query entries.
+    function Wrapper({ children }: PropsWithChildren): React.JSX.Element {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <WorkstreamSocketResumeProvider scope="user-one:workspace-one">
+            <LocalCacheScopeProvider scope={scope}>{children}</LocalCacheScopeProvider>
+          </WorkstreamSocketResumeProvider>
+        </QueryClientProvider>
+      );
+    }
+    const { rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => useWorkstreamSocket(api, workstreamId, enabled),
+      { initialProps: { enabled: true }, wrapper: Wrapper },
+    );
+    await vi.waitFor(() => {
+      expect(queryDetail(queryClient, workstreamId)?.title).toBe('Remembered title');
+    }, { timeout: 2_000 });
+    act(() => {
+      const socket = FakeWebSocket.instances[0]!;
+      socket.open();
+      socket.message(snapshotFrame({
+        sequence: 500,
+        workstream: { id: workstreamId, title: 'Live title' },
+        transcript: { ...emptyTranscriptSnapshot(), snapshotThrough: 4, eventSequence: 7 },
+      }));
+    });
+    expect(queryDetail(queryClient, workstreamId)?.title).toBe('Live title');
+
+    // The screen goes away and its query entries are collected; the registry
+    // keeps sequence 500. The next visit seeds from the disk again.
+    rerender({ enabled: false });
+    queryClient.removeQueries();
+    await remember(workstreamId, 'Remembered again');
+    rerender({ enabled: true });
+    await vi.waitFor(() => {
+      expect(queryDetail(queryClient, workstreamId)?.title).toBe('Remembered again');
+    }, { timeout: 2_000 });
+    expect(getSocketTicket.mock.calls[1]?.[3]).toBe(0);
+
+    // The room was rebuilt meanwhile and answers from a lower sequence.
+    act(() => {
+      const socket = FakeWebSocket.instances[1]!;
+      socket.open();
+      socket.message(snapshotFrame({
+        sequence: 5,
+        workstream: { id: workstreamId, title: 'Rebuilt room' },
+        transcript: { ...emptyTranscriptSnapshot(), snapshotThrough: 1, eventSequence: 3 },
+      }));
+    });
+    expect(queryDetail(queryClient, workstreamId)?.title).toBe('Rebuilt room');
+    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBe('socket_snapshot');
+  });
+
   it('reports a socket that never answers over a seed, and never writes the seed back', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const workstreamId = '00000000-0000-7000-8000-0000000007a2';

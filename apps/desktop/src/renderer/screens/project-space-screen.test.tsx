@@ -1,6 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import {
   PROJECT_COLOR_KEYS,
@@ -224,14 +224,37 @@ describe('project space appearance', () => {
   });
   it('paints a remembered project under a connecting card until the workspace socket answers', async () => {
     workspaceSocket.current = { sidebarConnect: null, state: 'connecting' };
-    renderProject();
+    const queryClient = renderProject();
 
     expect(screen.getByRole('heading', { name: 'Hiring' })).toBeInTheDocument();
     expect(screen.getByRole('status').textContent ?? '').toContain('Connecting to Hiring…');
 
     workspaceSocket.current = { sidebarConnect: null, state: 'unavailable' };
-    fireEvent.click(screen.getByRole('button', { name: 'Hiring' }));
-    expect(screen.getByRole('status').textContent ?? '').toContain('Waiting for a connection to Hiring…');
+    await act(async () => queryClient.setQueryData(['projects'], { waterline: 2, items: [project] }));
+    await waitFor(() => expect(screen.getByRole('status').textContent ?? '').toContain('Waiting for a connection to Hiring…'));
+  });
+
+  it('keeps a remembered project read-only until the directory is live', async () => {
+    workspaceSocket.current = { sidebarConnect: null, state: 'connecting' };
+    const queryClient = renderProject();
+
+    expect(screen.getByRole('status').textContent ?? '').toContain('Editing is available once Rally connects');
+    const name = screen.getByRole('button', { name: 'Hiring' });
+    fireEvent.doubleClick(name);
+    expect(screen.queryByLabelText('Project name')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Change icon and color for Hiring' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Project scope')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add participant' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Archive project' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add resource' })).toBeDisabled();
+
+    // The subscribe answer lands: the same record, now the socket's word.
+    workspaceSocket.current = { sidebarConnect: { generation: 1 }, state: 'connected' };
+    await act(async () => queryClient.setQueryData(['projects'], { waterline: 2, items: [project] }));
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Archive project' })).toBeEnabled();
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Hiring' }));
+    expect(screen.getByLabelText('Project name')).toBeInTheDocument();
   });
 
   it('shows no card once the socket has delivered the directory', () => {
