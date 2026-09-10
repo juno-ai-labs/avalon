@@ -93,9 +93,14 @@ describe("text search authority boundary", () => {
     await index.query(sources, { query: "needle", mode: "semantic", limit: 7, vector: [1, 0] });
     expect(JSON.stringify(provider.query.mock.calls[1]![0].filters)).not.toContain('"archived"');
     // A namespace written only before the display attributes shipped has nothing renderable.
-    provider.query.mockRejectedValueOnce(Object.assign(new Error('attribute "archived" not found in schema'), { status: 400 }));
+    // Both provider refusals were observed live against an old-schema namespace.
+    provider.query.mockRejectedValueOnce(Object.assign(new Error('400 {"error":"filter error in key `archived`: attribute not found"}'), { status: 400 }));
     expect(await index.queryPage(sources, { query: "needle", mode: "substring", limit: 7 })).toEqual({ results: [], nextCursor: null });
-    expect(provider.query).toHaveBeenCalledTimes(3);
+    provider.query.mockRejectedValueOnce(Object.assign(new Error('400 {"error":"attribute \u0022title\u0022 not found in schema, cannot be part of `include_attributes`"}'), { status: 400 }));
+    expect(await index.queryPage(sources, { query: "needle", mode: "substring", limit: 7 })).toEqual({ results: [], nextCursor: null });
+    provider.query.mockRejectedValueOnce(Object.assign(new Error("unrelated bad request"), { status: 400 }));
+    await expect(index.queryPage(sources, { query: "needle", mode: "substring", limit: 7 })).rejects.toThrow("search_index_query_failed");
+    expect(provider.query).toHaveBeenCalledTimes(5);
   });
 
   it("returns an explicit continuation after one rejected candidate page", async () => {

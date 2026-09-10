@@ -374,10 +374,13 @@ export class TextSearchIndex {
     }).catch((error: unknown) => {
       // A namespace does not exist until its first write.
       if (error instanceof Error && "status" in error && error.status === 404) return { rows: [] };
-      // A namespace with no write since the display attributes shipped has no
-      // `archived` column, and none of its rows carry a display to render.
+      // A namespace with no write since the display attributes shipped lacks
+      // them in its schema, so the provider refuses to return or filter on
+      // them (verified live: `attribute "x" not found in schema` for
+      // include_attributes, `filter error in key \`x\`: attribute not found`
+      // for filters). None of its rows carries a display to render.
       if (options.mode === "substring" && error instanceof Error && "status" in error && error.status === 400
-        && error.message.includes('attribute "archived" not found in schema')) return { rows: [] };
+        && /attribute (?:"[^"]*" )?not found/.test(error.message)) return { rows: [] };
       throw new Error("search_index_query_failed");
     });
     options.signal?.throwIfAborted();
