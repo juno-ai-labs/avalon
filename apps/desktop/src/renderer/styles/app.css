@@ -2743,7 +2743,7 @@ pre {
 .onboarding-items > button.is-complete .onboarding-check { background: var(--av-sys-color-brand-base); border-color: var(--av-sys-color-brand-base); }
 .onboarding-items > button.is-complete strong { color: var(--av-sys-color-text-muted); text-decoration: line-through; }
 .onboarding-items > button.is-complete small { opacity: 0.68; }
-.new-workstream-modifiers { display: flex; gap: 6px; margin: 0 auto 8px; max-width: 690px; }
+.new-workstream-modifiers { display: flex; gap: 6px; margin: 0 auto 8px; max-width: var(--composer-width); }
 .participant-modifier,
 .participant-modifier-add { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-2); border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); display: inline-flex; min-height: 34px; }
 .participant-modifier { font-size: 11px; gap: 7px; max-width: 310px; padding: 4px 9px 4px 5px; }
@@ -5208,8 +5208,19 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    turn's `max-width` stay literal: they are the column's own shape (a share of
    it, and an inset from its far edge), which nothing outside the column asks
    about. Rule-local rather than a registry token because it is the feed's
-   layout arithmetic and not an appearance either theme has an opinion about. */
-:root { --turn-width-cap: 640px; }
+   layout arithmetic and not an appearance either theme has an opinion about.
+
+   `--composer-width` is what the second reader takes: the field a person types
+   a turn into, on the conversation and on both launchers that become one, plus
+   the rows that sit above it in a launcher's dock. Four rules read it, which is
+   why it is a name and not four copies of 480px — the launcher's own 690px used
+   to be exactly that, written out in its stack, its banner and its participant
+   row, and the field it sized was a different width from the field the same
+   draft landed in one keystroke later. */
+:root {
+  --turn-width-cap: 640px;
+  --composer-width: calc(var(--turn-width-cap) * .75);
+}
 
 /* Work-stream conversation refinement: continuous transcript, compact human turns,
    quiet tool disclosures, and a low fixed composer. */
@@ -6212,14 +6223,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
      became an opaque rectangle cutting the canvas off at the sidebar's edge. */
   background: none;
   bottom: auto;
-  /* The dock is the pane's width, so it is the one box that can tell the
-     composer inside it how much pane there is. A container rather than a media
-     query because the pane is not the viewport: two sidebars and the rail take
-     their room out of it, and a query on the window answers for a width nobody
-     is looking at. Named, so the query below cannot drift onto some future
-     container between here and the stack. Only the inline size is contained —
-     the dock's height is still the composer's, which is the draft's. */
-  container: composer-dock / inline-size;
   left: auto;
   padding: 0 16px 16px;
   pointer-events: none;
@@ -6243,20 +6246,41 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    composer ran to both edges of the pane while every message in it stopped well
    short of them, so the one element a person types into was the widest thing on
    screen. Three quarters rather than the cap itself keeps the field visibly
-   narrower than the turn it becomes. */
-.workstream-screen .composer-stack {
-  max-width: calc(var(--turn-width-cap) * .75);
+   narrower than the turn it becomes.
+
+   Both selectors, because a launcher is a conversation that has not happened
+   yet: `.workstream-screen` is the settled one, `.workstream-launch-screen` is
+   the new-chat screen and the new-substream dock, and the draft in the field
+   moves from the second to the first on one keystroke without the element ever
+   unmounting. A width it changes across that keystroke is a width that moves
+   under the person typing. */
+:is(.workstream-screen, .workstream-launch-screen) .composer-stack {
+  max-width: var(--composer-width);
   width: 100%;
 }
 
-/* Under a pane this narrow the inset stops being a margin and starts being a
+/* The dock is the pane's width, so it is the one box that can tell the field
+   inside it how much pane there is. A container rather than a media query
+   because the pane is not the viewport: two sidebars and the rail take their
+   room out of it, and a query on the window answers for a width nobody is
+   looking at. Named, so the query below cannot drift onto some future container
+   between here and the stack. Only the inline size is contained — the dock's
+   height is still the composer's, which is the draft's. */
+:is(.workstream-screen, .workstream-launch-screen) .composer-dock {
+  container: composer-dock / inline-size;
+}
+
+/* Under a row this narrow the inset stops being a margin and starts being a
    waste: the field would sit in the middle of a column barely wider than
-   itself. It takes the row instead, inside the dock's own gutters.
-   568px is that 600px pane less those two 16px gutters — a size query reads the
-   container's content box, which is inside them; `app.css.node.test.ts` holds
-   the two numbers to that sum so neither can move alone. */
+   itself. It takes the row instead, inside the dock's own gutters, and the
+   rows a launcher stacks above it come with it or they stop lining up.
+   568px is a 600px pane less the conversation dock's two 16px gutters — a size
+   query reads the container's content box, which is inside them, and
+   `app.css.node.test.ts` holds those two numbers to that sum. A launcher's dock
+   states wider gutters, so it reaches the same row a little sooner. */
 @container composer-dock (width < 568px) {
-  .workstream-screen .composer-stack { max-width: none; }
+  :is(.workstream-screen, .workstream-launch-screen)
+  :is(.composer-stack, .substream-launch-banner, .new-workstream-modifiers) { max-width: none; }
 }
 
 /* A card or a rule, out of the same five values.
@@ -6702,14 +6726,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   right: auto;
 }
 
-.workstream-launch-screen .composer-stack {
-  transition: max-width 240ms cubic-bezier(.32, .72, 0, 1);
-}
-
-.workstream-launch-screen:not(.is-launching) .composer-stack {
-  max-width: 690px;
-}
-
 /* Participants are chosen before the work stream exists and are part of the
    header afterwards, so the row leaves rather than moves. */
 .launch-modifiers {
@@ -6806,7 +6822,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   display: flex;
   gap: 8px;
   margin: 0 auto;
-  max-width: 690px;
+  max-width: var(--composer-width);
   min-width: 0;
   padding: 0 2px 6px;
   width: 100%;
@@ -7028,13 +7044,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   right: 0;
 }
 
-/* The full row, as a length rather than as `none`. This screen also carries
-   `.workstream-launch-screen`, so its stack already transitions `max-width` —
-   but the moment `.is-launching` lands the field takes the conversation's
-   narrower measure, and a keyword cannot be travelled to a length: the width
-   would cut on the one frame the launch exists to make continuous. `100%` is
-   the same box, and it interpolates. */
-.new-chat-screen:not(.is-launching) .composer-stack { max-width: 100%; width: 100%; }
 .new-chat-screen:not(.is-launching) .launch-composer {
   background: var(--av-cmp-composer-background);
   border: var(--av-cmp-composer-border-width) solid var(--av-cmp-composer-border-color);
