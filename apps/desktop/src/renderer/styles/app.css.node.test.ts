@@ -298,7 +298,7 @@ describe('sidebar layout motion', () => {
     expect(rule('.workstream-context-sidebar.is-compact .workstream-substream-initial')).toContain('visibility: visible;');
     expect(rule('.workstream-context-sidebar.is-compact .workstream-context-mark:has(> .workstream-substream-initial) > .workstream-substream-arrow')).toContain('visibility: hidden;');
     expect(rule('.workstream-context-sidebar.is-compact .workstream-context-copy')).not.toContain('display: none');
-    expect(rule('.workstream-context-sidebar.is-compact .workstream-context-row,\n.workstream-context-sidebar.is-compact .workstream-context-empty')).not.toContain('justify-content');
+    expect(rule('.workstream-context-sidebar.is-compact .workstream-context-row')).not.toContain('justify-content');
     expect(rule('.workstream-context-sidebar.is-compact .sidebar-collapse-footer')).toContain('padding: 8px 32.5px 8px 8px;');
   });
 
