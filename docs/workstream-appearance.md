@@ -201,6 +201,14 @@ it render a *stored* key at all, and it inherits the unknown-key fallback that
 entry describes, which matters more here than for the other two: a Sidekick's
 key can now arrive from a client shipped after the one drawing it.
 
+**The trigger's hover fill moved with it**, from
+`--av-sys-color-surface-raised-hover` to `--av-cmp-row-background-hover`, for
+both callers. The hexagon is a sidebar tile in the other rail and hovers there
+on the row token, so filling differently depending on where you found it read
+as two controls; and the old token was the wrong weight anyway — opaque in
+dark, and in light the same value `cmp.row.background-selected` holds, so the
+trigger announced a selected row on something nothing had selected.
+
 **What a future change has to respect:** the picker is the primitive and the
 glyph is the caller's. A third surface adds a treatment beside
 `WorkstreamGlyph`, `WorkstreamMark` and `AutomationGlyph`, and passes it to this
