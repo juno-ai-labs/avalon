@@ -1,7 +1,11 @@
 import { useEffect, type RefObject } from 'react';
+import type { DesktopSettingsSection } from '../../common/settings';
 import type { SettingSearchResult } from './registry';
 
-const sectionLabels = { account: 'Account', workspace: 'Workspace', digest: 'Digest', connections: 'Connections', github: 'GitHub', 'custom-mcp': 'MCP tools', application: 'Application' };
+/* Typed against the section list rather than inferred, so adding a section
+   fails the build here instead of shipping a result whose page name is
+   `undefined`. */
+const sectionLabels: Record<DesktopSettingsSection, string> = { account: 'Account', workspace: 'Workspace', digest: 'Digest', 'internet-access': 'Internet access', connections: 'Connections', github: 'GitHub', 'custom-mcp': 'MCP tools', application: 'Application' };
 
 export function SettingsSearchResults({ results, onSelect }: {
   results: readonly SettingSearchResult[];

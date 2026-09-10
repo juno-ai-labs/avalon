@@ -286,19 +286,72 @@ pre {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* One exclusive choice as a row of pills in a recessed track — the shape
+   `SegmentedControl` draws for the appearance preference and the connections
+   filter alike. Two strips had grown their own rules: one squared off with a
+   hairline track and a bordered selection, the other with neither, and they sat
+   two panes apart looking like different controls.
+
+   The track is `cmp.segmented.track` rather than a neutral step because it has
+   to recess below a settings card in both appearances while staying clear of
+   the raised fill above it — see that token's note in the registry. The
+   selected pill carries no border and no shadow: `sys.elevation.shadow.sm` is
+   `none` in both appearances, and this design separates a raised surface from
+   the one behind it by fill, not by depth. That is also why the chosen segment
+   no longer gives two pixels of padding back — a border inside the padding was
+   what made it grow and nudge its neighbours. */
+.segmented {
+  align-items: center;
+  background: var(--av-cmp-segmented-track);
+  border-radius: var(--av-sys-size-radius-pill);
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+}
+
+.segmented > button {
+  background: transparent;
+  border: 0;
+  border-radius: var(--av-sys-size-radius-pill);
+  color: var(--av-sys-color-text-muted);
+  font-size: var(--av-cmp-control-font-size);
+  line-height: 20px;
+  padding: 4px 14px;
+  transition: background-color 140ms ease, color 140ms ease;
+  white-space: nowrap;
+}
+
+.segmented > button:hover { color: var(--av-sys-color-text-default); }
+
+.segmented > button[aria-checked='true'] {
+  background: var(--av-sys-color-surface-raised);
+  color: var(--av-sys-color-text-default);
+  font-weight: var(--av-sys-font-weight-emphasis);
+}
+
+.segmented > button:focus-visible {
+  outline: 2px solid var(--av-sys-color-focus-default);
+  outline-offset: 1px;
+}
+
+/* A pill, not a boxed tag: fully rounded, no outline, and one flat fill a shade
+   off the surface behind it. The old 3px corner and hairline border read as a
+   miniature input next to the rounded rows and cards around it, which is why
+   `.automation-header` had already overridden both. The shape is stated once
+   here instead. */
 .badge {
   align-items: center;
   background: var(--av-ref-color-neutral-4);
-  border: 1px solid var(--av-ref-color-line-3);
-  border-radius: var(--av-sys-size-radius-sm);
+  border: 1px solid transparent;
+  border-radius: var(--av-sys-size-radius-pill);
   color: var(--av-ref-color-neutral-11);
   display: inline-flex;
-  font-size: 10.5px;
-  font-weight: 520;
+  font-size: var(--av-sys-font-size-meta);
+  font-weight: var(--av-sys-font-weight-emphasis);
   line-height: 18px;
   max-width: 140px;
   overflow: hidden;
-  padding: 0 6px;
+  padding: 0 9px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1960,6 +2013,7 @@ pre {
   color: var(--av-sys-color-text-muted);
   display: inline-flex;
   gap: 4px;
+  padding: 0 8px;
 }
 .badge-private > svg { color: var(--av-sys-color-text-disabled); }
 
@@ -2188,9 +2242,6 @@ pre {
 .settings-diagnostics dt { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: var(--av-cmp-control-font-size); gap: 6px; }
 .settings-diagnostics dd { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); margin: 0; overflow-wrap: anywhere; text-align: right; }
 .settings-diagnostics dd > small { display: block; font-size: 12px; margin-top: 4px; }
-.settings-telemetry-heading { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
-.settings-telemetry-empty { color: var(--av-sys-color-text-muted); padding: 14px; }
-.settings-telemetry-empty > p { margin: 0; }
 
 /* Rally has one design with a three-position appearance preference. */
 .settings-theme-card {
@@ -2214,44 +2265,6 @@ pre {
 
 .settings-theme-heading strong { display: block; font-size: 13px; font-weight: 400; }
 .settings-theme-heading small { color: var(--av-sys-color-text-muted); display: block; font-size: 12px; margin-top: 2px; }
-
-/* System follows the Mac; Light and Dark pin one of Rally's two appearances. */
-.settings-theme-modes {
-  background: var(--av-sys-color-surface-subtle);
-  border: var(--av-sys-size-border-hairline) solid var(--av-ref-color-line-2);
-  border-radius: var(--av-sys-size-radius-lg);
-  display: inline-flex;
-  gap: 2px;
-  margin-bottom: 0;
-  padding: 2px;
-}
-
-.settings-theme-mode {
-  background: transparent;
-  border: 0;
-  border-radius: var(--av-sys-size-radius-md);
-  color: var(--av-sys-color-text-muted);
-  font-size: 11.5px;
-  padding: 5px 14px;
-  transition: background 140ms ease, color 140ms ease;
-}
-
-.settings-theme-mode:hover { color: var(--av-sys-color-text-default); }
-
-.settings-theme-mode[aria-checked='true'] {
-  background: var(--av-sys-color-surface-raised);
-  border: var(--av-sys-size-border-hairline) solid var(--av-ref-color-line-4);
-  color: var(--av-sys-color-text-default);
-  font-weight: var(--av-sys-font-weight-emphasis);
-  /* The border is inside the padding, so the cell must give it back or the
-     selected segment grows by two pixels and nudges its neighbours. */
-  padding: 4px 13px;
-}
-
-.settings-theme-mode:focus-visible {
-  outline: 2px solid var(--av-sys-color-focus-default);
-  outline-offset: 1px;
-}
 
 .settings-theme-status { color: var(--av-sys-color-text-muted); font-size: 12px; grid-column: 1 / -1; margin: 0; }
 
@@ -2376,24 +2389,6 @@ pre {
 
 .settings-connection-toolbar { align-items: center; display: flex; justify-content: space-between; margin-bottom: 12px; }
 .settings-connection-toolbar > span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
-.settings-segmented {
-  align-items: center;
-  background: var(--av-sys-color-surface-subtle);
-  border-radius: var(--av-cmp-control-radius);
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-}
-.settings-segmented button {
-  background: transparent;
-  border-radius: var(--av-cmp-control-radius);
-  color: var(--av-sys-color-text-muted);
-  font-size: var(--av-cmp-control-font-size);
-  min-height: 30px;
-  padding: 0 10px;
-}
-.settings-segmented button:hover { color: var(--av-sys-color-text-subtle); }
-.settings-segmented button[aria-pressed='true'] { background: var(--av-ref-color-neutral-6); color: var(--av-sys-color-text-default); }
 
 .settings-section-copy { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); line-height: 1.5; margin: 0 0 14px; }
 .provider-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); }
@@ -6902,7 +6897,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .automation-title-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .automation-title-line h1 { width: 100%; margin: 0 0 12px; font-size: 24px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
 .automation-description { margin-top: 16px; color: var(--av-sys-color-text-subtle); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
-.automation-header .badge { border-radius: var(--av-sys-size-radius-pill); padding: 3px 9px; }
+.automation-header .badge { padding: 3px 9px; }
 .automation-header .button { border-radius: var(--av-sys-size-radius-pill); }
 .automation-header .workstream-header-actions { width: 100%; gap: 8px; }
 .automation-header .workstream-header-actions > .button { flex: 1; justify-content: center; }

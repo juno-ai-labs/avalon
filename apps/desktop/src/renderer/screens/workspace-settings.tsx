@@ -14,6 +14,7 @@ import {
   Check,
   Copy,
   GitBranch,
+  Globe,
   LockKeyhole,
   LoaderCircle,
   MailPlus,
@@ -31,7 +32,6 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -46,8 +46,8 @@ import type {
 } from '@rally/contracts';
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
-import type { DesktopApplicationSettings, DesktopTelemetryInspectorEntry } from '../../common/desktop';
-import { Avatar, Badge, Button, ConnectorMark, DropdownSelect, EmptyState, InlineError, Modal } from '../components/primitives';
+import type { DesktopApplicationSettings } from '../../common/desktop';
+import { Avatar, Badge, Button, ConnectorMark, DropdownSelect, EmptyState, InlineError, Modal, SegmentedControl } from '../components/primitives';
 import { connectorBrandMark } from '../lib/plugin-marks';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { ThemePicker } from '../components/theme-picker';
@@ -211,6 +211,11 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
       // the timezone it borrows — not a workspace-level setting.
       { id: 'digest', label: 'Digest', icon: Newspaper },
       { id: 'workspace', label: 'Workspace', icon: Users },
+      // Under Workspace rather than beside it: the Terminal egress policy is a
+      // workspace-wide setting, but it is a page of its own — a review-then-
+      // confirm flow that stops running sandboxes, which does not belong in the
+      // middle of a list of names, timezones and invitations.
+      { id: 'internet-access', label: 'Internet access', icon: Globe, child: true },
       { id: 'connections', label: 'Connections', icon: Plug },
     ],
   },
@@ -435,7 +440,6 @@ export function WorkspaceSettingsScreen({
   const {
     api,
     runtime,
-    session,
     leaveWorkspace,
     signOut,
     pendingConnectorOAuth,
@@ -475,10 +479,6 @@ export function WorkspaceSettingsScreen({
   // events and replies to reads or mutations. A live event supersedes any
   // operation that was already in flight when it arrived.
   const applicationSettingsLiveGeneration = useRef(0);
-  const [telemetryInspector, setTelemetryInspector] = useState<DesktopTelemetryInspectorEntry[]>([]);
-  const [telemetryInspectorLoading, setTelemetryInspectorLoading] = useState(false);
-  const [telemetryInspectorError, setTelemetryInspectorError] = useState<string | null>(null);
-  const telemetryInspectorRequest = useRef(0);
   const [applicationSettingsLoadError, setApplicationSettingsLoadError] = useState<string | null>(null);
   const [reconnectTarget, setReconnectTarget] = useState<WorkstreamConnection | null>(null);
   const [disconnectTarget, setDisconnectTarget] = useState<WorkstreamConnection | null>(null);
@@ -610,7 +610,7 @@ export function WorkspaceSettingsScreen({
   const terminalSettings = useQuery({
     queryKey: ['terminal-workspace-settings'],
     queryFn: ({ signal }) => api!.getTerminalWorkspaceSettings(signal),
-    enabled: Boolean(api && activeSection === 'workspace'),
+    enabled: Boolean(api && activeSection === 'internet-access'),
     staleTime: 10_000,
   });
   useEffect(() => {
@@ -1017,36 +1017,6 @@ export function WorkspaceSettingsScreen({
     setActiveSection(nextSection);
   }), [bridge]);
 
-  const loadTelemetryInspector = useCallback(async (): Promise<void> => {
-    const request = telemetryInspectorRequest.current + 1;
-    telemetryInspectorRequest.current = request;
-    setTelemetryInspectorLoading(true);
-    setTelemetryInspectorError(null);
-    try {
-      const entries = await bridge.getTelemetryInspector();
-      if (telemetryInspectorRequest.current === request) setTelemetryInspector(entries);
-    } catch (error) {
-      if (telemetryInspectorRequest.current === request) {
-        setTelemetryInspectorError(
-          error instanceof Error ? error.message : 'Telemetry decisions could not be loaded.',
-        );
-      }
-    } finally {
-      if (telemetryInspectorRequest.current === request) setTelemetryInspectorLoading(false);
-    }
-  }, [bridge]);
-
-  useEffect(() => {
-    if (!applicationSettings?.developerSettingsAvailable) {
-      telemetryInspectorRequest.current += 1;
-      setTelemetryInspector([]);
-      setTelemetryInspectorError(null);
-      setTelemetryInspectorLoading(false);
-      return;
-    }
-    void loadTelemetryInspector();
-  }, [applicationSettings?.developerSettingsAvailable, loadTelemetryInspector]);
-
   useEffect(() => {
     let cancelled = false;
     const unsubscribe = bridge.onApplicationSettingsChanged((settings) => {
@@ -1334,7 +1304,117 @@ export function WorkspaceSettingsScreen({
                   </label>
                 </div>
                 {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}
+                <div className="settings-pane-heading settings-pane-heading-count settings-pane-heading-spaced">
+                  <div><h2><SettingLabel setting={settings.members} /></h2><p>People with access to {workspace.name}.</p></div>
+                  <span>{members.data?.length ?? 0}</span>
+                </div>
+                {members.error && <InlineError>{members.error.message}</InlineError>}
+                <div className="settings-member-list settings-list-card">
+                  {(members.data ?? []).map((member) => (
+                    <div className="settings-member-row" key={member.id}>
+                      <Avatar member={member} size="medium" />
+                      <span><strong>{member.name}</strong><small>{member.email}</small></span>
+                      <Badge className="role-badge">{member.role ?? 'member'}</Badge>
+                    </div>
+                  ))}
+                </div>
+
+                {isSettingAvailable(settings.invitations, settingsContext) && (
+                  <div className="settings-subsection">
+                    <div className="settings-pane-heading settings-pane-heading-count">
+                      <div><h2><SettingLabel setting={settings.invitations} /></h2><p>Invite teammates by email. Links expire after seven days.</p></div>
+                      <span>{pendingInvitations.length} pending</span>
+                    </div>
+                    <form
+                      className="invite-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        if (email.trim()) createInvitation.mutate();
+                      }}
+                    >
+                      <label>
+                        <span><SettingLabel setting={settings.inviteEmail} /></span>
+                        <input autoComplete="email" onChange={(event) => setEmail(event.target.value)} placeholder="teammate@company.com" type="email" value={email} />
+                      </label>
+                      <label>
+                        <span><SettingLabel setting={settings.inviteRole} /></span>
+                        <select onChange={(event) => setRole(event.target.value as 'admin' | 'member')} value={role}>
+                          <option value="member">Member</option>
+                          {workspace.currentUser.role === 'owner' && <option value="admin">Administrator</option>}
+                        </select>
+                      </label>
+                      <Button className="button-primary" disabled={!email.trim() || createInvitation.isPending} type="submit">
+                        {createInvitation.isPending ? <LoaderCircle aria-hidden="true" className="spin" size={15} /> : <MailPlus aria-hidden="true" size={15} />}
+                        <SettingLabel setting={settings.inviteSend} />
+                      </Button>
+                    </form>
+                    {createInvitation.error && <InlineError>{createInvitation.error.message}</InlineError>}
+                    {createdUrl && (
+                      <div className="invite-link-result" role="status">
+                        <div>
+                          <strong>{createdDelivery === 'sent' ? 'Invitation emailed' : 'Invite link ready'}</strong>
+                          <small>{createdDelivery === 'sent' ? 'It expires in seven days. You can also copy the one-time link.' : 'Email delivery is disabled outside production. Copy the one-time link to test the flow.'}</small>
+                        </div>
+                        <Button onClick={() => void copyInvitation()}>
+                          {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
+                          {copied ? 'Copied' : 'Copy link'}
+                        </Button>
+                      </div>
+                    )}
+                    {revokeInvitation.error && <InlineError>{revokeInvitation.error.message}</InlineError>}
+                    <div className="invitation-list settings-list-card">
+                      {invitations.isLoading ? (
+                        <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Loading invitations…</div>
+                      ) : pendingInvitations.length === 0 ? (
+                        <EmptyState title="No pending invitations" description="New invitations appear here until they are accepted or revoked." />
+                      ) : pendingInvitations.map((invitation) => (
+                        <div className="invitation-row" key={invitation.id}>
+                          <span><strong>{invitation.email}</strong><small>{invitation.role === 'admin' ? 'Administrator' : 'Member'} · expires {new Date(invitation.expiresAt).toLocaleDateString()}</small></span>
+                          <Badge>{invitationStatusLabel(invitation.status)}</Badge>
+                          <button aria-label={`Revoke invitation for ${invitation.email}`} disabled={revokeInvitation.isPending} onClick={() => revokeInvitation.mutate(invitation.id)} type="button">
+                            <Trash2 aria-hidden="true" size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    {previousInvitations.length > 0 && (
+                      <details className="invitation-history">
+                        <summary>Previous invitations ({previousInvitations.length})</summary>
+                        {previousInvitations.map((invitation) => (
+                          <div className="invitation-history-row" key={invitation.id}><span>{invitation.email}</span><Badge>{invitationStatusLabel(invitation.status)}</Badge></div>
+                        ))}
+                      </details>
+                    )}
+                  </div>
+                )}
                 <div className="settings-pane-heading settings-pane-heading-spaced">
+                  <h2><SettingLabel setting={settings.workspaceAccess} /></h2>
+                  <p>Leaving removes this workspace from your Rally account on every device.</p>
+                </div>
+                <div className="settings-list-card">
+                  <div className="settings-preference-row">
+                    <span className="settings-row-copy">
+                      <strong>{leavingClosesWorkspace ? 'Leave and close this workspace' : 'Leave this workspace'}</strong>
+                      <small>{leavingClosesWorkspace
+                        ? 'You are the last member. The workspace will become unavailable without deleting its retained data.'
+                        : 'The workspace stays available to its other members.'}</small>
+                    </span>
+                    <Button
+                      className="button-danger"
+                      disabled={members.isLoading || members.isError}
+                      onClick={() => setLeaveConfirmationOpen(true)}
+                    >
+                      {leavingClosesWorkspace ? 'Leave and close workspace' : 'Leave this workspace'}
+                    </Button>
+                  </div>
+                </div>
+                {members.isError && <InlineError>Rally could not verify whether anyone else belongs to this workspace.</InlineError>}
+              </section>
+            )}
+
+            {activeSection === 'internet-access' && (
+              <section aria-labelledby="settings-title" className="settings-pane">
+                <div className="settings-pane-heading">
                   <h2><SettingLabel setting={settings.terminal} /></h2>
                   <p>Choose where code running in Daytona may connect. Rally-managed platform access is applied automatically.</p>
                 </div>
@@ -1447,111 +1527,6 @@ export function WorkspaceSettingsScreen({
                     )}
                   </div>
                 )}
-                <div className="settings-pane-heading settings-pane-heading-count">
-                  <div><h2><SettingLabel setting={settings.members} /></h2><p>People with access to {workspace.name}.</p></div>
-                  <span>{members.data?.length ?? 0}</span>
-                </div>
-                {members.error && <InlineError>{members.error.message}</InlineError>}
-                <div className="settings-member-list settings-list-card">
-                  {(members.data ?? []).map((member) => (
-                    <div className="settings-member-row" key={member.id}>
-                      <Avatar member={member} size="medium" />
-                      <span><strong>{member.name}</strong><small>{member.email}</small></span>
-                      <Badge className="role-badge">{member.role ?? 'member'}</Badge>
-                    </div>
-                  ))}
-                </div>
-
-                {isSettingAvailable(settings.invitations, settingsContext) && (
-                  <div className="settings-subsection">
-                    <div className="settings-pane-heading settings-pane-heading-count">
-                      <div><h2><SettingLabel setting={settings.invitations} /></h2><p>Invite teammates by email. Links expire after seven days.</p></div>
-                      <span>{pendingInvitations.length} pending</span>
-                    </div>
-                    <form
-                      className="invite-form"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        if (email.trim()) createInvitation.mutate();
-                      }}
-                    >
-                      <label>
-                        <span><SettingLabel setting={settings.inviteEmail} /></span>
-                        <input autoComplete="email" onChange={(event) => setEmail(event.target.value)} placeholder="teammate@company.com" type="email" value={email} />
-                      </label>
-                      <label>
-                        <span><SettingLabel setting={settings.inviteRole} /></span>
-                        <select onChange={(event) => setRole(event.target.value as 'admin' | 'member')} value={role}>
-                          <option value="member">Member</option>
-                          {workspace.currentUser.role === 'owner' && <option value="admin">Administrator</option>}
-                        </select>
-                      </label>
-                      <Button className="button-primary" disabled={!email.trim() || createInvitation.isPending} type="submit">
-                        {createInvitation.isPending ? <LoaderCircle aria-hidden="true" className="spin" size={15} /> : <MailPlus aria-hidden="true" size={15} />}
-                        <SettingLabel setting={settings.inviteSend} />
-                      </Button>
-                    </form>
-                    {createInvitation.error && <InlineError>{createInvitation.error.message}</InlineError>}
-                    {createdUrl && (
-                      <div className="invite-link-result" role="status">
-                        <div>
-                          <strong>{createdDelivery === 'sent' ? 'Invitation emailed' : 'Invite link ready'}</strong>
-                          <small>{createdDelivery === 'sent' ? 'It expires in seven days. You can also copy the one-time link.' : 'Email delivery is disabled outside production. Copy the one-time link to test the flow.'}</small>
-                        </div>
-                        <Button onClick={() => void copyInvitation()}>
-                          {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
-                          {copied ? 'Copied' : 'Copy link'}
-                        </Button>
-                      </div>
-                    )}
-                    {revokeInvitation.error && <InlineError>{revokeInvitation.error.message}</InlineError>}
-                    <div className="invitation-list settings-list-card">
-                      {invitations.isLoading ? (
-                        <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Loading invitations…</div>
-                      ) : pendingInvitations.length === 0 ? (
-                        <EmptyState title="No pending invitations" description="New invitations appear here until they are accepted or revoked." />
-                      ) : pendingInvitations.map((invitation) => (
-                        <div className="invitation-row" key={invitation.id}>
-                          <span><strong>{invitation.email}</strong><small>{invitation.role === 'admin' ? 'Administrator' : 'Member'} · expires {new Date(invitation.expiresAt).toLocaleDateString()}</small></span>
-                          <Badge>{invitationStatusLabel(invitation.status)}</Badge>
-                          <button aria-label={`Revoke invitation for ${invitation.email}`} disabled={revokeInvitation.isPending} onClick={() => revokeInvitation.mutate(invitation.id)} type="button">
-                            <Trash2 aria-hidden="true" size={14} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                    {previousInvitations.length > 0 && (
-                      <details className="invitation-history">
-                        <summary>Previous invitations ({previousInvitations.length})</summary>
-                        {previousInvitations.map((invitation) => (
-                          <div className="invitation-history-row" key={invitation.id}><span>{invitation.email}</span><Badge>{invitationStatusLabel(invitation.status)}</Badge></div>
-                        ))}
-                      </details>
-                    )}
-                  </div>
-                )}
-                <div className="settings-pane-heading settings-pane-heading-spaced">
-                  <h2><SettingLabel setting={settings.workspaceAccess} /></h2>
-                  <p>Leaving removes this workspace from your Rally account on every device.</p>
-                </div>
-                <div className="settings-list-card">
-                  <div className="settings-preference-row">
-                    <span className="settings-row-copy">
-                      <strong>{leavingClosesWorkspace ? 'Leave and close this workspace' : 'Leave this workspace'}</strong>
-                      <small>{leavingClosesWorkspace
-                        ? 'You are the last member. The workspace will become unavailable without deleting its retained data.'
-                        : 'The workspace stays available to its other members.'}</small>
-                    </span>
-                    <Button
-                      className="button-danger"
-                      disabled={members.isLoading || members.isError}
-                      onClick={() => setLeaveConfirmationOpen(true)}
-                    >
-                      {leavingClosesWorkspace ? 'Leave and close workspace' : 'Leave this workspace'}
-                    </Button>
-                  </div>
-                </div>
-                {members.isError && <InlineError>Rally could not verify whether anyone else belongs to this workspace.</InlineError>}
               </section>
             )}
 
@@ -1664,15 +1639,16 @@ export function WorkspaceSettingsScreen({
                 </div>
                 <div className="settings-subsection">
                   <div className="settings-connection-toolbar">
-                    <div className="settings-segmented" role="group" aria-label="Filter connections">
-                      {([
-                        ['not_connected', 'Not connected'],
-                        ['connected', 'Connected'],
-                        ['all', 'All'],
-                      ] as const).map(([value, label]) => (
-                        <button aria-pressed={connectionFilter === value} key={value} onClick={() => setConnectionFilter(value)} type="button">{label}</button>
-                      ))}
-                    </div>
+                    <SegmentedControl
+                      ariaLabel="Filter connections"
+                      onChange={setConnectionFilter}
+                      options={[
+                        { value: 'not_connected', label: 'Not connected' },
+                        { value: 'connected', label: 'Connected' },
+                        { value: 'all', label: 'All' },
+                      ]}
+                      value={connectionFilter}
+                    />
                     <span>{healthyConnections.length} connected</span>
                   </div>
                   <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Workspace connections expose granted capabilities to every member; workspace automations use only the connections explicitly bound to them.</p>
@@ -2180,44 +2156,11 @@ export function WorkspaceSettingsScreen({
                       />
                     </div>
                     {updateDebugEnabled.error && <InlineError>{updateDebugEnabled.error.message}</InlineError>}
-                    <div className="settings-pane-heading settings-pane-heading-spaced settings-telemetry-heading">
-                      <div><h3><SettingLabel setting={settings.telemetry} /></h3><p>Recent contract decisions only. Values and identifiers are always redacted.</p></div>
-                      <Button
-                        aria-label="Refresh telemetry inspector"
-                        disabled={telemetryInspectorLoading}
-                        onClick={() => void loadTelemetryInspector()}
-                      >
-                        <RefreshCcw aria-hidden="true" className={telemetryInspectorLoading ? 'spin' : undefined} size={14} />
-                        Refresh
-                      </Button>
-                    </div>
-                    {telemetryInspectorError && <InlineError>{telemetryInspectorError}</InlineError>}
-                    {telemetryInspectorLoading && telemetryInspector.length === 0 ? (
-                      <div className="settings-list-card settings-telemetry-empty"><p role="status">Loading telemetry decisions…</p></div>
-                    ) : telemetryInspector.length === 0 ? (
-                      <div className="settings-list-card settings-telemetry-empty"><p>No telemetry decisions in this process yet.</p></div>
-                    ) : (
-                      <dl className="settings-list-card settings-diagnostics">
-                        {telemetryInspector.map((entry, index) => (
-                          <div key={`${entry.name}-${index}`}>
-                            <dt>{entry.name}</dt>
-                            <dd>
-                              {entry.propertyNames.join(', ') || 'No properties'}
-                              <small>{entry.route === 'eu' ? 'EU' : 'US'} · {entry.validation} · {entry.queueState}</small>
-                            </dd>
-                          </div>
-                        ))}
-                      </dl>
-                    )}
                   </>
                 )}
-                <div className="settings-pane-heading settings-pane-heading-spaced"><h2><SettingLabel setting={settings.about} /></h2><p>Build and service details for this Rally installation.</p></div>
+                <div className="settings-pane-heading settings-pane-heading-spaced"><h2><SettingLabel setting={settings.about} /></h2><p>Which release of Rally this Mac is running.</p></div>
                 <dl className="settings-diagnostics settings-list-card">
                   <div><dt><SettingLabel setting={settings.version} /></dt><dd>{runtime?.appVersion ?? 'Unknown'}</dd></div>
-                  <div><dt><SettingLabel setting={settings.build} /></dt><dd>{runtime?.isPackaged ? 'Installed app' : 'Development'}</dd></div>
-                  <div><dt><SettingLabel setting={settings.platform} /></dt><dd>{runtime?.platform ?? 'Unknown'}</dd></div>
-                  <div><dt><SettingLabel setting={settings.api} /></dt><dd className="mono">{session?.apiBaseUrl ?? api?.baseUrl ?? 'Unavailable'}</dd></div>
-                  <div><dt><Wifi aria-hidden="true" size={14} /> <SettingLabel setting={settings.realtime} /></dt><dd>Automatic reconnect · hibernating socket</dd></div>
                 </dl>
               </section>
             )}
