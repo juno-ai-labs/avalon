@@ -792,11 +792,10 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
             ariaLabel="Opening work-stream message"
             attachments={attachmentDraft.attachments}
             autoFocus={owningProjectId !== undefined}
-            className="launch-composer"
             error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? create.error?.message ?? attachmentDraft.error}
             fileInputRef={fileInputRef}
             footerHint="Enter to create · Shift+Enter for a new line"
-            layout={owningProjectId === undefined ? 'message-capsule' : undefined}
+            layout="message-capsule"
             maxHeight={220}
             model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
             mentionLabels={mentionLabels}

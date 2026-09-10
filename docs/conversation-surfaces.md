@@ -97,6 +97,17 @@ grows; that edge is the composer's own only while the dock states no padding
 above it, which `app.css.node.test.ts` holds for every rule naming either
 class.
 
+Every surface with a composer renders the same one, dressed the same way: the
+message capsule, keyed on `:is(.workstream-screen, .workstream-launch-screen)
+.workstream-composer.is-message-capsule` — one 44px pill on a 22px corner, a
+42px-tall field, the plus in the left column and the send or dictation control
+in the right. `ComposerInput` takes `layout: 'message-capsule'` on all four
+surfaces (the conversation, the new-substream dock, a workspace-level new chat
+and a project-owned one), and no surface states a treatment of its own. A
+launcher that dressed its field differently made the element a person types
+their first message into the odd one out on a screen already showing the
+conversation it becomes, and it made the hand-off a costume change.
+
 The composer's width is the conversation's, not the pane's, and it is one width
 across every surface that has a composer. A turn is capped at `--turn-width-cap`
 (640px, in `app.css`); `--composer-width` is three quarters of that, and the
@@ -417,6 +428,40 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — One composer, dressed one way
+
+**What changed:** The message capsule is now every conversation surface's, and
+the launchers state no composer treatment of their own. The capsule's 29 rules
+key on `:is(.workstream-screen, .workstream-launch-screen)` instead of
+`:is(.workstream-screen, .new-chat-screen)`, which reaches the new-substream dock
+and project-owned creation as well; `new-workstream.tsx` passes
+`layout="message-capsule"` unconditionally rather than only for a workspace-level
+new chat; and all eleven `.launch-composer` rules are gone, along with the
+`className` that carried them. Two of those were the treatment itself — a
+raised box on `--av-sys-size-radius-xl` with an 84px field under
+`elevation-shadow-md`, and the new-chat screen's restatement of the capsule it
+was already sitting beside — and two were the transitions that travelled between
+the treatments at `.is-launching`, which now have nothing to travel.
+
+**Why:** The new-substream field was 86px tall on an 8px corner while the
+conversation's, six inches above it on the same screen, was a 44px pill on a
+22px corner; a person starting a substream saw both at once. Three dressings of
+one component is also three places to keep in step, and they had already drifted:
+the launcher's placeholder ink, its hint ink, and its toolbar padding were each
+stated once and read nowhere else.
+
+**Consequences:** Project-owned creation loses the toolbar layout the
+2026-09-04 entry in [`workstream-creation.md`](workstream-creation.md) gave it —
+that entry's reasoning (the launcher should not look different from the
+conversation entry point) is the same reasoning applied to the surface it had
+left out. Its developer-only model override moves from the toolbar pill into the
+plus menu, where the capsule has carried it since that entry; its footer hint
+("Enter to create") is not rendered at all, because the capsule hides
+`.composer-hint`, so both launchers now state the keystroke nowhere. The prop is
+still passed, and one rule is all that stands between it and being shown again. The new-substream field is a single 42px row until it wraps
+rather than an 84px box, so its first impression is smaller; the banner above it
+is unchanged. Checked in a real window on both appearances, wrapped and empty.
 
 ### 2026-09-10 — One composer width, launchers included
 
