@@ -2,11 +2,11 @@
 
 What the work-stream transcript shows in place of an agent's tool calls: one row
 per plugin per uninterrupted stretch of work, saying which place Rally is working
-in and for how long — "Slack is working for 4m 02s", becoming "Slack worked for
-5m 02s" when the plugin is done.
+in and for how long — "Using Slack for 4m 02s", becoming "Used Slack for 5m 02s"
+when the plugin is done.
 
 The same collapse is applied to the model's thinking, which arrives one row per
-reasoning segment and reads as one "thought for …" per run.
+reasoning segment and reads as one "Thought for …" per run.
 
 Once an answer reports on a stretch of that work, the stretch folds behind one
 closed accordion sitting directly above the answer — "Worked for 41m 17s" where
@@ -95,13 +95,13 @@ duration and no spans, which is a state the accordion is built to expect.
 A thinking block is the model reasoning, and the transcript gives each one its
 own activity and so its own row. The model thinks between every pair of tool
 calls, so a run that used one plugin four times reaches the feed as one grouped
-plugin row and four thinking rows stacked under it — "thought for 29s / thought
-for 38s / thought for 17s / thought for 14s". Each is true and none is what a
+plugin row and four thinking rows stacked under it — "Thought for 29s / Thought
+for 38s / Thought for 17s / Thought for 14s". Each is true and none is what a
 reader wanted to know, which is the same complaint the per-call tool rows
 answered: what places Rally worked in, and for how long.
 
-So `groupThinkingMessages` sums a run's thinking into one row — "thinking for
-1m 39s" while any segment is still going, "thought for 1m 38s" once they have
+So `groupThinkingMessages` sums a run's thinking into one row — "Thinking for
+1m 39s" while any segment is still going, "Thought for 1m 38s" once they have
 all settled — sitting where the run's first thinking row sat.
 
 That row draws a **brain** where a plugin row draws its mark, in the same box
@@ -115,7 +115,7 @@ well as thinking, and the orb is the shape that stands for work in general.
 
 Two rows deliberately stay out of it:
 
-- **The response's own total**, the "worked for …" row at the foot of a live
+- **The response's own total**, the "Worked for …" row at the foot of a live
   run, which `foldSettledWorkIntoMessages` moves onto the message it produced
   when it settles — and which then becomes the label of that response's single
   accordion, or stays in the header where there is no accordion or more than
@@ -225,6 +225,16 @@ name is a common noun rather than a proper one, so it is the one that takes an
 article: "Used a computer for 11s". A row whose duration is unknown drops the
 duration rather than printing `0ms`, running or settled: printing the active
 segment alone would read as the whole.
+
+Every row's label opens with a capital, and `AgentWorkTiming` is what puts it
+there rather than each producer. A plugin group already names itself in
+sentence shape, but the thought rows carry bare English verbs, and a
+`sentenceCase` at the point the sentence is assembled is what keeps "Thought
+for 7s" from having to be spelled that way in the projection — where the same
+string is also the identifier that tells a thinking row from a response total.
+That covers the rows only: the message header and the accordion toggle are
+`workSummaryLabel`'s own sentence, which hard-codes "Worked" and deliberately
+ignores the row's verb.
 
 The mark is drawn bare — no chip, no ring, no per-connector brand fill — and
 pulses its opacity while the group is active, which is the whole of the "still
@@ -408,6 +418,13 @@ is the one that might have been partly unloaded, and what follows it is loaded.
   visible label ticks ten times a second, so a live region carries the name
   instead; deriving it from the verb left a thinking row announcing the bare
   word "thinking".
+- **A producer's verb stays as it is written; only `AgentWorkTiming` cases it.**
+  `activeVerb` is also the identity three readers compare a thought row's scope
+  with — `isThinkingEvent`, `foldSettledWorkIntoMessages`, and `ThoughtBlock`'s
+  choice of the brain over the orb — and each of them resolves a mismatch by
+  returning the wrong row rather than failing. Rewording a verb for how it
+  reads therefore moves rows between scopes silently. The row's sentence is
+  shaped where it is assembled, which is the one place that has no other job.
 - **A mark is sized through the surface that owns it.** `.connector-mark` holds
   the default low in the stylesheet, so a per-surface size written as a bare
   class ties it and loses on source order — an inert rule that reads as if it
@@ -618,6 +635,46 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-09-10 — The row's label opens with a capital
+
+**What changed:** `AgentWorkTiming` sentence-cases the label it prints, so a
+thought row reads "Thought for 7s" and "Thinking for 7s" where it read "thought
+for 7s", and the response's own live total reads "Working for 8s". The plugin
+rows are unchanged, because their verbs were already written that way.
+
+**Why:** the thought rows were the only ones in the column starting lowercase.
+Under a header reading "Worked for 8s" and beside "Used Slack for 5s", a
+lowercase "thought for 7s" reads as a fragment of some other sentence rather
+than as the row's own line — the capitalization was carrying a distinction
+between the rows that does not exist.
+
+The fix belongs in the component and not in the projection, which is the part a
+future change has to respect: `activeVerb` is not only wording. `isThinkingEvent`
+and `foldSettledWorkIntoMessages` compare it against `'thinking'` and
+`'working'` to decide which of the two thought rows they are looking at, and
+`ThoughtBlock` reads the same field to choose the brain over the orb — all three
+returning the wrong row silently rather than failing, as the brain entry below
+already warns. Capitalizing the verbs where they are produced would have made a
+row's appearance and its identity the same string to keep in step, so a later
+wording change would have quietly moved rows between scopes. The component owns
+the sentence it prints, so it is where the sentence is shaped, and
+already-capitalized verbs pass through untouched.
+
+**Considered and rejected:** `text-transform: capitalize` in the stylesheet,
+which capitalizes every word ("Used Slack For 5s") and leaves the accessible
+name of a settled row — the same string — lowercase. Also a `::first-letter`
+rule, which fixes what is seen and not what is read aloud.
+
+**Consequences:** the casing covers the rows only. The message header and the
+accordion toggle are `workSummaryLabel`'s own sentence, which hard-codes
+"Worked" because it deliberately ignores the row's verb; the two agree today,
+and a header that ever took a verb from a row is the change that has to
+reconcile them. A row whose duration is unknown now reads as the bare
+capitalized verb — a thinking row renders "Thought" beside its brain — which is
+a noun as readily as a past tense. No producer emits a null duration today.
+
+Shipped in #647.
 
 ### 2026-09-09 — A drawer reports its own stretch, from when its rows worked
 

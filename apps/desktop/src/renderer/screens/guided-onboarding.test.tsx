@@ -78,7 +78,14 @@ describe('new-account learning paths', () => {
     // asserts on. Reading it synchronously raced that second commit and failed
     // as `POP /onboarding` under a loaded machine. This still fails if the
     // journey pushes instead of replacing, or never leaves at all.
-    await waitFor(() => expect(screen.getByTestId('route')).toHaveTextContent('REPLACE /'));
+    //
+    // Anchored, because `toHaveTextContent` matches a string as a substring:
+    // "REPLACE /workstreams/x" would satisfy the bare "REPLACE /". Today
+    // `useOpenFirstWorkstream` always navigates to `WORKSTREAM_LANDING_ROUTE`
+    // and the landing resolves the stream to open within that route, so no
+    // such pathname can reach here — the anchor is what keeps that true if the
+    // landing ever redirects instead.
+    await waitFor(() => expect(screen.getByTestId('route')).toHaveTextContent(/^REPLACE \/$/u));
   });
   it('retains personal setup when the account save fails', async () => {
     state.saveAccount.mockRejectedValue(new Error('Profile changed in another session')); show();
