@@ -388,7 +388,14 @@ that follows from what the cache is, and it is not a number anyone has to
 guess. Letting the composer send over a seed with the existing queue-and-resend
 semantics. The optimistic row would be positioned against a fence the room had
 not confirmed, and the person would be told a message was sent into a
-conversation whose live state they had not seen.
+conversation whose live state they had not seen. SQLite for the store. The
+renderer is sandboxed with no Node integration, so SQLite would live in the
+main process behind a new IPC surface, as a native module or `node:sqlite`,
+and every read, write, and wipe would cross it; the cache's access pattern is
+get by key, range by prefix, and delete by subject, which IndexedDB's compound
+keys and ranges cover in-process, in the store shape the draft cache already
+keeps. Reading inside cached content, such as offline search across
+transcripts, is what would reopen that question.
 
 **Consequences:** Every writer of the detail, transcript, and context entries
 is now also a writer of the disk, through the mirror; a new canonical field
