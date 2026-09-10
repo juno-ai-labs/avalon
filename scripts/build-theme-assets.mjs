@@ -394,7 +394,8 @@ export function generate({ registry, base, themes }) {
  * resolved colour and redeclaring the ramp beneath it changes nothing. The
  * Settings miniatures are exactly that element.
  */
-export function resolvedTokens(theme, themes, base = { tokens: {} }) {
+export function resolvedTokens(theme, themes, base) {
+  if (!base?.tokens) throw new Error('resolvedTokens needs the base token file: without it every base token is missing from the output');
   const inherited = defaultTheme(themes).tokens;
   return { ...base.tokens, ...inherited, ...theme.tokens };
 }

@@ -49,10 +49,10 @@ test('a token path becomes a namespaced custom property', () => {
   * rename has to remember — and when `dark` became `neu` it did not.
   */
 test('one theme declares itself the default, and is emitted as :root', () => {
-  const base = defaultTheme(themes);
+  const fallback = defaultTheme(themes);
 
-  assert.equal(selectorFor(base.id, themes), `:root,\n[data-theme='${base.id}']`);
-  for (const theme of themes.filter((candidate) => candidate.id !== base.id)) {
+  assert.equal(selectorFor(fallback.id, themes), `:root,\n[data-theme='${fallback.id}']`);
+  for (const theme of themes.filter((candidate) => candidate.id !== fallback.id)) {
     assert.equal(selectorFor(theme.id, themes), `[data-theme='${theme.id}']`);
   }
   assert.throws(() => defaultTheme(themes.map((theme) => ({ ...theme, default: false }))), /exactly one/u);
@@ -62,7 +62,7 @@ test('one theme declares itself the default, and is emitted as :root', () => {
 test('every theme sets only tokens the registry declares', () => {
   for (const theme of [base, ...themes]) {
     const unknown = Object.keys(theme.tokens).filter((path) => !registry.tokens[path]);
-    assert.deepEqual(unknown, [], `${theme.id} sets tokens that are not in the registry`);
+    assert.deepEqual(unknown, [], `${theme.id ?? 'base'} sets tokens that are not in the registry`);
   }
 });
 
@@ -223,6 +223,7 @@ const asCss = (value) => {
       groups: { 'sys.backdrop': 'x' },
       tokens: { 'sys.backdrop.image': { $type: 'gradient' } },
     },
+    base: { tokens: {} },
     themes: [{
       id: 'base', name: 'D', description: 'd', appearance: 'dark', default: true,
       tokens: { 'sys.backdrop.image': value },
@@ -388,6 +389,7 @@ test('a bundled face points at the file that ships, and a remote one never does'
   const remote = { family: 'Far', src: { url: 'https://fonts.example/far.woff2' } };
   const css = generate({
     registry: { groups: { 'sys.font': 'x' }, tokens: { 'sys.font.family.ui': { $type: 'fontFamily' } } },
+    base: { tokens: {} },
     themes: [{
       id: 'base', name: 'D', description: 'd', appearance: 'dark', default: true,
       fonts: [bundled, remote], tokens: { 'sys.font.family.ui': 'Geist Mono' },
@@ -404,6 +406,7 @@ test('a bundled face points at the file that ships, and a remote one never does'
 test('a bundled font that is not in the repository fails the build', () => {
   assert.throws(() => generate({
     registry: { groups: { 'sys.font': 'x' }, tokens: { 'sys.font.family.ui': { $type: 'fontFamily' } } },
+    base: { tokens: {} },
     themes: [{
       id: 'base', name: 'D', description: 'd', appearance: 'dark', default: true,
       fonts: [{ family: 'Ghost', src: { bundled: 'ghost.woff2' } }],
@@ -416,7 +419,7 @@ test('the main process is told where to fetch a remote font from', () => {
   const remote = { family: 'Far', src: { url: 'https://fonts.example/far.woff2', integrity: 'sha256-AAAA' } };
   const manifest = assetManifest([{
     id: 'base', name: 'D', description: 'd', appearance: 'dark', default: true, fonts: [remote], tokens: {},
-  }]);
+  }], { tokens: {} });
 
   assert.match(manifest, new RegExp(`'${fontCacheId(remote.src.url)}': \\{`, 'u'));
   assert.match(manifest, /url: 'https:\/\/fonts\.example\/far\.woff2'/u);

@@ -696,6 +696,17 @@ describe('feed spacing is a step of the scale', () => {
     expect(stylesheet).toContain('--space-6: calc(var(--av-ref-space-unit) * 6);');
   });
 
+  /**
+   * The two launch surfaces render `MessageBlock` and `AgentWorkTiming`
+   * outside `.virtual-message-row`, where the row rhythm cannot reach them
+   * and the base rules now give a row no margin. Review found their rows
+   * stacked flush; these are the gaps they state for themselves.
+   */
+  it('spaces the launch surfaces\' rows, which sit outside the feed wrapper', () => {
+    expect(rule('.substream-branch-context > * + *,\n.launch-arrival + .launch-arrival')).toContain('margin-top: var(--av-sys-space-block-gap);');
+    expect(rule('.substream-branch-context > .message-block + .message-block,\n.substream-branch-context + .launch-arrival')).toContain('margin-top: var(--av-sys-space-stack-gap);');
+  });
+
   it('carries no literal spacing of a step or more in a feed rule', () => {
     const offenders = preludes()
       .filter((prelude) => FEED.test(prelude) && !NOT_FEED.test(prelude) && !(prelude in EXEMPT))
