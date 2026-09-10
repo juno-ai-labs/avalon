@@ -83,6 +83,21 @@ describe("text search authority boundary", () => {
     expect(provider.query).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps archived and pre-rewrite rows from consuming a member candidate page", async () => {
+    provider.query.mockResolvedValueOnce({ rows: [] });
+    const sources = [{ source: "messages", scopeIds: ["room"], load: async () => new Map() }];
+    await index.queryPage(sources, { query: "needle", mode: "substring", limit: 7 });
+    expect(provider.query.mock.calls[0]![0].filters[1][0][1]).toContainEqual(["archived", "Eq", false]);
+    // Semantic chunks carry no display and no `archived` attribute.
+    provider.query.mockResolvedValueOnce({ rows: [] });
+    await index.query(sources, { query: "needle", mode: "semantic", limit: 7, vector: [1, 0] });
+    expect(JSON.stringify(provider.query.mock.calls[1]![0].filters)).not.toContain('"archived"');
+    // A namespace written only before the display attributes shipped has nothing renderable.
+    provider.query.mockRejectedValueOnce(Object.assign(new Error('attribute "archived" not found in schema'), { status: 400 }));
+    expect(await index.queryPage(sources, { query: "needle", mode: "substring", limit: 7 })).toEqual({ results: [], nextCursor: null });
+    expect(provider.query).toHaveBeenCalledTimes(3);
+  });
+
   it("returns an explicit continuation after one rejected candidate page", async () => {
     const row = { id: "first", source: "messages", source_id: "0/turn", scope_id: "room", revision: 1 };
     provider.query.mockResolvedValueOnce({ rows: [row] }).mockResolvedValueOnce({ rows: [] });

@@ -318,7 +318,7 @@ reloaded from a canonical source.
 
 - Search scope enumeration includes archived and system conversations and has its own complete-list contract. Sidebar visibility is not search readability.
 - Scope prefilters are an optimization, never authority. The projected search decision decides every returned result; an index attribute never grants access.
-- A row without its display attributes, or with `archived` set, is never returned. Omission is the safe failure; nothing falls back to a canonical reload.
+- A row without its display attributes, or with `archived` set, is never returned. Member retrieval filters on `archived Eq false`, which a null attribute does not match, so neither kind consumes a candidate page; the read path checks the same value again on every row it renders. Omission is the safe failure; nothing falls back to a canonical reload.
 - Every writer of a conversation's display writes the current state it reads beside the text: the producer at upsert time, the patch job when it runs. A display job names the conversation and never carries a title, so a delayed or redelivered job cannot write an old one, and the pipeline's post-write fence retries an upsert whose display changed underneath it.
 - Public cursors identify consumed candidate positions and never grant access. Fully rejected pages may expose continuation; index-existence concealment is not part of this member-only API.
 
@@ -540,7 +540,13 @@ reads the current display and patches by filter until no row still differs.
 Admission stays on the projected decision; a miss is answered unavailable and
 filled after the response, so a request never waits on an owner. Rows without
 the display attributes are omitted rather than reloaded, which is why migration
-52 requeues every turn and WorkspaceDO migration 47 every resource. The
+52 requeues every turn and WorkspaceDO migration 47 every resource (a resource
+already in retry backoff keeps its `not_before`; an upgrade does not reset a
+committed retry schedule). Review of the first revision found that archived and
+pre-rewrite rows still filled the provider's page and were discarded only
+afterwards, leaving a page sparse or empty ahead of live matches, so member
+retrieval now filters `archived Eq false` and a namespace without that column
+yet, which has nothing renderable, answers with an empty page. The
 alternative of moving readability keys into the index as well was designed and
 rejected for now: the KV projection already exists, little data mutates, and a
 missed result is acceptable where a wrong one is not. `readAdmittedSearchContent`
