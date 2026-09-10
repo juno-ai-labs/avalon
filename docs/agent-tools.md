@@ -487,7 +487,7 @@ authority: an executor still performs its normal authorization query.
 
 An authorized wrong-tool call may carry a bounded `suggestedCall` for exactly
 `workstream_read_resource`, `workstream_view_resource`, their two
-automation-prefixed twins, or `terminal_import_resource`. The structured-failure
+`sidekick`-prefixed twins, or `terminal_import_resource`. The structured-failure
 sanitizer accepts only those strict shapes, the nine registered kinds, bounded
 MIME/reason values, and the existing fixed recovery fields. It does not forward
 converter, provider, or attachment-authored objects.
@@ -499,8 +499,8 @@ than replacing anything, so a model that follows the suggestion blind cannot
 lose work — the strict object is what stops a producer suggesting `overwrite`.
 It exists because a content read on a **site** has nothing single-bodied to
 return: a site's stored content is its manifest, not a page. The remediation is
-prefix-aware, and an automation-prefixed run gets the same sentence with **no**
-`suggestedCall` — automation runs hold no Terminal, so naming that tool would
+prefix-aware, and a `sidekick`-prefixed run gets the same sentence with **no**
+`suggestedCall` — Sidekick runs hold no Terminal, so naming that tool would
 trade one dead end for a worse one.
 
 Two further work-stream tools read a **live artifact's stored data**, and are on
@@ -874,6 +874,21 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-09-10 — The attachment twins take the `sidekick` prefix
+
+**What changed:** The attachment and artifact-data tools' second prefix is
+`sidekick` rather than `automation`, so the twins are `sidekick_read_resource`
+and `sidekick_view_resource`, the `suggestedCall` contract admits exactly those,
+and the site-read remediation's no-Terminal branch keys on the same value. The
+Sidekick creator's own tools render under the same prefix, and the memory and
+table tools' `scopeKind` enum offers `sidekick` where it offered `automation`.
+[`automation-lifecycle.md`](automation-lifecycle.md#2026-09-10--the-model-reads-sidekick-everywhere-a-person-does)
+owns the whole rename and its boundary.
+
+**Why:** A tool name is prompt text. The product had renamed automations to
+Sidekicks everywhere a person reads, and a model handed `sidekicks_list` beside
+`automation_read_resource` is being asked to hold two names for one thing.
 
 ### 2026-09-08 — A refusal echoes the value it refused
 

@@ -2042,9 +2042,9 @@ const automationDraftSubmissionJsonSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    automationId: {
+    sidekickId: {
       type: ["string", "null"],
-      description: "The id of an automation this conversation already owns, from automations_list, to replace its definition with this draft. Null creates a new automation. In an automation's own conversation the draft always goes to that automation."
+      description: "The id of a Sidekick this conversation already owns, from sidekicks_list, to replace its definition with this draft. Null creates a new Sidekick. In a Sidekick's own conversation the draft always goes to that Sidekick."
     },
     name: { type: "string" },
     description: { type: "string" },
@@ -2125,7 +2125,7 @@ const automationDraftSubmissionJsonSchema = {
     },
     memoryTables: {
       type: "array",
-      description: "Automation-scoped durable structured collections required across runs; use [] when none are needed.",
+      description: "Sidekick-scoped durable structured collections required across runs; use [] when none are needed.",
       items: {
         type: "object",
         additionalProperties: false,
@@ -2157,7 +2157,7 @@ const automationDraftSubmissionJsonSchema = {
     suggestedScope: {
       type: "string",
       enum: ["personal", "workspace", "workstream"],
-      description: "Who can see and change this automation, which cannot be changed after it is accepted: \"personal\" belongs to the person who asked and acts with their own connections, \"workspace\" belongs to the admins and acts with the workspace's own connections, \"workstream\" belongs to this work stream — everyone in the room can manage it, Rally posts its results here, and it outlives whoever asked for it. Ask which one before submitting. There is no work stream to name: an automation can only ever belong to the one it was written in. Nothing else is delivered for an automation: a result that should reach an inbox, a channel, a DM, or a document is sent by the run itself, so the instructions must name that send and its recipient as a step."
+      description: "Who can see and change this Sidekick, which cannot be changed after it is accepted: \"personal\" belongs to the person who asked and acts with their own connections, \"workspace\" belongs to the admins and acts with the workspace's own connections, \"workstream\" belongs to this work stream — everyone in the room can manage it, Rally posts its results here, and it outlives whoever asked for it. Ask which one before submitting. There is no work stream to name: a Sidekick can only ever belong to the one it was written in. Nothing else is delivered for a Sidekick: a result that should reach an inbox, a channel, a DM, or a document is sent by the run itself, so the instructions must name that send and its recipient as a step."
     },
     ready: {
       type: "boolean",
@@ -2319,15 +2319,15 @@ const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
     started: "Reading a public web page…",
     completed: "Web page ready",
   },
-  automation_plugins_list: {
+  sidekick_plugins_list: {
     started: "Checking available plugin capabilities…",
     completed: "Plugin capabilities are ready",
   },
-  automation_plugins_search: {
-    started: "Finding the plugins relevant to this automation…",
+  sidekick_plugins_search: {
+    started: "Finding the plugins relevant to this Sidekick…",
     completed: "Relevant plugins are ready",
   },
-  automation_plugin_inspect: {
+  sidekick_plugin_inspect: {
     started: "Reviewing what this plugin can do…",
     completed: "Plugin details are ready",
   },
@@ -2336,27 +2336,27 @@ const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
     completed: "Plugin capabilities are ready",
   },
   search_plugins: {
-    started: "Finding the plugins relevant to this automation…",
+    started: "Finding the plugins relevant to this Sidekick…",
     completed: "Relevant plugins are ready",
   },
   load_plugin: {
     started: "Loading the selected plugin…",
     completed: "Plugin guidance and tools are ready",
   },
-  automation_read_resource: {
-    started: "Reading an attached automation resource…",
+  sidekick_read_resource: {
+    started: "Reading an attached Sidekick resource…",
     completed: "Attached resource is ready",
   },
-  automation_search_resource: {
-    started: "Searching an attached automation resource…",
+  sidekick_search_resource: {
+    started: "Searching an attached Sidekick resource…",
     completed: "Attachment search completed",
   },
-  automation_view_resource: {
-    started: "Viewing an attached automation image…",
+  sidekick_view_resource: {
+    started: "Viewing an attached Sidekick image…",
     completed: "Attached image is ready",
   },
-  automation_summarize_resource: {
-    started: "Summarizing an attached automation resource…",
+  sidekick_summarize_resource: {
+    started: "Summarizing an attached Sidekick resource…",
     completed: "Attachment summary is ready",
   },
 };
@@ -2472,7 +2472,7 @@ export function parseAutomationSubmission(raw: unknown): z.ZodSafeParseResult<Au
  */
 export function automationSubmissionTarget(raw: unknown): string | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const target = (raw as Record<string, unknown>).automationId;
+  const target = (raw as Record<string, unknown>).sidekickId;
   if (typeof target !== "string") return null;
   const trimmed = target.trim();
   // The same fill-every-property habit that put a placeholder in a rule's
@@ -2490,7 +2490,7 @@ const UUID_TARGET_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 function normalizeAutomationDraft(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const draft = { ...(value as Record<string, unknown>) };
-  delete draft.automationId;
+  delete draft.sidekickId;
   const triggers = Array.isArray(draft.triggers)
     ? draft.triggers.map((trigger) => normalizeAutomationTrigger(trigger))
     : draft.triggers;
@@ -2865,7 +2865,7 @@ export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
 export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   {
     name: "plugins_list",
-    description: "List every connector plugin authorized for this automation creator, with compact trusted metadata.",
+    description: "List every connector plugin authorized for this Sidekick creator, with compact trusted metadata.",
     capability: "rally.automation.plugins.list",
     mode: "read",
     idempotency: "safe",
@@ -2934,8 +2934,8 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
     },
   },
   {
-    name: "automations_list",
-    description: "List the automations this conversation can edit, each with its current definition: in a work stream, the ones the room owns; in an automation's own conversation, that automation. Start an edit from the definition returned here and submit the whole revised draft with its automationId.",
+    name: "sidekicks_list",
+    description: "List the Sidekicks this conversation can edit, each with its current definition: in a work stream, the ones the room owns; in a Sidekick's own conversation, that Sidekick. Start an edit from the definition returned here and submit the whole revised draft with its sidekickId.",
     capability: "rally.automation.list",
     mode: "read",
     idempotency: "safe",
@@ -2943,7 +2943,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "submit_draft",
-    description: "Save the best current automation draft. Set ready=false when blocking input remains, then call core_request_elicitation with the structured question. A ready draft with a connector_activity, semantic_activity or webhook trigger is refused unless set_evaluator_rules has already sent at least one rule.",
+    description: "Save the best current Sidekick draft. Set ready=false when blocking input remains, then call core_request_elicitation with the structured question. A ready draft with a connector_activity, semantic_activity or webhook trigger is refused unless set_evaluator_rules has already sent at least one rule.",
     capability: "rally.automation.submit",
     mode: "write",
     idempotency: "record_before_execute",
@@ -3006,7 +3006,7 @@ export interface HarnessTool {
    * only the advertised schema, finds arguments that match it, files the
    * tool's own rejection as somebody else's data problem, and tells the model
    * to retry without changing them — which it does, until the run ends. That
-   * failure is silent in every log: `automation_submit_draft` shipped without
+   * failure is silent in every log: `sidekick_submit_draft` shipped without
    * one and cost a production compile before anyone could see why.
    */
   validateInput?: (input: unknown) => z.ZodError | null;

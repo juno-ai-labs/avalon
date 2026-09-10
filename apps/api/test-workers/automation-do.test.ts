@@ -127,8 +127,8 @@ let submitDraftOnNextTurn = false;
 const provider = useOpenRouterDouble((call) => {
   if (submitDraftOnNextTurn) {
     submitDraftOnNextTurn = false;
-    expect(call.toolNames).toContain("automation_submit_draft");
-    return { callTool: { name: "automation_submit_draft", arguments: { ...DEFINITION, triggers: [] } } };
+    expect(call.toolNames).toContain("sidekick_submit_draft");
+    return { callTool: { name: "sidekick_submit_draft", arguments: { ...DEFINITION, triggers: [] } } };
   }
   if (loadSkillOnNextTurn) {
     loadSkillOnNextTurn = false;

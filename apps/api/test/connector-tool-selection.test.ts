@@ -1791,7 +1791,7 @@ describe("editing an automation a conversation already owns", () => {
     const submit = await automationCreatorTool(database, workflowInput(), "submit_draft");
 
     await expect(submit.execute(
-      { ...manualDraft("Weekly digest"), automationId: OWNED_AUTOMATION_ID },
+      { ...manualDraft("Weekly digest"), sidekickId: OWNED_AUTOMATION_ID },
       { toolCallId: "edit-owned" } as never,
     )).resolves.toMatchObject({ output: { accepted: true } });
 
@@ -1813,7 +1813,7 @@ describe("editing an automation a conversation already owns", () => {
     const submit = await automationCreatorTool(database, workflowInput(), "submit_draft");
 
     await expect(submit.execute(
-      { ...manualDraft("Weekly digest"), automationId: FOREIGN_AUTOMATION_ID },
+      { ...manualDraft("Weekly digest"), sidekickId: FOREIGN_AUTOMATION_ID },
       { toolCallId: "edit-foreign" } as never,
     )).rejects.toThrow("not one this work stream owns");
 
@@ -1828,17 +1828,17 @@ describe("editing an automation a conversation already owns", () => {
     const submit = await automationCreatorTool(database, automationConversationInput(), "submit_draft");
 
     await expect(submit.execute(
-      { ...manualDraft("Someone else's job"), automationId: OWNED_AUTOMATION_ID },
+      { ...manualDraft("Someone else's job"), sidekickId: OWNED_AUTOMATION_ID },
       { toolCallId: "edit-another-automation" } as never,
-    )).rejects.toThrow("edits only its own automation");
+    )).rejects.toThrow("edits only its own Sidekick");
     expect(database.submittedDefinitions).toEqual([]);
 
     await expect(submit.execute(
-      { ...manualDraft("Named itself"), automationId: AUTOMATION_ID },
+      { ...manualDraft("Named itself"), sidekickId: AUTOMATION_ID },
       { toolCallId: "edit-itself-by-id" } as never,
     )).resolves.toMatchObject({ output: { accepted: true } });
     await expect(submit.execute(
-      { ...manualDraft("Named nothing"), automationId: null },
+      { ...manualDraft("Named nothing"), sidekickId: null },
       { toolCallId: "edit-itself-by-default" } as never,
     )).resolves.toMatchObject({ output: { accepted: true } });
 
@@ -1868,13 +1868,13 @@ describe("editing an automation a conversation already owns", () => {
     );
     database.automationDetails.set(AUTOMATION_ID, automationDetail(AUTOMATION_ID, "Drive digest"));
 
-    const roomList = await automationCreatorTool(database, workflowInput(), "automations_list");
+    const roomList = await automationCreatorTool(database, workflowInput(), "sidekicks_list");
     await expect(roomList.execute({}, { toolCallId: "list-in-room" } as never))
       .resolves.toMatchObject({
         output: {
-          automations: [
+          sidekicks: [
             {
-              automationId: OWNED_AUTOMATION_ID,
+              sidekickId: OWNED_AUTOMATION_ID,
               name: "Weekly digest",
               lifecycle: "active",
               scope: "workstream",
@@ -1883,7 +1883,7 @@ describe("editing an automation a conversation already owns", () => {
               currentDefinition: { name: "Weekly digest", definitionVersion: 2, triggers: [{ type: "manual" }, { type: "inbound_email" }] },
             },
             {
-              automationId: SECOND_OWNED_AUTOMATION_ID,
+              sidekickId: SECOND_OWNED_AUTOMATION_ID,
               name: "Standup notes",
               lifecycle: "paused",
               currentDefinitionRevision: 1,
@@ -1901,11 +1901,11 @@ describe("editing an automation a conversation already owns", () => {
 
     database.detailReads.length = 0;
     database.workstreamAutomationListReads.length = 0;
-    const ownList = await automationCreatorTool(database, automationConversationInput(), "automations_list");
+    const ownList = await automationCreatorTool(database, automationConversationInput(), "sidekicks_list");
     await expect(ownList.execute({}, { toolCallId: "list-in-automation" } as never))
       .resolves.toMatchObject({
         output: {
-          automations: [{ automationId: AUTOMATION_ID, name: "Drive digest" }],
+          sidekicks: [{ sidekickId: AUTOMATION_ID, name: "Drive digest" }],
         },
       });
     // The room's rail is never consulted from an automation's own conversation:
