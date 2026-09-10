@@ -227,7 +227,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
           above is disabled for the same reason. */}
       <DragHint
         action="Drag to resize"
-        {...(narrow ? {} : { shortcut: compact ? 'Double-click to expand' : 'Double-click to collapse' })}
+        {...(narrow ? {} : { shortcut: compact ? 'Double-click or Enter to expand' : 'Double-click or Enter to collapse' })}
       >
         <div
           role="separator"
@@ -241,6 +241,14 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
           onDoubleClick={() => { if (!narrow) saveCollapsed(!collapsed); }}
           onBlur={() => setKeyResizing(false)}
           onKeyDown={(event) => {
+            // As in the navigation: the key the ARIA authoring practices give a
+            // splitter, performing the toggle the double-click performs, so the
+            // hint names something a keyboard can actually do.
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              if (!narrow) saveCollapsed(!collapsed);
+              return;
+            }
             if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
             event.preventDefault();
             setKeyResizing(true);

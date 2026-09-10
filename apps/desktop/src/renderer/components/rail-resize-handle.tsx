@@ -70,7 +70,7 @@ export function RailResizeHandle({
     // control of its own, so its double-click gives back the width the panel
     // opens at instead. That is the same number `ui-store` starts it on, not a
     // second opinion about how wide the sidebar ought to be.
-    <DragHint action="Drag to resize" shortcut="Double-click to reset width" side="left">
+    <DragHint action="Drag to resize" shortcut="Double-click or Enter to reset width" side="left">
       <div
         aria-label={label}
         aria-orientation="vertical"
@@ -80,6 +80,15 @@ export function RailResizeHandle({
         className={clsx('rail-resizer', resizing && 'is-resizing')}
         onDoubleClick={() => onResize(clamp(DEFAULT_RAIL_WIDTH))}
         onKeyDown={(event) => {
+          // Enter is the splitter's own action in the ARIA authoring practices,
+          // and it is the only route to this width from the keyboard: the
+          // arrows step by a fixed amount, so reaching the default by holding
+          // one means counting steps to a number nothing on screen shows.
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            onResize(clamp(DEFAULT_RAIL_WIDTH));
+            return;
+          }
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
           event.preventDefault();
           onResize(clamp(Math.min(width, maxWidth) + (event.key === 'ArrowLeft' ? KEYBOARD_STEP : -KEYBOARD_STEP)));

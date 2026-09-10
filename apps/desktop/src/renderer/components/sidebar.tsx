@@ -2134,7 +2134,7 @@ export function Sidebar({
             and the toggle in the footer is disabled for the same reason. */}
         <DragHint
           action="Drag to resize"
-          {...(forcedCompact ? {} : { shortcut: compact ? 'Double-click to expand' : 'Double-click to collapse' })}
+          {...(forcedCompact ? {} : { shortcut: compact ? 'Double-click or Enter to expand' : 'Double-click or Enter to collapse' })}
         >
           <div
             aria-label="Resize navigation"
@@ -2146,6 +2146,16 @@ export function Sidebar({
             onDoubleClick={() => { if (!forcedCompact) setSidebarCollapsed(!sidebarCollapsed); }}
             onBlur={() => setKeyResizing(false)}
             onKeyDown={(event) => {
+              // The same toggle the double-click performs, on the key the ARIA
+              // authoring practices give a splitter. The arrows reach the
+              // collapsed width too, by crossing its threshold, but the hint
+              // names a gesture a keyboard cannot make, so it has to name a key
+              // as well.
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                if (!forcedCompact) setSidebarCollapsed(!sidebarCollapsed);
+                return;
+              }
               if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
               setKeyResizing(true);
               if (event.key === 'ArrowLeft' && !compact) {
