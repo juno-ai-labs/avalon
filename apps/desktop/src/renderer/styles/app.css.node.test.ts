@@ -40,6 +40,15 @@ describe('capsule composer stacking', () => {
  * can tell the two apart.
  */
 describe('jump to latest', () => {
+  type Edge = { side: 'top' | 'bottom'; longhands: string[]; boxes: string[]; blocks: string[] };
+
+  const TOP: Edge = { side: 'top', longhands: ['top', 'inset-block-start'], boxes: ['inset'], blocks: ['inset-block'] };
+  const BOTTOM: Edge = { side: 'bottom', longhands: ['bottom', 'inset-block-end'], boxes: ['inset'], blocks: ['inset-block'] };
+  const PADDING_TOP: Edge = { side: 'top', longhands: ['padding-top', 'padding-block-start'], boxes: ['padding'], blocks: ['padding-block'] };
+
+  /** A shorthand this scan cannot expand, so that it fails rather than passes. */
+  const UNREADABLE = '<unreadable to this scan>';
+
   /**
    * Every rule whose selector names one class, in source order, so a second
    * rule cannot quietly restate what the first one settled. Rules nested in an
@@ -47,48 +56,73 @@ describe('jump to latest', () => {
    * cannot cross a brace, so the wrapper never matches and its contents do.
    */
   function rulesNaming(className: string): { prelude: string; declarations: string }[] {
-    const named = new RegExp(`\\.${className}\\b`, 'u');
+    // Not `\b`, which ends a word at a hyphen and would take `.jump-bottom-wide`
+    // for the class it is named after.
+    const named = new RegExp(`\\.${className}(?![\\w-])`, 'u');
     return [...stylesheet.replace(/\/\*[\s\S]*?\*\//gu, ' ').matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
       .map(([, prelude, declarations]) => ({ prelude: prelude!.trim().replace(/\s+/gu, ' '), declarations: declarations! }))
       .filter(({ prelude }) => named.test(prelude));
   }
 
-  /** What a rule's declarations leave one edge on, reading them in order. */
-  function settlesOn(declarations: string, shorthands: string[], longhands: string[]): string | null {
+  /** A box shorthand's one to four values as `[top, bottom]`, in this app's writing mode. */
+  function blockValues(declared: string, count: 2 | 4): [string, string] | null {
+    const values = declared.trim().split(/\s+/u);
+    // A `calc()` or `var()` brings its own spaces; splitting on whitespace would
+    // mis-read it, and mis-reading is what this scan exists to prevent.
+    if (values.length > count || values.some((value) => value.includes('('))) return null;
+    const [first, second = first, third = first] = values as [string, string?, string?];
+    return count === 2 ? [first!, second!] : [first!, third!];
+  }
+
+  /**
+   * What a rule's declarations leave one edge on, reading them in order: the
+   * last declaration to touch that edge wins, which is what makes a longhand
+   * after a shorthand visible where matching on the shorthand alone is not.
+   * `null` means the rule says nothing about that edge.
+   */
+  function settlesOn(declarations: string, edge: Edge): string | null {
     let value: string | null = null;
     for (const [, property, declared] of declarations.matchAll(/([a-z-]+)\s*:\s*([^;]+)/gu)) {
-      if (shorthands.includes(property!)) value = declared!.trim().split(/\s+/u)[0]!;
-      if (longhands.includes(property!)) value = declared!.trim();
+      const box = edge.boxes.includes(property!) ? 4 as const : edge.blocks.includes(property!) ? 2 as const : null;
+      if (edge.longhands.includes(property!)) value = declared!.trim();
+      else if (box) value = blockValues(declared!, box)?.[edge.side === 'top' ? 0 : 1] ?? UNREADABLE;
     }
     return value;
   }
 
-  it('hangs above the composer rather than a fixed distance into the dock', () => {
-    expect(rule('.jump-bottom')).toContain('bottom: calc(100% + var(--space-2));');
+  /** Every rule with something to say about one edge, and what it leaves there. */
+  function settledEdges(rules: { prelude: string; declarations: string }[], edge: Edge): { prelude: string; value: string }[] {
+    return rules
+      .map(({ prelude, declarations }) => ({ prelude, value: settlesOn(declarations, edge) }))
+      .filter((edged): edged is { prelude: string; value: string } => edged.value !== null);
+  }
 
-    // Not the one rule: a later `top` anywhere would win over the anchor, and
-    // the control would be measured from the wrong direction again.
+  it('hangs above the composer rather than a fixed distance into the dock', () => {
     const anchored = rulesNaming('jump-bottom');
     expect(anchored.length).toBeGreaterThan(1);
-    expect(anchored
-      .map(({ prelude, declarations }) => ({ prelude, top: settlesOn(declarations, ['inset'], ['top', 'inset-block-start']) }))
-      .filter(({ top }) => top !== null && top !== 'auto')
-      .map(({ prelude, top }) => `${prelude} { top: ${top!} }`)).toEqual([]);
+
+    // One rule owns the anchor, and it puts the control's own bottom edge on
+    // the dock's top edge plus a step of the scale. A second entry here is a
+    // later rule restating `bottom`, which would win over it.
+    expect(settledEdges(anchored, BOTTOM).map(({ prelude, value }) => `${prelude} { bottom: ${value} }`))
+      .toEqual(['.jump-bottom { bottom: calc(100% + var(--space-2)) }']);
+
+    // And nothing measures the control from that same edge downwards again.
+    expect(settledEdges(anchored, TOP)
+      .filter(({ value }) => value !== 'auto')
+      .map(({ prelude, value }) => `${prelude} { top: ${value} }`)).toEqual([]);
   });
 
   it('keeps the dock edge it measures from the composer\'s own', () => {
     // `bottom: 100%` lands on the dock's padding-box top, so padding there is a
     // gap the control clears as well, silently widening the one it states. The
-    // last word on that edge is what counts: a `padding-top` after the
-    // shorthand overrides it, and reading the shorthand alone would miss it.
-    // The launch docks carry `.launch-dock` and their own padding; the control
-    // is not rendered in one, so they are deliberately out of scope here.
+    // launch docks carry `.launch-dock` and their own padding; the control is
+    // not rendered in one, so they are deliberately out of scope here.
     const docks = rulesNaming('composer-dock');
     expect(docks.length).toBeGreaterThan(1);
-    expect(docks
-      .map(({ prelude, declarations }) => ({ prelude, top: settlesOn(declarations, ['padding', 'padding-block'], ['padding-top', 'padding-block-start']) }))
-      .filter(({ top }) => top !== null && !/^0(?:px|rem|em|%)?$/u.test(top!))
-      .map(({ prelude, top }) => `${prelude} { padding-top: ${top!} }`)).toEqual([]);
+    expect(settledEdges(docks, PADDING_TOP)
+      .filter(({ value }) => !/^0(?:px|rem|em|%)?$/u.test(value))
+      .map(({ prelude, value }) => `${prelude} { padding-top: ${value} }`)).toEqual([]);
   });
 });
 
