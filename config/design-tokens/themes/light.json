@@ -176,7 +176,7 @@
     "sys.space.pane.padding": "34px",
     "sys.space.stack.gap": "58px",
     "sys.space.row.gap": "5px",
-    "sys.space.group.gap": "60px",
+    "sys.space.group.gap": "14px",
     "sys.space.block.gap": "28px",
     "sys.space.prose.gap": "22px",
     "sys.font.family.ui": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", system-ui, sans-serif",

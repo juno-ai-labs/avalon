@@ -281,7 +281,7 @@
   --av-sys-space-row-gap: 5px;
 
   /* Between one group of rows and the next. */
-  --av-sys-space-group-gap: 60px;
+  --av-sys-space-group-gap: 14px;
 
   /* Between events in the feed. */
   --av-sys-space-block-gap: 28px;
@@ -679,7 +679,7 @@
 
   --av-sys-space-row-gap: 5px;
 
-  --av-sys-space-group-gap: 60px;
+  --av-sys-space-group-gap: 14px;
 
   --av-sys-space-block-gap: 28px;
 
