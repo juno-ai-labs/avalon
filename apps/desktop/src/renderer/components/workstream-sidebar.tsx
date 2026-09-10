@@ -227,7 +227,8 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
           above is disabled for the same reason. */}
       <DragHint
         action="Drag to resize"
-        {...(narrow ? {} : { shortcut: compact ? 'Double-click or Enter to expand' : 'Double-click or Enter to collapse' })}
+        suppressed={resizing}
+        shortcut={narrow ? undefined : compact ? 'Double-click or Enter to expand' : 'Double-click or Enter to collapse'}
       >
         <div
           role="separator"

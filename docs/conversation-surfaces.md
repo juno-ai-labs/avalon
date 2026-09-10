@@ -264,7 +264,8 @@ guard on either double-click adds itself to the hint in the same change. The
 right sidebar's handle takes the same hint from the same primitive, with one
 difference in what it offers: that panel closes from its own header control, so
 its double-click, and its `Enter`, restore `DEFAULT_RAIL_WIDTH` rather than
-collapsing anything. There the key is the only keyboard route to that width at
+collapsing anything, through the same clamp the drag uses, so a window whose
+derived maximum is under that width resets to the maximum instead. There the key is the only keyboard route to that width at
 all: the arrows step by a fixed amount, so reaching the default by holding one
 means counting steps to a number nothing on screen shows. Either sidebar's
 arrows do reach its collapsed width, by crossing the collapse threshold, so
@@ -371,7 +372,8 @@ on hover or focus: `Drag to resize`, and under it the quick action. That is the
 navigation's handle, the work-stream sidebar's, and the right sidebar's. The two
 sidebars offer the double-click they have always had, named in the direction the
 next one would go, and the right sidebar's handle gained a double-click of its
-own that restores `DEFAULT_RAIL_WIDTH`. Each of those three quick actions is
+own that restores `DEFAULT_RAIL_WIDTH`, clamped as the drag is. Each of those
+three quick actions is
 also on `Enter`, the key the ARIA authoring practices give a window splitter,
 and the hint names the key beside the gesture. The hint is one primitive,
 `DragHint` in `components/primitives.tsx`, and its second line is omitted
@@ -396,8 +398,14 @@ handle that promises least the one a reader meets in a panel they opened
 deliberately; it has a close control, so resetting the width is the action that
 was missing rather than a collapse.
 
-**Consequences:** A handle's quick action now has three statements to keep in
-step: the `onDoubleClick`, the `Enter` branch beside it, and the hint that names
+**Consequences:** A hint has a veto for the length of a drag, `suppressed`,
+which each handle drives from the state that already raises its `.is-resizing`
+class. It exists because a grab focuses the handle and a focus is how a tooltip
+decides to open without waiting: without the veto a quick grab *opens* the hint,
+and Radix's own dismissal cannot catch it, reading an open state from the render
+before the focus. A handle that gains a drag gesture without passing its state
+in gets the defect back. A handle's quick action also now has three statements
+to keep in step: the `onDoubleClick`, the `Enter` branch beside it, and the hint that names
 both. A guard added to one and not the others leaves the tooltip offering an
 action that does nothing, or leaves the two routes disagreeing about when they
 work. The hint is also the only place any of it is written down. Both sidebars have a test pinning the pairing, the

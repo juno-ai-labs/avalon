@@ -2134,7 +2134,8 @@ export function Sidebar({
             and the toggle in the footer is disabled for the same reason. */}
         <DragHint
           action="Drag to resize"
-          {...(forcedCompact ? {} : { shortcut: compact ? 'Double-click or Enter to expand' : 'Double-click or Enter to collapse' })}
+          suppressed={resizing}
+          shortcut={forcedCompact ? undefined : compact ? 'Double-click or Enter to expand' : 'Double-click or Enter to collapse'}
         >
           <div
             aria-label="Resize navigation"
