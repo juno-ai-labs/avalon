@@ -1678,6 +1678,38 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-10 — The public globe answers for itself, through one tooltip primitive
+
+**What changed:** The sidebar's public badge carries a tip again — `Public —
+everyone in the workspace can see this work stream.`, shaped like the status
+dot's on the same glyph. A `Tip` primitive in `primitives.tsx` now states
+Radix's Root/Trigger/Portal/Content/Arrow subtree once, and the globe, the
+row's timer, `StatusDot`, `IconButton`, `SocketStatusIndicator` and each face
+in an `AvatarStack` compose it.
+
+**Why:** the badge is 17px and wordless, and it is the one thing on a row whose
+meaning cannot be worked out by looking; an `aria-label` answers a screen reader
+and nobody else. The reasoning that left it silent — a nested tooltip competes
+with the row's hover preview — holds only for a tip that takes the preview's
+place, and this one does not. Radix asks every other open tooltip to close when
+one opens, but the preview drives its own `open` and ignores the request, and
+the two never share space: the tip is a line above a badge at the sidebar's left
+edge, the preview a card off the row's right. The primitive came with it because
+the timer badge beside the globe was already the fourth hand-written copy of the
+same five tags, which is how one of them ends up with a different delay or no
+arrow.
+
+**Considered and rejected:** closing the preview while the pointer is on the
+badge. One popper at a time, but a pointer crossing the badge on its way into
+the row would blink the card away and pay 300ms to bring it back — a cost on
+the common gesture to tidy the rare one. Also rejected: a native `title` on the
+globe, for the reason the 2026-08-30 entry below gives — a second tooltip
+language the rest of the row does not speak.
+
+**What a future change has to respect:** a badge tip and the row preview coexist
+only because that preview is controlled. Moving it to an uncontrolled `open`
+puts the two back to taking turns; `sidebar.test.tsx` pins both halves.
+
 ### 2026-09-09 — Derived inputs at the settled step, and a ledger that rides the compaction commit
 
 **What changed:** Substream migration 51 adds the context-residency ledger.

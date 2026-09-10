@@ -744,8 +744,11 @@ top, that the Sidekick strip stays put below the list, and that the account
 and collapse controls stay fixed at the bottom.
 
 Hover a public stream icon and then move onto its globe in both appearances.
-The globe stays visible and only the stream preview opens; the public badge
-has an accessible label rather than a competing nested tooltip.
+The globe stays visible and answers for itself — **Public — everyone in the
+workspace can see this work stream.** — while the row's own preview card stays
+open off the row's right rather than the two taking turns. Move on to the
+status dot below it and confirm the globe's tip gives way to the dot's, which
+reads the same shape.
 
 When a narrow window forces navigation into compact mode, its Expand control
 is disabled and double-clicking the edge must preserve the saved expanded
