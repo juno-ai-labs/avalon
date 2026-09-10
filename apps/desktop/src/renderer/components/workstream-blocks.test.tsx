@@ -319,10 +319,13 @@ describe('MessageBlock human identity', () => {
     expect(own).toHaveAttribute('data-profile-color', 'violet');
     expect(own.style.getPropertyValue('--person-accent')).toBe('var(--av-sys-color-text-default)');
     expect(own.style.getPropertyValue('--person-dot')).toBe('var(--av-sys-color-project-violet)');
-    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--personal-ink-dark)');
-    view.rerender(<MemberPresentationContext.Provider value={new Map([['user-adam', { ...profile, color: 'orange', revision: 2 }]])}>{rows}</MemberPresentationContext.Provider>);
+    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--personal-ink-light)');
+    // `violet` takes white ink and `lime` black, so the repaint has to move the
+    // foreground as well as the fill. A pair on the same side of PALETTE_INK
+    // would let a bubble that never re-inked pass this.
+    view.rerender(<MemberPresentationContext.Provider value={new Map([['user-adam', { ...profile, color: 'lime', revision: 2 }]])}>{rows}</MemberPresentationContext.Provider>);
     expect(screen.getByLabelText('Message from Alex Rivera')).toBe(own);
-    expect(own.style.getPropertyValue('--person-dot')).toBe('var(--av-sys-color-project-orange)');
+    expect(own.style.getPropertyValue('--person-dot')).toBe('var(--av-sys-color-project-lime)');
     expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--personal-ink-dark)');
     expect(other.style.getPropertyValue('--person-accent')).toBe(otherAccent);
     expect(other).not.toHaveAttribute('data-profile-color');

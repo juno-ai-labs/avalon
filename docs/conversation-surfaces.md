@@ -73,7 +73,10 @@ between: the `cmp.member-message.*` roles that used to restate the fill and ink
 by hand drifted from the palette and could not survive the accent set changing,
 so the feed reads the palette directly. Contrast is still not inferred at render;
 `PALETTE_INK` is a checked-in table that `palette.css.node.test.ts` recomputes
-from the token values.
+from the token values, deciding by APCA rather than the WCAG 2 ratio. Bubble
+prose is the strictest thing that table serves, and on `emerald` and `orange`
+neither ink reaches APCA's Lc 60 for body text — a property of those two fills,
+recorded on `PALETTE_INK`.
 Unprofiled and external senders retain their stable identity-color fallback.
 These bubble overrides apply only inside the conversation feed hosts. Author
 labels use semantic default text while the independently themed dot retains the
