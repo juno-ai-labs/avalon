@@ -138,15 +138,12 @@
   --av-sys-color-success-soft: #5e8a7a;
   --av-sys-color-success-wash: #eef4f1;
   --av-sys-color-success-edge: #cfe0d8;
-  --av-sys-color-success-on: #14261f;
 
   /* Attention short of failure. */
   --av-sys-color-warning-base: #b8860b;
-  --av-sys-color-warning-strong: #9a7009;
   --av-sys-color-warning-soft: #8a6208;
   --av-sys-color-warning-wash: #fbf3e0;
   --av-sys-color-warning-edge: #ecd9a8;
-  --av-sys-color-warning-on: #241a00;
 
   /* Failure and destructive action. */
   --av-sys-color-danger-base: #c3453f;
@@ -277,14 +274,11 @@
   /* The height of a control. */
   --av-sys-size-control-height: 36px;
 
-  /* Padding around a pane of content. */
-  --av-sys-space-pane-padding: 34px;
-
   /* Between one turn and the next in the feed. */
   --av-sys-space-stack-gap: calc(var(--av-ref-space-unit) * 8);
 
   /* Between rows in a list. */
-  --av-sys-space-row-gap: 5px;
+  --av-sys-space-row-gap: var(--av-ref-space-unit);
 
   /* Between one group of rows and the next. */
   --av-sys-space-group-gap: 14px;
@@ -304,7 +298,6 @@
    * portals. Bundled Geist Mono remains available for code and technical
    * content. */
   --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --av-sys-font-family-display: var(--av-sys-font-family-ui);
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
   /* The sizes the interface sets, as against the document size a theme
@@ -392,7 +385,6 @@
   --av-cmp-bubble-human-background: #070707;
   --av-cmp-bubble-human-foreground: #fcfcfc;
   --av-cmp-bubble-border: transparent;
-  --av-cmp-bubble-padding: calc(var(--av-ref-space-unit) * 2) calc(var(--av-ref-space-unit) * 3);
 
   /* The message composer's frame. A theme builds either shape out of the same
    * five values: a card sets a background, a border and a radius; a rule sets
@@ -416,18 +408,9 @@
   --av-cmp-composer-send-radius: var(--av-sys-size-radius-pill);
   --av-cmp-composer-send-foreground: #fcfcfc;
 
-  /* Where a person's own turn sits. The three move together: a turn
-   * left-aligned but still capped reads as text that wraps early for no
-   * reason. */
-  --av-cmp-turn-align: flex-start;
-  --av-cmp-turn-margin: 0;
-  --av-cmp-turn-width: 100%;
-
-  /* The reading column, and the label over a turn in it. */
+  /* The reading column's width, and the label over a turn in it. */
   --av-cmp-feed-width: 880px;
   --av-cmp-feed-width-wide: 940px;
-  --av-cmp-feed-padding-y: calc(var(--av-ref-space-unit) * 8);
-  --av-cmp-feed-padding-x: calc(var(--av-ref-space-unit) * 8);
   --av-cmp-feed-author-font-size: 12px;
   --av-cmp-feed-author-font-weight: 470;
 
@@ -438,21 +421,17 @@
    * size has to be able to move the scale above it, and the rhythm with it.
    * The `article-*` values are the note detail's own scale: a note is read as
    * a document rather than as a turn in a transcript, so its headings run
-   * larger than the feed's. */
+   * larger than the feed's. Its margins are not tokens: they are the
+   * stylesheet's spacing steps, which follow `ref.space.unit`. */
   --av-cmp-markdown-diagram-line: var(--av-ref-color-line-6);
   --av-cmp-markdown-heading-1: 25px;
   --av-cmp-markdown-heading-2: 21px;
   --av-cmp-markdown-heading-3: 18.5px;
   --av-cmp-markdown-heading-4: 17px;
   --av-cmp-markdown-heading-leading: 1.35;
-  --av-cmp-markdown-heading-margin: calc(var(--av-ref-space-unit) * 6) 0 calc(var(--av-ref-space-unit) * 3);
   --av-cmp-markdown-strong-weight: 560;
-  --av-cmp-markdown-list-margin: calc(var(--av-ref-space-unit) * 3) 0 calc(var(--av-ref-space-unit) * 4);
-  --av-cmp-markdown-list-indent: 24px;
-  --av-cmp-markdown-blockquote-margin: calc(var(--av-ref-space-unit) * 6) 0;
-  --av-cmp-markdown-rule-margin: calc(var(--av-ref-space-unit) * 6) 0;
+  --av-cmp-markdown-list-indent: calc(var(--av-ref-space-unit) * 6);
   --av-cmp-markdown-table-leading: 1.7;
-  --av-cmp-markdown-cell-padding: calc(var(--av-ref-space-unit) * 2) calc(var(--av-ref-space-unit) * 3);
   --av-cmp-markdown-article-heading-1: 30px;
   --av-cmp-markdown-article-heading-2: 23px;
   --av-cmp-markdown-article-heading-3: 19px;
@@ -468,25 +447,6 @@
    * the off state read as a control. */
   --av-cmp-toggle-track: #dad3c5;
   --av-cmp-toggle-knob-off: #8d8375;
-
-  /* Connector faces. Each keeps enough of the provider's own colour to be
-   * recognised at 20px, on a block the theme can still sit behind. */
-  --av-cmp-connector-github-background: #f0efec;
-  --av-cmp-connector-github-foreground: #24292f;
-  --av-cmp-connector-google-background: #fbeeea;
-  --av-cmp-connector-google-foreground: #b4472a;
-  --av-cmp-connector-drive-background: #eaf5ee;
-  --av-cmp-connector-drive-foreground: #1a7a48;
-  --av-cmp-connector-slack-background: #eef2f7;
-  --av-cmp-connector-slack-foreground: #2f5b80;
-  --av-cmp-connector-linear-background: #f0eefa;
-  --av-cmp-connector-linear-foreground: #4b41a8;
-  --av-cmp-connector-webhook-background: #fbf1e8;
-  --av-cmp-connector-webhook-foreground: #97552a;
-  --av-cmp-connector-search-background: #edf3f8;
-  --av-cmp-connector-search-foreground: #2a5f85;
-  --av-cmp-connector-plug-background: #f4f3e8;
-  --av-cmp-connector-plug-foreground: #6c6a2c;
 
   /* Neutral primary actions, separate from brand identity and semantic danger
    * or success states. */
@@ -582,14 +542,11 @@
   --av-sys-color-success-soft: #8bb9a2;
   --av-sys-color-success-wash: #0e1712;
   --av-sys-color-success-edge: #1e2f26;
-  --av-sys-color-success-on: #cfe6da;
 
   --av-sys-color-warning-base: #d9b168;
-  --av-sys-color-warning-strong: #e9c98d;
   --av-sys-color-warning-soft: #cfa961;
   --av-sys-color-warning-wash: #1c1509;
   --av-sys-color-warning-edge: #382a13;
-  --av-sys-color-warning-on: #140f04;
 
   --av-sys-color-danger-base: #cc7a6a;
   --av-sys-color-danger-strong: #e09585;
@@ -686,11 +643,9 @@
 
   --av-sys-size-control-height: 36px;
 
-  --av-sys-space-pane-padding: 34px;
-
   --av-sys-space-stack-gap: calc(var(--av-ref-space-unit) * 8);
 
-  --av-sys-space-row-gap: 5px;
+  --av-sys-space-row-gap: var(--av-ref-space-unit);
 
   --av-sys-space-group-gap: 14px;
 
@@ -701,7 +656,6 @@
   --av-sys-space-event-gap: calc(var(--av-ref-space-unit) * 2);
 
   --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --av-sys-font-family-display: var(--av-sys-font-family-ui);
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
   --av-sys-font-size-base: 14px;
@@ -756,7 +710,6 @@
   --av-cmp-bubble-human-background: #5a5a5a;
   --av-cmp-bubble-human-foreground: #fcfcfc;
   --av-cmp-bubble-border: transparent;
-  --av-cmp-bubble-padding: calc(var(--av-ref-space-unit) * 2) calc(var(--av-ref-space-unit) * 3);
 
   --av-cmp-composer-background: #2f2f2f;
   --av-cmp-composer-border-color: rgba(252, 252, 252, 0.15);
@@ -771,14 +724,8 @@
   --av-cmp-composer-send-radius: var(--av-sys-size-radius-pill);
   --av-cmp-composer-send-foreground: #141414;
 
-  --av-cmp-turn-align: flex-start;
-  --av-cmp-turn-margin: 0;
-  --av-cmp-turn-width: 100%;
-
   --av-cmp-feed-width: 880px;
   --av-cmp-feed-width-wide: 940px;
-  --av-cmp-feed-padding-y: calc(var(--av-ref-space-unit) * 8);
-  --av-cmp-feed-padding-x: calc(var(--av-ref-space-unit) * 8);
   --av-cmp-feed-author-font-size: 12px;
   --av-cmp-feed-author-font-weight: 470;
 
@@ -788,14 +735,9 @@
   --av-cmp-markdown-heading-3: 18.5px;
   --av-cmp-markdown-heading-4: 17px;
   --av-cmp-markdown-heading-leading: 1.35;
-  --av-cmp-markdown-heading-margin: calc(var(--av-ref-space-unit) * 6) 0 calc(var(--av-ref-space-unit) * 3);
   --av-cmp-markdown-strong-weight: 560;
-  --av-cmp-markdown-list-margin: calc(var(--av-ref-space-unit) * 3) 0 calc(var(--av-ref-space-unit) * 4);
-  --av-cmp-markdown-list-indent: 24px;
-  --av-cmp-markdown-blockquote-margin: calc(var(--av-ref-space-unit) * 6) 0;
-  --av-cmp-markdown-rule-margin: calc(var(--av-ref-space-unit) * 6) 0;
+  --av-cmp-markdown-list-indent: calc(var(--av-ref-space-unit) * 6);
   --av-cmp-markdown-table-leading: 1.7;
-  --av-cmp-markdown-cell-padding: calc(var(--av-ref-space-unit) * 2) calc(var(--av-ref-space-unit) * 3);
   --av-cmp-markdown-article-heading-1: 30px;
   --av-cmp-markdown-article-heading-2: 23px;
   --av-cmp-markdown-article-heading-3: 19px;
@@ -806,23 +748,6 @@
 
   --av-cmp-toggle-track: #2a2318;
   --av-cmp-toggle-knob-off: #8a8070;
-
-  --av-cmp-connector-github-background: #16120c;
-  --av-cmp-connector-github-foreground: #c9c3ba;
-  --av-cmp-connector-google-background: #1c130c;
-  --av-cmp-connector-google-foreground: #d9926e;
-  --av-cmp-connector-drive-background: #101711;
-  --av-cmp-connector-drive-foreground: #8ab99b;
-  --av-cmp-connector-slack-background: #101418;
-  --av-cmp-connector-slack-foreground: #94b3c9;
-  --av-cmp-connector-linear-background: #14121c;
-  --av-cmp-connector-linear-foreground: #a99dd0;
-  --av-cmp-connector-webhook-background: #1d150c;
-  --av-cmp-connector-webhook-foreground: #d9a271;
-  --av-cmp-connector-search-background: #0f151a;
-  --av-cmp-connector-search-foreground: #8fb0c6;
-  --av-cmp-connector-plug-background: #191509;
-  --av-cmp-connector-plug-foreground: #c4b478;
 
   --av-cmp-button-primary-background: #fcfcfc;
   --av-cmp-button-primary-color: #070707;

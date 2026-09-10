@@ -429,7 +429,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   }, [workspaceKey]);
   const shellClassName = [
     'workspace-shell',
-    'grokbot-shell',
+    'app-shell',
     windowControlsShellClass(runtime?.platform),
     showShellRail ? 'rail-open' : '',
     switchingWorkspaceKey !== null ? 'is-switching-workspace' : '',
