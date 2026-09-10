@@ -1445,7 +1445,11 @@ describe('workspace search modal geometry', () => {
     expect(body).toContain('flex-direction: column;');
     // The list gives the footer its room rather than the modal finding more.
     expect(results).toContain('flex: 1;');
+    // Either of these lets it shrink below its rows: a scroll container's
+    // automatic minimum size is already zero, and `min-height` says so outright.
+    // Both are pinned, so a change has to mean to drop the pair.
     expect(results).toContain('overflow-y: auto;');
+    expect(results).toContain('min-height: 0;');
     expect(results).not.toMatch(/(?<![-\w])height:/u);
     expect(footer).toContain('flex-shrink: 0;');
     // The other conditional child never occupies flow at all.
