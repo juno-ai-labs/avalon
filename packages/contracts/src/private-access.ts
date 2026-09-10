@@ -13,7 +13,7 @@ export const DownloadGrantTokenSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 export const AccessRequestListSchema = z.object({
   requests: z.array(z.object({
     id: z.string(), email: z.string(), createdAt: z.string(),
-    acknowledgementStatus: z.enum(['pending', 'sent', 'failed', 'rejected', 'skipped']),
+    acknowledgementStatus: z.enum(['pending', 'sending', 'sent', 'failed', 'rejected', 'review_required', 'skipped']),
     acknowledgedAt: z.string().nullable(),
   })),
 });

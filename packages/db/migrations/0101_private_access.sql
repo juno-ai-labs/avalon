@@ -8,7 +8,8 @@ CREATE TABLE access_requests (
   acknowledgement_markdown TEXT NOT NULL,
   acknowledgement_from TEXT NOT NULL,
   acknowledgement_status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (acknowledgement_status IN ('pending', 'sent', 'failed', 'rejected', 'skipped')),
+    CHECK (acknowledgement_status IN ('pending', 'sending', 'sent', 'failed', 'rejected', 'review_required', 'skipped')),
+  acknowledgement_first_attempt_at TEXT,
   acknowledged_at TEXT
 );
 

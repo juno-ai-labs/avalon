@@ -15,14 +15,14 @@ let provider: MockInstance<typeof fetch>;
 const app = new Hono<HonoAppEnv>().route('/access', privateAccessRoutes).onError(errorHandler);
 const originalContent = { ...accessAcknowledgementContent };
 function submit(email: string, origin = 'https://rallywith.ai') {
-  return app.request('/access/requests', {
+  return app.request('https://api.rallywith.ai/access/requests', {
     method: 'POST', headers: { 'content-type': 'application/json', origin }, body: JSON.stringify({ email }),
   }, env);
 }
 beforeEach(() => {
   sqlite = migratedSqliteDatabase();
   env = createTestEnv({ DB: sqliteD1(sqlite), AVALON_REGION: 'global', APP_ENV: 'production',
-    ALLOWED_ORIGINS: 'https://rallywith.ai', RESEND_API_KEY: 'test-not-a-key', RESEND_FROM_EMAIL: 'Rally <test@example.com>' });
+    PUBLIC_API_BASE_URL: 'https://api.rallywith.ai', ALLOWED_ORIGINS: 'https://rallywith.ai', RESEND_API_KEY: 'test-not-a-key', RESEND_FROM_EMAIL: 'Rally <test@example.com>' });
   provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ id: 'test-email' }));
 });
 afterEach(() => { sqlite.close(); Object.assign(accessAcknowledgementContent, originalContent); vi.restoreAllMocks(); });
@@ -30,7 +30,7 @@ afterEach(() => { sqlite.close(); Object.assign(accessAcknowledgementContent, or
 describe('private access against regional migrations', () => {
   it('enforces the configured per-IP rate before saving or emailing another address', async () => {
     const limited = new Hono<HonoAppEnv>().route('/access', createPrivateAccessRoutes(1)).onError(errorHandler);
-    const send = (email: string) => limited.request('/access/requests', {
+    const send = (email: string) => limited.request('https://api.rallywith.ai/access/requests', {
       method: 'POST', headers: { origin: 'https://rallywith.ai', 'content-type': 'application/json', 'cf-connecting-ip': '192.0.2.1' },
       body: JSON.stringify({ email }),
     }, env);
@@ -52,7 +52,7 @@ describe('private access against regional migrations', () => {
 
   it('rejects an oversized body before parsing or saving when the byte guard is configured', async () => {
     const limited = new Hono<HonoAppEnv>().route('/access', createPrivateAccessRoutes(Number.POSITIVE_INFINITY, 16)).onError(errorHandler);
-    const response = await limited.request('/access/requests', {
+    const response = await limited.request('https://api.rallywith.ai/access/requests', {
       method: 'POST', headers: { origin: 'https://rallywith.ai', 'content-type': 'application/json' },
       body: JSON.stringify({ email: 'person@example.com' }),
     }, env);
