@@ -541,6 +541,9 @@ const browserBridge: RallyDesktopBridge = {
   onSettingsSectionRequested() {
     return () => undefined;
   },
+  onSettingsWindowRevealed() {
+    return () => undefined;
+  },
   async showDeepLinkError() {
     // No second window to open in a browser tab; the caller falls back to the
     // inline message it holds.

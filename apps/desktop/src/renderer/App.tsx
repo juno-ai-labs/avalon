@@ -14,6 +14,7 @@ import { Button, EmptyState, LoadingState } from './components/primitives';
 import { SpeechPlaybackProvider } from './components/speech-playback';
 import { ApiError, isSessionRejection } from './lib/api';
 import { AppSessionProvider, useAppSession, type AppSessionValue, FINISH_SIGN_IN_IN_BROWSER } from './lib/app-session';
+import { desktopBridge } from './lib/platform';
 import { workspaceFromSession } from './lib/session-workspace';
 import {
   abandonPendingWorkstreamFeedOpen,
@@ -138,11 +139,38 @@ function NotFoundScreen(): React.JSX.Element {
   );
 }
 
-function TelemetryRouteObserver(): null {
+/**
+ * Whether this window is on screen, for a surface that may have been built
+ * before anybody asked to see it.
+ *
+ * Only the settings window is prewarmed, and only main can tell a prewarmed
+ * window from an opened one: the renderer's own `document.visibilityState`
+ * reports `visible` for a `show: false` window on at least one platform, so it
+ * cannot be used for this. Every other surface is on screen the moment it
+ * mounts and starts `true`, which makes this a no-op everywhere else.
+ */
+function useWindowRevealed(prewarmable: boolean): boolean {
+  const [revealed, setRevealed] = useState(!prewarmable);
+  useEffect(() => {
+    if (!prewarmable) return;
+    return desktopBridge().onSettingsWindowRevealed(() => setRevealed(true));
+  }, [prewarmable]);
+  return revealed;
+}
+
+/**
+ * `enabled` is what keeps a prewarmed window out of the numbers. `/settings`
+ * resolves to a *surface*, so this reports `surface_viewed` for it rather than a
+ * screen — and that report both consumes the pending entrypoint and latches
+ * `lastSurfacePath`, so a prewarm firing it would spend the attribution on
+ * nobody and leave the real open reporting nothing at all.
+ */
+function TelemetryRouteObserver({ enabled = true }: { enabled?: boolean }): null {
   const location = useLocation();
   const lastScreen = useRef<ReturnType<typeof telemetryScreenForPath>>(null);
   const lastSurfacePath = useRef<string | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     const screen = telemetryScreenForPath(location.pathname);
     // The automation route has one screen behind it now that the builder is
     // gone, so the path is the whole answer and the draft lookup this used to
@@ -164,7 +192,7 @@ function TelemetryRouteObserver(): null {
         entrypoint: consumeSurfaceEntrypoint(),
       });
     }
-  }, [location.pathname]);
+  }, [enabled, location.pathname]);
   return null;
 }
 
@@ -267,13 +295,18 @@ function WorkspaceApp(): React.JSX.Element {
   );
 }
 
+/** The settings window's route observer, held until the window is on screen. */
+function SettingsSurfaceTelemetry(): React.JSX.Element {
+  return <TelemetryRouteObserver enabled={useWindowRevealed(true)} />;
+}
+
 function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { api } = useAppSession();
   const settingsSurface = new URLSearchParams(window.location.search).get('surface') === 'settings';
   if (settingsSurface) {
     return (
       <HashRouter>
-        <TelemetryRouteObserver />
+        <SettingsSurfaceTelemetry />
         <Routes>
           <Route element={<WorkspaceSettingsScreen standaloneWindow workspace={workspace} />} path="/settings" />
           <Route element={<Navigate replace to="/settings" />} path="*" />

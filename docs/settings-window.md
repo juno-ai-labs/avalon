@@ -17,7 +17,8 @@ owns the window and the boot around it.
 | `apps/desktop/src/main/settings-window-controller.ts` | The whole lifecycle: whether a window exists, whether it may be built before it is wanted, and when it is revealed. No Electron import — the window arrives through an injected factory. |
 | `apps/desktop/src/main/index.ts` | The factory that builds the real `BrowserWindow`, the two prewarm triggers, and `revealedSettingsWindow` — the one place that decides whether a settings window counts as a destination. |
 | `apps/desktop/src/renderer/lib/session-workspace.ts` | `workspaceFromSession`: the workspace a signed-in session already describes, used as the placeholder every surface renders on while `GET /workspace` is in flight. |
-| `apps/desktop/src/renderer/App.tsx` | `WorkspaceApp`, which holds that placeholder and picks the surface out of `?surface=`. |
+| `apps/desktop/src/renderer/App.tsx` | `WorkspaceApp`, which holds that placeholder and picks the surface out of `?surface=`; `useWindowRevealed`, which is how the settings surface learns it is on screen. |
+| `apps/desktop/src/preload/index.ts` | The `settings:revealed` latch, beside the section queue it mirrors. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The screen, and the freshness each of its reads is held to. |
 | `apps/desktop/src/common/settings.ts` | `DesktopSettingsSection`, shared by the URL, the IPC channel and the screen. |
 
@@ -108,6 +109,24 @@ right pane. A window that was prewarmed is told over IPC — `settings:section-r
 — before it is shown, so the reveal still shows the right pane rather than
 Account and then a switch.
 
+### The renderer is told when it is on screen
+
+A prewarmed renderer mounts long before anybody looks at it, and it cannot tell:
+`document.visibilityState` reported `visible` for a `show: false` window under
+Xvfb with no window manager while this was being verified, so the renderer has no
+trustworthy local signal. Main does know, so the controller sends
+`settings:revealed` the first time it reveals a window, and the preload latches
+it — a reveal is a state the window is in from then on, not an event a late
+listener may miss.
+
+Once per window, not once per `open`: raising a window already on screen is not a
+person arriving at Settings, and before prewarming it did not even remount the
+renderer.
+
+The one thing waiting on it today is the surface's own `surface_viewed` report;
+`telemetry.md` owns why. Anything else in the settings surface that should happen
+when a person actually looks at it belongs behind the same signal.
+
 ### The screen draws on the session, not on a round trip
 
 Every surface hangs below one `GET /workspace`, and until it landed `WorkspaceApp`
@@ -173,6 +192,10 @@ value is what the reveal is measured against.
   reason — a token refresh reaches `prewarm` — inherits it and shows and focuses
   itself with nobody having asked. This holds for a construction that threw as
   much as for a load that rejected.
+- **Work that means "somebody is looking at this" waits for `settings:revealed`.**
+  The renderer cannot detect the condition itself, and a prewarm that acts as
+  though it had been opened reports events nobody caused — or, worse, consumes
+  the one report the real open would have made.
 - **A prewarmed window is never the reason the application cannot exit.** Off
   macOS nothing quits Rally but `window-all-closed`, which counts hidden windows.
   A window built on speculation is released when the main window closes and is
@@ -219,12 +242,6 @@ meeting surfaces mount on the same placeholder.
 
 ## Failure modes and limits
 
-- **The hidden renderer still reports its screen view.** `TelemetryRouteObserver`
-  mounts with the settings surface and reports `application_settings` whether or
-  not the window is ever shown, so that metric now counts prewarms rather than
-  opens and inflates for people who never open Settings. Nothing breaks; the
-  number quietly stops meaning what it meant. Known and unfixed — see
-  [Open questions](#open-questions).
 - **A load that fails** destroys the window, clears the shared `settingsWindow`
   reference, and rethrows. Under `prewarm` that is reported through `reportError`
   and swallowed; under `open` it reaches the caller. Either way exactly one
@@ -276,14 +293,6 @@ exists to survive and Electron does not guarantee it.
   markdown stack to draw a list of toggles. Prewarming hides this from the click.
   Fixing it would speed up every window, including the first one, which
   prewarming cannot help.
-- **What `application_settings` should count.** The screen view fires on renderer
-  mount, which used to *be* opening Settings and now happens once per prewarm.
-  Reporting it on reveal instead would restore the old meaning, but the reveal is
-  known only in the main process, so it needs a signal from there. Gating in the
-  renderer on `document.visibilityState` is the obvious alternative and is not
-  safe: a window created with `show: false` reported `visible` under Xvfb with no
-  window manager during this change's own verification, so that signal cannot be
-  trusted to identify a hidden window.
 - **Whether prewarming should be conditional.** It is unconditional today. A
   machine under memory pressure is the case that would argue otherwise, and the
   threshold for that is a number nobody here can currently derive.
@@ -330,7 +339,9 @@ fires — confirmed by opening the real app — and the fallback would trade a
 guaranteed reveal for a window shown before it has painted.
 
 **Consequences:** Prewarming makes a hidden window a permanent fixture of a
-signed-in session, and two things that were previously safe stopped being so:
+signed-in session, and three things that were previously safe stopped being so:
+a mounted settings renderer no longer means a person is looking at Settings, so
+anything that would act on that waits for `settings:revealed`;
 `settingsWindow` being non-null no longer means anybody wants Settings, and a
 window existing no longer means the application should stay alive. The second is
 the sharper one — off macOS nothing quits Rally but `window-all-closed` — so any

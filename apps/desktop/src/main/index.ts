@@ -4206,6 +4206,7 @@ const settingsWindowController = new SettingsWindowController({
       show: () => window.show(),
       focus: () => window.focus(),
       deliverSection: (next) => requestSettingsSection(window, next),
+      announceRevealed: () => window.webContents.send('settings:revealed'),
       load: () => loadRenderer(window, rendererUrl('settings', section ?? undefined), 'settings'),
       destroy: release,
     };

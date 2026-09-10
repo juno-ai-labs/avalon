@@ -525,6 +525,16 @@ export interface RallyDesktopBridge {
   onMeetingCloseRequested: (listener: (reason: MeetingCloseReason) => void) => () => void;
   onSettingsSectionRequested: (listener: (section: DesktopSettingsSection) => void) => () => void;
   /**
+   * The settings window has been put on screen for the first time.
+   *
+   * Only main knows this: a prewarmed window is built, loaded and mounted long
+   * before anybody asks to see it, and the renderer cannot tell the difference —
+   * `document.visibilityState` reports `visible` for a `show: false` window on
+   * at least one platform. Anything in the settings surface that should happen
+   * when a person actually looks at it waits for this.
+   */
+  onSettingsWindowRevealed: (listener: () => void) => () => void;
+  /**
    * Raise the deep-link failure window in front of whatever is on screen.
    *
    * A refused deep link is reported by whichever renderer was handed it, and

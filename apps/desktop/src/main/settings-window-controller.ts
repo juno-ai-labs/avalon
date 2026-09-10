@@ -24,6 +24,11 @@ export interface SettingsWindowHandle {
   focus(): void;
   /** Ask the renderer to move to a section, for a window that already exists. */
   deliverSection(section: DesktopSettingsSection): void;
+  /**
+   * Tell the renderer it is on screen. Sent once per window, because only main
+   * can distinguish a window somebody opened from one built on speculation.
+   */
+  announceRevealed(): void;
   /** Start the renderer load. Rejects when the window could not load. */
   load(): Promise<void>;
   /**
@@ -90,6 +95,8 @@ export class SettingsWindowController {
   private pendingReveal = false;
   /** Set while a window nobody asked for should be given up on arrival. */
   private releaseRequested = false;
+  /** Whether the current window has been told it is on screen. */
+  private revealAnnounced = false;
   private pendingSection: DesktopSettingsSection | null = null;
 
   constructor(private readonly dependencies: SettingsWindowControllerDependencies) {}
@@ -155,6 +162,7 @@ export class SettingsWindowController {
     this.ready = false;
     this.closed = false;
     this.releaseRequested = false;
+    this.revealAnnounced = false;
     let window: SettingsWindowHandle | null = null;
     try {
       window = this.dependencies.createWindow(section, {
@@ -216,6 +224,13 @@ export class SettingsWindowController {
       window.deliverSection(this.pendingSection);
       this.pendingSection = null;
     }
+    // Once per window, not once per `open`. Raising a window that is already on
+    // screen is not a person arriving at Settings — before prewarming it did not
+    // even remount the renderer — so a second `open` must not look like one.
+    if (!this.revealAnnounced) {
+      this.revealAnnounced = true;
+      window.announceRevealed();
+    }
     if (window.isMinimized()) window.restore();
     window.show();
     window.focus();
@@ -249,6 +264,7 @@ export class SettingsWindowController {
     this.ready = false;
     this.revealRequested = false;
     this.pendingReveal = false;
+    this.revealAnnounced = false;
     this.pendingSection = null;
   }
 }
