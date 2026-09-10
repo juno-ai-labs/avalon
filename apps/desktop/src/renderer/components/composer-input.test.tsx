@@ -77,6 +77,30 @@ describe('ComposerInput IME composition guard', () => {
 });
 
 describe('ComposerInput message capsule', () => {
+  it('retains multiline state beneath the attachment layout and clears it for short text', () => {
+    // jsdom has no layout; expose the compact/attachment minimum heights and
+    // a two-line draft so the component must measure outside attachment mode.
+    const clientHeight = vi.spyOn(HTMLTextAreaElement.prototype, 'clientHeight', 'get')
+      .mockImplementation(function (this: HTMLTextAreaElement) {
+        return this.closest('.has-attachments') ? 67 : 42;
+      });
+    const scrollHeight = vi.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
+      .mockImplementation(function (this: HTMLTextAreaElement) {
+        return this.value.includes('\n') ? 55 : 42;
+      });
+    try {
+      renderInput({ layout: 'message-capsule', className: 'has-attachments', value: 'First\nSecond' });
+      const composer = document.querySelector('.workstream-composer');
+      expect(composer).toHaveAttribute('data-multiline', 'true');
+      expect(composer).toHaveClass('has-attachments');
+      fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Short' } });
+      expect(composer).toHaveAttribute('data-multiline', 'false');
+    } finally {
+      clientHeight.mockRestore();
+      scrollHeight.mockRestore();
+    }
+  });
+
   it('shows only the action menu and voice chrome around an empty draft', () => {
     renderInput({
       api: { getTranscriptionSocketTicket: vi.fn() },
