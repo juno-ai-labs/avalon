@@ -49,7 +49,7 @@ describe('AgentWorkTiming', () => {
       <AgentWorkTiming active durationMs={82_000} startedAt={startedAt} />,
     );
 
-    expect(screen.getByText('working for 1m 22s')).toBeInTheDocument();
+    expect(screen.getByText('Working for 1m 22s')).toBeInTheDocument();
     expect(screen.getByRole('status', { name: 'Rally is working' })).toBeInTheDocument();
     expect(container.querySelector('.agent-work-timing')).toHaveClass('agent-work-timing-active');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-state', 'solving');
@@ -58,20 +58,20 @@ describe('AgentWorkTiming', () => {
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-speed', '1');
 
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
-    expect(screen.getByText('working for 1m 23s')).toBeInTheDocument();
+    expect(screen.getByText('Working for 1m 23s')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveAccessibleName('Rally is working');
 
     rerender(<AgentWorkTiming active={false} durationMs={83_000} />);
-    expect(screen.getByText('worked for 1m 23s')).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveAccessibleName('worked for 1m 23s');
+    expect(screen.getByText('Worked for 1m 23s')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveAccessibleName('Worked for 1m 23s');
     expect(container.querySelector('.agent-work-timing')).not.toHaveClass('agent-work-timing-active');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'true');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-speed', '0');
   });
 
   it.each([
-    { active: true, label: 'working for 1m 23s', state: 'a paused active segment' },
-    { active: false, label: 'worked for 1m 23s', state: 'an initially completed segment' },
+    { active: true, label: 'Working for 1m 23s', state: 'a paused active segment' },
+    { active: false, label: 'Worked for 1m 23s', state: 'an initially completed segment' },
   ])('renders $state at the paused first frame', ({ active, label }) => {
     render(<AgentWorkTiming active={active} durationMs={83_000} />);
 
@@ -92,12 +92,12 @@ describe('AgentWorkTiming', () => {
       );
 
       // 6s completed, plus 2s elapsed on each of the two running segments.
-      expect(screen.getByText('working for 10s')).toBeInTheDocument();
+      expect(screen.getByText('Working for 10s')).toBeInTheDocument();
 
       // Settling records what both segments actually ran, and the live number
       // was already there rather than stepping up to meet it.
       rerender(<AgentWorkTiming active={false} durationMs={10_000} />);
-      expect(screen.getByText('worked for 10s')).toBeInTheDocument();
+      expect(screen.getByText('Worked for 10s')).toBeInTheDocument();
     } finally {
       nowSpy.mockRestore();
     }
@@ -107,7 +107,7 @@ describe('AgentWorkTiming', () => {
     const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(10_000);
     try {
       render(<AgentWorkTiming active durationMs={3_000} monotonicStartedAt={8_000} />);
-      expect(screen.getByText('working for 5s')).toBeInTheDocument();
+      expect(screen.getByText('Working for 5s')).toBeInTheDocument();
     } finally {
       nowSpy.mockRestore();
     }
@@ -143,14 +143,14 @@ describe('AgentWorkTiming', () => {
       />,
     );
 
-    expect(screen.getByText('worked for at most 1m 23s')).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveAccessibleName('worked for at most 1m 23s');
+    expect(screen.getByText('Worked for at most 1m 23s')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveAccessibleName('Worked for at most 1m 23s');
   });
 
   it('says only what it knows when the completed total is unknown', () => {
     render(<AgentWorkTiming active={false} durationMs={null} />);
 
-    expect(screen.getByText('worked')).toBeInTheDocument();
+    expect(screen.getByText('Worked')).toBeInTheDocument();
     expect(screen.queryByText(/for/u)).not.toBeInTheDocument();
   });
 
@@ -161,7 +161,7 @@ describe('AgentWorkTiming', () => {
       <AgentWorkTiming active durationMs={null} monotonicStartedAt={[performance.now() - 3_000]} />,
     );
 
-    expect(screen.getByText('working')).toBeInTheDocument();
+    expect(screen.getByText('Working')).toBeInTheDocument();
     expect(screen.queryByText(/3s/u)).not.toBeInTheDocument();
   });
 });
