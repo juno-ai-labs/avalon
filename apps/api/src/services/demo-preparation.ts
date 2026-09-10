@@ -387,10 +387,15 @@ async function launchAttempt(env: Env, operationId: string, attempt: number): Pr
  * Start one preparation, or return the one this operation id already started.
  *
  * Operation identity, not a concurrency limit: two different ids are two demos.
- * The request casts every role of the pack in service but the presenter's and
- * nothing else, each to a different colleague, and the presenter must be an
- * active member of the template — all refused here, before a row is written,
- * and checked again by the first phase in case either moved in between.
+ * A submission of an id that already has a row is answered with that row's
+ * progress and validates nothing, so a client retrying a lost response meets
+ * its own preparation rather than a refusal about a directory that has moved.
+ *
+ * A first submission casts every role of the pack in service but the
+ * presenter's and nothing else, each to a different colleague, and the
+ * presenter must be an active member of the template — all refused here,
+ * before a row is written, and checked again by the first phase in case either
+ * moved in between.
  */
 export async function startDemoOperation(
   env: Env,
@@ -399,6 +404,15 @@ export async function startDemoOperation(
 ): Promise<DemoOperationStatus> {
   requireDemoRegion(env);
   requireDriver(env);
+  // A repeat of an operation id is that operation, answered before this
+  // request is validated at all. The cast on the row was checked when it was
+  // written, and checking what this submission says against a directory that
+  // has moved since — somebody renamed, somebody's address changed — would
+  // refuse a retry of a preparation that is running perfectly well. The
+  // conflict-safe insert below is what settles two concurrent first requests;
+  // this settles the second submission of one that already landed.
+  const started = await demoOperationStatus(env, input.operationId);
+  if (started) return started;
   const pack = activeDemoPack();
   const castRoles = demoCastRoles(pack.roles);
   const bound: Record<string, string> = {};
