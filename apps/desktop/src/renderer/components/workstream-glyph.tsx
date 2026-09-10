@@ -7,6 +7,7 @@ import {
   Component,
   Dices,
   Orbit,
+  Play,
   Sparkles,
   Spline,
   WandSparkles,
@@ -15,6 +16,7 @@ import {
 } from 'lucide-react';
 import { PROJECT_COLOR_RING, type ProjectColorKey, type WorkstreamAppearance as SavedAppearance } from '@rally/contracts';
 import clsx from 'clsx';
+import { useId } from 'react';
 import { glyphInk } from '../lib/project-palette';
 import { PROJECT_ICONS } from './project-icons';
 
@@ -165,27 +167,122 @@ export function WorkstreamGlyph({ id, size = 32, appearance: saved }: { id: stri
 }
 
 /**
- * The rounded hexagon a Sidekick is drawn in, with one symbol centred in it.
+ * A state the hexagon carries in its bottom-right corner, drawn as its own
+ * symbol rather than as a coloured token whose meaning has to be learned.
+ *
+ * Generic on purpose: the primitive knows how to cut one symbol out of the
+ * fill and paint it, and nothing about which states a Sidekick has. A second
+ * state is a second constant like `SIDEKICK_RUNNING_MARKER` below, not a second
+ * knockout.
+ */
+export interface HexagonMarker {
+  symbol: LucideIcon;
+  /** A theme token; see `docs/theming.md`. */
+  color: string;
+}
+
+/**
+ * A Sidekick that is running: lifecycle `active`, in service and waiting on its
+ * triggers. Green because it is the healthy state, and a play because that is
+ * already what the product's own **Resume** and **Run now** controls are drawn
+ * with, so the marker and the buttons that produce it say the same thing.
+ */
+export const SIDEKICK_RUNNING_MARKER: HexagonMarker = {
+  symbol: Play,
+  color: 'var(--av-sys-color-success-base)',
+};
+
+/**
+ * The marker's box in the hexagon's own viewBox units, at the bottom right.
+ * Sized and placed here rather than in the stylesheet so it scales with the
+ * tile — 60px in the sidebar, 36px in the rail — instead of holding a pixel
+ * size and swelling as the shape around it shrinks, which is the same reason
+ * the new-Sidekick outline is stroked in these units.
+ */
+const MARKER_BOX = 26;
+const MARKER_ORIGIN = 69;
+
+/**
+ * How wide the knockout is stroked, in the marker's own 24-unit box. A stroke
+ * is centred on the outline it traces, so the gap this leaves around the
+ * painted symbol is half of it — but only because the knockout copy below
+ * carries `overflow="visible"`. A Lucide icon is a nested `<svg>`, which
+ * establishes its own viewport, and the UA stylesheet clips one to it. `Play`
+ * fills its box to about 3 units from the top and 21 from the left, so any
+ * dilation past 3 is cut off square at three edges — the shape-accurate gap
+ * flattening into a box corner exactly where the marker crosses the hexagon.
+ */
+const MARKER_KNOCKOUT = 7;
+
+/**
+ * The rounded hexagon a Sidekick is drawn in, with one symbol centred in it and
+ * an optional state marker cut out of its bottom-right corner.
  *
  * Separate from `AutomationGlyph` below because the shape is not the identity:
  * the sidebar's strip also has to draw the hexagon for a Sidekick that does not
  * exist yet, and that one has no id to seed a fill or a symbol from. Both go
  * through here so there is one hexagon rather than two paths that drift, and so
  * a fill and an outline are the same silhouette at the same size.
+ *
+ * The marker belongs to the hexagon rather than to the tile around it because
+ * the knockout does. A marker has one colour and the fill under it is whichever
+ * of the fifteen identity colours this Sidekick drew, so a marker painted
+ * straight onto the fill is legible on some Sidekicks and lost on the ones
+ * whose colour is near its own — green on `green` being exactly the pairing the
+ * strip already hands out. Masking the fill along the marker's own outline is
+ * what makes the separation independent of both colours. The strip used to buy
+ * the same separation with a disc of `surface-default` under a dot, which cost
+ * two things this does not: the gap was a circle around a symbol that is not
+ * one, and an opaque patch of the default surface sat over a row that is
+ * painted in a hover fill half the time. A hole shows whatever is behind it.
  */
-export function HexagonGlyph({ className, fill, ink, symbol: Icon }: {
+export function HexagonGlyph({ className, fill, ink, marker, symbol: Icon }: {
   className?: string | undefined;
   /** The shape's interior. `none` leaves what is underneath it showing. */
   fill: string;
   /** What the symbol is drawn in over that fill; see `glyphInk`. */
   ink: string;
+  /** The state to mark, or nothing where there is no state to mark. */
+  marker?: HexagonMarker | undefined;
   symbol: LucideIcon;
 }): React.JSX.Element {
+  // SVG ids are document-global and the strip draws one of these per Sidekick,
+  // so a fixed id would point every hexagon at the first one's mask.
+  const maskId = `hexagon-marker-${useId().replace(/[^A-Za-z0-9_-]/gu, '-')}`;
   return (
     <svg className={clsx('automation-glyph', className)} viewBox="0 0 100 100" fill="none" aria-hidden="true"
       style={{ '--glyph-ink': ink } as React.CSSProperties}>
-      <path className="automation-glyph-shape" d="M43 6C47 3 52 3 57 6L86 23C91 26 94 30 94 36L94 66C94 72 91 76 86 79L57 95C52 98 47 98 42 95L14 78C9 75 6 71 6 65L6 35C6 29 9 25 14 22Z" fill={fill} />
+      {marker && (
+        <defs>
+          {/*
+            Luminance, so `white` keeps the fill and `black` cuts it away. These
+            are the mask's own two channels rather than colours anything is
+            painted in, which is why they are not tokens.
+          */}
+          <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
+            <rect width="100" height="100" fill="white" />
+            {/*
+              `overflow="visible"` is load-bearing, not tidying: without it the
+              nested viewport clips the dilating stroke and the gap squares off
+              at the box edge. See `MARKER_KNOCKOUT`.
+            */}
+            <marker.symbol
+              className="automation-glyph-knockout" fill="black" overflow="visible" size={MARKER_BOX}
+              stroke="black" strokeLinejoin="round" strokeWidth={MARKER_KNOCKOUT}
+              x={MARKER_ORIGIN} y={MARKER_ORIGIN}
+            />
+          </mask>
+        </defs>
+      )}
+      <path className="automation-glyph-shape" d="M43 6C47 3 52 3 57 6L86 23C91 26 94 30 94 36L94 66C94 72 91 76 86 79L57 95C52 98 47 98 42 95L14 78C9 75 6 71 6 65L6 35C6 29 9 25 14 22Z" fill={fill} mask={marker ? `url(#${maskId})` : undefined} />
       <Icon x={25} y={25} size={50} strokeWidth={1.9} />
+      {marker && (
+        // Solid rather than stroked: at the rail's 36px the marker is about 7px
+        // across, where a 2-unit outline is most of the symbol and the shape
+        // stops reading as a play at all.
+        <marker.symbol className="automation-glyph-marker" fill={marker.color} size={MARKER_BOX} stroke="none"
+          x={MARKER_ORIGIN} y={MARKER_ORIGIN} />
+      )}
     </svg>
   );
 }
@@ -198,9 +295,15 @@ export function HexagonGlyph({ className, fill, ink, symbol: Icon }: {
  * chosen from the same catalog, through the same picker, so resolving them here
  * a second way is how the hexagon and the glyph would come to disagree about
  * one choice. The shape itself stays `HexagonGlyph`'s — this supplies only what
- * the identity decides, which is the fill, its ink, and the symbol.
+ * the identity decides (the fill, its ink, and the symbol) and passes through
+ * whatever state marker the caller wants cut out of that fill.
  */
-export function AutomationGlyph({ id, appearance: saved }: { id: string; appearance?: SavedAppearance }): React.JSX.Element {
+export function AutomationGlyph({ id, appearance: saved, marker }: {
+  id: string;
+  appearance?: SavedAppearance;
+  /** The Sidekick's lifecycle, where the surface shows one; see `HexagonMarker`. */
+  marker?: HexagonMarker | undefined;
+}): React.JSX.Element {
   const { Icon, color, colorKey } = resolveWorkstreamAppearance(id, saved);
-  return <HexagonGlyph fill={color} ink={glyphInk(colorKey)} symbol={Icon} />;
+  return <HexagonGlyph fill={color} ink={glyphInk(colorKey)} marker={marker} symbol={Icon} />;
 }
