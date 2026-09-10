@@ -252,7 +252,17 @@ export function SubstreamLaunchSurface({
           <span className="substream-launch-note">
             Private to you until you add somebody. Rally brings the conversation so far with it.
           </span>
-          <IconButton label="Cancel new substream" onClick={onCancel}><X size={15} /></IconButton>
+          {/* Only while there is something to cancel. The row leaves on submit,
+              but it leaves over 220ms and stays in the tab order while it does,
+              and this control does not stop a creation that is already in
+              flight: it would drop the surface while prepare and confirm ran
+              on, leaving a substream and a run behind somebody who had just
+              said no. Creation is not cancellable once it is claimed. */}
+          <IconButton
+            disabled={launching !== null}
+            label="Cancel new substream"
+            onClick={onCancel}
+          ><X size={15} /></IconButton>
         </div>
       </div>
       <div className="composer-stack">
