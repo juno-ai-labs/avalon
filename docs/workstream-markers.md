@@ -112,17 +112,28 @@ somebody scanning a list, because either way the agent has the work and nobody
 is being asked for anything. Nobody can act on "about to start" differently from
 "started".
 
-Every surface that draws a run's status goes through it — `workstreamMarkerStatus`
-for the ranked marker, and the work-stream header for its status line — so the
-two cannot disagree about one work stream. **That is the fold's real job.** A
-component that reads `harnessStatus` and hands it to `StatusDot` directly is
-reintroducing the second opinion, and `scheduled` is still in
-`WorkstreamMarkerStatus` for it to reach.
+There are two boundaries, not one, and the difference is load-bearing:
+
+- **`harnessMarkerStatus` — the run's own marker.** What the work-stream header
+  draws, because a header describes the run rather than the reader. Routing it
+  through the ranking instead would put **Unread** or **You were mentioned** in
+  the header of a work stream somebody is looking at, which is nonsense: they
+  are reading it.
+- **`workstreamMarkerStatus` — this viewer's marker.** What a list draws. It
+  calls `harnessMarkerStatus` first and then ranks the result against the
+  personal states, so a folded `scheduled` is what enters the ranking.
+
+Both therefore agree about the run, and only the second has an opinion about the
+reader. **That is the fold's real job.** A component that reads `harnessStatus`
+and hands it to `StatusDot` directly is reintroducing the second opinion, and
+`scheduled` is still in `WorkstreamMarkerStatus` for it to reach.
 
 It is there for the Sidekick **run history**, which lists runs rather than work
 streams: a pending run is exactly what somebody opened that list to find, so it
 draws `scheduled` under its own name and keeps its `.status-scheduled` rule.
-That is the only surface allowed to.
+That is the only surface allowed to, and it is not a work-stream surface — which
+is what makes it an exception to the invariant below rather than a violation of
+it.
 
 `scheduled` entering the ranking as `running` also settles it against the
 personal states, which it never faced before: it now outranks `unread` and loses
@@ -159,10 +170,14 @@ own state — so `app.css` carries a colour for those three and nothing else.
 
 ## Invariants
 
-- **At most one marker per work stream per person.** Every surface calls
-  `workstreamMarkerStatus`; nothing reads `harnessStatus` to colour a dot. A
-  surface that decided for itself would show one work stream two different
-  colours on two screens, which reads as a bug in the data.
+- **At most one marker per work stream per person.** Every work-stream surface
+  routes the run's status through `harnessMarkerStatus`; a viewer-aware one
+  calls `workstreamMarkerStatus`, which routes through it in turn. Nothing reads
+  `harnessStatus` and colours a dot from it. A surface that decided for itself
+  would show one work stream two different colours on two screens, which reads
+  as a bug in the data. Only a **run-history** surface — one listing runs rather
+  than work streams, the Sidekick history being the only one today — may pass
+  `scheduled` to `StatusDot` under its own name.
 - **The ranking lives in one array.** Reordering is editing `MARKER_PRECEDENCE`.
   A second copy — in a component, in a query, in a sort — silently forks the
   product decision.
@@ -237,6 +252,7 @@ own:
 | Suite | What it proves | How to run |
 | --- | --- | --- |
 | `apps/desktop/src/renderer/lib/format.test.ts` | The ranking, pair by pair, the queued-run fold, and the **Needs attention** membership rule. | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/format.test.ts` |
+| `apps/desktop/src/renderer/screens/workstream.test.tsx` | The header draws a queued run as running, which is what holds the second call site to the fold. | `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/workstream.test.tsx` |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The sidebar omits completed markers, draws a queued run as running, and preserves personal attention markers and their tooltips. | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/sidebar.test.tsx` |
 | `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | **Needs attention** holds the three addressed states, omits a merely unread work stream, and orders rows by recency. | `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/new-workstream.test.tsx` |
 | `apps/api/test-workers/unseen-workstream-state.test.ts` | On real workerd: added at creation, added later, cleared by the first open, unchanged by a duplicate add, set again by a re-add. | `pnpm --filter @rally/api test:workers` |
@@ -309,6 +325,17 @@ pending one is what somebody opened that list to find. That leaves the state
 reachable, so the fold is what keeps work-stream surfaces honest rather than the
 type: a component that hands `harnessStatus` to `StatusDot` directly is a second
 opinion about one work stream, which is the invariant below.
+
+**The first invariant was rewritten in the same change,** because it read "every
+surface calls `workstreamMarkerStatus`" and that was now wrong in two directions
+at once — the header calls `harnessMarkerStatus`, and the run history calls
+neither. Left as it was, a maintainer following it literally would route the
+header through the viewer's ranking and put **Unread** in the header of a work
+stream somebody is reading, or fold the run history's pending run and erase the
+distinction that list exists for. It now names both boundaries and the one
+exception. Caught by a review bot on this pull request, which is worth recording:
+the sentence had been loosely wrong before this change and became a live hazard
+only once the difference between the two helpers started carrying weight.
 
 Shipped in the pull request for this change.
 
