@@ -306,6 +306,11 @@ describe('token references', () => {
     // can hear the layout settle. Neither is a theme's to set.
     '--sidebar-layout-motion', '--sidebar-compact',
     '--turn-bubble-radius',
+    // The widest a turn is ever drawn, read by the turn rules and by the
+    // composer beneath them, which takes a fraction of it. It is the feed's
+    // layout arithmetic — the measure a column of conversation is built from —
+    // rather than an appearance either theme states differently.
+    '--turn-width-cap',
     // The feed's spacing steps, each a multiple of the one `ref.space.unit`
     // token; the multiples are the stylesheet's, not a theme's.
     '--space-1', '--space-2', '--space-3', '--space-4', '--space-5', '--space-6', '--space-7', '--space-8'];
