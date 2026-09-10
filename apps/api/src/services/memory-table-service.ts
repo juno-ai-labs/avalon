@@ -1276,7 +1276,26 @@ export async function materializeAutomationMemoryTables(
       rationale: "Declared by the Sidekick's definition",
     };
     const receiptId = `${harnessRunId}:${index}`;
-    const inputHash = await mutationInputHash("create", declaration);
+    // The receipt proves that this revision's declaration at this index was
+    // materialized, so its hash covers what the definition declared and
+    // nothing the platform names. The scope kind and the rationale were
+    // renamed once, and a hash that carried them turned every same-revision
+    // re-apply — the publication alarm's whole job — into a permanent
+    // `receipt_mismatch`. A receipt written before that rename hashed the
+    // whole declaration under the old names; it is asked for once more under
+    // that hash below, and only a second mismatch is a defect.
+    const inputHash = await mutationInputHash("create", {
+      name: declared.name,
+      description: declared.description,
+      usageInstructions: declared.usageInstructions,
+      columns: declared.columns,
+      keyColumns: declared.keyColumns,
+    });
+    const legacyInputHash = await mutationInputHash("create", {
+      ...declaration,
+      scopeKind: "automation",
+      rationale: "Declared by the automation's definition",
+    });
     const mutationId = await deterministicId("mtm", harnessRunId, receiptId);
     const memoryTableId = await deterministicId("mtt", scope.memoryScopeId, declared.name.toLocaleLowerCase());
     const columns = declared.columns.map((column, position) => ({
@@ -1302,7 +1321,7 @@ export async function materializeAutomationMemoryTables(
       mutationJson: JSON.stringify(declaration),
       resultJson: JSON.stringify({ memoryTableId, name: declared.name }),
     };
-    const outcome = WorkspaceMemoryTableCreateResultSchema.parse(await workspace.createMemoryTable({
+    const create = async (hash: string) => WorkspaceMemoryTableCreateResultSchema.parse(await workspace.createMemoryTable({
       workspaceId: input.workspaceId,
       memoryTableId,
       memoryScopeId: scope.memoryScopeId,
@@ -1316,9 +1335,11 @@ export async function materializeAutomationMemoryTables(
         definitionRevision: input.definitionRevision,
       }),
       columns,
-      mutation,
+      mutation: { ...mutation, inputHash: hash },
       at: nowIso(),
     }));
+    let outcome = await create(inputHash);
+    if (outcome.outcome === "receipt_mismatch") outcome = await create(legacyInputHash);
     if (outcome.outcome === "receipt_mismatch") throw new Error("memory_table_mutation_receipt_mismatch");
     if (outcome.outcome === "name_exists") {
       const existing = await scopeTable(env, input.workspaceId, scope, outcome.memoryTableId);
