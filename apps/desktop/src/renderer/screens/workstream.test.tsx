@@ -269,6 +269,30 @@ describe('WorkstreamHeader presence', () => {
   });
 });
 
+describe('WorkstreamHeader run status', () => {
+  // The sidebar and this header are the two places a run's status becomes a
+  // marker, and `docs/workstream-markers.md` forbids them disagreeing about one
+  // work stream. The helper's own fold is covered in `lib/format.test.ts`; this
+  // asserts the header actually goes through it, because handing
+  // `workstream.harnessStatus` straight to `StatusDot` is the regression that
+  // leaves both of those suites green.
+  it('draws a queued run as the sidebar does, as running', () => {
+    const { container } = renderWorkstreamHeader({ ...headerWorkstream, harnessStatus: 'scheduled' });
+
+    expect(container.querySelector('.workstream-subtitle .status-running .status-dot')).not.toBeNull();
+    expect(container.querySelector('.workstream-subtitle .status-scheduled')).toBeNull();
+    expect(screen.getByText('Running')).toBeInTheDocument();
+    expect(screen.queryByText('Scheduled')).not.toBeInTheDocument();
+  });
+
+  it('leaves a run that is not queued to speak for itself', () => {
+    const { container } = renderWorkstreamHeader({ ...headerWorkstream, harnessStatus: 'needs_input' });
+
+    expect(container.querySelector('.workstream-subtitle .status-needs_input .status-dot')).not.toBeNull();
+    expect(screen.getByText('Needs input')).toBeInTheDocument();
+  });
+});
+
 describe('WorkstreamHeader GrokBot shell', () => {
   it('does not imply child presence from workstream-wide presence', () => {
     const member = { id: 'member', name: 'Member', email: 'member@example.test', timezone: 'UTC' };

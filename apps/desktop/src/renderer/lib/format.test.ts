@@ -6,7 +6,9 @@ import {
   groupWorkstreams,
   nextRecencyBoundary,
   recencyGroupBatchFilter,
+  statusDescription,
   statusLabel,
+  harnessMarkerStatus,
   workstreamMarkerStatus,
   workstreamNeedsAttention,
 } from './format';
@@ -152,10 +154,25 @@ describe('work-stream presentation rules', () => {
     expect(workstreamMarkerStatus({ harnessStatus: 'completed', hasUnread: true })).toBe('unread');
     expect(workstreamMarkerStatus({ harnessStatus: 'stopped', hasUnread: true })).toBe('unread');
     expect(workstreamMarkerStatus({ harnessStatus: 'failed', hasUnread: true })).toBe('unread');
-    // Nothing personal is true, so the run answers for itself — including the
-    // one state the ranking does not mention.
-    expect(workstreamMarkerStatus({ harnessStatus: 'scheduled' })).toBe('scheduled');
+    // Nothing personal is true, so the run answers for itself.
     expect(workstreamMarkerStatus({ harnessStatus: 'failed' })).toBe('failed');
+    // A queued run enters the ranking as `running`, which is what puts it above
+    // `unread` — the same place a run that has already started sits.
+    expect(workstreamMarkerStatus({ harnessStatus: 'scheduled' })).toBe('running');
+    expect(workstreamMarkerStatus({ harnessStatus: 'scheduled', hasUnread: true })).toBe('running');
+    expect(workstreamMarkerStatus({ harnessStatus: 'scheduled', youAreMentioned: true })).toBe('mentioned');
+  });
+
+  it('presents a queued run as one already working, and leaves every other run alone', () => {
+    expect(harnessMarkerStatus('scheduled')).toBe('running');
+    expect(harnessMarkerStatus('running')).toBe('running');
+    expect(harnessMarkerStatus('needs_input')).toBe('needs_input');
+    expect(harnessMarkerStatus('completed')).toBe('completed');
+    expect(harnessMarkerStatus('stopped')).toBe('stopped');
+    expect(harnessMarkerStatus('failed')).toBe('failed');
+    // The running marker now speaks for a queued run as well, so its tooltip
+    // must not claim the agent is at work in this moment.
+    expect(statusDescription.running).not.toMatch(/\bnow\b/u);
   });
 
   it('asks for attention only where somebody named this person: unseen, mentioned, needs_input', () => {
