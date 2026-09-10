@@ -1,4 +1,5 @@
 import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
+import type { AgentModelOverride } from '../lib/agent-models';
 import { X } from 'lucide-react';
 import { IconBorderCornerPill } from '@tabler/icons-react';
 import { type ReactNode, useRef, useState } from 'react';
@@ -92,6 +93,13 @@ export interface SubstreamLaunchProps {
     confirmedParticipantUserIds: string[];
     attachments: MessageAttachment[];
     attachmentIds: string[];
+    /**
+     * The model every run of this substream is pinned to, or null for the
+     * ordinary unpinned case. It travels with the opening message because it
+     * was decided on the same keystroke: creation is one request, and the pin
+     * is part of what that request creates.
+     */
+    modelOverride: AgentModelOverride | null;
   }) => Promise<void>;
   onOpenAttachment: (preview: AttachmentPreview) => void;
   workspaceId: string;
@@ -128,6 +136,16 @@ export function SubstreamLaunchSurface({
 }: SubstreamLaunchProps): React.JSX.Element {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [tooLong, setTooLong] = useState(false);
+  /**
+   * The model this substream will be pinned to, until it is created.
+   *
+   * It starts unpinned rather than inheriting the parent's pin. A substream is
+   * its own conversation with its own row, and every substream created before
+   * this control existed follows the flag whatever its parent named — so
+   * seeding this with the parent's model would change what an untouched
+   * composer does, silently, for work nobody was making a decision about.
+   */
+  const [modelOverride, setModelOverride] = useState<AgentModelOverride | null>(null);
   // Its own draft key, so a message written for a substream that was never
   // created is not carrying into — or worse, out of — the main conversation's
   // composer. `new` is not a substream id: every real one is a UUID.
@@ -185,6 +203,7 @@ export function SubstreamLaunchSurface({
         confirmedParticipantUserIds,
         attachments,
         attachmentIds: attachments.map((attachment) => attachment.id),
+        modelOverride,
       });
       attachmentDraft.commitLease(lease.leaseId);
     } catch (failure) {
@@ -303,6 +322,7 @@ export function SubstreamLaunchSurface({
           fileInputRef={fileInputRef}
           footerHint={sendBlocked ? 'Starting a substream is available once Rally connects' : 'Enter to create · Shift+Enter for a new line'}
           members={members}
+          model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
           onAttach={attachmentDraft.addFiles}
           onOpenAttachment={onOpenAttachment}
           onRemoveAttachment={attachmentDraft.removeAttachment}

@@ -1,4 +1,4 @@
-import { asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
+import { asSubstreamId, asUserId, asWorkstreamId, type AgentModelOverride } from "@rally/contracts";
 import { PrivateChildPreparationOperationSchema, type PrivateChildPreparationOperation } from "@rally/contracts/conversation-parent";
 import type { SubstreamCreationResult, SubstreamOpeningMessage } from "@rally/contracts/substream-creation";
 import type { AuthContext, Env } from "../env";
@@ -128,6 +128,20 @@ export class SubstreamCreationService {
     parentId: string,
     operationId: string,
     opening: SubstreamOpeningMessage | null = null,
+    /**
+     * The model every run of this child is pinned to, or null for the ordinary
+     * unpinned case. Decided on the keystroke that submits the launch composer,
+     * because that is when a person chose it — preparation runs before there is
+     * a composer to choose from, and reserving a child under a pin nobody had
+     * picked yet would record a decision that had not been made.
+     *
+     * The first confirmation is the one that writes it: a retry of a
+     * confirmation that already reached `ready` replays its answer without
+     * re-provisioning, so a pin that changed between the two is ignored rather
+     * than applied to a child whose runs may already have started. That matches
+     * what a pin is everywhere else — decided once, at creation, and fixed.
+     */
+    modelOverride: AgentModelOverride | null = null,
   ): Promise<SubstreamCreationResult> {
     const parent = await this.parent(parentId);
     const address = { workspaceId: this.auth.workspaceId, parentId, operationId };
@@ -182,7 +196,7 @@ export class SubstreamCreationService {
       createdByUserId: this.auth.userId,
       participantUserIds: operation.membershipInitializer.memberUserIds,
       harnessStatus: "idle",
-      emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: null, now: operation.createdAt,
+      emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride, now: operation.createdAt,
     });
     const target = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, this.auth.workspaceId,
       conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, parentId, operation.substreamId));

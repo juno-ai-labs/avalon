@@ -7,6 +7,7 @@ import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import { clearAllDrafts } from '../lib/draft-cache';
 import { mentionOptionCopy } from '../test/mention-option-copy';
+import type { ComposerModelControl } from './composer-input';
 import { WorkstreamComposer } from './workstream-composer';
 
 // The composer shows the work stream's model only while Application →
@@ -63,6 +64,7 @@ function renderComposer(
   onAttach: (files: FileList | File[]) => void = vi.fn(),
   detail: WorkstreamDetail = workstream,
   members: WorkspaceMember[] = [creator, bob, cara],
+  model?: ComposerModelControl,
 ): ReturnType<typeof render> {
   vi.stubGlobal('ResizeObserver', class {
     observe(): void {}
@@ -75,6 +77,7 @@ function renderComposer(
         attachments={[]}
         fileInputRef={createRef<HTMLInputElement>()}
         members={members}
+        {...(model ? { model } : {})}
         onAttach={onAttach}
         onOpenAttachment={() => undefined}
         onRemoveAttachment={() => undefined}
@@ -752,15 +755,48 @@ describe('WorkstreamComposer draft caching', () => {
   });
 });
 
-describe('WorkstreamComposer GrokBot chrome', () => {
-  it('keeps developer model details out of the conversation input', async () => {
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
-    renderComposer(undefined, false, undefined, {
-      ...workstream,
-      modelOverride: 'deepseek/deepseek-v4-pro',
+describe('WorkstreamComposer model control', () => {
+  it('shows no model control unless developer mode is on', async () => {
+    renderComposer(undefined, false, undefined, workstream, [creator], {
+      kind: 'settled', model: 'deepseek/deepseek-v4-pro', pinned: true,
     });
 
     await screen.findByLabelText('Message the work stream');
     expect(screen.queryByRole('button', { name: /^Model:/u })).not.toBeInTheDocument();
+  });
+
+  it('names the model a created conversation is on and opens nothing', async () => {
+    // The pin is written once, at creation, and nothing afterwards edits it —
+    // so this control exists to be read. A menu here would offer a change the
+    // next run would not honour.
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    renderComposer(undefined, false, undefined, workstream, [creator], {
+      kind: 'settled', model: 'deepseek/deepseek-v4-pro', pinned: true,
+    });
+
+    const trigger = await screen.findByRole('button', { name: /^Model:/u });
+    expect(trigger).toHaveTextContent('DeepSeek V4 Pro');
+    // The exact id and the claim only a pinned conversation may make, because
+    // Tab skips a disabled button and the tooltip is not reachable that way.
+    expect(trigger).toHaveAccessibleName(
+      'Model: deepseek/deepseek-v4-pro — pinned when this conversation was created, so every run uses it. It cannot be changed.',
+    );
+    expect(trigger).toBeDisabled();
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    expect(screen.queryByRole('menuitemradio')).not.toBeInTheDocument();
+  });
+
+  it('says an unpinned conversation may run somewhere else next time', async () => {
+    // What is immutable for an unpinned conversation is the setting, not the
+    // model: it re-resolves the flag on every launch, so the id shown is only
+    // what the latest run happened to get.
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    renderComposer(undefined, false, undefined, workstream, [creator], {
+      kind: 'settled', model: 'x-ai/grok-4.3', pinned: false,
+    });
+
+    expect(await screen.findByRole('button', { name: /^Model:/u })).toHaveAccessibleName(
+      "Model: x-ai/grok-4.3 (the latest run's) — unpinned, so the agent-model-workstream flag decides each run and a later run may differ. It cannot be set here.",
+    );
   });
 });
