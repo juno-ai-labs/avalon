@@ -243,7 +243,7 @@ list motion to hold and so carries no `--sidebar-compact`.
 
 Both dividers say what they are. A grip carries no words, and the double-click
 that collapses the sidebar beside it was written down nowhere, so each handle is
-wrapped in `DragHint` (`components/primitives.tsx`): a Radix tooltip whose
+wrapped in `DragHint` (`components/primitives.tsx`): a `Tip` whose
 trigger is the handle's whole pointer target rather than the pill drawn inside
 it, so the hint and the pill appear for the same approach, and whose content is
 centre-aligned, which lands it beside the pill without either side measuring the
@@ -406,7 +406,12 @@ handle that promises least the one a reader meets in a panel they opened
 deliberately; it has a close control, so resetting the width is the action that
 was missing rather than a collapse.
 
-**Consequences:** The navigation's "the window is forcing this" is now the
+**Consequences:** `Tip` gained the four things this hint needs and the rest of
+the app does not: a `className` modifier, `disableHoverableContent`, and the
+`open`/`onOpenChange` pair that lets a caller take the answer over while Radix
+keeps deciding when to open. A second hint of any kind reaches for `Tip` rather
+than a sixth hand-rolled subtree. The navigation's "the window is forcing this"
+is now the
 shell's `sidebarConstrained` passed down, not a derivation, and a second reader
 of that condition adds itself to the prop rather than inferring it again from
 `compact`. A hint has a veto for the length of a drag, `suppressed`,
