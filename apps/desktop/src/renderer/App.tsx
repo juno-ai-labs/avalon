@@ -3,7 +3,7 @@ import { SidekicksWindow, SidekicksWindowRedirect } from './screens/sidekicks-li
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Cable, RefreshCcw } from 'lucide-react';
-import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useRef, useState } from 'react';
+import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useMemo, useRef, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { logError } from '../common/logger';
 import { desktopWorkspaceIdentityKey } from '../common/desktop';
@@ -14,6 +14,7 @@ import { Button, EmptyState, LoadingState } from './components/primitives';
 import { SpeechPlaybackProvider } from './components/speech-playback';
 import { ApiError, isSessionRejection } from './lib/api';
 import { AppSessionProvider, useAppSession, type AppSessionValue, FINISH_SIGN_IN_IN_BROWSER } from './lib/app-session';
+import { workspaceFromSession } from './lib/session-workspace';
 import {
   abandonPendingWorkstreamFeedOpen,
   abandonWorkstreamFeedOpenOutsideRoute,
@@ -192,11 +193,20 @@ function endSessionFor(
 
 function WorkspaceApp(): React.JSX.Element {
   const { api, session, signOut, signOutIfCredentialCleared, surrenderActiveWorkspace } = useAppSession();
+  // Every surface used to hold its whole tree behind this one read — the screen
+  // below was `Opening workspace…` until it landed, so a window opened onto
+  // Settings had not mounted the settings screen, let alone started any of its
+  // own reads, until a round trip had returned what the session already knew.
+  // The placeholder ends that: the tree mounts on the session's own copy and
+  // this read replaces it in place. `null` when the session cannot fully
+  // describe the workspace, which is the old behaviour exactly.
+  const placeholderWorkspace = useMemo(() => workspaceFromSession(session) ?? undefined, [session]);
   const workspace = useQuery({
     queryKey: ['workspace', session?.workspace?.id, session?.user.id],
     queryFn: ({ signal }) => api!.getWorkspace(signal),
     enabled: Boolean(api && session),
     staleTime: 30_000,
+    placeholderData: placeholderWorkspace,
   });
   useQuery({
     queryKey: ['workspace-members'],

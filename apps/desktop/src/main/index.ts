@@ -98,6 +98,7 @@ import { parseDesktopSettingsSection } from '../common/settings';
 import { parseSidekicksWindowTarget } from '../common/sidekicks';
 import type { SidekicksWindowTarget } from '../common/sidekicks';
 import type { DesktopSettingsSection } from '../common/settings';
+import { SettingsWindowController } from './settings-window-controller';
 import { fontScheme } from '../common/theme-assets';
 import {
   defaultThemeChoice,
@@ -865,6 +866,13 @@ function broadcastSessionChanged(value: WireSession | null): void {
   if (!exposed) menuBarContentStore.clear();
   else if (menuBarItemIsLive()) void menuBarContentStore.refresh();
   menuBarController.refresh();
+
+  // A sign-in is the first moment a settings window would be worth having, and
+  // this is the one place every session arrival passes through. Idempotent, so
+  // the token renewals that also land here cost nothing; gated inside on the
+  // session, so a sign-out — which has already closed the window above — does
+  // not immediately build another.
+  void settingsWindowController.prewarm();
 
   const nextBinding = exposed ? flagSessionIdentity(exposed.user.id, exposed.apiBaseUrl) : null;
   if (nextBinding && nextBinding !== telemetryAccountBinding) {
@@ -2816,8 +2824,7 @@ function isAllowedExternalUrl(rawUrl: string): boolean {
 function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): void {
   const navigation: DesktopDeepLinkNavigation = { url: rawUrl, entrypoint };
   const connectorSettingsWindow = shouldDeliverConnectorResultToSettings(rawUrl)
-    && settingsWindow && !settingsWindow.isDestroyed()
-    ? settingsWindow
+    ? revealedSettingsWindow()
     : null;
 
   // A legacy active-relative callback also refreshes the initiating Settings
@@ -3383,6 +3390,13 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     if (!mainWindow || event.sender !== mainWindow.webContents) return [];
     rendererReady = true;
+    // The main renderer is mounted, so a relaunch onto a stored session — which
+    // never broadcasts a session change — reaches prewarming here. Started now
+    // rather than later because the main window spends its own first second
+    // waiting on round trips: the settings renderer is a separate process, and
+    // the work it is doing is parse and mount, not anything the window in front
+    // of the person is contending with.
+    void settingsWindowController.prewarm();
     return pendingDeepLinks.splice(0);
   });
   ipcMain.handle('system:open-external', async (event, rawUrl: unknown) => {
@@ -4139,45 +4153,75 @@ async function createDeepLinkErrorWindow(message: string): Promise<void> {
   }
 }
 
+const settingsWindowController = new SettingsWindowController({
+  createWindow: async (section, callbacks) => {
+    const window = new BrowserWindow({
+      width: 960,
+      height: 720,
+      minWidth: 720,
+      minHeight: 560,
+      show: false,
+      backgroundColor: windowBackgroundColor(),
+      title: 'Rally Settings',
+      titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+      trafficLightPosition: { x: 18, y: 17 },
+      ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
+      webPreferences: {
+        preload: preloadPath(),
+        contextIsolation: true,
+        devTools: !app.isPackaged,
+        nodeIntegration: false,
+        sandbox: true,
+        spellcheck: true,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+      },
+    });
+    settingsWindow = window;
+
+    installWindowDiagnostics(window, 'settings');
+    window.setMenuBarVisibility(false);
+    // Both wired before the load starts: a window that fails to load is
+    // destroyed, and `ready-to-show` regularly beats `loadURL`'s promise, so a
+    // listener attached after the await is a listener attached after the event.
+    window.once('ready-to-show', () => callbacks.onReadyToShow());
+    window.on('closed', () => {
+      if (settingsWindow === window) settingsWindow = null;
+      callbacks.onClosed();
+    });
+    await loadRenderer(window, rendererUrl('settings', section ?? undefined), 'settings');
+    return {
+      isDestroyed: () => window.isDestroyed(),
+      isMinimized: () => window.isMinimized(),
+      restore: () => window.restore(),
+      show: () => window.show(),
+      focus: () => window.focus(),
+      deliverSection: (next) => requestSettingsSection(window, next),
+    };
+  },
+  // A window is worth having in advance only for somebody who could open it: a
+  // signed-out or workspace-less renderer would boot to sign-in, and a sign-out
+  // closes this window rather than replacing it.
+  mayPrewarm: () => Boolean(inMemorySession?.workspace) && !loggingOut,
+  reportError: (error) => logError('rally', 'failed to prepare the settings window', error),
+});
+
 async function createSettingsWindow(section?: DesktopSettingsSection): Promise<void> {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    if (section) requestSettingsSection(settingsWindow, section);
-    if (settingsWindow.isMinimized()) settingsWindow.restore();
-    settingsWindow.show();
-    settingsWindow.focus();
-    return;
-  }
+  await settingsWindowController.open(section);
+}
 
-  settingsWindow = new BrowserWindow({
-    width: 960,
-    height: 720,
-    minWidth: 720,
-    minHeight: 560,
-    show: false,
-    backgroundColor: windowBackgroundColor(),
-    title: 'Rally Settings',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 18, y: 17 },
-    ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
-    webPreferences: {
-      preload: preloadPath(),
-      contextIsolation: true,
-      devTools: !app.isPackaged,
-      nodeIntegration: false,
-      sandbox: true,
-      spellcheck: true,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-    },
-  });
-
-  installWindowDiagnostics(settingsWindow, 'settings');
-  settingsWindow.setMenuBarVisibility(false);
-  settingsWindow.once('ready-to-show', () => settingsWindow?.show());
-  settingsWindow.on('closed', () => {
-    settingsWindow = null;
-  });
-  await loadRenderer(settingsWindow, rendererUrl('settings', section), 'settings');
+/**
+ * The settings window a person can actually see.
+ *
+ * `settingsWindow` is now non-null for most of a signed-in session, because one
+ * is built hidden ahead of being asked for. Anything that means "settings is
+ * where this belongs" — raising it, handing it a callback — has to ask this
+ * instead, or a prewarmed window silently becomes the destination for results
+ * the person is waiting on in the window they are actually looking at.
+ */
+function revealedSettingsWindow(): BrowserWindow | null {
+  if (!settingsWindow || settingsWindow.isDestroyed()) return null;
+  return settingsWindowController.isRevealRequested() ? settingsWindow : null;
 }
 
 /** The branded type is the guarantee: only a parsed target can reach the hash. */
