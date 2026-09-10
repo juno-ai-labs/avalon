@@ -232,6 +232,10 @@ sentence shape, but the thought rows carry bare English verbs, and a
 `sentenceCase` at the point the sentence is assembled is what keeps "Thought
 for 7s" from having to be spelled that way in the projection — where the same
 string is also the identifier that tells a thinking row from a response total.
+That covers the rows only. The message header and the accordion toggle are
+`workSummaryLabel`'s own sentence, which hard-codes "Worked" because it
+deliberately ignores the row's verb; the two agree today, and a header that
+ever took a verb from a row would be the change that has to reconcile them.
 
 The mark is drawn bare — no chip, no ring, no per-connector brand fill — and
 pulses its opacity while the group is active, which is the whole of the "still
