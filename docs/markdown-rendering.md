@@ -116,6 +116,15 @@ skipped. Every other tag stays as it was. The pass runs on every body,
 including `verbatim`: this is a renderer affordance for one tag, not a repair
 of what a model meant, and a stored document's table uses the same workaround.
 
+### Human message line breaks
+
+Human message bubbles opt into `preserveLineBreaks`. The `remarkSoftBreaks`
+pass turns newlines in parsed text nodes into visible breaks, so Shift+Enter
+and pasted multiline input still read as separate lines after sending.
+Markdown paragraphs, inline formatting, mentions, and code retain their normal
+structure. This is separate from `verbatim`: documents and agent replies keep
+Markdown soft wrapping, while `verbatim` controls model-text repair.
+
 ### Heading collapse
 
 Heading collapse is opt-in and enabled only by the main work-stream message
@@ -726,6 +735,19 @@ raised the weight every override had to clear. The embed card's preview rule,
 `.citation-card .citation-card-preview div.markdown-body` at (0,3,1), still
 wins, now by a wider margin; the arithmetic in that entry stays as the record
 of why it was written at that weight.
+
+### 2026-09-09 — Human messages retain composer line breaks
+
+**Changed:** Human bubbles opt into a shared renderer pass that turns text-node
+newlines into breaks. Code nodes and existing hard breaks remain intact.
+
+**Why:** A three-line composer draft appeared as one line after sending even
+though its text retained the newlines. Markdown soft wrapping caused the loss
+in presentation. Rewriting the submitted text would alter stored input;
+changing every Markdown surface would change document formatting.
+
+**Consequences:** Keep this opt-in distinct from `verbatim`, which also serves
+attached documents. Future human chat hosts should use the same rendering mode.
 
 ### 2026-09-09 — Shared media tiles with host-specific layouts
 

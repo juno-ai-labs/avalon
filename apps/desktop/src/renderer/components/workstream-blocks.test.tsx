@@ -731,6 +731,34 @@ describe('MessageBlock markdown', () => {
       .toContain('$\\rightarrow$ deliberately, and paid $50.');
   });
 
+  it('keeps composer newlines visible in human messages alongside inline formatting', () => {
+    const { container } = render(<MessageBlock {...actions} message={{
+      ...baseMessage,
+      text: 'First line\n**Second line**\nThird line\n\nAnother paragraph',
+    }} />);
+
+    const body = container.querySelector('.human-message-bubble .markdown-body');
+    expect(body?.querySelector('p')?.innerHTML).toBe('First line<br>\n<strong>Second line</strong><br>\nThird line');
+    expect(body?.querySelectorAll('p')).toHaveLength(2);
+  });
+
+  it('preserves human code and explicit breaks without adding extra breaks', () => {
+    const { container } = render(<MessageBlock {...actions} message={{
+      ...baseMessage,
+      text: 'First  \nSecond\n\n```text\nalpha\nbeta\n```\n\n`inline\ncode`',
+    }} />);
+
+    expect(container.querySelectorAll('.markdown-body br')).toHaveLength(1);
+    expect(container.querySelector('pre')?.textContent).toContain('alpha\nbeta');
+    expect(container.querySelector('.markdown-inline-code')?.textContent).toBe('inline code');
+  });
+
+  it('keeps document soft wrapping separate from human chat line breaks', () => {
+    const { container } = render(<MarkdownBody verbatim>{'First line\nSecond line'}</MarkdownBody>);
+    expect(container.querySelector('br')).toBeNull();
+    expect(container.querySelector('p')?.textContent).toBe('First line\nSecond line');
+  });
+
   it('renders a person: target that is not an id as text, never as a link', () => {
     // `defaultUrlTransform` would empty the href; the urlTransform whitelist
     // is what lets the fallback branch see the scheme and refuse the anchor.
