@@ -31,3 +31,26 @@ export async function admitAccessRequest(env: Env, address: string, limit: numbe
     RETURNING count`).bind(subject, bucket).first<{ count: number }>();
   return row !== null && row.count <= limit;
 }
+
+/**
+ * LIMIT UNSET — anonymous signups spend shared mail quota even across rotating
+ * IPs. Per-IP limits do not bound aggregate mail. A full hourly budget defers
+ * acknowledgement (the request stays pending) instead of losing the lead.
+ * Derive from: provider quota reserved for acquisition / active hours.
+ */
+export const MAX_ACCESS_EMAILS_PER_HOUR = Number.POSITIVE_INFINITY;
+/**
+ * LIMIT UNSET — holders of timed links can open parallel R2 streams. IP limits
+ * do not bound redistributed links. Trips with a retryable 429 before R2 I/O.
+ * Derive from: acceptable download restarts per person per minute.
+ */
+export const MAX_DOWNLOAD_STARTS_PER_MINUTE = Number.POSITIVE_INFINITY;
+
+export async function admitAccessEmail(env: Env, limit: number, now = Date.now()): Promise<boolean> {
+  if (!Number.isFinite(limit)) return true;
+  const bucket = Math.floor(now / 3_600_000);
+  return await env.DB.prepare(`INSERT INTO access_email_budget (id, bucket, count) SELECT 1, ?, 1 WHERE ? > 0
+    ON CONFLICT(id) DO UPDATE SET count = CASE WHEN bucket = excluded.bucket THEN count + 1 ELSE 1 END,
+    bucket = excluded.bucket WHERE bucket <= excluded.bucket AND (bucket < excluded.bucket OR count < ?)
+    RETURNING id`).bind(bucket, limit, limit).first() !== null;
+}

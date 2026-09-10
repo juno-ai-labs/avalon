@@ -214,3 +214,21 @@ sender/reply domain, and confirm deployed rules actually cover the canonical hos
 without alias bypass. No high-volume production experiment is required to turn on
 basic protection. Recheck CI and review against the final head, deploy API/schema
 first, then publish site/Ace. Automatic merge/deployment is paused during this audit.
+
+
+## Follow-up — launch essentials implementation (2026-09-09)
+
+PR #637 now includes Turnstile server validation, a pre-database Worker-rate
+boundary, actual-byte request limits, a singleton D1 email budget, per-grant
+minute admission, paginated Ace lists, revocation and manual acknowledgement
+recovery. Recovery generations fence stale completions; the documented retryable
+Resend concurrency 409 is no longer treated as permanent rejection. Other
+non-retryable provider failures go to operator review without blaming the visitor's
+address; their HTTP status cannot distinguish sender/auth failures from a bad recipient.
+
+The original findings above describe the audited revision. These mechanisms are
+not yet activated in production: numerical values await the team, the connected
+Cloudflare credential rejected Turnstile creation, and the supplied sender remains
+unverified/unreachable. Production acquisition fails closed when these abuse
+controls are missing. The launch hold remains. See the current owner document
+[private access](private-access.md) for exact behavior and the retained limits.
