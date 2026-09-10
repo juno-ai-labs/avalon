@@ -12,8 +12,10 @@ does not deploy this code or backfill dormant objects.
 The core [authorization primitive](authorization.md) owns the optional migrated
 member read path and exact attachment discovery. Deployment enables this path
 for every workspace; incomplete attachment evidence initiates queued discovery.
-Search returns verified matches with `complete: false` if any candidate has
-unavailable authority; the desktop labels partial results and offers retry.
+Search returns verified matches only. A candidate whose authority the projection
+does not hold is omitted and filled after the response; the page carries no
+completeness flag, because the projection is registered from the mutation side
+before a search needs it.
 
 ## Where the code lives
 
@@ -21,7 +23,7 @@ unavailable authority; the desktop labels partial results and offers retry.
   tombstones, retrieval, and canonical result loading.
 - `apps/api/src/services/search-indexing-pipeline.ts`: shared chunk planning and independently retriable batch indexing.
 - `apps/api/src/services/search-indexing-jobs.ts`: reference-only batch contracts and Queue publication.
-- `apps/api/src/services/search-document.ts`: canonical document and deletion contracts.
+- `apps/api/src/services/search-document.ts`: canonical document, display and deletion contracts.
 - `apps/api/src/services/search-embedding.ts`: pinned Qwen tokenizer and embedding integration.
 - `apps/api/src/services/semantic-chunks.ts`: recursive and sliding-window semantic chunks.
 - `apps/api/test/semantic-chunks.test.ts`: coverage, Unicode, overlap, and token budgets.
@@ -47,8 +49,11 @@ embedded chunks. The semantic hash combines the workspace identity with tokenize
 and overlap, so changing chunk policy requires a semantic backfill in a new space.
 Hashing the complete semantic identity once keeps the name within Turbopuffer's
 [published 128-character namespace limit](https://turbopuffer.com/docs/write).
-A document records its source, canonical source ID, scope ID, revision, text,
-and, for semantic records, embedding. `searchDocumentId` hashes the source, scope, and source ID into a
+A document records its source, canonical source ID, scope ID, substream, revision, text,
+the display a result renders (title, source label, time, transcript position, link URL,
+MIME type and archive state), and, for semantic records, embedding. The producing object
+writes the display beside the text from its own tables; a deletion watermark and a row
+written before the display existed carry none. `searchDocumentId` hashes the source, scope, and source ID into a
 stable ID within Turbopuffer's 64-byte string-ID limit. Updates use conditional
 writes. Deletion replaces the document with a content-free revision watermark,
 preventing delayed writes at the same or an older revision from restoring it.
@@ -66,30 +71,51 @@ by semantic chunk boundaries. Semantic queries search only chunk records.
 
 The desktop requests seven candidates initially: the 360px results list minus
 16px padding shows six complete 52px two-line rows and part of the seventh,
-with 2px gaps. Additional pages load
-at the bottom of the list or through the keyboard-accessible Load more control.
-Each request consumes one candidate page. An empty page with a continuation
-shows a Load more control instead of automatically scanning more pages. Existing
-rows stay visible while fetching another page; a transient continuation failure
-offers retry, while a failed reauthorization hides them. Query and category
-changes discard old pages.
+with 2px gaps. Additional pages load on their own: a sentinel at the end of the
+list is observed with `IntersectionObserver`, so the next page is requested as
+the end scrolls into view, again whenever a page lands without filling the
+viewport, and when the keyboard highlight reaches the last row. Each request
+consumes one candidate page. An empty page with a continuation keeps scanning
+until a page has a row or the cursor ends. Existing rows stay visible while
+fetching another page, with a "Loading more" line below the list; a transient
+continuation failure stops the scan and offers a retry button, so a broken
+cursor cannot loop, while a failed reauthorization hides the rows. Query and
+category changes discard old pages.
 
 Requests opt into pagination with `pageSize` and continue with `nextCursor`, the
 last consumed Turbopuffer id boundary (stable hash order, not relevance or
 recency). This deterministic position is never an authorization grant.
 Continuation exposes matching index progress even if the page has no admitted
-results; it does not guarantee a readable match on a subsequent page. Each page obtains
-readable conversation scopes from WorkspaceDO and filters retrieval by those
-scopes. Each source admits its candidate batch through the eventually consistent search authorization projection (`checkMany`), then
-loads canonical content without repeating authorization after asynchronous reads.
-Conversation messages and links are grouped by parent/substream. Resources load
-metadata and revisions in one WorkspaceDO RPC, then load bodies concurrently.
-Canonical revision and content-hash checks still reject stale index candidates.
+results; it does not guarantee a readable match on a subsequent page. The read
+path reads no content owner (WorkstreamDO, SubstreamAgent, WorkspaceDO resource
+rows) and no R2. Each source admits its candidate batch through the projected
+search decision (`checkMany`: Global reads KV; EU, which has no KV binding, reads
+the WorkspaceDO snapshot table, the one Durable Object read left on the EU
+request path) and renders every result from the attributes the
+candidate came back with: the full text, the title and source label, the time,
+the transcript position, the link URL, the MIME type and the archive state. A
+decision the projection does not hold yet is answered unavailable, the candidate
+is omitted without the page saying so, and the fill (registration, canonical
+walk, publication) runs after the response through `waitUntil`, so the next
+search finds it. That is the exception: push jobs register every pair their
+target reaches from the WorkspaceDO directories before a member's first search
+(see [authorization](authorization.md)). Conversation messages and links are
+grouped by parent/substream. A connector resource row carries `connection_id`
+and is admitted by the `(subject, connection)` decision, read once per page;
+an attachment or note is admitted by its own resource decision. A row indexed before the display attributes existed, or whose
+conversation is archived, is omitted: not finding something is the safe failure.
+No revision or content-hash check runs against canonical text on the read path;
+the conditional upsert, the deletion watermark and the pipeline's post-write
+fence are what keep the index current. A conversation rename or archive reaches
+its indexed rows through `search_conversation_projection_v1`: one coalesced
+outbox row per conversation, a job that names the conversation only, and a
+`patch_by_filter` pass per source that rewrites the rows still showing the old
+values until none does.
 
 Older clients omit `pageSize` and retain the array response shape with up to 50
 results from one candidate batch. They receive no pagination or timing fields and
 do not trigger hidden refill scans. The 250ms typing debounce, REST, and final
-workspace membership check remain unchanged. Search decisions are cached in regional KV/SQLite and updated by DO mutation pushes through the activity queue. Reads do not trigger refresh, and decisions do not expire by age. No search-result cache is introduced.
+workspace membership check remain unchanged. Search decisions are cached in regional KV/SQLite and updated by DO mutation pushes through the activity queue. A read never waits for a refresh: a miss is filled after the response. Decisions do not expire by age. No search-result cache is introduced.
 
 The user-facing targets are p50 <= 500ms and p90 <= 1000ms from the last
 keystroke to painted results, including debounce. An empty page with continuation
@@ -272,10 +298,13 @@ missing-attribute behavior, and cleanup of legacy rows while retaining new chunk
 
 ### Queue recovery
 
-Source jobs (`search_projection_v1` and `resource_search_projection_v1`) and
+Source jobs (`search_projection_v1` and `resource_search_projection_v1`),
+display jobs (`search_conversation_projection_v1`) and
 embedding children (`search_embedding_batch_v1`) share the regional activity
 Queue with unrelated jobs. Inspect and replay only the failed search messages;
-never purge the whole Queue. Malformed embedding jobs retry and eventually
+never purge the whole Queue. A display job can be replayed unchanged at any
+time: it carries only the conversation address and reads the current title and
+archive state when it runs. Malformed embedding jobs retry and eventually
 dead-letter rather than falling through to the legacy-message acknowledgment. Publish a replacement durably before acknowledging
 or removing its failed predecessor.
 
@@ -290,15 +319,20 @@ existing projection publication obligation; semantic policy/namespace changes
 require a canonical-source backfill. Queue depth and chunk counts alone do not
 establish that all canonical documents have migrated.
 
-Sources provide server-resolved scope IDs and a canonical loader. Search filters
+Sources provide server-resolved scope IDs and an admitting loader. Search filters
 by those grants, validates returned candidate metadata, then invokes each loader
-only for candidates belonging to its source and scopes. The returned text comes
-from those loaders, never from the index.
+only for candidates belonging to its source and scopes. The loader admits through
+the projection and builds results from the candidate's own attributes; nothing is
+reloaded from a canonical source.
 
 ## Invariants
 
 - Search scope enumeration includes archived and system conversations and has its own complete-list contract. Sidebar visibility is not search readability.
-- Scope prefilters are an optimization, never authority. Current canonical authorization decides every returned result.
+- Scope prefilters are an optimization, never authority. The projected search decision decides every returned result; an index attribute never grants access. `connection_id` names which decision admits a row; it grants nothing by itself.
+- The response never reports what it omitted. A projection miss is filled after the response, and the mutation-side registration is what keeps misses rare; there is no partial-results flag to carry one.
+- A row without its display attributes, or with `archived` set, is never returned. Member retrieval filters on `archived Eq false`, which a null attribute does not match, so neither kind consumes a candidate page; the read path checks the same value again on every row it renders. Omission is the safe failure; nothing falls back to a canonical reload.
+- Every writer of a conversation's display writes the current state it reads beside the text: the producer at upsert time, the patch job when it runs. A display job names the conversation and never carries a title, so a delayed or redelivered job cannot write an old one; the pipeline's post-write fence retries an upsert whose display changed underneath it, and the patch job re-reads the display after patching and retries when it changed, so two overlapping deliveries for one conversation converge on the newest state rather than the last to run.
+- A resource result's time is the resource's `updated_at` as of its last search-input change. Bookkeeping writes (processing state, webhook provenance, hydration stamps) bump `updated_at` without requeueing the row, on purpose, so the index shows when the content last changed rather than when the row was last touched.
 - Public cursors identify consumed candidate positions and never grant access. Fully rejected pages may expose continuation; index-existence concealment is not part of this member-only API.
 
 - One tokenizer is retained per isolate (about 26 MiB after releasing construction
@@ -306,7 +340,7 @@ from those loaders, never from the index.
   frozen. Input fragments must be cleared before every count returns or throws.
 - Chunk offsets use the sorted code-point boundary array directly; do not add
   a per-character Map and its transient construction pairs.
-- Source loaders admit each candidate batch before canonical loading and reject stale index revisions. A new request admits again; an admitted result may finish after a concurrent revocation.
+- Source loaders admit each candidate batch before rendering it. A new request admits again; an admitted result may finish after a concurrent revocation, which reaches the projection within its push delay rather than before the next page.
 - Namespace identity includes the embedding model and dimensions. Mixing spaces
   makes vector distances meaningless.
 - Deleted revisions win against replayed upserts at the same revision. Removing
@@ -324,11 +358,11 @@ All, Messages, Links, Artifacts, and Files tabs use literal case-insensitive
 substring retrieval. BM25 and ANN are available at the shared boundary but are
 not yet exposed through this member endpoint.
 
-Conversation loaders admit the parent/private-child batch before reading canonical
-turns. Resource loaders admit their batch and load canonical metadata and revisions
-in one owner snapshot. Search revision values are parsed as integers; missing or
-renamed columns fail visibly instead of silently discarding every result. The route revalidates the workspace session before returning.
-The index returns candidate identifiers, never trusted display text. Excerpts
+Conversation loaders admit the parent/private-child batch and resource loaders
+admit their batch through the projected decision; neither reads an owner. The
+route revalidates the workspace session before returning. The index returns
+candidate identifiers, the canonical text and the display attributes the owning
+object wrote beside it, trusted for the projection's staleness window. Excerpts
 contain UTF-16 source ranges and excerpt-relative highlight ranges; React renders
 matching spans as text. Selecting a message hydrates its canonical sequence and
 positions the transcript. Selecting a file opens `/search/resources/:id/preview`, which repeats attachment
@@ -348,9 +382,24 @@ retrieval without a query embedding throws `search_embedding_required`. Provider
 write/query failures become content-free errors. The HTTP route returns a generic
 503 rather than exposing provider payloads. A nonexistent namespace is empty
 before its first write; other provider failures are not treated as empty results.
-A malformed canonical resource revision also fails the entire search response with
-503; its content-free diagnostic code is `search_resource_revision_invalid`, so
-operators can distinguish snapshot shape drift from an index/provider failure.
+
+A search never waits for a canonical owner: an undecided candidate is omitted and
+filled after the response. A `search_conversation_projection_v1` job that
+dead-letters leaves a conversation's previous title, or an archived conversation's
+rows, visible to admitted readers until it is redriven; a text rewrite that
+dead-letters leaves its row omitted, because a row carries no display until it is
+rewritten. The display rewrite itself is lazy: migration 52 requeues a
+conversation's turns when its SubstreamAgent next wakes, and WorkspaceDO
+migration 47 a workspace's resources when that object does, so a conversation
+nobody opens and no alarm reaches keeps rows with no display, which search omits
+with no error and no dead letter. The patch job cannot repair those rows either,
+because its filter requires the `substream_id` they lack. The forcing function
+is the migration tracker's **Force a migration** for both classes, under
+Operations below; until it has run in a region, "not yet rewritten" and "never
+rewritten" look the same from search. Edited or deleted text stays findable by admitted readers until its
+rewrite or watermark lands, typically seconds. The team accepted this window,
+with ten minutes as the bound the projection chain is expected to meet and a
+non-empty dead-letter queue as the signal that it did not.
 
 Turbopuffer requires a valid embedding for live documents in a vector-enabled
 namespace. Callers must retain failed projection work for retry. The service does
@@ -386,7 +435,19 @@ drives the Queue consumer through real source RPC and R2 reads, verifies identic
 chunks across messages/files/artifacts/pages, and proves concurrent deletion causes
 generation cleanup and retry. Its only doubles are external APIs/model assets.
 The pinned Qwen tokenizer was separately exercised in workerd with its actual
-public model assets served from a temporary local mirror. Component tests cover tabs, keyboard
+public model assets served from a temporary local mirror. The same pipeline suite
+proves the display attributes each producer writes and the patch passes a renamed
+or archived conversation runs; `test-workers/search-projection.test.ts`
+covers the display trigger, its outbox channel and the migration-52 requeue;
+`test-workers/search-authorization.test.ts`, `test-workers/conversation-parent-contract.test.ts`
+and `test/search-route.test.ts` cover deferred fills, connection-admitted rows and index-served rendering;
+`test-workers/search-authorization-universe.test.ts` covers what each push target registers, the
+push registering before it reloads, the `member` push and the connection decision
+with no content RPC. A disposable live namespace in gcp-us-west1 verified on
+2026-09-10 that the display attributes can be added to an existing namespace,
+that `text` returns with the row, that `patch_by_filter` reports `rows_patched`
+and matches nothing on its second pass, that a tombstone is untouched, and that
+a row without `archived` does not match `archived Eq false`. Component tests cover tabs, keyboard
 selection, stale responses, and error presentation. The modal was inspected in a
 real Electron window using synthetic results; this is not production end-to-end
 search verification.
@@ -400,6 +461,12 @@ participant turns into `durable_outbox` under `search_projection_v1`. Both use
 existing regional `ACTIVITY_QUEUE` transport with reference-only messages. The
 consumer reloads current source state and conditionally writes its revision.
 Resource watermarks survive deletion; transcript deletes publish tombstones.
+SubstreamAgent migration 52 installs the `workstream` title/archive trigger behind
+the `search_conversation_v1` channel and requeues every committed turn once so its
+lexical row is rewritten with the display attributes; WorkspaceDO migration 47
+marks every resource pending for the same rewrite. A row is omitted from results
+until its rewrite lands, so a workspace's search fills in as its objects wake and
+the Queue drains.
 
 Object alarms dispatch pending references only when the regional Turbopuffer key
 and `OPENROUTER_API_KEY` are present. Otherwise intents remain pending and search
@@ -421,8 +488,10 @@ stored objects; an untouched object does not migrate just because code deployed.
 See [Durable Object migration tracking](durable-object-migration-tracking.md).
 Verify migration reports, regional activity Queue drain and dead letters, then
 perform member searches and revocation checks. A current schema report proves
-schema application, not successful indexing. These deployment and fleet-backfill
-steps have not been run for this change.
+schema application, not successful indexing. For this change the forced wake is
+what turns the display rewrite from lazy into complete: a SubstreamAgent that
+never wakes never requeues its turns, and its conversation stays out of search.
+These deployment and fleet-backfill steps have not been run for this change.
 
 Browser Run captures Markdown asynchronously from links present in a canonical
 participant turn, including completed web fetch records. Link text and URL are
@@ -477,6 +546,98 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-10 — Continue pages by scroll position instead of a button
+
+The team asked that a paginated result list never show a button: the next page
+loads as the end of the list comes into view, infinite-scroll style. A sentinel
+inside the scroll container is observed with `IntersectionObserver`, re-observed
+whenever the row count changes so a page that lands without filling the viewport
+loads the next, and the keyboard's last-row move requests a page too. The Load
+more control and the "Continue searching" copy are gone; an empty page with a
+continuation now keeps scanning. A failed continuation is the one case that
+keeps a button, because scrolling past a broken cursor must not loop. The
+time-to-results trace is unchanged: it stays open across the automatic
+continuation exactly as it did across the explicit one.
+
+### 2026-09-10 — Fence overlapping display deliveries
+
+Review found that two `search_conversation_projection_v1` deliveries for one
+conversation can overlap across queue invocations: the first reads the display
+before an archive, the second archives and patches, and the first then patches
+the rows back to unarchived and acknowledges. The `NotEq` filter cannot fence
+that, because it makes the newer value eligible for the stale patch. The job now
+re-reads the display after patching and throws when it changed, so the stale
+delivery retries and re-patches the current state; the newest state always writes
+last. A version carried in the job was rejected because the job deliberately
+carries nothing but the address. The same review asked about a resource's
+`occurredAt` going stale on bookkeeping writes; that is the documented intent of
+the migration-43 trigger (the index shows the last content change), now written
+into the invariants above rather than changed.
+
+### 2026-09-10 — Register decisions before the first search and drop the completeness flag
+
+The entry below accepted a shorter first page for a cold user. The team then
+chose complete consistency as the design goal and asked for the incomplete flag
+to go: the search response no longer carries `complete`, the route no longer
+returns 503 to a client without partial-result support, and the desktop has no
+partial footer. What makes that honest is on the write side, recorded in the
+[authorization changelog](authorization.md#changelog): push jobs register every
+pair their target reaches before reloading owners, membership changes push the
+member they name, and migration 48 queues the existing directories. Connector
+rows now carry `connection_id` and are admitted by one decision per connection,
+read once per page, because 81,000 synced resources times the member list does
+not fit a per-resource projection. Nothing on the read path changed shape: the
+request field `supportsPartialResults` is still accepted and ignored for
+desktop builds that send it. Resource lists keep their own `complete` field.
+
+### 2026-09-10 — Serve results from the index and keep content owners off the read path
+
+Production traces of member search showed retrieval at about 45ms and the rest
+of a 5 to 47 second response spent reloading each candidate from cold Durable
+Objects, one conversation at a time: a WorkstreamDO read that woke and waited on
+its SubstreamAgent, then a content read from that agent, then WorkspaceDO and R2
+for resources. The team chose read performance over re-validation, accepted
+eventual consistency for what search shows within a ten-minute bound, and kept
+the KV projection as the security layer. The index therefore carries what a
+result renders (title, source label, time, transcript position, link URL, MIME
+type, archive state), written by the owning object beside the text with no
+extra RPC, and the read path renders from those attributes: no content owner,
+no R2, no revision or content-hash re-validation (EU admission still reads the
+WorkspaceDO snapshot table, one warm object, because EU has no KV binding). A rename or archive reaches
+the rows through a coalesced `search_conversation_v1` outbox row and a job that
+reads the current display and patches by filter for as long as the provider
+reports rows remaining.
+Admission stays on the projected decision; a miss is answered unavailable and
+filled after the response, so a request never waits on an owner. Rows without
+the display attributes are omitted rather than reloaded, which is why migration
+52 requeues every turn and WorkspaceDO migration 47 every resource (a resource
+already in retry backoff keeps its `not_before`; an upgrade does not reset a
+committed retry schedule). Review of the first revision found that archived and
+pre-rewrite rows still filled the provider's page and were discarded only
+afterwards, leaving a page sparse or empty ahead of live matches, so member
+retrieval now filters `archived Eq false`. A namespace with no write since the
+attributes shipped refuses both the filter and the `include_attributes` with a
+400 (both messages verified live); it has nothing renderable, so it answers
+with an empty page rather than failing the search until an unrelated write
+extends its schema; the display patch treats the same refusal as nothing to
+patch, since no row there carries a substream id (a schema on the patch write
+does not lift the refusal, verified live). The patch loop continues on the
+provider's `rows_remaining` rather than on a positive `rows_patched`, so its
+termination is the provider's statement and not an inference that every patched
+row left the filter. Semantic retrieval no longer asks for the display
+attributes, which chunk rows never carry. Migration 52's lazy requeue is now
+named as the gap it is: a conversation whose object never wakes is absent from
+search until the fleet is force-migrated. The
+alternative of moving readability keys into the index as well was designed and
+rejected for now: the KV projection already exists, little data mutates, and a
+missed result is acceptable where a wrong one is not. `readAdmittedSearchContent`
+and `resourceSearchRecords` stay callable for one release for Workers still
+rolling out; the Worker-side loaders are gone. This reverses the 2026-09-08
+entries below that retained canonical text and revision validation on the read
+path; future changes must keep every display writer writing current state and
+must not reintroduce a canonical reload as a fallback for a row the index has
+not rewritten yet.
 
 ### 2026-09-09 — Remove directory discovery from paginated retrieval
 

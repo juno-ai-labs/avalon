@@ -16,6 +16,8 @@ export async function publishWorkspaceSync(
   env: Env,
   workspaceId: string,
   topics: readonly WorkspaceSyncTopic[],
+  /** Members a membership change added or removed; each gets its search decisions projected. */
+  detail?: { memberUserIds: readonly string[] },
 ): Promise<number> {
   const unique = [...new Set(topics)].map((topic) => WorkspaceSyncTopicSchema.parse(topic));
   if (unique.length === 0) return 0;
@@ -27,7 +29,7 @@ export async function publishWorkspaceSync(
     workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
     placementAffinity,
   );
-  return workspace.publishSync(unique, workspaceId, placementAffinity);
+  return workspace.publishSync(unique, workspaceId, placementAffinity, detail ? { memberUserIds: [...detail.memberUserIds] } : undefined);
 }
 
 /**

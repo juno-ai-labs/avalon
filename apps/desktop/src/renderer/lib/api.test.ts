@@ -346,14 +346,14 @@ describe('Rally API wire adapter', () => {
       .toMatchObject({ harnessStatus: 'stopped' });
   });
 
-  it('advertises partial search support and preserves incomplete response metadata', async () => {
+  it('sends the search request as given and returns the page as the server shaped it', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      void input; void init; return json({ results: [], complete: false });
+      void input; void init; return json({ results: [], nextCursor: null });
     });
     vi.stubGlobal('fetch', fetchMock);
     const api = new RallyApi('https://api.rally.test', session);
-    await expect(api.searchWorkspace({ query: 'document', category: 'all' })).resolves.toEqual({ results: [], complete: false });
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ supportsPartialResults: true });
+    await expect(api.searchWorkspace({ query: 'document', category: 'all' })).resolves.toEqual({ results: [], nextCursor: null });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ query: 'document', category: 'all' });
   });
 
   it('lists searchable connector resources with an opaque pagination cursor', async () => {
