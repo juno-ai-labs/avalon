@@ -532,7 +532,14 @@ interface PinnedRowDrag {
  * — the visibility menu offers **Make public to workspace**, and a note's own
  * screen labels itself **Public to workspace** — and the tip, which is what a
  * reader points at the badge to get, spells out what that means.
+ *
+ * The third register is the badge's own name, which a screen reader reaches
+ * through the badge's `aria-label` and the row's `aria-description`. It is
+ * named here with the other two because the argument for keeping them distinct
+ * is only checkable if they are read together — two of three getting a copy
+ * edit is exactly the drift this is meant to prevent.
  */
+const PUBLIC_SCOPE_NAME = 'Public work stream';
 const PUBLIC_SCOPE_LABEL = 'Public to workspace';
 const PUBLIC_SCOPE_EXPLANATION = 'Public — everyone in the workspace can see this work stream.';
 
@@ -744,7 +751,7 @@ function WorkstreamRow({
                   navigation element's class resolver untouched. */}
               <div className="sidebar-workstream-preview-anchor">
                 <NavLink
-            aria-description={workstream.scope === 'workspace' ? 'Public work stream' : undefined}
+            aria-description={workstream.scope === 'workspace' ? PUBLIC_SCOPE_NAME : undefined}
             aria-describedby={previewOpen ? `workstream-preview-${workstream.id}` : undefined}
             aria-label={[naming ? 'Rally is naming this work stream' : workstream.title, drag?.position].filter(Boolean).join(', ')}
             className={({ isActive }) => clsx(
@@ -812,6 +819,7 @@ function WorkstreamRow({
                 align="center"
                 className="workstream-timer-tooltip"
                 delayDuration={300}
+                disableHoverableContent
                 label={<>
                   <strong>Next: {nextWakeupTime}</strong>
                   <span>{workstream.nextPendingWakeup.promptPreview}</span>
@@ -930,11 +938,12 @@ function PublicMarker(): React.JSX.Element {
     <Tip
       collisionPadding={8}
       delayDuration={300}
+      disableHoverableContent
       label={PUBLIC_SCOPE_EXPLANATION}
       side="top"
       sideOffset={8}
     >
-      <span aria-label="Public work stream" className="sidebar-workstream-public" role="img">
+      <span aria-label={PUBLIC_SCOPE_NAME} className="sidebar-workstream-public" role="img">
         <Globe2 aria-hidden="true" size={11} />
       </span>
     </Tip>
