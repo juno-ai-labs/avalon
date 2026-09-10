@@ -13,8 +13,11 @@ interface FakeWindow extends SettingsWindowHandle {
   focused: number;
   restored: number;
   readonly delivered: DesktopSettingsSection[];
-  destroy(): void;
+  destroyed: number;
+  close(): void;
   minimize(): void;
+  settleLoad(): void;
+  failLoad(error: Error): void;
 }
 
 function fakeWindow(
@@ -23,12 +26,19 @@ function fakeWindow(
 ): FakeWindow {
   let destroyed = false;
   let minimized = false;
+  let settle: (() => void) | null = null;
+  let fail: ((error: Error) => void) | null = null;
+  const loading = new Promise<void>((resolve, reject) => {
+    settle = resolve;
+    fail = reject;
+  });
   const window: FakeWindow = {
     section,
     callbacks,
     shown: 0,
     focused: 0,
     restored: 0,
+    destroyed: 0,
     delivered: [],
     isDestroyed: () => destroyed,
     isMinimized: () => minimized,
@@ -43,12 +53,23 @@ function fakeWindow(
       window.focused += 1;
     },
     deliverSection: (next) => window.delivered.push(next),
+    load: () => loading,
+    // The real factory detaches its `closed` listener before destroying, so a
+    // disposal never reaches `onClosed`. The fake models that by not calling it.
     destroy: () => {
       destroyed = true;
+      window.destroyed += 1;
+    },
+    // Somebody closing the window, which does reach the controller.
+    close: () => {
+      destroyed = true;
+      callbacks.onClosed();
     },
     minimize: () => {
       minimized = true;
     },
+    settleLoad: () => settle?.(),
+    failLoad: (error) => fail?.(error),
   };
   return window;
 }
@@ -56,13 +77,12 @@ function fakeWindow(
 /** A controller plus the levers a `BrowserWindow` would pull on it. */
 function harness(options: { mayPrewarm?: () => boolean } = {}) {
   const windows: FakeWindow[] = [];
-  const resolvers: Array<() => void> = [];
   const reportError = vi.fn();
   let failNextCreate: Error | null = null;
-  const createWindow = vi.fn(async (
+  const createWindow = vi.fn((
     section: DesktopSettingsSection | null,
     callbacks: SettingsWindowLifecycleCallbacks,
-  ): Promise<SettingsWindowHandle> => {
+  ): SettingsWindowHandle => {
     if (failNextCreate) {
       const error = failNextCreate;
       failNextCreate = null;
@@ -70,10 +90,6 @@ function harness(options: { mayPrewarm?: () => boolean } = {}) {
     }
     const window = fakeWindow(section, callbacks);
     windows.push(window);
-    // Loading is deliberately not instant: `ready-to-show` and the load promise
-    // race in Electron, and the order between them is what this class exists to
-    // survive, so the tests drive each one by hand.
-    await new Promise<void>((resolve) => resolvers.push(resolve));
     return window;
   });
   const controller = new SettingsWindowController({
@@ -87,9 +103,20 @@ function harness(options: { mayPrewarm?: () => boolean } = {}) {
     reportError,
     windows,
     latest: (): FakeWindow => windows[windows.length - 1]!,
-    /** Let the pending `createWindow` resolve, handing the window over. */
+    /**
+     * Let the newest window finish loading. Loading is deliberately not
+     * instant: `ready-to-show` and the load settling race in Electron, and the
+     * order between them is what this class exists to survive, so the tests
+     * drive each one by hand.
+     */
     finishLoad: async (): Promise<void> => {
-      resolvers.shift()?.();
+      windows[windows.length - 1]?.settleLoad();
+      await Promise.resolve();
+      await Promise.resolve();
+    },
+    /** Make the newest window's renderer load fail, as a bad URL would. */
+    breakLoad: async (error: Error): Promise<void> => {
+      windows[windows.length - 1]?.failLoad(error);
       await Promise.resolve();
       await Promise.resolve();
     },
@@ -206,18 +233,22 @@ describe('SettingsWindowController', () => {
     expect(test.latest().shown).toBe(1);
   });
 
-  it('shows a window whose readiness beat its load', async () => {
+  it('shows a window whose readiness arrives before its load settles', async () => {
     const test = harness();
     const opened = test.controller.open();
     // `ready-to-show` routinely fires before `loadURL` resolves, which is why
-    // the callback is wired at construction rather than after the await.
+    // the callback is wired at construction and the window is adopted before
+    // the load rather than after it. Ready means painted; there is nothing left
+    // to wait for.
     test.windows[0]!.callbacks.onReadyToShow();
-    expect(test.windows[0]!.shown).toBe(0);
+    expect(test.windows[0]!.shown).toBe(1);
 
     await test.finishLoad();
     await opened;
 
+    // Still one reveal for the one request, though both of its triggers ran.
     expect(test.windows[0]!.shown).toBe(1);
+    expect(test.windows[0]!.focused).toBe(1);
   });
 
   it('reveals a window that was prewarmed and asked for while still loading', async () => {
@@ -243,8 +274,7 @@ describe('SettingsWindowController', () => {
     await opened;
     const first = test.latest();
 
-    first.destroy();
-    first.callbacks.onClosed();
+    first.close();
     await test.finishLoad();
 
     expect(test.createWindow).toHaveBeenCalledTimes(2);
@@ -299,13 +329,61 @@ describe('SettingsWindowController', () => {
     const test = harness();
     const opened = test.controller.open();
     const window = test.windows[0]!;
-    window.destroy();
-    window.callbacks.onClosed();
+    window.close();
     await test.finishLoad();
     await opened;
 
     window.callbacks.onReadyToShow();
     expect(window.shown).toBe(0);
     expect(test.controller.isRevealRequested()).toBe(false);
+  });
+
+  it('destroys the window when its renderer fails to load', async () => {
+    const test = harness();
+    const failure = new Error('settings loadURL failed');
+    const opened = test.controller.open();
+    const window = test.windows[0]!;
+
+    await test.breakLoad(failure);
+    await expect(opened).rejects.toBe(failure);
+
+    // Electron leaves a window whose load failed exactly where it was, so a
+    // controller that merely forgot it would strand a blank window and its
+    // renderer process for the life of the process.
+    expect(window.destroyed).toBe(1);
+    expect(test.controller.isRevealRequested()).toBe(false);
+  });
+
+  it('builds one replacement after a failed load, not one per attempt', async () => {
+    const test = harness();
+    const failed = test.controller.open();
+    await test.breakLoad(new Error('settings loadURL failed'));
+    await expect(failed).rejects.toThrow();
+
+    const opened = test.controller.open();
+    await test.finishLoad();
+    test.latest().callbacks.onReadyToShow();
+    await opened;
+
+    // Two windows total, and the first was released rather than orphaned by the
+    // second overwriting the reference to it.
+    expect(test.windows).toHaveLength(2);
+    expect(test.windows[0]!.destroyed).toBe(1);
+    expect(test.windows[1]!.destroyed).toBe(0);
+    expect(test.windows[1]!.shown).toBe(1);
+  });
+
+  it('reports a failed prewarm load without rebuilding on the disposal', async () => {
+    const test = harness();
+    const failure = new Error('settings loadURL failed');
+    const prewarmed = test.controller.prewarm();
+    await test.breakLoad(failure);
+    await prewarmed;
+
+    expect(test.reportError).toHaveBeenCalledWith(failure);
+    expect(test.windows[0]!.destroyed).toBe(1);
+    // A disposal is not somebody closing Settings. Treating it as one would
+    // rebuild a window that cannot load, and then rebuild it again.
+    expect(test.createWindow).toHaveBeenCalledTimes(1);
   });
 });
