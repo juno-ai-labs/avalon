@@ -36,7 +36,8 @@ The middle sidebar puts the main conversation first, then one full-width row per
 child, then **New substream**. Every row is the navigation sidebar's work-stream
 row — borderless, one 36px leading mark slot — and the mark is what tells them
 apart: the work stream's own tinted icon for the main conversation, a Tabler
-`border-corner-pill` branch line for a child, Tabler `plus` for creation.
+`border-corner-pill` branch line for a child, and for creation the `↳` the
+main feed's **New substream** control is drawn with.
 Compact hides the titles and swaps a child's branch line for the first character
 of its title. It retains the existing sidebar colors, row sizing, drag width and
 icon-only collapse. A completed
@@ -381,6 +382,13 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-10 — The sidebar's creation mark matches the feed's
+
+Both entry points into a new substream now use the same `↳`; the sidebar's row
+previously used a Tabler `plus`. See
+[conversation-surfaces.md](conversation-surfaces.md) for why the arrow was the
+one to keep. Whichever mark either control uses, they have to stay the same one.
 
 ### 2026-09-10 — A substream is started from a composer, not from two modals
 
