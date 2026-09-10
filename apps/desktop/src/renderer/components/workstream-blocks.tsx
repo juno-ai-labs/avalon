@@ -27,7 +27,7 @@ import {
   Volume2,
   X,
 } from 'lucide-react';
-import { Children, Fragment, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Children, Fragment, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ButtonHTMLAttributes, type PropsWithChildren } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
 import {
   citationFootnotes,
@@ -88,7 +88,7 @@ import {
   type CitationRender,
 } from './markdown-citations';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
-import { Button, ConnectorMark, InlineError, RallyMark } from './primitives';
+import { Button, ConnectorMark, InlineError, RallyMark, Tip, TipGroup } from './primitives';
 import { useSpeechPlayback } from './speech-playback';
 
 /**
@@ -1389,6 +1389,52 @@ function exportStatusMessage(saving: MessageExportFormat | null, failed: Message
 }
 
 /**
+ * One action in a turn's hover row: the words on the button, and the sentence
+ * that says what pressing it does.
+ *
+ * The row is read at 10px in the margin of a turn, so its labels are one or two
+ * words and three of them — **Image**, **PDF**, **New substream** — name a thing
+ * rather than an action. `description` is the sentence, and it is the button's
+ * accessible name *and* its tip from one string: the explanation a reader waits
+ * on hover for is the one a screen reader is given, and neither can be added to
+ * this row without the other. Keep the visible words inside it, per WCAG
+ * 2.5.3 — voice control reaches this row by what it says.
+ *
+ * The two exports break that in one state, deliberately: a failed save shows
+ * **Image failed** or **PDF failed** while the name stays the sentence, because
+ * a name that moves with state is one a person cannot say twice and reach the
+ * same control. The fixed name is chosen just below, where the state is spoken
+ * instead; this is what it costs, and it is the only exception on the row.
+ *
+ * That name is stated here rather than accepted from a caller, and `type` with
+ * it: a control in this row that could be renamed from outside, or submit
+ * something, would not be the thing this component says it is. The three props
+ * that would do it are off the type *and* the fixed attributes come after the
+ * spread, because either one alone is a rule a future edit can undo by moving a
+ * line.
+ *
+ * Nothing here states its own opacity or metrics; the row owns the fade and
+ * `:is(.agent-message-actions, .human-message-actions) button` owns the rest.
+ */
+function MessageAction({ children, description, ...props }: PropsWithChildren<
+  Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'aria-labelledby' | 'type'>
+  & { description: string }
+>): React.JSX.Element {
+  return (
+    // Below the row, the way every other control in the app opens its tip: the
+    // row sits directly under the turn's last line, so a box above it lands on
+    // the words being read instead of in the gap under them.
+    //
+    // The sentence is this button's name, so the tip does not also describe it:
+    // a screen reader would otherwise read the name and then the identical
+    // description, twice over, for a control that only ever had one sentence.
+    <Tip describesTrigger={false} label={description}>
+      <button {...props} aria-label={description} type="button">{children}</button>
+    </Tip>
+  );
+}
+
+/**
  * Branch a private conversation off the turn this sits under, with that turn as
  * the cutoff. It reads as one of the turn's actions rather than as part of its
  * identity line, so it is rendered in the same row as copy and the exports —
@@ -1396,18 +1442,17 @@ function exportStatusMessage(saving: MessageExportFormat | null, failed: Message
  */
 function StartSubstreamButton({ onStart }: { onStart: () => void }): React.JSX.Element {
   return (
-    <button
+    <MessageAction
+      className="message-start-substream"
       // The visible words have to appear in the accessible name, or a person
       // driving by voice cannot say what they can see ("click New substream")
       // and reach it. The name extends the label rather than replacing it,
       // which is what every button beside it does — Copy is "Copy response",
       // PDF is "Save response as a PDF" — and the arrow is decorative, so it
       // stays out of both the name and the announcement.
-      aria-label="New substream from this message"
-      className="message-start-substream"
+      description="New substream from this message"
       onClick={onStart}
-      type="button"
-    ><span aria-hidden="true">↳</span> New substream</button>
+    ><span aria-hidden="true">↳</span> New substream</MessageAction>
   );
 }
 
@@ -1470,62 +1515,66 @@ function AssistantMessageActions({ citations, mentions, onStartSubstream, teleme
   const hasText = text.length > 0;
 
   return (
-    <footer
-      className={clsx('agent-message-actions', speaking && 'is-speaking')}
-      // The row itself is transient, so the failure on it should be too: it has
-      // been read by the time the pointer leaves, and a stale "Image failed"
-      // sitting under a turn the next day reads as a broken feature rather than
-      // as one attempt that did not work.
-      onPointerLeave={() => setFailed(null)}
-    >
-      {hasText && (
-        <button aria-label="Copy response" onClick={() => void copyResponse().catch(() => undefined)} type="button"><Clipboard size={12} /> Copy</button>
-      )}
-      {hasText && speech && (
-        <button
-          aria-label={speaking ? 'Stop speaking' : 'Speak response with an AI-generated voice'}
-          onClick={() => speaking ? speech.stop() : speech.speak(speechId, text)}
-          title={speaking ? 'Stop speaking' : 'Play with an AI-generated voice'}
-          type="button"
-        >
-          {speaking ? <Square aria-hidden="true" fill="currentColor" size={11} /> : <Volume2 aria-hidden="true" size={12} />}
-          {speaking ? 'Stop speaking' : 'Speak'}
-        </button>
-      )}
-      {hasText && exportsAvailable && (
-        <>
-          <button
-            aria-busy={saving === 'image' || undefined}
-            aria-label="Download response as an image"
-            disabled={saving !== null}
-            onClick={() => void save('image')}
-            type="button"
+    // One group for the row: the first tip waits, and reading along the rest of
+    // the row does not wait again. It also carries the tooltip provider, so the
+    // row explains itself wherever a turn is rendered rather than only under the
+    // app that happens to mount one.
+    <TipGroup>
+      <footer
+        className={clsx('agent-message-actions', speaking && 'is-speaking')}
+        // The row itself is transient, so the failure on it should be too: it has
+        // been read by the time the pointer leaves, and a stale "Image failed"
+        // sitting under a turn the next day reads as a broken feature rather than
+        // as one attempt that did not work.
+        onPointerLeave={() => setFailed(null)}
+      >
+        {hasText && (
+          <MessageAction description="Copy response" onClick={() => void copyResponse().catch(() => undefined)}><Clipboard size={12} /> Copy</MessageAction>
+        )}
+        {hasText && speech && (
+          <MessageAction
+            description={speaking ? 'Stop speaking' : 'Speak response'}
+            onClick={() => speaking ? speech.stop() : speech.speak(speechId, text)}
           >
-            {saving === 'image' ? <LoaderCircle aria-hidden="true" className="spin" size={12} /> : null}
-            {saving !== 'image' && failed === 'image' ? <CircleAlert aria-hidden="true" size={12} /> : null}
-            {saving !== 'image' && failed !== 'image' ? <ImageDown aria-hidden="true" size={12} /> : null}
-            {failed === 'image' ? 'Image failed' : 'Image'}
-          </button>
-          <button
-            aria-busy={saving === 'pdf' || undefined}
-            aria-label="Save response as a PDF"
-            disabled={saving !== null}
-            onClick={() => void save('pdf')}
-            type="button"
-          >
-            {saving === 'pdf' ? <LoaderCircle aria-hidden="true" className="spin" size={12} /> : null}
-            {saving !== 'pdf' && failed === 'pdf' ? <CircleAlert aria-hidden="true" size={12} /> : null}
-            {saving !== 'pdf' && failed !== 'pdf' ? <FileDown aria-hidden="true" size={12} /> : null}
-            {failed === 'pdf' ? 'PDF failed' : 'PDF'}
-          </button>
-          {/* Each button keeps a fixed accessible name so it stays findable, which
-              means neither the spinner nor the changed label announces anything on
-              its own. This is where the state is spoken. */}
-          <span className="sr-only" role="status">{exportStatusMessage(saving, failed)}</span>
-        </>
-      )}
-      {onStartSubstream && <StartSubstreamButton onStart={onStartSubstream} />}
-    </footer>
+            {speaking ? <Square aria-hidden="true" fill="currentColor" size={11} /> : <Volume2 aria-hidden="true" size={12} />}
+            {speaking ? 'Stop speaking' : 'Speak'}
+          </MessageAction>
+        )}
+        {hasText && exportsAvailable && (
+          <>
+            <MessageAction
+              aria-busy={saving === 'image' || undefined}
+              description="Save response as an image"
+              disabled={saving !== null}
+              onClick={() => void save('image')}
+            >
+              {saving === 'image' ? <LoaderCircle aria-hidden="true" className="spin" size={12} /> : null}
+              {saving !== 'image' && failed === 'image' ? <CircleAlert aria-hidden="true" size={12} /> : null}
+              {saving !== 'image' && failed !== 'image' ? <ImageDown aria-hidden="true" size={12} /> : null}
+              {failed === 'image' ? 'Image failed' : 'Image'}
+            </MessageAction>
+            <MessageAction
+              aria-busy={saving === 'pdf' || undefined}
+              description="Save response as a PDF"
+              disabled={saving !== null}
+              onClick={() => void save('pdf')}
+            >
+              {saving === 'pdf' ? <LoaderCircle aria-hidden="true" className="spin" size={12} /> : null}
+              {saving !== 'pdf' && failed === 'pdf' ? <CircleAlert aria-hidden="true" size={12} /> : null}
+              {saving !== 'pdf' && failed !== 'pdf' ? <FileDown aria-hidden="true" size={12} /> : null}
+              {failed === 'pdf' ? 'PDF failed' : 'PDF'}
+            </MessageAction>
+            {/* Each button keeps a fixed accessible name so it stays findable, which
+                means neither the spinner nor the changed label announces anything on
+                its own. This is where the state is spoken. A disabled button takes no
+                pointer events either, so a save in flight is not a hover away — it is
+                only here. */}
+            <span className="sr-only" role="status">{exportStatusMessage(saving, failed)}</span>
+          </>
+        )}
+        {onStartSubstream && <StartSubstreamButton onStart={onStartSubstream} />}
+      </footer>
+    </TipGroup>
   );
 }
 
@@ -2556,7 +2605,7 @@ export function MessageBlock({
               and so does a turn that is not yet a cutoff; leaving the slot out
               there handed the next turn a 4px clearance on the bubble itself. */}
           <footer className="human-message-actions">
-            {startSubstream && <StartSubstreamButton onStart={startSubstream} />}
+            {startSubstream && <TipGroup><StartSubstreamButton onStart={startSubstream} /></TipGroup>}
           </footer>
         </div>
       ) : (
