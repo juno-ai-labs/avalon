@@ -1132,28 +1132,31 @@ describe('resource detail content preview', () => {
   });
 });
 
-describe('attached Sidekicks in the main workstream rail', () => {
+describe('a work stream’s Sidekicks in the main workstream rail', () => {
   beforeEach(() => {
     useUiStore.setState({ railOpen: true, railVariant: 'context', railWidth: 360, inspector: null });
   });
-  it('hides the section when no Sidekick has been attached', () => {
-    render(<Tooltip.Provider><InspectorRail workstream={workstream} attachedSidekicks={[]} /></Tooltip.Provider>);
+  it('says nothing about a room with none; the sidebar is where emptiness is stated', () => {
+    render(<Tooltip.Provider><InspectorRail workstream={workstream} sidekicks={[]} /></Tooltip.Provider>);
     expect(screen.queryByRole('heading', { name: 'Sidekicks' })).toBeNull();
   });
-  it('shows actual attachments and removes the selected one', () => {
-    const onRemoveSidekick = vi.fn();
-    render(<Tooltip.Provider><InspectorRail workstream={workstream} attachedSidekicks={[
-      { id: 'sidekick-1', name: 'Editorial guidance', description: 'Write clearly.', available: true },
-    ]} onRemoveSidekick={onRemoveSidekick} /></Tooltip.Provider>);
+  it('shows the room’s Sidekicks and removes the one that offers it', () => {
+    const onRemove = vi.fn();
+    render(<Tooltip.Provider><InspectorRail workstream={workstream} sidekicks={[
+      { id: 'sidekick-1', name: 'Editorial guidance', description: 'Write clearly.', onRemove },
+    ]} /></Tooltip.Provider>);
     expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Editorial guidance' })).toHaveAttribute('title', 'Write clearly.');
+    // The rail's own tooltip carries the name, so the row takes no `title`:
+    // the platform's draws in the desktop's type and never for a keyboard.
+    expect(screen.getByRole('button', { name: 'Editorial guidance' })).not.toHaveAttribute('title');
+    expect(screen.getByText('Write clearly.')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Remove Editorial guidance' }));
-    expect(onRemoveSidekick).toHaveBeenCalledWith('sidekick-1');
+    expect(onRemove).toHaveBeenCalledOnce();
   });
   it('keeps an authorized unavailable attachment visible', () => {
-    render(<Tooltip.Provider><InspectorRail workstream={workstream} attachedSidekicks={[
-      { id: 'sidekick-1', name: 'Editorial guidance', description: 'Write clearly.', available: false },
+    render(<Tooltip.Provider><InspectorRail workstream={workstream} sidekicks={[
+      { id: 'sidekick-1', name: 'Editorial guidance', description: 'Write clearly.', note: 'Unavailable' },
     ]} /></Tooltip.Provider>);
-    expect(screen.getByText('Unavailable')).toBeVisible();
+    expect(screen.getByText('Unavailable · Write clearly.')).toBeVisible();
   });
 });
