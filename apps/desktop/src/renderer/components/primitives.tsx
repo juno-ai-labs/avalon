@@ -51,6 +51,42 @@ export function ConnectorMark({ className, mark }: {
   );
 }
 
+/**
+ * The tooltip subtree, once: root, trigger, portal, content, arrow.
+ *
+ * Five elements to say one thing, and every hand-rolled copy is a chance to
+ * leave off the portal — which is what keeps a tooltip from being clipped by a
+ * scrolling rail's `overflow` — or the arrow, or the class the theme paints
+ * through. It exists so a surface reaches for this rather than for the native
+ * `title` attribute, which draws the platform's own tooltip after its own
+ * delay, in the platform's own type, and never appears on keyboard focus.
+ *
+ * The trigger is `asChild`, so the child element *is* the trigger and keeps its
+ * own classes, ref and handlers. One child cannot be slotted directly: Radix's
+ * Slot string-merges `className`, so an element whose class is a callback (a
+ * `NavLink`) needs a plain wrapper to be the trigger instead.
+ */
+export function Tip({ align, children, delayDuration = 450, label, side = 'bottom', sideOffset = 6 }: {
+  align?: 'start' | 'center' | 'end';
+  children: React.ReactNode;
+  delayDuration?: number;
+  label: React.ReactNode;
+  side?: 'top' | 'right' | 'bottom' | 'left';
+  sideOffset?: number;
+}): React.JSX.Element {
+  return (
+    <Tooltip.Root delayDuration={delayDuration}>
+      <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content align={align} className="tooltip" side={side} sideOffset={sideOffset}>
+          {label}
+          <Tooltip.Arrow className="tooltip-arrow" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  );
+}
+
 export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement>>(
   function Button({ className, type = 'button', ...props }, ref) {
     return <button ref={ref} className={clsx('button', className)} type={type} {...props} />;
@@ -77,17 +113,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
 
   if (!showTooltip) return button;
 
-  return (
-    <Tooltip.Root delayDuration={450}>
-      <Tooltip.Trigger asChild>{button}</Tooltip.Trigger>
-      <Tooltip.Portal>
-        <Tooltip.Content className="tooltip" side={tooltipSide} sideOffset={6}>
-          {label}
-          <Tooltip.Arrow className="tooltip-arrow" />
-        </Tooltip.Content>
-      </Tooltip.Portal>
-    </Tooltip.Root>
-  );
+  return <Tip label={label} side={tooltipSide}>{button}</Tip>;
 });
 
 export function StatusDot({
@@ -109,15 +135,9 @@ export function StatusDot({
   );
   if (!tooltip) return indicator;
   return (
-    <Tooltip.Root delayDuration={300}>
-      <Tooltip.Trigger asChild>{indicator}</Tooltip.Trigger>
-      <Tooltip.Portal>
-        <Tooltip.Content align="start" className="tooltip" side="top" sideOffset={8}>
-          {statusDescription[status]}
-          <Tooltip.Arrow className="tooltip-arrow" />
-        </Tooltip.Content>
-      </Tooltip.Portal>
-    </Tooltip.Root>
+    <Tip align="start" delayDuration={300} label={statusDescription[status]} side="top" sideOffset={8}>
+      {indicator}
+    </Tip>
   );
 }
 
@@ -147,25 +167,17 @@ const socketStateCopy: Record<SocketState, { label: string; description: string 
 export function SocketStatusIndicator({ state }: { state: SocketState }): React.JSX.Element {
   const copy = socketStateCopy[state];
   return (
-    <Tooltip.Root delayDuration={300}>
-      <Tooltip.Trigger asChild>
-        <span
-          aria-label={copy.label}
-          className={clsx('socket-state', 'header-socket-state', `socket-${state}`)}
-          role="status"
-          tabIndex={0}
-        >
-          <span aria-hidden="true" />
-          <span className="sr-only">{copy.label}</span>
-        </span>
-      </Tooltip.Trigger>
-      <Tooltip.Portal>
-        <Tooltip.Content className="tooltip" side="bottom" sideOffset={6}>
-          {copy.description}
-          <Tooltip.Arrow className="tooltip-arrow" />
-        </Tooltip.Content>
-      </Tooltip.Portal>
-    </Tooltip.Root>
+    <Tip delayDuration={300} label={copy.description} side="bottom">
+      <span
+        aria-label={copy.label}
+        className={clsx('socket-state', 'header-socket-state', `socket-${state}`)}
+        role="status"
+        tabIndex={0}
+      >
+        <span aria-hidden="true" />
+        <span className="sr-only">{copy.label}</span>
+      </span>
+    </Tip>
   );
 }
 
@@ -267,22 +279,7 @@ export function AvatarStack({
         if (!showTooltip || (!nameTooltip && !showingPresence)) {
           return <Fragment key={member.id}>{item}</Fragment>;
         }
-        return (
-          <Tooltip.Root
-            delayDuration={300}
-            key={member.id}
-          >
-            <Tooltip.Trigger asChild>
-              {item}
-            </Tooltip.Trigger>
-            <Tooltip.Portal>
-              <Tooltip.Content className="tooltip" side="bottom" sideOffset={6}>
-                {tooltip}
-                <Tooltip.Arrow className="tooltip-arrow" />
-              </Tooltip.Content>
-            </Tooltip.Portal>
-          </Tooltip.Root>
-        );
+        return <Tip delayDuration={300} key={member.id} label={tooltip} side="bottom">{item}</Tip>;
       })}
       {overflow > 0 && <span className="avatar-overflow">+{overflow}</span>}
     </span>
