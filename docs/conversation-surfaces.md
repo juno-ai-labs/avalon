@@ -108,10 +108,11 @@ state as the conversation. Every conversation row in it is the navigation
 sidebar's work-stream row — borderless, one 36px leading slot, the same title
 and the same idle/hover/current fills — and only the mark in that slot says
 which conversation it is: the work stream's own icon tinted with its appearance
-colour for the main conversation, the branch line for a substream, a plus for
-**New substream**. Compact swaps a substream's branch line for the first
-character of its title, capitalized, because a rail of identical lines with no
-titles beside them says only that these are substreams. The main conversation's
+colour for the main conversation, the branch line for a substream, and for
+**New substream** the same `↳` the main feed's control carries. Compact swaps a
+substream's branch line for the first character of its title, capitalized,
+because a rail of identical lines with no titles beside them says only that
+these are substreams. The main conversation's
 mark reads the parent work stream's appearance off its **sidebar row** rather
 than its cached detail, so a colour or icon change moves both rails on the same
 receipt; the header stays on the detail, which is what retires the picker's
@@ -233,6 +234,18 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — One glyph for both New substream controls
+
+The sidebar's **New substream** row drew a Tabler `plus`; the control on a
+settled turn draws a literal `↳`. Two marks for the one act, creating a branch,
+made the rail's entry read as a different feature from the control it duplicates,
+so the row now carries the feed's arrow. The plus was the weaker of the two to
+keep: it says "add a thing here", which is what every other plus in the product
+says, while the arrow says what a substream actually is. Sizing moved into
+`.workstream-new-substream-mark` because a glyph has no `size` prop; a future
+change that restyles either control has to move both, or this collapses back
+into two marks.
 
 ### 2026-09-10 — Bubble ink follows the palette's APCA table
 
