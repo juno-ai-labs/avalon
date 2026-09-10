@@ -581,7 +581,8 @@ Sidekicks is still in flight, because an unloaded list is not an empty
 workspace. `AutomationGlyph`'s hexagon is now a `HexagonGlyph` primitive taking
 a fill, an ink, and a symbol, and the strip's tile shape is a
 `SidekickStripTile` both tiles render through. `openSidekicks` takes a target
-rather than an id, parsed in main by `parseSidekicksWindowTarget`.
+rather than an id, parsed in main by `parseSidekicksWindowTarget`. Neither tile
+marks a surface entrypoint any more.
 
 **Why:** Until a Sidekick existed the strip showed nothing, so the one place in
 the product that says what a Sidekick is had nothing to say in the only state
@@ -607,7 +608,21 @@ Keeping the tile alongside the shortcuts once Sidekicks exist, which would put a
 button that is not a Sidekick in a row that is scrolled and scanned as a list of
 them; the library window carries New Sidekick from then on. Opening the library
 rather than the composer, which asks a person who just pressed a plus to find a
-second one.
+second one. Carrying the surface entrypoint across the window boundary and
+mounting an observer on the Sidekicks surface, which is the fix that would
+actually attribute those visits rather than just stop mis-attributing others: it
+is an IPC contract change and a telemetry decision of its own, and the Sidekicks
+window reports no `surface_viewed` today either way.
+
+The entrypoint mark went because it never worked. `markSurfaceEntrypoint` writes
+a module-local marker that `TelemetryRouteObserver` consumes on the next route
+change *in the same renderer*, and both tiles open a different renderer — one
+whose surface in `App.tsx` mounts no observer at all. The marker could not reach
+the visit it described, and instead sat in the main window until its next
+unmarked navigation reported itself as `sidebar_automation`. Raised by Codex on
+the pull request; it predates this change on the Sidekick tile, and came out of
+both rather than being left inconsistent in a strip whose two tiles are
+otherwise the same tile.
 
 **Consequences:** The strip is no longer proof that a workspace has a Sidekick,
 so a test or a rule that read its presence that way has to read its tiles. A
