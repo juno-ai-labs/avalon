@@ -116,6 +116,52 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
   return <Tip label={label} side={tooltipSide}>{button}</Tip>;
 });
 
+interface DragHintProps {
+  /** The handle itself: whatever the pointer can already grab. */
+  children: React.ReactElement;
+  /** What dragging it does, e.g. `Drag to resize`. */
+  action: string;
+  /**
+   * The faster route to the same place: the double-click that collapses a
+   * sidebar, or the keys that move what the drag moves. Left out when the
+   * handle has none, and when the window is too narrow for the one it would
+   * otherwise name, because a hint that promises an action which does nothing
+   * is worse than no hint.
+   */
+  shortcut?: string | undefined;
+  /** Which way the hint leans off the handle: away from what it resizes. */
+  side?: 'top' | 'right' | 'bottom' | 'left';
+}
+
+/**
+ * The hint a drag handle shows on hover. A grip is the one control here that
+ * carries no words of its own, so nothing on screen said that the dividers
+ * could be dragged at all, or that double-clicking one collapses the sidebar
+ * beside it. That shortcut has been in the code the whole time and was
+ * reachable only by guessing.
+ *
+ * The trigger is the handle's whole pointer target rather than the grip drawn
+ * inside it: the target is what can be grabbed, and it is also what reveals
+ * the grip, so the hint and the pill appear for the same gesture. Both
+ * dividers centre their grip in that target, which is why the content is
+ * centre-aligned: it lands beside the pill without either side measuring the
+ * other.
+ */
+export function DragHint({ action, children, shortcut, side = 'right' }: DragHintProps): React.JSX.Element {
+  return (
+    <Tooltip.Root delayDuration={450}>
+      <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content className="tooltip tooltip-hint" side={side} sideOffset={8}>
+          <span>{action}</span>
+          {shortcut !== undefined && <small>{shortcut}</small>}
+          <Tooltip.Arrow className="tooltip-arrow" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  );
+}
+
 export function StatusDot({
   status,
   compact = false,

@@ -283,6 +283,13 @@ pre {
 }
 
 .tooltip-arrow { fill: var(--av-cmp-tooltip-background); }
+/* A drag handle's hint is two lines: what the drag does, then the quicker way
+   to the same place. The second line is subordinate to the first, but it is
+   also the half nobody could have discovered, so it stays at a readable size
+   and is set back by dimming the tooltip's own foreground rather than by a
+   second colour the token set would have to carry for one rule. */
+.tooltip-hint { display: grid; gap: 1px; justify-items: start; }
+.tooltip-hint > small { font-size: 11px; opacity: .72; }
 
 @keyframes tooltip-in {
   from { opacity: 0; transform: translateY(-2px); }
