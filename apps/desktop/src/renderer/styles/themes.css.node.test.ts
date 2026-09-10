@@ -290,6 +290,11 @@ describe('token references', () => {
     // the platform's window-chrome geometry, which no theme has an opinion
     // about and the registry does not declare.
     '--window-controls-inset',
+    // The band a screen leaves for the window's title bar to be dragged by,
+    // stated once so the drag strip and whatever must clear it, the project
+    // space's connecting card, measure the same figure. Platform geometry,
+    // like the inset above; no theme has an opinion about it.
+    '--screen-drag-strip-height',
     // Also outside the `--av-` namespace, and for the same reason: how long a
     // sidebar takes to reach its collapsed width is the shell's behaviour, not
     // a theme's palette. It is stated once in `app.css` so both sidebars spend

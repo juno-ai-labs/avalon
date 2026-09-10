@@ -15,6 +15,7 @@ import {
   groupThinkingMessages,
   mergeCanonicalTranscriptSnapshot,
   mergeRealtimeTranscriptActivity,
+  openingTranscriptSnapshot,
   mergeRealtimeTranscriptTurn,
   mergeTranscriptRange,
   transcriptCoverage,
@@ -3072,5 +3073,127 @@ describe('composer queue overlays', () => {
       { inputId: '00000000-0000-7000-8000-000000000102', inputSequence: 8 },
       { inputId: '00000000-0000-7000-8000-000000000101', inputSequence: 9 },
     ]).map((overlay) => overlay.queueSequence)).toEqual([8, 7, 9]);
+  });
+});
+
+describe('openingTranscriptSnapshot', () => {
+  const activity = (activityId: string, parentActivityId: string | null, state: 'active' | 'completed' = 'completed') => ({
+    activityId,
+    parentActivityId,
+    scope: parentActivityId === null ? 'response' as const : 'assistant_turn' as const,
+    subjectId: `subject-${activityId}`,
+    callIndex: null,
+    label: activityId,
+    state,
+    intervals: [],
+    revision: 1,
+  });
+  const turn = (sequence: number, activityId: string | null) => ({
+    transcriptSequence: sequence,
+    turnId: `turn-${sequence}`,
+    entryKind: 'conversation' as const,
+    actor: 'assistant' as const,
+    authorUserId: null,
+    authorSnapshot: null,
+    attentionOrdinal: null,
+    createdAtUtc: '2026-09-01T12:00:00.000Z',
+    revision: 1,
+    blocks: [{ type: 'text' as const, blockId: `turn-${sequence}:text:0`, blockIndex: 0, text: `turn ${sequence}`, streaming: false }],
+    activityId,
+  });
+  const range = (purpose: 'requested' | 'latest', start: number, turns: ReturnType<typeof turn>[]) => ({
+    purpose,
+    requested: { startInclusive: start, endExclusive: start + turns.length },
+    covered: { startInclusive: start, endExclusive: start + turns.length },
+    turns,
+    activities: [],
+    pluginRuns: [],
+  });
+  const pluginRun = (turnId: string) => ({
+    pluginRunId: `run-${turnId}`,
+    turnId,
+    pluginId: 'rally:memory',
+    displayName: 'Memory',
+    state: 'completed' as const,
+    durationMs: 12,
+    elapsedMsAtSnapshot: null,
+    timingAccuracy: 'observed' as const,
+    toolCallIds: [],
+  });
+
+  it('keeps the opening ranges and the timing of the turns they hold, and drops what was paged in', () => {
+    const snapshot = {
+      snapshotId: 'snapshot-1',
+      snapshotThrough: 4,
+      eventSequence: 9,
+      snapshotAtUtc: '2026-09-01T12:00:00.000Z',
+      unreadAnchorSequence: null,
+      unreadReason: 'no_unread' as const,
+      ranges: [
+        range('requested', 1, [turn(1, 'paged'), turn(2, null)]),
+        range('latest', 3, [turn(3, 'kept'), turn(4, null)]),
+      ],
+      activities: [activity('response', null), activity('paged', 'response'), activity('kept', 'response'), activity('live', 'response', 'active')],
+      activeActivities: [activity('live', 'response', 'active')],
+      pluginRuns: [pluginRun('turn-1'), pluginRun('turn-3'), pluginRun('turn-5')],
+      activeTurns: [turn(5, 'live')],
+      pendingInputs: [],
+    } satisfies WorkstreamTranscriptSnapshot;
+
+    const opening = openingTranscriptSnapshot(snapshot);
+
+    expect(opening.ranges.map((entry) => entry.purpose)).toEqual(['latest']);
+    expect(opening.activities.map((entry) => entry.activityId).sort()).toEqual(['kept', 'live', 'response']);
+    expect(opening.activeActivities.map((entry) => entry.activityId)).toEqual(['live']);
+    expect(opening.pluginRuns.map((entry) => entry.turnId)).toEqual(['turn-3', 'turn-5']);
+    expect(opening.activeTurns).toEqual(snapshot.activeTurns);
+    expect(opening.eventSequence).toBe(9);
+  });
+
+  it('keeps a turn the socket delivered live, which wears the same purpose as paged history', () => {
+    const opened = {
+      snapshotId: 'snapshot-3',
+      snapshotThrough: 4,
+      eventSequence: 9,
+      snapshotAtUtc: '2026-09-01T12:00:00.000Z',
+      unreadAnchorSequence: null,
+      unreadReason: 'no_unread' as const,
+      ranges: [
+        range('requested', 1, [turn(1, null), turn(2, null)]),
+        range('latest', 3, [turn(3, null), turn(4, null)]),
+      ],
+      activities: [],
+      activeActivities: [],
+      pluginRuns: [],
+      activeTurns: [],
+      pendingInputs: [],
+    } satisfies WorkstreamTranscriptSnapshot;
+    // The reader's own next message, appended the way the socket appends it.
+    const withLiveTurn = mergeRealtimeTranscriptTurn(opened, turn(5, null), 10);
+    expect(withLiveTurn.ranges.map((entry) => entry.purpose)).toEqual(['requested', 'latest', 'requested']);
+
+    const opening = openingTranscriptSnapshot(withLiveTurn);
+
+    expect(opening.ranges.flatMap((entry) => entry.turns.map((item) => item.turnId))).toEqual(['turn-3', 'turn-4', 'turn-5']);
+    expect(opening.eventSequence).toBe(10);
+  });
+
+  it('returns the snapshot itself when nothing was paged in', () => {
+    const snapshot = {
+      snapshotId: 'snapshot-2',
+      snapshotThrough: 1,
+      eventSequence: 1,
+      snapshotAtUtc: '2026-09-01T12:00:00.000Z',
+      unreadAnchorSequence: null,
+      unreadReason: 'no_unread' as const,
+      ranges: [range('latest', 1, [turn(1, null)])],
+      activities: [],
+      activeActivities: [],
+      pluginRuns: [],
+      activeTurns: [],
+      pendingInputs: [],
+    } satisfies WorkstreamTranscriptSnapshot;
+
+    expect(openingTranscriptSnapshot(snapshot)).toBe(snapshot);
   });
 });
