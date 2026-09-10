@@ -57,6 +57,8 @@ function receipt(overrides: Partial<DemoSeedReceipt> = {}): DemoSeedReceipt {
     kind: "create_workstream",
     room: "decision-memo",
     workstreamId: "00000000-0000-7000-8000-0000000000f1",
+    substream: null,
+    substreamId: "0",
     sidekickId: null,
     sidekickRunId: null,
     turnId: "00000000-0000-7000-8000-0000000000f2",
@@ -114,6 +116,8 @@ describe("demo seed receipts", () => {
       kind: "sidekick",
       room: null,
       workstreamId: null,
+      // In no room, so in no conversation either.
+      substreamId: null,
       sidekickId: await demoSeedSidekickId(OPERATION_ID, "morning-briefing"),
       sidekickRunId: "00000000-0000-7000-8000-0000000000fa",
       turnId: null,
