@@ -570,8 +570,12 @@ This module owns how a markdown string becomes DOM in the renderer, and how that
 DOM is styled. It exposes `MarkdownBody` — taking a markdown string, an optional
 `mentions` array, an optional `citations` context, and `glance` / `verbatim` /
 `still` / `streaming` / `collapseHeadings` / `preserveLineBreaks` flags — plus the citation matrix and
-`ResourceIcon`, which the inspector rail renders too so that one resource kind
-draws one glyph everywhere. Heading collapse is off unless a host explicitly
+`ResourceIcon`, which the inspector rail and the work-stream sidebar render too
+so that one resource kind draws one glyph everywhere. It dispatches on substrings
+of the type, with one exception ahead of that chain: a published site is matched
+whole, under both `generated_site` (the resource type on the wire) and `site`
+(the attachment kind a file-provenance resource classifies to), and draws a
+Tabler `rosette-asterisk`. Heading collapse is off unless a host explicitly
 sets `collapseHeadings`; the main work-stream feed is the intended opt-in host.
 Its collapse-all control is a sibling in the agent-message header and shares
 section ids with the body through `MarkdownCollapseController`.
@@ -730,6 +734,28 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-09-10 — A published site gets its own mark
+
+**What changed:** `ResourceIcon` draws a Tabler `rosette-asterisk` for
+`generated_site` and for the `site` attachment kind, checked as whole-string
+membership before the substring chain rather than as another `includes` in it.
+Every surface that renders resource kinds through it moves together: the inline
+chip, the embed card, the inspector rail, and the work-stream sidebar's
+artifact list.
+
+**Why:** A site fell off the end of the substring chain to the generic file
+mark, so the one artifact kind that is a page somebody opens looked identical to
+the ones they download — the sidebar showed a live site under the same sheet of
+paper as a `.docx`. The chain itself is why the match is exact and comes first:
+`includes('site')` would claim a `website` or `web_page` type that the `web`
+branch below already answers correctly with a link mark.
+
+**What a future change has to respect:** The two names are not
+interchangeable and both have to stay in the set — `resourceIconType` hands this
+function the resource type for a `generated_site` and the classified attachment
+kind for a generated file carrying the site manifest MIME, and a site reaches the
+UI both ways.
 
 ### 2026-09-10 — Line-break review edge cases
 

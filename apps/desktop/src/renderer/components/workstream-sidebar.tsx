@@ -1,7 +1,7 @@
 import type { SidekickAttachment } from '@rally/contracts';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { AttachedSidekicks } from './attached-sidekicks';
-import { Archive, FileBox, GripVertical, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
+import { Archive, GripVertical, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
 import { IconCornerDownRight, IconPlus } from '@tabler/icons-react';
 import { Fragment, useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
@@ -177,17 +177,21 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
             </button>
           )}
         </div>
-        <section aria-label="Generated artifacts" className="workstream-context-section">
-          <h2>Generated artifacts</h2>
-          {artifacts.length === 0 ? (
-            <div className="workstream-context-empty" title="No generated artifacts yet"><FileBox size={20} /><span>No generated artifacts yet</span></div>
-          ) : artifacts.map((resource) => (
-            <button className="workstream-context-row" key={resource.id} aria-label={`Open ${resource.title}`} title={resource.title} type="button" onClick={(event) => onOpenArtifact(resource.id, event.currentTarget)}>
-              <span className="workstream-context-resource-icon"><ResourceIcon type={resource.resourceType} /></span>
-              <span className="workstream-context-copy"><span>{resource.title}</span><small>{resource.resourceType.replaceAll('_', ' ')} · v{resource.currentVersion}</small></span>
-            </button>
-          ))}
-        </section>
+        {/* Absent rather than empty, as the Sidekick strip below is: a heading
+            over a placeholder row spends the rail's height saying a work
+            stream has produced nothing yet, which is the ordinary state of a
+            conversation that has only just started. */}
+        {artifacts.length > 0 && (
+          <section aria-label="Artifacts" className="workstream-context-section">
+            <h2>Artifacts</h2>
+            {artifacts.map((resource) => (
+              <button className="workstream-context-row" key={resource.id} aria-label={`Open ${resource.title}`} title={resource.title} type="button" onClick={(event) => onOpenArtifact(resource.id, event.currentTarget)}>
+                <span className="workstream-context-resource-icon"><ResourceIcon type={resource.resourceType} /></span>
+                <span className="workstream-context-copy"><span>{resource.title}</span><small>{resource.resourceType.replaceAll('_', ' ')} · v{resource.currentVersion}</small></span>
+              </button>
+            ))}
+          </section>
+        )}
         <section aria-label="Work-stream participants" className="workstream-context-section">
           <h2>Participants</h2>
           <button className="workstream-context-row" aria-label="Manage work-stream participants" aria-description={workstream.participants.map((person) => person.name).join(', ')} type="button" onClick={onParticipants}>

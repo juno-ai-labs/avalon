@@ -41,7 +41,7 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
 describe('WorkstreamSidebar', () => {
-  it('shows the work stream, generated artifacts, then participants, excluding sources and substreams', () => {
+  it('shows the work stream, its artifacts, then participants, excluding sources and substreams', () => {
     setup();
     const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
     const buttons = within(sidebar).getAllByRole('button');
@@ -214,11 +214,17 @@ describe('WorkstreamSidebar', () => {
     expect(localStorage.getItem('rally.workstream-sidebar-collapsed')).toBeNull();
   });
 
-  it('shows an honest empty artifact state', () => {
+  it('drops the artifact section entirely until a work stream has one', () => {
     setup({ ...workstream, resources: [], participants: [] });
-    expect(screen.getByText('No generated artifacts yet')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Artifacts' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Artifacts')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open Launch draft.md' })).not.toBeInTheDocument();
+  });
+
+  it('heads the section with the artifacts a work stream has produced', () => {
+    setup();
+    expect(within(screen.getByRole('region', { name: 'Artifacts' })).getByRole('heading', { name: 'Artifacts' })).toBeInTheDocument();
   });
 
   it('drags relative to the second sidebar, persists its width, and stops after release', () => {
