@@ -45,11 +45,10 @@ export const DemoPackRoleSchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u);
 export type DemoPackRole = z.infer<typeof DemoPackRoleSchema>;
 
 /**
- * The one role a real person plays. The presenter signs in and the demo is
- * their view of it, so their name is their account's; every other role is
- * played by a persona named when the demo is prepared, which is why the pack
- * carries a default name for those and none for this one. A pack without this
- * role is cast entirely from personas.
+ * The one role that has to be the person presenting. They sign in and the demo
+ * is their view of it, so they are cast from the template's members; every
+ * other role is cast from the company's directory when the demo is prepared.
+ * A pack without this role is cast entirely from that directory.
  */
 export const DEMO_PRESENTER_ROLE = "presenter";
 
@@ -166,8 +165,8 @@ const UploadStepSchema = z.strictObject({
  * have produced, written here instead so a demo does not depend on a live model
  * to have a Sidekick in it. `schedule` is the recurrence, and its `timezone` is
  * always named: a demo is presented in a zone somebody chose, and leaving it
- * null would resolve it against whichever persona happens to be cast as the
- * author, whose account has no zone of its own.
+ * null would resolve it against whichever colleague happens to be cast as the
+ * author, whose own zone is not the one the demo is being shown in.
  */
 const SidekickStepSchema = z.strictObject({
   kind: z.literal("sidekick"),
@@ -453,34 +452,8 @@ export const DemoPackSchema = z.strictObject({
    * was checked.
    */
   expect: z.array(ViewerExpectationSchema).default([]),
-  /**
-   * The name each cast role is offered under in the New demo form. A
-   * suggestion the operator types over, not a binding: the pack's prose names
-   * people by role token and reads the same whoever plays them.
-   */
-  castDefaults: z.record(DemoPackRoleSchema, z.string().trim().min(1).max(80)).default({}),
 }).superRefine((pack, context) => {
   const roles = new Set(pack.roles);
-  // Every role the operator has to name, and only those: a form field with no
-  // default would open empty, and a default for a role nobody plays is dead
-  // data that would read as a fourth person in the demo.
-  const named = new Set(demoCastRoles(pack.roles));
-  for (const role of named) {
-    if (!pack.castDefaults[role]) {
-      context.addIssue({ code: "custom", path: ["castDefaults"], message: `Role "${role}" has no default name` });
-    }
-  }
-  for (const role of Object.keys(pack.castDefaults)) {
-    if (!named.has(role)) {
-      context.addIssue({ code: "custom", path: ["castDefaults", role], message: `"${role}" is not a role the operator names` });
-    }
-  }
-  // Two people under one name is refused when a demo is started, so a pack
-  // whose defaults collide would open a form that cannot be submitted.
-  const defaults = Object.values(pack.castDefaults).map((name) => name.toLowerCase());
-  if (new Set(defaults).size !== defaults.length) {
-    context.addIssue({ code: "custom", path: ["castDefaults"], message: "Default names must differ" });
-  }
   if (roles.size !== pack.roles.length) {
     context.addIssue({ code: "custom", path: ["roles"], message: "Roles must be unique" });
   }
@@ -949,13 +922,10 @@ const PRESS_RELEASE_TITLE = "Announcement — listing";
  */
 export const PLACEHOLDER_DEMO_PACK = {
   version: "placeholder-2026-09",
+  // Product, sales and legal, in the order the operator meets them in the
+  // form. A role is a part in the script, not a person: whoever is cast as
+  // `priya` plays it under their own name.
   roles: ["presenter", "priya", "marcus", "dana"],
-  // What the form opens with, in the order the operator meets them: product,
-  // sales and legal. Deliberately not the role keys the pack was written
-  // around — the cast is invented for whoever is being presented to, and a
-  // default that reads as a person is easier to type over than one that reads
-  // as this pack's own character.
-  castDefaults: { priya: "Emma Shipman", marcus: "Sam Burton", dana: "Ben Diaz" },
   steps: [
     {
       kind: "create_workstream",
