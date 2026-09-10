@@ -103,6 +103,9 @@ describe('sidebar layout motion', () => {
   it('spends the collapse motion on the rows, and none of it under a drag', () => {
     expect(rule('.sidebar')).toContain('--sidebar-layout-motion: var(--sidebar-collapse-motion);');
     expect(rule('.sidebar.is-resizing')).toContain('--sidebar-layout-motion: 0s;');
+    // A zero interval only stops transitions the drag would start; the ones
+    // already running keep their duration unless they lose their property.
+    expect(rule('.sidebar.is-resizing *,\n.workstream-context-sidebar.is-resizing *')).toContain('transition-property: none !important;');
     for (const selector of [
       '.grokbot-shell .sidebar .sidebar-list > .sidebar-context-target',
       '.grokbot-shell .sidebar .workstream-row',

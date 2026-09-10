@@ -2598,6 +2598,31 @@ describe('pinned work streams', () => {
       expect(playedOn('workstream:ws-today')?.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
     });
 
+    // `transitionrun` arrives with the first frame after the toggle, and a
+    // render can land before it. The toggle raises the hold itself, and a
+    // frame later — jsdom runs no transitions, so nothing is travelling — the
+    // sidebar releases it and the next move plays.
+    it('raises the hold from the toggle itself, and releases it a frame later when nothing travels', async () => {
+      const today = workstream('ws-today', 'Roadmap review', 'completed', '2026-08-01T09:00:00.000Z');
+      const yesterday = workstream('ws-yesterday', 'Quarterly planning', 'completed', '2026-07-31T09:00:00.000Z');
+      const view = (compact: boolean, streams: WorkstreamSummary[]): React.JSX.Element => (
+        <MemoryRouter><Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} compact={compact} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
+        </Tooltip.Provider></MemoryRouter>
+      );
+      const { rerender } = render(view(false, [today, yesterday]));
+      rerender(view(true, [today, yesterday]));
+      const touched = { ...yesterday, lastActivityAt: '2026-08-01T11:00:00.000Z' };
+      rerender(view(true, [today, touched]));
+      // The rail's New chat row arriving is the one thing that plays: no row moved.
+      expect(animate.mock.calls.map(([element]) => (element as HTMLElement).dataset.motionKey)).toEqual(['action:new']);
+      await act(() => new Promise<void>((resolve) => { requestAnimationFrame(() => resolve()); }));
+      // The touched row goes back to Yesterday and the other climbs two
+      // slots past it: a move, and it plays.
+      rerender(view(true, [today, yesterday]));
+      expect(playedOn('workstream:ws-today')?.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
+    });
+
     // A row leaves one recency group for another whenever it is touched — its
     // heading changes from Yesterday to Today — and the two groups are separate
     // subtrees, so the row is remounted. It is still one row to the reader, and
