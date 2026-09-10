@@ -39,6 +39,11 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
   the human, assistant, tool, activity, attachment, and failure rows it
   composes. Both adapters render `MessageFeed`; windowing is the one thing it
   takes from its host, because only the paging surface needs it.
+- `apps/desktop/src/renderer/components/primitives.tsx` owns `Tip` and
+  `TipGroup`: a hover explanation, and the group a row of controls shares one
+  delay and one provider through. A new tooltip comes from there rather than
+  from Radix's five parts; eight files still assemble those by hand and predate
+  it.
 - `apps/desktop/src/renderer/components/expanded-composer.tsx`,
   `use-draft-text.ts`, and `use-file-attachments.ts` provide the common composer
   shell, local text persistence, and staged-file lifecycle.
@@ -358,6 +363,21 @@ button metrics, because the same control appears in each. The corner is
 and the action row: a theme that wants a different corner restates the token, not
 the corner.
 
+Every control in either row states one sentence — *Copy response*, *Save
+response as a PDF* — and `MessageAction` makes that sentence both the button's
+accessible name and the tip it opens under itself, out of one string: a row
+whose visible labels are a word each cannot grow a control that explains itself
+to one reader and not the other. The name is the sentence in every state, which
+is why a failed export reads **PDF failed** on screen while still answering to
+*Save response as a PDF* — the one place on the row where the name does not
+contain the visible words, and the cost of a name that stays findable while the
+label moves.
+
+Each row is one `TipGroup`, so the first explanation waits out the shared delay
+and the rest of the row opens immediately; the group carries Radix's provider
+with it, so a turn explains itself wherever it is rendered rather than only
+under a host that mounts one.
+
 Assistant H2 sections use the shared inline Markdown renderer. There is no
 heading-generated card deck or paged document reader.
 
@@ -434,6 +454,82 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — Two of the row's sentences get shorter
+
+**What changed:** *Speak response with an AI-generated voice* is now *Speak
+response*, and *Download response as an image* is now *Save response as an
+image*. Each is one string, so each moved as the button's accessible name and
+its tooltip together.
+
+**Why:** The five sentences are read one after another by a pointer travelling
+the row, which is a place a sentence's length is felt. Speak's ran roughly twice
+the length of its neighbours, and the image export was the only one that said
+*Download* where its neighbour said *Save* — the two exports do the same thing
+to the same turn and now say so the same way.
+
+**Consequences:** Speak's name no longer says the voice is synthetic, and
+nothing in the transcript says it instead; that gap and what closing it would
+take are recorded in [`message-speech.md`](message-speech.md). The exports read
+as a pair, so a third export format joins them as *Save response as a …*.
+
+### 2026-09-10 — Every action in a turn's hover row says what it does
+
+**What changed:** The four assistant actions and the substream cutoff open a tip
+under themselves, through a new `MessageAction` that takes one `description` and
+spends it twice — as the button's `aria-label` and as the tip's words. They go
+through `Tip`, the primitive the artifact rows brought in the entry below, which
+gains three things here: `TipGroup` over Radix's provider, `describesTrigger`,
+and a `collisionPadding` that defaults to 12 rather than to Radix's zero — the
+gutter the citation popover had been stating by hand, and the one the cutoff at
+the far right of a person's bubble needs. A caller states its own only to want
+something else. The Radix contents still assembled by hand are untouched: that
+popover states the same 12 itself, and the other ten state none.
+**Speak**'s native `title` is gone, superseded.
+
+A tip in a group also closes the moment the pointer leaves its control. Radix's
+default is to keep one open while the pointer is over the box itself, which is
+right for a popover with something in it to reach — but these rows appear on
+hover of the turn, and the box sits outside it, so walking onto the box faded
+the row out from under a label still pointing at where it had been. The rows are
+the only tips in the app that hang off something transient, which is why this is
+on the group rather than on every tip.
+
+**Why:** The row is read at 10px in the margin of a turn, so its labels are one
+or two words, and three of them — **Image**, **PDF**, **New substream** — name a
+thing rather than an action: **Image** is a file this turn becomes, not a
+picture in it, and nothing on the row said so before a reader clicked it. The
+sentences were already written for exactly this, one per action, and were
+reaching only screen readers and voice control. Writing the tip as a second
+string would have let the two drift, and this row is where a drifting pair is
+least likely to be caught — the visible label is the one part of it a sighted
+reader never needs.
+
+**Considered and rejected:** A native `title`, which is what **Speak** had. It
+opens after a delay nothing in the app sets, in the OS's box rather than this
+one's, and never for a pointer already moving along the row — the same case the
+artifact rows made below, arrived at independently on this row. Also rejected:
+opening above the row, where a bottom-anchored control usually opens — here it
+lands the box on the turn's last line, while under the row there is only the gap
+before the next turn. Unifying the app's two open delays (450ms on controls,
+300ms on the compact identity and status indicators) was deliberately left
+alone: nothing here asked for those surfaces to feel different.
+
+**Consequences:** A control added to either row goes through `MessageAction`,
+and so cannot be added without the sentence that explains it; a bare button in
+that row now needs a reason. `MessageAction` states that sentence as the
+button's name and refuses `aria-label`, `aria-labelledby` and `type` from its
+caller, so the name cannot be replaced from outside the row. It opens its tip
+with `describesTrigger={false}`: the name already *is* those words, and a name
+and a description that read alike are announced one after the other, which reads
+the row's one sentence twice to the reader who can least afford it. Anything
+else whose name is its tip — `IconButton` is the standing example — has the same
+duplication and the same one-word remedy.
+
+A `TipGroup` belongs around any cluster of tips a pointer travels along, and
+around any tip on a surface that may render outside `App`: it carries Radix's
+provider, which is why the row's tips work in a component test that mounts a
+`MessageBlock` and nothing else.
 
 ### 2026-09-11 — Every dock crosses the narrow row at the same pane
 
