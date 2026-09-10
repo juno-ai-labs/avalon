@@ -194,7 +194,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
             {artifacts.map((resource) => (
               <Tip key={resource.id} label={resource.title} side="right">
                 <button className="workstream-context-row" aria-label={`Open ${resource.title}`} type="button" onClick={(event) => onOpenArtifact(resource.id, event.currentTarget)}>
-                  <span className="workstream-context-resource-icon"><ResourceIcon type={resource.resourceType} /></span>
+                  <span className="workstream-context-resource-icon"><ResourceIcon resource={resource} /></span>
                   <span className="workstream-context-copy"><span>{resource.title}</span><small>{resource.resourceType.replaceAll('_', ' ')} · v{resource.currentVersion}</small></span>
                 </button>
               </Tip>

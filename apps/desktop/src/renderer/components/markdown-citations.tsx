@@ -161,7 +161,7 @@ const FILE_KIND_LABELS: Record<AttachmentKind, string> = {
 
 const FILE_PROVENANCE_TYPES = new Set(['generated_file', 'uploaded_file']);
 
-export function resourceKindLabel(resource: Pick<CitationResource, 'resourceType' | 'title' | 'mimeType'>): string {
+export function resourceKindLabel(resource: ResourceKindInput): string {
   const type = resource.resourceType;
   if (FILE_PROVENANCE_TYPES.has(type)) {
     return FILE_KIND_LABELS[classifyAttachmentKind({ mimeType: resource.mimeType, fileName: resource.title })];
@@ -175,7 +175,25 @@ function isAttachmentKind(value: string): value is AttachmentKind {
   return Object.hasOwn(FILE_KIND_LABELS, value);
 }
 
-function resourceIconType(resource: CitationResource): string {
+/**
+ * What the icon and the kind label classify from: everything either one reads,
+ * and nothing a caller has to look up. Both `CitationResource` and the rails'
+ * `WorkstreamResource` satisfy it.
+ */
+export type ResourceKindInput = Pick<CitationResource, 'mimeType' | 'resourceType' | 'title'>;
+
+/**
+ * The one name a resource is drawn under.
+ *
+ * A provenance type says who made the resource, not what it is, so it is
+ * replaced by the attachment kind its MIME and filename classify to. That is
+ * the only place the translation happens, and it is why `ResourceIcon` takes a
+ * resource rather than a string: a caller holding a raw `resourceType` cannot
+ * tell that a `generated_file` carrying the site manifest is a live site, and
+ * the two rails proved it by both passing the raw type and both drawing a
+ * `.docx` sheet over a page somebody opens.
+ */
+export function resourceIconType(resource: ResourceKindInput): string {
   if (FILE_PROVENANCE_TYPES.has(resource.resourceType)) {
     return classifyAttachmentKind({ mimeType: resource.mimeType, fileName: resource.title });
   }
@@ -190,9 +208,9 @@ function resourceIconType(resource: CitationResource): string {
  */
 const SITE_TYPES = new Set(['generated_site', 'site']);
 
-/** The kind of thing a resource is, at a glance. Shared with the rail's own list. */
-export function ResourceIcon({ type }: { type: string }): React.JSX.Element {
-  const normalized = type.toLowerCase();
+/** The kind of thing a resource is, at a glance. Shared with both rails' lists. */
+export function ResourceIcon({ resource }: { resource: ResourceKindInput }): React.JSX.Element {
+  const normalized = resourceIconType(resource).toLowerCase();
   // Ahead of the substring chain, which has no branch a site reaches: it would
   // fall through to the generic file mark, and a site is a page somebody opens
   // rather than a file they download.
@@ -218,7 +236,7 @@ function ResourceChip({ label, resource, onOpen }: {
       onClick={onOpen}
       type="button"
     >
-      <span aria-hidden="true" className="citation-chip-icon"><ResourceIcon type={resourceIconType(resource)} /></span>
+      <span aria-hidden="true" className="citation-chip-icon"><ResourceIcon resource={resource} /></span>
       <span className="citation-chip-label">{label}</span>
     </button>
   );
@@ -320,7 +338,7 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview,
       )}
       {!isImage && (
         <>
-          <span aria-hidden="true" className="citation-card-badge"><ResourceIcon type={kind} /></span>
+          <span aria-hidden="true" className="citation-card-badge"><ResourceIcon resource={resource} /></span>
           <span className="citation-card-text">
             <strong className="citation-card-title">{label}</strong>
             <small className="citation-card-kind">{resourceKindLabel(resource)}</small>
