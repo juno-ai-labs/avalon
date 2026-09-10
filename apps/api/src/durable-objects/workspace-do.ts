@@ -4554,7 +4554,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }).parse(input);
     this.assertWorkspace(request.workspaceId);
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this workspace's automations");
+      throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this workspace's Sidekicks");
     }
     return { items: this.listSidebarAutomations(request.workspaceId, request.userId, 250) };
   }
@@ -4613,12 +4613,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }).parse(input);
     this.assertWorkspace(request.workspaceId);
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this room's automations");
+      throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this room's Sidekicks");
     }
     // An archived room's rail still renders, and its automations are paused
     // rather than gone, so a participant of the archived room may list them.
     if (!this.isWorkstreamParticipant(request.workstreamId, request.userId, { includeArchived: true })) {
-      throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this room's automations");
+      throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this room's Sidekicks");
     }
     const rows = this.state.storage.sql.exec<AutomationDirectoryRow>(
       `SELECT automation_id, loadable, appearance_json, lifecycle, scope, owning_workstream_id, title,

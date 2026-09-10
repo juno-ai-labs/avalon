@@ -331,7 +331,7 @@ describe("sidekick_post_result", () => {
       executionPrincipal: { type: "user", userId: AUTHOR_ID },
       activation: activation(started.runId),
     });
-    expect(replay).toEqual({ outcome: "replayed", code: "automation_activation_replayed" });
+    expect(replay).toEqual({ outcome: "replayed", code: "sidekick_activation_replayed" });
     expect(await activationTurns()).toHaveLength(1);
   });
 
@@ -399,7 +399,7 @@ describe("sidekick_post_result", () => {
       executionPrincipal: { type: "user", userId: AUTHOR_ID },
       activation: activation(STAGED_RUN_ID),
     });
-    expect(appended).toEqual({ outcome: "appended", code: "automation_activation_appended" });
+    expect(appended).toEqual({ outcome: "appended", code: "sidekick_activation_appended" });
     // The wake is real: the room runs on it before this test lets go of it.
     const [roomRun] = await settledRun(roomConversation());
     expect(roomRun).toMatchObject({ status: "completed", error_json: null });

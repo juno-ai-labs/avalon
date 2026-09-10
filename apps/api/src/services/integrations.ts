@@ -1708,12 +1708,16 @@ function createAvalonAutomationsPlugin(
           asUserId(authorUserId),
         ));
       }
+      // A receipt written before the Sidekick rename carries the capability
+      // vocabulary of its day. The replay below reads canonical tool names,
+      // which did not change, so both vocabularies select the same receipts
+      // and a conversation resumed across the rename keeps what it inspected.
       const replayCapabilities = [
-        "rally.sidekick.plugins.inspect",
-        "rally.sidekick.people.search",
-        "rally.sidekick.resources.search",
-        "rally.sidekick.evaluators.set",
-      ];
+        "plugins.inspect",
+        "people.search",
+        "resources.search",
+        "evaluators.set",
+      ].flatMap((capability) => [`rally.sidekick.${capability}`, `rally.automation.${capability}`]);
       const receiptPort = createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
       // An automation's own conversation drafts across turns, so what it
       // inspected or looked up in an earlier turn still counts; a room's

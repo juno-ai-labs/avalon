@@ -767,7 +767,7 @@ describe("AutomationDO", () => {
     expect(await activeRegistrations()).toBe(0);
     await expect(runInDurableObject(automationStub(), (instance: AutomationDO) =>
       instance.runNow({ ...addressed(), actor: actor(), idempotencyKey: "pause-run-0002" })))
-      .rejects.toThrow("Only an active automation can run");
+      .rejects.toThrow("Only an active Sidekick can run");
 
     await automationStub().resume({ ...addressed(), actor: actor() });
 
@@ -797,13 +797,13 @@ describe("AutomationDO", () => {
     expect((await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID })).items)
       .toEqual([]);
     await expect(runInDurableObject(automationStub(), (instance: AutomationDO) =>
-      instance.readDetail({ ...addressed(), actor: actor() }))).rejects.toThrow("This automation was deleted");
+      instance.readDetail({ ...addressed(), actor: actor() }))).rejects.toThrow("This Sidekick was deleted");
   });
 
   it("refuses management by a member who is neither author nor principal", async () => {
     await activeAutomation();
     await expect(runInDurableObject(automationStub(), (instance: AutomationDO) =>
-      instance.pause({ ...addressed(), actor: actor(OUTSIDER_ID) }))).rejects.toThrow("You cannot manage this automation");
+      instance.pause({ ...addressed(), actor: actor(OUTSIDER_ID) }))).rejects.toThrow("You cannot manage this Sidekick");
     expect((await automationRow()).lifecycle).toBe("active");
   });
 
