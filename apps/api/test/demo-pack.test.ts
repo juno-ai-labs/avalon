@@ -28,17 +28,12 @@ const CAST: DemoCast = {
 
 const SAY = { kind: "say" as const, text: "Here is what I found." };
 
-/** A default name per role the operator names; the schema requires one each. */
-function castDefaults(roles: string[]): Record<string, string> {
-  return Object.fromEntries(roles.filter((role) => role !== "presenter").map((role) => [role, CAST[role]!.displayName]));
-}
-
 function pack(steps: unknown[], roles = ["presenter", "priya", "marcus", "dana"]) {
-  return DemoPackSchema.safeParse({ version: "test", roles, steps, castDefaults: castDefaults(roles) });
+  return DemoPackSchema.safeParse({ version: "test", roles, steps });
 }
 
 function parsedPack(steps: unknown[], roles = ["presenter", "priya", "marcus"]) {
-  return DemoPackSchema.parse({ version: "test", roles, steps, castDefaults: castDefaults(roles) });
+  return DemoPackSchema.parse({ version: "test", roles, steps });
 }
 
 function open(overrides: Record<string, unknown> = {}) {
@@ -194,19 +189,6 @@ describe("the pack schema", () => {
         assistant: { kind: "say", text: "Adam Presenter owns the Northgate call." },
       },
     }]);
-  });
-
-  it("refuses a pack whose cast cannot be named: a role with no default, one nobody plays, two alike", () => {
-    // The defaults are what the New demo form opens with, so a missing one is
-    // an empty field the operator has to fill in blind and two alike are a
-    // form that cannot be submitted — both found here, not in Ace.
-    const parse = (castDefaults: Record<string, string>) => DemoPackSchema.safeParse({
-      version: "test", roles: ["presenter", "priya", "marcus"], steps: [open()], castDefaults,
-    });
-    expect(issues(parse({ priya: "Priya Raman" }))).toContain('Role "marcus" has no default name');
-    expect(issues(parse({ priya: "Priya Raman", marcus: "Marcus Hale", presenter: "Adam" })))
-      .toContain('"presenter" is not a role the operator names');
-    expect(issues(parse({ priya: "Priya Raman", marcus: "Priya Raman" }))).toContain("Default names must differ");
   });
 
   it("refuses a room used before it is created", () => {

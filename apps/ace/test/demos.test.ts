@@ -13,6 +13,7 @@ import { createTestEnv } from './helpers/cloudflare-test';
 const OPERATION_ID = '00000000-0000-7000-8000-0000000000e2';
 const WORKSPACE_ID = '00000000-0000-7000-8000-0000000000f1';
 const PRESENTER_ID = '00000000-0000-7000-8000-0000000000a1';
+const PRIYA_ID = '00000000-0000-7000-8000-0000000000a2';
 
 function env(overrides: Partial<Env> = {}): Env {
   return createTestEnv({
@@ -73,7 +74,7 @@ describe('the Demos routes', () => {
   });
 
   it('starts a preparation same-origin only, and relays the regional refusal by its own code', async () => {
-    const body = JSON.stringify({ operationId: OPERATION_ID, companyName: 'Alto Capital', presenterUserId: PRESENTER_ID, cast: { priya: 'Emma Shipman' } });
+    const body = JSON.stringify({ operationId: OPERATION_ID, companyName: 'Alto Capital', presenterUserId: PRESENTER_ID, cast: { priya: PRIYA_ID } });
     const crossOrigin = await worker.fetch!(new Request('https://ace.internal.rallywith.ai/api/demos', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
     }), env(), context);
