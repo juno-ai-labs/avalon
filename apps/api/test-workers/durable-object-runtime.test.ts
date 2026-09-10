@@ -6301,7 +6301,7 @@ describe("Durable Objects in the Workers runtime", () => {
           workspaceId: WORKSPACE_ID,
           workstreamId: ROOM_ID,
           userId: STRANGER_ID,
-        })).rejects.toMatchObject({ code: "automation_directory_access_denied", status: 403 });
+        })).rejects.toMatchObject({ code: "sidekick_directory_access_denied", status: 403 });
       });
     });
 
@@ -6320,7 +6320,7 @@ describe("Durable Objects in the Workers runtime", () => {
           workspaceId: WORKSPACE_ID,
           workstreamId: ROOM_ID,
           userId: STRANGER_ID,
-        })).rejects.toMatchObject({ code: "automation_directory_access_denied", status: 403 });
+        })).rejects.toMatchObject({ code: "sidekick_directory_access_denied", status: 403 });
       });
     });
   });
@@ -6365,11 +6365,11 @@ describe("Durable Objects in the Workers runtime", () => {
       };
 
       expect(await stub.appendAutomationActivation(request))
-        .toEqual({ outcome: "appended", code: "automation_activation_appended" });
+        .toEqual({ outcome: "appended", code: "sidekick_activation_appended" });
       // The delivery loop retries after a crash; the room must not be told
       // twice, and the idempotency is the delivery's own id.
       expect(await stub.appendAutomationActivation(request))
-        .toEqual({ outcome: "replayed", code: "automation_activation_replayed" });
+        .toEqual({ outcome: "replayed", code: "sidekick_activation_replayed" });
 
       await runInDurableObject(stub, async (_instance, state) => {
         // An activation is loop input, not a canonical turn: it becomes one
@@ -6437,7 +6437,7 @@ describe("Durable Objects in the Workers runtime", () => {
         expect(row!.mode).toBe("queue");
         // What the woken agent reads. The untrusted wrapper travels with it —
         // an activation quotes connector content and is not an instruction.
-        expect(row!.bind_payload_json).toContain("UNTRUSTED AUTOMATION RESULT");
+        expect(row!.bind_payload_json).toContain("UNTRUSTED SIDEKICK RESULT");
         expect(row!.bind_payload_json).toContain("The board deck went out.");
       });
     });

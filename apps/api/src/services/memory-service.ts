@@ -30,7 +30,7 @@ import { isMemoryEmbeddingModel, MEMORY_EMBEDDING_MODEL, runEmbeddingInference }
 export const MEMORY_EMBEDDING_DIMENSIONS = 1_024;
 const MEMORY_EMBEDDING_SPACE_VERSION = "v1";
 
-export const MEMORY_SCOPE_KINDS = ["workstream", "automation", "user", "workspace"] as const;
+export const MEMORY_SCOPE_KINDS = ["workstream", "sidekick", "user", "workspace"] as const;
 const SEARCH_CANDIDATES_PER_LEG = 20;
 const SEARCH_RESULTS = 10;
 const RRF_OFFSET = 60;
@@ -324,7 +324,7 @@ export async function resolveMemoryAccess(
   // rather than as the person, and a workspace automation's runs would
   // otherwise write into whichever member happened to be its principal.
   if (input.parentKind === "automation") {
-    scopes.push(await ensureScope(env, input.workspaceId, "automation", input.parentId, true));
+    scopes.push(await ensureScope(env, input.workspaceId, "sidekick", input.parentId, true));
     return scopes;
   }
 

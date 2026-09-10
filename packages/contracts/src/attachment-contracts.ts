@@ -271,11 +271,11 @@ export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
     arguments: z.strictObject({ resourceIds: z.tuple([CanonicalUuidSchema]) }),
   }),
   z.strictObject({
-    tool: z.literal("automation_read_resource"),
+    tool: z.literal("sidekick_read_resource"),
     arguments: z.strictObject({ resourceId: CanonicalUuidSchema }),
   }),
   z.strictObject({
-    tool: z.literal("automation_view_resource"),
+    tool: z.literal("sidekick_view_resource"),
     arguments: z.strictObject({ resourceIds: z.tuple([CanonicalUuidSchema]) }),
   }),
   /**

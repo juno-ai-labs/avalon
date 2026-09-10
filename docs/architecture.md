@@ -150,7 +150,7 @@ Global and `Europe/London` in EU. Automation drafting preserves an explicit
 trigger timezone and leaves an unnamed one null: the zone is resolved when a
 revision is applied, inside the automation's own object, against the scope it
 is being applied with and the account it will run for. A zone the runtime
-cannot format refuses the apply with `automation_timezone_invalid` rather than
+cannot format refuses the apply with `sidekick_timezone_invalid` rather than
 being silently replaced.
 
 ### Region boundary
@@ -497,8 +497,8 @@ phase is a model-run summary. The Terminal adapter emits both the structured log
 and non-blocking aggregate point; neither is canonical sandbox state.
 
 Durable memory is scoped to an ad-hoc work stream, a user inside a workspace,
-the workspace itself, or an automation, whose chat and runs share one scope of
-kind `automation` in the same WorkspaceDO store. The host — not
+the workspace itself, or a Sidekick, whose chat and runs share one scope of
+kind `sidekick` in the same WorkspaceDO store. The host — not
 the model — derives the searchable scope union from the frozen execution principal
 and run origin. WorkspaceDO FTS5 and the regional Vectorize index are searched
 concurrently, merged with reciprocal-rank fusion, and rechecked against canonical

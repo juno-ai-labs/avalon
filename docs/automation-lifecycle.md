@@ -79,8 +79,8 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The parent half it inherits: child registry, projections, receipts, aggregation, the outbox and its drain. See [`workstream-durable-object.md`](workstream-durable-object.md). |
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through, which resolves whether the caller is in the owning room before asking the object. |
 | `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
-| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the drafting plugin's host, which creates a room's automation on its first submission and posts the proposal card; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; `createAutomationPostResultPlugin`, the `automation_post_result` tool; and the run prompt context built from the definition. |
-| `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:automations` plugin: the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
+| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the drafting plugin's host, which creates a room's automation on its first submission and posts the proposal card; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; `createAutomationPostResultPlugin`, the `sidekick_post_result` tool; and the run prompt context built from the definition. |
+| `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
 | `packages/contracts/src/automation-evaluators.ts` | The strict external-event evaluator grammar (`always`, or `all` over leaves) and the delivery message the matcher emits. |
@@ -88,7 +88,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/durable-objects/workspace-do.ts` | Migration 31: `automation_directory` and `workspace_external_event_registrations`; `applyAutomationDirectory`, `listAutomationDirectory`, `listWorkstreamAutomations`, `automationOwner`, `workstreamParticipant`, `applyExternalEventRegistrations`, `matchExternalEventDestinations`, and the owning-room archive fan-out `notifyOwningRoomArchival`. |
 | `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `admitExternalEvent`, and a run child's effects to the object through the shared effect leg. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
-| `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is an automation resolves the workspace scope and the automation's own `automation` scope. |
+| `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is a Sidekick resolves the workspace scope and the Sidekick's own `sidekick` scope. |
 | `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Delete, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
 | `apps/desktop/src/renderer/components/appearance-picker.tsx` | The one icon-and-colour palette, shared with the work stream's header. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows. |
 | `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | Enabled standalone Sidekick tiles above the account menu open library details, and `SidekickStripTile`, the tile shape they and the empty strip's **New Sidekick** action share; the center rail shows authorized main-conversation attachments and the participant facepile. |
@@ -127,9 +127,11 @@ a filter.
 
 `POST /sidekicks` creates a personal draft and its authoring conversation.
 `/sidekicks/new` replaces itself with the resulting detail route so Back cannot
-create a second draft. The existing `rally:automations` plugin can also create a
-workstream-owned Sidekick from a workstream conversation. Persisted plugin and
-tool identities remain unchanged. Workstream-owned entries are managed in the
+create a second draft. The existing `rally:sidekicks` plugin can also create a
+workstream-owned Sidekick from a workstream conversation. The persisted plugin
+id and the canonical tool names stay; the model reads the plugin as
+`rally_sidekicks` and its tools under the `sidekick_` prefix. Workstream-owned
+entries are managed in the
 library; the center sidebar shows loaded attachments only.
 
 `createAutomation` reserves the durable owner before bootstrapping its main
@@ -189,7 +191,7 @@ here the play the changelog below explains.
 
 
 ### Drafting in the conversation
-`automation_submit_draft` calls `SidekickDO.saveDefinition` under the submitting
+`sidekick_submit_draft` calls `SidekickDO.saveDefinition` under the submitting
 actor's management authority. The owner appends an immutable revision and publishes
 it immediately when ready. New definitions carry `definitionVersion: 2`; inbound
 email is explicit. There is no instruction editor, type selector, or Create/Apply
@@ -233,13 +235,13 @@ inserts one `runs` row in state `pending` with `INSERT OR IGNORE` on the unique
 `occurrence_key`, returns `{runId, reused}`, and arms one `automation_run` alarm
 entry for the run. A repeated admission of the same occurrence answers with the
 run it already made. The object must hold an accepted revision
-(`automation_not_active` otherwise), and the run is pinned to that revision.
+(`sidekick_not_active` otherwise), and the run is pinned to that revision.
 
 | Trigger | Entry | Occurrence key | Refusals |
 | --- | --- | --- | --- |
-| **Manual** | `POST /automations/:id/run` with an `idempotency-key` header; `runNow` | `manual:<idempotencyKey>` | `automation_not_active` unless `active`; `automation_forbidden` unless the caller may manage it |
+| **Manual** | `POST /automations/:id/run` with an `idempotency-key` header; `runNow` | `manual:<idempotencyKey>` | `sidekick_not_active` unless `active`; `sidekick_forbidden` unless the caller may manage it |
 | **Schedule** | the `automation_schedule` alarm for one schedule row; `executeSchedule` | `schedule:<scheduleId>:<plannedFor>` | skipped silently unless `active`; the next occurrence is computed from now and re-armed |
-| **Connector event** | the Queue consumer's `admitExternalEvent`, one message per matched registration | `external:<workspaceEventId>` | `automation_<lifecycle>` unless `active`; `automation_event_before_activation_boundary` when the event's sequence is at or below `effective_after_event_sequence` |
+| **Connector event** | the Queue consumer's `admitExternalEvent`, one message per matched registration | `external:<workspaceEventId>` | `sidekick_<lifecycle>` unless `active`; `sidekick_event_before_activation_boundary` when the event's sequence is at or below `effective_after_event_sequence` |
 | **Inbound email** | `resend-inbound-email-service.ts` calling `admitInboundEmail` once per delivery | `inbound_email:<resendEmailId>` | see below; the refusal is written to `inbound_email_receipts` |
 
 **Connector events** follow one regional path. The regional activity Queue
@@ -255,7 +257,7 @@ predicate with no model inference, and returns one complete
 registration, the destination, and the event. There is no delivery ledger and
 no lease: the consumer sends each message to the Queue, and the destination is
 idempotent on the event id, which is all a lease ever guaranteed. A redelivery
-answers `automation_occurrence_replayed`. Registrations for an automation and
+answers `sidekick_occurrence_replayed`. Registrations for an automation and
 for a watched work-stream resource share one candidate index; a watched work
 stream sends no evaluator object, while an automation needs predicates because
 it selects event families, content, people, and provider fields.
@@ -274,8 +276,8 @@ ingress fetches the message, resolves the sender to an active member, stores
 the payload in R2 and the email as a resource, and then calls
 `admitInboundEmail` once. The object answers a retry from
 `inbound_email_receipts` by Resend email id before deciding anything; a new
-message is refused with `automation_not_active`,
-`automation_email_route_mismatch` (the address is not this automation's), or
+message is refused with `sidekick_not_active`,
+`sidekick_email_route_mismatch` (the address is not this automation's), or
 `email_sender_not_authorized` (no member matched, or a `personal` automation's
 sender is neither its author nor its run-as principal), and the refusal is the
 receipt. An admitted message stores its text, structured content, and resource
@@ -317,7 +319,7 @@ Before every provider write, `assertRunAuthorityStillValid` asks the parent
 `active`, or whose own row is no longer `running` or `needs_input`, refuses
 with `ConnectorError("unauthorized")`, so a run that outlives a pause or a
 delete stops rather than finishing on stale consent. The
-`rally:automations` drafting plugin is withheld from a run.
+`rally:sidekicks` drafting plugin is withheld from a run.
 
 The run reports its state the way every conversation does: its
 `directory_common` effect reaches the parent through the child effect leg, and
@@ -331,8 +333,9 @@ row, no activity, and no notification.
 
 ### Posting a result
 
-A run of a room's automation holds one extra plugin, `rally:automation-result`,
-preloaded, with the tool `automation_post_result`. It is offered only when
+A run of a room's automation holds one extra plugin, `rally:sidekick-result`
+(`rally_sidekick_result` to the model), preloaded, with the tool
+`sidekick_post_result`. It is offered only when
 `readRunDefinition().owningWorkstreamId` is not null, so a personal or
 workspace automation cannot post into a room at all. The tool asks
 `WorkstreamDO.authority` for the room's generation and archive state, refuses an
@@ -348,7 +351,7 @@ instructions name is the run's own work with its connector tools.
 | Transition | Who | What |
 | --- | --- | --- |
 | `pause` | a manager | `runs` in `pending`, `running`, or `needs_input` become `stopped`; `lifecycle = 'paused'`, `paused_by = 'person'`; schedule and run alarm entries cancelled; the workspace's registrations replaced with `[]`; sidebar row enqueued |
-| `resume` | a manager | each schedule's next due instant recomputed from now (a paused automation does not fire what it slept through), `lifecycle = 'active'`, `paused_by` cleared, alarms re-armed, the accepted evaluator projection re-registered with a fresh sequence boundary; refused with `automation_room_archived` while the owning room is archived |
+| `resume` | a manager | each schedule's next due instant recomputed from now (a paused automation does not fire what it slept through), `lifecycle = 'active'`, `paused_by` cleared, alarms re-armed, the accepted evaluator projection re-registered with a fresh sequence boundary; refused with `sidekick_room_archived` while the owning room is archived |
 | `remove` (`DELETE`) | a manager | open runs stopped, `lifecycle = 'deleted'`, alarms cancelled, registrations replaced with `[]`; the object is kept, and `authorizeViewer` answers unauthorized and archived from then on |
 | `setOwningRoomArchived` | `WorkspaceDO`, from a directory effect that archived or unarchived the owning room | archiving pauses an `active` automation with `paused_by = 'room_archive'`; unarchiving resumes only an automation the archive paused, so a person's pause is never undone by somebody unarchiving the room. The Worker's viewer decision reports `archived` while the room is, which makes the automation's conversation and runs read-only |
 
@@ -375,9 +378,9 @@ row is content-free by design; `GET /automations/:id` reads the object.
 
 ### Memory
 
-`resolveMemoryAccess` gives a conversation whose parent is an automation two
-scopes: the workspace's, and the automation's own scope of kind `automation`
-keyed by the automation id, writable. The drafting chat and every run share it,
+`resolveMemoryAccess` gives a conversation whose parent is a Sidekick two
+scopes: the workspace's, and the Sidekick's own scope of kind `sidekick`
+keyed by the Sidekick id, writable. The drafting chat and every run share it,
 so what a run learns is what the next run knows and what the person said while
 drafting is part of that. The person's own scope stays out, because a run acts
 for the automation rather than as the person, and a workspace automation's runs
@@ -462,7 +465,7 @@ Sidekick's id, exactly what every Sidekick showed before the picker existed.
 - **`AutomationDO` forwards nothing its children say.** The workspace hears the
   automation's row and nothing else; forwarding a run's aggregate would put
   every run in the work-stream directory, which is the design this replaced.
-- **The one way a result reaches a room is `automation_post_result`.** Rally
+- **The one way a result reaches a room is `sidekick_post_result`.** Rally
   posts nothing after a run; the run posts, once, when its instructions say the
   room should hear it. A second delivery path is a duplicate the room reads
   twice.
@@ -500,14 +503,14 @@ or the memory store the automation scope lives in.
 
 - **A failure inside the object is an `ApiError` with a stable snake_case
   code**, thrown directly and surviving the RPC hop with its status: 403
-  `automation_forbidden`, 404 `automation_not_found` or
-  `automation_run_not_found`, 409 `automation_not_active`,
-  `automation_not_paused`, `automation_room_archived`, 422
-  `automation_definition_not_ready`, `automation_plugin_unavailable`,
-  `automation_workspace_connection_required`,
-  `automation_personal_connection_access_denied`, `automation_person_not_found`,
-  `automation_resource_not_found`, `automation_recurrence_has_no_future`,
-  `automation_timezone_invalid`, and the evaluator blocker codes. An identity
+  `sidekick_forbidden`, 404 `sidekick_not_found` or
+  `sidekick_run_not_found`, 409 `sidekick_not_active`,
+  `sidekick_not_paused`, `sidekick_room_archived`, 422
+  `sidekick_definition_not_ready`, `sidekick_plugin_unavailable`,
+  `sidekick_workspace_connection_required`,
+  `sidekick_personal_connection_access_denied`, `sidekick_person_not_found`,
+  `sidekick_resource_not_found`, `sidekick_recurrence_has_no_future`,
+  `sidekick_timezone_invalid`, and the evaluator blocker codes. An identity
   mismatch is a bare `Error`, deliberately, because it is a wiring fault and not
   a refusal.
 - **Apply fails part-way.** The transaction either committed or did not; the
@@ -520,10 +523,10 @@ or the memory store the automation scope lives in.
   object. A run admitted while the automation was paused is marked `stopped`
   when its alarm fires.
 - **The Queue redelivers a matched event.** `admitExternalEvent` answers
-  `automation_occurrence_replayed`; the consumer logs it and acks.
-- **A result cannot be posted.** `automation_post_result` throws
-  `automation_owning_room_archived`, `automation_owning_room_missing`, or
-  `automation_post_result_refused:<code>` (a stale generation or an archived
+  `sidekick_occurrence_replayed`; the consumer logs it and acks.
+- **A result cannot be posted.** `sidekick_post_result` throws
+  `sidekick_owning_room_archived`, `sidekick_owning_room_missing`, or
+  `sidekick_post_result_refused:<code>` (a stale generation or an archived
   room decided inside the room's object); the run sees the tool error and says
   so in its result.
 - **A run's parent is unreachable** when `readRunDefinition` or `readRunState`
@@ -548,7 +551,7 @@ or the memory store the automation scope lives in.
 | `apps/api/test-workers/conversation-parent-contract.test.ts`, `conversation-effect-queue.test.ts` | `pnpm --filter @rally/api test:workers` | The parent contract through the real ticket route, and the effect legs an automation's children use, including a child effect producing no `parent_effect` row. Owned by [`workstream-durable-object.md`](workstream-durable-object.md#testing). |
 | `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, and the connector vocabulary. |
 | `apps/api/test/run-authority-validity.test.ts` | `pnpm --filter @rally/api test` | A running run admitted, a paused or unknown one stopped, connector evidence not re-read after admission, and a run with no automation reference asking no automation. |
-| `apps/api/test/scoped-memory.test.ts` | `pnpm --filter @rally/api test` | An automation's conversation resolving the workspace scope and its own `automation` scope. |
+| `apps/api/test/scoped-memory.test.ts` | `pnpm --filter @rally/api test` | A Sidekick's conversation resolving the workspace scope and its own `sidekick` scope. |
 | `apps/api/test/resend-inbound-email.test.ts`, `workstream-email-routing.test.ts`, `workstream-email-address.test.ts` | `pnpm --filter @rally/api test` | The single admission call, its receipts, and the address claim. |
 | `apps/api/test/access-revocation.test.ts` | `pnpm --filter @rally/api test` | The workspace fan-out naming an automation and the consumer walking its children. |
 | `packages/agent-harness/src/automation-creator-tools.test.ts` | `pnpm --filter @rally/agent-harness test` | The drafting tools, the `all` evaluator shape, and the submission pre-check. |
@@ -651,12 +654,143 @@ the regional activities dead-letter queue, per
 [`workstream-durable-object.md`](workstream-durable-object.md#operations). A
 missing scheduled run is a schedule row whose `next_due_at` is null or an
 alarm entry behind its backoff gate in `_internal_durable_alarms`;
-`automation_scheduled_alarm_failed` names the entry and the handler's code. A
+`sidekick_scheduled_alarm_failed` names the entry and the handler's code. A
 run refusing provider writes with "This automation run is no longer running"
 was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-10 — The stored names follow the model-facing ones
+
+**What changed:** The four things the previous entry kept are renamed too. The
+canonical plugin ids are `rally:sidekicks` and `rally:sidekick-result`; the
+capability strings are `rally.sidekick.*`; every `automation_*` error, refusal,
+outcome, blocker, and alarm-log code the Sidekick paths produce is `sidekick_*`
+(`sidekick_not_found`, `sidekick_not_active`, `sidekick_post_result_refused:<code>`,
+`sidekick_scheduled_alarm_stalled`, ...); and a Sidekick's memory scope is
+stored as kind `sidekick`, which WorkspaceDO migration 50 writes by replacing
+`memory_scopes`. The `modelScopeKind` and `storedScopeKind` boundary the
+previous entry introduced is gone, since the two names are now one.
+
+**Why:** Keeping the stored and internal names was a compatibility choice, and
+it was withdrawn: one vocabulary in logs, receipts, and rows is worth the
+migration, and every one of these was a place a person searching for a Sidekick
+would still have had to know to type "automation".
+
+**What stays:** the table names (`automation_directory`, `automation_runs`,
+...), the alarm kinds `automation_schedule` and `automation_run`, the telemetry
+event names and properties, the transcript row types `automation_activation`
+and `automation_draft_proposed`, the diagnostic schema name `automation_draft`,
+the object component `automation_do`, and every `Automation*` type, function,
+and file name. Those are stored rows, an analytics contract shared with the
+desktop, or internal identifiers, and none of them reaches a person or a
+model. Two renamed codes land on literals that already existed:
+`sidekick_directory_access_denied` now covers the legacy and the current
+listing routes alike, and `sidekick_missing` is also the demo-readiness gap
+for an expected Sidekick that is not listed; both name the same condition.
+
+**How the stored halves stay readable:**
+
+- A plugin activation hint written under `rally:automations` or
+  `rally:automation-result` is read as the new id (`LEGACY_PLUGIN_IDS` in
+  `integrations.ts`), so a drafting conversation resumed across the deploy keeps
+  its plugin rather than reaching for `load_plugin` again. The old hint row
+  stays beside the new one; both are harmless.
+- The desktop's activity-row map carries both ids, so a transcript row a run
+  recorded before the rename keeps the keyframes glyph.
+- `memory_scopes.kind` is a CHECK vocabulary on an immutable row, so migration
+  50 replaces the table the way migration 31 replaced `connector_connections`:
+  every dependent is held in a scratch copy, the parent is rebuilt with the new
+  vocabulary and its rows mapped, the immutability trigger and the workspace
+  identity fences are recreated, and the dependents are put back parent-first
+  with foreign keys enforced throughout. The populated-upgrade test on workerd
+  seeds every table in the cascade closure and proves the FTS shadow tables,
+  the fences, and the immutability trigger survive.
+- Vectorize metadata carries `scopeKind` for information only; nothing queries
+  by it, so vectors written before the rename keep `automation` there.
+
+**What review added:** the outcome an admitted event gets from a paused,
+draft, or deleted Sidekick (`sidekick_paused`, ...), the activation outcomes
+`sidekick_activation_appended`, `sidekick_activation_replayed`, and
+`sidekick_activation_failed`, the consumer's `sidekick_directory_applied`
+reason, and the description refresh's `sidekick_parent` skip reason follow the
+same rule; the user-visible messages behind the renamed codes say Sidekick; and
+the drafting receipt replay selects receipts under both capability
+vocabularies, since a conversation that inspected a plugin before the rename
+holds receipts under `rally.automation.*` and must still count them. The
+materialization receipt for a declared memory table is keyed by the Sidekick,
+its revision, and the table's position, and the publication alarm re-applies
+the same revision until every effect has landed; its payload hash carried the
+scope kind and the rationale, so the rename turned every such re-apply into
+`memory_table_mutation_receipt_mismatch` and the alarm into a permanent stall.
+The hash now covers only what the definition declared, and a receipt written
+under the pre-rename hash is asked for once more under that hash before a
+mismatch counts as a defect (`memory-table-materialization-receipts.test.ts`
+seeds one and re-applies). In-run tool-receipt replay for the creator and
+result tools is not shimmed: a receipt written before the deploy differs in
+plugin id and tool surface hash as well as capability, the same situation any
+edit to a built-in tool's definition creates, and the platform's answer is the
+same; `sidekick_post_result` is deduplicated by the room on the run id, and a
+resubmitted `submit_draft` writes the same draft as a revision.
+
+**Consequences:** Receipts and telemetry written from now on carry the new
+capability strings and codes; the runbook's search terms changed with them.
+`memory_scope_not_writable:<kind>` and the refusals that list scopes now name
+`sidekick` because the stored kind does. `MEMORY_SCOPE_KINDS` still orders the
+retry list narrowest-first; the value changed, not the position.
+
+### 2026-09-10 — The model reads Sidekick everywhere a person does
+
+**What changed:** Every surface the model reads now says Sidekick. The drafting
+plugin's model id is `rally_sidekicks` and its tools render under the
+`sidekick_` prefix (`sidekick_submit_draft`, `sidekick_plugin_inspect`,
+`sidekick_set_evaluator_rules`, ...); `automations_list` is `sidekicks_list` and
+answers `{ sidekicks: [{ sidekickId, ... }] }`; the draft's target field is
+`sidekickId`. The result plugin is `rally_sidekick_result` and its tool is
+`sidekick_post_result`. A run's task context carries its definition under
+`sidekick`, with each durable table's `scopeKind` as `sidekick`, and the memory
+and table tools accept and return the scope kind `sidekick`. The run prompt's
+`# Result delivery` and `# Where this Sidekick was set up` sections, the
+untrusted headers (`UNTRUSTED SIDEKICK RESULT`, `UNTRUSTED SIDEKICK TRIGGER
+ACTIVITY`, `AUTHORIZED SIDEKICK CONDITION`), the work-opportunity classifier,
+the memory and table plugin policy, the drafting plugin's whole system message,
+the tool summaries, and the refusals the model reads verbatim follow. So do the
+attachment tools' `sidekick` prefix with its `sidekick_read_resource` and
+`sidekick_view_resource` suggested calls, and Slack's activity trigger
+descriptions.
+
+**Why:** The product rename had reached the plugin's display name, its
+description, and the opening lines of its system message, and stopped. The
+model was told it was working with Sidekicks and then handed tools, fields, and
+rules that all called the same thing an automation, inside one system message.
+A medium model reads that as two things. The rebrand inventory's rule applies
+here as it did to Avalon: a field is model-facing if something stringifies it,
+and every one of these was.
+
+**Not renamed, deliberately:** the canonical plugin ids `rally:automations` and
+`rally:automation-result`, which are the identity of a persisted plugin
+activation and the key the desktop's activity rows use; the canonical tool
+names receipts record (`submit_draft`, `plugin_inspect`, ...), which is why a
+drafting conversation resumed across the deploy keeps its inspections and staged
+rules; the stored memory scope kind `automation`, which rows and vector metadata
+carry and which now meets the model only through `modelScopeKind` and
+`storedScopeKind` at the tool boundary; the `rally.automation.*` capability
+strings, which are authorization identity; and the `automation_*` error codes
+(`automation_owning_room_archived`, `automation_post_result_refused:<code>`),
+which the runbook searches logs for; the one exception is the kind suffix on
+`memory_scope_not_writable:<kind>`, which names the kind the model chose and so
+reads `sidekick`. Internal type, function, and file names
+stay as they were, as the rest of this document already records for the object.
+
+**Consequences:** The result tool's canonical name is now `post_result`, so its
+receipts change name; the room's replay on the run id is what still makes a
+second post a no-op. Telemetry's `tool_name` values change with the wire names.
+A run in flight across the deploy sees the new names on its next turn; a model
+that still emits `automationId` is refused by the strict draft schema and
+retries with the schema it is shown. Two golden prompt hashes moved,
+`automationWorkstream` and `semanticTrigger`, and each was checked against a
+rename-only reversal of the new text before it was regenerated.
 
 ### 2026-09-10 — The Sidekicks window closes on Escape
 

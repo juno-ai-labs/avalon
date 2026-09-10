@@ -142,8 +142,10 @@ one **Rally** row. `rally:terminal` and `rally:workstream` are Rally operating a
 machine, and are drawn as one **Computer** row. The
 `rally:multimodal-generation` plugin keeps its own **Multimodal generation** row;
 its canonical id maps it to Tabler's dedicated **image-generation** glyph rather
-than the generic plug, and `rally:automations` keeps its own **Automations** row
-the same way, drawing Tabler's **keyframes** glyph. A first-party plugin that is
+than the generic plug, and `rally:sidekicks` keeps its own **Sidekicks** row
+the same way, drawing Tabler's **keyframes** glyph; `rally:automations`, the id
+transcripts recorded before the rename, maps to the same row so a stored row
+keeps its glyph. A first-party plugin that is
 absent from that map *and* has no display name of its own — which is how an
 undecided one appears, since the transcript falls back to the raw id as its
 label — joins Rally, so an internal identifier never reaches the feed. Every
@@ -635,6 +637,19 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-09-10 — The Sidekicks plugin's canonical id is `rally:sidekicks`
+
+**What changed:** `GROUPED_PLUGIN_IDS` pins the keyframes glyph to
+`rally:sidekicks`, and keeps the `rally:automations` entry beside it for the
+rows transcripts recorded under the old id. The row's key is still
+`name:Automations`, which is the group's name rather than the plugin's display
+name, so old and new rows merge on it the way every other row does.
+
+**Why:** The canonical id was renamed with the rest of the Sidekick vocabulary
+([`automation-lifecycle.md`](automation-lifecycle.md#2026-09-10--the-stored-names-follow-the-model-facing-ones)),
+and a stored row is not rewritten: dropping the old id from the map would have
+turned every earlier Sidekick row back into the generic plug.
 
 ### 2026-09-10 — The connector fill tokens are gone
 

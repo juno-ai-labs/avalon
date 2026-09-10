@@ -1982,14 +1982,14 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       activityTriggers: defineConnectorActivityTriggers("Slack", SlackActivityTypes, {
         "slack.message.posted": {
           label: "Message posted",
-          description: "A human posted a new root message in a Slack channel selected by an automation.",
+          description: "A human posted a new root message in a Slack channel selected by a Sidekick.",
           filterFields: SlackMessageActivityFilterFields,
           eventFamilies: ["slack.message.created"],
           resourceRelationships: [{ relationship: "channel", resourceType: "slack_channel" }],
         },
         "slack.message.replied": {
           label: "Thread reply posted",
-          description: "A human replied in a Slack thread selected by an automation.",
+          description: "A human replied in a Slack thread selected by a Sidekick.",
           filterFields: SlackMessageActivityFilterFields,
           eventFamilies: ["slack.message.created"],
           resourceRelationships: [{ relationship: "channel", resourceType: "slack_channel" }],

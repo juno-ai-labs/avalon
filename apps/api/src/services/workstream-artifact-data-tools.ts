@@ -90,7 +90,7 @@ export interface ArtifactDataToolContext {
 
 export function createWorkstreamArtifactDataTools(
   context: ArtifactDataToolContext,
-  modelToolPrefix: "workstream" | "automation" = "workstream",
+  modelToolPrefix: "workstream" | "sidekick" = "workstream",
 ): HarnessTool[] {
   async function requireArtifact(reference: string) {
     const artifact = await context.resolveArtifact(reference);
