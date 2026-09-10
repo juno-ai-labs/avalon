@@ -6315,7 +6315,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 }
 
 .composer-action-menu-item > svg { height: 16px; stroke-width: 1.9; width: 16px; }
-.composer-action-menu-item .composer-teach-task-icon { color: var(--av-sys-color-danger-base); stroke-width: 2.4; }
 
 [data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule { border-color: var(--av-cmp-composer-border-color); }
 [data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule:focus-within { border-color: var(--av-cmp-composer-border-color-focus); }
