@@ -1033,29 +1033,29 @@ where to look when one misbehaves.
   the object's `durable_outbox` (a row there has not been accepted by the
   Queue yet; `parent_effect_enqueue_failed` says why) and the regional
   activities dead-letter queue (`conversation_effect_processing_failed` names
-  the message that kept throwing). An `automation_directory_version_conflict`
+  the message that kept throwing). An `sidekick_directory_version_conflict`
   is a producer bug: the same `source_version` carrying two hashes.
-- **Apply refuses.** The code is the answer: `automation_definition_not_ready`
-  (the chat has not submitted a ready draft), `automation_plugin_unavailable`
+- **Apply refuses.** The code is the answer: `sidekick_definition_not_ready`
+  (the chat has not submitted a ready draft), `sidekick_plugin_unavailable`
   and its binding siblings (the workspace no longer has the connection the draft
-  named), `automation_timezone_invalid`, `automation_recurrence_has_no_future`.
+  named), `sidekick_timezone_invalid`, `sidekick_recurrence_has_no_future`.
   A 500 from `POST /automations/:id/accept` is a fault, not a refusal.
 - **A scheduled run did not fire.** Inspect the object's `schedules`
   (`next_due_at` null means the rule has no future occurrence) and
   `_internal_durable_alarms` (an `automation_schedule` entry behind its retry
-  gate). `automation_scheduled_alarm_failed` and
-  `automation_scheduled_alarm_stalled` name the entry and the handler's code.
+  gate). `sidekick_scheduled_alarm_failed` and
+  `sidekick_scheduled_alarm_stalled` name the entry and the handler's code.
   A paused automation fires nothing and does not catch up on resume.
 - **An event did not start a run.** `external_event_delivery_terminal` records
-  the admission outcome per registration: `automation_paused`,
-  `automation_event_before_activation_boundary` (the event's sequence is at or
+  the admission outcome per registration: `sidekick_paused`,
+  `sidekick_event_before_activation_boundary` (the event's sequence is at or
   below `effective_after_event_sequence`, so it predates the apply that
-  registered the rule), or `automation_occurrence_replayed` (a redelivery). No
+  registered the rule), or `sidekick_occurrence_replayed` (a redelivery). No
   delivery at all means the matcher found no active registration, which
   `WorkspaceDO.workspace_external_event_registrations` will show.
 - **Mail did not start a run.** `inbound_email_receipts` on the object holds
   one row per Resend email id with the refusal code
-  (`automation_not_active`, `automation_email_route_mismatch`,
+  (`sidekick_not_active`, `sidekick_email_route_mismatch`,
   `email_sender_not_authorized`) or the run it admitted.
 - **A run stopped early.** `runs.state` on the object is what its child
   conversation last reported; `stopped` with the automation `paused` or
@@ -1064,7 +1064,7 @@ where to look when one misbehaves.
   never left `pending` has an `automation_run` alarm entry behind its gate.
 - **A result never reached the room.** Only a run of a room's Sidekick holds
   `sidekick_post_result`, and only the run posts; look for
-  `automation_post_result_refused:<code>` or `automation_owning_room_archived`
+  `sidekick_post_result_refused:<code>` or `sidekick_owning_room_archived`
   in the run's tool results. Nothing posts after the run.
 
 Inspect the object through the engineering MCP's raw SQL per
@@ -1356,7 +1356,7 @@ audit, and telemetry remain valid D1 writers.
   timezone for personal scope, then the workspace timezone — resolved at acceptance, inside the
   automation's own object, rather than when the draft was compiled, so the scope chosen on the
   create screen and the account adopting a shared template are the ones that answer it. A zone
-  the runtime cannot format refuses acceptance with `automation_timezone_invalid` rather than
+  the runtime cannot format refuses acceptance with `sidekick_timezone_invalid` rather than
   falling back silently. The resolved zone is then frozen with the schedule: changing the
   author's account timezone afterwards does not move an accepted automation's calendar runs.
 

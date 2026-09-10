@@ -152,8 +152,8 @@ ingress fetches the message, resolves the sender to an active member, writes
 the payload to R2 and the resource, and then calls
 `AutomationDO.admitInboundEmail` exactly once. The object answers a retry from
 `inbound_email_receipts` by Resend email id before deciding anything; a new
-message is refused with `automation_not_active`,
-`automation_email_route_mismatch`, or `email_sender_not_authorized`, and the
+message is refused with `sidekick_not_active`,
+`sidekick_email_route_mismatch`, or `email_sender_not_authorized`, and the
 refusal is the receipt, so a retry never re-evaluates it. There is no pre-fetch
 screen and no hourly window; the sender must be inside the message, so the
 message is fetched first, and the address is a routing identifier every member
@@ -177,7 +177,7 @@ screening at ingress. [`security.md`](security.md) records the decision and what
 a re-tightening would have to cover.
 
 Pausing an automation changes nothing in Global: the claim stands and the
-object's own lifecycle check refuses the mail with `automation_not_active`,
+object's own lifecycle check refuses the mail with `sidekick_not_active`,
 writing a refusal receipt rather than a run. Resuming makes the same address
 deliverable again. An archived or deleted owner keeps its claim forever; the
 row is the tombstone.
@@ -402,7 +402,7 @@ registry, and what happens to mail addressed to one. It does not own:
   one call that either writes the receipt and the run together or writes the
   refusal receipt alone.
 - **A message an automation refuses is receipted, not dropped.** The outcome code
-  (`automation_not_active`, `automation_email_route_mismatch`,
+  (`sidekick_not_active`, `sidekick_email_route_mismatch`,
   `email_sender_not_authorized`) is stored against the Resend email ID, so a
   provider retry resolves to the same refusal instead of being re-evaluated
   against a lifecycle that has since moved. The message is fetched and stored

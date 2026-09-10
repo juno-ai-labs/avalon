@@ -1136,6 +1136,23 @@ const CONNECTOR_CONNECTION_DEPENDENTS = [
   "webhook_receipts",
 ] as const;
 
+/**
+ * Every table that cascades from `memory_scopes`, parent-first, so a restore
+ * in this order never inserts a child before its parent. The last three reach
+ * the scope through `memory_tables` and `memory_table_rows` rather than
+ * directly, and would be emptied all the same.
+ */
+const MEMORY_SCOPE_DEPENDENTS = [
+  "memory_items",
+  "memory_mutations",
+  "memory_index_outbox",
+  "memory_tables",
+  "memory_table_columns",
+  "memory_table_rows",
+  "memory_table_cells",
+  "memory_table_mutations",
+] as const;
+
 export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
   description: "workspace control-plane authority and realtime synchronization",
@@ -2884,6 +2901,52 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `ALTER TABLE automation_directory ADD COLUMN appearance_json TEXT
        CHECK (appearance_json IS NULL OR json_valid(appearance_json))`,
   ],
+}, {
+  version: 50,
+  description: "memory scopes store a Sidekick's kind as sidekick",
+  // `kind` is a CHECK vocabulary and the row is immutable by trigger, so the
+  // stored `automation` cannot be renamed in place: the table is replaced, the
+  // way migration 31 replaced `connector_connections`. Every dependent cascades
+  // from it, so each is held in a scratch copy across the replacement and put
+  // back afterwards, with foreign keys enforced the whole way — `PRAGMA
+  // foreign_keys = OFF` is a no-op by the time a group runs. One step differs
+  // from 31: the dependents are emptied child-first *before* the parent is
+  // dropped rather than left to the drop's implicit delete. Two of them carry
+  // FTS5 shadow tables whose triggers fire on every deleted row, and a cascade
+  // reaching those from inside `DROP TABLE` locks the table being dropped
+  // (`SQLITE_LOCKED`); an ordinary `DELETE` fires the same triggers cleanly.
+  // The immutability trigger and the workspace identity fences go with the old
+  // table and are recreated; no later migration added an index or a column to
+  // this table, and no dependent's schema is restated here.
+  statements: [
+    ...MEMORY_SCOPE_DEPENDENTS.map((table) => `CREATE TABLE ${table}_v50_hold AS SELECT * FROM ${table}`),
+    ...[...MEMORY_SCOPE_DEPENDENTS].reverse().map((table) => `DELETE FROM ${table}`),
+    `CREATE TABLE memory_scopes_v50 (
+      memory_scope_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('workstream', 'sidekick', 'user', 'workspace')),
+      owner_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE (workspace_id, kind, owner_id),
+      CHECK (kind <> 'workspace' OR owner_id = workspace_id)
+    ) STRICT`,
+    `INSERT INTO memory_scopes_v50 (memory_scope_id, workspace_id, kind, owner_id, created_at)
+     SELECT memory_scope_id, workspace_id,
+            CASE kind WHEN 'automation' THEN 'sidekick' ELSE kind END,
+            owner_id, created_at
+       FROM memory_scopes`,
+    // Childless by now, so nothing cascades. The rename then puts the
+    // replacement under the name every dependent still references.
+    `DROP TABLE memory_scopes`,
+    `ALTER TABLE memory_scopes_v50 RENAME TO memory_scopes`,
+    `CREATE TRIGGER memory_scopes_are_immutable BEFORE UPDATE ON memory_scopes
+      BEGIN SELECT RAISE(ABORT, 'memory_scope_immutable'); END`,
+    ...workspaceIdentityFencesFor("memory_scopes"),
+    ...MEMORY_SCOPE_DEPENDENTS.flatMap((table) => [
+      `INSERT INTO ${table} SELECT * FROM ${table}_v50_hold`,
+      `DROP TABLE ${table}_v50_hold`,
+    ]),
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -4405,7 +4468,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const envelope = request.envelope;
     const effect = envelope.effect;
-    if (effect.kind !== "directory_automation") throw new Error("automation_directory_effect_kind_invalid");
+    if (effect.kind !== "directory_automation") throw new Error("sidekick_directory_effect_kind_invalid");
     const result = this.state.storage.transactionSync(() => {
       const existing = this.state.storage.sql.exec<{ source_version: number; payload_hash: string }>(
         `SELECT source_version, payload_hash FROM automation_directory WHERE automation_id = ?`,
@@ -4415,7 +4478,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (existing.source_version > envelope.sourceVersion) return { applied: false };
         if (existing.source_version === envelope.sourceVersion) {
           if (existing.payload_hash !== envelope.payloadHash) {
-            throw new Error("automation_directory_version_conflict");
+            throw new Error("sidekick_directory_version_conflict");
           }
           return { applied: false };
         }
@@ -4491,7 +4554,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }).parse(input);
     this.assertWorkspace(request.workspaceId);
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      throw new ApiError(403, "automation_directory_access_denied", "You cannot list this workspace's automations");
+      throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this workspace's automations");
     }
     return { items: this.listSidebarAutomations(request.workspaceId, request.userId, 250) };
   }
@@ -4550,12 +4613,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }).parse(input);
     this.assertWorkspace(request.workspaceId);
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      throw new ApiError(403, "automation_directory_access_denied", "You cannot list this room's automations");
+      throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this room's automations");
     }
     // An archived room's rail still renders, and its automations are paused
     // rather than gone, so a participant of the archived room may list them.
     if (!this.isWorkstreamParticipant(request.workstreamId, request.userId, { includeArchived: true })) {
-      throw new ApiError(403, "automation_directory_access_denied", "You cannot list this room's automations");
+      throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this room's automations");
     }
     const rows = this.state.storage.sql.exec<AutomationDirectoryRow>(
       `SELECT automation_id, loadable, appearance_json, lifecycle, scope, owning_workstream_id, title,
@@ -6351,11 +6414,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }));
     for (const [index, outcome] of settled.entries()) {
       if (outcome.status !== "rejected") continue;
-      logWarn(this.env, "automation_owning_room_archival_failed", {
+      logWarn(this.env, "sidekick_owning_room_archival_failed", {
         workspace_id: workspaceId,
         automation_id: owned[index]?.automation_id ?? null,
         workstream_id: owned[index]?.workstream_id ?? null,
-        code: diagnosticErrorCode(outcome.reason, "automation_owning_room_archival_failed"),
+        code: diagnosticErrorCode(outcome.reason, "sidekick_owning_room_archival_failed"),
       });
     }
   }

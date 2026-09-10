@@ -509,7 +509,7 @@ async function automationCreatorTool(
   name: string,
 ): Promise<Awaited<ReturnType<typeof __integrationTesting.loadHarnessTools>>["tools"][number]> {
   const selected = await __integrationTesting.loadHarnessTools(env(database), input);
-  const plugin = selected.plugins.find((candidate) => candidate.canonicalId === "rally:automations");
+  const plugin = selected.plugins.find((candidate) => candidate.canonicalId === "rally:sidekicks");
   if (!plugin) throw new Error("automations_plugin_missing");
   const tool = plugin.tools.find((candidate) => candidate.definition.name === name);
   if (!tool) throw new Error(`automation_creator_tool_missing:${name}`);
@@ -882,7 +882,7 @@ describe("connector tools selected for harness runs", () => {
     // parent surface — deferred, so being here costs a catalog entry and no
     // connector read until somebody loads it.
     expect(parentTools.plugins.map((plugin) => plugin.canonicalId))
-      .toContain("rally:automations");
+      .toContain("rally:sidekicks");
     expect(parentTools.plugins).toHaveLength(5);
     expect(parentTools.plugins.flatMap((plugin) => plugin.tools)
       .some((tool) => tool.definition.mode === "write")).toBe(true);
@@ -979,7 +979,7 @@ describe("connector tools selected for harness runs", () => {
       JSON.stringify({ pluginId: "plugin_google" }),
       JSON.stringify({
         canonicalToolName: "plugin_inspect",
-        capability: "rally.automation.plugins.inspect",
+        capability: "rally.sidekick.plugins.inspect",
       }),
     );
     database.objectStore.prepare(
@@ -1000,7 +1000,7 @@ describe("connector tools selected for harness runs", () => {
       "replay/automation-resources",
       JSON.stringify({
         canonicalToolName: "resources_search",
-        capability: "rally.automation.resources.search",
+        capability: "rally.sidekick.resources.search",
       }),
     );
     database.replayOutputs.set("replay/automation-resources", {
@@ -1041,12 +1041,12 @@ describe("connector tools selected for harness runs", () => {
       JSON.stringify(evaluatorRules),
       JSON.stringify({
         canonicalToolName: "set_evaluator_rules",
-        capability: "rally.automation.evaluators.set",
+        capability: "rally.sidekick.evaluators.set",
       }),
     );
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
     const automations = selected.plugins.find((plugin) =>
-      plugin.canonicalId === "rally:automations"
+      plugin.canonicalId === "rally:sidekicks"
     );
     if (!automations) throw new Error("automations_plugin_missing");
     // A restored durable activation skips onActivate. Its first tool still has
@@ -1128,7 +1128,7 @@ describe("connector tools selected for harness runs", () => {
       replacement.loadedAutomationPluginIds,
     );
     const replacementSubmit = replacement.plugins.find((candidate) =>
-      candidate.canonicalId === "rally:automations"
+      candidate.canonicalId === "rally:sidekicks"
     )?.tools.find((tool) => tool.definition.name === "submit_draft");
     if (!replacementSubmit) throw new Error("replacement_automation_creator_tools_missing");
     await expect(replacementSubmit.execute(
@@ -1171,7 +1171,7 @@ describe("connector tools selected for harness runs", () => {
       JSON.stringify({ pluginId: "plugin_google" }),
       JSON.stringify({
         canonicalToolName: "plugin_inspect",
-        capability: "rally.automation.plugins.inspect",
+        capability: "rally.sidekick.plugins.inspect",
       }),
     );
     // The receipt holds what the model sent, sentinel included: the strip
@@ -1208,11 +1208,11 @@ describe("connector tools selected for harness runs", () => {
       JSON.stringify(sentinelRules),
       JSON.stringify({
         canonicalToolName: "set_evaluator_rules",
-        capability: "rally.automation.evaluators.set",
+        capability: "rally.sidekick.evaluators.set",
       }),
     );
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
-    const automations = selected.plugins.find((plugin) => plugin.canonicalId === "rally:automations");
+    const automations = selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
     if (!automations) throw new Error("automations_plugin_missing");
     __integrationTesting.recordCredentialPluginActivation(
       `connection:${WORKSPACE_CONNECTION_ID}`,

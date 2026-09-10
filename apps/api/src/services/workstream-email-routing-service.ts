@@ -491,7 +491,7 @@ export class WorkstreamEmailRoutingService {
     const existing = await this.loadLegacyAutomationDestination(input);
     if (existing) {
       if (existing.local_part.toLowerCase() !== claimed.localPart) {
-        throw new ApiError(409, "automation_email_address_conflict", "The automation already has a different email address");
+        throw new ApiError(409, "sidekick_email_address_conflict", "The automation already has a different email address");
       }
       return { ...input, localPart: claimed.localPart, emailAddress: claimed.emailAddress };
     }
@@ -505,7 +505,7 @@ export class WorkstreamEmailRoutingService {
     ).bind(claimed.localPart, input.region, input.workspaceId, input.automationSubscriptionId, at, at).run();
     const reserved = await this.loadLegacyAutomationDestination(input);
     if (!reserved || reserved.local_part.toLowerCase() !== claimed.localPart) {
-      throw new ApiError(409, "automation_email_address_conflict", "The automation already has a different email address");
+      throw new ApiError(409, "sidekick_email_address_conflict", "The automation already has a different email address");
     }
     return { ...input, localPart: claimed.localPart, emailAddress: claimed.emailAddress };
   }
@@ -543,7 +543,7 @@ export class WorkstreamEmailRoutingService {
 
   private mapLegacyAutomationRoute(row: LegacyRouteRow): AutomationEmailRoute {
     if (!row.automation_subscription_id || row.workstream_id) {
-      throw new ApiError(500, "automation_email_route_invalid", "The automation email route is invalid");
+      throw new ApiError(500, "sidekick_email_route_invalid", "The automation email route is invalid");
     }
     return {
       localPart: row.local_part,
@@ -625,7 +625,7 @@ export class WorkstreamEmailRoutingService {
     if (!existing || existing.email_address.toLowerCase() !== emailAddress) {
       throw new ApiError(
         409,
-        kind === "workstream" ? "workstream_email_address_conflict" : "automation_email_address_conflict",
+        kind === "workstream" ? "workstream_email_address_conflict" : "sidekick_email_address_conflict",
         kind === "workstream"
           ? "The work stream already has a different email address"
           : "The automation already has a different email address",
@@ -668,7 +668,7 @@ export class WorkstreamEmailRoutingService {
 
   private mapAutomationRoute(row: RouteRow): AutomationEmailRoute {
     if (!row.automation_subscription_id || row.workstream_id) {
-      throw new ApiError(500, "automation_email_route_invalid", "The automation email route is invalid");
+      throw new ApiError(500, "sidekick_email_route_invalid", "The automation email route is invalid");
     }
     const { emailAddress, localPart } = this.parseStoredAddress(row.email_address);
     return {
@@ -733,7 +733,7 @@ export class WorkstreamEmailRoutingService {
 
   private assertAutomationRegionalOwner(input: AutomationEmailRouteInput): void {
     if (input.region !== this.env.AVALON_REGION) {
-      throw new ApiError(422, "automation_email_region_mismatch", "The automation belongs to a different data region");
+      throw new ApiError(422, "sidekick_email_region_mismatch", "The automation belongs to a different data region");
     }
   }
 

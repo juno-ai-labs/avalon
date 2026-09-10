@@ -40,7 +40,6 @@ export interface WorkstreamAutomationPromptContext {
   durableTables: Array<{
     memoryTableId: string;
     memoryScopeId: string;
-    /** The model-facing name of the stored `automation` memory scope kind. */
     scopeKind: "sidekick";
     name: string;
     description: string;

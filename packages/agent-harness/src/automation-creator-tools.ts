@@ -128,7 +128,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
   const draftState = input.draftState;
   const creatorDefinition = (name: string): HarnessTool["definition"] => {
     const definition = AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS.find((candidate) => candidate.name === name);
-    if (!definition) throw new Error(`automation_creator_definition_missing:${name}`);
+    if (!definition) throw new Error(`sidekick_creator_definition_missing:${name}`);
     return definition;
   };
   const creatorTools: HarnessTool[] = [
@@ -162,7 +162,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         return parsed.success ? null : parsed.error;
       },
       execute: async (raw) => {
-        if (!input.draftResearchPort) throw new Error("automation_draft_research_host_unavailable");
+        if (!input.draftResearchPort) throw new Error("sidekick_draft_research_host_unavailable");
         const { query } = z.strictObject({ query: z.string().min(1) }).parse(raw);
         const output = await input.draftResearchPort.searchPeople(query);
         rememberAutomationPeopleSearchResult(output, resolvedAutomationPersonIds);
@@ -179,7 +179,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         return parsed.success ? null : parsed.error;
       },
       execute: async (raw) => {
-        if (!input.draftResearchPort) throw new Error("automation_draft_research_host_unavailable");
+        if (!input.draftResearchPort) throw new Error("sidekick_draft_research_host_unavailable");
         const { query } = z.strictObject({ query: z.string().min(1) }).parse(raw);
         const output = await input.draftResearchPort.searchResources(query);
         rememberAutomationResourceSearchResult(output, resolvedAutomationResources);
@@ -192,7 +192,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
     {
       definition: creatorDefinition("sidekicks_list"),
       execute: async () => {
-        if (!input.automationDirectoryPort) throw new Error("automation_directory_host_unavailable");
+        if (!input.automationDirectoryPort) throw new Error("sidekick_directory_host_unavailable");
         return {
           output: await input.automationDirectoryPort.listAutomations(),
           summary: "Listed the Sidekicks this conversation can edit",
@@ -217,7 +217,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
        * the same draft, is refused identically, and the compile ends with no
        * draft at all. That is request 8592b3f1 — four identical rejections of
        * one missing `deterministicPrefilter.eventType`, then
-       * `automation_draft_not_submitted` and a 502 the person could only read
+       * `sidekick_draft_not_submitted` and a 502 the person could only read
        * as "try again". Re-running the same parse here is what turns that dead
        * end into the named field, because it is the one signal that separates a
        * correctable argument from an external fault.
@@ -272,13 +272,13 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
           // predicate the object applies, so the two cannot disagree about
           // which drafts are refused; only the wording is this side's.
           const blocker = automationDraftAcceptanceBlocker(parsed.data, draftState.evaluatorRules ?? null);
-          if (blocker === "automation_evaluator_rules_required") {
+          if (blocker === "sidekick_evaluator_rules_required") {
             throw new Error(
               "Call set_evaluator_rules with at least one rule before submitting a ready draft "
               + "that has a connector_activity, semantic_activity or webhook trigger",
             );
           }
-          if (blocker === "automation_activity_source_unbound") {
+          if (blocker === "sidekick_activity_source_unbound") {
             throw new Error(
               "Every rule's sourceBindingKey and suggestedSourcePluginId must match a connector_activity, "
               + "semantic_activity or webhook trigger in this draft. Call set_evaluator_rules again with rules "
@@ -309,7 +309,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
       serial: true,
       validateInput: (raw) => evaluatorRuleIssues(withoutUnusableDraftResourceIds(raw, catalog)),
       execute: async (rawArguments, context) => {
-        if (!input.draftMutationPort) throw new Error("automation_draft_mutation_host_unavailable");
+        if (!input.draftMutationPort) throw new Error("sidekick_draft_mutation_host_unavailable");
         const raw = withoutUnusableDraftResourceIds(rawArguments, catalog);
         // The harness consults `validateInput` only after the executor has
         // already thrown a ZodError, so a semantic check that lives there
@@ -453,7 +453,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
   return creatorTools;
 }
 
-export const AUTOMATIONS_PLUGIN_ID = "rally:automations";
+export const AUTOMATIONS_PLUGIN_ID = "rally:sidekicks";
 
 export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "Sidekicks let people delegate work or knowledge. Create and edit them through conversation; never ask users to edit system instructions.",
