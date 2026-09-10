@@ -123,6 +123,10 @@ html[data-theme='dark'] { --personal-ink-light: var(--av-ref-color-neutral-14); 
    which is why no accent needs a rule of its own here. Keying this off the hue
    made every light-theme accent near-black ink on a near-black mix. */
 html[data-personal-color] { --av-sys-color-accent-on: var(--av-sys-color-text-on-inverse); }
+/* Only a fallback: every swatch carries an inline `personalColorInk(value)`
+   that wins over this. It is the dark ink because a swatch with no accent
+   resolved is an uncoloured button, not because black is the common ink —
+   since the palette moved to APCA it is the minority, on three fills. */
 .personal-colors button { color: var(--personal-ink-dark); }
 
 .intro-scene.is-exiting { animation: onboarding-exit 100ms ease-in both; }

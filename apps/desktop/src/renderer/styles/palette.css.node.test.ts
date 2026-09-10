@@ -70,9 +70,25 @@ function apcaLc(text: string, background: string): number {
   return (sapc > -0.1 ? 0 : sapc + 0.027) * 100;
 }
 
+/**
+ * The two inks that actually ship, read from the theme rather than idealised as
+ * pure black and white. `#fcfcfc` and `#141414` are what a glyph is painted in,
+ * so they are what every judgement here is made against; comparing `#ffffff`
+ * against `#000000` would let a change to either ink token move the real winner
+ * without moving this test.
+ */
+function inks(theme: 'light' | 'dark'): { white: string; black: string } {
+  const values = themeValues(theme);
+  return {
+    white: values['sys.color.palette-ink.light'] as string,
+    black: values['sys.color.palette-ink.dark'] as string,
+  };
+}
+
 /** The ink APCA would pick, which the table follows everywhere but the ties below. */
-function apcaWinner(fill: string): 'white' | 'black' {
-  return Math.abs(apcaLc('#ffffff', fill)) > Math.abs(apcaLc('#000000', fill)) ? 'white' : 'black';
+function apcaWinner(fill: string, theme: 'light' | 'dark'): 'white' | 'black' {
+  const { white, black } = inks(theme);
+  return Math.abs(apcaLc(white, fill)) > Math.abs(apcaLc(black, fill)) ? 'white' : 'black';
 }
 
 /**
@@ -98,13 +114,48 @@ const APCA_TIES = new Set(['cyan', 'emerald']);
  * This is accepted debt, not an oversight: WCAG 2's relative luminance misjudges
  * saturated mid-tones, `PALETTE_INK` follows APCA instead, and the contract
  * comment records the trade. The list is pinned so the debt cannot quietly grow
- * — a token change that drags a fifth fill under the bar fails here. Thirteen
- * more sit between 3:1 and the 4.5:1 that standard asks of text; these four are
- * the ones under even its graphical-object bar.
+ * — a token change that drags a fifth fill under the bar fails here. *Nine*
+ * more sit between 3:1 and the 4.5:1 that standard asks of text; thirteen is
+ * the count below 4.5:1 in total, these four being the ones under even the
+ * graphical-object bar.
+ *
+ * Asserted by set equality, so *improving* one of these fills fails this test
+ * too. That is intended — a fill leaving the set is exactly as much a change to
+ * the recorded debt as one joining it, and `yellow` at 2.86:1 is close enough to
+ * the bar that a small edit could do it.
  */
 const BELOW_WCAG_GRAPHICAL = new Set(['cyan', 'emerald', 'orange', 'yellow']);
 
 describe('project palette', () => {
+  it('given APCA\'s published check values, when the transcription runs, then it reproduces them', () => {
+    // `apcaY`/`apcaLc` are transcribed by hand, so a mistyped exponent would
+    // quietly re-decide the whole table while every other test in this file
+    // agreed with it — they all read the same function. These are the
+    // algorithm's own keystone check values, stated to full precision and taken
+    // from its documentation rather than from this implementation, which is what
+    // makes them able to catch that.
+    //
+    // The set matters as much as the numbers. A vector over white or black
+    // exercises nothing on the background side, because `1 ** x` and `0 ** x`
+    // are the same whatever `x` is — the first draft of this test used only
+    // those and survived changing `0.56` to `0.57`. The mid-tone backgrounds
+    // below are what pin both background exponents, and the last pair sits under
+    // the low-contrast clip.
+    const vectors: readonly [string, string, number][] = [
+      ['#888888', '#ffffff', 63.056469930209424],
+      ['#ffffff', '#888888', -68.54146436644962],
+      ['#000000', '#aaaaaa', 58.146262578561334],
+      ['#aaaaaa', '#000000', -56.24113336839742],
+      ['#112233', '#ddeeff', 91.66830811481631],
+      ['#ddeeff', '#112233', -93.06770049484275],
+      ['#112233', '#444444', 8.32326136957393],
+      ['#444444', '#112233', -7.526878460278154],
+    ];
+    for (const [text, background, expected] of vectors) {
+      expect(apcaLc(text, background), `${text} on ${background}`).toBeCloseTo(expected, 6);
+    }
+  });
+
   it('given each palette fill, when APCA decides the ink, then it agrees with PALETTE_INK', () => {
     // The table is checked in so a token edit that flips an ink has to be a
     // visible change rather than a silent one. This is the half that proves the
@@ -112,20 +163,29 @@ describe('project palette', () => {
     // themselves in both appearances.
     //
     // APCA, not the WCAG 2 ratio this once used. That ratio made black the
-    // winner on thirteen of these fills — `blue`, `red`, `violet` among them —
-    // where a white mark plainly reads better; its luminance curve misjudges
-    // saturated mid-tones and the whole palette is saturated mid-tones.
+    // winner on sixteen of these nineteen fills — `blue`, `red`, `violet` among
+    // them — where a white mark plainly reads better; thirteen of those sixteen
+    // are what this change reversed, the other three still taking black. Its
+    // luminance curve misjudges saturated mid-tones, and the whole palette is
+    // saturated mid-tones.
     for (const theme of ['light', 'dark'] as const) {
       const tokens = themeValues(theme);
       for (const key of PALETTE_KEYS) {
         const fill = tokens[`sys.color.project.${key}`];
         expect(fill, `${theme} is missing a fill for ${key}`).toMatch(/^#[0-9a-f]{6}$/);
-        const white = Math.abs(apcaLc('#ffffff', fill as string));
-        const black = Math.abs(apcaLc('#000000', fill as string));
+        const white = Math.abs(apcaLc(inks(theme).white, fill as string));
+        const black = Math.abs(apcaLc(inks(theme).black, fill as string));
         const detail = `${key} in ${theme} (white Lc ${white.toFixed(0)}, black Lc ${black.toFixed(0)})`;
 
-        if (!APCA_TIES.has(key)) {
-          expect(PALETTE_INK[key], detail).toBe(apcaWinner(fill as string));
+        if (APCA_TIES.has(key)) {
+          // The exemption is only honest while the fill really is a tie. If one
+          // ink stops being readable the disagreement is no longer a coin-flip,
+          // and the table has to follow the model rather than keep its
+          // exception. Stated as "both inks clear the floor" so there is no
+          // invented tolerance to argue about.
+          expect(Math.min(white, black), `${detail} is no longer a tie`).toBeGreaterThanOrEqual(READABLE_LC);
+        } else {
+          expect(PALETTE_INK[key], detail).toBe(apcaWinner(fill as string, theme));
         }
 
         // Whichever ink the table takes has to actually be readable, tie or not.
@@ -144,7 +204,7 @@ describe('project palette', () => {
       const tokens = themeValues(theme);
       const failing = PALETTE_KEYS.filter((key) => {
         const fill = tokens[`sys.color.project.${key}`] as string;
-        const ink = PALETTE_INK[key] === 'white' ? '#ffffff' : '#000000';
+        const ink = PALETTE_INK[key] === 'white' ? inks(theme).white : inks(theme).black;
         return contrast(luminance(ink), luminance(fill)) < 3;
       });
       expect(new Set(failing), `${theme}: the WCAG 2 shortfall changed`).toEqual(BELOW_WCAG_GRAPHICAL);
@@ -203,6 +263,41 @@ describe('project palette', () => {
     // can hold that still takes black.
     const whiteAccents = PERSONAL_COLOR_KEYS.filter((key) => PALETTE_INK[key] === 'white');
     expect(whiteAccents).toEqual(['rose', 'orange', 'emerald', 'blue', 'violet', 'fuchsia', 'black']);
+  });
+
+  it('given the personal ink pair, when the appearance swaps the ramp under it, then the pair does not invert', () => {
+    // `personalColorInk()` is the other reader of `PALETTE_INK`, and it resolves
+    // through `--personal-ink-light`/`-dark` rather than the palette-ink tokens
+    // the glyph uses. Those two are defined off `ref.color.neutral.*`, which
+    // *does* invert with the appearance, and onboarding.css swaps which neutral
+    // each one points at to cancel that out. Two inversions cancelling is
+    // exactly the kind of thing that silently stops cancelling, and until now
+    // nothing checked it — the flip to sixteen white accents raised the stakes.
+    for (const theme of ['light', 'dark'] as const) {
+      const values = themeValues(theme);
+      const rule = theme === 'dark'
+        ? "html[data-theme='dark'] { --personal-ink-light: var(--av-ref-color-neutral-14); --personal-ink-dark: var(--av-ref-color-neutral-1); }"
+        : 'html { --personal-ink-light: var(--av-ref-color-neutral-1); --personal-ink-dark: var(--av-ref-color-neutral-14); }';
+      expect(onboarding, `${theme} no longer declares the personal ink pair as expected`).toContain(rule);
+
+      const light = values[theme === 'dark' ? 'ref.color.neutral.14' : 'ref.color.neutral.1'] as string;
+      const dark = values[theme === 'dark' ? 'ref.color.neutral.1' : 'ref.color.neutral.14'] as string;
+
+      // Threshold-free: whatever the ramp does, the light ink has to stay
+      // lighter than every fill it can be painted on and the dark ink darker.
+      for (const key of PERSONAL_COLOR_KEYS) {
+        const fill = values[`sys.color.project.${key}`] as string;
+        expect(luminance(light), `${theme}: personal-ink-light is not light over ${key}`)
+          .toBeGreaterThan(luminance(fill));
+        expect(luminance(dark), `${theme}: personal-ink-dark is not dark over ${key}`)
+          .toBeLessThan(luminance(fill));
+
+        // And the ink the table actually picks has to be readable on it.
+        const chosen = PALETTE_INK[key] === 'white' ? light : dark;
+        expect(Math.abs(apcaLc(chosen, fill)), `${key} in ${theme}: accent ink below the floor`)
+          .toBeGreaterThanOrEqual(READABLE_LC);
+      }
+    }
   });
 
   it('given every accent a person can hold, when onboarding.css is read, then each resolves to the token the contract gives', () => {

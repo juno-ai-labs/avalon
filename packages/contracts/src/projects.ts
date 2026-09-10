@@ -115,9 +115,10 @@ export const PROJECT_COLOR_RING = PALETTE_RING;
  * The basis is APCA — the perceptual contrast model the WCAG 3 drafts are built
  * on — together with a look at every fill at the sizes it actually ships. It is
  * deliberately not WCAG 2's relative-luminance ratio, which this table used to
- * follow. WCAG 2 makes black the winner on thirteen of these nineteen fills,
+ * follow. WCAG 2 makes black the winner on sixteen of these nineteen fills,
  * `blue`, `red` and `violet` among them, where a white symbol plainly reads
- * better and where every other design system ships white. Its luminance curve is
+ * better and where every other design system ships white. Thirteen of those
+ * sixteen are what this table reversed; the other three still take black. Its luminance curve is
  * known to misjudge saturated mid-tones, and this palette is nothing but
  * saturated mid-tones: on `blue` it scores black 5.71 against white's 3.68,
  * while APCA scores white Lc 69 against black's Lc 40.
@@ -129,8 +130,9 @@ export const PROJECT_COLOR_RING = PALETTE_RING;
  * Lc 55. Where the two inks tie, the ring reads better with one of them running
  * through it than with two exceptions stranded in the middle.
  *
- * What this knowingly gives up: none of the thirteen fills from `cyan` to
- * `indigo` meets WCAG 2's 4.5:1 for text with the white ink, and four of them —
+ * What this knowingly gives up: none of the thirteen fills this change flips to
+ * white meets WCAG 2's 4.5:1 for text with that ink — they are scattered around
+ * the ring rather than being a run of it — and four of them —
  * `cyan` at 2.43:1, `emerald`, `orange`, `yellow` — are under even the 3:1 that
  * standard asks of a graphical object. An audit run against WCAG 2 will flag
  * them. That is the price of following the model that matches what is on the
@@ -144,7 +146,8 @@ export const PROJECT_COLOR_RING = PALETTE_RING;
  *
  * Checked in rather than computed at render, so a value change that flips an ink
  * has to be a visible edit; `palette.css.node.test.ts` holds the readable floor
- * against the tokens in both appearances.
+ * against the tokens in both appearances, and pins both the WCAG 2 shortfall and
+ * the two APCA ties by name so neither can grow unnoticed.
  */
 export const PALETTE_INK = {
   rose: "white",
