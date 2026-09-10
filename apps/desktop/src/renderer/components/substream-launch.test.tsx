@@ -147,6 +147,20 @@ describe('substream launch surface', () => {
     expect(screen.getByRole('heading', { level: 1 }).querySelector('.title-skeleton')).not.toBeNull();
   });
 
+  it('stops offering to cancel once creation is in flight', () => {
+    renderSurface({
+      launching: {
+        attachments: [],
+        createdAt: '2026-09-09T20:05:00.000Z',
+        startedAt: Date.parse('2026-09-09T20:05:00.000Z'),
+        text: 'Compare it with last release',
+      },
+    });
+    // The row is on its way out, but it is still in the tab order while it
+    // goes — and this control cannot stop a creation the server has claimed.
+    expect(screen.getByRole('button', { name: 'Cancel new substream' })).toBeDisabled();
+  });
+
   it('keeps the words when creation fails, because the composer restores what it cleared', async () => {
     const { onCreate } = renderSurface();
     onCreate.mockRejectedValueOnce(new Error('The substream could not be created.'));
