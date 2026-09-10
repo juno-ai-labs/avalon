@@ -79,6 +79,14 @@ interface SidebarProps {
   conversationOnly?: boolean;
   /** The responsive or manually selected GrokBot icon rail. */
   compact?: boolean;
+  /**
+   * True while the window is too narrow to hold the expanded sidebar, whatever
+   * the saved preference says. It cannot be recovered from `compact`, which is
+   * `collapsed || constrained` and so reads the same for a sidebar the reader
+   * collapsed as for one the window is pinning; somebody who did both is held
+   * by the window, and expanding is impossible until it widens.
+   */
+  constrained?: boolean;
   workspace: Workspace;
   /**
    * Every Sidekick the person can see, or `undefined` while the workspace
@@ -1004,6 +1012,7 @@ export function Sidebar({
   onOpenSearch,
   conversationOnly = false,
   compact = false,
+  constrained = false,
   workspace,
   automations,
   notes = [],
@@ -1046,7 +1055,13 @@ export function Sidebar({
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const setSidebarCollapsed = useUiStore((state) => state.setSidebarCollapsed);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
-  const forcedCompact = compact && !sidebarCollapsed;
+  // The window's own answer, not one inferred from `compact`. Inferred as
+  // `compact && !sidebarCollapsed`, this read false for a reader who collapsed
+  // navigation and then narrowed the window: the footer toggle came back to
+  // life, the hint offered an expansion that could not happen, and taking
+  // either rewrote the saved preference to expanded for a widening that might
+  // never come.
+  const forcedCompact = constrained;
   const effectiveSidebarWidth = compact ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
   const openPublicPage = useCallback(async (path: string): Promise<void> => {
     const bridge = desktopBridge();
