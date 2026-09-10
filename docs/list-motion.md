@@ -113,9 +113,9 @@ no old slot to leave from. Rows that are gone cannot be animated.
 
 The hook takes a `layoutKey` naming the layout the rows are in. When it
 changes, every row is measured afresh and nothing plays: the sidebar's compact
-toggle changes the scroll box's padding, hides the headings, and swaps the
-command bar for the rail's controls, which moves every row's position for a
-reason that is not a reorder; the sidebar passes `compact`.
+toggle narrows every row, closes the headings to no height and changes the
+scroll box's padding, which moves every row's position for a reason that is
+not a reorder; the sidebar passes `compact`.
 
 It also takes `layoutSettling`, which says the rows are still travelling to
 that layout. The sidebar's rows change shape under CSS transitions for as long
@@ -461,6 +461,8 @@ sidebar reads it from the native event, and so must any second caller. The
 entrance's wait is the mover's, so an inserted row lands about 180ms after a
 240ms layout has; a different rhythm for insertions is a change to
 `enterKeyframes`, not to the hook.
+
+Shipped in #648.
 
 ### 2026-09-09 — Drags target the slot laid out under the pointer, and the reader's own row is held
 

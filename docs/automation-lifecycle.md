@@ -567,8 +567,9 @@ production inspection paths.
 **What changed:** In the compact rail the strip stays below the scrolling
 streams and above the account row, and stays a horizontally scrolling row of
 54px tiles, with one tile centred and the next showing past the padding. This
-reverses the 2026-09-08 entry below, which had folded the tiles into the
-vertical navigation scroller.
+reverses the 2026-09-08 entry below, **Scroll compact Sidekicks with
+navigation**, which had folded the tiles into the vertical navigation
+scroller.
 
 **Why:** The strip was asked to keep its place and its horizontal scroll in
 the collapsed sidebar, so the Sidekicks are reached at the same spot whichever
@@ -591,6 +592,8 @@ transitions on `--sidebar-layout-motion`, per
 [`conversation-surfaces.md`](conversation-surfaces.md), and a rule that gives
 a tile a keyword size in one width cuts. On a platform whose scrollbars take
 space, an overflowing strip in the rail shows a thin scrollbar under the tile.
+
+Shipped in #648.
 
 ### 2026-09-08 — Give Sidekicks a library and dedicated profile layout
 

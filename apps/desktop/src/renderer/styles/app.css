@@ -675,6 +675,10 @@ pre {
   left: 0;
   position: fixed;
   top: 0;
+  /* Declared here as well as on the shell's rule below, so the signal fires
+     wherever the sidebar is rendered; the shell's rule restates it beside the
+     workspace-switch fade because `transition` is a shorthand. */
+  transition: --sidebar-compact var(--sidebar-layout-motion);
   width: var(--av-cmp-sidebar-width);
   z-index: 30;
 }
@@ -1273,11 +1277,13 @@ pre {
    brightness and rises — a dip to zero would flash the bare backdrop between. */
 @keyframes workspace-enter { from { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) {
-  /* The fade goes; the layout channel stays, because the box's width still
-     travels for this reader and the rows have to arrive with it. The whole
-     shorthand, not `transition-property` alone: the longhand would keep the
-     rule's duration and easing lists and pair the one remaining property with
-     the fade's 220ms `ease`, ending the signal before the layout has. */
+  /* The fade goes; the layout channel stays in the list so that its run and
+     end events still bracket the change. For this reader the change is a
+     snap: the sitewide reduced-motion rule further down brings every
+     transition's duration to 0.001ms, the box's width and the rows' shapes
+     included, and this channel with them. The whole shorthand rather than
+     `transition-property` alone, which would keep the rule's duration and
+     easing lists and pair the one remaining property with the fade's. */
   .workspace-shell .sidebar { transition: --sidebar-compact var(--sidebar-layout-motion); }
   .workspace-shell .main-pane { transition: none; }
   .workspace-shell.is-entering-workspace .sidebar,
@@ -7042,7 +7048,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .sidebar-workstream-public { align-items: center; background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); display: flex; height: 17px; justify-content: center; position: absolute; right: -1px; top: -2px; width: 17px; }
 .sidebar-collapse-footer { display: flex; align-items: center; justify-content: flex-end; flex-shrink: 0; gap: 4px; margin-top: auto; padding: 8px 12px; min-height: 62px; }
 .grokbot-shell .sidebar .sidebar-collapse-footer { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
-.grokbot-shell .sidebar .sidebar-collapse-footer .account-trigger { flex: 1; height: 40px; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), height var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
+.grokbot-shell .sidebar .sidebar-collapse-footer .account-trigger { flex: 1; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .grokbot-shell .sidebar.is-compact .sidebar-collapse-footer { padding: 8px; gap: 0; }
 /* The work-stream sidebar's toggle is carried to the centre by the footer's
    padding — 32.5px on the right leaves a 30px button centred in the 95px
@@ -7051,8 +7057,10 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .workstream-context-sidebar .sidebar-collapse-footer { transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .workstream-context-sidebar.is-compact .sidebar-collapse-footer { gap: 0; padding: 8px 32.5px 8px 8px; }
 /* The avatar is centred by its padding rather than `justify-content`, which
-   would jump it at the start of the travel. */
-.grokbot-shell .sidebar.is-compact .sidebar-collapse-footer .account-trigger { gap: 0; height: 38px; min-height: 38px; padding: 6px 6px 6px 10.5px; }
+   would jump it at the start of the travel. The floor travels, not a fixed
+   height: the row's content is shorter than either floor, so the floor is
+   the height, and a taller copy would grow it rather than be clipped. */
+.grokbot-shell .sidebar.is-compact .sidebar-collapse-footer .account-trigger { gap: 0; min-height: 38px; padding: 6px 6px 6px 10.5px; }
 .sidebar-collapse-footer > .icon-button { flex-shrink: 0; }
 .sidebar-drag-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--av-sys-color-text-muted); opacity: .25; pointer-events: none; z-index: 100; }
 

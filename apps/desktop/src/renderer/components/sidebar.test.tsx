@@ -2579,6 +2579,11 @@ describe('pinned work streams', () => {
       };
       const { rerender } = render(view([today, yesterday]));
       const aside = screen.getByRole('complementary', { name: 'Rally navigation' });
+      // Another property transitioning on the aside — the workspace-switch
+      // fade — is not the layout's, and holds nothing.
+      const fade = new Event('transitionrun', { bubbles: true });
+      Object.defineProperty(fade, 'propertyName', { value: 'opacity' });
+      fireEvent(aside, fade);
       fireEvent(aside, layoutEvent('transitionrun'));
       // Touched, so it crosses into Today: a move, were the layout at rest.
       const touched = { ...yesterday, lastActivityAt: '2026-08-01T11:00:00.000Z' };

@@ -384,6 +384,23 @@ describe('useListMotion', () => {
     expect(list.querySelector('[data-motion-stand-in]')).toBeNull();
   });
 
+  it('takes a stand-in out when its exit is cancelled, and cancels every exit on unmount', () => {
+    const { rerender, getByTestId, unmount } = render(<List insert={['b']} rows={['a', 'b', 'c']} />);
+    rerender(<List insert={['b']} rows={['a', 'c']} />);
+    const list = getByTestId('list');
+    const exit = animate.mock.calls.find((call) => (call[0] as HTMLElement).hasAttribute('data-motion-stand-in'));
+    const exitAnimation = animate.mock.results[animate.mock.calls.indexOf(exit!)]!.value as FakeAnimation;
+    // Cancelled — by the layout going, say — the copy goes with it.
+    exitAnimation.oncancel?.();
+    expect(list.querySelector('[data-motion-stand-in]')).toBeNull();
+    rerender(<List insert={['b']} rows={['a', 'b', 'c']} />);
+    rerender(<List insert={['b']} rows={['a', 'c']} />);
+    const second = animate.mock.calls.filter((call) => (call[0] as HTMLElement).hasAttribute('data-motion-stand-in')).at(-1);
+    const secondAnimation = animate.mock.results[animate.mock.calls.indexOf(second!)]!.value as FakeAnimation;
+    unmount();
+    expect(secondAnimation.cancel).toHaveBeenCalledTimes(1);
+  });
+
   // The sidebar's rows change shape under CSS transitions for as long as its
   // box's width does. A move planned against positions still in flight would
   // fight that travel, and the last positions measured mid-flight are not
