@@ -96,6 +96,55 @@ describe('sidebar collapse motion', () => {
   });
 });
 
+describe('sidebar layout motion', () => {
+  // The rows travel on the box's own interval, restated once on the sidebar so
+  // a drag — which snaps the edge to the pointer — turns every one of them off
+  // with one override rather than a rule per shape.
+  it('spends the collapse motion on the rows, and none of it under a drag', () => {
+    expect(rule('.sidebar')).toContain('--sidebar-layout-motion: var(--sidebar-collapse-motion);');
+    expect(rule('.sidebar.is-resizing')).toContain('--sidebar-layout-motion: 0s;');
+    for (const selector of [
+      '.grokbot-shell .sidebar .sidebar-list > .sidebar-context-target',
+      '.grokbot-shell .sidebar .workstream-row',
+      '.grokbot-shell .sidebar .sidebar-group-heading',
+      '.sidebar-commandbar .sidebar-search',
+      '.sidebar-automation-strip',
+    ]) {
+      expect(rule(selector), selector).toContain('var(--sidebar-layout-motion)');
+    }
+  });
+
+  // What the component listens to: a number that travels between the layouts
+  // on the aside itself. Unregistered it would switch over at the halfway
+  // point, and the events would say the layout had settled 120ms early.
+  it('carries a registered number the component hears the layout settle by', () => {
+    expect(stylesheet).toMatch(/@property --sidebar-compact \{\n {2}syntax: '<number>';/u);
+    expect(rule('.sidebar')).toContain('--sidebar-compact: 0;');
+    expect(rule('.sidebar.is-compact')).toContain('--sidebar-compact: 1;');
+    expect(rule('.workspace-shell .sidebar')).toContain('--sidebar-compact var(--sidebar-layout-motion)');
+  });
+
+  // The titles are faded and clipped rather than hidden, so they can travel;
+  // `visibility` on the same interval is what takes them out of the
+  // accessibility tree when the fade ends.
+  it('keeps the rail\'s hidden copy in layout and takes it out of the tree by visibility', () => {
+    const title = rule('.grokbot-shell .sidebar.is-compact .workstream-row .sidebar-row-main');
+    expect(title).toContain('opacity: 0;');
+    expect(title).toContain('visibility: hidden;');
+    expect(title).not.toContain('display: none');
+    expect(rule('.grokbot-shell .sidebar .workstream-row .sidebar-row-main')).toContain('visibility var(--sidebar-layout-motion)');
+  });
+
+  // The strip stays a horizontally scrolling row in the rail: a column inside
+  // the scroll box was the earlier answer, and it took the strip away from the
+  // bottom where the full sidebar keeps it.
+  it('keeps the Sidekick strip horizontal and below the list in the rail', () => {
+    expect(rule('.grokbot-shell .sidebar.is-compact .sidebar-automation-strip')).not.toContain('flex-direction');
+    expect(rule('.sidebar-automation-strip')).toContain('overflow-x: auto;');
+    expect(rule('.grokbot-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target')).toContain('flex-basis: 54px;');
+  });
+});
+
 describe('work-stream context sidebar layout', () => {
   it('keeps the transcript flexible and anchors the drag target to its panel', () => {
     expect(rule('.conversation-layout')).toContain('display: flex');
@@ -207,7 +256,11 @@ describe('GrokBot sidebar header geometry', () => {
     expect(scroll).not.toBeNull();
     expect(scrollbar).not.toBeNull();
     expect(titlebar).toContain('height: 44px;');
-    expect(commandbar).toContain('display: block;');
+    // Two numeric tracks — the search row and the rail's New chat slot — so
+    // the slot can open and close over the layout motion.
+    expect(commandbar).toContain('display: grid;');
+    expect(commandbar).toContain('grid-template-rows: 32px 0px;');
+    expect(rule('.grokbot-shell .sidebar.is-compact .sidebar-commandbar')).toContain('grid-template-rows: 54px 54px;');
     expect(create).toContain('background: transparent;');
     expect(search).toContain('border-radius: 8px;');
     expect(search).toContain('height: 32px;');

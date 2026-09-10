@@ -7,7 +7,11 @@ it into a different section, a drag or an `Alt`+`Arrow` rearranges the pinned
 list — and a row that simply vanishes from one slot and materialises in another
 reads as two events rather than one move. This module makes it one: the row
 slides out of frame to the left, the rows between its two slots close the gap,
-and it slides back in from the left at its new slot.
+and it slides back in from the left at its new slot. A row whose arrival or
+departure is itself the change — the rail's New chat row, which the compact
+toggle inserts under the search row and the expand removes — plays the same
+two halves on their own: in from the left when it appears, and out to the
+left, through a stand-in, when it is removed.
 
 Nothing in it knows what a work stream is: the sidebar is its one caller, and
 it is written against a small contract — keyed rows under a scroll box — so
@@ -15,10 +19,12 @@ that a second list could take it without a second implementation. The
 transcript's own arrival motion in `message-feed.tsx` (`data-arrival-id`) is a
 different thing, an entrance for a new message rather than a move, and stays
 where it is. So is the sidebar *box* travelling between its expanded and
-collapsed widths, which is a CSS transition on the width itself and is owned by
-[`conversation-surfaces.md`](conversation-surfaces.md); the rows inside it are
-re-laid-out rather than animated when that happens, which is what naming the
-compact toggle as the layout key does.
+collapsed widths, and the rows inside it changing shape as it does: both are
+CSS transitions on one interval, and both are owned by
+[`conversation-surfaces.md`](conversation-surfaces.md). This module's part in
+that is to keep out of the way — to plan no move against positions that are
+still travelling — which is what naming the compact toggle as the layout key,
+and reporting for how long the rows are still settling into it, do.
 
 Read this before changing when a sidebar row animates, how long any part of the
 choreography takes, or before adding motion to another list.
@@ -27,9 +33,9 @@ choreography takes, or before adding motion to another list.
 
 | Path | Responsibility |
 | --- | --- |
-| [`apps/desktop/src/renderer/lib/list-motion.ts`](../apps/desktop/src/renderer/lib/list-motion.ts) | The arithmetic, pure over measured positions: `planListMotion` decides which rows moved and which were displaced, `moverKeyframes` and `shifterKeyframes` say what each plays, `LIST_MOTION` holds every duration, stagger, and easing, and `layoutRowAt` answers which row is laid out under a pointer while rows are in motion. Owns no timer. |
-| [`apps/desktop/src/renderer/lib/use-list-motion.ts`](../apps/desktop/src/renderer/lib/use-list-motion.ts) | `useListMotion(containerRef, layoutKey?)`: measures the rows after every commit, plans against the positions it last saw, and plays the plan through the Web Animations API. Owns the interruption handling. |
-| [`apps/desktop/src/renderer/components/sidebar.tsx`](../apps/desktop/src/renderer/components/sidebar.tsx) | The one caller today. Marks each work-stream and note row with `data-motion-key`, marks the **Pinned** heading and every recency-group heading as a held row so they travel with the column, holds the row being dragged, resolves a drag's target through `layoutRowAt`, names the compact toggle as the layout, and attaches the hook to the scroll box. |
+| [`apps/desktop/src/renderer/lib/list-motion.ts`](../apps/desktop/src/renderer/lib/list-motion.ts) | The arithmetic, pure over measured positions: `planListMotion` decides which rows moved and which were displaced, `exitKeyframes` and `enterKeyframes` are the two halves a removed and an inserted row play, `moverKeyframes` composes them for a row that did both, `shifterKeyframes` is what a displaced row plays, `LIST_MOTION` holds every duration, stagger, and easing, and `layoutRowAt` answers which row is laid out under a pointer while rows are in motion. Owns no timer. |
+| [`apps/desktop/src/renderer/lib/use-list-motion.ts`](../apps/desktop/src/renderer/lib/use-list-motion.ts) | `useListMotion(containerRef, layoutKey?, layoutSettling?)`: measures the rows after every commit, plans against the positions it last saw, and plays the plan through the Web Animations API; plays a marked row's entrance, and its exit on a stand-in it makes and removes. Owns the interruption handling. |
+| [`apps/desktop/src/renderer/components/sidebar.tsx`](../apps/desktop/src/renderer/components/sidebar.tsx) | The one caller today. Marks each work-stream and note row with `data-motion-key`, marks the **Pinned** heading and every recency-group heading as a held row so they travel with the column, holds the row being dragged, resolves a drag's target through `layoutRowAt`, names the compact toggle as the layout and reports — from the aside's own transition events — whether the rows are still travelling to it, attaches the hook to the scroll box, and attaches a second instance to the command bar above it, whose New chat row is marked `data-motion-insert`. |
 | [`apps/desktop/src/renderer/components/project-sidebar-section.tsx`](../apps/desktop/src/renderer/components/project-sidebar-section.tsx) | Gives each project's member list its own `data-motion-scope`, since a member is the same row the recent list shows, and marks each project row as held so a reordered project glides with its members. |
 
 ## How it works
@@ -67,10 +73,30 @@ them rather than flying off through the slot they are looking at. A remounted
 row with focus is not the reader's doing, since the sidebar repairs focus onto
 a pinned row, and it travels.
 
-A row with no layout — a heading hidden in the compact rail — is neither
-measured nor remembered. It is closer to not being there than to being at the
-top of the container, which is what its empty rect would say, and when it
-comes back it is a row never seen before and is left alone.
+A row with no layout — one under `display: none` — is neither measured nor
+remembered. It is closer to not being there than to being at the top of the
+container, which is what its empty rect would say, and when it comes back it
+is a row never seen before and is left alone. A heading closed to no height in
+the compact rail still has a width, and is measured where it is.
+
+A row that carries `data-motion-insert` is one whose arrival and departure are
+themselves the change, and it is seen making them. When it first appears it
+plays the entrance — the second half of a mover's choreography, on its own.
+When it is removed it plays the exit, the first half, on a **stand-in**: React
+has already taken the row's element out of the document by the time the hook
+runs, so the hook clones the element it last measured, places the copy
+absolutely over the slot the row left — the container is the copy's
+positioning context, and has to be positioned — and removes the copy when the
+exit finishes or is cancelled. The copy is a picture of the row and nothing
+else: it is `inert`, hidden from assistive technology, and stripped of its
+`id`s and of every `data-motion-` attribute, so the document keeps one of each
+id and the next render does not measure the copy as a row. Every other
+attribute stays, because the copy has to still look like the row, which also
+means a caller that finds rows by some other attribute can find the copy for
+the length of its exit. Every other row still appears and disappears in place —
+a page of rows arriving at once is not a move — and nothing at all plays on
+the hook's first commit, whatever the rows carry, so a list that mounts with a
+marked row already in it does not open with that row sliding in from nowhere.
 
 The container is the scroll box the rows live in. Positions are measured
 relative to its content, not the viewport, so scrolling between two renders is
@@ -90,6 +116,22 @@ changes, every row is measured afresh and nothing plays: the sidebar's compact
 toggle changes the scroll box's padding, hides the headings, and swaps the
 command bar for the rail's controls, which moves every row's position for a
 reason that is not a reorder; the sidebar passes `compact`.
+
+It also takes `layoutSettling`, which says the rows are still travelling to
+that layout. The sidebar's rows change shape under CSS transitions for as long
+as its box's width does, and a move planned against positions still in flight
+would fight that travel: every render while the flag holds measures afresh and
+plays nothing, and so does the first render after it clears, so that the last
+positions measured mid-flight are not the ones the next change is planned
+from. The sidebar reads the flag from the platform's own transition events for
+`--sidebar-compact` on the aside — `transitionrun` raises it, `transitionend`
+and `transitioncancel` clear it — rather than from a timer, which would have to
+know the duration and would still be wrong under a drag, which turns the
+transition off, and would leave the flag raised for ever wherever no transition
+runs at all. The one thing a relayout leaves playing is an entrance: it
+travels horizontally only, so the slots it was measured between do not stale
+it, and the rail's New chat row arrives with the very toggle that relays out
+everything else.
 
 `planListMotion` sorts the rest into two kinds. Within each scope, among the
 rows that are not held, the largest set that kept their relative order is found
@@ -129,6 +171,13 @@ Shifters play a straight translation from their old position to rest over
 the stagger together, so the gap is closing while the mover is still on its way
 out, and the mover is on its way back in while the gap is still closing.
 Nothing is sequential except the stagger.
+
+An inserted row plays the entrance alone: parked off frame for the length of
+an exit and the stagger, then in — the wait is for the rows below it, which
+shift down over `shiftMs`, to have opened the gap before it lands, as they
+close it before a mover returns. A removed row's stand-in plays the exit
+alone, held at its end until the finish handler takes the copy out. The rows
+around either shift exactly as they would for a mover.
 
 Each kind of motion takes the standard curve for what it is doing: a row
 leaving the frame accelerates (`exitEasing`), a row arriving decelerates
@@ -235,11 +284,27 @@ event reached is the slot.
   hands the frames to the compositor. A change that animates `top`, `height`, or
   anything but `transform` and `opacity` would move the work back to the main
   thread, and would also change the rows' layout under the pointer mid-move.
+- **Nothing plays on the hook's first commit.** A list that mounts with a
+  marked row already in it — the sidebar restored to the rail — would
+  otherwise open with that row sliding in from nowhere.
+- **A stand-in is a picture, and the container it is drawn in is positioned.**
+  It is inert, hidden from assistive technology, without ids or motion
+  attributes, and gone the moment its exit settles or the hook unmounts. Drawn
+  in a container that is not positioned, it lands over the nearest positioned
+  ancestor's origin instead of over its slot.
+- **An entrance survives a relayout; a move does not.** A move is measured
+  between slots the new layout has replaced; an entrance is horizontal, and is
+  the change the relayout was made for. A relayout that cancelled entrances
+  would cut the rail's New chat row a frame after it started.
+- **A caller whose rows change shape under CSS reports the travel.** The hook
+  measures on every commit and cannot see a transition; a render that lands
+  mid-flight without `layoutSettling` plans against positions still moving,
+  and the rows are seen to fight their own transition.
 
 ## Boundary
 
 The module owns which rows move, how, and for how long. It exposes one hook,
-the three data attributes, and `LIST_MOTION`.
+the four data attributes, and `LIST_MOTION`.
 
 It does not decide *where* rows go — the sidebar's ordering functions and
 `orderPinnedWorkstreams` do that, and [`workstream-pinning.md`](workstream-pinning.md)
@@ -250,9 +315,12 @@ viewport, so the scroll does not read as movement, and the reveal runs as a
 layout effect declared *before* the hook, so the row is scrolled to before its
 first frame translates it back to the slot it left — `scrollIntoView` scrolls
 to the box as transformed, and `nearest` would otherwise find the row still on
-screen where it used to be and scroll to nothing. It
-does not animate rows entering or leaving the list, deliberately — see
-[Failure modes and limits](#failure-modes-and-limits). And it does not touch
+screen where it used to be and scroll to nothing. It animates a row entering
+or leaving the list only when the row is marked for it — see
+[Failure modes and limits](#failure-modes-and-limits) — and it does not own
+the shapes the rows take in each layout or the transitions between them,
+which are the sidebar's stylesheet's and
+[`conversation-surfaces.md`](conversation-surfaces.md)'s. And it does not touch
 the drag itself: what a drag reorders and when it commits is the pinned
 section's, and this module only asks, through `data-motion-hold`, that the row
 under the pointer is placed rather than made to leave and re-enter on every
@@ -260,11 +328,26 @@ step.
 
 ## Failure modes and limits
 
-- **Rows entering or leaving are not animated.** A new row appears in place and
-  the rows it displaced shift; a removed row is simply gone and the rows below
-  it shift up. Animating an exit would need a stand-in kept in the DOM after
-  React has removed the row, and nothing has asked for that yet. This is the
-  one place the request for "moving streams" was read narrowly.
+- **Rows entering or leaving are animated only when marked.** An unmarked row
+  appears in place and the rows it displaced shift; a removed one is simply
+  gone and the rows below it shift up. The marking is opt-in because a page of
+  rows arriving at once is not a move, and because an exit needs a stand-in
+  kept in the document after React has removed the row — a clone of the
+  subtree, which the reader cannot tell from the row for 160ms — which is
+  worth paying for a row whose leaving *is* the event and not for every row a
+  socket update drops.
+- **A stand-in exits from the row's slot, not from where it was drawn.** The
+  offset an animation was applying is read per connected element, and a
+  removed element has no computed style; a marked row removed mid-shift
+  restarts from its slot.
+- **A row that loses its layout counts as gone.** `display: none` and
+  unmounting look the same to the hook, so a marked row hidden by a stylesheet
+  plays its exit through a stand-in while its own element stays in the
+  document.
+- **The entrance lands well after the box has.** Over the sidebar's 240ms
+  collapse the rail's New chat row is parked until 200ms and at rest at 420ms:
+  the slot is seen to open before the row arrives, which is the reading
+  intended, and the numbers are `LIST_MOTION`'s.
 - **A row whose element is replaced mid-animation restarts its motion from its
   slot.** The in-flight offset is read per element, so a row that is unmounted
   and remounted while an earlier animation on it was still running loses that
@@ -294,9 +377,9 @@ step.
 
 | Suite | What it covers |
 | --- | --- |
-| `apps/desktop/src/renderer/lib/list-motion.test.ts` | The planner's classification — one mover, two movers together, a held row, a heading never being the mover, scopes ranked apart so a block shifts as one, a row that moved between containers, an interrupted offset — and the exact keyframes and options each kind plays. |
-| `apps/desktop/src/renderer/lib/use-list-motion.test.tsx` | The hook under jsdom: the exit distance measured against the container, shifters starting on the first frame, a row followed across a remount, a held row shifted instead of moved, a render that moved nothing leaving every animation alone, interruption touching only the rows that moved and reading a pending animation's own start, a late cancel not clearing its successor's record, reduced motion and a hidden window both remembering positions while playing nothing, measurement through the container's scroll, a focused row held only while it keeps its element, a row with no layout neither measured nor remembered, a changed layout key measuring afresh, and scopes keeping shared keys apart. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams` › `list motion`) | That the sidebar wires it: a pin moves the row's animation with it into the **Pinned** section, a touch moves it with the row from one recency group into another, the reveal's scroll lands before the motion starts, a drag's target is the slot laid out under the pointer while the dragged row is held, and a project's members are scoped apart from the recent list under a held project row. |
+| `apps/desktop/src/renderer/lib/list-motion.test.ts` | The planner's classification — one mover, two movers together, a held row, a heading never being the mover, scopes ranked apart so a block shifts as one, a row that moved between containers, an interrupted offset — and the exact keyframes and options each kind plays, the exit and the entrance on their own included. |
+| `apps/desktop/src/renderer/lib/use-list-motion.test.tsx` | The hook under jsdom: the exit distance measured against the container, shifters starting on the first frame, a row followed across a remount, a held row shifted instead of moved, a render that moved nothing leaving every animation alone, interruption touching only the rows that moved and reading a pending animation's own start, a late cancel not clearing its successor's record, reduced motion and a hidden window both remembering positions while playing nothing, measurement through the container's scroll, a focused row held only while it keeps its element, a row with no layout neither measured nor remembered, a changed layout key measuring afresh, scopes keeping shared keys apart, nothing playing on the first commit, a marked row entering after the gap opens and leaving through a stand-in that is removed when its exit settles, reduced motion leaving no stand-in, a settling layout measuring afresh until the render after it settles, and an entrance surviving a relayout that cancels a move. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams` › `list motion`) | That the sidebar wires it: a pin moves the row's animation with it into the **Pinned** section, a touch moves it with the row from one recency group into another, the reveal's scroll lands before the motion starts, a drag's target is the slot laid out under the pointer while the dragged row is held, a project's members are scoped apart from the recent list under a held project row, the rail's New chat row sits under a search row above the scroll box and is marked as inserted, and the aside's own `transitionrun` for `--sidebar-compact` holds the motion until its `transitionend`. |
 
 jsdom lays nothing out and implements neither `Element.prototype.animate` nor
 `getAnimations`. The hook tests install `getBoundingClientRect` and `animate`
@@ -319,6 +402,51 @@ work stream from its right-click menu, then pause every animation with
 each one.
 
 ## Changelog
+
+### 2026-09-10 — Marked rows are seen arriving and leaving, and the hook holds while a layout travels
+
+**What changed:** A row marked `data-motion-insert` plays the mover's entrance
+when it first appears and the mover's exit, through a stand-in, when it is
+removed; the mover's keyframes are now composed from those two halves rather
+than written out. Nothing plays on the hook's first commit. `useListMotion`
+takes a third argument, `layoutSettling`, under which every render measures
+afresh and plays nothing, as does the first render after it clears, and only an
+entrance survives a relayout. The sidebar attaches a second instance to the
+command bar above its scroll box, marks the rail's New chat row there, and
+reports the flag from the aside's own transition events for `--sidebar-compact`.
+
+**Why:** The compact toggle was reported as a cut — the box's width glided and
+everything inside it snapped a frame ahead of the edge — and the search and
+New chat controls, which changed shape and place with it, snapped hardest.
+Making the rows' shapes CSS transitions on the box's own interval, in
+[`conversation-surfaces.md`](conversation-surfaces.md), fixed the rows but put
+this hook in the way of them: it measures on every commit, and a render landing
+mid-flight — the reveal clearing, a socket update — would have planned shifters
+against positions still moving and sent rows fighting their own transition.
+The New chat row is the one control the toggle genuinely inserts and removes,
+and the request was for it to use the row insert and remove motion; the
+choreography already had the two halves, and the case that had been read
+narrowly on 2026-09-08 now had a caller.
+
+**Considered and rejected:** Detecting the travel inside the hook from running
+`CSSTransition`s on the rows, which needs no caller wiring but cannot tell a
+geometry transition from a hover fade without a list of properties that would
+have to be kept. A timer matching the collapse duration, which would have to
+know a number that lives in a stylesheet and would be wrong under a drag,
+which turns the transition off. Animating exits for every removed row, which
+would clone a subtree for each row a socket update drops. Keeping the New chat
+row rendered in both layouts and hiding it by CSS, which is not an insertion
+and would have needed a starting style that also fired on every mount.
+
+**Consequences:** A list that marks rows for insertion must be a positioned
+container, and any selector that finds its rows by an attribute other than the
+motion ones can find a stand-in for 160ms. A caller whose rows change shape
+under CSS reports the travel or gets rows fighting their transition. React's
+synthetic `transitionrun` and `transitioncancel` carry no `propertyName`; the
+sidebar reads it from the native event, and so must any second caller. The
+entrance's wait is the mover's, so an inserted row lands about 180ms after a
+240ms layout has; a different rhythm for insertions is a change to
+`enterKeyframes`, not to the hook.
 
 ### 2026-09-09 — Drags target the slot laid out under the pointer, and the reader's own row is held
 

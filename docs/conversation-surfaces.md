@@ -154,6 +154,27 @@ so collapse cannot change its own measurement and cause oscillation. All paint
 uses the existing light/dark sidebar, row, text, and focus tokens; selectors are
 scoped to the new component and do not change global navigation rows.
 
+The global navigation's contents travel with its edge. Every rule in its
+stylesheet that changes a shape between the expanded sidebar and the 96px rail
+transitions on `--sidebar-layout-motion`, stated once on `.sidebar` as the
+collapse motion and set to `0s` by a drag: the rows narrow to their 36px marks
+while their titles fade under a clip, the headings close to no height, the
+group gaps and the scroll box's padding close, the titlebar's New chat fades,
+the account row keeps its avatar and closes its name, and the Sidekick tiles
+shed their captions. Nothing on screen during the toggle is `display: none` in
+the rail — hidden copy is kept in layout at zero size and faded, with
+`visibility` carried on the same interval so it leaves the accessibility tree
+when the fade ends — and every travelling value is a number in both layouts,
+because a keyword cannot be interpolated. Search sits in a command bar between
+the titlebar and the scroll box in both layouts, a grid of two numeric tracks:
+the pill closes to a 54px square in place, and the second track opens for the
+rail's New chat row, which arrives and leaves through
+[`list-motion.md`](list-motion.md)'s insert motion. The aside carries a
+registered `--sidebar-compact` number on the same interval, drawn from by
+nothing; the component listens to the platform's transition events for it on
+the aside itself to know when the layout has settled, and holds the list
+motion until then.
+
 The route host, not the feed, owns identity transitions. A new work stream
 begins with local composer keys; after durable admission its adapter rekeys
 text/files and adopts the server identity without remounting the conversation
@@ -234,6 +255,71 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — The navigation's contents travel with its edge, and search stays at the top
+
+**What changed:** Everything inside the global navigation that changes shape
+between the expanded sidebar and the 96px rail now transitions between the two
+over the same 240ms the box's width spends: the rows narrow to their 36px
+marks while their titles fade under a clip, the recency headings close to no
+height, the group gaps and the scroll box's padding close, the titlebar's New
+chat fades, the account row keeps its avatar and closes its name, the Sidekick
+tiles shed their captions, and the search pill closes to its icon. The search
+row moved out of the scroll box into a command bar under the titlebar, so it is
+at the top in both layouts however far the list is scrolled; the rail's New
+chat row is rendered there under it and arrives and leaves through the list
+motion. The Sidekick strip stays below the list in both layouts. The interval
+is stated once on `.sidebar` as `--sidebar-layout-motion`, which a drag sets to
+`0s`, and the aside carries a registered `--sidebar-compact` number on the same
+interval whose transition events tell the component when the layout has
+settled.
+
+**Why:** Collapsing the sidebar was reported as only the edge animating: the
+width glided and every row, heading and control inside it cut to its compact
+shape in the first frame, so the reader watched an empty box close over rows
+that had already become icons. The 2026-09-09 entry below animated the box and
+left the contents to "re-lay-out rather than animate"; that was the cut.
+Search and New chat cut hardest because the two layouts rendered different
+elements in different places — a pill inside the scroll box, then a square
+inside the scroll box above a second square — and the request was for the
+search row to hold its place at the top in both layouts and for the New chat
+row to use the row insert and remove motion, which
+[`list-motion.md`](list-motion.md) now provides. Two rules follow from
+transitioning the contents. Nothing on screen during the toggle is
+`display: none` in the rail, because `display` cannot travel: hidden copy is
+kept in layout at zero size and faded, with `visibility` on the same interval
+so it leaves the accessibility tree when the fade ends. And every travelling
+value is a number in both layouts — `width: 100%` for a row's wrapper rather
+than `auto`, a heading's `height` rather than its `min-height` — because a
+keyword cannot be interpolated and a rule that reaches one cuts. The command
+bar is a two-track grid with numeric tracks for the same reason: the slot for
+the New chat row opens and closes over the interval rather than the bar
+growing by a row in the frame React inserts one.
+
+**Considered and rejected:** Driving every row shape from the one interpolated
+`--sidebar-compact` number through `calc()`, which puts one source of truth
+under everything but makes each rule an equation nobody can read a width off.
+`interpolate-size: allow-keywords` on the sidebar, which would have let `auto`
+travel and saved the numeric restatements, but changes what every keyword
+inside the sidebar means to a transition; it is used on the strip alone, where
+a lone tile is sized to its caption. `@starting-style` for the rows' hidden
+copy, which would also have faded in the title of every row that mounts.
+Suppressing the contents' transitions under `prefers-reduced-motion`, which
+would have brought the cut back for exactly those readers, since the box's
+width still travels for them.
+
+**Consequences:** A rule that changes a shape between the two layouts declares
+its transition on `--sidebar-layout-motion`, or that shape cuts; a shape that
+needs a keyword in one width cuts. The titlebar's New chat is hidden by the
+`hidden` attribute in the rail rather than unmounted, and the rail's is
+rendered only in the rail, marked `data-motion-insert`; a test that counts New
+chat links sees one in either layout. `.sidebar-rail-new-button` is styled
+without reference to `.is-compact`, because its stand-in is drawn after the
+class has gone. The first section under the command bar drops its own top
+margin, since the bar's padding now provides the 12px the collapsed margins
+used to. A stand-in overhangs the command bar into the list for 160ms on
+expand, uncut, because the bar does not clip. React fills in `propertyName`
+for `transitionend` alone, so the component reads it from the native event.
 
 ### 2026-09-10 — One glyph for both New substream controls
 

@@ -652,7 +652,18 @@ Both collapsed navigation sidebars are 96 CSS pixels wide, allowing symmetric
 space around the macOS traffic lights. Their navigation controls, including
 Search and New substream, are 54-pixel squares with 9-pixel padding. Collapse
 controls sit at the bottom; the account avatar and navigation toggle remain
-side by side. The main conversation row uses the work-stream title, and carries
+side by side. In the global navigation, Search sits above the scrolling
+streams in both widths and the rail's New chat row sits under it; the
+Sidekick strip stays below the streams as a horizontal row in both widths,
+one tile centred and the next showing past the edge when there are more.
+Collapse and expand the global navigation with ⌘B and confirm its contents
+travel with the edge rather than cutting a frame ahead of it: the rows narrow
+to their marks as the titles fade, the headings close, the search pill closes
+to its icon in place, the titlebar's New chat fades while the rail's slides in
+under Search once the slot has opened, and on expand the rail's New chat
+slides out to the left as the pill reopens. Drag the edge past the threshold
+and confirm the contents snap with it, as the edge does.
+The main conversation row uses the work-stream title, and carries
 the work stream's own icon in its colour; a substream row carries the branch
 line, which compact replaces with the first character of the substream's title.
 

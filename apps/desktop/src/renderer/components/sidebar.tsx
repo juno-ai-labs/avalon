@@ -31,7 +31,7 @@ import {
   Settings,
   Smartphone,
 } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { CreateProjectRequest, ProjectSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
@@ -1006,6 +1006,28 @@ export function Sidebar({
   // reason does not scroll the reader again.
   const [reveal, setReveal] = useState<{ id: string; pinned: boolean } | null>(null);
   const scrollRef = useRef<HTMLElement | null>(null);
+  // The search row — and, in the rail, the New chat row under it — sit above
+  // the scroll box rather than in it, so search is at the top of the sidebar
+  // however far the list has been scrolled. The bar has a list motion of its
+  // own: the New chat row is inserted by the compact toggle and removed by the
+  // expand, and is seen arriving and leaving.
+  const commandRef = useRef<HTMLDivElement | null>(null);
+  // Whether the sidebar's contents are still travelling between its two
+  // layouts. The box's width is a CSS transition and so is everything inside
+  // it that changes shape with it; `--sidebar-compact` is the sidebar's own
+  // channel on that same interval, and the platform's events on it are the one
+  // honest answer to "has the layout settled" — a timer would have to know the
+  // duration, and would still be wrong under a drag, which turns the
+  // transition off, and under a reader who has asked for less motion. Only the
+  // aside's own events count: the rows' transitions bubble through here too.
+  const [layoutSettling, setLayoutSettling] = useState(false);
+  const trackLayoutTransition = useCallback((event: TransitionEvent<HTMLElement>): void => {
+    // From the platform's event rather than React's: React fills in
+    // `propertyName` for `transitionend` alone, and leaves it undefined on
+    // `transitionrun` and `transitioncancel`.
+    if (event.target !== event.currentTarget || event.nativeEvent.propertyName !== '--sidebar-compact') return;
+    setLayoutSettling(event.type === 'transitionrun');
+  }, []);
   /**
    * Ask for the next page as the scroll approaches the end of the list.
    *
@@ -1596,8 +1618,12 @@ export function Sidebar({
   // there rather than reappearing: out to the left, the rows between closing
   // the gap, then in from the left at its new slot. After the reveal above,
   // and for the reason given there. The compact toggle relays out every row
-  // for a reason that is not a move, so it names the layout.
-  useListMotion(scrollRef, compact);
+  // for a reason that is not a move, so it names the layout, and says for how
+  // long the rows are still travelling to it. The command bar above the scroll
+  // box is a list of its own, whose New chat row arrives and leaves with the
+  // same toggle.
+  useListMotion(scrollRef, compact, layoutSettling);
+  useListMotion(commandRef, compact, layoutSettling);
 
   const sidekickShortcuts = standaloneSidekicks.length > 0 && (
     <section className="sidebar-automation-strip" aria-label="Sidekick shortcuts" onClick={() => setSidebarOpen(false)}>
@@ -1615,21 +1641,52 @@ export function Sidebar({
         aria-label="Rally navigation"
         className={clsx('sidebar', compact && 'is-compact', sidebarOpen && 'is-mobile-open', (resizing || keyResizing) && 'is-resizing')}
         data-sidebar-collapsed={compact ? '' : undefined}
+        onTransitionCancel={trackLayoutTransition}
+        onTransitionEnd={trackLayoutTransition}
+        onTransitionRun={trackLayoutTransition}
         ref={panel}
       >
         <div className="sidebar-titlebar window-drag">
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
           </IconButton>
-          {!compact && <NavLink
+          {/* Hidden rather than unmounted in the rail, so it can fade out with
+              the layout instead of vanishing a frame ahead of it; the row that
+              takes its place is the one under the search row below. */}
+          <NavLink
             aria-label="New chat"
             className={({ isActive }) => clsx('sidebar-new-button window-no-drag', isActive && 'is-active')}
+            hidden={compact}
             onClick={() => markSurfaceEntrypoint('sidebar_new')}
             state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
             to="/workstreams/new"
           >
             <Plus aria-hidden="true" size={16} />
-          </NavLink>}
+          </NavLink>
+        </div>
+
+        {/* Above the scroll box in both layouts, so search stays at the top
+            however far the list is scrolled. */}
+        <div className="sidebar-commandbar window-no-drag" onClick={() => setSidebarOpen(false)} ref={commandRef}>
+          <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace" />
+          {/* The rail's New chat row. Inserted by the compact toggle and
+              removed by the expand, and marked so that it is seen arriving and
+              leaving rather than appearing in place: it slides in under the
+              search row as the bar opens the slot for it, and out to the left
+              as the slot closes. See `useListMotion`. */}
+          {compact && (
+            <NavLink
+              aria-label="New chat"
+              className={({ isActive }) => clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', isActive && 'is-active')}
+              data-motion-insert=""
+              data-motion-key="action:new"
+              onClick={() => markSurfaceEntrypoint('sidebar_new')}
+              state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
+              to="/workstreams/new"
+            >
+              <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
+            </NavLink>
+          )}
         </div>
 
         <nav
@@ -1638,24 +1695,6 @@ export function Sidebar({
           onScroll={loadMoreWhenNearBottom}
           ref={scrollRef}
         >
-          {compact && (
-            <div className="sidebar-rail-actions window-no-drag">
-              <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace" />
-              <NavLink
-                aria-label="New chat"
-                className={({ isActive }) => clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', isActive && 'is-active')}
-                onClick={() => markSurfaceEntrypoint('sidebar_new')}
-                state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
-                to="/workstreams/new"
-              >
-                <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
-              </NavLink>
-            </div>
-          )}
-
-          {!compact && <div className="sidebar-commandbar window-no-drag">
-            <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace" />
-          </div>}
           {conversationOnly && location.pathname === '/workstreams/new' && (
             <div aria-current="page" aria-label="New chat draft" className="sidebar-new-chat-draft">
               <span aria-hidden="true" className="sidebar-new-chat-draft-icon">
@@ -1863,7 +1902,6 @@ export function Sidebar({
             )}
 
           </section>
-          {compact && sidekickShortcuts}
         </nav>
 
         {/*
@@ -1886,7 +1924,9 @@ export function Sidebar({
         */}
         {/* <OnboardingChecklist /> */}
 
-        {!compact && sidekickShortcuts}
+        {/* Below the scroll box in both layouts: a horizontal strip in the
+            rail as in the full sidebar, one tile wide with the next peeking. */}
+        {sidekickShortcuts}
 
         <div className="sidebar-collapse-footer">
         {accountMenu ?? <DropdownMenu.Root>

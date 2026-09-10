@@ -175,34 +175,74 @@ export function planListMotion(
 }
 
 /**
- * What a moved row plays: out of its old slot to the left, dark while its
- * neighbours close the gap, then in from the left at its new slot. One
- * animation rather than three chained ones, so an interruption has one thing
- * to cancel and the phases cannot drift apart under load.
+ * The exit: from where the row is drawn, leftwards until it has cleared the
+ * container. The first half of what a moved row plays, and the whole of what a
+ * removed row plays through its stand-in. Held at its end, because a stand-in
+ * is taken out of the document by the finish handler and must not be drawn at
+ * rest in the frame between.
  *
  * `exitDistance` is how far left the row has to travel to clear the container,
  * measured by the caller — a fraction of the row's own width would leave a
  * narrow row's edge showing in a wider container.
  */
-export function moverKeyframes(
+export function exitKeyframes(
   { fromX, fromY }: { fromX: number; fromY: number },
   exitDistance: number,
 ): { keyframes: Keyframe[]; options: KeyframeAnimationOptions } {
-  const total = LIST_MOTION_TOTAL_MS;
-  const exitEnd = LIST_MOTION.exitMs / total;
-  const enterStart = (LIST_MOTION.exitMs + LIST_MOTION.enterStaggerMs) / total;
+  return {
+    keyframes: [
+      { transform: `translate(${fromX}px, ${fromY}px)`, easing: LIST_MOTION.exitEasing },
+      { transform: `translate(${exitDistance}px, ${fromY}px)` },
+    ],
+    options: { duration: LIST_MOTION.exitMs, fill: 'forwards' },
+  };
+}
+
+/**
+ * The entrance: parked off frame for as long as an exit and the stagger take,
+ * then in from the left to rest. The second half of what a moved row plays,
+ * and the whole of what an inserted row plays — it waits the same interval so
+ * that the rows below it, which shift down over `shiftMs`, have opened the gap
+ * before it arrives, the way they have closed it before a mover returns.
+ * Filled backwards so the row is off frame from its first paint.
+ */
+export function enterKeyframes(exitDistance: number): { keyframes: Keyframe[]; options: KeyframeAnimationOptions } {
+  const enterStart = (LIST_MOTION.exitMs + LIST_MOTION.enterStaggerMs) / LIST_MOTION_TOTAL_MS;
   const away = `translate(${exitDistance}px, 0px)`;
   return {
     keyframes: [
-      { offset: 0, transform: `translate(${fromX}px, ${fromY}px)`, easing: LIST_MOTION.exitEasing },
-      // The old slot, cleared. The same offset twice is a jump: the row is
-      // parked off frame at its new slot without travelling there vertically.
-      { offset: exitEnd, transform: `translate(${exitDistance}px, ${fromY}px)` },
-      { offset: exitEnd, transform: away, easing: 'linear' },
+      { offset: 0, transform: away, easing: 'linear' },
       { offset: enterStart, transform: away, easing: LIST_MOTION.enterEasing },
       { offset: 1, transform: 'translate(0px, 0px)' },
     ],
-    options: { duration: total, fill: 'backwards' },
+    options: { duration: LIST_MOTION_TOTAL_MS, fill: 'backwards' },
+  };
+}
+
+/**
+ * What a moved row plays: out of its old slot to the left, dark while its
+ * neighbours close the gap, then in from the left at its new slot — the exit
+ * and the entrance above, in one animation rather than two chained ones, so an
+ * interruption has one thing to cancel and the phases cannot drift apart under
+ * load.
+ */
+export function moverKeyframes(
+  from: { fromX: number; fromY: number },
+  exitDistance: number,
+): { keyframes: Keyframe[]; options: KeyframeAnimationOptions } {
+  const exitEnd = LIST_MOTION.exitMs / LIST_MOTION_TOTAL_MS;
+  const [leaving, cleared] = exitKeyframes(from, exitDistance).keyframes;
+  const [parked, ...arriving] = enterKeyframes(exitDistance).keyframes;
+  return {
+    keyframes: [
+      { ...leaving, offset: 0 },
+      // The old slot, cleared. The same offset twice is a jump: the row is
+      // parked off frame at its new slot without travelling there vertically.
+      { ...cleared, offset: exitEnd },
+      { ...parked, offset: exitEnd },
+      ...arriving,
+    ],
+    options: { duration: LIST_MOTION_TOTAL_MS, fill: 'backwards' },
   };
 }
 
