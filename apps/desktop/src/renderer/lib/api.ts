@@ -928,13 +928,22 @@ export class RallyApi {
     return page.items.map(mapAutomationSummary);
   }
 
-  /** What one work stream owns. Its rail is the only place these are listed. */
-  async getWorkstreamAutomations(
+  /**
+   * What one work stream owns: the Sidekicks created in it, whose managers are
+   * its participants. Its own rail and the library are where these are listed.
+   *
+   * Under `/sidekicks` rather than `/automations`, which serves the same rows
+   * through the same handler: a new client reads the Sidekick surface, and the
+   * legacy prefix exists for installed builds that cannot parse a modern
+   * detail. A caller who is not a participant is refused, so a viewer's 403 is
+   * an answer about them rather than about the room.
+   */
+  async getWorkstreamSidekicks(
     workstreamId: string,
     signal?: AbortSignal,
   ): Promise<WorkstreamAutomationSummary[]> {
     const page = await this.request(
-      `/automations/workstream/${encodeURIComponent(workstreamId)}`,
+      `/sidekicks/workstream/${encodeURIComponent(workstreamId)}`,
       { schema: wireWorkstreamAutomationPageSchema, signal },
     );
     return page.items.map(mapWorkstreamAutomationSummary);
