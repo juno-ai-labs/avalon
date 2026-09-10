@@ -5319,7 +5319,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .sidebar-commandbar {
   display: grid;
   grid-template-rows: 32px 0px;
-  padding: 4px 12px 12px;
+  padding: 4px 12px var(--av-sys-space-group-gap);
   position: relative;
   transition: grid-template-rows var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
 }
@@ -5685,10 +5685,10 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 }
 .grokbot-shell .sidebar .sidebar-section,
 .grokbot-shell .sidebar .sidebar-group { transition: margin-top var(--sidebar-layout-motion); }
-/* The first section sits 12px under the search row, which the command bar's
-   own padding provides. A section's top margin is the gap between sections;
-   when the command bar lived inside the scroll box the two collapsed into
-   one, and now that it is above the box they would add. */
+/* The first section sits one group gap under the search row, which the
+   command bar's own bottom padding provides. A section's top margin is the
+   same gap; when the command bar lived inside the scroll box the two collapsed
+   into one, and now that it is above the box they would add. */
 .grokbot-shell .sidebar .sidebar-scroll > .sidebar-section:first-child { margin-top: 0; }
 .grokbot-shell .sidebar.is-compact .sidebar-section,
 .grokbot-shell .sidebar.is-compact .sidebar-group { margin-top: 0; }
