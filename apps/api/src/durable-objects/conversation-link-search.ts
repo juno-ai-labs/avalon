@@ -105,6 +105,8 @@ export async function conversationSearchDocumentIds(sql: SqlStorage,
 export async function prepareConversationLinks(sql: SqlStorage, env: Env,
   identity: { workspaceId: string; parentId: string; substreamId: string }, turnId: string,
   readTurn: () => TranscriptTurn | null, capture = true, documentId?: string,
+  // Read after capture, like the turn: the conversation the link lives in.
+  readConversation: () => ConversationDisplay | null = () => null,
 ): Promise<SearchDocumentBatch> {
   await reconcileConversationLinks(sql, identity, turnId, readTurn);
   // A child must not load every sibling's captured body into its RPC payload.
@@ -140,12 +142,19 @@ export async function prepareConversationLinks(sql: SqlStorage, env: Env,
     }
   }
   const documents: SearchDocumentBatch['documents'] = [];
+  const conversation = readConversation();
   for (const row of rows()) {
     const current = readConversationSearchLink(sql, row.id, readTurn());
     if (!current && !row.deleted) { captureFailed = true; continue; }
     documents.push({ id: row.id, source: 'conversation_links',
       sourceId: `${identity.substreamId}/${turnId}/${row.id}`, scopeId: identity.parentId,
-      revision: current?.revision ?? row.revision, text: current?.text ?? null });
+      substreamId: identity.substreamId,
+      revision: current?.revision ?? row.revision, text: current?.text ?? null,
+      ...(current && conversation ? { display: { title: current.label, sourceLabel: conversation.title,
+        occurredAt: null, transcriptSequence: null, url: current.url, mimeType: null, archived: conversation.archived } } : {}) });
   }
   return { documents, retry: captureFailed };
 }
+
+/** The conversation a link or message belongs to, as its result renders it. */
+export interface ConversationDisplay { title: string; archived: boolean }

@@ -3,8 +3,8 @@ import { SidekickSkillSnapshotSchema } from "@rally/contracts";
 import { sidekickSkillCatalog, sidekickSkillRef } from "../services/sidekick-skills";
 import { flushAuthorizationProjection, nextAuthorizationProjectionAt } from './authorization-projection';
 import { searchIndexingConfigured } from '../services/search-embedding';
-import { conversationSearchDocumentIds, prepareConversationLinks, readConversationSearchLink } from './conversation-link-search';
-import { drainSearchProjectionOutbox, nextSearchProjectionDueAt, SearchProjectionMessageSchema } from './search-projection-outbox';
+import { conversationSearchDocumentIds, prepareConversationLinks, readConversationSearchLink, type ConversationDisplay } from './conversation-link-search';
+import { drainSearchProjectionOutbox, nextSearchProjectionDueAt, SearchConversationProjectionMessageSchema, SearchProjectionMessageSchema } from './search-projection-outbox';
 import { searchDocumentId } from '../services/text-search';
 import { ConversationParentKindSchema } from "@rally/contracts/conversation-parent";
 import { SubstreamAddressSchema, type SubstreamContextCapture } from "@rally/contracts/substream-creation";
@@ -4722,11 +4722,29 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private async searchTurnIdentity(input: unknown) {
     await this.storageReady;
     const request = SearchProjectionMessageSchema.parse(input);
+    return { request, identity: this.searchProjectionIdentity(request) };
+  }
+
+  /** A search job names one conversation; this object answers only for itself. */
+  private searchProjectionIdentity(request: { region: string; workspaceId: string; parentId: string; substreamId: string }) {
     const identity = this.objectStore.identity();
     if (!identity || request.region !== this.env.AVALON_REGION
       || request.workspaceId !== identity.workspaceId || request.parentId !== identity.parentId
       || request.substreamId !== this.externalSubstreamId()) throw new Error("search_projection_identity_mismatch");
-    return { request, identity };
+    return identity;
+  }
+
+  /** What every indexed row of this conversation shows for it: read beside the text, never cached. */
+  private currentConversationDisplay(): ConversationDisplay | null {
+    const row = this.identityRows.identity();
+    return row ? { title: row.title, archived: row.archived_at != null } : null;
+  }
+
+  /** Internal Queue consumer entrypoint: the display a conversation's indexed rows must carry now. */
+  async searchConversationDisplay(input: unknown): Promise<ConversationDisplay | null> {
+    await this.storageReady;
+    this.searchProjectionIdentity(SearchConversationProjectionMessageSchema.parse(input));
+    return this.currentConversationDisplay();
   }
 
   /** Identity-only discovery keeps sibling bodies out of the source delivery. */
@@ -4752,15 +4770,23 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const { request, identity } = await this.searchTurnIdentity(input);
     const links = await prepareConversationLinks(this.state.storage.sql, this.env,
       { ...identity, substreamId: request.substreamId }, request.turnId,
-      () => this.transcript.participantTurn(request.turnId), captureLinks, documentId);
-    // Capture awaits external I/O, so read the message only after extraction.
+      () => this.transcript.participantTurn(request.turnId), captureLinks, documentId,
+      () => this.currentConversationDisplay());
+    // Capture awaits external I/O, so read the message and its conversation only after extraction.
     const turn = this.transcript.participantTurn(request.turnId);
+    const conversation = this.currentConversationDisplay();
     const sourceId = `${request.substreamId}/${request.turnId}`;
     const id = await searchDocumentId("messages", identity.parentId, sourceId);
+    const live = turn?.entryKind === "conversation" ? turn : null;
     if (documentId === undefined || documentId === id) links.documents.unshift({ id, source: "messages", sourceId, scopeId: identity.parentId,
+      substreamId: request.substreamId,
       revision: turn?.revision ?? request.revision,
-      text: turn?.entryKind === "conversation"
-        ? turn.blocks.filter((block) => block.type === "text").map((block) => block.text).join("\n") : null });
+      text: live ? live.blocks.filter((block) => block.type === "text").map((block) => block.text).join("\n") : null,
+      // The result renders from the index: the conversation title, when the
+      // message was sent, and where it sits in the transcript travel with it.
+      ...(live && conversation ? { display: { title: conversation.title, sourceLabel: conversation.title,
+        occurredAt: Date.parse(live.createdAtUtc), transcriptSequence: live.transcriptSequence,
+        url: null, mimeType: null, archived: conversation.archived } } : {}) });
     return links;
   }
 
