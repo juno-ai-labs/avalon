@@ -249,6 +249,30 @@ describe("a demo preparation operation", () => {
     expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", error_code: "demo_cast_not_a_colleague" });
   });
 
+  it("refuses to prepare a demo whose cast came to share a name after the row was written", async () => {
+    // A name is not fixed: it is rewritten from the platform identity every
+    // time somebody signs in, so two people in one demo can collide between
+    // the start request and the phase that acts on it — and a retry can be
+    // days later. A mention resolves to a user id, and nobody watching could
+    // attribute it to either of them.
+    const { env } = fixture();
+    await startDemoOperation(env, request());
+    await env.DB.prepare("UPDATE users SET name = ? WHERE id = ?").bind("Priya Raman", DANA_ID).run();
+    await expect(runDemoPreparationPhase(env, OPERATION_ID, "checking_template", { attempt: 1 }))
+      .rejects.toMatchObject({ code: "demo_cast_name_duplicate", status: 409 });
+    expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", error_code: "demo_cast_name_duplicate" });
+
+    // The presenter is in the demo under their own name too, so they are one
+    // of the people the check covers. A second operation, because the first is
+    // failed and every phase refuses one that is not running.
+    const second = "00000000-0000-7000-8000-0000000000e3";
+    await env.DB.prepare("UPDATE users SET name = ? WHERE id = ?").bind("Ben Diaz", DANA_ID).run();
+    await startDemoOperation(env, { ...request(), operationId: second });
+    await env.DB.prepare("UPDATE users SET name = ? WHERE id = ?").bind("Adam", MARCUS_ID).run();
+    await expect(runDemoPreparationPhase(env, second, "checking_template", { attempt: 1 }))
+      .rejects.toMatchObject({ code: "demo_cast_name_duplicate" });
+  });
+
   it("allocates a workspace id onto the row before the workspace exists", async () => {
     // The creating phase writes the id first so a crash between the two
     // retries the same id. The real migration has to accept that write — a

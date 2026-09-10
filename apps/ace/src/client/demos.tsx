@@ -202,8 +202,15 @@ function NewDemoForm({ template, onStarted, onFailed, onCancel }: {
   const nameOfCandidate = (userId: string): string =>
     template.castCandidates.find((candidate) => candidate.userId === userId)?.name ?? '';
   const presenterName = template.members.find((member) => member.userId === presenterUserId)?.name ?? '';
+  // The presenter is in the demo already, so they are not offered for a part.
+  // The two lists overlap — a template member is usually on the company's
+  // domain too — and whoever is presenting comes out of this one.
+  const castable = template.castCandidates.filter((candidate) => candidate.userId !== presenterUserId);
   // The presenter is in the demo too, so they are one of the people who has to
-  // be cast once and read unambiguously; the API refuses either collision
+  // be cast once and read unambiguously. They are not offered for a part and a
+  // part they held is cleared when they start presenting, so their half of
+  // this is unreachable from the form — it is the invariant that is stated
+  // here, not the reachable half of it, and the API refuses either collision
   // whatever the page sends.
   const seated = [...roles.map((role) => cast[role] ?? ''), ...(template.pack.presenterRole ? [presenterUserId] : [])]
     .filter((userId) => userId !== '');
@@ -213,9 +220,13 @@ function NewDemoForm({ template, onStarted, onFailed, onCancel }: {
   const folded = spoken.map((name) => name.toLowerCase());
   // Shown as the directory has it, not as it was compared.
   const sharedName = twice === '' ? spoken.find((_name, index) => folded.indexOf(folded[index]!) !== index) ?? '' : '';
+  // Enough people to cast is a question about the presenter, not the company:
+  // the page refuses the form when nobody could present, and this is the same
+  // dead end one field further in.
+  const tooFew = castable.length < roles.length;
   const complete = companyName.trim().length > 0 && presenterUserId !== ''
     && roles.every((role) => (cast[role] ?? '') !== '')
-    && twice === '' && sharedName === '';
+    && twice === '' && sharedName === '' && !tooFew;
 
   const start = async (): Promise<void> => {
     if (!complete || starting) return;
@@ -244,17 +255,26 @@ function NewDemoForm({ template, onStarted, onFailed, onCancel }: {
     <div className="section-title"><div><h3>New demo</h3><p>Pack {template.pack.version}. The workspace will be named after the company. The presenter is the person who will show the demo; everyone else is a colleague seated in it, and they will see it in their own account.</p></div></div>
     <div className="demo-form-grid">
       <Field label="Company"><input maxLength={80} placeholder="Alto Capital" value={companyName} onChange={(event) => setCompanyName(event.target.value)} /></Field>
-      <Field label="Presenter"><select value={presenterUserId} onChange={(event) => setPresenterUserId(event.target.value)}>
+      <Field label="Presenter"><select value={presenterUserId} onChange={(event) => {
+        // Whoever is now presenting cannot also play a part; a part they were
+        // holding is cleared rather than left in a dropdown that no longer
+        // offers them.
+        setPresenterUserId(event.target.value);
+        setCast((current) => Object.fromEntries(Object.entries(current).map(
+          ([role, userId]) => [role, userId === event.target.value ? '' : userId],
+        )));
+      }}>
         {template.members.map((member) => <option key={member.userId} value={member.userId}>{member.name} · {member.email}</option>)}
       </select></Field>
       {roles.map((role, index) => <Field key={role} label={`User ${index + 1}`}>
         <select value={cast[role] ?? ''} onChange={(event) => setCast((current) => ({ ...current, [role]: event.target.value }))}>
           <option value="">Choose a colleague…</option>
-          {template.castCandidates.map((candidate) => <option key={candidate.userId} value={candidate.userId}>{candidate.name} · {candidate.email}</option>)}
+          {castable.map((candidate) => <option key={candidate.userId} value={candidate.userId}>{candidate.name} · {candidate.email}</option>)}
         </select>
       </Field>)}
     </div>
     <p className="ace-form-note">Operation <code>{operationId}</code></p>
+    {tooFew && <p className="queue-error" role="alert">This pack has {roles.length} parts besides the presenter, and {presenterName || 'the presenter'} leaves {castable.length} {castable.length === 1 ? 'colleague' : 'colleagues'} to cast them. Present it as somebody else, or wait until more of the company has signed in.</p>}
     {twice !== '' && <p className="queue-error" role="alert">{nameOfCandidate(twice) || presenterName} is in this demo twice. Each part is played by a different person.</p>}
     {sharedName !== '' && <p className="queue-error" role="alert">Two people in this demo are called {sharedName}. Nobody watching could tell which of them a mention names, so cast somebody else.</p>}
     {error && <p className="queue-error" role="alert">{error}</p>}

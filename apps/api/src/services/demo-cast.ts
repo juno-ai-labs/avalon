@@ -93,3 +93,25 @@ export async function readDemoCast(env: Env, input: {
   }
   return read;
 }
+
+/**
+ * Refuse two people in one demo under one display name.
+ *
+ * A mention resolves to a user id, but what the room validates it against is
+ * the visible text, and nobody watching can tell which of two identically
+ * named people was named — the presenter reading their own name on somebody
+ * else's message worst of all. Checked when the demo is started and again
+ * before the first write, because a name is not fixed: it is refreshed from
+ * the platform identity every time somebody signs in, so two people can
+ * collide between a start request and the phase that acts on it, and a retry
+ * can be days later.
+ */
+export function assertDemoCastNamesDistinct(input: { names: readonly string[]; status: 422 | 409 }): void {
+  const folded = input.names.map((name) => name.toLowerCase());
+  if (new Set(folded).size === folded.length) return;
+  throw new ApiError(
+    input.status,
+    "demo_cast_name_duplicate",
+    "Two people in this demo have the same name; nobody watching could tell which of them a mention names",
+  );
+}
