@@ -206,8 +206,12 @@ export function useWorkstreamControlSocket(
                 < (current?.privateChildrenWaterline ?? stored.viewerWaterline)))) return current;
           return { privateChildren: metadata.privateChildren, privateChildrenWaterline: metadata.privateChildrenWaterline, stateVersion: incoming };
         });
-        if (localCacheScope !== null && metadata.privateChildren) {
-          const listed = metadata.privateChildren.map((child) => child.substreamId).sort();
+        // Prune from the roster the guard above accepted, which may be the
+        // one already held rather than this frame's: a stale frame that lists
+        // fewer children must not take a still-authorized child off the disk.
+        const accepted = queryClient.getQueryData<WorkstreamChildDirectory>(['workstream-children', workstreamId]);
+        if (localCacheScope !== null && accepted?.privateChildren) {
+          const listed = accepted.privateChildren.map((child) => child.substreamId).sort();
           const roster = listed.join(',');
           if (roster !== retainedChildren) {
             retainedChildren = roster;

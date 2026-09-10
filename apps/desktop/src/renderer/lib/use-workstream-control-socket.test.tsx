@@ -472,6 +472,16 @@ describe('useWorkstreamControlSocket', () => {
         conversationCacheKey(workstreamId, kept),
       ].sort());
     }, { timeout: 2_000 });
+
+    // A stale frame the version guard rejects lists no children at all. The
+    // roster the cache kept is the one the disk follows, so nothing goes.
+    act(() => socket.message(metadata(4, { privateChildren: [], privateChildrenWaterline: 1 })));
+    await flushPromises();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect((await conversationSlice.entries(scope)).map((entry) => entry.key).sort()).toEqual([
+      conversationCacheKey(workstreamId, '0'),
+      conversationCacheKey(workstreamId, kept),
+    ].sort());
     closeLocalCache();
   });
 

@@ -9,9 +9,9 @@ import {
   workspaceDirectorySlice,
   type CachedWorkspaceDirectory,
 } from './workspace-directory-cache';
-import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { setCachedWorkstreams, WORKSTREAM_PAGE_SIZE, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
-const scope = localCacheScope('global', '00000000-0000-7000-8000-000000000001');
+const scope = localCacheScope('00000000-0000-7000-8000-0000000000aa', 'global', '00000000-0000-7000-8000-000000000001');
 
 function summary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary {
   return {
@@ -83,6 +83,22 @@ describe('workspace directory cache', () => {
     expect(queryClient.getQueryData(['automations'])).toBeUndefined();
   });
 
+  it('refuses a row a wipe overtook while it was being read', async () => {
+    await workspaceDirectorySlice.write(scope, DIRECTORY_CACHE_KEY, directory());
+    const queryClient = new QueryClient();
+    let wipe: Promise<void> | null = null;
+    const stillWanted = (): boolean => {
+      wipe = clearAllLocalCache();
+      return true;
+    };
+
+    await expect(hydrateWorkspaceDirectory(queryClient, scope, stillWanted)).resolves.toBe(false);
+    await wipe;
+
+    expect(queryClient.getQueryData(WORKSTREAMS_QUERY_KEY)).toBeUndefined();
+    expect(queryClient.getQueryData(['projects'])).toBeUndefined();
+  });
+
   it('refuses a stored directory with a row this build cannot read', async () => {
     const raw = defineLocalCacheSlice<unknown>({ kind: 'directory', version: 1, parse: (value) => value });
     // A row with no title, written the way an older build might have written it.
@@ -90,6 +106,23 @@ describe('workspace directory cache', () => {
 
     expect(await workspaceDirectorySlice.read(scope, DIRECTORY_CACHE_KEY)).toBeNull();
     await expect(hydrateWorkspaceDirectory(new QueryClient(), scope, () => true)).resolves.toBe(false);
+  });
+
+  it('keeps one page of the flat list, however many pages the sidebar has loaded', async () => {
+    const queryClient = new QueryClient();
+    const mirror = mirrorWorkspaceDirectory(queryClient, scope, { live: () => true });
+    const loaded = Array.from({ length: WORKSTREAM_PAGE_SIZE + 1 }, (_, index) => summary({
+      id: `00000000-0000-7000-8000-${String(index).padStart(12, '0')}`,
+      title: `Row ${index}`,
+    }));
+
+    setCachedWorkstreams(queryClient, loaded);
+    await mirror.flush();
+
+    const row = await workspaceDirectorySlice.read(scope, DIRECTORY_CACHE_KEY);
+    expect(row?.workstreams).toHaveLength(WORKSTREAM_PAGE_SIZE);
+    expect(row?.workstreams[0]?.title).toBe('Row 0');
+    mirror.stop();
   });
 
   it('mirrors the lists only once the caller says they are the socket\'s', async () => {

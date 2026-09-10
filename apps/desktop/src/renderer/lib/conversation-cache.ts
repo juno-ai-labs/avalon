@@ -1,7 +1,7 @@
 import { WorkstreamTranscriptSnapshotSchema, type WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import { SubstreamInitialContextSchema, type SubstreamInitialContext } from '@rally/contracts/substream-creation';
 import { notifyManager, type QueryClient } from '@tanstack/react-query';
-import { defineLocalCacheSlice } from './local-cache';
+import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
 import { mirrorQueriesToLocalCache, queryKeyIsOneOf, type QueryMirror } from './local-cache-mirror';
 import type { WorkstreamFeedSource } from './telemetry';
 import { openingTranscriptSnapshot } from './transcript';
@@ -113,9 +113,13 @@ export async function hydrateConversation(
   keys: ConversationCacheKeys,
   stillWanted: () => boolean,
 ): Promise<'seeded' | 'skipped' | 'missing'> {
+  const epoch = localCacheEpoch();
   const cached = await conversationSlice.read(scope, conversationCacheKey(parentId, substreamId));
   if (!cached) return 'missing';
   if (!stillWanted() || cached.detail.id !== parentId) return 'skipped';
+  // A wipe that began while the row was in flight is taking it off the disk;
+  // a row on its way out is not a seed.
+  if (localCacheEpoch() !== epoch) return 'skipped';
   // Whatever is there already is newer than a seed: a live snapshot that
   // landed while this read was in flight, or the optimistic turn a launch
   // surface wrote before navigating here.

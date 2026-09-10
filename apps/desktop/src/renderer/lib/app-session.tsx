@@ -543,7 +543,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     }
     const departure = await bridge.leaveWorkspace({ expectedOutcome, region: session.workspace.region, workspaceId });
     await clearWorkspaceDrafts(session.workspace.region, workspaceId);
-    await clearWorkspaceLocalCache(session.workspace.region, workspaceId);
+    await clearWorkspaceLocalCache(session.user.id, session.workspace.region, workspaceId);
     queryClient.removeQueries();
     return departure;
   }, [bridge, queryClient, session?.workspace]);
@@ -635,11 +635,11 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   }, [bridge, queryClient]);
 
   const surrenderActiveWorkspace = useCallback(async (): Promise<void> => {
-    const departing = session?.workspace ?? null;
+    const departing = session ? { userId: session.user.id, workspace: session.workspace ?? null } : null;
     const nextSession = await bridge.surrenderActiveWorkspace();
-    if (departing) {
-      await clearWorkspaceDrafts(departing.region, departing.id);
-      await clearWorkspaceLocalCache(departing.region, departing.id);
+    if (departing?.workspace) {
+      await clearWorkspaceDrafts(departing.workspace.region, departing.workspace.id);
+      await clearWorkspaceLocalCache(departing.userId, departing.workspace.region, departing.workspace.id);
     }
     // Kept alongside `applySession`'s own scope check: with nothing left to
     // select, previous and next are both null and read as the same scope.

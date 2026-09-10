@@ -1460,9 +1460,11 @@ export function useWorkstreamSocket(
       // what the room said some launches ago, and a room rebuilt since then
       // can legitimately answer with lower ones; whatever the room sends now
       // is newer than anything the disk remembered.
+      // The resume registry outlives the query entries, so the sequence it
+      // remembers from an earlier visit is a fence the seed must skip too.
       const replacingLocalSeed = event.type === 'snapshot' && seededFromLocalCache();
       if (event.type === 'snapshot') {
-        if (event.sequence < resumeState.lastSequence) return;
+        if (!replacingLocalSeed && event.sequence < resumeState.lastSequence) return;
         // The room sequence can be equal when a requested snapshot races the
         // upsert that prompted it. Transcript event sequence is the canonical
         // fence: an older snapshot must never roll the cache back.

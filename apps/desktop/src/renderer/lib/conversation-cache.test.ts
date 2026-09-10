@@ -15,8 +15,8 @@ import {
 import { clearAllLocalCache, closeLocalCache, localCacheScope } from './local-cache';
 import type { WorkstreamDetail } from './types';
 
-const scope = localCacheScope('global', '00000000-0000-7000-8000-000000000001');
-const otherScope = localCacheScope('eu', '00000000-0000-7000-8000-000000000001');
+const scope = localCacheScope('00000000-0000-7000-8000-0000000000aa', 'global', '00000000-0000-7000-8000-000000000001');
+const otherScope = localCacheScope('00000000-0000-7000-8000-0000000000aa', 'eu', '00000000-0000-7000-8000-000000000001');
 const parentId = '00000000-0000-7000-8000-000000000010';
 const childId = '00000000-0000-7000-8000-000000000011';
 
@@ -152,6 +152,27 @@ describe('conversation cache', () => {
     const fresh = new QueryClient();
     await expect(hydrateConversation(fresh, scope, parentId, '0', keys, () => false)).resolves.toBe('skipped');
     expect(fresh.getQueryData(keys.detail)).toBeUndefined();
+  });
+
+  it('refuses a row a wipe overtook while it was being read', async () => {
+    await conversationSlice.write(scope, conversationCacheKey(parentId, '0'), {
+      detail: detail(), transcript: transcript(), initialContext: null, cachedAt: '',
+    }, parentId);
+    const queryClient = new QueryClient();
+    const keys = keysFor('0');
+    // The wipe begins after the row has been read and before it is seeded:
+    // the account changed while the read was in flight.
+    let wipe: Promise<void> | null = null;
+    const stillWanted = (): boolean => {
+      wipe = clearAllLocalCache();
+      return true;
+    };
+
+    await expect(hydrateConversation(queryClient, scope, parentId, '0', keys, stillWanted)).resolves.toBe('skipped');
+    await wipe;
+
+    expect(queryClient.getQueryData(keys.detail)).toBeUndefined();
+    expect(queryClient.getQueryData(keys.feedSource)).toBeUndefined();
   });
 
   it('reports a missing row, and one written under another workspace', async () => {
