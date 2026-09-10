@@ -103,7 +103,11 @@ message capsule, keyed on `:is(.workstream-screen, .workstream-launch-screen)
 42px-tall field, the plus in the left column and the send or dictation control
 in the right. `ComposerInput` takes `layout: 'message-capsule'` on all four
 surfaces (the conversation, the new-substream dock, a workspace-level new chat
-and a project-owned one), and no surface states a treatment of its own. A
+and a project-owned one), and no surface states a treatment of its own. Wrapped
+text and staged attachments span the controls' own grid row, so the reserve at
+the foot of the field is what holds the two apart: the 28px control, the 7px of
+row padding under it, and 4px of air between the last line and the top of the
+plus. A
 launcher that dressed its field differently made the element a person types
 their first message into the odd one out on a screen already showing the
 conversation it becomes, and it made the hand-off a costume change.
@@ -428,6 +432,19 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — Wrapped text clears the controls by 4px
+
+**What changed:** The reserve at the foot of a capsule's field, on the two
+states where the text spans the controls' row — wrapped text and staged
+attachments — is 39px rather than 34px: the 28px control, the 7px of row padding
+under it, and 4px between the last line and the top of the plus. The field is
+5px taller in those states and unchanged at 44px while it holds one line.
+
+**Why:** At 34px the text ended flush with the controls' top edge. Nothing
+overlapped and nothing was illegible, which is why it survived; it just read as
+one block of text with buttons stuck to the bottom of it rather than as a field
+with its controls under it. The number is the design's.
 
 ### 2026-09-10 — One composer, dressed one way
 
