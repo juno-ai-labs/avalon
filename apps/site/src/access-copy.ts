@@ -1,7 +1,7 @@
 /** Approved early-access copy. Change these values without changing the form or API. */
 export const accessCopy = {
   title: 'Rally — Get early access',
-  headline: 'Stop copy/pasting great AI work into Slack.',
+  headline: 'Stop copy/pasting AI work into Slack.',
   description: 'Rally brings your chats, skills, context, and workflows into one shared place your whole team can build on.',
   capabilities: 'Collaborative Chat. Team Skills. Ready Out of the Box.',
   emailLabel: 'Work email',
@@ -13,6 +13,7 @@ export const accessCopy = {
   reviewRequired: 'Your request was saved. We need to check the confirmation email before sending it again.',
   rejected: 'Your request was saved, but we couldn’t deliver your confirmation email. Check that you entered the right address.',
   failure: 'We couldn’t complete your request. Please try again.',
+  verification: 'Please complete the verification shown above the email field.',
 };
 
 export function renderAccessCopy(html: string): string {
