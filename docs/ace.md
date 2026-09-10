@@ -103,13 +103,15 @@ the template seats nobody to present, or the company has fewer people than the
 pack has parts — a sentence saying so rather than a form that cannot be
 submitted. **New demo** takes a company name, the presenter (chosen from the
 template's members, because they are handed its connections), and a colleague
-for every other pack role: dropdowns labelled **User 1** onwards, listing
+for every other pack role: one dropdown per part, labelled with what that part
+is — **Product**, **Sales**, **Legal** for the pack in service — listing
 everyone with a `@rallywith.ai` account who has signed in, by name and address
-([`demo-workspaces.md`](demo-workspaces.md#casting-a-demo)). They open uncast:
-a default here would seat a real person because nobody looked. It refuses to
-start while a part is uncast, one person is in two parts, or two of them share
-a display name, and mints one operation id per form so a second click resolves
-to the same preparation.
+([`demo-workspaces.md`](demo-workspaces.md#casting-a-demo)). They open uncast: a
+default here would seat a real person because nobody looked, and the form says
+how many parts are still empty rather than leaving **Start preparation** dead
+with nothing to read. It refuses to start while a part is uncast, one person is
+in two parts, or two of them share a display name, and mints one operation id
+per form so a second click resolves to the same preparation.
 **Retry** is offered while a preparation is failed and disabled while it is
 running; a running one that has stopped moving is abandoned rather than raced. A Ready demo names the workspace and where
 the presenter finds it — the account menu at the foot of Rally's sidebar,
@@ -468,9 +470,13 @@ the field.
 **Consequences:** The presenter's list and the cast's are now different lists
 from the same response, and the page names the domain when it says the second
 one is too short — so it reads the domain from the template rather than
-carrying a copy of it. What the page refuses, the regional API refuses again:
-the dropdown is a convenience, not the boundary
+carrying a copy of it. A template that reads fine but has nobody to cast is its
+own state rather than the "could not be read" one, because Refresh is not the
+remedy for it. What the page refuses, the regional API refuses again: the
+dropdown is a convenience, not the boundary
 ([`demo-workspaces.md`](demo-workspaces.md#casting-a-demo)).
+
+Shipped in #664.
 
 ### 2026-09-09 — Bound and recover early-access operations
 

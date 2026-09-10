@@ -56,6 +56,7 @@ export const DEMO_MEMO_TITLE = "Insights pricing — decision memo";
 export const DEMO_TEST_PACK = DemoPackSchema.parse({
   version: "workerd-test",
   roles: ["presenter", "priya", "marcus"],
+  roleLabels: { priya: "Product", marcus: "Sales" },
   steps: [
     {
       kind: "create_workstream",
