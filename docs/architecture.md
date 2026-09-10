@@ -57,12 +57,15 @@ docs/                      Product, architecture, security, setup, runbooks
    regional API. The macOS application menu opens the singleton Settings window
    with **Command-,** and closes the focused window with **Command-W**, which on
    darwin has to come from a File menu of Rally's own — Electron's `windowMenu`
-   role omits it there. Settings also closes on **Escape**, a convenience rather
-   than the platform gesture, and only when no dialog, select menu, or unsaved
-   text field has a nearer claim on the keystroke. The main process also owns the
-   macOS menu bar status item, which is the one surface that exists with no
-   window open — Rally opens at login by default and starts hidden — and which
-   therefore reads the regional API for itself rather than through a renderer;
+   role omits it there. Settings and the Sidekicks window also close on
+   **Escape**, a convenience rather than the platform gesture, and only when no
+   IME composition, dialog, select menu, or unsaved text field has a nearer
+   claim on the keystroke; `renderer/lib/window-escape.ts` is the one predicate
+   and the hook that installs it, and each window nominates what closing it
+   would cost. The main process also owns the macOS menu bar status item, which
+   is the one surface that exists with no window open — Rally opens at login by
+   default and starts hidden — and which therefore reads the regional API for
+   itself rather than through a renderer;
    [`menu-bar.md`](menu-bar.md) owns it. Main also owns the typed telemetry
    reporter, route and identity epochs, local spool, Crashpad generations, and
    authenticated regional upload; the renderer can only invoke registered
@@ -798,6 +801,26 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-09-10 — Escape closes any secondary window, not just Settings
+
+**What changed:** The Escape-closes-this-window gesture is now the shared
+`renderer/lib/window-escape.ts` — `escapeClosesWindow` and the
+`useEscapeClosesWindow` hook that installs it — and the Sidekicks window is its
+second caller. The predicate also declines an Escape belonging to an in-flight
+IME composition, which the Settings-only version did not check.
+
+**Why:** The gesture was written once for Settings, with its dialog, modifier,
+`preventDefault`, and unsaved-text reasoning inside a 2,500-line screen. Rally
+opens four secondary windows and every one of them will eventually want it, so
+the second caller was going to be a copy of a subtle predicate rather than a
+call to it. What differs between windows is one question — *would closing cost
+text that has nowhere to come from?* — so that is the only thing a caller passes:
+Settings nominates its visible pane, the Sidekicks window nominates nothing,
+because a conversation composer's draft is cached on the device and comes back.
+The IME check came with the move: the Sidekicks window's writing surface is a
+chat composer, where an Escape that abandons a candidate is the common case, and
+a window that closed over one would take a sentence with no undo.
 
 ### 2026-09-03: An automation is a conversation parent, not a sibling authority
 

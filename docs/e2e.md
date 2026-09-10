@@ -425,6 +425,19 @@ the Automation home page.
    attachment, follow, and **Jump to latest** behavior with a work stream. Confirm
    work-stream-only participant/resource/unread controls and automation-only
    review/template controls do not leak across adapters.
+9. In the Sidekicks window, press `Escape` on the library with nothing focused
+   and confirm the window closes. Reopen it and confirm the keystroke is refused
+   while something nearer wants it: type a filter in **Search Sidekicks** and
+   confirm the first `Escape` clears the filter and leaves the window standing,
+   while the next one closes it; open a Sidekick and confirm `Escape` is taken
+   by the overflow menu, the delete confirmation, and the composer's `@` and `/`
+   lists before it reaches the window, and that a drafted composer holds it while
+   the caret is still in it. With an IME active, confirm the `Escape` that
+   abandons a candidate in the composer leaves both the draft and the window
+   exactly as they were. Then click off the drafted composer, confirm `Escape`
+   closes the window, and confirm the draft is back in the composer when the
+   Sidekick is reopened — that restoration is why nothing here is swept for
+   unsaved text.
 
 Pass evidence: one stable automation ID, one accepted authority, strict event
 matching with one occurrence per canonical event, private generated runs shown
