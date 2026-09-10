@@ -7108,10 +7108,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .settings-account-actions { display: flex; align-items: center; gap: 10px; justify-content: flex-end; color: var(--av-sys-color-text-muted); }
 
 /* Feed colors follow the sender's live profile, including older loaded turns. */
-.automation-chat-surface .human-message[data-profile-color] .human-message-bubble {
-  background: var(--av-cmp-bubble-human-background);
-  color: var(--av-cmp-bubble-human-foreground);
-}
 .human-message[data-profile-color] .human-message-bubble .markdown-body,
 .human-message[data-profile-color] .human-message-bubble .markdown-body :is(p, strong, em, code, a) {
   color: var(--av-cmp-bubble-human-foreground);
