@@ -58,10 +58,31 @@ lands second calls `revealIfReady`, and `pendingReveal` is consumed there so one
 screen still raises it.
 
 Both `ready-to-show` and `closed` are wired by the factory at construction rather
-than by the controller afterwards. `ready-to-show` routinely fires before
-`loadURL` resolves, and a window whose load fails is destroyed before the promise
-settles; a listener attached after the await is a listener attached after the
-event.
+than by the controller afterwards, because both can fire during the load:
+`ready-to-show` routinely beats `loadURL`, and a window can be closed before it
+finishes. A listener attached after the load is a listener attached after the
+event. For the same reason the controller adopts the window *before* starting
+the load, so that readiness arriving mid-load has a window to reveal.
+
+### A window whose load fails is disposed of, by the controller
+
+Electron does not dispose a window whose `loadURL` rejected: the `BrowserWindow`
+and its renderer process stay exactly where they were, hidden and blank. Nothing
+else holds a reference, so a controller that merely forgot it would strand both
+for the life of the process — and the next attempt would strand another. With
+prewarming that next attempt is not rare: `prewarm` runs on every session
+broadcast, which includes every token refresh.
+
+So the handle exposes `load()` and `destroy()` and the controller owns both. It
+adopts the window, awaits `load()`, and on rejection forgets the window,
+destroys it, and rethrows. The factory's `destroy()` detaches its `closed`
+listener first, because `destroy()` still emits `closed` and the controller
+already knows this window is finished — letting the callback run would have it
+read a disposal as somebody closing Settings and build a replacement, which for
+a window that cannot load is a loop.
+
+This is the same disposal `createDeepLinkErrorWindow` does for the same reason;
+that one is the older worked example.
 
 The requested section takes whichever of two paths is cheaper. A window built for
 this request carries the section in its URL, so its first paint is already the
@@ -125,6 +146,14 @@ value is what the reveal is measured against.
   so a failure to build one has no one to report to and must not surface as an
   unhandled rejection in the main process. A failure under `open` is the person's
   to see.
+- **A window that fails to load is destroyed, never merely forgotten.** Electron
+  keeps it and its renderer process alive otherwise, and nothing else holds a
+  reference — so forgetting one leaks a process, and a prewarm that runs on every
+  token refresh leaks one per failure.
+- **Disposing a window must not run `onClosed`.** `destroy()` emits `closed`, and
+  the controller treats a close as "this person uses Settings" and rebuilds. A
+  disposal that reaches that callback turns a window which cannot load into an
+  endless rebuild.
 - **The placeholder workspace is all-or-nothing.** `workspaceFromSession` returns
   a complete `Workspace` or `null`. A partial one would put invented values —
   a guessed timezone above all — on screen as though they had been read.
@@ -163,13 +192,12 @@ meeting surfaces mount on the same placeholder.
 
 ## Failure modes and limits
 
-- **A prewarm that fails to load** is reported through `reportError` and leaves no
-  window. The next `open` builds one and surfaces its own failure. A window
-  destroyed while it loads is never adopted, so the controller cannot end up
-  holding a destroyed window.
-- **A prewarm that fails while a window is closing** is skipped rather than
-  retried, because the in-flight creation is still recorded. That is what keeps a
-  window which cannot load from being rebuilt in a loop.
+- **A load that fails** destroys the window, clears the shared `settingsWindow`
+  reference, and rethrows. Under `prewarm` that is reported through `reportError`
+  and swallowed; under `open` it reaches the caller. Either way exactly one
+  window is built per attempt and none is left behind.
+- **A window closed while it loads** has already run `onClosed`, so the load
+  settling finds the controller's state cleared and reveals nothing.
 - **Data can be older than the window.** A window prewarmed at launch and opened
   hours later shows what it read at prewarm time, then refreshes on the reveal:
   connections through `refetchOnWindowFocus`, everything else on its own
@@ -260,7 +288,12 @@ as a safety net* in case `ready-to-show` never fires for a hidden window. It
 fires — confirmed by opening the real app — and the fallback would trade a
 guaranteed reveal for a window shown before it has painted.
 
-**Consequences:** A settings window now exists for most of a signed-in session,
+**Consequences:** A window whose renderer load fails is now this controller's to
+destroy — Electron does not, nothing else holds it, and `prewarm` runs often
+enough (every token refresh) that forgetting one would leak a renderer process
+per failure. Any future path that abandons a settings window disposes of it, and
+does so without running `onClosed`, or the rebuild that callback triggers becomes
+a loop. A settings window now exists for most of a signed-in session,
 so `settingsWindow` being non-null no longer means anybody wants one. Deep-link
 routing asks `revealedSettingsWindow()` instead, and any future caller that means
 "settings is the destination" must do the same or it will raise a window at
