@@ -4,7 +4,7 @@ import type { PropsWithChildren } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { WorkstreamSummary } from './types';
-import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from './use-workstreams-query';
+import { WORKSTREAMS_QUERY_KEY, useCachedWorkstreams, useWorkstreamsQuery } from './use-workstreams-query';
 import { setCachedWorkstreams } from './workstreams-cache';
 
 const listWorkstreams = vi.hoisted(() => vi.fn());
@@ -213,6 +213,8 @@ describe('useWorkstreamsQuery', () => {
     // the first page would truncate the list under somebody who had scrolled.
     it('reloads every page already on screen when the list refetches', async () => {
       pagedList();
+      // Startup's observer mounts first and must never register a second pager.
+      const observer = renderHook(() => useCachedWorkstreams(), { wrapper });
       const { result, rerender } = renderHook(() => useWorkstreamsQuery(), { wrapper });
       landConnectPayload(rerender, {
         items: [summary('workstream-1', 'First page')],
@@ -231,6 +233,7 @@ describe('useWorkstreamsQuery', () => {
       expect(listWorkstreams.mock.calls[2]?.[0]).toMatchObject({ before: 'cursor-1' });
       expect(result.current.data?.map((item) => item.id))
         .toEqual(['workstream-1', 'workstream-2']);
+      expect(observer.result.current?.map((item) => item.id)).toEqual(['workstream-1', 'workstream-2']);
     });
 
     // A later payload must not drag the cursor back to the end of page one

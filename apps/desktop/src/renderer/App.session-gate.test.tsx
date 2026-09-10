@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { WorkstreamSummary } from './lib/types';
 import type { DesktopSession } from '../common/desktop';
 import { SessionGate } from './App';
 import { setCachedWorkstreams } from './lib/workstreams-cache';
@@ -15,6 +16,9 @@ const sessionState = vi.hoisted(() => ({
   api: {
     getWorkspace: vi.fn(),
     getWorkspaceMembers: vi.fn(),
+    getWorkspaceSocketTicket: vi.fn(),
+    getSocketTicket: vi.fn(),
+    getWorkstreamControlSocketTicket: vi.fn(),
   },
   activateWorkspace: vi.fn(),
   booting: false,
@@ -32,10 +36,6 @@ vi.mock('./lib/app-session', () => ({
   AppSessionProvider: ({ children }: { children: React.ReactNode }) => children,
   useAppSession: () => sessionState,
   FINISH_SIGN_IN_IN_BROWSER: 'Finish signing in to Rally in your browser',
-}));
-vi.mock('./lib/workspace-socket', () => ({
-  WorkspaceSocketProvider: ({ children }: { children: React.ReactNode }) => children,
-  useWorkspaceSocket: () => ({ state: 'connected', sidebarConnect: null }),
 }));
 vi.mock('./screens/onboarding', () => ({
   BootScreen: () => <div>boot screen</div>,
@@ -59,10 +59,11 @@ const identitySession: DesktopSession = {
   workspace: null,
 };
 
-function renderGate(): void {
+function renderGate(): QueryClient {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   setCachedWorkstreams(queryClient, []);
   render(<QueryClientProvider client={queryClient}><SessionGate /></QueryClientProvider>);
+  return queryClient;
 }
 
 describe('SessionGate identity-first ordering', () => {
@@ -85,6 +86,11 @@ describe('SessionGate identity-first ordering', () => {
       currentUser: { id: 'user-1', email: 'adam@example.com', name: 'Adam', role: 'owner' },
     });
     sessionState.api.getWorkspaceMembers.mockResolvedValue([]);
+    // Hold transport outside the renderer: these tests exercise the real
+    // provider/pool mount order, while workspace-socket and pool suites drive frames.
+    sessionState.api.getWorkspaceSocketTicket.mockImplementation(() => new Promise(() => {}));
+    sessionState.api.getSocketTicket.mockImplementation(() => new Promise(() => {}));
+    sessionState.api.getWorkstreamControlSocketTicket.mockImplementation(() => new Promise(() => {}));
   });
 
   it('requires sign-in before showing a deep-linked invitation', () => {
@@ -102,6 +108,43 @@ describe('SessionGate identity-first ordering', () => {
 
     expect(await screen.findByText('main workspace UI')).toBeVisible();
     expect(sessionState.getOnboardingState).not.toHaveBeenCalled();
+  });
+
+  it('starts workspace admission and the landing pair while workspace details are pending', async () => {
+    sessionState.session = { ...identitySession, workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' } };
+    const profile = { id: 'workspace-1', name: 'Rally Studio', region: 'global', currentUser: { id: 'user-1', email: 'adam@example.com', name: 'Adam', role: 'owner' } };
+    let finishProfile!: (value: typeof profile) => void;
+    sessionState.api.getWorkspace.mockImplementationOnce(() => new Promise((resolve) => { finishProfile = resolve; }));
+    const client = renderGate();
+    expect(screen.getByText('Opening workspace…')).toBeVisible();
+    expect(sessionState.api.getWorkspace).toHaveBeenCalledTimes(1);
+    expect(sessionState.api.getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
+    const id = '00000000-0000-7000-8000-000000000031';
+    // The workspace provider's canonical directory write can land before REST.
+    const first: WorkstreamSummary = {
+      id, title: 'First work stream', titleStatus: 'settled', scope: 'workspace',
+      harnessStatus: 'completed', latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0,
+      manualUnreadFromSequenceNumber: null, manualUnreadGeneration: 0, hasUnread: false,
+      firstUnreadSequenceNumber: null, lastActivityAt: '2025-01-01T12:00:00Z',
+      lastAccessedAt: '2026-09-09T12:00:00Z',
+      pinPosition: null, nextPendingWakeup: null, participantUserIds: [], participantExtraCount: 0,
+    };
+    // Recently viewed wins the landing even outside the five most active rows.
+    const recent = Array.from({ length: 5 }, (_, index) => ({ ...first,
+      id: `00000000-0000-7000-8000-${String(index + 40).padStart(12, '0')}`,
+      lastActivityAt: '2026-09-09T13:00:00Z', lastAccessedAt: '2026-09-08T12:00:00Z',
+    }));
+    act(() => setCachedWorkstreams(client, [first, ...recent]));
+    await waitFor(() => expect(sessionState.api.getSocketTicket).toHaveBeenCalledTimes(6));
+    expect(sessionState.api.getSocketTicket.mock.calls.some(([target]) => target === id)).toBe(true);
+    expect(sessionState.api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(6);
+    expect(screen.getByText('Opening workspace…')).toBeVisible();
+    await act(async () => { finishProfile(profile); });
+    expect(await screen.findByText('workstream')).toBeVisible();
+    expect(window.location.hash).toBe(`#/workstreams/${id}`);
+    expect(sessionState.api.getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
+    expect(sessionState.api.getSocketTicket).toHaveBeenCalledTimes(6);
+    expect(sessionState.api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(6);
   });
 
   it.each([

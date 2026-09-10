@@ -25,7 +25,7 @@ the different question of who a work stream is *for*.
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The flat-array cache key and the only typed write boundary for it. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | `applyPinnedWorkstreams` derives the new pin positions before handing the list update to the cache boundary. |
 | `apps/desktop/src/renderer/screens/workstream-landing.tsx` | The root route: resolves to the first pin, else the most recent row, else the composer. |
-| `apps/desktop/src/renderer/lib/workstream-landing.ts` | `useOpenFirstWorkstream`, the one way a screen leaves for that route, and the `skipWorkstreamIds` state it carries. |
+| `apps/desktop/src/renderer/lib/workstream-landing.ts` | Shared landing selection and `useOpenFirstWorkstream`, the one way a screen leaves for that route, and the `skipWorkstreamIds` state it carries. |
 
 ## How it works
 
@@ -383,6 +383,16 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-09-09 — Warm the root landing before workspace details finish
+
+Startup and the root route now share the pin-then-viewer-recency selection.
+The existing connection pool starts from the workspace directory while profile
+loading continues, and includes the chosen landing even when its activity falls
+outside the five recent background rows. This removes serial connection setup
+without changing navigation order, skip lists, empty-directory handling, or
+explicit New/deep-link routes. Warming still does not count as viewing.
+
 
 ### 2026-09-09 — Every leaving screen opens the first work stream
 
