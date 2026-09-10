@@ -99,7 +99,7 @@ export const granolaTools: ToolDefinition[] = [
         updatedAfter: dateFilterJsonSchema,
         folderId: folderIdJsonSchema,
         cursor: cursorJsonSchema,
-        pageSize: { type: "integer", minimum: 1, maximum: 30 },
+        pageSize: { type: "integer", minimum: 1, maximum: 30, description: "Maximum notes to return in one page. Defaults to Granola's own page size; follow the cursor for the rest." },
       },
     },
   },
@@ -130,7 +130,7 @@ export const granolaTools: ToolDefinition[] = [
       additionalProperties: false,
       properties: {
         cursor: cursorJsonSchema,
-        pageSize: { type: "integer", minimum: 1, maximum: 30 },
+        pageSize: { type: "integer", minimum: 1, maximum: 30, description: "Maximum folders to return in one page. Defaults to Granola's own page size; follow the cursor for the rest." },
       },
     },
   },
@@ -143,7 +143,14 @@ export const granolaTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: true,
-      properties: { query: { type: "string", minLength: 1, maxLength: 8_000 } },
+      properties: {
+        query: {
+          type: "string",
+          minLength: 1,
+          maxLength: 8_000,
+          description: "The question to ask, in full sentences, for example \"What did we decide about the pricing page in the last month?\". Granola answers it across the meetings this person can see, so include the names, dates, or topics that narrow it; bare keywords give a vaguer answer rather than an error.",
+        },
+      },
       required: ["query"],
     },
   },
@@ -165,9 +172,24 @@ export const granolaTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: true,
       properties: {
-        folderId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
-        startDate: { type: ["string", "null"], minLength: 1, format: "date-time" },
-        endDate: { type: ["string", "null"], minLength: 1, format: "date-time" },
+        folderId: {
+          type: ["string", "null"],
+          minLength: 1,
+          maxLength: 200,
+          description: "Return only meetings in this folder, as an id from list_meeting_folders. Omit it, or send `null`, for every folder. A folder name is not an id, and an id for a folder this person cannot see returns no meetings rather than an error.",
+        },
+        startDate: {
+          type: ["string", "null"],
+          minLength: 1,
+          format: "date-time",
+          description: "Return only meetings at or after this moment, as an ISO 8601 timestamp, for example 2026-08-01T00:00:00Z. Omit it, or send `null`, for no lower bound.",
+        },
+        endDate: {
+          type: ["string", "null"],
+          minLength: 1,
+          format: "date-time",
+          description: "Return only meetings at or before this moment, as an ISO 8601 timestamp, for example 2026-08-31T23:59:59Z. Omit it, or send `null`, for no upper bound. A window whose end precedes its start is accepted and returns nothing.",
+        },
       },
     },
   },
@@ -186,6 +208,7 @@ export const granolaTools: ToolDefinition[] = [
           minItems: 1,
           maxItems: 25,
           items: { type: "string", minLength: 1, maxLength: 200 },
+          description: "The meetings to read, as ids from list_meetings or query_granola_meetings, at most 25 per call. A meeting's title or date is not an id; an id this person cannot see is left out of the result rather than reported as an error, so check that every id you sent came back.",
         },
       },
       required: ["meetingIds"],
@@ -200,7 +223,14 @@ export const granolaTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: true,
-      properties: { meetingId: { type: "string", minLength: 1, maxLength: 200 } },
+      properties: {
+        meetingId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "The meeting to transcribe, as an id from list_meetings or query_granola_meetings. A meeting recorded without audio has no transcript, which comes back empty rather than as an error.",
+        },
+      },
       required: ["meetingId"],
     },
   },
