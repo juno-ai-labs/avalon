@@ -1007,8 +1007,14 @@ describe('message header meta typography', () => {
     // `padding-inline` is in the pattern for the same reason: it sets the
     // trailing inset as surely as either, and it is the logical spelling the
     // stylesheet actually reaches for.
-    expect(rule('.workstream-screen .human-message > header'))
-      .not.toMatch(/padding(?:-right|-inline(?:-end)?)?:/u);
+    // The theme no longer restates anything on the header: the one
+    // declaration it carried, a margin a pixel off the shared rule's, went
+    // with the feed's move to one spacing scale. A theme rule on the header is
+    // where a literal inset would creep back in, so its absence is what is
+    // asserted, and the shared rule is checked to carry the inset by token.
+    expect(rule('.workstream-screen .human-message > header')).toBeNull();
+    expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message > header'))
+      .not.toMatch(/padding(?:-right|-inline(?:-end)?)?:\s*\d/u);
   });
 
   /**
@@ -1025,8 +1031,9 @@ describe('message header meta typography', () => {
    * is what the human header opposite uses.
    */
   it('starts the assistant identity line on the same vertical as its prose', () => {
-    expect(rule('.workstream-screen .agent-message > header'))
-      .not.toMatch(/padding(?:-left|-inline(?:-start)?)?:/u);
+    // Same shape as the human rule above: the theme's header rule carried only
+    // a margin that disagreed with the shared one by a pixel, and is gone.
+    expect(rule('.workstream-screen .agent-message > header')).toBeNull();
     expect(rule(':is(.workstream-screen, .automation-chat-surface) .agent-message > header'))
       .not.toMatch(/padding(?:-left|-inline(?:-start)?)?:/u);
   });

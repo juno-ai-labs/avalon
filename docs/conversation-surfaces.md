@@ -92,6 +92,25 @@ latest** is selected. Programmatic repositioning is announced before changing
 the jump control. Exiting controls remain mounted but inaccessible until their
 fade completes; changing direction reverses the active animation in place.
 
+The feed's vertical rhythm is one primitive: a row owns the space above it,
+chosen by what precedes it, and no row sets a bottom margin. `app.css` sets it
+on `.virtual-message-row`, which `MessageFeed` renders in index order in both
+the windowed and the plain list, so a sibling combinator sees the true
+neighbour; each row is `flow-root`, so the margin is inside the row's border
+box and the virtualizer measures it. A turn is a row whose layer holds a
+`.message-block`; everything else (a tool row, a timing row, the work
+accordion, a system note, a status pill, the proposal card, an open
+elicitation) is an event. Four cases cover the feed: turn after turn takes
+`sys.space.stack.gap`, a turn beside an event in either direction takes
+`sys.space.block.gap`, event after event takes `sys.space.event.gap`, and
+Rally's answer after the work that produced it also takes `sys.space.event.gap`,
+because it is the same turn finishing rather than a new one. The surface's own
+trailing rows, the live timer and the run notices, take `sys.space.block.gap`
+above them for the same reason. Every other margin, padding and gap in the feed
+is a step of the `--space-N` scale `app.css` derives from `ref.space.unit`; a
+value off that scale is either a sub-unit optical nudge inside an inline
+control or a bleed derived from something else, and says which in a comment.
+
 Sharing stops at product semantics. Work streams retain participants, unread,
 resource, run, and steering controls. The in-flight pending queue is one of
 those: it attaches to the work-stream composer, not to the shared
@@ -272,6 +291,47 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — The feed's spacing is one scale and one rhythm
+
+**What changed:** Every margin, padding and gap in the feed is now a whole
+multiple of `ref.space.unit` (4px), through the `--space-1` to `--space-8`
+steps `app.css` derives from it, and the space between rows is set in one place:
+each row owns the space above it, keyed on what precedes it, through four
+sibling rules on `.virtual-message-row`. Turn to turn is 32px, a turn beside an
+event is 16, event to event is 8, and Rally's answer sits 8 above the work that
+produced it. The per-row bottom margins (`.message-block` 58, `.transcript-event`
+28, `.agent-work-timing` 26, `.system-message` 20, the status pill 12/18, the
+notices 26) are gone, as are the two negative-margin rules that clawed a turn's
+58 back when a tool or timing row followed it, the work-stream theme's second
+header margins (7 and 5 against the shared 8 and 4), its `padding-left: 2px`
+on the agent turn, and its `+ 4px` on the column padding. Prose tightened with
+it: paragraphs 16, headings `24 0 12`, lists `12 0 16` with 4 between items,
+blockquote and rule 24, code and table 16, and the answer's last block is trimmed
+inside the heading collapse, which had been leaking a full paragraph gap under
+every heading-led answer. The tool disclosure sits on a 24px row with no padding
+and details at `4 0 4 16`, the accordion's rows are 4 apart, the elicitation
+panel is 12 with 8 above its options and actions, the column is 32 on all sides
+(24 below 760px, the chevron outdent's floor), and the bubble's `8px 12px` moved
+from a literal on the theme rule into `cmp.bubble.padding`, which had been 0.
+
+**Why:** A measured pass over the live feed found 184 spacing declarations
+using every integer from 1px to 18px, three tokens covering three of them, and a
+vertical rhythm that was the *sum* of each row's bottom margin and the next row's
+top margin. The sums were the visible defect: the same system note sat 78px below
+a bubble and 20px above the answer, two consecutive tool rows were 1px apart, a
+status pill had 70 above and 38 below, and the author line had five different
+gaps under it (6, 8, 7, 4, 5) set in four places. The negative margins existed
+only because a turn set a bottom margin that its own work then had to undo. A
+row that owns the space above it makes every gap one number with one owner; it
+was preferred over a `gap` on the column, which the virtualizer's absolute rows
+cannot use, and over stamping a kind on the row from `MessageFeed`, which
+`:has()` on the layer's child makes unnecessary. The numbers themselves were
+tuned in a real window across six candidates, with machinery rows and the drawer
+compressed hardest because a receipt for work the reader has already read the
+result of should read denser than progress. One unit token rather than eight
+scale tokens because a theme has no opinion about step five that is not an
+opinion about the unit. `docs/theming.md` records the token side.
 
 ### 2026-09-10 — The work-stream sidebar's contents travel with its edge too
 
