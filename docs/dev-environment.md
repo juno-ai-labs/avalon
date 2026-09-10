@@ -485,6 +485,11 @@ right for a solo run and are deliberately left alone.
 
 ## Working in a second checkout or worktree
 
+ESLint excludes nested `.claude/worktrees/` checkouts: each owns its own config
+and should run its own gates. Walking one from its parent can also make
+TypeScript ESLint infer two conflicting configuration roots.
+
+
 `node_modules`, `.env.local`, `apps/api/.dev.vars.*`, and `.wrangler/state/` are
 all ignored by Git and are not carried across. A new checkout needs the full
 sequence from [§1](#1-install-and-prepare) — including its own migrate and seed,

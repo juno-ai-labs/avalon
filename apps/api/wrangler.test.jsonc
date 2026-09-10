@@ -1,6 +1,7 @@
 {
   "name": "avalon-do-runtime-tests",
   "main": "src/index.ts",
+  "ratelimits": [{ "name": "ACCESS_EDGE_RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 2, "period": 60 } }],
   "compatibility_date": "2026-08-17",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
@@ -82,6 +83,7 @@
   // receipt; without this binding every completed tool call dies in the
   // suite's one place production would have persisted it.
   "r2_buckets": [
+    { "binding": "DESKTOP_RELEASES", "bucket_name": "private-access-test-releases" },
     { "binding": "PAYLOADS", "bucket_name": "avalon-do-runtime-test-payloads" }
   ],
   "kv_namespaces": [

@@ -21,6 +21,7 @@ mention, or changing what a connector can deliver to a person.
 | Recording and sending what a run wrote | `apps/api/src/services/digest-run-settlement.ts` |
 | Destination dispatch | `apps/api/src/services/digest-delivery-service.ts` |
 | Email HTML | `apps/api/src/services/digest-email-content.ts` |
+| Access-request acknowledgements using the shared renderer | `apps/api/src/services/access-request-service.ts`; lifecycle in [private access](private-access.md). |
 | Markdown → email HTML | `apps/api/src/services/email-markdown.ts` |
 | Which lines are code, for both of the above | `packages/contracts/src/markdown-code.ts` — see [`markdown-code.md`](markdown-code.md) |
 | Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |
@@ -693,6 +694,20 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-09-09 — Preserve digest identity when introducing authored access mail
+
+**What changed:** The shared Resend caller accepts a trusted per-message From
+override for the authored acknowledgement.
+
+**Why:** New access mail comes from Adam while digests retain their configured
+notification identity.
+
+**Considered and rejected:** Changing the global sender would also rename digest
+and unrelated transactional mail.
+
+**Consequences:** Existing caller resolution is unchanged. [Private access](private-access.md)
+owns freezing the new message's sender and its domain-verification requirement.
 
 ### 2026-09-09 — Seek directly to the activity cursor
 

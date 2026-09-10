@@ -14,6 +14,10 @@ on:
       # Runtime contracts are a bundle input; contract tests are not.
       - "packages/contracts/**"
       - "!packages/contracts/src/**/*.test.ts"
+      # Ace executes the shared request queries and download-grant issuer.
+      - "packages/db/src/**"
+      - "!packages/db/src/**/*.test.ts"
+      - "packages/db/package.json"
       # Dependency resolution and the shared compiler configuration can change
       # Ace's emitted bundle without touching apps/ace itself.
       - "pnpm-lock.yaml"

@@ -1,3 +1,4 @@
+import { renderAccessCopy } from './src/access-copy';
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
@@ -12,16 +13,21 @@ const desktopReleaseValue = JSON.parse(readFileSync(new URL('./release.config.js
 const rootPackage = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
 
 export default defineConfig(async () => {
+  if (process.env.RALLY_RELEASE_DISCOVERY === '1' && !process.env.RALLY_TURNSTILE_SITE_KEY) {
+    throw new Error('RALLY_TURNSTILE_SITE_KEY is required for production site deployment');
+  }
   const desktopRelease = parseDesktopReleaseConfig(desktopReleaseValue);
   const publication = process.env.RALLY_RELEASE_DISCOVERY === '1'
     ? await discoverDesktopRelease(desktopRelease)
     : undefined;
   return {
     define: {
+      __RALLY_TURNSTILE_SITE_KEY__: JSON.stringify(process.env.RALLY_TURNSTILE_SITE_KEY ?? ''),
       __RALLY_SITE_RELEASE__: JSON.stringify(`site+${rootPackage.version}`),
       __RALLY_SITE_BUILD__: JSON.stringify(process.env.CF_PAGES_COMMIT_SHA?.slice(0, 40) ?? rootPackage.version),
     },
     plugins: [
+      { name: 'rally-access-copy', transformIndexHtml: renderAccessCopy },
       {
         name: 'rally-desktop-release',
         transformIndexHtml(html: string) {
@@ -50,6 +56,7 @@ export default defineConfig(async () => {
           concepts: `${projectRoot}concepts/index.html`,
           horizonConcepts: `${projectRoot}concepts/horizon/index.html`,
           heroConcepts: `${projectRoot}concepts/hero/index.html`,
+          download: `${projectRoot}download/index.html`,
           invite: `${projectRoot}invite/index.html`,
           slackLink: `${projectRoot}slack/link/index.html`,
           desktopOpen: `${projectRoot}open/index.html`,

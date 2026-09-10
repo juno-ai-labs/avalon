@@ -32,6 +32,17 @@ relationally queried.
 Read it before adding a table, a column, or a migration, and before assuming that
 knowing an object's ID is enough to read it — it never is.
 
+Migration 0101 adds Global pre-workspace `access_requests` and hashed
+`download_grants`. Their lifecycle and regional boundaries are in
+[private access](private-access.md). The shared migration creates empty EU schema;
+public acquisition writes only in Global. Nullable `expires_at` selects single-use
+admission or repeat downloads until a UTC deadline. `used_at` retains first use.
+Required `acknowledgement_from` freezes the authored sender; permanent provider
+rejection is terminal until operator intervention. `acknowledgement_first_attempt_at`
+anchors safe retries; `sending` owns one call and `review_required` prevents an
+uncertain retry beyond the provider window. The optional rate guard uses
+`access_request_rate_buckets` only when a finite threshold is configured.
+
 ## Personal work-stream access history
 
 WorkspaceDO migration 37 adds `workspace_workstream_access`, keyed by user and
@@ -63,6 +74,24 @@ SidekickDO migration 3 adds automation.loadable, atomically maintained with the 
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
 
 ## How it works
+
+### Early-access acquisition
+
+- `access_requests`: Global normalized email uniqueness, original request time,
+  frozen acknowledgement sender/subject/body, first-attempt time, generation and provider-acceptance/suppression state.
+- `download_grants`: SHA-256 token digest, manual/invitation source attribution,
+  operator, first admission, revocation and optional exact UTC expiry. Null expiry
+  means single-use without time expiry; a deadline allows repeated admission. Minute bucket/count fields coordinate download starts.
+- `access_request_rate_buckets`: hashed edge IP and current hourly count, written
+  only for a finite configured intake cap. Old buckets are removed on the next
+  guarded request; raw IPs are never stored.
+
+`access_email_budget` holds one hourly aggregate attempt counter in Global; it is distinct from IP counters. Stable `(created_at, id)` indexes support request/grant paging.
+
+All arrive in `0101_private_access.sql`. These pre-workspace records have no
+workspace association; existing workspace deletion does not erase them. Both
+regions share schema, while this slice writes only Global. [Private access](private-access.md)
+owns their lookup, erasure, admission and delivery semantics.
 
 ### Search projection state
 
@@ -978,6 +1007,34 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-09-09 — Bound and recover early-access operations
+
+**What changed:** Added the singleton `access_email_budget`, acknowledgement generations and suppression, per-grant minute counters, and stable paging indexes in the still-undeployed migration 0101. These coordinate budget and recovery without another storage service; generation checks prevent stale send completions from reversing an operator decision.
+
+**Why:** Public acquisition needs predictable failure and recoverable operator actions before launch, without imposing account approval or building a campaign system.
+
+**Consequences:** [Private access](private-access.md) owns configuration, undecided numerical limits, and recovery procedures. PR #637.
+
+### 2026-09-09 — Add pre-workspace access requests and download grants
+
+**What changed:** Migration `0101_private_access.sql` creates normalized requests
+with frozen acknowledgement sender/content, hashed grants with nullable expiry,
+and an IP-hash rate bucket table populated only when the intake cap is enabled.
+The first acknowledgement-attempt timestamp and sending/review states preserve
+exclusive provider admission and stop uncertain retries after deduplication expires.
+
+**Why:** Intake precedes workspace membership, while retrying email and download
+authorization both need durable state independent of the browser.
+
+**Considered and rejected:** Three incremental migrations for this never-deployed
+schema added fictitious legacy states. One founding migration defines the complete
+shape. Email uniqueness replaces duplicate request rows, and only token hashes
+persist rather than reusable bearer URLs.
+
+**Consequences:** Both regions receive schema; active intake stays Global. Timed
+grants preserve first admission while allowing repeats until expiry. The lifecycle
+and erasure procedure are in [private access](private-access.md).
 
 ### 2026-09-09 — The context-residency ledger
 

@@ -66,6 +66,9 @@ importers:
       '@rally/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@rally/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       hono:
         specifier: 4.13.2
         version: 4.13.2
@@ -404,6 +407,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/contracts
     devDependencies:
+      jsdom:
+        specifier: 30.0.1
+        version: 30.0.1(@noble/hashes@2.2.0)
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
