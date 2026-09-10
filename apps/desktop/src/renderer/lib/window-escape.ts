@@ -2,7 +2,14 @@ import { useEffect, type RefObject } from 'react';
 import { isComposingKeyEvent } from './ime';
 
 /**
- * The Escape-closes-this-window gesture, shared by every secondary Rally window.
+ * The Escape-closes-this-window gesture, for the secondary Rally windows that
+ * opt into it.
+ *
+ * Opt-in is the point, and worth reading as a limit rather than a description:
+ * a window answers Escape only by installing the hook below. Settings and the
+ * Sidekicks window do. The meeting and deep-link-error windows deliberately do
+ * not, so this module is not "what every secondary window does" — it is what a
+ * window gets when it asks.
  *
  * macOS spends Escape on *cancelling* — a sheet, a popover, an operation in
  * flight — and closes an ordinary window with Command-W, so Escape here is a
