@@ -145,6 +145,7 @@
     "cmp.markdown.diagram-line": "{ref.color.line.6}",
     "cmp.tooltip.background": "#2a241d",
     "cmp.tooltip.foreground": "#f7f3ec",
+    "cmp.segmented.track": "#eeeeee",
     "cmp.toggle.track": "#dad3c5",
     "cmp.toggle.knob-off": "#8d8375",
     "cmp.button.primary-background": "#070707",

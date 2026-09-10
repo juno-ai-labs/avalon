@@ -253,7 +253,7 @@ describe('project palette', () => {
     // The serpentine order is computed against PROJECT_COLOR_COLUMNS; a grid
     // that renders at a different width silently reorders the swatches.
     expect(app).toContain(`grid-template-columns: repeat(${PROJECT_COLOR_COLUMNS}, 32px)`);
-    expect(app).toContain(`.workstream-appearance-colors { grid-template-columns: repeat(${PROJECT_COLOR_COLUMNS}, minmax(0, 1fr)); }`);
+    expect(app).toContain(`.appearance-picker-colors { grid-template-columns: repeat(${PROJECT_COLOR_COLUMNS}, minmax(0, 1fr)); }`);
   });
 
   it('given the accent ink rules, when onboarding.css is read, then they mirror the ink table', () => {

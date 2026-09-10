@@ -34,7 +34,7 @@ import type { WorkstreamDetail } from '../lib/types';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { AvatarStack, Badge, Button, IconButton, InlineError, Modal, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
 import { WorkstreamGlyph } from '../components/workstream-glyph';
-import { WorkstreamAppearancePicker } from '../components/workstream-appearance-picker';
+import { AppearancePicker } from '../components/appearance-picker';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import { useCachedWorkstreamAppearance } from '../lib/use-workstreams-query';
 import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/launched-conversation';
@@ -325,7 +325,7 @@ export function WorkstreamHeader({
           <h1><TitleSkeleton className="title-skeleton-header" /></h1>
         ) : (
           <div className="grokbot-conversation-title">
-              {onAppearanceChange ? <WorkstreamAppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} size={20} onChange={onAppearanceChange} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={20} />}
+              {onAppearanceChange ? <AppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} label="Change work-stream icon and color" onChange={onAppearanceChange} renderGlyph={(appearance) => <WorkstreamGlyph id={workstream.id} appearance={appearance} size={20} />} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={20} />}
               {titleContent}
               {renameError && <InlineError>{renameError}</InlineError>}
           </div>
@@ -368,7 +368,7 @@ export function WorkstreamHeader({
     <header className="workstream-header window-drag">
       <div className="workstream-header-left window-no-drag">
         <IconButton className="header-menu-button" label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={16} /></IconButton>
-        {onAppearanceChange ? <WorkstreamAppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} size={30} onChange={onAppearanceChange} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={30} />}
+        {onAppearanceChange ? <AppearancePicker key={workstream.id} id={workstream.id} appearance={workstream.appearance} label="Change work-stream icon and color" onChange={onAppearanceChange} renderGlyph={(appearance) => <WorkstreamGlyph id={workstream.id} appearance={appearance} size={30} />} /> : <WorkstreamGlyph id={workstream.id} appearance={workstream.appearance} size={30} />}
         <div className="workstream-title-block">
           {/* The one place a title arriving on its own is worth announcing. A
               work stream created a second ago is named while its author is

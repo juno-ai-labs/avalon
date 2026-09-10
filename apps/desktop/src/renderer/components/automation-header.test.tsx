@@ -2,7 +2,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AutomationDetail } from '../lib/types';
-import { AutomationHeader } from './automation-header';
+import { AutomationHeader, type AutomationHeaderProps } from './automation-header';
 
 const definition: NonNullable<AutomationDetail['currentDefinition']> = {
   name: 'Weekly changelog',
@@ -45,6 +45,7 @@ function actions() {
     onResume: vi.fn<() => void>(),
     onDelete: vi.fn<() => Promise<void>>(async () => undefined),
     onRunNow: vi.fn<() => void>(),
+    onAppearanceChange: vi.fn<AutomationHeaderProps['onAppearanceChange']>(async () => undefined),
   };
 }
 
@@ -59,6 +60,19 @@ function renderHeader(automation: AutomationDetail, overrides: Partial<React.Com
 }
 
 describe('AutomationHeader', () => {
+  it('opens the shared appearance picker from the hexagon and saves one field', async () => {
+    const handlers = renderHeader({ ...draft, appearance: { icon: 'atom', color: 'blue' } });
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Change Sidekick icon and color' }), { key: 'Enter' });
+    // The same catalog the work stream's header offers, not a Sidekick-only one.
+    expect(await screen.findByRole('menuitemradio', { name: 'Blue' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Rocket' }));
+
+    // Only the field that was clicked: the colour somebody else may have just
+    // chosen is not carried along by an icon choice.
+    await waitFor(() => expect(handlers.onAppearanceChange).toHaveBeenCalledWith({ icon: 'rocket' }));
+  });
+
   it('shows the conversational draft without an activation button', () => {
     renderHeader(draft);
 

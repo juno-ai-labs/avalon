@@ -711,6 +711,31 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-09-10 — The desktop telemetry inspector is withdrawn
+
+**What changed:** The staff-only **Telemetry inspector** pane in
+**Settings → Application → Developer** is gone, and with it the
+`telemetry:inspector` IPC channel, its preload method, the `getTelemetryInspector`
+bridge call and the `DesktopTelemetryInspectorEntry` shape. `TelemetryReporter`
+keeps its in-process decision record, renamed from `inspector()` to
+`decisions()` returning `TelemetryDecision`.
+
+**Why:** The pane was a developer read-out whose only readers were the people
+who wrote it, and it was the sole reason a renderer could ask the main process
+for telemetry decisions at all. Removing the surface removes that reach; the
+regional operations HTTP surface remains the supported way to inspect what was
+actually collected.
+
+**Considered and rejected:** Deleting the reporter's record along with the pane.
+It is the only place that separates *suppressed* — the opt-out held — from
+*rejected* — the event failed its own schema — and the reporter's tests assert
+on that distinction; the spool cannot, because both outcomes leave it empty. The
+name moved instead, so nothing still points at a pane that is gone.
+
+**Consequences:** Renderer-visible telemetry state is now the **Product
+analytics** preference and its status lines, nothing else. A future debugging
+surface for decisions is a new decision, not a restoration.
+
 ### 2026-09-08 — The `demos` credential leaves the telemetry map
 
 **What changed:** `requireTelemetryOperator` is one instance of
