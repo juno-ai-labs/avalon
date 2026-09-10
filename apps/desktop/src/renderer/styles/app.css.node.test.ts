@@ -819,15 +819,16 @@ describe('global reduced-motion kill switch', () => {
 /**
  * A keycap is a label, not a selection.
  *
- * `onboarding.css` re-points `cmp.row.background-selected` at the reader's own
- * account accent under `html[data-personal-color]`, which is what selection is
- * supposed to do. The letter beside an option is not selection: it says which
- * key answers this row, and while it borrowed that fill an accent of `blue`
- * printed A, B, C, D on pale blue chips. `cmp.keycap.background` carries the
- * same neutral value with none of that reach, so naming the rejected token as
- * well as the required one is what makes the revert fail here rather than in
- * somebody's window — the two are identical for a reader with no accent set,
- * which is every reader this suite renders.
+ * It got its own fill because `onboarding.css` re-pointed
+ * `cmp.row.background-selected` at the reader's account accent, which printed
+ * A, B, C, D on pale blue chips. That re-point is gone now and the two tokens
+ * hold the same value, so this no longer guards a colour — it guards the
+ * coupling. `cmp.row.background-selected` is the fill a *selection* takes, and
+ * the registry's own entry says a theme may set it to `transparent` and mark
+ * selection with the marker alone. A keycap that followed it would disappear
+ * on that theme, having never been a selection in the first place. Naming the
+ * rejected token as well as the required one is what makes a revert fail here
+ * rather than in somebody's window.
  */
 describe('option keycaps', () => {
   it('fills the letter from the keycap token, not the selected row', () => {
@@ -837,10 +838,11 @@ describe('option keycaps', () => {
   });
 
   /**
-   * And the row underneath still is a selection, so it keeps the accent. A fix
-   * that took the tint off the whole panel would pass the assertion above.
+   * And the row underneath still draws from the selection fill. Lifting the
+   * keycap off that token is a split, not a removal; a change that took the
+   * whole panel off it would pass the assertion above on its own.
    */
-  it('leaves the selected option itself drawn in the accent', () => {
+  it('leaves the selected option itself drawn in the selection fill', () => {
     expect(rule('.app-shell .elicitation-option.is-selected,\n.app-shell .elicitation-option.is-selected:hover'))
       .toContain('background: var(--av-cmp-row-background-selected);');
   });

@@ -165,6 +165,38 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-10 — The account accent colours marks and controls, and fills no row
+
+**What changed:** `onboarding.css` no longer re-points
+`cmp.row.background-selected` under `html[data-personal-color]`, in either
+appearance. Row fills are neutral for everyone: the selected sidebar row, the
+current substream, the selected option, the automation tile, both hover states
+and the composer's mention chip and dictation button. The accent keeps the
+`sys.color.accent.*` group, so links, marks, checkboxes and the controls that
+resolve through it are unchanged, as are the avatar, the person's own bubble and
+the author name, which take a palette fill directly and never went through this
+token. The keycap split from the entry above stays.
+
+**Why:** The re-point was written for selection, and for selection it reads
+well — the row this reader picked, in this reader's colour. But
+`cmp.row.background-selected` is a *fill*, and only about half of what reads it
+is a selection: an inline mention chip in the composer, the dictation button's
+resting state, two hover rules, and the letter beside an option all took the
+accent because they wanted that value, not because anyone decided they should
+carry somebody's identity. The keycap was split off first; splitting the other
+four the same way would have meant four more names to keep the accent on the
+half that had a claim to it, and that is more vocabulary than the effect was
+worth. Removing the re-point is one deletion and leaves no borrower behind.
+A future accent that wants a row back should give that row a token of its own
+rather than re-point the one everything shares, and `palette.css.node.test.ts`
+now fails if this one comes back.
+
+**What it does not fix:** the two hover rules still draw from
+`cmp.row.background-selected` rather than `cmp.row.background-hover`, so a hover
+in the mention popover and the new-chat recipient list still carries a
+selection's weight. That is a separate reading of the same rules and was left
+alone here.
+
 ### 2026-09-10 — A keycap takes its own fill, not the selected row's
 
 **What changed:** `cmp.keycap.background` is a new token — the neutral fill a
