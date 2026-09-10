@@ -1772,17 +1772,17 @@ describe('the shared shell primitives and the artifact pane', () => {
     expect(rule('.resource-lightbox .rail-scroll:has(> .site-detail)')).toContain('padding: 0');
   });
 
-  it('rounds the composited view to the corner of the surface it bleeds into', () => {
-    // CSS cannot clip a `WebContentsView`: the page is painted above the DOM,
-    // so a square view reaching the lightbox's bottom corners would paint the
-    // page out over the scrim. The main process rounds the view itself, and
-    // this is what notices when one of the two numbers moves without the
-    // other. Read from disk for the reason at the top of this file.
-    const host = /border-radius:\s*(\d+)px/u.exec(rule('.attachment-lightbox.is-document-viewer') ?? '')?.[1];
-    const main = readFileSync(resolve(process.cwd(), 'src/main/artifact-viewers.ts'), 'utf8');
-    const applied = /export const PREVIEW_CORNER_RADIUS = (\d+);/u.exec(main)?.[1];
+  it('leaves the page square inside chrome that is not', () => {
+    // The lightbox is Rally's frame and keeps its corner. The viewer inside it
+    // is the page itself, and a page does not get rounded by the thing holding
+    // it: the composited view is square, which means nothing in the main
+    // process may round it either. CSS cannot reach that view, so this is
+    // where the two halves are kept in agreement. Read from disk for the
+    // reason at the top of this file.
+    expect(rule('.attachment-lightbox.is-document-viewer')).toContain('border-radius:');
+    expect(rule('.site-detail-pane')).not.toContain('border-radius');
 
-    expect(host).toBeDefined();
-    expect(applied).toBe(host);
+    const main = readFileSync(resolve(process.cwd(), 'src/main/artifact-viewers.ts'), 'utf8');
+    expect(main).not.toContain('setBorderRadius');
   });
 });
