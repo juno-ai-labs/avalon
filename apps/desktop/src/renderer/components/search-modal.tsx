@@ -108,7 +108,6 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
     // Focus changes must not restart candidate pages while the reader is choosing.
     refetchOnWindowFocus: false,
   });
-  const incomplete = settledQuery === normalized && response.data?.pages.some((page) => page.complete === false);
   const continuationFailed = response.isFetchNextPageError
     && (!(response.error instanceof ApiError) || response.error.status >= 500);
   const results = open && normalized && settledQuery === normalized && (!response.isFetching || response.isFetchingNextPage) && (!response.isError || continuationFailed)
@@ -128,9 +127,23 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
     }); });
     return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
   }, [open, normalized, settledQuery, response.isFetching, response.isFetched, response.isError, results.length, response.hasNextPage]);
+  const canContinue = open && settledQuery === normalized && response.hasNextPage && (!response.isError || continuationFailed);
   const loadMore = () => {
-    if (open && settledQuery === normalized && response.hasNextPage && !response.isFetching && (!response.isError || continuationFailed)) void response.fetchNextPage({ cancelRefetch: false });
+    if (canContinue && !response.isFetching) void response.fetchNextPage({ cancelRefetch: false });
   };
+  // The next page loads as the end of the list comes into view, and again
+  // whenever a page lands without filling the viewport; a failed continuation
+  // waits for the explicit retry so a broken cursor cannot loop.
+  const sentinel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const target = sentinel.current;
+    if (!target || !canContinue || continuationFailed || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) loadMore();
+    }, { root: list.current });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [canContinue, continuationFailed, results.length]);
   const active = Math.min(selected, Math.max(0, results.length - 1));
   useEffect(() => {
     list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -159,6 +172,8 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
               if (isComposingKeyEvent(event.nativeEvent)) return;
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                 event.preventDefault();
+                // Reaching the last row by keyboard is the same signal as scrolling to it.
+                if (event.key === 'ArrowDown' && active >= results.length - 1) loadMore();
                 setSelected(Math.max(0, Math.min(results.length - 1, active + (event.key === 'ArrowDown' ? 1 : -1))));
               } else if (event.key === 'Enter') { event.preventDefault(); choose(active); }
               else if ((event.metaKey || event.ctrlKey) && /^[1-9]$/u.test(event.key)) {
@@ -196,22 +211,18 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
               {index < 9 && <kbd aria-hidden="true">⌘{index + 1}</kbd>}
             </div>;
           })}
+          {canContinue && <div ref={sentinel} className="rally-search-sentinel" aria-hidden="true" />}
         </div>
-        {incomplete && !response.isFetching && <div className="rally-search-footer" role="status">
-          <div>Some results are unavailable.</div>
-          <Button type="button" onClick={() => { void response.refetch(); }}>Retry search</Button>
+        {canContinue && (continuationFailed || response.isFetchingNextPage) && <div className="rally-search-footer" role="status">
+          {continuationFailed
+            ? <><div>More results could not be loaded. Please try again.</div>
+              <Button type="button" onClick={loadMore} onMouseDown={(event) => event.preventDefault()}>Retry loading more results</Button></>
+            : <div>Loading more…</div>}
         </div>}
-        {settledQuery === normalized && response.hasNextPage && (!response.isError || continuationFailed) && <div className="rally-search-footer">
-          {continuationFailed && <div role="status">More results could not be loaded. Please try again.</div>}
-          <Button type="button" onClick={loadMore} aria-disabled={response.isFetching}
-            onMouseDown={(event) => event.preventDefault()}>
-            {response.isFetchingNextPage ? 'Loading more…' : continuationFailed ? 'Retry loading more results' : 'Load more results'}
-          </Button>
-        </div>}
-        {results.length === 0 && <div className="rally-search-state" role="status">
+        {results.length === 0 && !(canContinue && continuationFailed) && <div className="rally-search-state" role="status">
           {!normalized ? 'Search messages, links, artifacts, and files'
-            : (response.isFetching || settledQuery !== normalized) ? 'Searching…'
-            : response.isError ? 'Search could not be completed. Please try again.' : response.hasNextPage ? 'Continue searching' : incomplete ? 'No verified results available' : 'No results'}
+            : (response.isFetching || settledQuery !== normalized || canContinue) ? 'Searching…'
+            : response.isError ? 'Search could not be completed. Please try again.' : 'No results'}
         </div>}
       </Dialog.Content>
     </Dialog.Portal>

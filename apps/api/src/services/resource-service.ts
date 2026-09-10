@@ -1,6 +1,5 @@
 import { createAccessContext, requireAuthorizedRead } from './authorization-service';
 import type { AccessContext } from './authorization-policy';
-import { resourceSearchRevision, resourceSearchText } from './resource-search-text';
 import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
 import {
   classifyAttachmentKind,
@@ -286,22 +285,6 @@ export class ResourceService {
     const row = await this.loadResource(id);
     await this.authorizeRead(id);
     return this.toResource(row);
-  }
-
-  /** Admit a page once, then load canonical snapshots through the owning store. */
-  async searchTexts(ids: readonly string[]) {
-    const addresses = [...new Set(ids)].map((id) => ({ kind: 'resource' as const,
-      workspaceId: this.auth.workspaceId, resourceId: IdSchema.parse(id) }));
-    const decisions = await this.access.checkMany(addresses);
-    const allowed = addresses.filter((_, index) => decisions[index]?.status === 'allowed');
-    const rows = allowed.length ? await (await this.workspaceDirectory()).resourceSearchRecords({ workspaceId: this.auth.workspaceId,
-      resourceIds: allowed.map((address) => address.resourceId) }) : [];
-    const records = await Promise.all(rows.map(async (row) => {
-      const revision = resourceSearchRevision(row.search_revision);
-      return { resource: this.toResource(row), text: await resourceSearchText(this.env, row), revision: String(revision) };
-    }));
-    return { records: new Map(records.map((record) => [record.resource.id, record])),
-      complete: decisions.every((decision) => decision.status !== 'unavailable') };
   }
 
   /** Opening a search result repeats the same attachment authority checks. */

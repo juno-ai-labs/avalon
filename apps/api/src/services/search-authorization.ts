@@ -12,7 +12,7 @@ export const SearchAuthorizationSnapshotSchema = z.strictObject({
   decision: AuthorizationDecisionSchema, observedAt: z.number().int().nonnegative(),
 });
 export const SearchAuthorizationTargetSchema = z.strictObject({
-  kind: z.enum(['resource', 'parent', 'connection']), id: z.string(),
+  kind: z.enum(['resource', 'parent', 'connection', 'member']), id: z.string(),
 });
 export const SearchAuthorizationPushJobSchema = z.strictObject({
   type: z.literal('search_authorization_push_v1'), region: z.enum(['global', 'eu']),
@@ -26,9 +26,18 @@ export async function searchAuthorizationKey(subject: AuthorizationSubject, reso
   return `search-authz:v1:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
+/** Work a request hands past its own response, typically `ExecutionContext.waitUntil`. */
+export type DeferredWork = (work: Promise<unknown>) => void;
+
 /** Search trusts regional projected decisions; canonical reads only populate misses or mutation jobs. */
 export class SearchAuthorizationResolver implements AuthorizationResolver {
-  constructor(private readonly env: Env, private readonly authority: AuthorizationResolver = new AuthorizationService(env)) {}
+  constructor(private readonly env: Env, private readonly authority: AuthorizationResolver = new AuthorizationService(env),
+    /**
+     * Member search: a decision the projection does not hold yet is answered
+     * unavailable and filled after the response, so no request waits for a
+     * canonical owner. Callers without it keep the inline fill.
+     */
+    private readonly defer?: DeferredWork) {}
 
   private async write(snapshots: z.infer<typeof SearchAuthorizationSnapshotSchema>[]) {
     if (!snapshots.length) return { written: 0, superseded: 0, kvWriteMs: 0 };
@@ -70,47 +79,77 @@ export class SearchAuthorizationResolver implements AuthorizationResolver {
         && JSON.stringify(parsed.data.resource) === JSON.stringify(resources[index])
         ? parsed.data.decision : null;
     });
-    // KV caches negative lookups too. A miss is not evidence that the durable projection is absent.
     const missedIndexes = resources.flatMap((_, index) => decisions[index] === null ? [index] : []);
-    if (missedIndexes.length && this.env.AVALON_REGION === 'global' && this.env.AUTHORIZATION_CACHE) {
-      try {
-        const stored = await (await authorizationWorkspace(this.env, subject.workspaceId)).readSearchAuthorizationSnapshots({
-          subject, resources: missedIndexes.map((index) => resources[index]!),
-        });
-        for (const [offset, snapshot] of stored.entries()) {
-          if (snapshot) decisions[missedIndexes[offset]!] = snapshot.decision;
+    if (!missedIndexes.length) return decisions as AuthorizationDecision[];
+    const fill = async (): Promise<Map<number, AuthorizationDecision>> => {
+      const resolved = new Map<number, AuthorizationDecision>();
+      let pending = missedIndexes;
+      // KV caches negative lookups too. A miss is not evidence that the durable projection is absent.
+      if (this.env.AVALON_REGION === 'global' && this.env.AUTHORIZATION_CACHE) {
+        try {
+          const workspace = await authorizationWorkspace(this.env, subject.workspaceId);
+          const stored = await workspace.readSearchAuthorizationSnapshots({ subject, resources: pending.map((index) => resources[index]!) });
+          for (const [offset, snapshot] of stored.entries()) {
+            if (snapshot) resolved.set(pending[offset]!, snapshot.decision);
+          }
+          // Put the durable decision back into KV, under its generation fence,
+          // so the next search reads it there instead of missing again. A
+          // failed put is already queued for retry by the object.
+          const republish = stored.filter((snapshot) => snapshot !== null);
+          if (republish.length) await workspace.writeSearchAuthorizationSnapshots(republish).catch(() => undefined);
+        } catch {
+          // An unavailable projection store must not trigger a more expensive authority walk.
+          for (const index of pending) resolved.set(index, unavailable());
         }
-      } catch {
-        // An unavailable projection store must not trigger a more expensive authority walk.
-        for (const index of missedIndexes) decisions[index] = unavailable();
+        pending = pending.filter((index) => !resolved.has(index));
       }
+      if (pending.length) {
+        try {
+          const loaded = await this.project(subject, pending.map((index) => resources[index]!));
+          pending.forEach((index, offset) => resolved.set(index, loaded[offset]!));
+        } catch { for (const index of pending) resolved.set(index, unavailable()); }
+      }
+      return resolved;
+    };
+    if (this.defer) {
+      // The response never waits for an owner. The fill registers the key and
+      // publishes through the projection, so the next search finds the decision.
+      this.defer(fill().catch(() => undefined));
+      return decisions.map((decision) => decision ?? unavailable());
     }
-    const missing = resources.filter((_, index) => decisions[index] === null);
-    let loaded: AuthorizationDecision[];
-    try {
-      loaded = missing.length ? await this.project(subject, missing) : [];
-    }
-    catch { loaded = missing.map(unavailable); }
-    let index = 0;
-    return decisions.map((decision) => decision ?? loaded[index++]!);
+    const resolved = await fill();
+    return decisions.map((decision, index) => decision ?? resolved.get(index)!);
   }
 }
 
-export function createSearchAccessContext(env: Env, auth: AuthContext) {
-  return new AccessContext({ workspaceId: auth.workspaceId, userId: auth.userId, delegation: null }, new SearchAuthorizationResolver(env));
+export function createSearchAccessContext(env: Env, auth: AuthContext, defer?: DeferredWork) {
+  return new AccessContext({ workspaceId: auth.workspaceId, userId: auth.userId, delegation: null },
+    new SearchAuthorizationResolver(env, undefined, defer));
 }
 
-/** Mutation-driven projection. Jobs contain only the workspace address and reload current owners. */
+/**
+ * Mutation-driven projection. Jobs contain only the workspace address and
+ * reload current owners. A targeted job first registers every pair its target
+ * reaches, so a decision exists before the first search that would need it;
+ * the read path then never has to fill one.
+ */
 export async function pushSearchAuthorization(env: Env, job: z.infer<typeof SearchAuthorizationPushJobSchema>, attempt = 1) {
   if (job.region !== env.AVALON_REGION) throw new Error('search_authorization_region_mismatch');
   const startedAt = Date.now();
   const stats = { written: 0, superseded: 0, kvWriteMs: 0, resolveMs: 0 };
   let selected = 0;
+  let registered = 0;
   let selectionMs = 0;
   let outcome = 'failed';
   let errorCode: string | undefined;
   try {
-    const snapshots = await (await authorizationWorkspace(env, job.workspaceId)).listSearchAuthorizationSnapshots({ workspaceId: job.workspaceId, ...(job.target ? { target: job.target } : {}) });
+    const workspace = await authorizationWorkspace(env, job.workspaceId);
+    if (job.target) {
+      for (const pair of await workspace.enumerateSearchAuthorization({ workspaceId: job.workspaceId, target: job.target })) {
+        registered += (await workspace.registerSearchAuthorization(pair)).length;
+      }
+    }
+    const snapshots = await workspace.listSearchAuthorizationSnapshots({ workspaceId: job.workspaceId, ...(job.target ? { target: job.target } : {}) });
     selected = snapshots.length;
     selectionMs = Date.now() - startedAt;
     const subjects = new Map<string, { subject: AuthorizationSubject; resources: AuthorizationResource[] }>();
@@ -145,7 +184,7 @@ export async function pushSearchAuthorization(env: Env, job: z.infer<typeof Sear
       outbox_ms: job.timing ? job.timing.enqueuedAt - job.timing.mutationAt : null,
       queue_ms: job.timing ? startedAt - job.timing.enqueuedAt : null,
       duration_ms: completedAt - startedAt, selection_ms: selectionMs, resolve_ms: stats.resolveMs,
-      kv_write_ms: stats.kvWriteMs, selected_keys: selected, written_keys: stats.written, superseded_keys: stats.superseded };
+      kv_write_ms: stats.kvWriteMs, registered_keys: registered, selected_keys: selected, written_keys: stats.written, superseded_keys: stats.superseded };
     if (outcome === 'failed') logWarn(env, 'authz_push_timing', fields);
     else logInfo(env, 'authz_push_timing', fields);
   }

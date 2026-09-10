@@ -5,6 +5,8 @@ export const SearchCategorySchema = z.enum(['all', 'messages', 'links', 'artifac
 export type SearchCategory = z.infer<typeof SearchCategorySchema>;
 export const SearchRequestSchema = z.strictObject({
   query: z.string().trim().min(1),
+  // Accepted and ignored: desktop builds before 1.305 still send it. The
+  // response carries no completeness flag; an undecided candidate is omitted.
   supportsPartialResults: z.literal(true).optional(),
   category: SearchCategorySchema,
   pageSize: z.number().int().min(1).max(50).optional(),
@@ -31,7 +33,6 @@ export const SearchResultSchema = z.strictObject({
 export type SearchResult = z.infer<typeof SearchResultSchema>;
 export const SearchResponseSchema = z.strictObject({
   results: z.array(SearchResultSchema),
-  complete: z.boolean().optional(),
   nextCursor: z.string().nullable().optional(),
   timings: z.strictObject({ scopeMs: z.number().nonnegative(), retrievalMs: z.number().nonnegative(),
     hydrationMs: z.number().nonnegative(), serverMs: z.number().nonnegative() }).optional(),

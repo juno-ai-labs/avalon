@@ -41,6 +41,7 @@ function matchesFilter(row: Record<string, unknown>, filter: unknown): boolean {
   if (parts[1] === 'In') return z.array(z.unknown()).parse(parts[2]).includes(value);
   if (parts[1] === 'Lt') return z.number().parse(value) < z.number().parse(parts[2]);
   if (parts[1] === 'Lte') return z.number().parse(value) <= z.number().parse(parts[2]);
+  if (parts[1] === 'NotEq') return value !== parts[2];
   throw new Error('unsupported_provider_filter');
 }
 // Sized above 512 tokens for the actual pinned Qwen tokenizer.
@@ -93,6 +94,16 @@ beforeEach(() => {
         for (const [key, row] of indexed) {
           if (key.startsWith(`${namespace}\0`) && matchesFilter(row, body.delete_by_filter)) indexed.delete(key);
         }
+      }
+      if (body.patch_by_filter) {
+        const patch = z.object({ filters: z.unknown(), patch: z.record(z.string(), z.unknown()) }).parse(body.patch_by_filter);
+        let patched = 0;
+        for (const [key, row] of indexed) {
+          if (key.startsWith(`${namespace}\0`) && matchesFilter(row, patch.filters)) { indexed.set(key, { ...row, ...patch.patch }); patched += 1; }
+        }
+        // The live API omits `rows_patched` when the filter matched nothing and
+        // `rows_remaining` unless a partial pass left matches behind (probe, 2026-09-10).
+        return Response.json(patched ? { rows_affected: patched, rows_patched: patched } : { rows_affected: 0 });
       }
       for (const row of z.array(z.record(z.string(), z.unknown())).parse(body.upsert_rows ?? [])) {
         if (typeof row.id === 'string') indexed.set(`${namespace}\0${row.id}`, row);
@@ -438,5 +449,64 @@ describe('shared Queue indexing pipeline', () => {
     expect(child.retryMessages).toEqual([{ msgId: 'search-0' }]);
     expect(liveRows().some((row) => row.text.includes('gamma delta'))).toBe(true);
     expect(embeddingInputs).toEqual([]);
+  });
+});
+
+describe('index-served display attributes', () => {
+  const upserted = (source: string) => writes.flatMap(({ body }) => z.array(z.record(z.string(), z.unknown())).safeParse(body.upsert_rows).data ?? [])
+    .filter((row) => row.source === source && row.record_type === 'document');
+  const turn = (turnId: string) => ({ type: 'search_projection_v1', region: 'global', workspaceId, parentId, substreamId: '0', turnId, revision: 1 });
+
+  it('writes what a result renders beside the text for messages, links and files', async () => {
+    await seedResource();
+    const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName('global', workspaceId, parentId, '0'));
+    const url = 'https://example.com/page';
+    const linkId = await searchDocumentId('conversation_links', `${parentId}/0/turn`, url);
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: parentId });
+      await seedParticipantMessage(state, { id: 'turn', sequence: 1, text: `alpha ${url}` });
+      state.storage.sql.exec(`INSERT INTO conversation_search_links (id, turn_id, url, label, markdown, captured, deleted, revision)
+        VALUES (?, 'turn', ?, ?, 'captured page', 1, 0, 1)`, linkId, url, url);
+    });
+    const result = await consume([resourceMessage(), turn('turn')]);
+    expect(result.retryMessages).toEqual([]);
+    expect(upserted('messages')).toEqual([expect.objectContaining({ substream_id: '0', title: 'Fixture', source_label: 'Fixture',
+      archived: false, transcript_sequence: expect.any(Number), occurred_at: expect.any(Number), url: null, mime_type: null })]);
+    expect(upserted('conversation_links')).toEqual([expect.objectContaining({ substream_id: '0', title: url, url, source_label: 'Fixture',
+      archived: false, occurred_at: null, transcript_sequence: null })]);
+    expect(upserted('files')).toEqual([expect.objectContaining({ substream_id: null, title: 'alpha', source_label: 'alpha',
+      mime_type: 'text/plain', occurred_at: Date.parse('2026-09-05T00:00:00Z'), archived: false })]);
+  });
+
+  it('patches every indexed row of a renamed or archived conversation and stops when none still differs', async () => {
+    const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName('global', workspaceId, parentId, '0'));
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: parentId });
+      await seedParticipantMessage(state, { id: 'first', sequence: 1, text: 'alpha one' });
+      await seedParticipantMessage(state, { id: 'second', sequence: 2, text: 'alpha two' });
+    });
+    await consume([turn('first'), turn('second')]);
+    const messages = () => [...indexed.values()].filter((row) => row.source === 'messages' && row.record_type === 'document');
+    expect(messages().map((row) => row.title)).toEqual(['Fixture', 'Fixture']);
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`UPDATE workstream SET title = 'Renamed', updated_at = 2 WHERE id = 1`);
+    });
+    const job = { type: 'search_conversation_projection_v1', region: 'global', workspaceId, parentId, substreamId: '0' };
+    const renamed = await consume([job], {}, false, false);
+    expect(renamed.explicitAcks).toEqual(['search-0']);
+    expect(renamed.retryMessages).toEqual([]);
+    expect(messages().map((row) => [row.title, row.source_label])).toEqual([['Renamed', 'Renamed'], ['Renamed', 'Renamed']]);
+    const patches = writes.filter(({ body }) => body.patch_by_filter);
+    expect(patches.length).toBeGreaterThanOrEqual(2);
+    expect(JSON.stringify(patches[0]!.body)).toContain(JSON.stringify(['substream_id', 'Eq', '0']));
+    // A redelivery finds nothing left to patch: one empty pass per source.
+    const before = writes.length;
+    await consume([job], {}, false, false);
+    expect(writes.slice(before).filter(({ body }) => body.patch_by_filter)).toHaveLength(2);
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`UPDATE workstream SET archived_at = 3, updated_at = 3 WHERE id = 1`);
+    });
+    await consume([job], {}, false, false);
+    expect(messages().map((row) => row.archived)).toEqual([true, true]);
   });
 });

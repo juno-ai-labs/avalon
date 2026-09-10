@@ -2,6 +2,7 @@ import { safeParseSocketEvent, isUnknownSocketEvent, WorkspaceSocketClientEventT
 
 import { SEARCH_AUTHORIZATION_PUSH_MIGRATION, nextSearchAuthorizationPush, flushSearchAuthorizationPush } from './search-authorization-projection';
 import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey } from '../services/search-authorization';
+import { enumerateSearchAuthorizationUniverse, type SearchAuthorizationTarget } from './search-authorization-universe';
 import { resolveWorkspaceEventResources } from "./workspace-event-resources";
 import { WorkstreamAppearanceSchema } from "@rally/contracts";
 import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
@@ -2846,6 +2847,34 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       FROM search_authorization_keys k JOIN authorization_snapshots s USING(cache_key)
       WHERE json_extract(s.snapshot_json, '$.decision.status') = 'unavailable'`,
   ],
+}, {
+  version: 47,
+  description: 'rewrite every indexed resource with its display attributes',
+  // The index now serves a result's title, time and type beside its text.
+  // Re-publishing at the current revision rewrites the lexical row in place
+  // (an equal-revision upsert is admitted while the row is live) and leaves
+  // completed embeddings alone. A row in backoff keeps its `not_before`: the
+  // rewrite lands when that delay expires, and an upgrade never resets a
+  // committed retry schedule.
+  statements: ['UPDATE resource_search_versions SET pending = 1'],
+}, {
+  version: 48,
+  description: 'register the search projection universe from the directories',
+  // Search admission is complete only if every (member, conversation) pair
+  // has a projected decision before the member's first search. The push job
+  // now registers what its target reaches, so every live parent, every
+  // connection and every attachment-admitted resource gets one push here.
+  // Connector resources are admitted per connection and carry that key.
+  statements: [
+    'ALTER TABLE search_authorization_keys ADD COLUMN connection_id TEXT',
+    'CREATE INDEX search_authorization_keys_connection ON search_authorization_keys(connection_id, cache_key)',
+    `INSERT INTO search_authorization_push
+     SELECT 'parent', workstream_id, 1, 0, NULL, 'workspace_mutation' FROM workspace_workstream_directory WHERE archived_at IS NULL
+     UNION ALL SELECT 'parent', automation_id, 1, 0, NULL, 'workspace_mutation' FROM automation_directory WHERE lifecycle <> 'deleted'
+     UNION ALL SELECT 'connection', id, 1, 0, NULL, 'workspace_mutation' FROM connector_connections
+     UNION ALL SELECT 'resource', id, 1, 0, NULL, 'workspace_mutation' FROM resources WHERE connection_id IS NULL
+     ON CONFLICT(kind, target_id) DO UPDATE SET revision = revision + 1`,
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -4102,6 +4131,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     topics: WorkspaceSyncTopic[],
     workspaceId: string,
     placementAffinity: WorkspacePlacementAffinity,
+    /** Members whose search decisions the change created or removed; each gets its own projection push. */
+    detail?: { memberUserIds?: string[] },
   ): Promise<number> {
     await this.initialized;
     this.ensureIdentity(workspaceId, placementAffinity);
@@ -4120,6 +4151,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         GROUP BY 1, 2
         ON CONFLICT(kind, target_id) DO UPDATE SET revision = revision + 1,
           first_mutated_at = COALESCE(first_mutated_at, excluded.first_mutated_at)`, occurredAtMs);
+      for (const userId of new Set(z.array(UserIdSchema).optional().parse(detail?.memberUserIds) ?? [])) {
+        this.state.storage.sql.exec(`INSERT INTO search_authorization_push VALUES ('member', ?, 1, 0, ?, 'workspace_mutation')
+          ON CONFLICT(kind, target_id) DO UPDATE SET revision = revision + 1,
+            first_mutated_at = COALESCE(first_mutated_at, excluded.first_mutated_at)`, userId, occurredAtMs);
+      }
       const row = this.state.storage.sql.exec<{ waterline: number }>(
         `INSERT INTO workspace_sync_events(event_id, topics_json, occurred_at)
          VALUES (?, ?, ?) RETURNING waterline`,
@@ -8684,10 +8720,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const key = await searchAuthorizationKey(request.subject, resource);
       // Allocate before owner reads. A later attempt supersedes an earlier one even in the same millisecond.
       const generation = this.state.storage.sql.exec<{ generation: number }>(`INSERT INTO search_authorization_keys
-        (cache_key, generation, resource_id, parent_id) VALUES (?, 1, ?, ?)
+        (cache_key, generation, resource_id, parent_id, connection_id) VALUES (?, 1, ?, ?, ?)
         ON CONFLICT(cache_key) DO UPDATE SET generation = generation + 1 RETURNING generation`, key,
         resource.kind === 'resource' ? resource.resourceId : resource.kind === 'memory' ? resource.scopeId : null,
-        resource.kind === 'conversation' || resource.kind === 'memory' ? resource.parentId : null).one().generation;
+        resource.kind === 'conversation' || resource.kind === 'memory' ? resource.parentId : null,
+        resource.kind === 'connection' ? resource.connectionId : null).one().generation;
       generations.push(generation);
       const pending = { version: 1, generation, subject: request.subject, resource, observedAt: 0,
         decision: { status: 'unavailable', reason: 'projection_incomplete', retryable: true } };
@@ -8715,7 +8752,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     else if (target.kind === 'resource') {
       keys = 'SELECT cache_key FROM search_authorization_keys WHERE resource_id = ?'; bindings = [target.id];
     } else if (target.kind === 'connection') {
-      keys = `SELECT k.cache_key FROM resources r JOIN search_authorization_keys k ON k.resource_id = r.id WHERE r.connection_id = ?`;
+      keys = `SELECT k.cache_key FROM resources r JOIN search_authorization_keys k ON k.resource_id = r.id WHERE r.connection_id = ?
+        UNION SELECT cache_key FROM search_authorization_keys WHERE connection_id = ?`;
+      bindings = [target.id, target.id];
+    } else if (target.kind === 'member') {
+      keys = `SELECT cache_key FROM authorization_snapshots WHERE json_extract(snapshot_json, '$.subject.userId') = ?`;
       bindings = [target.id];
     } else {
       // Indexed prior owners reach removed grants; current locations reach newly attached resources.
@@ -8764,8 +8805,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
                 timing_origin = CASE WHEN first_mutated_at IS NULL OR excluded.first_mutated_at < first_mutated_at THEN excluded.timing_origin ELSE timing_origin END,
                 first_mutated_at = CASE WHEN first_mutated_at IS NULL THEN excluded.first_mutated_at
                   WHEN excluded.first_mutated_at IS NULL THEN first_mutated_at ELSE MIN(first_mutated_at, excluded.first_mutated_at) END`,
-              snapshot.resource.kind === 'conversation' ? 'parent' : 'resource',
-              snapshot.resource.kind === 'resource' ? snapshot.resource.resourceId : snapshot.resource.kind === 'conversation' ? snapshot.resource.parentId : snapshot.resource.scopeId,
+              snapshot.resource.kind === 'conversation' ? 'parent' : snapshot.resource.kind === 'connection' ? 'connection' : 'resource',
+              snapshot.resource.kind === 'resource' ? snapshot.resource.resourceId : snapshot.resource.kind === 'conversation' ? snapshot.resource.parentId
+                : snapshot.resource.kind === 'connection' ? snapshot.resource.connectionId : snapshot.resource.scopeId,
               snapshot.timing?.mutationAt ?? null, snapshot.timing?.origin ?? (snapshot.timing ? 'workspace_mutation' : 'cache_fill'));
             throw error;
           } finally { stats.kvWriteMs += Date.now() - startedAt; }
@@ -8900,6 +8942,37 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ) directory LEFT JOIN authorization_backfill tracked USING(parent_id) WHERE tracked.parent_id IS NULL`).one().pending;
     return { pendingParents: parents + undiscovered, pendingChildren: children,
       complete: parents === 0 && children === 0 && undiscovered === 0 };
+  }
+
+  /** A connection's resources are readable exactly when the connection is; one observation decides them all. */
+  async authorizationConnectionFacts(input: { workspaceId: string; userId: string; connectionIds: string[] }) {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema, connectionIds: z.array(IdSchema) }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return request.connectionIds.map((connectionId) => {
+      const row = this.state.storage.sql.exec<{ scope: string; owner_user_id: string | null; status: string; updated_at: string }>(
+        'SELECT scope, owner_user_id, status, updated_at FROM connector_connections WHERE id = ? AND workspace_id = ?', connectionId, request.workspaceId,
+      ).toArray()[0];
+      if (!row) return { connectionId, exists: false as const, validatedAt: Date.now() };
+      return { connectionId, exists: true as const, validatedAt: Date.now(), revision: row.updated_at,
+        allowed: row.status !== 'disabled' && (row.scope === 'workspace' || row.owner_user_id === request.userId) };
+    });
+  }
+
+  /**
+   * The subjects and resources a push target reaches, from this object's
+   * directories and the regional member list. Discovery for registration
+   * only: every pair is still decided by its canonical owner.
+   */
+  async enumerateSearchAuthorization(input: { workspaceId: string; target: SearchAuthorizationTarget }) {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, target: SearchAuthorizationTargetSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const members = await this.env.DB.prepare(
+      `SELECT user_id FROM workspace_members WHERE workspace_id = ? AND status = 'active'`,
+    ).bind(request.workspaceId).all<{ user_id: string }>();
+    return enumerateSearchAuthorizationUniverse(this.state.storage.sql, request.workspaceId,
+      members.results.map((row) => row.user_id), request.target);
   }
 
   async authorizationResourceFacts(input: { workspaceId: string; userId: string; resourceIds: string[] }) {

@@ -1,10 +1,10 @@
 import { nextResourceSearchDueAt, publishResourceSearch } from '../src/durable-objects/resource-search-projection';
-import { nextSearchProjectionDueAt } from '../src/durable-objects/search-projection-outbox';
+import { drainSearchProjectionOutbox, nextSearchProjectionDueAt } from '../src/durable-objects/search-projection-outbox';
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { asWorkspaceId } from '@rally/contracts';
+import { asSubstreamId, asWorkspaceId } from '@rally/contracts';
 import { applyDurableObjectSqliteMigrations } from '../src/durable-objects/sqlite-migrations';
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from '../src/durable-objects/workstream-object-schema';
 import { WorkstreamTranscriptStorage } from '../src/durable-objects/workstream-transcript-storage';
@@ -207,6 +207,69 @@ describe('transcript search migration', () => {
       })).rejects.toThrow('search_intent_rejected');
       expect(sql.exec('SELECT turn_id FROM participant_transcript_turns WHERE turn_id = ?', 'must-roll-back').toArray()).toEqual([]);
       expect(sql.exec('PRAGMA foreign_key_check').toArray()).toEqual([]);
+    });
+  });
+});
+
+describe('conversation display projection', () => {
+  const identity = { region: 'global' as const, workspaceId, parentId: '00000000-0000-7000-8000-000000009e03', substreamId: asSubstreamId('0') };
+  const outboxRows = (sql: SqlStorage) => sql.exec<{ channel: string; state: string; not_before: number; attempts: number }>(
+    `SELECT channel, state, not_before, attempts FROM durable_outbox WHERE channel = 'search_conversation_v1'`).toArray();
+
+  it('queues one display job per conversation when its title or archive changes and drains it as a reference', async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName('search-display-projection');
+    await stub.ping();
+    await runInDurableObject(stub, async (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+        component: 'substream_agent_do', workerVersionId: 'search', now: 2_000 });
+      seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: identity.parentId });
+      const sql = state.storage.sql;
+      sql.exec(`DELETE FROM durable_outbox`);
+      // Bookkeeping writes on the identity row are not display changes.
+      sql.exec(`UPDATE workstream SET preview = 'quiet', updated_at = 3 WHERE id = 1`);
+      expect(outboxRows(sql)).toEqual([]);
+      sql.exec(`UPDATE workstream SET title = 'Renamed', updated_at = 4 WHERE id = 1`);
+      sql.exec(`UPDATE workstream SET archived_at = 5, updated_at = 5 WHERE id = 1`);
+      expect(outboxRows(sql)).toEqual([{ channel: 'search_conversation_v1', state: 'pending', not_before: 0, attempts: 0 }]);
+      expect(nextSearchProjectionDueAt(sql)).toBe(0);
+      const failing = createCloudflareTestBinding<Queue>({ sendBatch: vi.fn(async () => { throw new Error('queue unavailable'); }) });
+      await expect(drainSearchProjectionOutbox(sql, failing, identity)).rejects.toThrow('queue unavailable');
+      expect(outboxRows(sql)).toEqual([expect.objectContaining({ state: 'pending', attempts: 1 })]);
+      expect(outboxRows(sql)[0]!.not_before).toBeGreaterThan(Date.now());
+      sql.exec(`UPDATE durable_outbox SET not_before = 0 WHERE channel = 'search_conversation_v1'`);
+      const queue = createCloudflareTestBinding<Queue>({ sendBatch: vi.fn(async () => undefined) });
+      await drainSearchProjectionOutbox(sql, queue, identity);
+      expect(queue.sendBatch).toHaveBeenCalledWith([{ body: { type: 'search_conversation_projection_v1', ...identity } }]);
+      expect(outboxRows(sql)).toEqual([]);
+      expect(nextSearchProjectionDueAt(sql)).toBeNull();
+    });
+  });
+
+  it('requeues committed turns once when the display attributes arrive', async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName('search-display-upgrade-from-v51');
+    await stub.ping();
+    await runInDurableObject(stub, async (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 51),
+        component: 'substream_agent_do', workerVersionId: 'v51', now: 1_000 });
+      seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: identity.parentId });
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      for (const [turnId, ordinal] of [['delivered-turn', 1], ['pending-turn', 2]] as const) {
+        await transcript.appendParticipantMessage({ turnId, actor: 'system', authorUserId: null, authorSnapshot: null,
+          text: `Searchable ${turnId}`, createdAtUtc: '2026-09-05T00:00:00Z', attentionOrdinal: ordinal });
+      }
+      // One reference already delivered, one still waiting: the upgrade must not fail on either.
+      state.storage.sql.exec(`DELETE FROM durable_outbox WHERE message_id = 'search-turn:delivered-turn'`);
+    });
+    await runInDurableObject(stub, async (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+        component: 'substream_agent_do', workerVersionId: 'display', now: 2_000 });
+      const sql = state.storage.sql;
+      expect(sql.exec<{ message_id: string; state: string }>(
+        `SELECT message_id, state FROM durable_outbox WHERE channel = 'search_projection_v1' ORDER BY message_id`).toArray())
+        .toEqual([{ message_id: 'search-turn:delivered-turn', state: 'pending' }, { message_id: 'search-turn:pending-turn', state: 'pending' }]);
+      expect(sql.exec<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workstream_search_display_update'`).toArray())
+        .toEqual([{ name: 'workstream_search_display_update' }]);
     });
   });
 });

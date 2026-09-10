@@ -12,6 +12,14 @@ import {
   WorkspaceService,
 } from "../src/services/workspace-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestD1Results, createTestEnv } from "./helpers/cloudflare-test";
+import { publishWorkspaceSync } from "../src/services/workspace-realtime-service";
+import type * as WorkspaceRealtimeService from "../src/services/workspace-realtime-service";
+
+// The control plane is a scripted D1 here; the workspace object behind the sync publish is not.
+vi.mock("../src/services/workspace-realtime-service", async (importActual) => ({
+  ...await importActual<typeof WorkspaceRealtimeService>(),
+  publishWorkspaceSync: vi.fn(async () => 1),
+}));
 
 interface RecordedStatement {
   sql: string;
@@ -232,6 +240,8 @@ describe("workspace invitation lifecycle", () => {
 
     await expect(acceptInvitationForUser(env, invitationRow.id, user))
       .resolves.toBe(invitationRow.workspace_id);
+    // The new member's search decisions are projected for them by name.
+    expect(publishWorkspaceSync).toHaveBeenCalledWith(env, invitationRow.workspace_id, ["member_directory"], { memberUserIds: [user.id] });
     expect(database.batches).toHaveLength(1);
     expect(database.batches[0]).toHaveLength(2);
     expect(database.batches[0]![0]!.sql).toContain("UPDATE workspace_invitations SET accepted_at = ?, accepted_by_user_id = ?");

@@ -236,6 +236,14 @@ export async function acceptInvitationForUser(
     }
   }
   if (transitioned) {
+    // The membership is committed; project the new member's search decisions
+    // so their first search is complete. A failed publish leaves that member
+    // to the after-response fill, which the warning is there to notice.
+    try { await publishWorkspaceSync(env, invitation.workspace_id, ["member_directory"], { memberUserIds: [user.id] }); }
+    catch (error) {
+      logWarn(env, "search_authorization_member_push_failed", { workspace_id: invitation.workspace_id, user_id: user.id,
+        error_code: error instanceof Error ? error.message : "unknown" });
+    }
     await notifyInvitationResolution(env, invitation, user, "accepted");
     await emitInvitationTerminal(env, invitation, {
       userId: asUserId(user.id),
@@ -494,7 +502,7 @@ export class WorkspaceService {
       // admissible any longer.
       sessionId: null,
     });
-    await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"]);
+    await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"], { memberUserIds: [userId] });
   }
 
   /**
@@ -545,7 +553,7 @@ export class WorkspaceService {
       const abandoned = Number(abandonment[0]?.meta?.changes ?? 0) === 1;
       if (abandoned) {
         await this.publishOwnMembershipRevocation();
-        await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"]);
+        await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"], { memberUserIds: [this.auth.userId] });
         return { outcome: "abandoned" };
       }
       throw new ApiError(
@@ -575,7 +583,7 @@ export class WorkspaceService {
     ).bind(this.auth.workspaceId, this.auth.userId).first<{ user_id: string }>();
     if (departure) {
       await this.publishOwnMembershipRevocation();
-      await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"]);
+      await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"], { memberUserIds: [this.auth.userId] });
       return { outcome: "left" };
     }
 

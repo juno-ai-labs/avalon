@@ -91,12 +91,16 @@ export function applyWorkspaceResourceSchema(database: DatabaseSync, workspaceId
        (id, workspace_id, region, placement_affinity, created_at, updated_at)
      VALUES (1, ?, 'global', 'wnam', 0, 0)`,
   ).run(workspaceId);
+  const exists = (table: string) => Boolean(database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table));
   for (const migration of resourceSchemaMigrations()) {
     for (const statement of migration.statements) {
-      // Mixed migrations also install triggers on DO-only tables absent from
-      // this regional resource fixture. Keep every trigger whose source exists.
+      // Mixed migrations also install triggers on, and backfill rows from,
+      // DO-only tables absent from this regional resource fixture. Keep every
+      // trigger and every read whose source exists.
       const triggerTable = /^\s*CREATE TRIGGER\s+\S+[\s\S]*?\bON\s+(\w+)/u.exec(statement)?.[1];
-      if (triggerTable && !database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(triggerTable)) continue;
+      if (triggerTable && !exists(triggerTable)) continue;
+      const sources = [...statement.matchAll(/\b(?:FROM|JOIN)\s+(\w+)\b(?!\s*\()/gu)].map((match) => match[1]!);
+      if (!/^\s*CREATE\s/u.test(statement) && sources.some((table) => !exists(table))) continue;
       database.exec(statement);
     }
   }
