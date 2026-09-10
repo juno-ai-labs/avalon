@@ -1,7 +1,7 @@
 /** Approved early-access copy. Change these values without changing the form or API. */
 export const accessCopy = {
   title: 'Rally — Get early access',
-  headline: 'Stop copy/pasting great AI work into Slack.',
+  headline: 'Stop copy/pasting AI work into Slack.',
   description: 'Rally brings your chats, skills, context, and workflows into one shared place your whole team can build on.',
   capabilities: 'Collaborative Chat. Team Skills. Ready Out of the Box.',
   emailLabel: 'Work email',
