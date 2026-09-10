@@ -732,21 +732,6 @@ export function InsetSurface({
   return <div className={clsx('inset-surface', className)} {...props}>{children}</div>;
 }
 
-/**
- * `InsetSurface` for rows: hairlines between them rather than gaps around them.
- *
- * The rows are ordinary `li` children, styled by the list. A row component
- * would only be a `li` with a class, and would make a row that needs its own
- * layout harder to write than plain markup.
- */
-export function InsetList({
-  children,
-  className,
-  ...props
-}: PropsWithChildren<HTMLAttributes<HTMLUListElement>>): React.JSX.Element {
-  return <ul className={clsx('inset-surface inset-list', className)} {...props}>{children}</ul>;
-}
-
 export function EmptyState({ title, description, action }: { title: string; description: string; action?: ReactNode }): React.JSX.Element {
   return (
     <div className="empty-state">
