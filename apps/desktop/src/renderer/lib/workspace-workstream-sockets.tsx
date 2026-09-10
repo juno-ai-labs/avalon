@@ -2,7 +2,7 @@ import { useMemo, type PropsWithChildren } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { WorkstreamSummary } from './types';
 import type { WorkstreamSocketApi } from './use-workstream-socket';
-import { useWorkstreamsQuery } from './use-workstreams-query';
+import { useCachedWorkstreams } from './use-workstreams-query';
 import { firstLandingWorkstream, openWorkstreamId, skippedWorkstreamIds } from './workstream-landing';
 import { WorkstreamSocketPool } from './workstream-socket-pool';
 
@@ -35,14 +35,14 @@ export function WorkspaceWorkstreamSockets({ api, children }: PropsWithChildren<
   api: WorkstreamSocketApi | null;
 }>): React.JSX.Element {
   const location = useLocation();
-  const workstreams = useWorkstreamsQuery();
+  const workstreams = useCachedWorkstreams();
   const activeWorkstreamId = openWorkstreamId(location.pathname);
   const backgroundIds = useMemo(() => {
-    const selected = backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams.data);
-    if (location.pathname !== '/' || !workstreams.data) return selected;
+    const selected = backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams);
+    if (location.pathname !== '/' || !workstreams) return selected;
     const skipped = skippedWorkstreamIds(location.state);
-    const first = firstLandingWorkstream(workstreams.data.filter((row) => !skipped.has(row.id)));
+    const first = firstLandingWorkstream(workstreams.filter((row) => !skipped.has(row.id)));
     return first ? [...new Set([first.id, ...selected])] : selected;
-  }, [activeWorkstreamId, location.pathname, location.state, workstreams.data]);
+  }, [activeWorkstreamId, location.pathname, location.state, workstreams]);
   return <WorkstreamSocketPool api={api} activeWorkstreamId={activeWorkstreamId} backgroundWorkstreamIds={backgroundIds}>{children}</WorkstreamSocketPool>;
 }
