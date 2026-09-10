@@ -51,20 +51,26 @@ and composer dock:
   participant row collapses.
 
 The launching state deliberately declares no geometry of its own. Because its
-root carries `workstream-screen`, it inherits that screen's dock padding, column
-width, and composer treatment from the same rules the real screen uses. Anything
-restyled for the launcher is written under `:not(.is-launching)` instead, so the
-moment the class lands the element is already dressed as the screen it is about
-to become and the navigation that follows changes only the data.
+root carries `workstream-screen`, it inherits that screen's dock padding and
+column width from the same rules the real screen uses. Anything restyled for the
+launcher is written under `:not(.is-launching)` instead, so the moment the class
+lands the element is already dressed as the screen it is about to become and the
+navigation that follows changes only the data. The composer is no longer one of
+those things: it is the same message capsule at the same width on both sides of
+the hand-off, per
+[`conversation-surfaces.md`](conversation-surfaces.md).
 
 ### What moves
 
 Two things animate, and they are the whole transition:
 
-- **The composer settles.** It is the same DOM element throughout, so its dock
-  padding, stack width, background, border, radius, shadow, and text height all
-  transition rather than cut. It is the object the eye follows from the middle of
-  the launcher down into the dock.
+- **The composer stays put.** It is the same DOM element throughout, and now
+  also the same width and the same capsule on both sides, so nothing about it
+  moves: it is the fixed point the eye holds while the header, the transcript and
+  the rows around it change. It used to settle instead — dock padding, stack
+  width, background, border, radius, shadow and text height each transitioning
+  from a launcher treatment to the conversation's — and the transitions that
+  carried it are gone with the difference they existed for.
 - **The transcript assembles.** The opening turn and the work timer each rise
   7px into place on a 70ms stagger, so the transcript reads as being built rather
   than revealed.
@@ -384,6 +390,28 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
+
+### 2026-09-10 — Project-owned creation uses the message capsule too
+
+**What changed:** `layout="message-capsule"` is passed unconditionally, so the
+project-owned launcher renders the same field as a workspace-level new chat and
+as the conversation, rather than the toolbar layout the 2026-09-04 entry below
+left it on. Its participant row is untouched. The composer no longer changes
+treatment across `.is-launching`, so the transitions that travelled it are gone
+and **What moves** above is one item shorter.
+
+**Why:** The same reasoning as that entry, applied to the surface it left out: a
+field that is dressed differently from the conversation's makes the launcher look
+like a different product, and the field is the one element that survives the
+hand-off. [`conversation-surfaces.md`](conversation-surfaces.md) owns the capsule
+and carries the full entry.
+
+**Consequences:** The developer-only model override moves from the toolbar pill
+into the plus menu beside Attach files, where the capsule has carried it since
+the 2026-09-04 entry. The footer hint is not rendered at all — the capsule hides
+`.composer-hint` — so neither launcher now states the Enter-to-create keystroke
+anywhere; the prop is still passed and one rule stands between it and being
+shown.
 
 ### 2026-09-10 — The launch geometry and the optimistic turn are shared with substreams
 

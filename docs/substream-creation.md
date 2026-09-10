@@ -64,9 +64,12 @@ work stream has not been left; only its middle column has something else in it.
 
 The geometry is `.workstream-launch-screen`, shared with the work-stream
 launcher and described in [`workstream-creation.md`](workstream-creation.md):
-while composing, the launcher's own dock padding and raised composer; on submit,
-`is-launching` lands and every value settles on the conversation's own, so the
-composer travels into the dock rather than being replaced by it.
+while composing, the launcher's own dock padding; on submit, `is-launching` lands
+and every value settles on the conversation's own, so the composer travels into
+the dock rather than being replaced by it. The composer itself is not one of
+those values any more — it is the same message capsule, at the same width, on
+both sides of the submit, per
+[`conversation-surfaces.md`](conversation-surfaces.md).
 
 What sits above that composer is the difference between the two entry points:
 
@@ -431,6 +434,23 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-10 — The launch field is the conversation's field
+
+**What changed:** Nothing in this surface's own code: the raised composer it
+showed while composing — 86px tall on an 8px corner under a heavier shadow — was
+one of the `.launch-composer` rules, and those are gone. It now draws the same
+44px message capsule as the conversation behind it, on both appearances.
+
+**Why:** A substream is started inside the work stream it branches out of, with
+that conversation's own composer on screen a moment earlier and directly behind
+the surface. Two dressings of one component, six inches apart, read as two
+different controls.
+[`conversation-surfaces.md`](conversation-surfaces.md) carries the full entry.
+
+**Consequences:** The field's first impression is a single row rather than a
+box, which is a smaller target before it is typed into; the banner above it, its
+`border-corner-pill` and the Cancel control are unchanged.
 
 ### 2026-09-10 — A substream carries a model pin of its own
 

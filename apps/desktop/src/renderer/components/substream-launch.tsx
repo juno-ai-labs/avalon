@@ -317,7 +317,6 @@ export function SubstreamLaunchSurface({
           api={api ?? undefined}
           attachments={attachmentDraft.attachments}
           autoFocus
-          className="launch-composer"
           error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? error ?? attachmentDraft.error}
           fileInputRef={fileInputRef}
           footerHint={sendBlocked ? 'Starting a substream is available once Rally connects' : 'Enter to create · Shift+Enter for a new line'}
