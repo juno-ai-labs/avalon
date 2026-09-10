@@ -731,6 +731,82 @@ describe('MessageBlock markdown', () => {
       .toContain('$\\rightarrow$ deliberately, and paid $50.');
   });
 
+  it('keeps composer newlines visible in human messages alongside inline formatting', () => {
+    const { container } = render(<MessageBlock {...actions} message={{
+      ...baseMessage,
+      text: 'First line\n**Second line**\nThird line\n\nAnother paragraph',
+    }} />);
+
+    const body = container.querySelector('.human-message-bubble .markdown-body');
+    const paragraph = body?.querySelector('p');
+    expect(paragraph?.querySelectorAll('br')).toHaveLength(2);
+    expect(paragraph?.querySelector('strong')).toHaveTextContent('Second line');
+    expect(paragraph).toHaveTextContent('First line Second line Third line');
+    expect(body?.querySelectorAll('p')).toHaveLength(2);
+  });
+
+  it('preserves human code and explicit breaks without adding extra breaks', () => {
+    const { container } = render(<MessageBlock {...actions} message={{
+      ...baseMessage,
+      text: 'First  \nSecond\n\n```text\nalpha\nbeta\n```\n\n`inline\ncode`',
+    }} />);
+
+    expect(container.querySelectorAll('.markdown-body br')).toHaveLength(1);
+    expect(container.querySelector('pre')?.textContent).toContain('alpha\nbeta');
+    expect(container.querySelector('.markdown-inline-code')?.textContent).toBe('inline code');
+  });
+
+  it.each(['First\r\nSecond', 'First\rSecond'])('preserves external line-ending forms: %j', (text) => {
+    const { container } = render(<MarkdownBody preserveLineBreaks verbatim>{text}</MarkdownBody>);
+    expect(container.querySelectorAll('br')).toHaveLength(1);
+    expect(container.querySelector('p')).toHaveTextContent('First Second');
+    expect(container.querySelector('p')?.textContent).not.toContain('\r');
+  });
+
+  it.each(['hello\n', '\nhello', '\nhello\n'])('does not add breaks at paragraph edges: %j', (text) => {
+    const { container } = render(<MarkdownBody preserveLineBreaks verbatim>{text}</MarkdownBody>);
+    expect(container.querySelectorAll('br')).toHaveLength(0);
+    expect(container.querySelector('p')).toHaveTextContent('hello');
+  });
+
+  it.each(['a\n<br>\nb', 'a<br>\nb', 'a\n<br>b'])('does not duplicate HTML breaks: %j', (text) => {
+    const { container } = render(<MarkdownBody preserveLineBreaks verbatim>{text}</MarkdownBody>);
+    expect(container.querySelectorAll('br')).toHaveLength(1);
+    expect(container.querySelector('p')).toHaveTextContent('a b');
+  });
+
+  it('retains breaks next to inline elements and preserves multiline mention labels', () => {
+    const { container } = render(<MarkdownBody preserveLineBreaks verbatim>{
+      '**First**\nSecond\n[site](https://example.com)\n[@Ada\nLovelace](person:ada-lovelace)'
+    }</MarkdownBody>);
+    expect(container.querySelectorAll('br')).toHaveLength(3);
+    expect(screen.getByRole('link', { name: 'site' })).toHaveAttribute('href', 'https://example.com');
+    expect(container.querySelector('.mention-text-fallback')).toHaveTextContent('@Ada Lovelace');
+  });
+
+  it('keeps a multiline connector mention as a chip', () => {
+    const text = 'Ask @Google\nDrive\nto sync';
+    const { container } = render(<MessageBlock {...actions} message={{
+      ...baseMessage,
+      text,
+      mentions: [{ type: 'connector', connectorType: 'google', startOffset: 4, endOffset: 17 }],
+    }} />);
+    expect(container.querySelector('[data-connector-type="google"]')).toHaveClass('mention-chip');
+    expect(container.querySelectorAll('.markdown-body br')).toHaveLength(1);
+  });
+
+  it('combines visible line breaks with streaming pending citations', () => {
+    const { container } = render(<MarkdownBody preserveLineBreaks streaming>{'First\nSecond[^pending] and more'}</MarkdownBody>);
+    expect(container.querySelectorAll('br')).toHaveLength(1);
+    expect(container.querySelector('.citation-pill-pending')).toBeInTheDocument();
+  });
+
+  it('keeps document soft wrapping separate from human chat line breaks', () => {
+    const { container } = render(<MarkdownBody verbatim>{'First line\nSecond line'}</MarkdownBody>);
+    expect(container.querySelector('br')).toBeNull();
+    expect(container.querySelector('p')?.textContent).toBe('First line\nSecond line');
+  });
+
   it('renders a person: target that is not an id as text, never as a link', () => {
     // `defaultUrlTransform` would empty the href; the urlTransform whitelist
     // is what lets the fallback branch see the scheme and refuse the anchor.

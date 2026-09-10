@@ -377,6 +377,34 @@ function remarkHtmlBreaks() {
   };
 }
 
+/** Chat input uses newlines as visible breaks, unlike document soft wrapping. */
+function remarkSoftBreaks() {
+  return (tree: unknown) => {
+    const visit = (node: MarkdownRewriteNode): void => {
+      // Labels must stay text for mention/citation resolution; code is literal.
+      if (node.type === 'link' || node.type === 'code' || node.type === 'inlineCode') return;
+      const children = node.children;
+      if (!children) return;
+      node.children = children.flatMap((child, index) => {
+        if (child.type === 'text' && child.value !== undefined && /[\r\n]/u.test(child.value)) {
+          let value = child.value.replace(/\r\n?/gu, '\n');
+          // A bare <br> already owns its surrounding line break. Do not add
+          // blank lines around it, or at the edges of a parsed paragraph.
+          if (index === 0 || children[index - 1]?.type === 'break') value = value.replace(/^\n+/u, '');
+          if (index === children.length - 1 || children[index + 1]?.type === 'break') value = value.replace(/\n+$/u, '');
+          return value.split('\n').flatMap((part, partIndex) => [
+            ...(partIndex > 0 ? [{ type: 'break' }] : []),
+            ...(part ? [{ type: 'text', value: part }] : []),
+          ]);
+        }
+        visit(child);
+        return [child];
+      });
+    };
+    visit(tree as MarkdownRewriteNode);
+  };
+}
+
 function rewriteMarkdownBreaks(node: MarkdownRewriteNode): void {
   if (node.type === 'code' || node.type === 'inlineCode') return;
   const children = node.children;
@@ -941,6 +969,7 @@ export function MarkdownBody({
   collapseHeadings = false,
   glance = false,
   mentions = NO_MENTIONS,
+  preserveLineBreaks = false,
   still = false,
   streaming = false,
   telemetry,
@@ -969,6 +998,8 @@ export function MarkdownBody({
    */
   glance?: boolean;
   mentions?: MessageMention[];
+  /** Human chat messages keep the visible line breaks entered in the composer. */
+  preserveLineBreaks?: boolean;
   /**
    * This body is being rendered into a picture rather than onto the screen.
    *
@@ -1183,7 +1214,13 @@ export function MarkdownBody({
   }), [dropBorrowedFootnotes, headingComponents]);
   // A streaming body draws the pending pill; a settled one never does, so the
   // literal `[^foo]` of a reference nothing ever defined stays literal.
-  const remarkPlugins = streaming ? STREAMING_REMARK_PLUGINS : REMARK_PLUGINS;
+  const remarkPlugins = useMemo(() => {
+    const base = streaming ? STREAMING_REMARK_PLUGINS : REMARK_PLUGINS;
+    return preserveLineBreaks ? [...base, remarkSoftBreaks] : base;
+  }, [preserveLineBreaks, streaming]);
+  const tailRemarkPlugins = useMemo(() => preserveLineBreaks
+    ? [...STREAMING_TAIL_REMARK_PLUGINS, remarkSoftBreaks]
+    : STREAMING_TAIL_REMARK_PLUGINS, [preserveLineBreaks]);
   const rendered = useMemo(() => {
     const componentsFor = (source: string, extra: MarkdownComponents): {
       resolved: string;
@@ -1233,7 +1270,7 @@ export function MarkdownBody({
             );
           })}
           {/* Only here is the source's last line still arriving. */}
-          {renderMarkdown(tail, extra, STREAMING_TAIL_REMARK_PLUGINS)}
+          {renderMarkdown(tail, extra, tailRemarkPlugins)}
         </>
       );
     };
@@ -1304,6 +1341,7 @@ export function MarkdownBody({
     rehypePlugins,
     remarkPlugins,
     streaming,
+    tailRemarkPlugins,
     urlTransform,
   ]);
   // The provider sits outside the memoised body deliberately: a definition that
@@ -2491,6 +2529,7 @@ export function MessageBlock({
             <HumanMessageBubble disclosure={rowDisclosure} messageId={message.id} text={message.text}>
               <MarkdownBody
                 mentions={message.mentions}
+                preserveLineBreaks
                 telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
                 verbatim
               >{message.text}</MarkdownBody>
