@@ -250,6 +250,11 @@ describe('token references', () => {
     // a theme's palette. It is stated once in `app.css` so both sidebars spend
     // the same figure.
     '--sidebar-collapse-motion',
+    // The navigation's own two: the interval its contents spend travelling
+    // between its layouts, which is the collapse motion unless a drag has
+    // turned it off, and the number that travels over it so the component
+    // can hear the layout settle. Neither is a theme's to set.
+    '--sidebar-layout-motion', '--sidebar-compact',
     '--turn-bubble-radius'];
 
   // Set at runtime rather than in CSS: some by components as inline styles,
