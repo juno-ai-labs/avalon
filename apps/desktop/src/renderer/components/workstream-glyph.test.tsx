@@ -157,6 +157,13 @@ describe('HexagonGlyph markers', () => {
     expect(knockout).toHaveClass('lucide-play');
     expect(knockout).toHaveAttribute('stroke', 'black');
     expect(Number(knockout?.getAttribute('stroke-width'))).toBeGreaterThan(0);
+    // A Lucide icon is a nested `<svg>`, and the UA stylesheet clips one to its
+    // own viewport. `Play` reaches within about 3 units of that box, so without
+    // this the dilating stroke is cut off square at three edges and the gap
+    // stops following the symbol — which is the whole behaviour. jsdom does no
+    // layout and cannot see the clip, so the attribute is the only part of this
+    // a test can hold; the rendered proof is in the changelog.
+    expect(knockout).toHaveAttribute('overflow', 'visible');
   });
 
   it('paints the marker in its own colour, over the hole and not stroked', () => {

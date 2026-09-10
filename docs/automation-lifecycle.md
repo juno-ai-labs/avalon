@@ -693,6 +693,19 @@ gap has to stay a gap at the rail's 36px, where the whole marker is about 7px
 across and the first value tried left under a pixel of it. Narrowing it back to
 a hairline is a regression that only shows in the rail.
 
+That constant is also why the knockout copy carries `overflow="visible"`. A
+Lucide icon renders as a nested `<svg>`, which establishes its own viewport, and
+the UA stylesheet clips one to it; `Play` reaches within about 3 of the 24 units
+at the top, so a stroke wider than 6 is cut off square at the top, right and
+bottom rather than following the outline. Review caught it at the shipped 7,
+where the overflow is about half a unit — a third of a pixel at the 60px tile,
+and not visible. Confirmed by rendering the marker at a knockout of 16, where
+the gap is plainly a rectangle with the clip and traces the play without it.
+It is fixed rather than left because the ceiling was the trap: the gap this
+constant claims to leave is only true while the stroke stays inside the box, so
+the next person to widen it would have got nothing on three sides and no
+indication why.
+
 ### 2026-09-10 — A Sidekick's hexagon is a picker, and its choice rides the sidebar push
 
 **What changed:** The hexagon on the Sidekick profile opens the work stream's
