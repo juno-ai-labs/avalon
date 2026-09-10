@@ -253,7 +253,12 @@ export function useListMotion(
   useLayoutEffect(() => () => {
     for (const entry of running.current.values()) entry.animation.cancel();
     running.current.clear();
+    // Each cancel removes its stand-in through the animation's own handler;
+    // the set is cleared here as well so a handler that never fires — an
+    // environment that settles cancellations after the container is gone —
+    // leaves nothing behind.
     for (const animation of [...leaving.current]) animation.cancel();
+    leaving.current.clear();
   }, []);
 }
 

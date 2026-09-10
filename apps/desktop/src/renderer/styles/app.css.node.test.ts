@@ -122,7 +122,14 @@ describe('sidebar layout motion', () => {
   // point, and the events would say the layout had settled 120ms early.
   it('carries a registered number the component hears the layout settle by', () => {
     expect(stylesheet).toMatch(/@property --sidebar-compact \{\n {2}syntax: '<number>';/u);
+    // A registration without an initial value is invalid as a whole, and an
+    // inherited number would recompute every row's style each frame.
+    expect(rule('@property --sidebar-compact')).toContain('inherits: false;');
+    expect(rule('@property --sidebar-compact')).toContain('initial-value: 0;');
     expect(rule('.sidebar')).toContain('--sidebar-compact: 0;');
+    // On the sidebar itself, so the signal fires wherever it is rendered, and
+    // restated on the shell's rule beside the workspace-switch fade.
+    expect(rule('.sidebar')).toContain('transition: --sidebar-compact var(--sidebar-layout-motion);');
     expect(rule('.sidebar.is-compact')).toContain('--sidebar-compact: 1;');
     expect(rule('.workspace-shell .sidebar')).toContain('--sidebar-compact var(--sidebar-layout-motion)');
     // Under reduced motion the fade goes and the channel stays — as the whole
@@ -162,6 +169,8 @@ describe('sidebar layout motion', () => {
       expect(rule(selector), selector).toContain('var(--sidebar-layout-motion)');
     }
     expect(rule('.workstream-context-mark > *')).toContain('grid-area: 1 / 1;');
+    expect(rule('.workstream-substream-initial')).toContain('visibility: hidden;');
+    expect(rule('.workstream-context-sidebar.is-compact .workstream-substream-initial')).toContain('visibility: visible;');
     expect(rule('.workstream-context-sidebar.is-compact .workstream-context-mark:has(> .workstream-substream-initial) > .workstream-substream-connector')).toContain('visibility: hidden;');
     expect(rule('.workstream-context-sidebar.is-compact .workstream-context-copy')).not.toContain('display: none');
     expect(rule('.workstream-context-sidebar.is-compact .workstream-context-row,\n.workstream-context-sidebar.is-compact .workstream-context-empty')).not.toContain('justify-content');
@@ -293,6 +302,8 @@ describe('GrokBot sidebar header geometry', () => {
     // the slot can open and close over the layout motion.
     expect(commandbar).toContain('display: grid;');
     expect(commandbar).toContain('grid-template-rows: 32px 0px;');
+    // The list motion draws a removed row's stand-in in this box.
+    expect(commandbar).toContain('position: relative;');
     expect(rule('.grokbot-shell .sidebar.is-compact .sidebar-commandbar')).toContain('grid-template-rows: 54px 54px;');
     expect(create).toContain('background: transparent;');
     expect(search).toContain('border-radius: 8px;');
