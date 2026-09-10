@@ -145,23 +145,27 @@ describe('WorkstreamSidebar', () => {
     /></Tooltip.Provider>);
     expect(screen.getByRole('button', { name: /Launch risks/ })).toHaveAttribute('aria-current', 'page');
     const child = screen.getByRole('button', { name: /Launch risks/ });
-    // The branch line is the substream's own mark now, in the slot the main
-    // row gives the work stream's icon: no creator avatar, no outer connector.
-    expect(child.querySelector('.workstream-context-mark > .tabler-icon-border-corner-pill')).not.toBeNull();
+    // The ↳ arrow is the substream's own mark, in the slot the main row gives
+    // the work stream's icon: no creator avatar, no outer connector, and not
+    // the faint branch line this rail once drew.
+    expect(child.querySelector('.workstream-context-mark > .tabler-icon-corner-down-right')).not.toBeNull();
+    expect(child.querySelector('.tabler-icon-border-corner-pill')).toBeNull();
     expect(child.querySelector('.avatar')).toBeNull();
     // Never a conversation glyph, even though a substream now has an icon of
     // its own: the naming pass stores what it chose, and this rail draws the
-    // branch line regardless — the payload behind these rows carries no
-    // appearance to draw instead.
+    // arrow regardless — the payload behind these rows carries no appearance
+    // to draw instead.
     expect(child.querySelector('.workstream-mark')).toBeNull();
     const sidebar = screen.getByRole('complementary');
     const navigation = within(sidebar).getAllByRole('button').slice(0, 3);
     expect(navigation.map((button) => button.getAttribute('aria-label'))).toEqual([
       'Go to conversation: Launch preparation', 'Go to substream: Launch risks', 'New substream',
     ]);
-    expect(sidebar.querySelectorAll('.tabler-icon-border-corner-pill')).toHaveLength(1);
-    // The same arrow the main feed's New substream control carries, not an icon.
-    expect(screen.getByRole('button', { name: 'New substream' }).querySelector('.workstream-new-substream-mark')?.textContent).toBe('\u21b3');
+    expect(sidebar.querySelectorAll('.tabler-icon-corner-down-right')).toHaveLength(1);
+    // A plus, so the row that starts a substream is not marked like the rows
+    // that are one.
+    expect(screen.getByRole('button', { name: 'New substream' }).querySelector('.workstream-context-mark > .tabler-icon-plus')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'New substream' }).querySelector('.tabler-icon-corner-down-right')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Launch risks/ }));
     expect(onSelectSubstream).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000099');
     fireEvent.click(screen.getByRole('button', { name: 'New substream' }));
@@ -169,19 +173,19 @@ describe('WorkstreamSidebar', () => {
     // Compact has no title, so the mark carries the substream's first letter.
     // Both marks are in the slot in both widths — the stylesheet cross-fades
     // one into the other as the rail narrows — so the letter is already
-    // there, and the line stays after the toggle.
+    // there, and the arrow stays after the toggle.
     expect(child.querySelector('.workstream-substream-initial')?.textContent).toBe('L');
     fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
     expect(sidebar).toHaveClass('is-compact');
     expect(screen.getByRole('button', { name: /Launch risks/ }).querySelector('.workstream-substream-initial')?.textContent).toBe('L');
-    expect(sidebar.querySelectorAll('.tabler-icon-border-corner-pill')).toHaveLength(1);
+    expect(sidebar.querySelectorAll('.tabler-icon-corner-down-right')).toHaveLength(1);
     fireEvent.click(child);
     expect(onSelectSubstream).toHaveBeenLastCalledWith('00000000-0000-7000-8000-000000000099');
     fireEvent.click(screen.getByRole('button', { name: 'Go to conversation: Launch preparation' }));
     expect(onSelectSubstream).toHaveBeenLastCalledWith('0');
   });
 
-  it('keeps the branch line for a substream whose title has no first character', () => {
+  it('keeps the arrow for a substream whose title has no first character', () => {
     render(<Tooltip.Provider><WorkstreamSidebar
       workstream={{ ...workstream, privateChildren: [{
         substreamId: asSubstreamId('00000000-0000-7000-8000-000000000098'), title: '   ', createdByUserId: asUserId(person.id),
@@ -197,7 +201,7 @@ describe('WorkstreamSidebar', () => {
     expect(sidebar).toHaveClass('is-compact');
     // A lone space is wire-legal, and an empty mark square says nothing at all.
     expect(sidebar.querySelector('.workstream-substream-initial')).toBeNull();
-    expect(sidebar.querySelector('.tabler-icon-border-corner-pill')).not.toBeNull();
+    expect(sidebar.querySelector('.tabler-icon-corner-down-right')).not.toBeNull();
   });
 
   it('collapses for available pane width without overwriting the manual preference', () => {
