@@ -107,9 +107,9 @@ describe('sidebar layout motion', () => {
     // already running keep their duration unless they lose their property.
     expect(rule('.sidebar.is-resizing *,\n.workstream-context-sidebar.is-resizing *')).toContain('transition-property: none !important;');
     for (const selector of [
-      '.grokbot-shell .sidebar .sidebar-list > .sidebar-context-target',
-      '.grokbot-shell .sidebar .workstream-row',
-      '.grokbot-shell .sidebar .sidebar-group-heading',
+      '.app-shell .sidebar .sidebar-list > .sidebar-context-target',
+      '.app-shell .sidebar .workstream-row',
+      '.app-shell .sidebar .sidebar-group-heading',
       '.sidebar-commandbar .sidebar-search',
       '.sidebar-automation-strip',
     ]) {
@@ -143,11 +143,11 @@ describe('sidebar layout motion', () => {
   // `visibility` on the same interval is what takes them out of the
   // accessibility tree when the fade ends.
   it('keeps the rail\'s hidden copy in layout and takes it out of the tree by visibility', () => {
-    const title = rule('.grokbot-shell .sidebar.is-compact .workstream-row .sidebar-row-main');
+    const title = rule('.app-shell .sidebar.is-compact .workstream-row .sidebar-row-main');
     expect(title).toContain('opacity: 0;');
     expect(title).toContain('visibility: hidden;');
     expect(title).not.toContain('display: none');
-    expect(rule('.grokbot-shell .sidebar .workstream-row .sidebar-row-main')).toContain('visibility var(--sidebar-layout-motion)');
+    expect(rule('.app-shell .sidebar .workstream-row .sidebar-row-main')).toContain('visibility var(--sidebar-layout-motion)');
   });
 
   // The work-stream sidebar restates the interval and travels the same way,
@@ -181,9 +181,9 @@ describe('sidebar layout motion', () => {
   // the scroll box was the earlier answer, and it took the strip away from the
   // bottom where the full sidebar keeps it.
   it('keeps the Sidekick strip horizontal and below the list in the rail', () => {
-    expect(rule('.grokbot-shell .sidebar.is-compact .sidebar-automation-strip')).not.toContain('flex-direction');
+    expect(rule('.app-shell .sidebar.is-compact .sidebar-automation-strip')).not.toContain('flex-direction');
     expect(rule('.sidebar-automation-strip')).toContain('overflow-x: auto;');
-    expect(rule('.grokbot-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target')).toContain('flex-basis: 54px;');
+    expect(rule('.app-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target')).toContain('flex-basis: 54px;');
   });
 });
 
@@ -304,7 +304,7 @@ describe('GrokBot sidebar header geometry', () => {
     expect(commandbar).toContain('grid-template-rows: 32px 0px;');
     // The list motion draws a removed row's stand-in in this box.
     expect(commandbar).toContain('position: relative;');
-    expect(rule('.grokbot-shell .sidebar.is-compact .sidebar-commandbar')).toContain('grid-template-rows: 54px 54px;');
+    expect(rule('.app-shell .sidebar.is-compact .sidebar-commandbar')).toContain('grid-template-rows: 54px 54px;');
     expect(create).toContain('background: transparent;');
     expect(search).toContain('border-radius: 8px;');
     expect(search).toContain('height: 32px;');
