@@ -255,7 +255,10 @@ describe('token references', () => {
     // turned it off, and the number that travels over it so the component
     // can hear the layout settle. Neither is a theme's to set.
     '--sidebar-layout-motion', '--sidebar-compact',
-    '--turn-bubble-radius'];
+    '--turn-bubble-radius',
+    // The feed's spacing steps, each a multiple of the one `ref.space.unit`
+    // token; the multiples are the stylesheet's, not a theme's.
+    '--space-1', '--space-2', '--space-3', '--space-4', '--space-5', '--space-6', '--space-7', '--space-8'];
 
   // Set at runtime rather than in CSS: some by components as inline styles,
   // three by libraries on their own elements. They cannot be checked from this

@@ -2927,7 +2927,7 @@ pre {
 
 .transcript-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: auto; scrollbar-gutter: stable; }
 
-.unread-divider { align-items: center; color: var(--av-sys-color-accent-base); display: flex; font-size: 10.5px; font-weight: 620; gap: 9px; margin: 8px 0 14px; }
+.unread-divider { align-items: center; color: var(--av-sys-color-accent-base); display: flex; font-size: 10.5px; font-weight: 620; gap: var(--space-2); margin: 0 0 var(--space-3); }
 .unread-divider::before,
 .unread-divider::after { background: var(--av-sys-color-accent-tint); content: ''; flex: 1; height: 1px; }
 .unread-divider span { flex: 0 0 auto; }
@@ -2937,20 +2937,63 @@ pre {
   color: var(--av-sys-color-text-muted);
   display: flex;
   font-size: var(--av-cmp-control-font-size);
-  gap: 7px;
+  gap: var(--space-2);
   justify-content: center;
-  margin-bottom: 18px;
+  margin-bottom: var(--space-4);
   min-height: var(--av-sys-size-control-height);
   text-align: center;
 }
 .transcript-history-control .button { max-width: 100%; white-space: normal; }
 .transcript-history-control svg { flex-shrink: 0; }
-.transcript-history-control + .inline-error { margin-bottom: 18px; }
+.transcript-history-control + .inline-error { margin-bottom: var(--space-4); }
 .virtual-message-row { display: flow-root; }
 .message-arrival-layer { display: flow-root; transform-origin: center bottom; }
+/* The spacing scale, derived from the theme's one unit: every margin, padding
+   and gap in the feed is a whole number of these steps, so a theme that wants a
+   looser or tighter feed moves `ref.space.unit` and nothing else. Rule-local
+   rather than eight registry tokens because a theme has no opinion about step
+   five that is not an opinion about the unit. */
+:root {
+  --space-1: var(--av-ref-space-unit);
+  --space-2: calc(var(--av-ref-space-unit) * 2);
+  --space-3: calc(var(--av-ref-space-unit) * 3);
+  --space-4: calc(var(--av-ref-space-unit) * 4);
+  --space-5: calc(var(--av-ref-space-unit) * 5);
+  --space-6: calc(var(--av-ref-space-unit) * 6);
+  --space-7: calc(var(--av-ref-space-unit) * 7);
+  --space-8: calc(var(--av-ref-space-unit) * 8);
+}
+/* The feed's vertical rhythm is one primitive: a row owns the space above it,
+   chosen by what precedes it, and no row sets a bottom margin. Before this,
+   each row kind carried its own bottom margin (58px on a turn, 28 on an event,
+   26 on a timing row, 20 on a system note) and the next row's top margin was
+   added to it, including two negative margins whose only job was to claw back
+   the 58px a turn left under itself when its own work followed. The same
+   system note sat 78px below a bubble and 20px above the answer, and two
+   consecutive tool rows were 1px apart.
+
+   Rows render in index order in both the windowed and the plain feed, so the
+   sibling combinator sees the true neighbour, and each row is `flow-root`, so
+   the margin is inside the row's border box and the virtualizer measures it.
+   A turn is a row whose layer holds a `.message-block`; everything else (a
+   tool row, a timing row, the accordion, a system note, a status pill, the
+   proposal card, an open elicitation) is an event. Rally's answer sits on the
+   work that produced it at the same distance its header sits above its body,
+   because it is the same turn finishing; a person's reply after an event is a
+   new turn and keeps the turn-to-event distance. */
+.virtual-message-row > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-stack-gap); }
+.virtual-message-row:not(:has(> .message-arrival-layer > .message-block)) + .virtual-message-row > .message-arrival-layer > :first-child,
+.virtual-message-row + .virtual-message-row:not(:has(> .message-arrival-layer > .message-block)) > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-block-gap); }
+.virtual-message-row:not(:has(> .message-arrival-layer > .message-block)) + .virtual-message-row:not(:has(> .message-arrival-layer > .message-block)) > .message-arrival-layer > :first-child,
+.virtual-message-row:not(:has(> .message-arrival-layer > .message-block)) + .virtual-message-row:has(> .message-arrival-layer > .agent-message) > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-event-gap); }
+.virtual-message-row:first-child > .message-arrival-layer > :first-child { margin-top: 0; }
+/* The unread divider takes the row's space; the row it labels sits under it. */
+.virtual-message-row > .message-arrival-layer > .unread-divider + * { margin-top: 0; }
 .activity-presence { display: flow-root; transform-origin: left center; }
-.message-block { margin: 0 0 var(--av-sys-space-stack-gap); }
-.message-block > header { align-items: center; display: flex; gap: 8px; margin-bottom: 6px; }
+/* The live timer under the feed is the next event row, drawn by the surface. */
+.activity-presence .agent-work-timing { margin-top: var(--av-sys-space-block-gap); }
+.message-block { margin: 0; }
+.message-block > header { align-items: center; display: flex; gap: 8px; margin-bottom: var(--space-2); }
 /* The header mixes three type sizes, and each one's line box is taller than its
    glyphs by a different amount, so centring the boxes leaves the text looking
    off-centre. Collapsing the children to their glyph height makes the flex
@@ -3002,6 +3045,10 @@ pre {
    the text now, which is what a gutter is, and it lands on the same x as the
    work accordion's above it. */
 .markdown-body > .markdown-collapse:first-child .markdown-collapse-heading { margin-top: 0; }
+/* The trim above and `.markdown-body > :last-child` both stop at the collapse
+   wrapper, so the last block inside the last section kept its prose margin and
+   leaked it under every answer that opened with a heading. */
+.markdown-body > .markdown-collapse:last-child > .markdown-collapse-body > :last-child { margin-bottom: 0; }
 .markdown-collapse-heading { cursor: pointer; position: relative; }
 .markdown-collapse-chevron {
   align-items: center;
@@ -3224,7 +3271,7 @@ pre {
    for an image, or one compact file row. The old tall citation tile made sites
    and audio look like empty documents and survived after attachments moved on. */
 .citation-card { color: var(--av-sys-color-text-default); cursor: pointer; font: inherit; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; overflow: hidden; text-align: left; }
-.citation-card.is-file { align-items: center; background: var(--av-cmp-composer-background); border: .5px solid var(--av-cmp-composer-border-color); border-radius: 12px; display: grid; gap: 9px; grid-template-columns: 36px minmax(0, 1fr); min-height: var(--attachment-file-card-height); min-width: min(220px, 100%); padding: 8px; width: min(340px, 100%); }
+.citation-card.is-file { align-items: center; background: var(--av-cmp-composer-background); border: .5px solid var(--av-cmp-composer-border-color); border-radius: 12px; display: grid; gap: var(--space-2); grid-template-columns: 36px minmax(0, 1fr); min-height: var(--attachment-file-card-height); min-width: min(220px, 100%); padding: 8px; width: min(340px, 100%); }
 .citation-card.is-file:hover { background: var(--av-sys-color-surface-elevated-hover); }
 .citation-card-badge { align-items: center; background: color-mix(in srgb, var(--av-sys-color-accent-base) 18%, var(--av-sys-color-surface-raised)); border-radius: 9px; color: var(--av-sys-color-accent-base); display: inline-flex; height: 36px; justify-content: center; width: 36px; }
 .citation-card.is-image { background: var(--av-ref-color-neutral-4); border: 0; border-radius: 12px; box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--av-sys-color-text-default) 15%, transparent); display: block; max-height: 200px; min-height: 64px; padding: 0; position: relative; transition: filter 140ms ease; }
@@ -3308,7 +3355,7 @@ pre {
 /* The footnotes GFM still renders — the definitions the citation grammar did
    not lift. Without a rule they read as an ordinary numbered list inside the
    answer, which is exactly what a footnote is not. */
-.markdown-body .footnotes { border-top: 1px solid var(--av-sys-color-border-subtle); color: var(--av-sys-color-text-muted); font-size: 0.9em; margin-top: 22px; padding-top: 12px; }
+.markdown-body .footnotes { border-top: 1px solid var(--av-sys-color-border-subtle); color: var(--av-sys-color-text-muted); font-size: 0.9em; margin-top: var(--space-5); padding-top: var(--space-3); }
 
 .citation-identity-card { background: color-mix(in srgb, var(--av-sys-color-brand-base) 10%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-brand-base) 24%, transparent); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-brand-ink); display: inline-block; font-size: 0.92em; font-weight: 580; padding: 3px 9px; }
 /* Markers are restated because Tailwind's preflight sets `list-style: none` on
@@ -3333,8 +3380,8 @@ pre {
 .markdown-body ol { list-style: decimal; }
 .markdown-body ul,
 .markdown-body ol { margin: var(--av-cmp-markdown-list-margin); padding-left: var(--av-cmp-markdown-list-indent); }
-.markdown-body li { margin: calc(var(--av-sys-space-prose-gap) / 3) 0; padding-left: 1px; }
-.markdown-body li > p { margin-bottom: 7px; }
+.markdown-body li { margin: var(--space-1) 0; padding-left: 1px; }
+.markdown-body li > p { margin-bottom: var(--space-1); }
 .markdown-body li::marker { color: var(--av-ref-color-neutral-13); }
 /* Keeps its own `none`: a task list draws checkboxes, and a bullet beside each
    one is what this exception exists to prevent. It carries two classes to the
@@ -3343,12 +3390,12 @@ pre {
 .markdown-body .task-list-item { align-items: baseline; display: flex; gap: 9px; }
 .markdown-body .task-list-item > input { accent-color: var(--av-sys-color-accent-base); flex: 0 0 auto; margin: 0; transform: translateY(1px); }
 .markdown-inline-code { background: var(--av-ref-color-neutral-4); border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-13); font-size: 0.88em; padding: 2px 4px; }
-.markdown-code-block { background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-xl); margin: 17px 0 18px; overflow: hidden; }
-.markdown-code-block-header { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; gap: 8px; justify-content: space-between; padding: 7px 8px 7px 16px; }
+.markdown-code-block { background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-xl); margin: var(--space-4) 0; overflow: hidden; }
+.markdown-code-block-header { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; gap: 8px; justify-content: space-between; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); }
 .markdown-code-language { color: var(--av-ref-color-neutral-9); font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; }
 .markdown-code-block-header button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-11); display: flex; height: 26px; justify-content: center; padding: 0; width: 26px; }
 .markdown-code-block-header button:hover { background: var(--av-ref-color-neutral-4); color: var(--av-ref-color-neutral-13); }
-.markdown-code-block pre { background: transparent !important; font-size: 0.93em; line-height: 1.55; margin: 0; overflow: auto; padding: 14px 18px; tab-size: 2; }
+.markdown-code-block pre { background: transparent !important; font-size: 0.93em; line-height: 1.55; margin: 0; overflow: auto; padding: var(--space-3) var(--space-4); tab-size: 2; }
 .markdown-code-block code { background: none; border-radius: 0; display: block; min-width: max-content; padding: 0; }
 .markdown-code-block code > span { display: block; min-height: 1.55em; }
 .markdown-mermaid-diagram { overflow: auto; padding: 18px; }
@@ -3361,7 +3408,7 @@ pre {
 .markdown-body blockquote { border-left: 2px solid var(--av-ref-color-line-4); color: var(--av-ref-color-neutral-11); margin: var(--av-cmp-markdown-blockquote-margin); padding: 1px 0 1px 15px; }
 .markdown-body blockquote > :last-child { margin-bottom: 0; }
 .markdown-body hr { background: var(--av-ref-color-neutral-5); border: 0; height: 1px; margin: var(--av-cmp-markdown-rule-margin); }
-.markdown-table-scroll { --tw-fade-scrollbar-thumb: var(--av-sys-color-scrollbar-thumb); --tw-fade-scrollbar-width: 9px; margin: 15px -2px 18px; overflow-x: auto; }
+.markdown-table-scroll { --tw-fade-scrollbar-thumb: var(--av-sys-color-scrollbar-thumb); --tw-fade-scrollbar-width: 9px; margin: var(--space-4) -2px; overflow-x: auto; }
 .markdown-body table { border-collapse: separate; border-spacing: 2px; line-height: var(--av-cmp-markdown-table-leading); margin: 0; min-width: max(100%, calc(var(--markdown-table-columns, 1) * 140px)); table-layout: fixed; width: calc(100% - 1px); }
 .markdown-body th,
 .markdown-body td { background: var(--av-sys-color-surface-raised); border: 0; border-radius: var(--av-sys-size-radius-xs); min-width: 120px; padding: var(--av-cmp-markdown-cell-padding); text-align: left; vertical-align: top; }
@@ -3392,7 +3439,7 @@ pre {
    line. The agent's row deliberately does not do this: it is also visible while
    speech is playing and while a save is in flight, so tying its hit-testing to
    hover would take away the Stop speaking it puts there. */
-.human-message-actions { display: flex; margin-top: 4px; opacity: 0; pointer-events: none; transition: opacity 120ms; }
+.human-message-actions { display: flex; margin-top: var(--space-1); opacity: 0; pointer-events: none; transition: opacity 120ms; }
 .human-message:hover .human-message-actions, .human-message:focus-within .human-message-actions { opacity: 1; pointer-events: auto; }
 @media (prefers-reduced-motion: reduce) { :is(.agent-message-actions, .human-message-actions) { transition: none; } }
 /* A save in flight keeps the row visible and stops a second one starting; the
@@ -3401,14 +3448,14 @@ pre {
 .agent-message-actions button:disabled:hover { color: var(--av-sys-color-text-disabled); }
 .agent-message:has(.agent-message-actions button:disabled) .agent-message-actions { opacity: 1; }
 .streaming-caret { animation: active-pulse 0.9s infinite; background: var(--av-sys-color-brand-ink); display: inline-block; height: 13px; margin-left: 2px; vertical-align: text-bottom; width: 2px; }
-.transcript-event { margin: 0 0 var(--av-sys-space-block-gap); }
-.system-message { --system-message-lines: 5; align-items: flex-start; color: var(--av-ref-color-neutral-9); display: flex; font-size: 10.5px; gap: 8px; line-height: 1.55; margin: 20px 0; }
+.transcript-event { margin: 0; }
+.system-message { --system-message-lines: 5; align-items: flex-start; color: var(--av-ref-color-neutral-9); display: flex; font-size: 10.5px; gap: var(--space-2); line-height: 1.55; margin: 0; }
 .system-message-dot { background: var(--av-ref-color-neutral-7); border-radius: 50%; flex: none; height: 4px; margin-top: 6px; width: 4px; }
 .system-message-body { min-width: 0; }
 .system-message-text { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .system-message-text:not([data-expanded]) { -webkit-box-orient: vertical; -webkit-line-clamp: var(--system-message-lines); display: -webkit-box; overflow: hidden; }
 .system-message-text[data-expanded] { max-height: 320px; overflow-y: auto; }
-.system-message-toggle { align-items: center; background: transparent; color: var(--av-ref-color-neutral-10); display: flex; font-size: 10.5px; gap: 2px; margin-top: 3px; padding: 0; }
+.system-message-toggle { align-items: center; background: transparent; color: var(--av-ref-color-neutral-10); display: flex; font-size: 10.5px; gap: 2px; margin-top: var(--space-1); padding: 0; }
 .system-message-toggle:hover { color: var(--av-sys-color-text-subtle); }
 /* The one system row with something to do about it. The action is a real
    control rather than the "show more" affordance the toggle usually is, so it
@@ -3418,8 +3465,8 @@ pre {
   border: 1px solid var(--av-sys-color-border-subtle);
   border-radius: 6px;
   font-size: 11.5px;
-  margin-top: 8px;
-  padding: 4px 10px;
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-3);
 }
 .principal-unavailable-card .system-message-toggle:disabled { opacity: 0.55; }
 /* The proposal card. Same system-row frame — this is still Rally noting
@@ -3429,8 +3476,8 @@ pre {
   border: 1px solid var(--av-sys-color-border-subtle);
   border-radius: 6px;
   font-size: 11.5px;
-  margin-top: 8px;
-  padding: 4px 10px;
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-3);
 }
 .automation-draft-card .system-message-toggle:disabled { opacity: 0.55; }
 .automation-draft-triggers {
@@ -3451,10 +3498,10 @@ pre {
   color: var(--av-sys-color-text-muted);
   display: inline-flex;
   font-size: 10.5px;
-  gap: 5px;
+  gap: var(--space-1);
   line-height: 1.2;
-  margin: 12px 0 18px;
-  padding: 5px 8px;
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
 }
 
 .assistant-turn-status-pill svg { color: var(--av-sys-color-danger-base); flex: none; }
@@ -3475,13 +3522,13 @@ pre {
 .disclosure-chevron { transition: transform 140ms; }
 .tool-block[open] .disclosure-chevron { transform: rotate(90deg); }
 .tool-details { border-top: 1px solid var(--av-sys-color-border-default); display: grid; gap: 12px; padding: 11px 12px; }
-.tool-details h4 { color: var(--av-sys-color-text-muted); font-size: 9px; letter-spacing: 0.06em; margin: 0 0 5px; text-transform: uppercase; }
-.tool-details pre { background: var(--av-sys-color-text-on-inverse); border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-11); font-size: 10px; margin: 0; max-height: 220px; overflow: auto; padding: 9px; white-space: pre-wrap; }
+.tool-details h4 { color: var(--av-sys-color-text-muted); font-size: 9px; letter-spacing: 0.06em; margin: 0 0 2px; text-transform: uppercase; }
+.tool-details pre { background: var(--av-sys-color-text-on-inverse); border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-11); font-size: 10px; margin: 0; max-height: 220px; overflow: auto; padding: var(--space-2); white-space: pre-wrap; }
 .tool-warning { color: var(--av-sys-color-danger-soft); font-size: 11px; margin: 0; }
 
 
 
-.agent-work-timing { align-items: center; color: var(--av-ref-color-neutral-9); display: flex; font-size: 11.5px; gap: 7px; margin: 2px 0 26px; min-height: 20px; }
+.agent-work-timing { align-items: center; color: var(--av-ref-color-neutral-9); display: flex; font-size: 11.5px; gap: var(--space-2); margin: 0; min-height: 20px; }
 .agent-work-timing-label { display: inline-block; font-weight: 480; }
 /* The stop positions and `background-size` are load-bearing and duplicated on
    `.plugin-activity.tool-started .tool-summary strong`; change them together and
@@ -3521,7 +3568,7 @@ pre {
    ever wrapped would stretch the box and centre the glyph across both lines,
    where it belongs on the first. Pinning it is what the heading rule does too,
    for the same reason. */
-.work-accordion { display: grid; gap: 12px; }
+.work-accordion { display: grid; gap: var(--space-1); }
 
 .work-accordion-toggle {
   align-items: center;
@@ -3562,12 +3609,11 @@ pre {
 .work-accordion-chevron svg { display: block; transition: transform 140ms ease; }
 .work-accordion-toggle[aria-expanded='true'] .work-accordion-chevron svg { transform: rotate(90deg); }
 
-/* The rows inside carry the feed's own bottom margin, which spaces one row from
-   the next in a column that has nothing else in it. Inside the drawer the grid
-   gap does that job, and the margin would add a run's worth of empty space
-   under the last row. */
-.work-accordion-rows { display: grid; gap: 12px; }
-.work-accordion-rows .agent-work-timing { margin: 0; }
+/* A receipt for work the reader has already read the result of, so its rows
+   sit closer than the live rows above the answer: the drawer is denser than
+   progress. The rows carry no margin of their own; the feed's rhythm is set on
+   the row wrapper, and inside the drawer this gap is the whole of it. */
+.work-accordion-rows { display: grid; gap: var(--space-1); }
 
 .run-failure-notice {
   align-items: flex-start;
@@ -3577,7 +3623,7 @@ pre {
   display: grid;
   gap: 10px;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  margin: 6px 0 26px;
+  margin: var(--av-sys-space-block-gap) 0 0;
   padding: 12px;
 }
 .run-failure-icon { color: var(--av-sys-color-danger-base); display: grid; padding-top: 1px; place-items: center; }
@@ -3595,7 +3641,7 @@ pre {
   display: grid;
   gap: 10px;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  margin: 6px 0 26px;
+  margin: var(--av-sys-space-block-gap) 0 0;
   padding: 12px;
 }
 .run-stopped-icon { color: var(--av-sys-color-text-muted); display: grid; padding-top: 1px; place-items: center; }
@@ -3746,15 +3792,15 @@ pre {
 }
 .elicitation-panel,
 .elicitation-collapsed-bar { background: var(--av-ref-color-neutral-1); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-xl); box-shadow: var(--av-sys-elevation-shadow-md); width: 100%; }
-.elicitation-panel { padding: 14px 14px 13px; }
+.elicitation-panel { padding: var(--space-3); }
 /* GrokBot choice-rows: one inset list, not separate elevated cards. */
 .grokbot-shell .elicitation-panel,
 .grokbot-shell .elicitation-collapsed-bar { background: var(--av-cmp-bubble-background); border: 0; border-radius: 16px; box-shadow: none; padding: 12px; }
 .grokbot-shell .elicitation-panel-header { align-items: center; gap: 8px; min-height: 20px; }
 .grokbot-shell .elicitation-panel-header h3 { color: var(--av-sys-color-text-default); font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; margin: 0; overflow-wrap: anywhere; }
 .grokbot-shell .elicitation-header-actions button { height: 20px; width: 20px; }
-.grokbot-shell .elicitation-options { background: var(--av-cmp-elicitation-option-background); border: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); border-radius: 8px; gap: 0; margin-top: 10px; padding: 0; }
-.grokbot-shell .elicitation-option { background: transparent; border: 0; border-radius: 0; gap: 8px; grid-template-columns: auto minmax(0, 1fr); min-height: 38px; padding: 8px; position: relative; }
+.grokbot-shell .elicitation-options { background: var(--av-cmp-elicitation-option-background); border: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); border-radius: 8px; gap: 0; margin-top: var(--space-2); padding: 0; }
+.grokbot-shell .elicitation-option { background: transparent; border: 0; border-radius: 0; gap: var(--space-3); grid-template-columns: auto minmax(0, 1fr); min-height: 38px; padding: var(--space-2) var(--space-3); position: relative; }
 .grokbot-shell .elicitation-option + .elicitation-option { border-top: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); }
 .grokbot-shell .elicitation-option:has(input[type='checkbox']) { grid-template-columns: auto minmax(0, 1fr) auto; }
 .grokbot-shell .elicitation-option:hover { background: var(--av-cmp-row-background-hover); }
@@ -3772,14 +3818,14 @@ pre {
 .grokbot-shell .elicitation-submit:not(:disabled),
 .grokbot-shell .elicitation-submit:hover:not(:disabled) { background: var(--av-cmp-bubble-human-background); color: var(--av-cmp-bubble-human-foreground); }
 .grokbot-shell .elicitation-submit kbd { color: inherit; }
-.elicitation-panel-header { align-items: flex-start; display: flex; gap: 14px; justify-content: space-between; min-height: 34px; }
+.elicitation-panel-header { align-items: flex-start; display: flex; gap: var(--space-3); justify-content: space-between; min-height: 34px; }
 .elicitation-panel-header > div:first-child { min-width: 0; }
 .elicitation-panel-header h3 { color: var(--av-ref-color-neutral-14); font-size: 15px; font-weight: 590; line-height: 1.38; margin: 4px 0 0; }
 .elicitation-header-actions { display: flex; flex: 0 0 auto; gap: 3px; }
 .elicitation-header-actions button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-11); display: flex; height: 29px; justify-content: center; padding: 0; width: 29px; }
 .elicitation-header-actions button:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 7%, var(--av-sys-color-surface-elevated-hover)); color: var(--av-sys-color-brand-ink); }
-.elicitation-options { border: 0; display: grid; gap: 5px; margin: 11px 0 0; max-height: min(52vh, 540px); overflow-y: auto; padding: 0 1px 0 0; }
-.elicitation-option { align-items: center; background: var(--av-sys-color-surface-raised-hover); border: 1px solid transparent; border-radius: var(--av-sys-size-radius-md); cursor: pointer; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) auto; min-height: 61px; padding: 9px 12px; transition: background-color 120ms ease, border-color 120ms ease; }
+.elicitation-options { border: 0; display: grid; gap: var(--space-1); margin: var(--space-2) 0 0; max-height: min(52vh, 540px); overflow-y: auto; padding: 0 1px 0 0; }
+.elicitation-option { align-items: center; background: var(--av-sys-color-surface-raised-hover); border: 1px solid transparent; border-radius: var(--av-sys-size-radius-md); cursor: pointer; display: grid; gap: var(--space-3); grid-template-columns: minmax(0, 1fr) auto; min-height: 61px; padding: var(--space-2) var(--space-3); transition: background-color 120ms ease, border-color 120ms ease; }
 .elicitation-option:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 7%, var(--av-sys-color-surface-elevated-hover)); border-color: color-mix(in srgb, var(--av-sys-color-brand-base) 28%, transparent); }
 .elicitation-option.is-selected { background: color-mix(in srgb, var(--av-sys-color-brand-base) 8%, var(--av-ref-color-neutral-6)); border-color: color-mix(in srgb, var(--av-sys-color-brand-base) 32%, var(--av-ref-color-line-4)); }
 .elicitation-option.is-selected:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 13%, var(--av-ref-color-neutral-6)); border-color: color-mix(in srgb, var(--av-sys-color-brand-base) 48%, var(--av-ref-color-line-4)); }
@@ -3799,9 +3845,9 @@ pre {
 .elicitation-other-option input[type='text'] { background: var(--av-ref-color-neutral-6); border: 0; border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-14); font-size: 13px; height: 38px; outline: 0; padding: 0 10px; width: 100%; }
 .elicitation-other-option input[type='text']::placeholder { color: var(--av-ref-color-neutral-9); }
 .elicitation-other-option input[type='text']:focus { box-shadow: inset 0 0 0 1px var(--av-ref-color-line-6); }
-.elicitation-text-response { background: var(--av-sys-color-surface-raised-hover); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-14); display: block; margin-top: 11px; min-height: 86px; outline: 0; padding: 10px 11px; resize: vertical; width: 100%; }
+.elicitation-text-response { background: var(--av-sys-color-surface-raised-hover); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-14); display: block; margin-top: var(--space-3); min-height: 86px; outline: 0; padding: var(--space-3); resize: vertical; width: 100%; }
 .elicitation-text-response:focus { border-color: var(--av-ref-color-line-6); }
-.elicitation-actions { align-items: center; display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+.elicitation-actions { align-items: center; display: flex; gap: var(--space-2); justify-content: flex-end; margin-top: var(--space-2); }
 .elicitation-actions .inline-error { flex: 1; margin: 0; }
 .elicitation-actions .button { border: 0; font-size: 12px; min-height: 33px; }
 .elicitation-skip { background: var(--av-sys-color-surface-elevated-hover); color: var(--av-ref-color-neutral-12); }
@@ -3811,7 +3857,7 @@ pre {
 .elicitation-submit:disabled { background: var(--av-ref-color-neutral-4); color: var(--av-ref-color-neutral-8); }
 .elicitation-submit:disabled kbd { color: var(--av-ref-color-neutral-7); }
 .elicitation-resolved-answer { color: var(--av-ref-color-neutral-13); font-size: 14px; line-height: 1.45; }
-.elicitation-collapsed-bar { align-items: center; color: var(--av-ref-color-neutral-11); display: grid; gap: 9px; grid-template-columns: auto minmax(0, 1fr) auto; min-height: 48px; padding: 8px 12px; text-align: left; }
+.elicitation-collapsed-bar { align-items: center; color: var(--av-ref-color-neutral-11); display: grid; gap: var(--space-2); grid-template-columns: auto minmax(0, 1fr) auto; min-height: 48px; padding: var(--space-2) var(--space-3); text-align: left; }
 .elicitation-collapsed-bar:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 6%, var(--av-sys-color-surface-raised)); border-color: color-mix(in srgb, var(--av-sys-color-brand-base) 34%, var(--av-ref-color-line-5)); }
 .elicitation-collapsed-bar span { color: var(--av-sys-color-brand-ink); font-size: 9px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
 .elicitation-collapsed-bar strong { color: var(--av-ref-color-neutral-13); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3824,7 +3870,7 @@ pre {
 .composer-attachments > * { flex: 0 0 auto; }
 .composer-attachments .attachment-remove { right: 3px; top: 3px; }
 .composer-attachments .attachment-file-card .attachment-remove { top: 50%; transform: translateY(-50%); }
-.message-attachments { margin: 4px 0 9px; }
+.message-attachments { margin: var(--space-1) 0 var(--space-2); }
 .attachment-tile { background: var(--av-ref-color-neutral-4); border: .5px solid var(--av-ref-color-line-4); border-radius: 12px; height: 50px; overflow: visible; position: relative; width: 50px; }
 .attachment-tile-content { align-items: center; background: transparent; border: 0; border-radius: inherit; color: var(--av-ref-color-neutral-11); display: flex; height: 100%; justify-content: center; overflow: hidden; padding: 0; width: 100%; }
 .attachment-tile-content:not(:disabled) { cursor: zoom-in; }
@@ -3847,7 +3893,7 @@ pre {
 .attachment-progress small { color: var(--av-ref-color-neutral-14); font-size: 9px; font-variant-numeric: tabular-nums; position: relative; }
 .human-message .message-attachments { align-items: flex-end; margin-left: auto; }
 
-.message-attachment-images { display: flex; gap: 6px; max-width: 100%; }
+.message-attachment-images { display: flex; gap: var(--space-2); max-width: 100%; }
 .message-attachment-image-cell { border-radius: 12px; display: block; flex: 1 1 0; min-width: 0; overflow: hidden; position: relative; }
 .message-attachment-image-cell:first-child,
 .message-attachment-image-cell:first-child .message-attachment-image { border-bottom-left-radius: 12px; border-top-left-radius: 12px; }
@@ -3888,7 +3934,7 @@ pre {
 }
 .attachment-file-card.is-pending { margin-block: 0; width: 220px; }
 .attachment-file-card.is-failed { border-color: var(--av-sys-color-danger-base); }
-.attachment-file-open { align-items: center; background: transparent; display: grid; flex: 1 1 auto; gap: 9px; grid-template-columns: 36px minmax(0, 1fr); min-width: 0; padding: 0; text-align: left; }
+.attachment-file-open { align-items: center; background: transparent; display: grid; flex: 1 1 auto; gap: var(--space-2); grid-template-columns: 36px minmax(0, 1fr); min-width: 0; padding: 0; text-align: left; }
 .attachment-file-open:hover:not(:disabled) .attachment-file-name { text-decoration: underline; text-underline-offset: 2px; }
 .attachment-file-icon { align-items: center; background: color-mix(in srgb, var(--av-sys-color-accent-base) 18%, var(--av-sys-color-surface-raised)); border-radius: 9px; color: var(--av-sys-color-accent-base); display: flex; flex: 0 0 auto; height: 36px; justify-content: center; width: 36px; }
 .attachment-file-details { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
@@ -4424,7 +4470,6 @@ body:has(.resource-lightbox) .menu-content { z-index: 1004; }
    than a constant: at 60px the composer already covered the
    message above it, and a stop or error row made it worse. */
 .automation-conversation { margin: 20px auto auto; padding-bottom: 132px; width: min(920px, 100%); }
-.automation-chat-surface .agent-work-timing { margin-top: 2px; }
 .automation-summary-card { background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); margin: 31px 0 10px; overflow: hidden; }
 .automation-summary-card > header { align-items: flex-start; border-bottom: 1px solid var(--av-sys-color-border-default); display: flex; gap: 11px; padding: 16px; }
 .automation-summary-card > header > span { align-items: center; background: var(--av-sys-color-warning-wash); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-brand-ink); display: flex; height: 32px; justify-content: center; width: 32px; }
@@ -4627,7 +4672,12 @@ body:has(.resource-lightbox) .menu-content { z-index: 1004; }
 }
 
 @media (max-width: 760px) {
-  .transcript-column { padding-left: 20px; padding-right: 20px; }
+  /* 24px, because the transcript's two collapse chevrons hang outside the
+     column: 20px of outdent, plus the 3px a `.markdown-collapse-chevron:focus-visible`
+     ring reaches beyond its own box (2px wide at `outline-offset: 1px`), is 23,
+     so anything narrower clips the chevron and the focus ring a keyboard user
+     needs to see. Raise the outdent or the ring and this number moves with them. */
+  .transcript-column { padding-left: var(--space-5); padding-right: var(--space-5); }
   .composer-dock { padding-left: 16px; padding-right: 16px; }
   .workstream-header-actions .participant-header-button { display: none; }
   .automation-overview-layout { display: block; padding: 38px 22px 90px; }
@@ -5055,11 +5105,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    quiet tool disclosures, and a low fixed composer. */
 .workstream-screen .transcript-column {
   max-width: var(--av-cmp-feed-width-wide);
-  padding: var(--av-cmp-feed-padding-y) calc(var(--av-cmp-feed-padding-x) + 4px);
-}
-
-:is(.workstream-screen, .automation-chat-surface) .message-block {
-  margin-bottom: var(--av-sys-space-stack-gap);
+  padding: var(--av-cmp-feed-padding-y) var(--av-cmp-feed-padding-x);
 }
 
 :is(.workstream-screen, .automation-chat-surface) .agent-message {
@@ -5068,8 +5114,14 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: fit-content;
 }
 
+/* The identity line starts on the same vertical as the prose under it. The
+   theme used to inset it by 18px, which reads as a hanging indent on a turn
+   that has nothing in that gutter: Rally's turn carries no avatar, so the space
+   held nothing and only broke the left edge the body and the action row share.
+   Any future mark to the left of the name belongs in the header as an element,
+   not as padding here. */
 :is(.workstream-screen, .automation-chat-surface) .agent-message > header {
-  margin-bottom: 8px;
+  margin-bottom: var(--space-2);
   opacity: 0.7;
 }
 
@@ -5181,8 +5233,8 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   display: inline-flex;
   font-size: 9.5px;
   line-height: 1;
-  margin-top: 5px;
-  padding: 4px 7px;
+  margin-top: var(--space-1);
+  padding: var(--space-1) var(--space-2);
 }
 
 /* An in-flight turn states no geometry of its own. It is the same bubble, at the
@@ -5243,9 +5295,9 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    a theme that aligns turns to the leading edge leaves the header flush there,
    which is the same relationship on the other side. */
 :is(.workstream-screen, .automation-chat-surface) .human-message > header {
-  gap: 5px;
+  gap: var(--space-1);
   justify-content: flex-end;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
   padding-inline-end: var(--turn-bubble-radius);
 }
 
@@ -5298,19 +5350,6 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   margin-bottom: 0;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .transcript-event:has(.tool-block) {
-  margin: -17px 0 18px;
-}
-
-/* `.work-accordion` is named alongside the timing row it wraps because a closed
-   accordion contains no timing row at all, and a transcript event that changed
-   its own outer margin on being opened would shift the answer under it. */
-:is(.workstream-screen, .automation-chat-surface) .transcript-event:is(:has(.agent-work-timing), :has(.work-accordion)) {
-  margin: -12px 0 18px;
-}
-
-.transcript-event > .agent-work-timing { margin: 0; }
-
 :is(.workstream-screen, .automation-chat-surface) .tool-block {
   background: transparent;
   border: 0;
@@ -5320,10 +5359,10 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 :is(.workstream-screen, .automation-chat-surface) .tool-block summary {
   cursor: pointer;
-  gap: 7px;
+  gap: var(--space-2);
   grid-template-columns: 17px minmax(0, 1fr) auto auto 14px;
-  min-height: 29px;
-  padding: 3px 0;
+  min-height: 24px;
+  padding: 0;
 }
 
 /* Grok-inspired conversation shell. These rules intentionally live as one
@@ -5772,22 +5811,12 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   border-radius: var(--turn-bubble-radius);
   box-shadow: none;
   color: var(--av-cmp-bubble-human-foreground);
-  padding: 8px 12px;
 }
 
 .workstream-screen .human-message-bubble .markdown-body,
 .workstream-screen .human-message-bubble .markdown-body :is(p, strong, em, code, a) { color: var(--av-cmp-bubble-human-foreground); }
-.workstream-screen .human-message > header { margin-bottom: 5px; }
 .workstream-screen .human-message .message-author { color: var(--av-sys-color-text-subtle); font-size: 12px; }
 .workstream-screen .human-message time { color: var(--av-sys-color-text-muted); }
-.workstream-screen .agent-message { padding-left: 2px; }
-/* The identity line starts on the same vertical as the prose under it. The
-   theme used to inset it by 18px, which reads as a hanging indent on a turn
-   that has nothing in that gutter: Rally's turn carries no avatar, so the space
-   held nothing and only broke the left edge the body and the action row share.
-   Any future mark to the left of the name belongs in the header as an element,
-   not as padding here. */
-.workstream-screen .agent-message > header { margin-bottom: 7px; }
 
 /* GrokBot uses four text roles throughout its conversation surfaces rather
    than per-theme typography. Keep Rally's extra author/time labels on the same
@@ -5897,7 +5926,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 
 :is(.workstream-screen, .automation-chat-surface) .plugin-activity summary {
   grid-template-columns: max-content minmax(0, 1fr) auto auto 14px;
-  min-height: 34px;
+  min-height: 24px;
 }
 
 /* The transcript's mark box: a plugin row's glyph, and the thinking row's brain
@@ -5969,7 +5998,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 :is(.workstream-screen, .automation-chat-surface) .tool-summary {
   align-items: baseline;
   flex-direction: row;
-  gap: 7px;
+  gap: var(--space-2);
 }
 
 :is(.workstream-screen, .automation-chat-surface) .tool-summary strong {
@@ -6055,12 +6084,13 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 :is(.workstream-screen, .automation-chat-surface) .tool-details {
   border-left: 1px solid var(--av-ref-color-line-2);
   border-top: 0;
-  margin: 3px 0 8px 8px;
-  padding: 8px 0 8px 16px;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 0 var(--space-2);
+  padding: var(--space-1) 0 var(--space-1) var(--space-4);
 }
 
 :is(.workstream-screen, .automation-chat-surface) .agent-message-actions {
-  margin-top: 7px;
+  margin-top: var(--space-2);
 }
 
 .workstream-screen .composer-dock {
@@ -6365,17 +6395,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 }
 
 @media (max-width: 760px) {
-  /* 24px, not the 18px this used to be, because the transcript's two collapse
-     chevrons hang outside the column: 20px of outdent, plus the 3px a
-     `.markdown-collapse-chevron:focus-visible` ring reaches beyond its own box
-     (2px wide at `outline-offset: 1px`), is 23 — so 18px clipped 2px off every
-     chevron and 5px off the focus ring a keyboard user needs to see. Raise the
-     outdent or the ring and this number moves with them. */
-  .workstream-screen .transcript-column {
-    padding-left: 24px;
-    padding-right: 24px;
-  }
-
   .workstream-screen :is(.human-message, .agent-message) {
     max-width: min(88%, 640px, calc(100% - 82px));
   }

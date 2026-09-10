@@ -5,6 +5,7 @@
     "cmp.elicitation": "The inset choice list within an agent question, distinct from its surrounding message surface.",
     "ref.color.neutral": "The neutral ramp, ordered by contrast against the surface rather than by lightness, so a step means the same thing whichever way round a theme runs. Fills at the faint end, text at the strong end.",
     "ref.color.line": "The line ramp. Borders are not faint fills: a theme that draws with space needs to flatten its lines without erasing the fills that share a contrast level with them.",
+    "ref.space": "The spacing unit. Every margin, padding and gap in the feed is a whole multiple of it, derived in the stylesheet, and the semantic spacing tokens are multiples of it too, so a theme that wants a looser or tighter feed moves one number.",
     "sys.backdrop": "The window's backdrop: one painted layer behind every pane, so a theme's light runs unbroken beneath a translucent sidebar and the feed beside it rather than being repainted per pane and showing a seam at the join. Each token is a CSS `background-*` longhand under its own name, so a theme declares a backdrop the way a stylesheet would and the browser's own sizing, centring and tiling rules apply unchanged. `image` also accepts `{\"svg\": \"<svg …>\"}` for artwork drawn in the theme file and `{\"url\": \"https://…\"}` for one fetched over the network, and an array for layers.",
     "sys.color.surface": "The named surfaces. Declared outright by each theme because their relationship inverts between light and dark — a dark theme makes a control recede by darkening it, a light theme by greying it.",
     "sys.color.text": "Text tones, strongest to faintest.",
@@ -30,10 +31,11 @@
     "sys.size.border": "Border widths.",
     "sys.size.control": "The height of a control.",
     "sys.space.pane": "Padding around a pane of content.",
-    "sys.space.stack": "Between message blocks in the feed.",
+    "sys.space.stack": "Between one turn and the next in the feed.",
     "sys.space.row": "Between rows in a list.",
     "sys.space.group": "Between one group of rows and the next.",
-    "sys.space.block": "Between events in the feed.",
+    "sys.space.block": "Between a turn and an event row in the feed, in either direction: a turn and the work that follows it, or an event and the person's reply.",
+    "sys.space.event": "Between one event row and the next, and between a run's work and the answer it produced.",
     "sys.space.prose": "Between paragraphs.",
     "sys.font.family": "System sans-serif for application UI, including secondary windows and portals. Bundled Geist Mono remains available for code and technical content.",
     "sys.font.size": "The sizes the interface sets, as against the document size a theme inherits.",
@@ -126,6 +128,9 @@
     },
     "ref.color.line.6": {
       "$type": "color"
+    },
+    "ref.space.unit": {
+      "$type": "dimension"
     },
     "sys.backdrop.color": {
       "$type": "color"
@@ -545,6 +550,9 @@
       "$type": "dimension"
     },
     "sys.space.prose.gap": {
+      "$type": "dimension"
+    },
+    "sys.space.event.gap": {
       "$type": "dimension"
     },
     "sys.font.family.ui": {

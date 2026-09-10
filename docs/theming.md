@@ -145,6 +145,31 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-10 — Spacing tokens derive from one unit
+
+**What changed:** The registry gains `ref.space.unit` (4px in both appearances)
+and `sys.space.event.gap`, and the feed's spacing tokens are now expressed as
+multiples of the unit rather than as their own numbers: `sys.space.stack.gap`
+is `calc({ref.space.unit} * 8)` (32px, was 58), `sys.space.block.gap` and
+`sys.space.prose.gap` are `* 4` (16, were 28 and 22), `sys.space.event.gap` is
+`* 2`, `cmp.feed.padding-y` and `-x` are `* 8` (32, were 64 and 46), and the
+markdown margins, the table cell padding and `cmp.bubble.padding` (which was 0
+while the work-stream rule wrote `8px 12px` over it) are written the same way.
+`app.css` derives `--space-1` to `--space-8` from the unit as rule-local
+properties, listed in `themes.css.node.test.ts` as such. The group descriptions
+for `sys.space.stack` and `sys.space.block` now say what they sit between.
+
+**Why:** The feed's rhythm was rebuilt on a 4px scale (the entry of the same
+date in `conversation-surfaces.md` has the measurements). The first cut added
+eight `ref.space.N` tokens, one per step; that was cut back to one unit on the
+observation that a theme cannot have an opinion about step five that is not an
+opinion about the unit, and eight tokens would only let the two appearance files
+disagree about arithmetic. The build resolves `{ref.space.unit}` inside a
+`calc()` the same way it resolves any other alias, so nothing in the generator
+changed. The steps live in `app.css` rather than the registry for the same
+reason: they are the stylesheet's multiples of the theme's number, not eight
+more numbers a theme sets.
+
 ### 2026-09-10 — The group gap stopped being Airy's number
 
 **What changed:** `sys.space.group.gap` goes from 60px to 14px in both themes,

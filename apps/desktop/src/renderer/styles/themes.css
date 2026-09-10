@@ -56,6 +56,12 @@
   --av-ref-color-line-5: #b6b6b6;
   --av-ref-color-line-6: #8d8d8d;
 
+  /* The spacing unit. Every margin, padding and gap in the feed is a whole
+   * multiple of it, derived in the stylesheet, and the semantic spacing tokens
+   * are multiples of it too, so a theme that wants a looser or tighter feed
+   * moves one number. */
+  --av-ref-space-unit: 4px;
+
   /* The window's backdrop: one painted layer behind every pane, so a theme's
    * light runs unbroken beneath a translucent sidebar and the feed beside it
    * rather than being repainted per pane and showing a seam at the join. Each
@@ -274,8 +280,8 @@
   /* Padding around a pane of content. */
   --av-sys-space-pane-padding: 34px;
 
-  /* Between message blocks in the feed. */
-  --av-sys-space-stack-gap: 58px;
+  /* Between one turn and the next in the feed. */
+  --av-sys-space-stack-gap: calc(var(--av-ref-space-unit) * 8);
 
   /* Between rows in a list. */
   --av-sys-space-row-gap: 5px;
@@ -283,11 +289,16 @@
   /* Between one group of rows and the next. */
   --av-sys-space-group-gap: 14px;
 
-  /* Between events in the feed. */
-  --av-sys-space-block-gap: 28px;
+  /* Between a turn and an event row in the feed, in either direction: a turn
+   * and the work that follows it, or an event and the person's reply. */
+  --av-sys-space-block-gap: calc(var(--av-ref-space-unit) * 4);
 
   /* Between paragraphs. */
-  --av-sys-space-prose-gap: 22px;
+  --av-sys-space-prose-gap: calc(var(--av-ref-space-unit) * 4);
+
+  /* Between one event row and the next, and between a run's work and the
+   * answer it produced. */
+  --av-sys-space-event-gap: calc(var(--av-ref-space-unit) * 2);
 
   /* System sans-serif for application UI, including secondary windows and
    * portals. Bundled Geist Mono remains available for code and technical
@@ -381,7 +392,7 @@
   --av-cmp-bubble-human-background: #070707;
   --av-cmp-bubble-human-foreground: #fcfcfc;
   --av-cmp-bubble-border: transparent;
-  --av-cmp-bubble-padding: 0;
+  --av-cmp-bubble-padding: calc(var(--av-ref-space-unit) * 2) calc(var(--av-ref-space-unit) * 3);
 
   /* The message composer's frame. A theme builds either shape out of the same
    * five values: a card sets a background, a border and a radius; a rule sets
@@ -415,8 +426,8 @@
   /* The reading column, and the label over a turn in it. */
   --av-cmp-feed-width: 880px;
   --av-cmp-feed-width-wide: 940px;
-  --av-cmp-feed-padding-y: 64px;
-  --av-cmp-feed-padding-x: 46px;
+  --av-cmp-feed-padding-y: calc(var(--av-ref-space-unit) * 8);
+  --av-cmp-feed-padding-x: calc(var(--av-ref-space-unit) * 8);
   --av-cmp-feed-author-font-size: 12px;
   --av-cmp-feed-author-font-weight: 470;
 
@@ -434,14 +445,14 @@
   --av-cmp-markdown-heading-3: 18.5px;
   --av-cmp-markdown-heading-4: 17px;
   --av-cmp-markdown-heading-leading: 1.35;
-  --av-cmp-markdown-heading-margin: 40px 0 16px;
+  --av-cmp-markdown-heading-margin: calc(var(--av-ref-space-unit) * 6) 0 calc(var(--av-ref-space-unit) * 3);
   --av-cmp-markdown-strong-weight: 560;
-  --av-cmp-markdown-list-margin: 16px 0 26px;
+  --av-cmp-markdown-list-margin: calc(var(--av-ref-space-unit) * 3) 0 calc(var(--av-ref-space-unit) * 4);
   --av-cmp-markdown-list-indent: 24px;
-  --av-cmp-markdown-blockquote-margin: 28px 0;
-  --av-cmp-markdown-rule-margin: 38px 0;
+  --av-cmp-markdown-blockquote-margin: calc(var(--av-ref-space-unit) * 6) 0;
+  --av-cmp-markdown-rule-margin: calc(var(--av-ref-space-unit) * 6) 0;
   --av-cmp-markdown-table-leading: 1.7;
-  --av-cmp-markdown-cell-padding: 11px 13px;
+  --av-cmp-markdown-cell-padding: calc(var(--av-ref-space-unit) * 2) calc(var(--av-ref-space-unit) * 3);
   --av-cmp-markdown-article-heading-1: 30px;
   --av-cmp-markdown-article-heading-2: 23px;
   --av-cmp-markdown-article-heading-3: 19px;
@@ -513,6 +524,8 @@
   --av-ref-color-line-4: #383838;
   --av-ref-color-line-5: #515151;
   --av-ref-color-line-6: #7d7d7d;
+
+  --av-ref-space-unit: 4px;
 
   --av-sys-backdrop-color: var(--av-sys-color-surface-canvas);
   --av-sys-backdrop-image: none;
@@ -675,15 +688,17 @@
 
   --av-sys-space-pane-padding: 34px;
 
-  --av-sys-space-stack-gap: 58px;
+  --av-sys-space-stack-gap: calc(var(--av-ref-space-unit) * 8);
 
   --av-sys-space-row-gap: 5px;
 
   --av-sys-space-group-gap: 14px;
 
-  --av-sys-space-block-gap: 28px;
+  --av-sys-space-block-gap: calc(var(--av-ref-space-unit) * 4);
 
-  --av-sys-space-prose-gap: 22px;
+  --av-sys-space-prose-gap: calc(var(--av-ref-space-unit) * 4);
+
+  --av-sys-space-event-gap: calc(var(--av-ref-space-unit) * 2);
 
   --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --av-sys-font-family-display: var(--av-sys-font-family-ui);
@@ -741,7 +756,7 @@
   --av-cmp-bubble-human-background: #5a5a5a;
   --av-cmp-bubble-human-foreground: #fcfcfc;
   --av-cmp-bubble-border: transparent;
-  --av-cmp-bubble-padding: 0;
+  --av-cmp-bubble-padding: calc(var(--av-ref-space-unit) * 2) calc(var(--av-ref-space-unit) * 3);
 
   --av-cmp-composer-background: #2f2f2f;
   --av-cmp-composer-border-color: rgba(252, 252, 252, 0.15);
@@ -762,8 +777,8 @@
 
   --av-cmp-feed-width: 880px;
   --av-cmp-feed-width-wide: 940px;
-  --av-cmp-feed-padding-y: 64px;
-  --av-cmp-feed-padding-x: 46px;
+  --av-cmp-feed-padding-y: calc(var(--av-ref-space-unit) * 8);
+  --av-cmp-feed-padding-x: calc(var(--av-ref-space-unit) * 8);
   --av-cmp-feed-author-font-size: 12px;
   --av-cmp-feed-author-font-weight: 470;
 
@@ -773,14 +788,14 @@
   --av-cmp-markdown-heading-3: 18.5px;
   --av-cmp-markdown-heading-4: 17px;
   --av-cmp-markdown-heading-leading: 1.35;
-  --av-cmp-markdown-heading-margin: 40px 0 16px;
+  --av-cmp-markdown-heading-margin: calc(var(--av-ref-space-unit) * 6) 0 calc(var(--av-ref-space-unit) * 3);
   --av-cmp-markdown-strong-weight: 560;
-  --av-cmp-markdown-list-margin: 16px 0 26px;
+  --av-cmp-markdown-list-margin: calc(var(--av-ref-space-unit) * 3) 0 calc(var(--av-ref-space-unit) * 4);
   --av-cmp-markdown-list-indent: 24px;
-  --av-cmp-markdown-blockquote-margin: 28px 0;
-  --av-cmp-markdown-rule-margin: 38px 0;
+  --av-cmp-markdown-blockquote-margin: calc(var(--av-ref-space-unit) * 6) 0;
+  --av-cmp-markdown-rule-margin: calc(var(--av-ref-space-unit) * 6) 0;
   --av-cmp-markdown-table-leading: 1.7;
-  --av-cmp-markdown-cell-padding: 11px 13px;
+  --av-cmp-markdown-cell-padding: calc(var(--av-ref-space-unit) * 2) calc(var(--av-ref-space-unit) * 3);
   --av-cmp-markdown-article-heading-1: 30px;
   --av-cmp-markdown-article-heading-2: 23px;
   --av-cmp-markdown-article-heading-3: 19px;
