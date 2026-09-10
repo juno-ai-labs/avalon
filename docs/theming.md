@@ -24,6 +24,9 @@ properties without knowing which appearance is active.
 | `apps/desktop/src/renderer/lib/theme.ts` | Applies the resolved appearance, persists the preference, follows macOS, and synchronizes windows. |
 | `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance setting. |
 | `apps/desktop/src/main/theme-assets.ts` | The private cache for a remote font declared by an appearance. |
+| `packages/contracts/src/projects.ts` | `PALETTE_INK` — which of the two absolute inks each palette fill carries, and the reasoning behind the rule that picks it. |
+| `apps/desktop/src/renderer/lib/project-palette.ts` | `glyphInk()`, resolving that table to the `palette-ink` token a glyph paints its symbol in. |
+| `apps/desktop/src/renderer/styles/palette.css.node.test.ts` | Recomputes the table from the tokens, and pins the WCAG 2 shortfall and the APCA ties. |
 
 ## How it works
 
@@ -65,6 +68,18 @@ serves it through `rally-font://`.
   size.
 - **The main-process window background matches the canvas token.** A mismatch
   flashes the wrong colour before the renderer's first frame.
+- **A palette fill's ink is decided by APCA, not by the WCAG 2 ratio, and it is
+  checked in.** `PALETTE_INK` is the table; sixteen of the nineteen fills take
+  the near-white ink and `amber`, `lime` and `green` take the near-black one.
+  The rule is deliberately not WCAG 2's, whose luminance curve misjudges
+  saturated mid-tones, and the resulting shortfall against that standard is
+  recorded rather than fixed — see the 2026-09-10 changelog entry for what is
+  accepted and why.
+- **Both palette inks are absolute.** A fill does not change with the
+  appearance, so the ink over it must not either. `palette-ink-light` and
+  `palette-ink-dark` hold the same values in both appearance files, and the
+  `--personal-ink-*` pair swaps which neutral it points at precisely so that it
+  does not invert.
 - **Appearance files are data.** They cannot carry HTML or JavaScript, and the
   desktop registers no appearance-document protocol or iframe.
 
