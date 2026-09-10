@@ -15,7 +15,7 @@ one of them silently missed the others; the changelog records what that cost.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, heading collapse, and the `a`, `img`, `li` and `section` renderers that hand a node to the citation matrix. Also the two remark rewrites over the parsed tree: `remarkHtmlBreaks`, and the streaming-only `remarkPendingCitations` that stands a skeleton where a footnote reference has no definition yet. |
+| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, heading collapse, and the `a`, `img`, `li` and `section` renderers that hand a node to the citation matrix. Also the remark rewrites over the parsed tree: `remarkHtmlBreaks`, the opt-in human-message `remarkSoftBreaks`, and the streaming-only `remarkPendingCitations` that stands a skeleton where a footnote reference has no definition yet. |
 | `apps/desktop/src/renderer/components/markdown-mermaid.tsx` | The asynchronous Mermaid SVG render, strict untrusted-input configuration, active-token configuration, and source fallback. Mermaid's module-wide configuration and render calls are serialized here so two diagrams cannot race one another's theme. |
 | `apps/desktop/src/renderer/components/markdown-mermaid-theme.ts` | Maps Mermaid's rendering roles onto the active computed Rally design tokens. It owns no palette and does not branch on an appearance id. |
 | `apps/desktop/src/renderer/lib/markdown-collapse.ts` | Which h2–h6 start a collapsible section, and which nested headings stay in the body. Shared by the renderer and the **Worked for** collapse-all control so they cannot disagree about the ids. |
@@ -122,7 +122,17 @@ Human message bubbles opt into `preserveLineBreaks`. The `remarkSoftBreaks`
 pass turns newlines in parsed text nodes into visible breaks, so Shift+Enter
 and pasted multiline input still read as separate lines after sending.
 Markdown paragraphs, inline formatting, mentions, and code retain their normal
-structure. This is separate from `verbatim`: documents and agent replies keep
+structure. Newlines bordering a bare HTML break do not add duplicate breaks.
+LF, CRLF, and CR line endings all produce the same breaks.
+Paragraph edges do not add empty lines, and link labels stay text so mention and
+citation resolution can recognize them. The option composes with both streaming
+plugin lists, including the open tail's pending citations.
+
+The composer queue deliberately keeps soft wrapping: it is a single-line clipped
+preview, where multiline content would hide subsequent lines. Export controls
+belong to agent replies and retain their Markdown behavior.
+
+This is separate from `verbatim`: documents and agent replies keep
 Markdown soft wrapping, while `verbatim` controls model-text repair.
 
 ### Heading collapse
@@ -559,7 +569,7 @@ written this way is a sign it is not a typography override.
 This module owns how a markdown string becomes DOM in the renderer, and how that
 DOM is styled. It exposes `MarkdownBody` — taking a markdown string, an optional
 `mentions` array, an optional `citations` context, and `glance` / `verbatim` /
-`still` / `streaming` / `collapseHeadings` flags — plus the citation matrix and
+`still` / `streaming` / `collapseHeadings` / `preserveLineBreaks` flags — plus the citation matrix and
 `ResourceIcon`, which the inspector rail renders too so that one resource kind
 draws one glyph everywhere. Heading collapse is off unless a host explicitly
 sets `collapseHeadings`; the main work-stream feed is the intended opt-in host.
@@ -721,6 +731,21 @@ The traps, both of which have bitten:
 
 ## Changelog
 
+### 2026-09-10 — Line-break review edge cases
+
+**Changed:** Avoid duplicate breaks around bare HTML breaks, keep link labels
+intact for identity resolution, and compose soft breaks with streaming plugins.
+Updated the renderer inventory and documented the single-line queue exception.
+
+**Why:** Review exposed surrounding text newlines that survive the HTML-break
+rewrite and multiply its visible gap. Splitting mention labels also changed the
+shape consumed by chip resolution. Applying the option to the queue would hide
+later lines in its intentionally clipped preview, so that host stays explicit.
+
+**Consequences:** Existing breaks own their adjacent newlines. Human message
+text stays unmodified; these are rendering decisions, not input normalization.
+
+
 ### 2026-09-10 — The feed's markdown host rule lost its host prefix
 
 **What changed:** The rule the 2026-08-30 entry below counts against,
@@ -747,7 +772,8 @@ in presentation. Rewriting the submitted text would alter stored input;
 changing every Markdown surface would change document formatting.
 
 **Consequences:** Keep this opt-in distinct from `verbatim`, which also serves
-attached documents. Future human chat hosts should use the same rendering mode.
+attached documents. Full human-message readers should use the same rendering
+mode; the composer queue intentionally remains a single-line preview.
 
 ### 2026-09-09 — Shared media tiles with host-specific layouts
 

@@ -208,13 +208,13 @@ export function ComposerQueue({ items, onReorder }: ComposerQueueProps): React.J
             <span className="composer-queue-text">
               {empty
                 ? placeholder
-                // The transcript's renderer on the transcript's terms for a
-                // person's own words: `verbatim`, because the model-text repair
+                // The shared renderer for a person's own words: `verbatim`, because the model-text repair
                 // has no business rewriting what a member typed, and the stored
                 // mentions, because a connection mention is nothing but its
                 // offsets into this exact string. The row is laid out as one
-                // clipped line in CSS rather than by a second renderer that
-                // would have to keep pace with this one.
+                // clipped line in CSS. It deliberately omits preserveLineBreaks:
+                // this is a one-line preview, so later lines must remain
+                // in the horizontal text flow instead of disappearing below it.
                 : <MarkdownBody mentions={item.mentions} verbatim>{item.text}</MarkdownBody>}
             </span>
             <span className="sr-only">{`${item.member.name}, ${index + 1} of ${visible.length}`}</span>
