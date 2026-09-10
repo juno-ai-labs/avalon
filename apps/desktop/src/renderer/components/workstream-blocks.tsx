@@ -1911,9 +1911,9 @@ function PluginFace({ plugin }: { plugin: AutomationPluginActivity }): React.JSX
 /**
  * One plugin's stretch of work, standing in for every tool call it made.
  *
- * The wording is the plugin's own — "Slack is working for 4m 02s" becoming
- * "Slack worked for 5m 02s" — so the row reads as a place rather than as a
- * mechanism, which is the whole point of hiding the calls underneath it.
+ * The wording is the plugin's own — "Using Slack for 4m 02s" becoming "Used
+ * Slack for 5m 02s" — so the row reads as a place rather than as a mechanism,
+ * which is the whole point of hiding the calls underneath it.
  */
 function PluginActivityBlock({ message }: { message: Message }): React.JSX.Element | null {
   const group = message.pluginActivity;

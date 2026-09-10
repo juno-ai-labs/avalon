@@ -134,6 +134,16 @@ describe('AgentWorkTiming', () => {
     expect(screen.getByRole('status')).toHaveAccessibleName(expected);
   });
 
+  it('leaves a verb that already names itself exactly as its producer wrote it', () => {
+    // The casing is the row's own sentence opening with a capital, not a rule
+    // applied to the verb: a plugin group names itself, and a name is not this
+    // component's to restyle. Asserted here rather than left to the grouped-row
+    // suite, since this is the file that owns the label.
+    render(<AgentWorkTiming active={false} completedVerb="Used Slack" durationMs={83_000} />);
+
+    expect(screen.getByText('Used Slack for 1m 23s')).toBeInTheDocument();
+  });
+
   it('qualifies a recovered terminal duration as an upper bound', () => {
     render(
       <AgentWorkTiming
