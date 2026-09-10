@@ -27,6 +27,7 @@ import {
   uuidV7,
 } from './lib/telemetry';
 import { watchSystemAppearance, watchThemeBroadcast } from './lib/theme';
+import { useEscapeClosesWindow } from './lib/window-escape';
 import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
 import { WorkspaceSocketProvider } from './lib/workspace-socket';
 import { WorkspaceWorkstreamSockets } from './lib/workspace-workstream-sockets';
@@ -209,6 +210,24 @@ function WorkspaceApp(): React.JSX.Element {
 
   const surface = new URLSearchParams(window.location.search).get('surface');
   const mainSurface = surface !== 'settings' && surface !== 'sidekicks' && surface !== 'meeting';
+  // A window that closes on Escape has to do it before its screen exists, too.
+  // `Opening workspace…` and the service-setup error are the states a person is
+  // most stuck in, and until the profile lands neither Settings nor Sidekicks
+  // has mounted the screen that installs the gesture — so the keystroke did
+  // nothing in exactly the dead end it exists to leave.
+  //
+  // It stands down the moment the screen is there. Both installs would answer
+  // the same keystroke otherwise, and this one nominates no scope, so it would
+  // close Settings over a half-written invitation its own pane guard had just
+  // refused. `workspace.data` is the whole condition because it is what decides
+  // whether that screen renders at all.
+  //
+  // No scope of its own: a loading state and an error card hold no typing.
+  // The meeting window is left out — a recording in progress is not a dead end,
+  // and nobody asked for Escape to end one.
+  useEscapeClosesWindow({
+    enabled: (surface === 'sidekicks' || surface === 'settings') && !workspace.data,
+  });
   const scope = `${session!.user.email}:${desktopWorkspaceIdentityKey(session!.workspace!.region, session!.workspace!.id)}`;
   const content = workspace.error
     ? <ServiceSetupState error={workspace.error} onRetry={() => void workspace.refetch()} />

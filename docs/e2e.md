@@ -438,6 +438,13 @@ the Automation home page.
    closes the window, and confirm the draft is back in the composer when the
    Sidekick is reopened — that restoration is why nothing here is swept for
    unsaved text.
+   Finally, stop the regional API, open the Sidekicks window, and confirm
+   `Escape` closes it while it still reads **Opening workspace…** and again on
+   the service-setup error — the states with nothing on screen to click. With
+   the API back, open **Settings**, type an invitation, click off the field, and
+   confirm `Escape` does *not* close it: that is the higher listener having stood
+   down for the screen's own, and it is the regression to watch for whenever
+   either install moves.
 
 Pass evidence: one stable automation ID, one accepted authority, strict event
 matching with one occurrence per canonical event, private generated runs shown

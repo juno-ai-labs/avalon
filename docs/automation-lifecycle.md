@@ -115,7 +115,12 @@ commits the remainder on React unmount, which no closing window runs, so an edit
 newer than the debounce is lost — by Escape, by Command-W, and by the traffic
 light alike. That belongs to the draft cache's teardown rather than to this
 keystroke, and a sweep here would not recover it, because the sweep reads the DOM
-and the loss is in the cache. The keystroke still stops at anything with a nearer claim on it — an
+and the loss is in the cache.
+
+The window answers Escape before the library or a Sidekick has rendered, too:
+`WorkspaceApp` installs the gesture for this surface while the workspace profile
+is still loading or has failed, which is the state with nothing on screen to
+click, and stands it down once `SidekicksWindow` mounts and installs its own. The keystroke still stops at anything with a nearer claim on it — an
 IME composition, the run-history or delete dialog, a model menu, the composer's
 own mention and command lists, and the library's search box while it still holds
 a filter.
