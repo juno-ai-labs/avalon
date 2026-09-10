@@ -96,12 +96,12 @@ describe("transport retry backoff", () => {
 });
 
 describe("agent harness", () => {
-  it("presents every automation attachment tool as visible compiler activity", () => {
+  it("presents every Sidekick attachment tool as visible compiler activity", () => {
     for (const toolName of [
-      "automation_read_resource",
-      "automation_search_resource",
-      "automation_view_resource",
-      "automation_summarize_resource",
+      "sidekick_read_resource",
+      "sidekick_search_resource",
+      "sidekick_view_resource",
+      "sidekick_summarize_resource",
     ]) {
       expect(__testing.automationResearchToolPresentation[toolName]).toMatchObject({
         started: expect.stringMatching(/…$/u),

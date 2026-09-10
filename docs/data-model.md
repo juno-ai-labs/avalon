@@ -710,7 +710,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
 - An automation has no destinations anywhere: `AutomationDO` stores none, and
   a run's loop input is a reference to its definition revision. A room-owned
   automation's result reaches the room through the run's own
-  `automation_post_result` tool; any other destination is the run's own work,
+  `sidekick_post_result` tool; any other destination is the run's own work,
   sent with its connector tools.
 - `slack_unfurled_links` records which Slack message carries which work-stream
   link, plus a hash of the attachment posted on it, so a posted unfurl card is

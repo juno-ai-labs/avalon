@@ -235,7 +235,7 @@ describe("what a content read on a site does instead of dead-ending", () => {
   it("names no tool for an automation run, which holds no terminal", async () => {
     // Naming a tool the run cannot call would trade one dead end for a worse
     // one, and the sanitizer would drop the unrecognized entry anyway.
-    const failure = siteReadRemediation(ARTIFACT, SITE_MANIFEST_MIME_TYPE, "automation_read_resource", "automation");
+    const failure = siteReadRemediation(ARTIFACT, SITE_MANIFEST_MIME_TYPE, "sidekick_read_resource", "sidekick");
     expect(failure.details?.suggestedCall).toBeUndefined();
     expect(failure.message).toContain("does not have");
   });

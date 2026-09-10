@@ -31,11 +31,29 @@ export const MEMORY_EMBEDDING_DIMENSIONS = 1_024;
 const MEMORY_EMBEDDING_SPACE_VERSION = "v1";
 
 export const MEMORY_SCOPE_KINDS = ["workstream", "automation", "user", "workspace"] as const;
+/**
+ * The scope kinds as the model names them. A Sidekick's scope is stored as
+ * `automation`, the kind the rows and the vector metadata carry; the model
+ * reads and writes it as `sidekick`, and the two meet only at the tool
+ * boundary, in {@link modelScopeKind} and {@link storedScopeKind}.
+ */
+export const MODEL_MEMORY_SCOPE_KINDS = ["workstream", "sidekick", "user", "workspace"] as const;
 const SEARCH_CANDIDATES_PER_LEG = 20;
 const SEARCH_RESULTS = 10;
 const RRF_OFFSET = 60;
 
 export type MemoryScopeKind = typeof MEMORY_SCOPE_KINDS[number];
+export type ModelMemoryScopeKind = typeof MODEL_MEMORY_SCOPE_KINDS[number];
+
+/** The stored kind as the model reads it. */
+export function modelScopeKind(kind: MemoryScopeKind): ModelMemoryScopeKind {
+  return kind === "automation" ? "sidekick" : kind;
+}
+
+/** The kind the model named, as it is stored. */
+export function storedScopeKind(kind: ModelMemoryScopeKind): MemoryScopeKind {
+  return kind === "sidekick" ? "automation" : kind;
+}
 
 export interface MemoryScope {
   memoryScopeId: string;
@@ -48,7 +66,7 @@ export interface MemoryScope {
 export interface MemorySearchItem {
   memoryItemId: string;
   memoryScopeId: string;
-  scopeKind: MemoryScopeKind;
+  scopeKind: ModelMemoryScopeKind;
   text: string;
   revision: number;
   expiresAt: string | null;
@@ -80,7 +98,7 @@ interface RankedCandidate {
 interface MutationResult {
   memoryItemId: string;
   memoryScopeId: string;
-  scopeKind: MemoryScopeKind;
+  scopeKind: ModelMemoryScopeKind;
   revision: number;
   invalidated: boolean;
 }
@@ -110,7 +128,7 @@ const SearchInputSchema = z.union([
 ], { error: "Send exactly one of query or memoryItemId: query to search, memoryItemId to reread one known item." });
 
 const AddInputSchema = z.strictObject({
-  scopeKind: z.enum(MEMORY_SCOPE_KINDS),
+  scopeKind: z.enum(MODEL_MEMORY_SCOPE_KINDS).transform(storedScopeKind),
   text: z.string().trim().min(1).max(16_000),
   expiresAt: z.string().datetime({ offset: true }).optional(),
   rationale: z.string().trim().min(1).max(2_000),
@@ -167,7 +185,7 @@ function scopeList(scopes: readonly MemoryScope[]): string {
   return [...scopes]
     .sort((left, right) =>
       MEMORY_SCOPE_KINDS.indexOf(left.kind) - MEMORY_SCOPE_KINDS.indexOf(right.kind))
-    .map((scope) => scope.kind)
+    .map((scope) => modelScopeKind(scope.kind))
     .join(", ");
 }
 
@@ -203,7 +221,7 @@ export function unavailableScopeError(
 ): MemoryToolError {
   return new MemoryToolError(
     "memory_scope_not_available",
-    `This run cannot reach ${kind} memory. Its scopes are: ${scopeList(scopes)}.`,
+    `This run cannot reach ${modelScopeKind(kind)} memory. Its scopes are: ${scopeList(scopes)}.`,
     { reason: retryInstruction(scopes) },
   );
 }
@@ -216,8 +234,8 @@ export function unwritableScopeError(
   return new MemoryToolError(
     "memory_scope_not_writable",
     writable.length === 0
-      ? `This run may read ${kind} memory, and has no writable memory scope at all.`
-      : `This run may read ${kind} memory but not write it. It may write: ${scopeList(writable)}.`,
+      ? `This run may read ${modelScopeKind(kind)} memory, and has no writable memory scope at all.`
+      : `This run may read ${modelScopeKind(kind)} memory but not write it. It may write: ${scopeList(writable)}.`,
     { reason: retryInstruction(scopes) },
   );
 }
@@ -547,7 +565,7 @@ async function hybridMemorySearch(
       return {
         memoryItemId: row.memoryItemId,
         memoryScopeId: row.memoryScopeId,
-        scopeKind: row.scopeKind,
+        scopeKind: modelScopeKind(row.scopeKind),
         text: row.text,
         revision: row.revision,
         expiresAt: row.expiresAt,
@@ -595,7 +613,7 @@ async function memoryReadById(
     results: visible ? [{
       memoryItemId: visible.memoryItemId,
       memoryScopeId: visible.memoryScopeId,
-      scopeKind: visible.scopeKind,
+      scopeKind: modelScopeKind(visible.scopeKind),
       text: visible.text,
       revision: visible.revision,
       expiresAt: visible.expiresAt,
@@ -765,7 +783,7 @@ async function addMemory(
   const result: MutationResult = {
     memoryItemId,
     memoryScopeId: scope.memoryScopeId,
-    scopeKind: scope.kind,
+    scopeKind: modelScopeKind(scope.kind),
     revision: 1,
     invalidated: false,
   };
@@ -820,7 +838,7 @@ async function loadWritableItem(
   if (found.outcome !== "found") throw new Error("memory_item_not_found");
   const scope = scopes.find((candidate) => candidate.memoryScopeId === found.item.memoryScopeId);
   if (!scope) throw new Error("memory_item_not_authorized");
-  if (!scope.writable) throw new Error(`memory_scope_not_writable:${scope.kind}`);
+  if (!scope.writable) throw new Error(`memory_scope_not_writable:${modelScopeKind(scope.kind)}`);
   return { item: found.item, scope };
 }
 
@@ -849,7 +867,7 @@ async function updateMemory(
   const result: MutationResult = {
     memoryItemId: args.memoryItemId,
     memoryScopeId: scope.memoryScopeId,
-    scopeKind: scope.kind,
+    scopeKind: modelScopeKind(scope.kind),
     revision: nextRevision,
     invalidated: false,
   };
@@ -905,7 +923,7 @@ async function invalidateMemory(
   const result: MutationResult = {
     memoryItemId: args.memoryItemId,
     memoryScopeId: scope.memoryScopeId,
-    scopeKind: scope.kind,
+    scopeKind: modelScopeKind(scope.kind),
     revision: nextRevision,
     invalidated: true,
   };
@@ -990,7 +1008,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
           type: "object",
           additionalProperties: false,
           properties: {
-            scopeKind: { type: "string", enum: MEMORY_SCOPE_KINDS },
+            scopeKind: { type: "string", enum: MODEL_MEMORY_SCOPE_KINDS },
             text: { type: "string", minLength: 1, maxLength: 16_000 },
             expiresAt: { type: "string", format: "date-time" },
             rationale: { type: "string", minLength: 1, maxLength: 2_000 },
