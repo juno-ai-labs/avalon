@@ -68,7 +68,7 @@ import {
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { layoutRowAt } from '../lib/list-motion';
 import { useListMotion } from '../lib/use-list-motion';
-import { Avatar, Button, DragHint, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
+import { Avatar, Button, DragHint, IconButton, InlineError, Modal, StatusDot, Tip, TitleSkeleton } from './primitives';
 import { ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup } from './sidebar-skeleton';
 import { AutomationGlyph, HexagonGlyph, SIDEKICK_RUNNING_MARKER, WorkstreamGlyph } from './workstream-glyph';
@@ -784,29 +784,25 @@ function WorkstreamRow({
                 change it is said once, on the section. */}
             {drag && <span className="sr-only">{drag.position}</span>}
             {workstream.nextPendingWakeup && (
-              <Tooltip.Root delayDuration={300}>
-                <Tooltip.Trigger asChild>
-                  <span
-                    aria-label={`Active timer. Next: ${nextWakeupTime}. ${workstream.nextPendingWakeup.promptPreview}`}
-                    className="sidebar-workstream-timer"
-                    role="img"
-                  >
-                    <Clock aria-hidden="true" size={15} strokeWidth={1.7} />
-                  </span>
-                </Tooltip.Trigger>
-                <Tooltip.Portal>
-                  <Tooltip.Content
-                    align="center"
-                    className="tooltip workstream-timer-tooltip"
-                    side="right"
-                    sideOffset={8}
-                  >
-                    <strong>Next: {nextWakeupTime}</strong>
-                    <span>{workstream.nextPendingWakeup.promptPreview}</span>
-                    <Tooltip.Arrow className="tooltip-arrow" />
-                  </Tooltip.Content>
-                </Tooltip.Portal>
-              </Tooltip.Root>
+              <Tip
+                align="center"
+                className="workstream-timer-tooltip"
+                delayDuration={300}
+                label={<>
+                  <strong>Next: {nextWakeupTime}</strong>
+                  <span>{workstream.nextPendingWakeup.promptPreview}</span>
+                </>}
+                side="right"
+                sideOffset={8}
+              >
+                <span
+                  aria-label={`Active timer. Next: ${nextWakeupTime}. ${workstream.nextPendingWakeup.promptPreview}`}
+                  className="sidebar-workstream-timer"
+                  role="img"
+                >
+                  <Clock aria-hidden="true" size={15} strokeWidth={1.7} />
+                </span>
+              </Tip>
             )}
                 </NavLink>
               </div>
@@ -888,13 +884,33 @@ function PrivacyMarker({ label }: { label: string }): React.JSX.Element {
   );
 }
 
+/**
+ * The globe a work stream wears when its audience is the whole workspace.
+ *
+ * A 17px badge with no words is the one thing on the row a reader cannot work
+ * out by looking, so the explanation is a tip rather than a label only a screen
+ * reader reaches. It reads like the status dot beside it — the name, then the
+ * sentence — because the two badges sit on the same glyph and answering the
+ * same question two different ways is what makes a row need decoding.
+ *
+ * The row's own preview stays open behind it: the tip is a line above a badge
+ * at the sidebar's left edge and the preview is a card off the row's right, so
+ * the two never share the space. Radix would close one for the other, but the
+ * preview drives its `open` itself and ignores the request.
+ */
 function PublicMarker(): React.JSX.Element {
-  // The parent row owns its hover preview. A nested tooltip competes with it
-  // and can obscure the tiny badge while both poppers are positioning.
   return (
-    <span aria-label="Public work stream" className="sidebar-workstream-public" role="img">
-      <Globe2 aria-hidden="true" size={11} />
-    </span>
+    <Tip
+      collisionPadding={8}
+      delayDuration={300}
+      label="Public — everyone in the workspace can see this work stream."
+      side="top"
+      sideOffset={8}
+    >
+      <span aria-label="Public work stream" className="sidebar-workstream-public" role="img">
+        <Globe2 aria-hidden="true" size={11} />
+      </span>
+    </Tip>
   );
 }
 
