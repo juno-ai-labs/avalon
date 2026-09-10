@@ -215,7 +215,15 @@ the first model context without becoming executable historical work.
 - Creation is idempotent under retry in both halves: the operation resumes
   rather than making a second child, and the opening turn replays by
   `clientMessageId` rather than being said twice. A confirmation whose response
-  is lost is the common case, not the rare one.
+  is lost is the common case, not the rare one. That only holds if the caller
+  keeps the two ids, so the launch surface mints them when it opens and holds
+  them until the substream exists or the surface is left — the composer hands
+  the words back on a failure and the obvious next thing is to press enter
+  again, which fresh ids would turn into a second substream.
+- An opening message over the ceiling is refused as `message_too_long`, with the
+  sentence the composer would have shown, before the confirmation reserves
+  anything. It travels one level down in the body, which is where a bound
+  quietly stops being the caller's to act on.
 - Nothing is reserved while the launch surface is open. A composer somebody
   closes must not leave a reserved child, a spent summary call, or an operation
   for a later request to conflict with.
@@ -380,9 +388,10 @@ abandoned substream was an ordinary outcome rather than an anomaly.
   draws.
 
 **What a future change has to respect:** nothing may be reserved while the
-launch surface is open; the opening turn stays idempotent by `clientMessageId`;
-and a substream's name is written through the child's address, never the
-parent's.
+launch surface is open; the operation and message ids live with the launch
+state, so a retry resumes rather than reserving again; the opening turn stays
+idempotent by `clientMessageId`; and a substream's name is written through the
+child's address, never the parent's.
 
 ### 2026-09-09 — Move the message cutoff into the turn's action row
 

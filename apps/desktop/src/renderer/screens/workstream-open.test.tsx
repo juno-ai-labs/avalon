@@ -406,6 +406,34 @@ describe('socket-first work-stream open', () => {
     expect(screen.queryByRole('region', { name: 'Branching from' })).not.toBeInTheDocument();
   });
 
+  it('retries a lost creation under the same identity rather than making a second substream', async () => {
+    const childId = '00000000-0000-7000-8000-000000000673';
+    // The failure this covers: the response is lost after the server committed.
+    // A retry that minted fresh ids would reserve a second child and say the
+    // same message twice; under the same ids both halves resume.
+    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New substream', context: { parts: [] } });
+    api.confirmSubstream.mockRejectedValueOnce(new Error('The connection was lost.'));
+    api.confirmSubstream.mockResolvedValue({
+      substreamId: childId,
+      title: 'Look at the invoice',
+      opening: { turnId: 'turn-child-1', clientMessageId: 'client-1', createdAt: '2026-08-26T14:05:00.000Z' },
+    });
+    openConversation(1);
+    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
+    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.change(composer, { target: { value: 'Look at the invoice' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await screen.findByText('The connection was lost.');
+
+    fireEvent.keyDown(await screen.findByRole('textbox', { name: 'What should this substream work on?' }), { key: 'Enter' });
+    await waitFor(() => expect(api.confirmSubstream).toHaveBeenCalledTimes(2));
+    const [first, second] = api.confirmSubstream.mock.calls;
+    expect(second![1]).toBe(first![1]);
+    expect(second![2].clientMessageId).toBe(first![2].clientMessageId);
+    expect(api.prepareSubstream.mock.calls[1]![1].operationId)
+      .toBe(api.prepareSubstream.mock.calls[0]![1].operationId);
+  });
+
   it('puts the message back in the composer when the substream could not be created', async () => {
     api.prepareSubstream.mockRejectedValue(new Error('The context could not be prepared.'));
     openConversation(1);
