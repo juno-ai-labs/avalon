@@ -73,8 +73,14 @@ describe('workstreamAppearance', () => {
 
     expect(glyph).toHaveAttribute('aria-hidden', 'true');
     expect(glyph).toHaveStyle({ height: '30px', width: '30px' });
+    // The raw fill and nothing else. `PALETTE_INK` and its APCA floor are
+    // computed against this token, so a second colour behind the symbol — the
+    // 145deg gradient this used to carry, mixing 22% of `surface-default` into
+    // the far stop — is a background the table was never measured against. That
+    // one cost up to 19 Lc and put five fills under the floor. Asserted exactly,
+    // so re-introducing any gradient or mix fails here.
     expect(container.querySelector('.workstream-glyph-shape')).toHaveStyle({
-      background: 'linear-gradient(145deg, color-mix(in srgb, var(--av-sys-color-project-lime) 78%, var(--av-sys-color-surface-default)), var(--av-sys-color-project-lime))',
+      background: 'var(--av-sys-color-project-lime)',
     });
   });
 });
