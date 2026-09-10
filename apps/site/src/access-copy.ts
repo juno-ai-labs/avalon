@@ -10,6 +10,7 @@ export const accessCopy = {
   pending: 'Sending…',
   success: 'You’re on the list. We’ll be in touch when your invitation is ready.',
   savedFailure: 'Your request was saved, but the confirmation email could not be sent. Please try again.',
+  reviewRequired: 'Your request was saved. We need to check the confirmation email before sending it again.',
   rejected: 'Your request was saved, but we couldn’t deliver your confirmation email. Check that you entered the right address.',
   failure: 'We couldn’t complete your request. Please try again.',
 };
