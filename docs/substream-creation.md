@@ -297,7 +297,11 @@ the first model context without becoming executable historical work.
   confirmation that already reached `ready` replays its answer rather than
   re-provisioning — so the pin a run resolves is the one the first confirmation
   carried. A child that names nothing is unpinned and follows the flag, which is
-  what every substream created before the pin existed does.
+  what every substream created before the pin existed does. The optimistic seed
+  states it too, rather than letting it arrive with the parent's fields it is
+  built by spreading: a child of a pinned work stream that inherited the pin
+  there would show the parent's model as its own for the frames before the
+  room's snapshot lands, which is the inheritance this rule refuses.
 - Feed and model use the same installed selected parts. The complete source
   capture is preparation provenance, not a second hidden model-context source.
 - Child membership versions fence signed admission and live commands. Removing
@@ -455,7 +459,12 @@ child under a decision the person had not made yet.
 retried confirmation replays rather than re-pinning — a pin changed between the
 two is ignored, which is what keeps it fixed for runs that may already have
 started. Nothing reads a parent's pin on the child's behalf, so a substream that
-should run where its parent runs has to name that model itself.
+should run where its parent runs has to name that model itself. That includes
+the client: `launchedSubstreamDetail` takes the pin as a required argument
+rather than an optional one, because the seed it builds spreads the parent's
+detail — which now carries a `modelOverride` — and a caller that omitted it
+would hand the child its parent's pin in the one window somebody is looking at
+the conversation they just created.
 
 ### 2026-09-10 — A substream's row carries the ↳, and the creation row a plus
 
