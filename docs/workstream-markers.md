@@ -167,8 +167,10 @@ when those personal states win the ranking.
 ### Project space
 
 The project space lists a project's work streams and draws the ranked marker on
-each row. It is the only list outside the sidebar that draws one, and unlike the
-sidebar it suppresses nothing.
+each row. It is the only list outside the sidebar that draws **the ranked
+per-person marker** — the Sidekick run history draws a dot too, but from a run's
+own status rather than this viewer's — and unlike the sidebar it suppresses
+nothing.
 
 **The dot carries the state; the label beside it is not coloured.** These rows
 are the home screen's retired **Needs attention** rows, reused wholesale, and
@@ -178,12 +180,20 @@ and an arbitrary three-of-eight under the full ranking. Those three rules are
 gone, so a project row reads the way a sidebar row does.
 
 Its first column is a **fixed track**, so every title in the list starts on the
-same edge whatever marker precedes it. The track fits the widest label that can
-land here; a longer one eats into the gap before the title rather than moving
-it. That is also why `.status-dot` sets `flex: 0 0 auto` — as a flex item beside
-a label too wide for its track, the dot is otherwise what gives way, and a row
-whose marker has been shrunk to nothing shows no state at all. **A label added
-to `statusLabel` is a reason to go and re-measure this row.**
+same edge whatever marker precedes it. A per-row `auto` column cannot do that —
+each row is its own grid, so it would size to that row alone and leave a ragged
+edge down a list whose whole value is that it can be scanned.
+
+The track is sized to the widest label `statusLabel` holds. It was 112px, which
+four of the nine labels overflowed, and the dot absorbed all four: it is a flex
+item beside the label, so it is what gives way, and under the widest two it was
+crushed to nothing and the row showed no marker at all. The track is now 130px,
+above the 125.5px "Latest run completed" measures with its dot and gap, and
+`.status-dot` sets `flex: 0 0 auto` so it can never be the thing that yields
+again. The label ellipsizes instead, which is the backstop for a label that
+outgrows the track: it clips where somebody can see it rather than sliding under
+the title. **A label added to `statusLabel` is still a reason to re-measure this
+row** — the numbers above are one platform's font.
 
 ## Invariants
 
@@ -324,13 +334,22 @@ sidebar does. Removing three rules beat adding five, and it is the reading the
 sidebar had already committed to.
 
 **That window also found a real defect, which is why it is worth opening one.**
-`.status-dot` is a flex item in `.status-indicator`, and in a project row's
-fixed 112px first column the two longest labels — "You were mentioned" and
-"Latest run completed" — shrank it to zero width. Those rows showed **no marker
-at all**, and `completed` is the ordinary state of a finished work stream, so
-this was not an edge case. `flex: 0 0 auto` fixes it everywhere the dot is drawn.
-Nothing asserted on the dot's width, which is how it survived: the class was
-present and the tests looked at the class.
+`.status-dot` is a flex item in `.status-indicator`, so it is what gives way
+when a label outgrows the row's fixed first column — and four of the nine
+labels outgrew the 112px that column was, by 13.5, 8, 1.2 and 0.2px. The dot
+absorbed all four and was crushed to zero under the widest two, so those rows
+showed **no marker at all**. `completed` is the ordinary state of a finished
+work stream, so this was not an edge case. Nothing asserted on the dot's width,
+which is how it survived: the class was present and the tests looked at the
+class.
+
+`flex: 0 0 auto` alone would only move the overflow from the dot to the label,
+where it is worse — a missing dot is visible, text sliding under a title is not,
+and "Latest run completed" overran by more than the 10px gap before the title.
+So the track is sized to fit instead, at 130px against a measured 125.5px, and
+the label ellipsizes as the backstop for whatever outgrows *that*. The numbers
+are one platform's font, which is why the slack is there and why the body still
+tells the next person to re-measure.
 
 **Considered and rejected:** Keeping `workstreamNeedsAttention` against a future
 attention surface. Six days without a caller is what produced this cleanup: it
@@ -348,8 +367,8 @@ their dot. Bringing an attention surface back means writing the membership rule
 again from the 2026-08-24 entry; it does not mean bringing these colours back,
 which are now a separate decision with the window above behind it. The first
 column stays a fixed track so titles share an edge, so **a label added to
-`statusLabel` needs re-measuring against it** — the two longest already reach the
-gap before the title, which is tight but keeps every title aligned. Two rules
+`statusLabel` needs re-measuring against it**; the ellipsis is a backstop, not a
+substitute for that. Two rules
 from the section's own markup, `.waiting-workstream-projects` and
 `.waiting-workstream-source`, are still dead: they belong to the row's six-track
 grid, which the project space inherited and only partly fills. The project
