@@ -497,7 +497,8 @@ column catalog; what follows is only what WorkspaceDO still holds.
   workspace, author, `source_version`, payload hash, lifecycle (`draft`,
   `active`, `paused`, `deleted`), scope (`personal`, `workspace`,
   `workstream`), the owning work stream a `workstream` scope must name, title,
-  description, next run time, and when it was projected. It holds no
+  description, next run time, the chosen icon and colour (null until somebody
+  picks one), and when it was projected. It holds no
   definition, no instructions, and no run content, and a row can locate an
   automation but never authorize a read of one. The object publishes it as a
   `directory_automation` effect through the same parent outbox its children's

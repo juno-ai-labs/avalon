@@ -18,9 +18,10 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type AutomationScope } from "@rally/contracts";
+import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type AutomationDetail, type AutomationScope } from "@rally/contracts";
 
 import { automationDOName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import type { SidekickDO } from "../src/durable-objects/sidekick-do";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
@@ -199,6 +200,60 @@ describe("automation directory", () => {
       userId: AUTHOR_ID,
     });
     expect(rail.items.map((item) => item.id)).toEqual([owned]);
+  });
+
+  it("carries a chosen icon and colour into every list, one field at a time", async () => {
+    const automationId = await createAndPublish("workspace");
+    const author = { userId: AUTHOR_ID, actorRole: "member" as const, participantOfOwningWorkstream: false };
+
+    // Inside the object, the way every other detail read in these suites is:
+    // `AutomationDetail` does not survive the stub's serializable mapping.
+    // Through the stub, which is the boundary `AutomationService` crosses in
+    // production, per `docs/durable-object-sqlite.md`. The annotation is what
+    // makes that possible here: the RPC return mapping collapses
+    // `AutomationDetail` to `never`, and `never` is assignable to it, so the
+    // type is restored at the call site rather than the call being moved
+    // inside the object to dodge it.
+    const afterColour: AutomationDetail = await automationStub(automationId).setAppearance({
+      workspaceId: WORKSPACE_ID, automationId, actor: author, appearance: { color: "purple" },
+    });
+    // The unset field stays null rather than being filled in with the derived
+    // value: what the id derives is a fallback, not a choice somebody made.
+    expect(afterColour.appearance).toEqual({ icon: null, color: "purple" });
+    const afterIcon: AutomationDetail = await automationStub(automationId).setAppearance({
+      workspaceId: WORKSPACE_ID, automationId, actor: author, appearance: { icon: "rocket" },
+    });
+    expect(afterIcon.appearance).toEqual({ icon: "rocket", color: "purple" });
+
+    const delivered = await deliverParentEffects(TEST_ENV, automationStub(automationId));
+    expect(delivered.at(-1)?.effect).toMatchObject({
+      kind: "directory_automation",
+      appearance: { icon: "rocket", color: "purple" },
+    });
+    const listed = await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID });
+    expect(listed.items.map((item) => item.appearance)).toEqual([{ icon: "rocket", color: "purple" }]);
+    const library = await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID });
+    expect(library.items.map((item) => item.appearance)).toEqual([{ icon: "rocket", color: "purple" }]);
+  });
+
+  it("refuses a choice from somebody who cannot manage the Sidekick", async () => {
+    const automationId = await createAndPublish("personal");
+    // Asked inside the object, for the reason the room-rail refusal above gives:
+    // a rejection over the stub is reported a second time as unhandled and
+    // fails the run even when the assertion held. The two success paths in the
+    // test above go through the stub, so the RPC boundary is covered.
+    await expect(runInDurableObject(automationStub(automationId), (instance: SidekickDO) => instance.setAppearance({
+      workspaceId: WORKSPACE_ID,
+      automationId,
+      actor: { userId: MEMBER_ID, actorRole: "member", participantOfOwningWorkstream: false },
+      appearance: { color: "purple" },
+    }))).rejects.toMatchObject({ code: "automation_forbidden", status: 403 });
+    const detail: AutomationDetail = await automationStub(automationId).readDetail({
+      workspaceId: WORKSPACE_ID,
+      automationId,
+      actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: false },
+    });
+    expect(detail.appearance).toBeUndefined();
   });
 
   it("names every automation for a member's revocation, and a room's own for a lost room", async () => {

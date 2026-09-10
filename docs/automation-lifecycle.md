@@ -74,11 +74,11 @@ not export a Cloudflare class from the Worker entrypoint.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/durable-objects/sidekick-do.ts` | The object: its v1 schema, `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setOwningRoomArchived`, `runNow`, `runSeeded`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, the parent contract, the schedule and run-provisioning alarms, and the sidebar row it enqueues. |
+| `apps/api/src/durable-objects/sidekick-do.ts` | The object: its v1 schema, `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `setOwningRoomArchived`, `runNow`, `runSeeded`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, the parent contract, the schedule and run-provisioning alarms, and the sidebar row it enqueues. |
 | `apps/api/src/durable-objects/automation-do-protocol.ts` | The request schemas the Worker and the Queue consumer send it, and the two alarm kinds `automation_schedule` and `automation_run`. |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The parent half it inherits: child registry, projections, receipts, aggregation, the outbox and its drain. See [`workstream-durable-object.md`](workstream-durable-object.md). |
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through, which resolves whether the caller is in the owning room before asking the object. |
-| `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/pause`, `POST /:id/resume`, `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
+| `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
 | `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the drafting plugin's host, which creates a room's automation on its first submission and posts the proposal card; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; `createAutomationPostResultPlugin`, the `automation_post_result` tool; and the run prompt context built from the definition. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:automations` plugin: the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), and `AutomationDraftProposedV1` (the card). |
@@ -89,9 +89,10 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `admitExternalEvent`, and a run child's effects to the object through the shared effect leg. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is an automation resolves the workspace scope and the automation's own `automation` scope. |
-| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (lifecycle badge, scope, email address, Pause, Resume, Delete, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
+| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Delete, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
+| `apps/desktop/src/renderer/components/appearance-picker.tsx` | The one icon-and-colour palette, shared with the work stream's header. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows. |
 | `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | Enabled standalone Sidekick tiles above the account menu open library details, and `SidekickStripTile`, the tile shape they and the empty strip's **New Sidekick** action share; the center rail shows authorized main-conversation attachments and the participant facepile. |
-| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink and a symbol; `AutomationGlyph` is that primitive seeded by a Sidekick's id, and the empty strip's tile is the same silhouette outlined around a plus. |
+| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink and a symbol; `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen, and the empty strip's tile is the same silhouette outlined around a plus. |
 | `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
 
 ## How it works
@@ -358,6 +359,58 @@ for the automation rather than as the person, and a workspace automation's runs
 would otherwise write into whichever member happened to be its principal.
 Automation memory is ordinary WorkspaceDO memory; there is no separate engine.
 
+### Choosing what a Sidekick looks like
+
+The hexagon on the Sidekick's profile is a button, and it opens the same palette
+a work stream's header opens — the same catalog, the same fourteen-hue ring, the
+same "each click saves and the popup stays open". The catalog, the descriptions,
+the colour vocabulary and the deterministic default all belong to
+[`workstream-appearance.md`](workstream-appearance.md); what belongs here is
+where the value lives and how it travels.
+
+`SidekickDO` stores it, in `automation.appearance_json`, beside the title and
+the lifecycle. The work stream keeps its appearance on the *main conversation*
+and reaches it with a socket command, and the difference is not an
+inconsistency: for a work stream the conversation is the room, while for a
+Sidekick the authoring conversation is a child of the object that owns the
+identity. Sending an icon down the chat's socket would make substream `0` the
+authority for a fact about its parent. So this is `POST /sidekicks/:id/appearance`
+— a parent-owned mutation over REST, the way pause, resume and delete are, which
+is what [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) asks for.
+Management authority is checked exactly as it is for those three.
+
+The write is a **patch**, merged over what is stored, so two people picking at
+once change a field each rather than one silently restoring the other's colour.
+The response is the whole `AutomationDetail`, not an acknowledgement: the person
+who picked gets the committed value in one round trip and never watches their
+own choice arrive twice. The screen sends one at a time, chained on a ref, for
+that reason rather than for the object's: the object merges concurrent patches
+correctly in any order, but two whole Sidekicks landing out of order would leave
+the *cache* holding the earlier one — the same serialization the work stream's
+socket hook does, for the same reason.
+
+That chain orders these requests against each other and nothing else, so the
+cache write is guarded as well as ordered. A pause, a resume, or the sidebar
+push all refresh the same detail while a pick is in flight, and an older whole
+Sidekick landing afterwards would put a stale lifecycle back with the
+notification that would have corrected it already spent. The write keeps
+whichever of the two carries the newer `updatedAt`, which is the object's own
+clock and moves on every mutation there: a response older than what is cached
+has nothing left to say, because whatever wrote that newer entry read this
+appearance too.
+
+Everyone else finds out the way they find out about a rename. The write enqueues
+the automation's directory row, which carries the appearance to WorkspaceDO, and
+WorkspaceDO pushes the `automations` sidebar list to every subscribed socket in
+the workspace. That push is already what tells an open Sidekick page that its
+chat published a revision, and the page refetches its detail on it, so the icon
+travels the path that exists rather than a second one built for it. The sidebar
+tiles and the library list read the appearance straight off the pushed row.
+
+A Sidekick nobody has chosen for stores `NULL`, which is not the same as
+choosing the default: the glyph falls back to the mark derived from the
+Sidekick's id, exactly what every Sidekick showed before the picker existed.
+
 ## Invariants
 
 - **One automation is one object and one conversation, for its whole life.**
@@ -463,7 +516,8 @@ or the memory store the automation scope lives in.
 | --- | --- | --- |
 | `apps/api/test-workers/automation-do.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg. |
 | `apps/api/test-workers/automation-post-result.test.ts` | `pnpm --filter @rally/api test:workers` | The result tool appending into the owning room's substream `0`, and refused for an archived room and a stale generation. |
-| `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`. |
+| `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick. |
+| `apps/desktop/src/renderer/screens/automation.test.tsx` | `pnpm --filter @rally/desktop test` | The profile's appearance saving: an older response losing to a newer Sidekick already in the cache, and its own response applied when nothing newer arrived. |
 | `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | The binding half in isolation: the table absent from D1, a recommended plugin bound from the workspace object's connections, a missing one refused, a disabled row skipped for the live one. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and watched work streams; a redelivery admits once. |
 | `apps/api/test-workers/conversation-parent-contract.test.ts`, `conversation-effect-queue.test.ts` | `pnpm --filter @rally/api test:workers` | The parent contract through the real ticket route, and the effect legs an automation's children use, including a child effect producing no `parent_effect` row. Owned by [`workstream-durable-object.md`](workstream-durable-object.md#testing). |
@@ -491,7 +545,7 @@ siblings in `test-workers/helpers/conversation-effects.ts`.
 
 ## Data model
 
-`SidekickDO` SQLite retains the namespace renamed from `AutomationDO`, with six
+`SidekickDO` SQLite retains the namespace renamed from `AutomationDO`, with seven
 ordered object migrations: `automation`, `definition_revisions`,
 `schedules`, `runs`, `inbound_email_receipts`, the shared parent tables,
 `_internal_durable_alarms`, and the `object_retirement` tombstone
@@ -499,7 +553,8 @@ ordered object migrations: `automation`, `definition_revisions`,
 catalogs the columns; the occurrence keys and run states are in the tables
 above. `run_id` is the child substream id, and `harness_run_id` is unique per
 run. Migration 6 adds `runs.seed_json`, null on every run but one a demo
-seeded.
+seeded; migration 7 adds `automation.appearance_json`, null until somebody
+picks an icon or a colour.
 
 `WorkspaceDO` migration 32 rebuilt `automation_directory` (automation id,
 workspace, author, `source_version`, hash, lifecycle, scope, owning work stream,
@@ -513,7 +568,8 @@ keyed on `destination_key`, with
 automation run had made. [`data-model.md`](data-model.md) is the map of both
 authorities. Workspace migration 35 projects stored `loadable`; migration 36
 adds `external_registration_generations`, retaining the latest generation and
-activation cutoff even for an empty replacement. Owner migration 4 stores the
+activation cutoff even for an empty replacement; migration 49 adds
+`automation_directory.appearance_json`, nullable and never backfilled. Owner migration 4 stores the
 source counter. Versioned registration IDs equal immutable evaluator IDs, so a
 late delivery from a superseded predicate is refused by the owner.
 
@@ -576,6 +632,60 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-10 — A Sidekick's hexagon is a picker, and its choice rides the sidebar push
+
+**What changed:** The hexagon on the Sidekick profile opens the work stream's
+appearance palette. `SidekickDO` stores the result in
+`automation.appearance_json` (migration 7), `POST /sidekicks/:id/appearance`
+writes it under the same management check as pause and delete, and the value
+travels on the automation's directory row into `automation_directory`
+(WorkspaceDO migration 49), onto `AutomationSummary`, and from there to the
+sidebar tiles, the library list and every open profile.
+
+**Why the object rather than the conversation.** A work stream keeps its
+appearance on its main conversation and sets it with a socket command, and the
+obvious move was to lift the `parentKind === "workstream"` guard off that
+command and be done. It was rejected: for a work stream the main conversation
+*is* the room, while a Sidekick's authoring chat is a child of the object that
+owns the Sidekick's name, scope and lifecycle. Putting the icon there would make
+substream `0` the authority for a fact about its parent, and `readDetail` — the
+one place every client reads a Sidekick from — would have had to go and ask a
+child for one field. `docs/choosing-sockets-or-rest.md` decides the channel from
+that: a parent-owned mutation is REST, and this one now sits beside pause,
+resume and delete rather than beside message admission.
+
+**Why no new push.** "Streamed to everyone with the sidekick open" needed no new
+event. WorkspaceDO already pushes the whole `automations` sidebar list to every
+subscribed socket whenever an automation's row changes, and the client already
+treats that push as the signal to refetch open Sidekick details — it is how a
+chat publishing a revision reaches a second window today. Enqueuing the
+directory row puts the icon on that path. A dedicated appearance event on the
+authoring conversation's socket was the alternative and buys nothing here: it
+would reach only the people with the *chat* open, leave the sidebar tiles to the
+existing push anyway, and add a second order to reconcile against the first.
+
+The person who picked does not wait for any of that: the route answers with the
+committed `AutomationDetail` and the screen writes it into the detail cache,
+which is a better position than the work stream's — whose receipt carries no
+payload, and which needs the two unversioned cache writers described in
+[`workstream-appearance.md`](workstream-appearance.md) to close the same gap.
+
+**A known, accepted consequence.** `enqueueDirectory` bumps
+`registration_generation`, so picking an icon while a publication tail is still
+running moves the fence under it and the tail reconciles rather than recording
+`applied_effects_revision` — one extra idempotent pass over setup that is
+already durable. Exempting appearance from the bump was considered and dropped:
+`reconcileLoadable` already publishes a row for a reason unrelated to
+registrations, and the fence is deliberately conservative, so a cosmetic
+exception to it would be the odd case a later reader has to hold in their head.
+
+**What a future change has to respect:** the patch is partial and merges over
+what is stored, so a colour choice never carries an icon with it; `NULL` means
+nobody has chosen, which is not the same as choosing the derived mark; and the
+directory row is the only way this reaches anybody else. Anything that starts
+writing a Sidekick's appearance without enqueuing that row leaves every other
+window on the old glyph with nothing to correct it.
 
 ### 2026-09-10 — The empty strip makes the first Sidekick
 

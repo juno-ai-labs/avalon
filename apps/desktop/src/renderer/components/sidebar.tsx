@@ -459,7 +459,7 @@ function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.
   return (
     <SidekickStripTile
       active
-      glyph={<AutomationGlyph id={sidekick.id} />}
+      glyph={<AutomationGlyph {...(sidekick.appearance ? { appearance: sidekick.appearance } : {})} id={sidekick.id} />}
       label={`${sidekick.name}, Active${scopeDescription}`}
       name={sidekick.name}
       onClick={() => void desktopBridge().openSidekicks(sidekick.id)}

@@ -7,6 +7,7 @@ import {
   AutomationExecutionPrincipalClaimSchema,
   AutomationSummarySchema,
   WorkstreamAutomationSummarySchema,
+  WorkstreamAppearancePatchSchema,
   IdSchema,
 } from "@rally/contracts";
 import { z } from "zod";
@@ -79,6 +80,16 @@ automationRoutes.post("/:id/execution-principal", zValidator("param", idParam), 
     await new AutomationService(c.env, getAuth(c))
       .claimExecutionPrincipal(c.req.valid("param").id),
   )));
+// The Sidekick's icon and colour: a partial choice, so two people picking at
+// once change a field each. Parent-owned, so it is REST rather than a command
+// on the authoring conversation's socket, and it answers with the whole detail
+// so the person who picked never waits on the directory projection.
+automationRoutes.post("/:id/appearance", zValidator("param", idParam),
+  zValidator("json", WorkstreamAppearancePatchSchema), async (c) =>
+  c.json(AutomationDetailSchema.parse(detailResponse(
+    await new AutomationService(c.env, getAuth(c))
+      .setAppearance(c.req.valid("param").id, c.req.valid("json")),
+  ))));
 automationRoutes.post("/:id/pause", zValidator("param", idParam), async (c) => { await new AutomationService(c.env, getAuth(c)).pause(c.req.valid("param").id); return c.body(null, 204); });
 automationRoutes.post("/:id/resume", zValidator("param", idParam), async (c) => { await new AutomationService(c.env, getAuth(c)).resume(c.req.valid("param").id); return c.body(null, 204); });
 automationRoutes.delete("/:id", zValidator("param", idParam), async (c) => { await new AutomationService(c.env, getAuth(c)).delete(c.req.valid("param").id); return c.body(null, 204); });

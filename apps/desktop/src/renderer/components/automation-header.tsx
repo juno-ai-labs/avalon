@@ -1,8 +1,10 @@
 import { AutomationGlyph } from './workstream-glyph';
+import { AppearancePicker } from './appearance-picker';
 import { useState } from 'react';
 import { CirclePause, Ellipsis, History, Mail, Play, Trash2 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { DeleteAutomationDialog } from './delete-automation-dialog';
+import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import type { AutomationDetail, AutomationRun } from '../lib/types';
 import { formatRelative, statusLabel } from '../lib/format';
 import { Badge, Button, IconButton, InlineError, Modal, StatusDot } from './primitives';
@@ -25,6 +27,13 @@ export interface AutomationHeaderProps {
   /** Runs the deletion once the person has confirmed it; a rejection stays in the dialog. */
   onDelete: () => Promise<void>;
   onRunNow: () => void;
+  /**
+   * Saves one icon or colour choice. Rejecting leaves the error in the open
+   * palette and puts the committed appearance back, so a member without
+   * management authority sees the refusal rather than a glyph that reverts on
+   * its own later.
+   */
+  onAppearanceChange: (patch: WorkstreamAppearancePatch) => Promise<void>;
 }
 
 const lifecycleLabel: Record<AutomationDetail['lifecycle'], string> = {
@@ -62,6 +71,7 @@ export function AutomationHeader({
   onResume,
   onDelete,
   onRunNow,
+  onAppearanceChange,
 }: AutomationHeaderProps): React.JSX.Element {
   const definition = automation.currentDefinition;
   const name = definition?.name ?? automation.name;
@@ -75,7 +85,15 @@ export function AutomationHeader({
   const [showRunHistory, setShowRunHistory] = useState(false);
   return (
     <div className="automation-header">
-      <span className="sidekick-profile-glyph"><AutomationGlyph id={automation.id} /></span>
+      <span className="sidekick-profile-glyph">
+        <AppearancePicker
+          id={automation.id}
+          {...(automation.appearance ? { appearance: automation.appearance } : {})}
+          label="Change Sidekick icon and color"
+          onChange={onAppearanceChange}
+          renderGlyph={(appearance) => <AutomationGlyph appearance={appearance} id={automation.id} />}
+        />
+      </span>
       <div className="automation-header-row">
         <div className="workstream-header-left window-no-drag">
           <div className="workstream-title-block">
