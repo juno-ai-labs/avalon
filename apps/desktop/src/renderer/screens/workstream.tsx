@@ -21,6 +21,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { WorkspaceTarget } from '@rally/contracts/workspace-target';
 import { useAppSession } from '../lib/app-session';
+import { harnessMarkerStatus } from '../lib/format';
 import { isComposingKeyEvent } from '../lib/ime';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
@@ -392,7 +393,7 @@ export function WorkstreamHeader({
               <InlineError>{renameError}</InlineError>
             ) : (
               <>
-                <StatusDot status={workstream.harnessStatus} />
+                <StatusDot status={harnessMarkerStatus(workstream.harnessStatus)} />
               </>
             )}
           </div>
