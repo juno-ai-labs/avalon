@@ -76,21 +76,30 @@ What sits above that composer is the difference between the two entry points:
   reached, so there is no particular moment to be looking at.
 
 Nothing is reserved while the surface is open: no operation, no child id, no
-model call. Leaving it is a `setState`, and the draft stays under its own
-composer key. This is why there is no cancellation to make — the flow that
+model call. Leaving it before the first submit is a `setState`, and the draft
+stays under its own composer key. After a submit that failed there *is*
+something reserved — preparation froze a capture and reserved a child — so
+leaving then cancels that operation as well, which is the one thing the
+renderer still calls `POST …/substreams/cancel` for. This is why there is no cancellation to make — the flow that
 prepared on open, and cancelled what it had reserved on the way out, was the
 modal one. After submit there is nothing to cancel either, for the opposite
 reason: the operation has been claimed, so the control that leaves the surface
 is disabled rather than dropping a creation that would carry on without it.
 
-On submit the surface draws the typed turn and the work timer, and the
-substream is created behind them: `POST …/substreams/prepare` freezes and
+On submit the surface draws the typed turn and a work timer, and the substream
+is created behind them: `POST …/substreams/prepare` freezes and
 summarizes, then `POST …/substreams/confirm` carries the message. The response
 names the canonical turn, which is seeded into the child's transcript with the
 child's detail before the navigation, so the child's screen paints the same turn
 in the same place rather than showing its opening state. A creation that fails
 takes the optimistic turn back off the screen and puts the words back in the
 composer.
+
+The timer is the one thing the swap does not carry across, and deliberately: a
+work stream's creation writes its run and answers with the id, while a message
+admitted into a conversation leaves a pending input — the run row is written
+when the child's loop claims it, after the response. There is no id to seed, so
+the child's own timer starts when its room reports the run.
 
 Every section of the center sidebar belongs to the parent work stream. Switching
 substreams changes the conversation, not the sidebar's artifact inventory,
@@ -118,7 +127,9 @@ or replace the child's creator-only conversation membership.
    installs the immutable seed. None of this is visible to anybody yet.
 6. The opening message is admitted through the child's own product
    `create_message`, which writes the canonical turn and wakes the child's
-   persistent loop. **Only then** is the child marked ready — carrying that
+   persistent loop. The people a confirmed mention named travel with it, because
+   the child refuses a mention of somebody who is neither a participant nor
+   confirmed and it has no participants but its creator yet. **Only then** is the child marked ready — carrying that
    title, so the registry row every sidebar reads and the child object agree in
    the write that makes it visible. Readiness is the publication fence: a
    creation that fails to write its message leaves nothing behind for anybody
@@ -244,9 +255,16 @@ the first model context without becoming executable historical work.
   sentence the composer would have shown, before the confirmation reserves
   anything. It travels one level down in the body, which is where a bound
   quietly stops being the caller's to act on.
-- Nothing is reserved while the launch surface is open. A composer somebody
-  closes must not leave a reserved child, a spent summary call, or an operation
-  for a later request to conflict with.
+- Nothing is reserved while the launch surface is open, and nothing stays
+  reserved once it is left. A composer somebody closes must not leave a reserved
+  child, a spent summary call, or an operation for a later request to conflict
+  with — before the first submit there is nothing to release, and after a failed
+  one the cancellation is what releases it.
+- **A mention nobody can be seated for is refused before anything is created.**
+  Confirmation asks the seating's own two questions first — active workspace
+  membership, then whether this work stream admits them — because the answer
+  arrives as a sentence about the message ("add this person to the work stream
+  first"), and a sentence about the message should not cost a substream.
 - Feed and model use the same installed selected parts. The complete source
   capture is preparation provenance, not a second hidden model-context source.
 - Child membership versions fence signed admission and live commands. Removing

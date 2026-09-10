@@ -127,6 +127,31 @@ describe('substream launch surface', () => {
     })));
   });
 
+  it('draws an attachment on the turn it is about to create', async () => {
+    // `MessageBlock` shows an attachment row only when it has both the opener
+    // and the loader, so a missing loader is not a degraded tile — it is no
+    // tile, and then the file appears when the real transcript arrives.
+    renderSurface({
+      loadAttachmentContent: async () => new Blob(['x']),
+      launching: {
+        attachments: [{
+          id: '00000000-0000-7000-8000-0000000000e1',
+          fileName: 'pricing.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 12,
+          contentAvailable: true,
+          createdAt: '2026-09-09T20:05:00.000Z',
+        }],
+        createdAt: '2026-09-09T20:05:00.000Z',
+        startedAt: Date.parse('2026-09-09T20:05:00.000Z'),
+        text: 'Check this against last quarter',
+      },
+    });
+    // The name is split into base and suffix for the middle-ellipsis, so this
+    // asks for the half that carries it.
+    expect(await screen.findByText('pricing')).toBeInTheDocument();
+  });
+
   it('says only what it is when there is no branch point to show', () => {
     renderSurface({ draft: { throughTurnId: null, provenance: [] } });
     expect(screen.queryByRole('region', { name: 'Branching from' })).not.toBeInTheDocument();

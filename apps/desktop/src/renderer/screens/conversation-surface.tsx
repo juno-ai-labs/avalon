@@ -1944,6 +1944,7 @@ export function ConversationSurface({
         }}
         error={substreamLaunch.error}
         launching={substreamLaunch.launching}
+        {...(api ? { loadAttachmentContent } : {})}
         members={members.data ?? []}
         onCancel={substreamLaunch.onCancel}
         onCreate={substreamLaunch.onCreate}

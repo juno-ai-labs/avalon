@@ -143,6 +143,16 @@ export function launchedSubstreamDetail(
     // Admitted, not yet started: the substream's loop is being woken by the
     // turn that created it. `scheduled` is what withholds the child's `Ready to
     // begin` empty state until the room's own snapshot arrives with the run.
+    //
+    // No run is seeded beside it, unlike `launchedWorkstreamDetail`, and it is
+    // not an omission: a work stream's creation writes its run and answers with
+    // the id, while an opening message admitted into a conversation only leaves
+    // a pending input — the run row is written when the child's loop claims it,
+    // after this response. There is no id to seed, so the work timer the launch
+    // surface was showing is not carried across; the child's own starts when
+    // its room reports the run, a socket round trip later. Seeding a fabricated
+    // id instead would put a run identity into the cache that the transcript's
+    // own timing compares against and would never match.
     harnessStatus: 'scheduled',
     stopRequested: false,
   };

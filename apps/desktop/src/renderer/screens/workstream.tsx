@@ -555,12 +555,28 @@ export function WorkstreamScreen(): React.JSX.Element {
       if (routeRef.current.id === target.parentId && routeRef.current.visit === visit) setSubstreamPending(false);
     }
   };
+  /**
+   * Whether the attempt on screen has reserved anything on the server.
+   *
+   * Nothing is reserved while the surface is merely open — that is the
+   * flow's own promise — but a submit that failed after `prepare` leaves a
+   * reserved child and a spent summary behind it, and the surface stays open
+   * over it. Leaving is where that gets cancelled, so leaving has to know.
+   */
+  const preparedRef = useRef(false);
   const resetCreation = (): void => {
+    const abandoned = preparedRef.current ? creationRef.current : null;
+    preparedRef.current = false;
     creationRef.current = null;
     setCreation(null); setLaunching(null); setCreationError(null);
+    // Best effort by design: the endpoint refuses an operation that is already
+    // confirming or ready, which is exactly when there is nothing to release.
+    if (api && abandoned) {
+      void api.cancelSubstream(abandoned.parentId, abandoned.operationId).catch(() => undefined);
+    }
   };
   const startCreation = (throughTurnId: string | null): void => {
-    setLaunching(null); setCreationError(null);
+    resetCreation();
     setCreation({
       parentId: id,
       throughTurnId,
@@ -606,6 +622,9 @@ export function WorkstreamScreen(): React.JSX.Element {
       await trace.step('prepare_request', () => api.prepareSubstream(attempt.parentId, {
         operationId: attempt.operationId, throughTurnId: attempt.throughTurnId,
       }));
+      // From here the operation holds a reserved child, so leaving the surface
+      // has something to release.
+      if (creationRef.current === attempt) preparedRef.current = true;
       const created = await trace.step('confirm_request', () => api.confirmSubstream(
         attempt.parentId,
         attempt.operationId,
@@ -653,6 +672,9 @@ export function WorkstreamScreen(): React.JSX.Element {
       // Nothing else is this attempt's to do: it is not the one on screen, so
       // it neither clears that surface nor navigates anybody.
       if (!current) return;
+      // Created, so there is nothing left to cancel — and `cancelSubstream`
+      // refuses a ready operation anyway.
+      preparedRef.current = false;
       trace.mark('cache_seed');
       holdCreationTraceUntilSendReady(
         trace,

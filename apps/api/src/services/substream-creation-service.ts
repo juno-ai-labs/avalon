@@ -2,6 +2,7 @@ import { asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
 import { PrivateChildPreparationOperationSchema, type PrivateChildPreparationOperation } from "@rally/contracts/conversation-parent";
 import type { SubstreamCreationResult, SubstreamOpeningMessage } from "@rally/contracts/substream-creation";
 import type { AuthContext, Env } from "../env";
+import type { WorkstreamDO } from "../durable-objects/workstream-do";
 import { conversationObjectName, workstreamDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { ApiError } from "../lib/api-error";
@@ -13,6 +14,7 @@ import {
   SUBSTREAM_MEMBERSHIP_POLICY,
 } from "./substream-context";
 import { createSubstreamContextTransformServices } from "./substream-context-summary";
+import { provisionalWorkstreamDescription } from "./workstream-description-service";
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { bootstrapConversationChildRuntime, provisionWorkstreamObject } from "./workstream-runtime-database";
@@ -140,6 +142,13 @@ export class SubstreamCreationService {
     if (operation.status !== "confirming" || !operation.preparedContext) {
       throw new ApiError(409, "substream_context_not_prepared", "Prepare the starting context first.");
     }
+    // Before anything is created. Seating somebody the parent will not admit is
+    // refused by the parent, and that refusal used to land after the child had
+    // been provisioned — leaving a substream behind for a message the person
+    // was told to fix. The check is the parent's own, asked one question
+    // earlier: mentioning a colleague who is not on this work stream is a
+    // mistake to answer with an empty composer, not with an empty substream.
+    await this.assertParticipantsAdmitted(parent, parentId, opening);
     // A child created with an instruction is named from it, exactly as a work
     // stream is: the first line stands while the naming pass runs, and
     // `naming` is what puts the skeleton in its header. A child created
@@ -149,7 +158,14 @@ export class SubstreamCreationService {
     await bootstrapConversationChildRuntime(this.env, this.auth.workspaceId, "workstream", parentId, operation.substreamId);
     await provisionWorkstreamObject(this.env, {
       workspaceId: this.auth.workspaceId, workstreamId: parentId, substreamId: operation.substreamId,
-      title, titleStatus: opening ? "naming" : "settled", objective: opening?.text ?? "", scope: "personal",
+      title, titleStatus: opening ? "naming" : "settled",
+      // The opening *line*, through the same helper the work-stream path uses,
+      // for the same reason: a description is the line a sidebar shows and the
+      // standing context every run starts from, and neither wanted the whole
+      // of a message that may run to a hundred thousand characters. The title
+      // beside it already reads the message this way.
+      objective: opening ? provisionalWorkstreamDescription(opening.text, "Review the attached files") : "",
+      scope: "personal",
       createdByUserId: this.auth.userId,
       participantUserIds: operation.membershipInitializer.memberUserIds,
       harnessStatus: "idle",
@@ -167,6 +183,43 @@ export class SubstreamCreationService {
     // the same way with its route activation.
     return this.openSubstream(parentId, operation, opening, () =>
       parent.setPrivateChildTerminalStatus({ ...address, status: "ready", errorCode: null, title }));
+  }
+
+  /**
+   * Refuse an opening whose mentions name somebody this work stream would not
+   * admit, while refusing still costs nothing.
+   *
+   * The parent answers the same question at the seating itself, so this is not
+   * the authority — it is the same authority asked before the child exists.
+   * A race between the two (somebody removed from the work stream in between)
+   * still fails at the seating, where the turn is already durable and a retry
+   * completes it.
+   */
+  private async assertParticipantsAdmitted(
+    parent: DurableObjectStub<WorkstreamDO>,
+    parentId: string,
+    opening: SubstreamOpeningMessage | null,
+  ): Promise<void> {
+    for (const userId of opening?.confirmedParticipantUserIds ?? []) {
+      // The seating's two gates, in its own order and with its own words:
+      // active workspace membership, then whether this work stream admits
+      // them. A workspace-scoped parent admits anybody, so the second refuses
+      // only for a personal one — which is exactly where a composer offering
+      // the whole roster can name somebody who cannot be seated.
+      const member = await this.env.DB.prepare(
+        `SELECT status FROM workspace_members WHERE workspace_id = ? AND user_id = ?`,
+      ).bind(this.auth.workspaceId, userId).first<{ status: string }>();
+      if (member?.status !== "active") {
+        throw new ApiError(404, "workspace_member_not_found", "Workspace member not found.");
+      }
+      const admitted = await parent.authorizeViewer({
+        workspaceId: this.auth.workspaceId, parentId, userId: asUserId(userId),
+      });
+      if (!admitted.authorized) {
+        throw new ApiError(409, "substream_member_needs_workstream_access",
+          "Add this person to the work stream before adding them to a substream.");
+      }
+    }
   }
 
   /**
@@ -203,7 +256,13 @@ export class SubstreamCreationService {
       text: opening.text,
       clientMessageId: opening.clientMessageId,
       mentions: opening.mentions,
-      confirmedParticipantUserIds: [],
+      // Carried rather than stripped. The child refuses a mention of somebody
+      // who is neither a participant nor confirmed, and it is not one yet: the
+      // parent seats them below, once the child is ready enough for it to. The
+      // desktop's ordinary send passes `[]` here because it has already been
+      // through the parent's roster API; this path has not, and the parent
+      // admission those ids need was checked before anything was created.
+      confirmedParticipantUserIds: [...opening.confirmedParticipantUserIds],
       attachmentIds: opening.attachmentIds,
     });
     await publish?.();
