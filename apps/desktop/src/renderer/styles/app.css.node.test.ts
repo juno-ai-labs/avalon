@@ -40,16 +40,55 @@ describe('capsule composer stacking', () => {
  * can tell the two apart.
  */
 describe('jump to latest', () => {
+  /**
+   * Every rule whose selector names one class, in source order, so a second
+   * rule cannot quietly restate what the first one settled. Rules nested in an
+   * `@media` block are found the same way `preludes()` finds them: the pattern
+   * cannot cross a brace, so the wrapper never matches and its contents do.
+   */
+  function rulesNaming(className: string): { prelude: string; declarations: string }[] {
+    const named = new RegExp(`\\.${className}\\b`, 'u');
+    return [...stylesheet.replace(/\/\*[\s\S]*?\*\//gu, ' ').matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
+      .map(([, prelude, declarations]) => ({ prelude: prelude!.trim().replace(/\s+/gu, ' '), declarations: declarations! }))
+      .filter(({ prelude }) => named.test(prelude));
+  }
+
+  /** What a rule's declarations leave one edge on, reading them in order. */
+  function settlesOn(declarations: string, shorthands: string[], longhands: string[]): string | null {
+    let value: string | null = null;
+    for (const [, property, declared] of declarations.matchAll(/([a-z-]+)\s*:\s*([^;]+)/gu)) {
+      if (shorthands.includes(property!)) value = declared!.trim().split(/\s+/u)[0]!;
+      if (longhands.includes(property!)) value = declared!.trim();
+    }
+    return value;
+  }
+
   it('hangs above the composer rather than a fixed distance into the dock', () => {
     expect(rule('.jump-bottom')).toContain('bottom: calc(100% + var(--space-2));');
-    expect(rule('.jump-bottom')).not.toMatch(/(?:^|;)\s*top:/u);
+
+    // Not the one rule: a later `top` anywhere would win over the anchor, and
+    // the control would be measured from the wrong direction again.
+    const anchored = rulesNaming('jump-bottom');
+    expect(anchored.length).toBeGreaterThan(1);
+    expect(anchored
+      .map(({ prelude, declarations }) => ({ prelude, top: settlesOn(declarations, ['inset'], ['top', 'inset-block-start']) }))
+      .filter(({ top }) => top !== null && top !== 'auto')
+      .map(({ prelude, top }) => `${prelude} { top: ${top!} }`)).toEqual([]);
   });
 
   it('keeps the dock edge it measures from the composer\'s own', () => {
-    // `bottom: 100%` lands on the dock's top edge; padding there would be a gap
-    // the control clears as well, silently widening the one it states.
-    expect(rule('.workstream-screen .composer-dock')).toMatch(/padding:\s*0\s/u);
-    expect(rule('.composer-dock')).toMatch(/padding:\s*0\s/u);
+    // `bottom: 100%` lands on the dock's padding-box top, so padding there is a
+    // gap the control clears as well, silently widening the one it states. The
+    // last word on that edge is what counts: a `padding-top` after the
+    // shorthand overrides it, and reading the shorthand alone would miss it.
+    // The launch docks carry `.launch-dock` and their own padding; the control
+    // is not rendered in one, so they are deliberately out of scope here.
+    const docks = rulesNaming('composer-dock');
+    expect(docks.length).toBeGreaterThan(1);
+    expect(docks
+      .map(({ prelude, declarations }) => ({ prelude, top: settlesOn(declarations, ['padding', 'padding-block'], ['padding-top', 'padding-block-start']) }))
+      .filter(({ top }) => top !== null && !/^0(?:px|rem|em|%)?$/u.test(top!))
+      .map(({ prelude, top }) => `${prelude} { padding-top: ${top!} }`)).toEqual([]);
   });
 });
 
