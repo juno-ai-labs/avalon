@@ -5,7 +5,7 @@ import {
   abandonPendingWorkstreamFeedOpen,
   markWorkstreamFeedOpenStarted,
 } from './telemetry';
-import { useWorkstreamFeedOpenTelemetry } from './use-workstream-feed-open-telemetry';
+import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from './use-workstream-feed-open-telemetry';
 
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('./platform', () => ({
@@ -71,5 +71,21 @@ describe('useWorkstreamFeedOpenTelemetry', () => {
       outcome: 'visible',
       workstreamId,
     }));
+  });
+});
+
+describe('resolveFeedOpenSource', () => {
+  it('names the local cache when its seed painted first, whatever the cache state read', () => {
+    // The pool seeds a conversation before its surface mounts, so the surface
+    // finds a transcript already cached and would otherwise call it the feed cache.
+    expect(resolveFeedOpenSource('feed_cached', 'local_cache')).toBe('local_cache');
+    expect(resolveFeedOpenSource('cold', 'local_cache')).toBe('local_cache');
+  });
+
+  it('keeps the feed cache for a transcript that was cached by a socket', () => {
+    expect(resolveFeedOpenSource('feed_cached', 'socket_snapshot')).toBe('feed_cache');
+    expect(resolveFeedOpenSource('feed_cached', null)).toBe('feed_cache');
+    expect(resolveFeedOpenSource('cold', 'socket_snapshot')).toBe('socket_snapshot');
+    expect(resolveFeedOpenSource('cold', null)).toBeNull();
   });
 });

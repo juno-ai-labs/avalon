@@ -28,6 +28,8 @@ import {
 } from './lib/telemetry';
 import { watchSystemAppearance, watchThemeBroadcast } from './lib/theme';
 import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
+import { localCacheScope } from './lib/local-cache';
+import { LocalCacheScopeProvider } from './lib/local-cache-scope';
 import { WorkspaceSocketProvider } from './lib/workspace-socket';
 import { WorkspaceWorkstreamSockets } from './lib/workspace-workstream-sockets';
 import type { Workspace } from './lib/types';
@@ -215,6 +217,9 @@ function WorkspaceApp(): React.JSX.Element {
     : workspace.data ? <WorkspaceAppContent workspace={workspace.data} />
       : <LoadingState label="Opening workspace…" />;
   return (
+    // Named above the socket provider so the directory it seeds and the
+    // conversations every feed hook below it seeds belong to this workspace.
+    <LocalCacheScopeProvider scope={localCacheScope(session!.user.id, session!.workspace!.region, session!.workspace!.id)}>
     <WorkspaceSocketProvider key={scope} api={api!} onAccessRevoked={surrenderActiveWorkspace} workspaceId={session!.workspace!.id}>
       {/* The directory connection and profile request start together. Keep this
           tree mounted when the profile arrives so prepared sockets survive. */}
@@ -229,6 +234,7 @@ function WorkspaceApp(): React.JSX.Element {
         </WorkstreamSocketResumeProvider>
       </HashRouter> : content}
     </WorkspaceSocketProvider>
+    </LocalCacheScopeProvider>
   );
 }
 

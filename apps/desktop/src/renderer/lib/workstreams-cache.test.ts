@@ -1,5 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { conversationCacheKey, conversationSlice } from './conversation-cache';
+import { clearAllLocalCache, localCacheScope } from './local-cache';
 import {
   evictCachedSubstream,
   evictCachedWorkstream,
@@ -250,5 +252,56 @@ describe('workstreamDetailQueryKey', () => {
     expect(workstreamDetailQueryKey('parent')).toEqual(['workstream', 'parent']);
     expect(workstreamDetailQueryKey('parent', '0')).toEqual(['workstream', 'parent']);
     expect(workstreamDetailQueryKey('parent', 'child')).toEqual(['substream-workstream', 'parent', 'child']);
+  });
+});
+
+describe('eviction reaches the disk', () => {
+  const scope = localCacheScope('00000000-0000-7000-8000-0000000000aa', 'global', '00000000-0000-7000-8000-000000000001');
+  const otherScope = localCacheScope('00000000-0000-7000-8000-0000000000bb', 'global', '00000000-0000-7000-8000-000000000001');
+  const parentId = summary().id;
+  const row = () => ({
+    detail: {
+      ...summary(), createdAt: '2026-08-12T11:00:00.000Z',
+      participants: [], viewers: [], resources: [], connections: [], backgroundTasks: [],
+    },
+    transcript: {
+      snapshotId: '00000000-0000-7000-8000-000000000777', snapshotThrough: 0, eventSequence: 0,
+      snapshotAtUtc: '2026-08-12T12:00:00.000Z', unreadAnchorSequence: null, unreadReason: 'no_unread' as const,
+      ranges: [], activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
+    },
+    initialContext: null,
+    cachedAt: '',
+  });
+
+  it('forgets every remembered conversation under an evicted work stream, in every scope', async () => {
+    await clearAllLocalCache();
+    for (const substreamId of ['0', 'child-a']) {
+      await conversationSlice.write(scope, conversationCacheKey(parentId, substreamId), row(), parentId);
+    }
+    await conversationSlice.write(otherScope, conversationCacheKey(parentId, '0'), row(), parentId);
+    await conversationSlice.write(scope, conversationCacheKey('other-parent', '0'), row(), 'other-parent');
+
+    evictCachedWorkstream(new QueryClient(), parentId);
+
+    await vi.waitFor(async () => {
+      expect((await conversationSlice.entries(scope)).map((entry) => entry.key)).toEqual([conversationCacheKey('other-parent', '0')]);
+      expect(await conversationSlice.entries(otherScope)).toEqual([]);
+    });
+  });
+
+  it('forgets one evicted child and keeps its parent and sibling', async () => {
+    await clearAllLocalCache();
+    for (const substreamId of ['0', 'child-a', 'child-b']) {
+      await conversationSlice.write(scope, conversationCacheKey(parentId, substreamId), row(), parentId);
+    }
+
+    evictCachedSubstream(new QueryClient(), parentId, 'child-a');
+
+    await vi.waitFor(async () => {
+      expect((await conversationSlice.entries(scope)).map((entry) => entry.key).sort()).toEqual([
+        conversationCacheKey(parentId, '0'),
+        conversationCacheKey(parentId, 'child-b'),
+      ].sort());
+    });
   });
 });
