@@ -228,6 +228,37 @@ duplicate because the consumer rechecks target generations.
 
 ## Changelog
 
+### 2026-09-10 — Add to project leaves the work-stream context menu
+
+**What changed:** The sidebar work-stream right-click menu no longer offers the
+**Add to project** submenu. Nothing else in the menu moved.
+
+**Why:** Requested. The menu carries pin, unread, rename, scope, and archive on
+the row people open most often to rename or archive, and this was the one item
+in it that fanned out to a list with no ceiling — every project the viewer can
+see.
+
+**Considered and rejected:** Keeping the submenu behind a project-count
+threshold. That trades a predictable menu for one whose shape depends on how
+many projects happen to exist, which is worse to learn than either answer.
+
+**Consequences:** No surface the desktop shell renders can now add an *existing*
+work stream to a project. `app-shell.tsx` passes `conversationOnly` to the
+sidebar unconditionally, and that flag is what suppresses
+`ProjectSidebarSection` — so the project rows that accept a work-stream drop are
+not on screen, and this submenu was the last reachable path to
+`addWorkstreamToProject`. The project space has no equivalent control. Starting
+a work stream *inside* a project is unaffected, and every server path
+(WorkspaceDO staging, audience enlargement, default-resource attachment) is
+untouched and still exercised by its tests. `WorkstreamRow` keeps its `projects`
+prop only to gate `draggable`; when the sidebar's project section comes back,
+that drop target works again with no further change. `ContextNestedMenu` and
+`DropdownNestedMenu` in
+`apps/desktop/src/renderer/components/nested-menu.tsx` now have no callers; the
+component and its `.nested-menu-*` styles are left in place as the shared
+submenu primitive rather than deleted and rebuilt by the next menu that needs
+one.
+
 ### 2026-09-09 — New projects start blue, because the palette has no neutral left
 
 **What changed:** The new-project dialog's initial and reset colour is `blue`.
