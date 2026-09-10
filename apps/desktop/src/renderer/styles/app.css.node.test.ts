@@ -29,6 +29,129 @@ describe('capsule composer stacking', () => {
   });
 });
 
+/**
+ * The one fixed thing about **Jump to latest** is its own 30px. It hangs over a
+ * composer whose height is the draft's (a queue above the field, an error under
+ * it, a message grown to six lines), so the only edge worth measuring from is
+ * that composer's top, upwards. `top` measures from the same edge downwards: it
+ * reads correctly on a one-line field and sinks the control further into the
+ * composer the taller the composer gets, which is the state a reader is most
+ * likely to be scrolled away in. jsdom lays nothing out, so no component test
+ * can tell the two apart.
+ */
+describe('jump to latest', () => {
+  type Edge = { side: 'top' | 'bottom'; longhands: string[]; boxes: string[]; blocks: string[] };
+
+  const TOP: Edge = { side: 'top', longhands: ['top', 'inset-block-start'], boxes: ['inset'], blocks: ['inset-block'] };
+  const BOTTOM: Edge = { side: 'bottom', longhands: ['bottom', 'inset-block-end'], boxes: ['inset'], blocks: ['inset-block'] };
+  const PADDING_TOP: Edge = { side: 'top', longhands: ['padding-top', 'padding-block-start'], boxes: ['padding'], blocks: ['padding-block'] };
+
+  /** A shorthand this scan cannot expand, so that it fails rather than passes. */
+  const UNREADABLE = '<unreadable to this scan>';
+
+  /**
+   * Every rule whose selector names one class, in source order, so a second
+   * rule cannot quietly restate what the first one settled. Rules nested in an
+   * `@media` block are found the same way `preludes()` finds them: the pattern
+   * cannot cross a brace, so the wrapper never matches and its contents do.
+   */
+  function rulesNaming(className: string): { prelude: string; declarations: string }[] {
+    // Not `\b`, which ends a word at a hyphen and would take `.jump-bottom-wide`
+    // for the class it is named after.
+    const named = new RegExp(`\\.${className}(?![\\w-])`, 'u');
+    return [...stylesheet.replace(/\/\*[\s\S]*?\*\//gu, ' ').matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
+      .map(([, prelude, declarations]) => ({ prelude: prelude!.trim().replace(/\s+/gu, ' '), declarations: declarations! }))
+      .filter(({ prelude }) => named.test(prelude));
+  }
+
+  /** A box shorthand's one to four values as `[top, bottom]`, in this app's writing mode. */
+  function blockValues(declared: string, count: 2 | 4): [string, string] | null {
+    const values = declared.trim().split(/\s+/u);
+    // A `calc()` or `var()` brings its own spaces; splitting on whitespace would
+    // mis-read it, and mis-reading is what this scan exists to prevent.
+    if (values.length > count || values.some((value) => value.includes('('))) return null;
+    const [first, second = first, third = first] = values as [string, string?, string?];
+    return count === 2 ? [first!, second!] : [first!, third!];
+  }
+
+  /**
+   * What a rule's declarations leave one edge on, reading them in order: the
+   * last declaration to touch that edge wins, which is what makes a longhand
+   * after a shorthand visible where matching on the shorthand alone is not.
+   * `null` means the rule says nothing about that edge.
+   */
+  function settlesOn(declarations: string, edge: Edge): string | null {
+    let value: string | null = null;
+    for (const [, property, declared] of declarations.matchAll(/([a-z-]+)\s*:\s*([^;]+)/gu)) {
+      const box = edge.boxes.includes(property!) ? 4 as const : edge.blocks.includes(property!) ? 2 as const : null;
+      if (edge.longhands.includes(property!)) value = declared!.trim();
+      else if (box) value = blockValues(declared!, box)?.[edge.side === 'top' ? 0 : 1] ?? UNREADABLE;
+    }
+    return value;
+  }
+
+  /** The last value a rule declares for one plain property, or null for none. */
+  function declares(declarations: string, property: string): string | null {
+    return [...declarations.matchAll(/([a-z-]+)\s*:\s*([^;]+)/gu)]
+      .filter(([, declared]) => declared === property)
+      .map(([, , value]) => value!.trim())
+      .at(-1) ?? null;
+  }
+
+  /** Every rule with something to say about one edge, and what it leaves there. */
+  function settledEdges(rules: { prelude: string; declarations: string }[], edge: Edge): { prelude: string; value: string }[] {
+    return rules
+      .map(({ prelude, declarations }) => ({ prelude, value: settlesOn(declarations, edge) }))
+      .filter((edged): edged is { prelude: string; value: string } => edged.value !== null);
+  }
+
+  it('hangs above the composer rather than a fixed distance into the dock', () => {
+    const anchored = rulesNaming('jump-bottom');
+    expect(anchored.length).toBeGreaterThan(1);
+
+    // One rule owns the anchor, and it puts the control's own bottom edge on
+    // the dock's top edge plus a step of the scale. A second entry here is a
+    // later rule restating `bottom`, which would win over it.
+    expect(settledEdges(anchored, BOTTOM).map(({ prelude, value }) => `${prelude} { bottom: ${value} }`))
+      .toEqual(['.jump-bottom { bottom: calc(100% + var(--space-2)) }']);
+
+    // And nothing measures the control from that same edge downwards again.
+    expect(settledEdges(anchored, TOP)
+      .filter(({ value }) => value !== 'auto')
+      .map(({ prelude, value }) => `${prelude} { top: ${value} }`)).toEqual([]);
+  });
+
+  it('stays out of flow, over a dock that is a containing block', () => {
+    // `bottom` addresses a containing block, so two things outside the anchor
+    // itself decide which box it lands on: the control being positioned at all,
+    // and the dock being positioned rather than transparent to the search. Take
+    // either away and the declaration keeps its value and changes its meaning.
+    expect(rulesNaming('jump-bottom')
+      .map(({ prelude, declarations }) => ({ prelude, position: declares(declarations, 'position') }))
+      .filter(({ position }) => position !== null)
+      .map(({ prelude, position }) => `${prelude} { position: ${position!} }`))
+      .toEqual(['.jump-bottom { position: absolute }']);
+
+    const docks = rulesNaming('composer-dock')
+      .map(({ prelude, declarations }) => ({ prelude, position: declares(declarations, 'position') }))
+      .filter(({ position }) => position !== null);
+    expect(docks.length).toBeGreaterThan(1);
+    expect(docks.filter(({ position }) => position === 'static').map(({ prelude }) => prelude)).toEqual([]);
+  });
+
+  it('keeps the dock edge it measures from the composer\'s own', () => {
+    // `bottom: 100%` lands on the dock's padding-box top, so padding there is a
+    // gap the control clears as well, silently widening the one it states. The
+    // launch docks carry `.launch-dock` and their own padding; the control is
+    // not rendered in one, so they are deliberately out of scope here.
+    const docks = rulesNaming('composer-dock');
+    expect(docks.length).toBeGreaterThan(1);
+    expect(settledEdges(docks, PADDING_TOP)
+      .filter(({ value }) => !/^0(?:px|rem|em|%)?$/u.test(value))
+      .map(({ prelude, value }) => `${prelude} { padding-top: ${value} }`)).toEqual([]);
+  });
+});
+
 describe('secondary surface focus and layout', () => {
   it('keeps Terminal selection and keyboard focus distinguishable from resting borders', () => {
     expect(rule('.terminal-network-modes > label:has(input:checked)')).toContain('var(--av-sys-color-text-default)');
