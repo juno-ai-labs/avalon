@@ -70,7 +70,7 @@ export function RailResizeHandle({
     // control of its own, so its double-click gives back the width the panel
     // opens at instead. That is the same number `ui-store` starts it on, not a
     // second opinion about how wide the sidebar ought to be.
-    <DragHint action="Drag to resize" shortcut="Double-click or Enter to reset width" side="left">
+    <DragHint action="Drag to resize" shortcut="Double-click or Enter to reset width" side="left" suppressed={resizing}>
       <div
         aria-label={label}
         aria-orientation="vertical"

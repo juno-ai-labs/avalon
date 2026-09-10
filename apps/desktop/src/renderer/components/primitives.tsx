@@ -1,4 +1,4 @@
-import { useContext } from 'react';
+import { useContext, useState } from 'react';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { PersonalAvatar } from './personal-avatar';
 import * as AvatarPrimitive from '@radix-ui/react-avatar';
@@ -133,6 +133,14 @@ interface DragHintProps {
   shortcut?: string | undefined;
   /** Which way the hint leans off the handle: away from what it resizes. */
   side?: 'top' | 'right' | 'bottom' | 'left';
+  /**
+   * True while the handle is being dragged. The gesture has to say so itself:
+   * a grab focuses the handle, and a focus is how a tooltip decides to open
+   * without waiting out its delay, so on a quick grab the press *opens* the
+   * hint instead of dismissing it. Radix's own dismissal cannot catch that one,
+   * because it reads an open state from the render before the focus.
+   */
+  suppressed?: boolean;
 }
 
 /**
@@ -149,9 +157,22 @@ interface DragHintProps {
  * centre-aligned: it lands beside the pill without either side measuring the
  * other.
  */
-export function DragHint({ action, children, shortcut, side = 'right' }: DragHintProps): React.JSX.Element {
+export function DragHint({ action, children, shortcut, side = 'right', suppressed = false }: DragHintProps): React.JSX.Element {
+  // Radix still decides when to open: the delay, the hover, and the focus are
+  // all its own, and this only takes a veto over the answer. Corrected during
+  // the render rather than in an effect because the open and the drag land in
+  // the same batch, and a hint that commits to the screen for one frame over
+  // the edge it is about is the whole defect.
+  const [open, setOpen] = useState(false);
+  if (open && suppressed) setOpen(false);
+
   return (
-    <Tooltip.Root delayDuration={450}>
+    // `disableHoverableContent`, alone among this app's tooltips: the others
+    // hang off controls with room around them, while this one hangs off a 12px
+    // divider with the transcript immediately beside it. Letting the pointer
+    // travel into the hint would keep it open over the thing the handle is
+    // there to reveal, and a two-line hint has nothing in it to travel for.
+    <Tooltip.Root delayDuration={450} disableHoverableContent onOpenChange={setOpen} open={open}>
       <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content className="tooltip tooltip-hint" side={side} sideOffset={8}>
