@@ -2756,6 +2756,12 @@ pre {
    below center, so the curve meets the title rather than the slot's floor. */
 .workstream-substream-connector { color: var(--av-cmp-sidebar-border); transform: translateY(-8px) scaleY(-1); }
 .workstream-new-substream { color: var(--av-sys-color-text-muted); }
+/* The same character the main feed's New substream control is drawn with, so
+   the two ways into a substream read as one act; a Tabler plus made the rail's
+   entry look like a different thing from the one on the turn it branches from.
+   It is a glyph, not an icon, so it is sized here rather than by a prop, and it
+   keeps the connector's muted weight beside it rather than the feed row's 10px. */
+.workstream-new-substream-mark { font-size: 22px; line-height: 1; }
 .workstream-context-row:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
 .workstream-context-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 /* The navigation sidebar's row title, so the two rails read as one list. */

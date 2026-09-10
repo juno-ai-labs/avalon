@@ -2,7 +2,7 @@ import type { SidekickAttachment } from '@rally/contracts';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { AttachedSidekicks } from './attached-sidekicks';
 import { Archive, FileBox, GripVertical, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
-import { IconBorderCornerPill, IconPlus } from '@tabler/icons-react';
+import { IconBorderCornerPill } from '@tabler/icons-react';
 import { Fragment, useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { WorkstreamDetail } from '../lib/types';
@@ -169,7 +169,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
               title="New substream"
               type="button"
             >
-              <span className="workstream-context-mark"><IconPlus aria-hidden="true" size={22} stroke={1.5} /></span>
+              <span aria-hidden="true" className="workstream-context-mark workstream-new-substream-mark">↳</span>
               <span className="workstream-context-copy"><span>New substream</span></span>
             </button>
           )}
