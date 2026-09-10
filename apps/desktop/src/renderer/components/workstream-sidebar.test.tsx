@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamResource } from '../lib/types';
-import { asSubstreamId, asUserId } from '@rally/contracts';
+import { SITE_MANIFEST_MIME_TYPE, asSubstreamId, asUserId } from '@rally/contracts';
 import { WorkstreamSidebar } from './workstream-sidebar';
 
 const artifact: WorkstreamResource = {
@@ -35,13 +35,16 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class {
     constructor(callback: () => void) { resized = callback; }
     observe() {}
+    // Radix measures the tooltip arrow through `useSize`, which unobserves on
+    // unmount; a stub without it throws during teardown, not during the assert.
+    unobserve() {}
     disconnect() {}
   });
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
 describe('WorkstreamSidebar', () => {
-  it('shows the work stream, generated artifacts, then participants, excluding sources and substreams', () => {
+  it('shows the work stream, its artifacts, then participants, excluding sources and substreams', () => {
     setup();
     const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
     const buttons = within(sidebar).getAllByRole('button');
@@ -214,11 +217,44 @@ describe('WorkstreamSidebar', () => {
     expect(localStorage.getItem('rally.workstream-sidebar-collapsed')).toBeNull();
   });
 
-  it('shows an honest empty artifact state', () => {
+  it('explains a truncated artifact with the rail\u2019s own tooltip, never the platform\u2019s', async () => {
+    setup();
+    const row = screen.getByRole('button', { name: 'Open Launch draft.md' });
+    // The native tooltip is the thing being replaced: leaving `title` behind
+    // means both fire, at different delays, in different type.
+    expect(row).not.toHaveAttribute('title');
+    fireEvent.focus(row);
+    const tip = await screen.findByRole('tooltip');
+    expect(tip).toHaveClass('tooltip');
+    expect(tip).toHaveTextContent('Launch draft.md');
+  });
+
+  it('marks a site by what it is, including one still typed as the file it was published from', () => {
+    // `swapPublishedContent` rewrites `mime_type` on an archive\u2192site upgrade and
+    // never `resource_type`, so a live site reaches this rail as a
+    // `generated_file`. Reading the raw type here is what drew it as a sheet of
+    // paper while the row beside it opened a live page.
+    setup({ ...workstream, resources: [
+      { ...artifact, id: 'site-fresh', title: 'Launch dashboard', resourceType: 'generated_site', mimeType: SITE_MANIFEST_MIME_TYPE },
+      { ...artifact, id: 'site-upgraded', title: 'Offsite RSVP', resourceType: 'generated_file', mimeType: SITE_MANIFEST_MIME_TYPE },
+    ] });
+    for (const title of ['Launch dashboard', 'Offsite RSVP']) {
+      const row = screen.getByRole('button', { name: `Open ${title}` });
+      expect(row.querySelector('.tabler-icon-rosette-asterisk'), title).not.toBeNull();
+    }
+  });
+
+  it('drops the artifact section entirely until a work stream has one', () => {
     setup({ ...workstream, resources: [], participants: [] });
-    expect(screen.getByText('No generated artifacts yet')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Artifacts' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Artifacts')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open Launch draft.md' })).not.toBeInTheDocument();
+  });
+
+  it('heads the section with the artifacts a work stream has produced', () => {
+    setup();
+    expect(within(screen.getByRole('region', { name: 'Artifacts' })).getByRole('heading', { name: 'Artifacts' })).toBeInTheDocument();
   });
 
   it('drags relative to the second sidebar, persists its width, and stops after release', () => {

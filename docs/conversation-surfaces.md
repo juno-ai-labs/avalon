@@ -162,7 +162,18 @@ uses `useCitations.openPreview` to open the artifact lightbox, including an
 explicit unavailable-preview state rather than an inspector fallback; arrival
 of an artifact never opens a panel. Generated sites open the existing isolated
 native viewer inside a resource lightbox, not the file conversion endpoint.
-Generated artifacts has no **Manage resources** button or resource-list popup.
+**Artifacts** is absent, not empty, until the work stream has one — the way the
+Sidekick strip below it already is — because a heading over a placeholder row
+spends rail height saying a conversation has produced nothing yet, which is
+every conversation's opening state. Each artifact row carries the renderer's own
+tooltip through the shared `Tip` primitive, opening to the **right** so it covers
+the feed rather than the next artifact, and never a native `title`: the rail
+truncates a long title and the compact rail drops it entirely, so the tooltip is
+how the row is read, and `title` draws it in the desktop's own type, after the
+desktop's own delay, and not at all for a reader who arrives by keyboard. That is
+the same rule the sidebar facepile settled — one tooltip language per slot, never
+Radix and native together. It has no **Manage resources** button or
+resource-list popup.
 File previews still offer individual **Resource details**; their lightbox retains
 refresh, watch, archive and version history, but no navigation to a resource list.
 Changing conversations closes both lightboxes and pending resource dialogs.
@@ -323,6 +334,67 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — Artifact rows take the renderer's tooltip, through a shared `Tip`
+
+**What changed:** An artifact row in the work-stream sidebar no longer carries a
+native `title`; it is wrapped in `Tip`, a new primitive in `primitives.tsx` that
+holds the `Tooltip.Root`/`Trigger`/`Portal`/`Content`/`Arrow` subtree once. The
+row's tooltip opens to the right. `IconButton`, `StatusDot`,
+`SocketStatusIndicator` and `AvatarStack` were moved onto the same primitive
+without changing a prop between them — same sides, offsets, alignments and
+delays.
+
+**Why:** `title` is the platform's tooltip, not this product's: a different
+delay, a different type, no arrow, no theme, and — the part that actually costs
+something — nothing at all on keyboard focus. That matters most exactly where
+these rows are, because the rail truncates every artifact title and the compact
+rail hides it outright, so the tooltip is the only way to read the row. The
+primitive came with it because the same five-element subtree was hand-rolled in
+nine files; a tenth copy to fix one row is how a portal or an arrow gets left
+off. Placing it to the right was the second half: below, it covered the next
+artifact, which is the row a reader is most likely to want next.
+
+**Considered and rejected:** Keeping `title` alongside the Radix tooltip. Both
+fire on a long hover, at different delays, which the sidebar facepile had already
+rejected on 2026-08-30 for the same slot-level reason. Also rejected: converting
+the rail's conversation, substream and **New substream** rows in the same change —
+they have the same native `title` and the same truncation, but they were not what
+this change set out to fix, and `Tip` is now sitting there for whoever does.
+
+**What a future change has to respect:** `Tip` takes `asChild` semantics from
+Radix, so its child element becomes the trigger. A child whose `className` is a
+callback — a `NavLink` — cannot be slotted directly and needs a plain wrapper to
+be the trigger, which is why `sidebar.tsx` still builds its work-stream preview
+by hand. Do not give a row both `Tip` and `title`.
+
+### 2026-09-10 — The artifact section is named Artifacts and appears only when full
+
+**What changed:** The work-stream sidebar's second section is headed
+**Artifacts** rather than **Generated artifacts**, on both its `aria-label` and
+its `h2`, and the whole `<section>` — heading included — is dropped while the
+work stream has no `artifact`-direction resource. Its placeholder row and the
+`.workstream-context-empty` rules that dressed it are gone with it.
+
+**Why:** "Generated" was doing no work in the rail. Every resource under that
+heading is one the work stream produced; the word only distinguished them from
+sources, which this section never shows, so it said nothing to a reader while
+being the half of the label that got truncated away in a 280px rail. Absence
+follows the same reasoning: an empty conversation is the ordinary opening state,
+and a heading plus a "No generated artifacts yet" row spent 60px of a rail
+shared with substreams and participants to report it. `AttachedSidekicks` had
+already settled that question one section down by returning `null`.
+
+**Considered and rejected:** Keeping the heading and hiding only the placeholder
+row. That leaves a heading with nothing under it, which reads as a load failure
+rather than as an honest empty. Also rejected: keeping the empty state and
+shortening only the label, which fixes the smaller half of the problem.
+
+**What a future change has to respect:** The section is the artifact list's own
+element, so anything added beside it — a count, a control, a filter — arrives
+inside that guard or it resurrects the empty heading. `.workstream-context-empty`
+no longer exists; a section that wants an empty state defines its own rather
+than reaching for that name.
 
 ### 2026-09-10 — Turn to turn closes onto the hover row
 

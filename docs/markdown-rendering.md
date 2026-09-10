@@ -570,8 +570,16 @@ This module owns how a markdown string becomes DOM in the renderer, and how that
 DOM is styled. It exposes `MarkdownBody` — taking a markdown string, an optional
 `mentions` array, an optional `citations` context, and `glance` / `verbatim` /
 `still` / `streaming` / `collapseHeadings` / `preserveLineBreaks` flags — plus the citation matrix and
-`ResourceIcon`, which the inspector rail renders too so that one resource kind
-draws one glyph everywhere. Heading collapse is off unless a host explicitly
+`ResourceIcon`, which the inspector rail and the work-stream sidebar render too
+so that one resource kind draws one glyph everywhere. **It takes the resource,
+never a type string**, and calls the exported `resourceIconType` itself: a
+provenance type (`generated_file`, `uploaded_file`) says who made the resource
+rather than what it is, and only that function replaces it with the attachment
+kind its MIME and filename classify to. A caller holding a raw `resourceType`
+cannot see that a `generated_file` carrying the site manifest is a live site.
+The glyph is then chosen by substrings of that one name, with a published site
+matched whole ahead of the chain — under both `generated_site` and `site` — and
+drawn as a Tabler `rosette-asterisk`. Heading collapse is off unless a host explicitly
 sets `collapseHeadings`; the main work-stream feed is the intended opt-in host.
 Its collapse-all control is a sibling in the agent-message header and shares
 section ids with the body through `MarkdownCollapseController`.
@@ -730,6 +738,50 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-09-10 — A published site gets its own mark
+
+**What changed:** `ResourceIcon` draws a Tabler `rosette-asterisk` for
+`generated_site` and for the `site` attachment kind, checked as whole-string
+membership before the substring chain rather than as another `includes` in it.
+Its parameter changed with it: it takes the **resource** and calls
+`resourceIconType` itself, where it used to take a `type` string each caller
+derived — or did not. `resourceIconType` is exported for that, over the shared
+`ResourceKindInput` shape both `CitationResource` and the rails'
+`WorkstreamResource` satisfy. All four surfaces now pass the resource: the
+inline chip, the embed card, the inspector rail, and the work-stream sidebar's
+artifact list.
+
+**Why:** A site fell off the end of the substring chain to the generic file
+mark, so the one artifact kind that is a page somebody opens looked identical to
+the ones they download — the sidebar showed a live site under the same sheet of
+paper as a `.docx`. The chain itself is why the match is exact and comes first:
+`includes('site')` would claim a `website` or `web_page` type that the `web`
+branch below already answers correctly with a link mark.
+
+Taking the resource is the other half, and it is not tidiness. Only the two
+citation call sites ever called `resourceIconType`; both rails passed
+`resource.resourceType` raw, so the `site` half of the match was unreachable
+there. That is not a hypothetical gap: `assertKindTransitionAllowed` lets an
+`archive → site` republish through by design, and `swapPublishedContent`'s
+`UPDATE` rewrites `mime_type` without ever touching `resource_type` — nothing in
+`apps/api/src` does — so a folder republished with an entry file stays
+`generated_file` with the site manifest MIME. A live site, drawn as a file, in
+the very rail this change set out to fix. The inspector rail disagreed with
+itself over it: its `isSiteResource` classifies by MIME and opens the row as a
+live page, beside an icon that called it a document.
+
+**Considered and rejected:** Exporting `resourceIconType` and calling it at the
+two rail call sites. Same pixels, but it leaves the trap armed — a fifth caller
+with a `resourceType` in hand still type-checks, and this is the second time
+that shape has produced this bug.
+
+**What a future change has to respect:** Do not add a `type` escape hatch back
+to `ResourceIcon`. Both names have to stay in the set: `resourceIconType`
+resolves a `generated_site` to itself and a provenance-typed site to `site`, and
+a site reaches the UI both ways — the sidebar test covers both, because a test
+that goes through `MarkdownBody` alone exercises only the citation path and
+passed throughout the window this was broken.
 
 ### 2026-09-10 — Line-break review edge cases
 
