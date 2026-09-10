@@ -38,10 +38,10 @@ describe('workstreamAppearance', () => {
   });
 
   it('inks a glyph from the colour it is actually painted, not the one the id generates', () => {
-    // Every ring hue takes black ink and only the neutral and two retired keys
-    // take white, so a saved `black` is the case that tells the two apart. The
-    // glyph resolves one appearance now, and inking off the wrong half of it
-    // would put white on a light fill.
+    // `launch-room` generates `lime`, one of the three fills that still take
+    // black ink, and the saved colour is `black`, which takes white. That pair
+    // is what tells the two apart: the glyph resolves one appearance now, and
+    // inking off the wrong half of it would put black on a near-black fill.
     const saved = { icon: null, color: 'black' } satisfies WorkstreamAppearance;
     const generated = render(<WorkstreamGlyph id="launch-room" />).container;
     const stored = render(<WorkstreamGlyph appearance={saved} id="launch-room" />).container;
@@ -73,8 +73,14 @@ describe('workstreamAppearance', () => {
 
     expect(glyph).toHaveAttribute('aria-hidden', 'true');
     expect(glyph).toHaveStyle({ height: '30px', width: '30px' });
+    // The raw fill and nothing else. `PALETTE_INK` and its APCA floor are
+    // computed against this token, so a second colour behind the symbol — the
+    // 145deg gradient this used to carry, mixing 22% of `surface-default` into
+    // the far stop — is a background the table was never measured against. That
+    // one cost up to 19 Lc and put five fills under the floor. Asserted exactly,
+    // so re-introducing any gradient or mix fails here.
     expect(container.querySelector('.workstream-glyph-shape')).toHaveStyle({
-      background: 'linear-gradient(145deg, color-mix(in srgb, var(--av-sys-color-project-lime) 78%, var(--av-sys-color-surface-default)), var(--av-sys-color-project-lime))',
+      background: 'var(--av-sys-color-project-lime)',
     });
   });
 });
