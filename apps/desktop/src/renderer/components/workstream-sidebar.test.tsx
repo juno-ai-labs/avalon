@@ -298,6 +298,26 @@ describe('WorkstreamSidebar', () => {
     expect(screen.getByRole('tooltip')).not.toHaveTextContent('Double-click');
   });
 
+  // A hint that rides along beside the divider for the whole drag is worse than
+  // no hint: it sits over the transcript the drag is revealing, at the one
+  // moment the reader is watching an edge move. The press has to leave it shut.
+  it('keeps the hint shut through a grab that never waited for it', () => {
+    setup();
+    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+    edge.setPointerCapture = vi.fn();
+    edge.releasePointerCapture = vi.fn();
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.pointerDown(edge, { clientX: 563, pointerId: 1, button: 0 });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.pointerMove(edge, { clientX: 600, pointerId: 1 });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.pointerUp(edge, { pointerId: 1 });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
   it('drops the artifact section entirely until a work stream has one', () => {
     setup({ ...workstream, resources: [], participants: [] });
     expect(screen.queryByRole('region', { name: 'Artifacts' })).not.toBeInTheDocument();

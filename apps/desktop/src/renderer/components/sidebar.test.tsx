@@ -339,6 +339,26 @@ describe('Sidebar work-stream markers', () => {
     expect(useUiStore.getState().sidebarCollapsed).toBe(false);
   });
 
+  // Same as the work-stream divider: the press must not open what the hover
+  // delay has not yet opened. A hint riding beside the edge for the length of
+  // the drag covers the transcript the drag is revealing.
+  it('keeps the hint shut through a grab that never waited for it', () => {
+    useUiStore.getState().setSidebarCollapsed(false);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const edge = screen.getByRole('separator', { name: 'Resize navigation' });
+    edge.setPointerCapture = vi.fn();
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.pointerDown(edge, { button: 0, clientX: 300, pointerId: 9 });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.pointerMove(window, { clientX: 340, pointerId: 9 });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.pointerUp(window, { pointerId: 9 });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
   // A window too narrow to hold the expanded sidebar pins it compact and
   // disables the footer toggle, and the double-click on the divider is guarded
   // by the same condition. The hint is the only place that shortcut is written
