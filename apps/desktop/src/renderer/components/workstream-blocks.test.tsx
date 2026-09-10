@@ -2315,6 +2315,35 @@ describe('MessageBlock substream cutoff', () => {
     expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-4');
   });
 
+  it('keeps the action slot under a person’s turn that cannot start a substream', () => {
+    // The slot is what the one-unit turn gap relies on to keep the next turn
+    // off this bubble, so it is laid out whether or not there is a control to
+    // put in it: an automation's conversation, a substream other than the
+    // main one, and the launch provenance all render the turn without a
+    // handler, and an answered elicitation is a person's turn with none.
+    const { container, rerender } = render(
+      <MessageBlock {...actions} message={{ ...baseMessage, transcriptTurnId: 'turn-4' }} />,
+    );
+
+    const slot = container.querySelector('.human-message-actions');
+    expect(slot).not.toBeNull();
+    expect(slot!.querySelector('button')).toBeNull();
+    expect(container.querySelector('.human-message-bubble')?.compareDocumentPosition(slot!))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    rerender(
+      <MessageBlock
+        {...actions}
+        currentUserId="user-adam"
+        message={{ ...baseMessage, messageType: 'elicitation', text: '', elicitation: { ...singleSelectElicitation, status: 'answered', answer: 'compare' } }}
+      />,
+    );
+
+    const response = screen.getByLabelText('Your elicitation response');
+    expect(response.querySelector('.human-message-actions')).not.toBeNull();
+    expect(response.querySelector('.human-message-actions button')).toBeNull();
+  });
+
   it('keeps the cutoff on a settled turn that carries no prose, without the actions that need it', () => {
     // An attachment-only turn is still a place to branch from, but there is
     // nothing to copy, read aloud, or render to a card.
