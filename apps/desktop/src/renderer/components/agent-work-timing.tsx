@@ -71,6 +71,18 @@ export function AgentCompactionIndicator(): React.JSX.Element {
   );
 }
 
+/**
+ * The label opens a row's own line, so it opens with a capital.
+ *
+ * Here rather than at each producer because a producer's verb is also the
+ * identity that routes the row — see the invariant in
+ * `docs/plugin-activity-rows.md`. Already-capitalized verbs pass through
+ * unchanged, so a producer that names itself keeps saying exactly what it says.
+ */
+function sentenceCase(label: string): string {
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 export function AgentWorkTiming({
   active,
   activeName = 'Rally is working',
@@ -115,11 +127,12 @@ export function AgentWorkTiming({
   const duration = durationMs === null
     ? null
     : formatDuration(durationMs + activeDuration) ?? '0ms';
-  const label = durationMs === null
+  const phrase = durationMs === null
     ? verb
     : timingAccuracy === 'upper_bound' && !active
       ? `${verb} for at most ${duration}`
       : `${verb} for ${duration}`;
+  const label = sentenceCase(phrase);
   // The elapsed time changes ten times a second, so a live region carrying it
   // would read the row out continuously; `activeName` is the stable stand-in.
   const accessibleLabel = active ? activeName : label;
