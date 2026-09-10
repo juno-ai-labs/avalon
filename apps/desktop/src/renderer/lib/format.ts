@@ -221,36 +221,6 @@ export function workstreamMarkerStatus(
   return MARKER_PRECEDENCE.find((status) => active.has(status)) ?? own;
 }
 
-/**
- * Whether somebody has put this work stream in front of this person.
- *
- * The **Needs attention** section's membership rule: they were added to it,
- * named in it, or asked a question by its agent. Not "everything only they can
- * clear" — that was the rule until unread swamped the section, and unread is
- * squarely something only they can clear. What separates the three is that a
- * person is behind each one, which is what makes a short list worth reading.
- */
-export function workstreamNeedsAttention(
-  // `hasUnread` is accepted and deliberately not read. Callers pass a whole
-  // work stream, and the tests pass the field explicitly to state that being
-  // unread does not put a row in this section — a signature that refused it
-  // could not say that.
-  workstream: { harnessStatus: HarnessStatus; hasUnread?: boolean; unseen?: boolean; youAreMentioned?: boolean },
-): boolean {
-  // Asked of the states rather than of the marker, so a work stream whose dot
-  // shows something else can still be listed: a room somebody was added to
-  // reads as `unseen` here whatever its run is doing.
-  //
-  // What dropping unread cost, for whoever considers putting it back: it is
-  // the ordinary condition of a work stream somebody is working in, so a person
-  // with a normal backlog saw most of what they had listed here and the one
-  // mention among them was indistinguishable from the rest. The sidebar still
-  // marks unread, in its own colour.
-  return workstream.unseen === true
-    || workstream.youAreMentioned === true
-    || workstream.harnessStatus === 'needs_input';
-}
-
 export type RecencyGroup = 'Last hour' | 'Today' | 'Yesterday' | 'This week' | 'This month' | 'Before this month';
 
 const hourInMilliseconds = 3_600_000;

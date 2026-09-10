@@ -8,21 +8,19 @@ work stream somebody put them in that they have never opened. The ranking
 between them is a product decision, written down once, and every surface that
 draws a marker reads it from here.
 
-Read this before changing a marker colour, adding a state, reordering the
-ranking, or changing what the home screen's **Needs attention** section holds.
-The colours themselves are tokens, so [`theming.md`](theming.md) still owns how
-a colour is written down; this document owns which state gets which token and
-which state wins.
+Read this before changing a marker colour, adding a state, or reordering the
+ranking. The colours themselves are tokens, so [`theming.md`](theming.md) still
+owns how a colour is written down; this document owns which state gets which
+token and which state wins.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/lib/format.ts` | `WorkstreamMarkerStatus`, the labels and descriptions, `harnessMarkerStatus`, `MARKER_PRECEDENCE`, `workstreamMarkerStatus`, and `workstreamNeedsAttention`. The ranking exists here and nowhere else. |
+| `apps/desktop/src/renderer/lib/format.ts` | `WorkstreamMarkerStatus`, the labels and descriptions, `harnessMarkerStatus`, `MARKER_PRECEDENCE`, and `workstreamMarkerStatus`. The ranking exists here and nowhere else. |
 | `apps/desktop/src/renderer/components/primitives.tsx` | `StatusDot` — the one component that draws a marker, for every surface. |
 | `apps/desktop/src/renderer/components/sidebar.tsx` | The sidebar row's compact dot and completed-marker suppression. |
 | `apps/desktop/src/renderer/screens/project-space.tsx` | The project space's work-stream rows, which draw the ranked marker. |
-| `apps/desktop/src/renderer/screens/new-workstream.tsx` | The home screen's **Needs attention** section and its rows. **Stale:** the screen no longer renders one, and `workstreamNeedsAttention` has no production caller. Left for a change that can retire the section and its function together, rather than half-removing it here. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The work-stream header's status line, which names the run's own marker rather than this viewer's. |
 | `apps/desktop/src/renderer/components/automation-header.tsx` | The Sidekick run history, the one surface that still draws `scheduled` under its own name. |
 | `config/design-tokens/registry.json` | The `sys.color.workstream` group: one token per state. |
@@ -100,9 +98,8 @@ a failure a person has not read about is first of all something to read — the
 transcript says what broke, and the marker's job is to get them there. A failure
 they *have* read shows as **Needs intervention**, because nothing outranks it
 any more. If the product wants a failure to shout over an unread message
-instead, that is one line: move `failed` above `unread` in `MARKER_PRECEDENCE`
-and update `workstreamNeedsAttention`, which today lists a failed run only when
-a mention or an unseen membership puts it there.
+instead, that is one line: move `failed` above `unread` in
+`MARKER_PRECEDENCE`.
 
 ### A queued run is an active one
 
@@ -167,28 +164,36 @@ The sidebar omits the dot and its tooltip when the ranked marker is `completed`.
 Unread, mentioned, and unseen markers still appear on completed work streams
 when those personal states win the ranking.
 
-### Needs attention
+### Project space
 
-The home screen's **Needs attention** section holds the work streams that name
-this person: **unseen**, **mentioned**, or a run **stopped for an answer**. That
-is `workstreamNeedsAttention`, which asks the states rather than the marker, so
-a work stream showing a different dot can still be listed — a room somebody was
-added to is `unseen` here whatever its run is doing. The list is ordered by
-`lastActivityAt`, newest first, so what moved most recently is at the top
-regardless of which state put it there.
+The project space lists a project's work streams and draws the ranked marker on
+each row. It is the only list outside the sidebar that draws **the ranked
+per-person marker** — the Sidekick run history draws a dot too, but from a run's
+own status rather than this viewer's — and unlike the sidebar it suppresses
+nothing.
 
-**Unread is deliberately not one of them.** It was, and it swamped the section:
-unread is the ordinary condition of a work stream somebody is working in, so a
-person with a normal backlog saw most of what they had listed here and the one
-mention among them read exactly like the rest. The three that remain each have
-somebody's hand behind them — you were put in this room, you were named in it,
-or the agent stopped and asked you a question — and that is what keeps the list
-short enough to be worth reading. Unread has not gone anywhere: it is still a
-marker in the sidebar, in its own colour.
+**The dot carries the state; the label beside it is not coloured.** These rows
+are the home screen's retired **Needs attention** rows, reused wholesale, and
+they arrived carrying a label colour for `unseen`, `mentioned`, and
+`needs_input` — a complete set under that section's three-state membership rule,
+and an arbitrary three-of-eight under the full ranking. Those three rules are
+gone, so a project row reads the way a sidebar row does.
 
-That also bounds what a row can show. Only three markers can reach one: `unseen`
-and `mentioned` outrank everything in the ranking, and `needs_input` is the run's
-own state — so `app.css` carries a colour for those three and nothing else.
+Its first column is a **fixed track**, so every title in the list starts on the
+same edge whatever marker precedes it. A per-row `auto` column cannot do that —
+each row is its own grid, so it would size to that row alone and leave a ragged
+edge down a list whose whole value is that it can be scanned.
+
+The track is sized to the widest label `statusLabel` holds. It was 112px, which
+four of the nine labels overflowed, and the dot absorbed all four: it is a flex
+item beside the label, so it is what gives way, and under the widest two it was
+crushed to nothing and the row showed no marker at all. The track is now 130px,
+above the 125.5px "Latest run completed" measures with its dot and gap, and
+`.status-dot` sets `flex: 0 0 auto` so it can never be the thing that yields
+again. The label ellipsizes instead, which is the backstop for a label that
+outgrows the track: it clips where somebody can see it rather than sliding under
+the title. **A label added to `statusLabel` is still a reason to re-measure this
+row** — the numbers above are one platform's font.
 
 ## Invariants
 
@@ -253,16 +258,6 @@ own:
 - **A person added to hundreds of work streams at once** sees hundreds of
   markers. There is no cap and no digest: the sidebar is already a list, and the
   states below it behave the same way.
-- **Needs attention has no cap.** Its membership is bounded in practice by the
-  fact that all three states need somebody to have named this person, so the
-  section is short for the same reason it is worth reading. It is not bounded in
-  principle: somebody added to fifty work streams at once sees fifty rows above
-  the composer. No cap is written here on purpose — a limit is a decision with a
-  number, and the number belongs to the team rather than to whoever noticed
-  ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
-  What a cap would need to decide: how many rows, what the overflow affordance
-  is, and which states survive the trim, since dropping the oldest unseen is not
-  the same call as dropping everything below a mention.
 - **Existing memberships at deploy.** Both backfills — `first_opened_at =
   added_at` in the object's schema migration, and `unseen` defaulting to 0 in the
   workspace projection — read every membership that already existed as seen. A
@@ -273,10 +268,9 @@ own:
 
 | Suite | What it proves | How to run |
 | --- | --- | --- |
-| `apps/desktop/src/renderer/lib/format.test.ts` | The ranking, pair by pair, the queued-run fold, and the **Needs attention** membership rule. | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/format.test.ts` |
+| `apps/desktop/src/renderer/lib/format.test.ts` | The ranking, pair by pair, and the queued-run fold. | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/format.test.ts` |
 | `apps/desktop/src/renderer/screens/workstream.test.tsx` | The header draws a queued run as running, which is what holds the second call site to the fold. | `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/workstream.test.tsx` |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The sidebar omits completed markers, draws a queued run as running, and preserves personal attention markers and their tooltips. | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/sidebar.test.tsx` |
-| `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | **Needs attention** holds the three addressed states, omits a merely unread work stream, and orders rows by recency. | `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/new-workstream.test.tsx` |
 | `apps/api/test-workers/unseen-workstream-state.test.ts` | On real workerd: added at creation, added later, cleared by the first open, unchanged by a duplicate add, set again by a re-add. | `pnpm --filter @rally/api test:workers` |
 | `apps/api/test-workers/workspace-directory-reads.test.ts` | The flag survives the workspace projection as the viewer's rather than the row's. | as above |
 | `apps/api/test/workstream-object-schema.test.ts` | Both compatibility views reset the column on a re-add, and leave it alone on a removal. | `pnpm --filter @rally/api exec vitest run test/workstream-object-schema.test.ts` |
@@ -288,10 +282,6 @@ paths set it.
 
 ## Open questions
 
-- **How long may Needs attention get?** See the entry under **Failure modes and
-  limits**. Dropping unread took the everyday pressure off it, but it is still
-  uncapped; the cap, its overflow affordance, and which states survive the trim
-  are the team's to set if it ever needs one.
 - **Should a failed run outrank an unread message?** The ranking says no today,
   and the reasoning is under [The ranking](#the-ranking). It is one line to
   reverse if the product disagrees.
@@ -307,6 +297,84 @@ Schema migrations: work-stream object v18, WorkspaceDO v10. Both backfill
 existing rows as seen.
 
 ## Changelog
+
+### 2026-09-10 — Needs attention is retired, and the rule it carried is unhoused
+
+**What changed:** `workstreamNeedsAttention` and the tests that were its only
+callers are deleted, and this document no longer describes a **Needs attention**
+section — including the **Stale:** marker the entry below left on its row. The
+surface itself went on 2026-09-04 in #551; what this change removes is the code
+and the description it left standing. The three label colours the section
+justified are gone too, and `.status-dot` no longer shrinks.
+
+**Why:** The section was never retired on its own terms — it went with the
+screen it lived on. #551 replaced the New work stream launcher's home dashboard
+with a bare composer, and the reasoning is recorded in
+[`workstream-creation.md`](workstream-creation.md)'s 2026-09-01 entry:
+work-stream navigation already owned ongoing work, so an attention list and a
+suggestion list inside the launcher amounted to a second, visually unrelated
+home product between the person and the conversation shell. That is a reason not
+to put the list *there*. **It is not a judgement on the membership rule**, and no
+such judgement exists: #551 deleted the markup and left
+`workstreamNeedsAttention`, this document, and the row colours in place, which is
+what a change that was not thinking about them looks like. So the 2026-08-24
+entry below is not overturned here. Its argument — that a list is worth scanning
+only when a person is behind every row on it — is unhoused, not withdrawn, and
+whoever builds an "addressed to me" surface next inherits it intact rather than a
+decision against it.
+
+**The label colours went because the project space inherited these rows.** It
+draws them from the full ranking, so the section's three-of-eight colour map
+stopped being exhaustive and became arbitrary. Rendering all eight states in a
+real window settled which way to close the gap: three loud rows among five quiet
+ones read as noise rather than emphasis, the amber `needs_input` label was the
+least legible text in the list, and the five uncoloured rows were already doing
+the legible thing — a coloured dot against a quiet label, which is what the
+sidebar does. Removing three rules beat adding five, and it is the reading the
+sidebar had already committed to.
+
+**That window also found a real defect, which is why it is worth opening one.**
+`.status-dot` is a flex item in `.status-indicator`, so it is what gives way
+when a label outgrows the row's fixed first column — and four of the nine
+labels outgrew the 112px that column was, by 13.5, 8, 1.2 and 0.2px. The dot
+absorbed all four and was crushed to zero under the widest two, so those rows
+showed **no marker at all**. `completed` is the ordinary state of a finished
+work stream, so this was not an edge case. Nothing asserted on the dot's width,
+which is how it survived: the class was present and the tests looked at the
+class.
+
+`flex: 0 0 auto` alone would only move the overflow from the dot to the label,
+where it is worse — a missing dot is visible, text sliding under a title is not,
+and "Latest run completed" overran by more than the 10px gap before the title.
+So the track is sized to fit instead, at 130px against a measured 125.5px, and
+the label ellipsizes as the backstop for whatever outgrows *that*. The numbers
+are one platform's font, which is why the slack is there and why the body still
+tells the next person to re-measure.
+
+**Considered and rejected:** Keeping `workstreamNeedsAttention` against a future
+attention surface. Six days without a caller is what produced this cleanup: it
+type-checked, it had tests, and both this document and `app.css` cited it as
+live, so nothing on the way past would have told the next reader the product had
+moved. The rule itself is three lines and is preserved in prose in the
+2026-08-24 entry, which survives a rewrite of the screen in a way a function
+signature does not. Also rejected: giving the remaining five states a label
+colour, per the window above.
+
+**Consequences:** `unseen` and `mentioned` did **not** lose their last
+non-sidebar surface, which was the live question when this was found — the
+project space picked up the rows — but they no longer have a colour there beyond
+their dot. Bringing an attention surface back means writing the membership rule
+again from the 2026-08-24 entry; it does not mean bringing these colours back,
+which are now a separate decision with the window above behind it. The first
+column stays a fixed track so titles share an edge, so **a label added to
+`statusLabel` needs re-measuring against it**; the ellipsis is a backstop, not a
+substitute for that. Two rules
+from the section's own markup, `.waiting-workstream-projects` and
+`.waiting-workstream-source`, are still dead: they belong to the row's six-track
+grid, which the project space inherited and only partly fills. The project
+space's markers still have no test.
+
+Follows #551, which removed the surface.
 
 ### 2026-09-10 — A queued run is drawn as an active one
 
