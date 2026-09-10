@@ -17,14 +17,14 @@ function rule(selector: string): string | null {
 describe('capsule composer stacking', () => {
   // This guards the CSS contract; actual pointer hit-testing is verified in Electron.
   it('keeps both capsule control areas above the spanning attachment input shell', () => {
-    const controls = rule(':is(.workstream-screen, .new-chat-screen) .is-message-capsule :is(.composer-tools, .composer-submit-area)');
+    const controls = rule(':is(.workstream-screen, .workstream-launch-screen) .is-message-capsule :is(.composer-tools, .composer-submit-area)');
     expect(controls).toContain('position: relative;');
     expect(controls).toContain('z-index: 1;');
     expect(rule('.composer-input-shell')).toContain('position: relative;');
     expect(rule('.composer-input-shell')).not.toContain('z-index:');
-    expect(rule(':is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule.has-attachments .composer-input-shell'))
+    expect(rule(':is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments .composer-input-shell'))
       .toContain('grid-column: 1 / -1;');
-    expect(rule(":is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule[data-multiline='true'] .composer-input-shell,\n:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule.has-attachments .composer-input-shell"))
+    expect(rule(":is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule[data-multiline='true'] .composer-input-shell,\n:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments .composer-input-shell"))
       .toContain('grid-column: 1 / -1;');
   });
 });
@@ -506,7 +506,7 @@ describe('work-stream launch surface geometry', () => {
   it.each([
     ['.workstream-launch-screen.is-launching > .launch-dock', ['padding', 'background']],
     ['.workstream-launch-screen.is-launching .composer-stack', ['max-width']],
-    ['.workstream-launch-screen.is-launching .launch-composer', ['background', 'border-color', 'border-radius']],
+    ['.workstream-launch-screen.is-launching .workstream-composer', ['background', 'border-color', 'border-radius']],
   ])('states no geometry of its own in %s', (selector, forbidden) => {
     // The one `rule()` consumer with no null guard, deliberately: these three
     // selectors are absent from the stylesheet today — the split is written as
