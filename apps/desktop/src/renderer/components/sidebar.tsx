@@ -41,7 +41,6 @@ import {
   groupActivityItems,
   nextRecencyBoundary,
   recencyGroupBatchFilter,
-  workstreamMarkerIsQuiet,
   workstreamMarkerStatus,
   type RecencyGroup,
 } from '../lib/format';
@@ -756,8 +755,8 @@ function WorkstreamRow({
             <span className="sidebar-row-icon">
               <WorkstreamGlyph appearance={workstream.appearance} id={workstream.id} size={36} />
               {workstream.scope === 'workspace' && <PublicMarker />}
-              {/* Personal attention markers on a resting run must remain visible. */}
-              {!workstreamMarkerIsQuiet(markerStatus) && (
+              {/* Personal attention markers on completed runs must remain visible. */}
+              {markerStatus !== 'completed' && (
                 <span className="workstream-row-status">
                   <StatusDot compact status={markerStatus} tooltip />
                 </span>

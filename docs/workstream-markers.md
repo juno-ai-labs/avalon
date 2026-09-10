@@ -18,10 +18,12 @@ which state wins.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/lib/format.ts` | `WorkstreamMarkerStatus`, the labels and descriptions, `MARKER_PRECEDENCE`, `workstreamMarkerStatus`, `workstreamMarkerIsQuiet`, and `workstreamNeedsAttention`. The ranking exists here and nowhere else. |
+| `apps/desktop/src/renderer/lib/format.ts` | `WorkstreamMarkerStatus`, the labels and descriptions, `harnessMarkerStatus`, `MARKER_PRECEDENCE`, `workstreamMarkerStatus`, and `workstreamNeedsAttention`. The ranking exists here and nowhere else. |
 | `apps/desktop/src/renderer/components/primitives.tsx` | `StatusDot` — the one component that draws a marker, for every surface. |
-| `apps/desktop/src/renderer/components/sidebar.tsx` | The sidebar row's compact dot, and the resting-marker suppression it asks `workstreamMarkerIsQuiet` for. |
+| `apps/desktop/src/renderer/components/sidebar.tsx` | The sidebar row's compact dot and completed-marker suppression. |
 | `apps/desktop/src/renderer/screens/new-workstream.tsx` | The home screen's **Needs attention** section and its rows. |
+| `apps/desktop/src/renderer/screens/workstream.tsx` | The work-stream header's status line, which names the run's own marker rather than this viewer's. |
+| `apps/desktop/src/renderer/components/automation-header.tsx` | The Sidekick run history, the one surface that still draws `scheduled` under its own name. |
 | `config/design-tokens/registry.json` | The `sys.color.workstream` group: one token per state. |
 | `apps/desktop/src/renderer/styles/app.css` | `.status-<state> .status-dot` — one rule per state, each naming its token. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | The authority for the three personal states: `member_attention` for unread and mentions, `participants.first_opened_at` for unseen. |
@@ -85,8 +87,8 @@ returns the first one in `MARKER_PRECEDENCE`:
 
 The personal states are deliberately not grouped: being named outranks a run
 that is working, while merely having unread messages does not. `scheduled` is
-not in the list — it has no personal state to lose to, and falls through as the
-run's own status.
+not in the list because it never reaches it under its own name — see
+[A queued run is an active one](#a-queued-run-is-an-active-one).
 
 Only one run state is ever in the set at a time, so their order relative to each
 other decides nothing; what the list actually decides is each run state against
@@ -101,26 +103,36 @@ instead, that is one line: move `failed` above `unread` in `MARKER_PRECEDENCE`
 and update `workstreamNeedsAttention`, which today lists a failed run only when
 a mention or an unseen membership puts it there.
 
-### The two resting states
+### A queued run is an active one
 
-`workstreamMarkerIsQuiet` names the markers that report nothing: `completed`, a
-run that has finished, and `scheduled`, a run that has not begun. Between them
-they are the ordinary condition of every work stream nobody is currently
-watching, so a list that draws them marks the ordinary as though it were news.
-It is a predicate beside the ranking rather than a condition inside a component
-for the reason the ranking is one array: two surfaces that each decided for
-themselves would drift.
+`harnessMarkerStatus` turns a run's status into a marker, and folds `scheduled`
+into `running`. A work stream whose next run is queued is presented as one that
+is already working: the difference is real in the data and worth nothing to
+somebody scanning a list, because either way the agent has the work and nobody
+is being asked for anything. Nobody can act on "about to start" differently from
+"started".
 
-Honouring it is still the surface's call, and the work-stream header
-deliberately does not — it names the run's state in words, and there a resting
-run is exactly what somebody opened the header to read.
+Every surface that draws a run's status goes through it — `workstreamMarkerStatus`
+for the ranked marker, and the work-stream header for its status line — so the
+two cannot disagree about one work stream. **That is the fold's real job.** A
+component that reads `harnessStatus` and hands it to `StatusDot` directly is
+reintroducing the second opinion, and `scheduled` is still in
+`WorkstreamMarkerStatus` for it to reach.
+
+It is there for the Sidekick **run history**, which lists runs rather than work
+streams: a pending run is exactly what somebody opened that list to find, so it
+draws `scheduled` under its own name and keeps its `.status-scheduled` rule.
+That is the only surface allowed to.
+
+`scheduled` entering the ranking as `running` also settles it against the
+personal states, which it never faced before: it now outranks `unread` and loses
+to `mentioned` and `unseen`, in the one place those pairs were already decided.
 
 ### Sidebar
 
-The sidebar omits the dot and its tooltip when the ranked marker is a resting
-one. Unread, mentioned, and unseen markers still appear on a resting work stream
-when those personal states win the ranking — which is why the suppression tests
-the *ranked* marker rather than `harnessStatus`.
+The sidebar omits the dot and its tooltip when the ranked marker is `completed`.
+Unread, mentioned, and unseen markers still appear on completed work streams
+when those personal states win the ranking.
 
 ### Needs attention
 
@@ -224,8 +236,8 @@ own:
 
 | Suite | What it proves | How to run |
 | --- | --- | --- |
-| `apps/desktop/src/renderer/lib/format.test.ts` | The ranking, pair by pair, which markers are resting, and the **Needs attention** membership rule. | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/format.test.ts` |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The sidebar omits both resting markers while preserving personal attention markers and their tooltips. | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/sidebar.test.tsx` |
+| `apps/desktop/src/renderer/lib/format.test.ts` | The ranking, pair by pair, the queued-run fold, and the **Needs attention** membership rule. | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/format.test.ts` |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The sidebar omits completed markers, draws a queued run as running, and preserves personal attention markers and their tooltips. | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/sidebar.test.tsx` |
 | `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | **Needs attention** holds the three addressed states, omits a merely unread work stream, and orders rows by recency. | `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/new-workstream.test.tsx` |
 | `apps/api/test-workers/unseen-workstream-state.test.ts` | On real workerd: added at creation, added later, cleared by the first open, unchanged by a duplicate add, set again by a re-add. | `pnpm --filter @rally/api test:workers` |
 | `apps/api/test-workers/workspace-directory-reads.test.ts` | The flag survives the workspace projection as the viewer's rather than the row's. | as above |
@@ -258,38 +270,45 @@ existing rows as seen.
 
 ## Changelog
 
-### 2026-09-10 — Scheduled joins completed as a resting marker
+### 2026-09-10 — A queued run is drawn as an active one
 
-**What changed:** The sidebar no longer draws a dot or a tooltip for a
-`scheduled` work stream. The completed-only suppression became
-`workstreamMarkerIsQuiet`, a predicate in `format.ts` that answers for
-`completed` and `scheduled` together.
+**What changed:** `scheduled` no longer draws a marker of its own. The new
+`harnessMarkerStatus` folds it into `running` on the way from a run's status to
+a marker, and both `workstreamMarkerStatus` and the work-stream header's status
+line go through it. The `running` tooltip lost the word "now" — it now covers a
+run that is admitted as well as one mid-work.
 
-**Why:** a hollow outlined dot appeared on a work stream whose only distinction
-was that its next run had not started yet, sitting in a list of rows that showed
-nothing. A marker is a claim that something is under way or that somebody is
-owed an answer, and "a run is queued" is neither — it is the same nothing as
-"the last run finished", one moment earlier. On a schedule-driven work stream it
-is also the resting state most of the time, so the dot was permanent furniture
-rather than a signal.
+**Why:** a hollow outlined dot with its own tooltip appeared on a work stream
+that had done nothing yet, in a list of rows that were otherwise plain. There is
+nothing for a reader to do about it: the agent has the work either way, nobody
+is being asked for anything, and "about to start" is not a state a person acts
+on differently from "started". On a schedule-driven work stream it is also the
+state the row sits in most of the time, so the marker that was meant to be news
+was permanent furniture.
 
-**Considered and rejected:** adding a second `markerStatus !== …` to the
-sidebar, which is where the completed rule already lived. Two states now answer
-the same question, and leaving that as a pair of inline comparisons is how the
-next surface ends up disagreeing about which of them counts. Also rejected:
-removing `scheduled` from `WorkstreamMarkerStatus` altogether. The work-stream
-header reads the run's own status and names it in words, where **Scheduled** is
-the answer somebody is looking for; deleting the state would have taken that
-sentence with it.
+**Considered and rejected:** drawing no marker at all for `scheduled`, treating
+it as a resting state alongside `completed`. That was the first attempt on this
+branch, and it is the wrong reading of the same complaint — a queued run is not
+a finished one, and hiding it means the moment a schedule fires is invisible
+until the run has already produced something. Also rejected: giving `scheduled`
+the running colour and label while leaving it a separate state. Two states with
+identical presentation is the drift the ranking's single array exists to
+prevent, and the next person to touch either would have to work out which one a
+surface meant.
 
-**Consequences:** `.status-scheduled` in `app.css` is still live — the header and
-the project space draw it — so it is not dead and must not be swept. A surface
-that wants a lit dot for a queued run is opting out of the predicate rather than
-editing it, because the two states go together by definition of what a marker
-claims. The sr-only **Scheduled** label goes with the dot in the sidebar, the
-same trade completed already made there: a scheduled work stream is announced
-by its title alone, and its timer, when it has one, still carries its own
-labelled control.
+**Consequences:** `scheduled` now enters the ranking as `running`, which settles
+it against the personal states for the first time — it outranks `unread` and
+loses to `mentioned` and `unseen`, exactly as a started run does. A scheduled
+work stream with unread messages therefore shows **Running** where it used to
+show **Unread**; that is the point rather than a side effect, since the two runs
+are indistinguishable to the reader.
+
+`scheduled` stays in `WorkstreamMarkerStatus`, with its label, description, and
+`.status-scheduled` rule, because the Sidekick run history lists *runs* and a
+pending one is what somebody opened that list to find. That leaves the state
+reachable, so the fold is what keeps work-stream surfaces honest rather than the
+type: a component that hands `harnessStatus` to `StatusDot` directly is a second
+opinion about one work stream, which is the invariant below.
 
 Shipped in the pull request for this change.
 
