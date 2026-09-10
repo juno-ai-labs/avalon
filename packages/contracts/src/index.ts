@@ -1461,6 +1461,12 @@ export const AutomationRunStatusSchema = z.enum([
 
 export const AutomationSummarySchema = z.object({
   loadable: z.boolean().default(false),
+  /**
+   * The Sidekick's chosen icon and colour, from the same catalog a work stream
+   * picks from. Optional, and absent until somebody chooses: every Sidekick
+   * that predates the picker keeps the mark derived from its id.
+   */
+  appearance: WorkstreamAppearanceSchema.optional(),
   id: IdSchema,
   name: z.string(),
   description: z.string(),

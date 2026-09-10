@@ -10,6 +10,7 @@ import {
   type AutomationSetEvaluatorRulesInputV1,
   type AutomationSummary,
   type DemoSeed,
+  type WorkstreamAppearancePatch,
   type WorkstreamAutomationSummary,
 } from "@rally/contracts";
 
@@ -173,6 +174,21 @@ export class AutomationService {
       actor,
       seed,
     });
+  }
+
+  /**
+   * Choose the Sidekick's icon or colour, and return the Sidekick that results.
+   *
+   * The detail comes back rather than a 204 so the person who picked sees the
+   * committed value immediately; everyone else sees it when WorkspaceDO pushes
+   * the row this write enqueues.
+   */
+  async setAppearance(
+    automationId: string,
+    appearance: WorkstreamAppearancePatch,
+  ): Promise<AutomationDetail> {
+    const automation = await this.automation(automationId);
+    return automation.setAppearance({ ...await this.actorRequest(automationId), appearance });
   }
 
   async pause(automationId: string): Promise<void> {

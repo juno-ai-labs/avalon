@@ -2,7 +2,7 @@ import { projectColorCells } from '../lib/project-palette';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { WORKSTREAM_ICON_KEYS, type WorkstreamAppearance, type WorkstreamAppearancePatch } from '@rally/contracts';
 import { useEffect, useRef, useState } from 'react';
-import { WORKSTREAM_ICON_COMPONENTS, WorkstreamGlyph, workstreamAppearance } from './workstream-glyph';
+import { WORKSTREAM_ICON_COMPONENTS, workstreamAppearance } from './workstream-glyph';
 
 function label(key: string): string {
   return key.split('-').map((part) => part[0]?.toUpperCase() + part.slice(1)).join(' ');
@@ -24,10 +24,25 @@ function settled(choice: PendingChoice, appearance: WorkstreamAppearance | undef
   return matches || changed;
 }
 
-export function WorkstreamAppearancePicker({ id, appearance, size, onChange }: {
+/**
+ * The one icon-and-colour palette, for anything that has an appearance.
+ *
+ * A work stream and a Sidekick pick from the same catalog and store the same
+ * two keys, and the part that is genuinely hard — a click that saves without a
+ * Save button, several of them in flight at once, retiring each preview only
+ * when *its own* field moves, and an error that belongs to the newest choice —
+ * is the same problem in both. It lives here once. What differs between the two
+ * is only the mark the trigger draws, which is why {@link renderGlyph} is a
+ * prop rather than a component this file picks: the caller owns its own
+ * treatment, and this owns the choosing.
+ */
+export function AppearancePicker({ id, appearance, label: triggerLabel, renderGlyph, onChange }: {
   id: string;
   appearance?: WorkstreamAppearance;
-  size: number;
+  /** The trigger's accessible name, and the popup's: "Change X icon and color". */
+  label: string;
+  /** The glyph, drawn from the appearance *including* choices not yet committed. */
+  renderGlyph: (appearance: WorkstreamAppearance) => React.ReactNode;
   onChange: (patch: WorkstreamAppearancePatch) => Promise<void>;
 }): React.JSX.Element {
   const [pending, setPending] = useState<PendingChoice[]>([]);
@@ -62,31 +77,31 @@ export function WorkstreamAppearancePicker({ id, appearance, size, onChange }: {
   };
   return <DropdownMenu.Root onOpenChange={(value) => { open.current = value; setError(null); }}>
     <DropdownMenu.Trigger asChild>
-      <button type="button" aria-label="Change work-stream icon and color" className="workstream-appearance-trigger window-no-drag">
-        <WorkstreamGlyph id={id} appearance={selected} size={size} />
+      <button type="button" aria-label={triggerLabel} className="appearance-picker-trigger window-no-drag">
+        {renderGlyph(selected)}
       </button>
     </DropdownMenu.Trigger>
     <DropdownMenu.Portal>
-      <DropdownMenu.Content className="menu-content workstream-appearance-popup" align="start" sideOffset={8} collisionPadding={12} aria-label="Work-stream appearance">
-        <DropdownMenu.Label className="workstream-appearance-label">Color</DropdownMenu.Label>
-        <DropdownMenu.RadioGroup value={selected.color ?? ''} className="workstream-appearance-colors" aria-label="Color">
+      <DropdownMenu.Content className="menu-content appearance-picker-popup" align="start" sideOffset={8} collisionPadding={12} aria-label={triggerLabel}>
+        <DropdownMenu.Label className="appearance-picker-label">Color</DropdownMenu.Label>
+        <DropdownMenu.RadioGroup value={selected.color ?? ''} className="appearance-picker-colors" aria-label="Color">
           {projectColorCells().map((color, cell) => (color === null
-            ? <span aria-hidden="true" className="workstream-appearance-gap" key={`gap-${cell}`} />
-            : <DropdownMenu.RadioItem key={color} value={color} aria-label={label(color)} title={label(color)} className="workstream-appearance-choice" onSelect={(event) => { event.preventDefault(); change({ color }); }}>
-              <span className="workstream-appearance-swatch" style={{ background: `var(--av-sys-color-project-${color})` }} />
+            ? <span aria-hidden="true" className="appearance-picker-gap" key={`gap-${cell}`} />
+            : <DropdownMenu.RadioItem key={color} value={color} aria-label={label(color)} title={label(color)} className="appearance-picker-choice" onSelect={(event) => { event.preventDefault(); change({ color }); }}>
+              <span className="appearance-picker-swatch" style={{ background: `var(--av-sys-color-project-${color})` }} />
             </DropdownMenu.RadioItem>))}
         </DropdownMenu.RadioGroup>
-        <DropdownMenu.Separator className="workstream-appearance-divider" />
-        <DropdownMenu.Label className="workstream-appearance-label">Icon</DropdownMenu.Label>
-        <DropdownMenu.RadioGroup value={selected.icon ?? ''} className="workstream-appearance-icons" aria-label="Icon">
+        <DropdownMenu.Separator className="appearance-picker-divider" />
+        <DropdownMenu.Label className="appearance-picker-label">Icon</DropdownMenu.Label>
+        <DropdownMenu.RadioGroup value={selected.icon ?? ''} className="appearance-picker-icons" aria-label="Icon">
           {WORKSTREAM_ICON_KEYS.map((icon) => {
             const Icon = WORKSTREAM_ICON_COMPONENTS[icon];
-            return <DropdownMenu.RadioItem key={icon} value={icon} aria-label={label(icon)} title={label(icon)} className="workstream-appearance-choice" onSelect={(event) => { event.preventDefault(); change({ icon }); }}>
+            return <DropdownMenu.RadioItem key={icon} value={icon} aria-label={label(icon)} title={label(icon)} className="appearance-picker-choice" onSelect={(event) => { event.preventDefault(); change({ icon }); }}>
               <Icon size={20} strokeWidth={1.8}  />
             </DropdownMenu.RadioItem>;
           })}
         </DropdownMenu.RadioGroup>
-        {error && <p role="alert" className="workstream-appearance-error">{error}</p>}
+        {error && <p role="alert" className="appearance-picker-error">{error}</p>}
       </DropdownMenu.Content>
     </DropdownMenu.Portal>
   </DropdownMenu.Root>;

@@ -8,13 +8,23 @@ catalog; where that pass produced none it keeps the deterministic icon derived
 from its id, which is also what every work stream created before this existed
 still shows.
 
+**A Sidekick has one too, and it is the same palette.** Clicking the hexagon on
+its profile opens the picker this document owns, over the same catalog and the
+same colour ring. What differs is only where the value is stored and how it is
+sent, which is the Sidekick's own business and lives in
+[`automation-lifecycle.md`](automation-lifecycle.md#choosing-what-a-sidekick-looks-like);
+this document owns the catalog, the descriptions, the colours, the picker's
+behaviour and the deterministic default, for every surface that has an
+appearance. Anything else that grows one comes here for those, and brings its
+own storage and its own glyph treatment.
+
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/workstream-appearance.ts` | Stable icon keys, one model-visible description per key, the default key, color keys, and partial updates. |
-| `apps/desktop/src/renderer/components/workstream-appearance-picker.tsx` | Palette, optimistic preview, ordered clicks, and failures. |
-| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `resolveWorkstreamAppearance`, the one resolver from a stored appearance to an icon component and a colour, and the two treatments over it: the filled `WorkstreamGlyph` for navigation, and `WorkstreamMark` — the bare tinted symbol — for a surface already inside the work stream, such as the center rail's main conversation row. |
+| `apps/desktop/src/renderer/components/appearance-picker.tsx` | `AppearancePicker`: palette, optimistic preview, ordered clicks, and failures, for every surface that has an appearance. The caller supplies the trigger's mark through `renderGlyph` and its accessible name through `label`; nothing else about it differs between a work stream and a Sidekick. |
+| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `resolveWorkstreamAppearance`, the one resolver from a stored appearance to an icon component and a colour, and the three treatments over it: the filled `WorkstreamGlyph` for navigation, `WorkstreamMark` — the bare tinted symbol — for a surface already inside the work stream, such as the center rail's main conversation row, and `AutomationGlyph`, the rounded hexagon a Sidekick wears. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | `patchCachedWorkstreamAppearance`, the receipt-time write that puts a committed choice on the sidebar row ahead of the directory projection, and `patchCachedGeneratedIcon`, the naming pass's, which additionally declines a row that already has an icon. Neither touches the cached detail. Built on `patchCachedWorkstream`, the write for any unversioned fact both caches must agree on. |
 | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | `useCachedWorkstreamAppearance`, the read side: one work stream's appearance off the sidebar row, for a surface that must move with that row rather than with the detail. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Orders the picker's choices on the retained Main socket and applies each one to the caches when its receipt arrives. |
@@ -22,6 +32,7 @@ still shows.
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Main conversation's nullable `workstream.appearance_json`. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Directory projection for all workspace surfaces. |
 | `apps/api/src/durable-objects/workstream-identity-storage.ts` | `rename`, the second writer: it offers the naming pass's icon and refuses it where one is stored. See [`workstream-naming.md`](workstream-naming.md). |
+| `apps/api/src/durable-objects/sidekick-do.ts` | `setAppearance` and `automation.appearance_json` — the Sidekick's copy of this, owned by [`automation-lifecycle.md`](automation-lifecycle.md#choosing-what-a-sidekick-looks-like). |
 
 ## How it works
 
@@ -117,8 +128,8 @@ until someone picks a hue.
 
 ## Boundary
 
-This controls work-stream identity only. Project appearance and automation glyphs
-keep their existing behavior. The account's personal accent and device light/dark
+This controls chosen identity — a work stream's, and a Sidekick's. Project
+appearance keeps its existing behavior. The account's personal accent and device light/dark
 preference remain owned by [desktop appearance](theming.md). This document owns
 the catalog, the descriptions, the picker, the colour, the deterministic default
 and the projection; *which* icon Rally picks for an unnamed work stream, and when
@@ -135,7 +146,9 @@ The scroll viewport is a layout choice, not a cap on the catalog or server data.
 ## Testing
 
 The picker component suite covers immediate selection, ordered rapid clicks,
-staying open, Escape focus restoration, and failed saves. The socket hook suite
+staying open, Escape focus restoration, and failed saves — through the work
+stream's own arrangement of it, because the behaviour is the picker's and the
+work stream is one real caller rather than a component built for the test. The socket hook suite
 proves the caches hold the old appearance until the receipt and the merged value
 after it, and that a naming pass's icon reaches the row and not the detail;
 the cache suite covers the merge over a stored and a generated appearance. The
@@ -144,10 +157,54 @@ refusal that protects a person's choice from a naming pass is proved in
 `message-to-output-pipeline.test.ts` appearance case covers partial updates,
 idempotent replay, and persistence across object eviction. Its dropped-write
 mutation must fail the reopened snapshot assertion. Client control/state tests
-cover the common cache path. Inspect the actual Electron popup in light and dark,
+cover the common cache path. The Sidekick's half is proved in the real-workerd
+`automation-directory.test.ts`, which drives `setAppearance` and the effect
+legs and asserts the merge, the refusal, and the value on both directory
+listings. Inspect the actual Electron popup in light and dark,
 including scrolling, and check another connected window and reopening.
 
 ## Changelog
+
+### 2026-09-10 — A Sidekick picks from the same palette, and the picker stopped belonging to work streams
+
+**What changed:** The Sidekick profile's hexagon became the trigger for this
+picker. `WorkstreamAppearancePicker` is now `AppearancePicker` in
+`appearance-picker.tsx`, taking the trigger's mark as `renderGlyph` and its
+accessible name as `label`; its CSS moved from `.workstream-appearance-*` to
+`.appearance-picker-*`. `AutomationGlyph` gained an `appearance` prop and now
+resolves through `resolveWorkstreamAppearance` like the other two treatments.
+Where a Sidekick's value is stored and how it reaches other people is
+[`automation-lifecycle.md`](automation-lifecycle.md#choosing-what-a-sidekick-looks-like).
+
+**Why:** A Sidekick had a hexagon nobody could change, in the identity colours
+this catalog already defines, and the ask was for the *same* picker rather than
+one that looks like it. The hard part of this component is not the grid: it is
+several unsaved clicks in flight at once, each retiring only when its own field
+moves authoritatively, an error that belongs to the newest choice, and a preview
+that survives an unrelated broadcast. Copying that for the second caller would
+have meant two of them, and the second copy would have been the one that
+drifted. The only thing that genuinely differs is the mark the trigger draws, so
+that is the prop and everything else stayed put.
+
+Renaming it was part of the change rather than tidying after it. A component
+called `WorkstreamAppearancePicker` mounted on a Sidekick is a name that
+actively misleads whoever reads it next, and this repository has a document
+about exactly that kind of stale name. The CSS moved for the same reason and no
+other; the rules themselves are untouched.
+
+`AutomationGlyph` reading the palette itself was the older half of the same
+problem, and the entry below already predicted it — "a future surface wanting a
+third treatment should add it here rather than reading `workstreamAppearance`
+and picking colours itself". It was already the third treatment; it simply
+predated the resolver. Going through `resolveWorkstreamAppearance` is what lets
+it render a *stored* key at all, and it inherits the unknown-key fallback that
+entry describes, which matters more here than for the other two: a Sidekick's
+key can now arrive from a client shipped after the one drawing it.
+
+**What a future change has to respect:** the picker is the primitive and the
+glyph is the caller's. A third surface adds a treatment beside
+`WorkstreamGlyph`, `WorkstreamMark` and `AutomationGlyph`, and passes it to this
+same picker; it does not fork either one.
 
 ### 2026-09-10 — Project colours live in the base token file
 
