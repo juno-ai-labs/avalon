@@ -312,9 +312,13 @@ prove layout, focus, scroll position, or overlap.
 along with the `onTeachTask` prop that carried it through `WorkstreamComposer`
 into `ComposerInput`, the work-stream host's `navigate('/automations/new')`
 handler behind it, and the `.composer-teach-task-icon` rule that coloured its
-mark. The menu is back to attachment alone. The route it opened is untouched
-and still reachable: the application menu bar's **New Automation** item emits
-the `automations/new` deep link, and the Slack agent hands out the same link.
+mark. Outside a debug build that leaves the menu at attachment alone; the
+model picker under it (a separator, a **Model** label, and the radio group,
+rendered only when `model && debugEnabled && model.kind === 'choice'`) is
+untouched, and still the menu's second section where it renders. The route the
+item opened is untouched too, and still reachable: the application menu bar's
+**New Automation** item emits the `automations/new` deep link, and the Slack
+agent hands out the same link.
 
 **Why:** The entry point was dropped as a product decision, so the shared
 composer no longer offers it. Nothing was rehomed, because the prop was not a
