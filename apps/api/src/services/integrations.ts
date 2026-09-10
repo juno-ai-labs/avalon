@@ -8023,7 +8023,12 @@ function createFirecrawlWebTools(env: Env): HarnessTool[] {
           type: "object",
           additionalProperties: false,
           properties: {
-            query: { type: "string", minLength: 1, maxLength: 500 },
+            query: {
+              type: "string",
+              minLength: 1,
+              maxLength: 500,
+              description: "What to search the public web for, in the words a person would type, for example `Cloudflare Durable Objects alarm limits`. It is a search box, not a query language: operators such as `site:` are passed through to the engine and are not interpreted here. A search matching nothing returns an empty result list rather than an error.",
+            },
             limit: {
               type: "integer",
               minimum: 1,
@@ -8077,7 +8082,11 @@ function createFirecrawlWebTools(env: Env): HarnessTool[] {
           type: "object",
           additionalProperties: false,
           properties: {
-            url: { type: "string", format: "uri" },
+            url: {
+              type: "string",
+              format: "uri",
+              description: "The page to read, as a complete http or https URL including the scheme, for example https://example.com/pricing. Take it from a web_search result or from text a person gave you rather than composing one from a domain and a guessed path. Other schemes, and addresses on private networks, are refused.",
+            },
             must_be_fresh: {
               type: "boolean",
               description: "Set true only when a freshly fetched copy is essential; otherwise a cached copy up to two days old may be used.",
