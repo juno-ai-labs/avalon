@@ -131,6 +131,57 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-10 — The group gap stopped being Airy's number
+
+**What changed:** `sys.space.group.gap` goes from 60px to 14px in both themes,
+and the four rules that existed only to escape it are gone —
+`.workstreams-section` (22px), `.projects-section` (12px),
+`.grokbot-shell .workstreams-section` (10px), and
+`.grokbot-shell .sidebar-group` (14px). One selector went with them:
+`.grokbot-shell .sidebar.is-compact .workstreams-section`, which had been
+carrying enough specificity to beat the first two and is now covered by the
+`.sidebar-section` beside it.
+
+**Why:** 60px was Airy's, set by the 2026-08-19 entry below when Airy's whole
+premise was that negative space does the work of borders. Airy is gone — the
+2026-08-20 entry collapsed the family into one design at two brightnesses — but
+its number stayed on as the single value every theme inherits, which is a
+different claim than the one that was argued for. What followed is the part
+worth recording: rather than the token being re-fitted, each consumer somebody
+actually looked at was overridden back down to the low teens, one rule at a
+time. That left the token deciding nothing except in the two places nobody had
+looked — above **Pinned**, and under `.sidebar-primary-actions` — so the number
+that survived was the one no argument was ever made for. Measured in the running
+client, the gap from the search field to the **Pinned** label was 70px; it is
+now 24px.
+
+**Where 14px comes from.** Not a fresh guess. It is what
+`.grokbot-shell .sidebar-group` already used, and a sidebar group is exactly
+what `registry.json` says this token is for: "Between one group of rows and the
+next." The overrides were the team's revealed answer to what this break should
+measure; the change adopts the one attached to the token's own definition
+instead of inventing a fifth number.
+
+**Considered and rejected:** a `.grokbot-shell .pinned-section` override, which
+was cheaper to reverse and would have fixed the reported symptom on its own. It
+was rejected because it is the same move that produced the bug: a fifth escape
+would have left the token meaning nothing, and the next section added to the
+sidebar would have inherited 60px and needed a sixth.
+
+**Consequences:** `.workstreams-section` moves from 10px to 14px — the one
+visible change beyond **Pinned**, accepted so the breaks in that rail are one
+value rather than three. `.sidebar-primary-actions` and `.projects-section` now
+follow the token too, but `app-shell.tsx` passes `conversationOnly`
+unconditionally, so neither renders in the shipping client and neither could be
+looked at; if that flag ever comes off, they are the two to check first. The
+compact rail keeps its explicit `margin-top: 0` because it hides the headings
+these gaps are spacing, which is a different reason than escaping the token. A
+`.sidebar-section` that wants a different break should now say why in a comment
+rather than write a sixth number. Margins here collapse: `.sidebar-commandbar`
+has a 12px bottom margin and the section a 14px top, so the token alone decides
+that gap — raising the commandbar's number would not show until it passed the
+token's.
+
 ### 2026-09-10 — The ink table follows APCA, not the WCAG 2 ratio
 
 **What changed:** `PALETTE_INK` flips thirteen of nineteen fills from black ink
