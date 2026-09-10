@@ -37,8 +37,10 @@ const SEARCH_DOCUMENT_SCHEMA = {
 } as const;
 
 /** Every attribute a page needs to render and admit a candidate without a loader. */
-const CANDIDATE_ATTRIBUTES = ["source", "source_id", "scope_id", "substream_id", "revision", "chunk_start", "chunk_end",
-  "text", "title", "source_label", "archived", "url", "mime_type", "occurred_at", "transcript_sequence"] as const;
+const CANDIDATE_ATTRIBUTES = ["source", "source_id", "scope_id", "revision", "chunk_start", "chunk_end"] as const;
+/** What a member result renders. Only substring retrieval asks for these; chunks carry none of them. */
+const DISPLAY_ATTRIBUTES = ["substream_id", "text", "title", "source_label", "archived", "url", "mime_type", "occurred_at",
+  "transcript_sequence"] as const;
 
 /** Separate deployments and embedding spaces; EU never falls back to Global. */
 export async function workspaceSearchIndex(env: Env, workspaceId: string): Promise<TextSearchIndex> {
@@ -277,9 +279,10 @@ export class TextSearchIndex {
 
   /**
    * A conversation's title or archive state changed: patch every live row that
-   * still shows the previous values. Each pass excludes the rows it patched, so
-   * the loop ends on its own once the conversation's rows agree, however many
-   * there are; a row with no display yet is left for its backfill rewrite.
+   * still shows the previous values. The provider patches a bounded number of
+   * rows per request and says whether more still match (`rows_remaining`), so
+   * the loop continues on its word rather than on a count; a row with no
+   * display yet is left for its backfill rewrite.
    */
   async patchConversationDisplay(conversation: { scopeId: string; substreamId: string },
     display: ConversationDisplay): Promise<number> {
@@ -291,22 +294,26 @@ export class TextSearchIndex {
         stale: ["Or", [["source_label", "NotEq", display.title], ["archived", "NotEq", display.archived]]] },
     ];
     for (const pass of passes) {
-      for (;;) {
+      let remaining = true;
+      while (remaining) {
         const result = await this.lexicalNamespace.write({
           patch_by_filter: { filters: ["And", [["source", "Eq", pass.source], ["scope_id", "Eq", conversation.scopeId],
             ["substream_id", "Eq", conversation.substreamId], ["deleted", "Eq", false], ["record_type", "Eq", "document"],
             pass.stale]], patch: pass.patch },
-          // The provider patches a bounded number of rows per request; the
-          // next pass picks up the rest because patched rows no longer match.
           patch_by_filter_allow_partial: true,
-        }).catch((error: unknown) => {
+        }).catch((error: unknown): { rows_patched?: number; rows_remaining?: boolean } => {
           // A namespace does not exist until its first write; nothing to patch.
-          if (error instanceof Error && "status" in error && error.status === 404) return { rows_patched: 0 };
+          if (error instanceof Error && "status" in error && error.status === 404) return {};
+          // A namespace with no write since the display attributes shipped
+          // refuses the filter (`filter error in key \`x\`: attribute not
+          // found`, verified live, with or without a schema on the write).
+          // None of its rows carries a substream id, so none could match.
+          if (error instanceof Error && "status" in error && error.status === 400 && /attribute not found/.test(error.message)) return {};
           throw new Error("search_index_write_failed");
         });
-        const rows = result.rows_patched ?? 0;
-        patched += rows;
-        if (rows === 0) break;
+        // Omitted when the filter matched nothing (verified live).
+        patched += result.rows_patched ?? 0;
+        remaining = result.rows_remaining === true;
       }
     }
     return patched;
@@ -359,7 +366,8 @@ export class TextSearchIndex {
     const namespace = options.mode === "semantic" ? this.namespace : this.lexicalNamespace;
     const query = (includeGeneration: boolean) => namespace.query({
       filters: ["And", pageFilters],
-      include_attributes: [...CANDIDATE_ATTRIBUTES, ...includeGeneration ? ["generation"] : []],
+      include_attributes: [...CANDIDATE_ATTRIBUTES, ...options.mode === "substring" ? DISPLAY_ATTRIBUTES : [],
+        ...includeGeneration ? ["generation"] : []],
       rank_by: searchRanking(options),
       limit: options.limit,
       consistency: { level: "strong" },
