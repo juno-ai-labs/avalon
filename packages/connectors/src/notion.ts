@@ -92,9 +92,14 @@ export const notionTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        query: { type: "string", minLength: 1, maxLength: 500 },
-        object: { type: "string", enum: ["page", "data_source"] },
-        pageSize: { type: "integer", minimum: 1, maximum: 25 },
+        query: {
+          type: "string",
+          minLength: 1,
+          maxLength: 500,
+          description: "Words to match against titles only, for example `Launch plan`. Notion does not search page bodies here, so a phrase that appears inside a page but not in its title comes back as an empty result rather than an error.",
+        },
+        object: { type: "string", enum: ["page", "data_source"], description: "Return only pages, or only data sources, which are the tables behind Notion databases. Omit it to get both." },
+        pageSize: { type: "integer", minimum: 1, maximum: 25, description: "Maximum results to return in one page. Defaults to 20." },
         startCursor: NOTION_CURSOR_SCHEMA,
       },
       required: ["query"],
@@ -106,7 +111,10 @@ export const notionTools: ToolDefinition[] = [
     capability: NotionCapabilities.read,
     mode: "read",
     idempotency: "safe",
-    inputSchema: idInputSchema("pageId"),
+    inputSchema: idInputSchema(
+      "pageId",
+      "The page's Notion id, as search returns it in `id`, for example `1a2b3c4d-5e6f-4789-a012-3456789abcde`. A page URL ends in the same 32 characters without the hyphens; either spelling works, the page title does not.",
+    ),
   },
   {
     name: "retrieve_data_source",
@@ -114,7 +122,10 @@ export const notionTools: ToolDefinition[] = [
     capability: NotionCapabilities.read,
     mode: "read",
     idempotency: "safe",
-    inputSchema: idInputSchema("dataSourceId"),
+    inputSchema: idInputSchema(
+      "dataSourceId",
+      "The data source's Notion id, as search with `object: \"data_source\"` returns it in `id`. A database's page id is not its data source id; call search rather than reusing a page id.",
+    ),
   },
   {
     name: "query_data_source",
@@ -126,8 +137,13 @@ export const notionTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        dataSourceId: { type: "string", minLength: 1, maxLength: 200 },
-        pageSize: { type: "integer", minimum: 1, maximum: 25 },
+        dataSourceId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "The data source to read rows from, as search with `object: \"data_source\"` returns it in `id`. Call retrieve_data_source first to learn what its columns mean.",
+        },
+        pageSize: { type: "integer", minimum: 1, maximum: 25, description: "Maximum rows to return in one page. Defaults to 20; follow the cursor for the rest." },
         startCursor: NOTION_CURSOR_SCHEMA,
       },
       required: ["dataSourceId"],
@@ -143,9 +159,14 @@ export const notionTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        parentPageId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
-        title: { type: "string", minLength: 1, maxLength: 300 },
-        markdown: { type: ["string", "null"], maxLength: 40_000 },
+        parentPageId: {
+          type: ["string", "null"],
+          minLength: 1,
+          maxLength: 200,
+          description: "Create the new page underneath this existing page, as its Notion id from search. Omit it, or send `null`, to create the page at the top level of whatever the integration can reach — which may not be where a person expects to find it, so name a parent when one is known.",
+        },
+        title: { type: "string", minLength: 1, maxLength: 300, description: "The page title, for example \"Q3 launch plan\". It is also written into the page as its top heading, so do not repeat it in `markdown`." },
+        markdown: { type: ["string", "null"], maxLength: 40_000, description: "The page body, in Markdown: headings, lists, tables, code fences, and links all become their Notion blocks. Omit it, or send `null`, for a page holding only its title." },
       },
       required: ["title"],
     },
@@ -160,18 +181,29 @@ export const notionTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        pageId: { type: "string", minLength: 1, maxLength: 200 },
+        pageId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "The page to edit, as its Notion id from search. Read it with retrieve_page first: every edit below is matched against the Markdown that tool returns.",
+        },
         updates: {
           type: "array",
           minItems: 1,
           maxItems: 10,
+          description: "The edits to apply, in order, each replacing exact existing text. At most 10 per call.",
           items: {
             type: "object",
             additionalProperties: false,
             properties: {
-              oldText: { type: "string", minLength: 1, maxLength: 20_000 },
-              newText: { type: "string", maxLength: 20_000 },
-              replaceAllMatches: { type: "boolean" },
+              oldText: {
+                type: "string",
+                minLength: 1,
+                maxLength: 20_000,
+                description: "The exact text to find, copied from what retrieve_page returned, including its Markdown punctuation — `## Risks`, not `Risks`. It is literal text, not a pattern. Text that matches nothing changes nothing rather than failing, so copy rather than retype.",
+              },
+              newText: { type: "string", maxLength: 20_000, description: "What the matched text becomes. An empty string deletes it." },
+              replaceAllMatches: { type: "boolean", description: "Replace every occurrence rather than only the first. Defaults to false. Leave it false and include enough surrounding text to make `oldText` unique when only one place should change." },
             },
             required: ["oldText", "newText"],
           },
@@ -190,8 +222,8 @@ export const notionTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        pageId: { type: "string", minLength: 1, maxLength: 200 },
-        markdown: { type: "string", minLength: 1, maxLength: 40_000 },
+        pageId: { type: "string", minLength: 1, maxLength: 200, description: "The page to add to, as its Notion id from search." },
+        markdown: { type: "string", minLength: 1, maxLength: 40_000, description: "Markdown added as new blocks at the end of the page. Existing content is untouched; use update_page_markdown to change what is already there." },
       },
       required: ["pageId", "markdown"],
     },
@@ -206,8 +238,13 @@ export const notionTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        blockId: { type: "string", minLength: 1, maxLength: 200 },
-        pageSize: { type: "integer", minimum: 1, maximum: 25 },
+        blockId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "The page or block whose comments to read, as its Notion id. A page id returns the comments on the page itself; a block id returns the ones anchored to that block. Only unresolved comments come back, so a page whose discussions were all resolved returns an empty list rather than an error.",
+        },
+        pageSize: { type: "integer", minimum: 1, maximum: 25, description: "Maximum comments to return in one page. Defaults to 20." },
         startCursor: NOTION_CURSOR_SCHEMA,
       },
       required: ["blockId"],
@@ -223,9 +260,19 @@ export const notionTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        pageId: { type: "string", minLength: 1, maxLength: 200 },
-        discussionId: { type: "string", minLength: 1, maxLength: 200 },
-        markdown: { type: "string", minLength: 1, maxLength: 20_000 },
+        pageId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "Start a new top-level comment on this page, as its Notion id from search. Send this or `discussionId`, never both.",
+        },
+        discussionId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "Reply inside an existing discussion, as the `discussion_id` list_comments returns on each comment. It is not a comment id and not a page id. Send this or `pageId`, never both.",
+        },
+        markdown: { type: "string", minLength: 1, maxLength: 20_000, description: "The comment text, in Markdown. It is posted as the authorized Notion identity." },
       },
       required: ["markdown"],
       // Exclusivity is stated in the description and enforced by
@@ -1179,11 +1226,11 @@ function requiredString(record: Record<string, unknown>, key: string, message: s
   return value;
 }
 
-function idInputSchema(name: string): Record<string, unknown> {
+function idInputSchema(name: string, description: string): Record<string, unknown> {
   return {
     type: "object",
     additionalProperties: false,
-    properties: { [name]: { type: "string", minLength: 1, maxLength: 200 } },
+    properties: { [name]: { type: "string", minLength: 1, maxLength: 200, description } },
     required: [name],
   };
 }
