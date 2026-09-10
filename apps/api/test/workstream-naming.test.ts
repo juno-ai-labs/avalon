@@ -89,7 +89,7 @@ describe("work-stream naming", () => {
     expect(appearance(database)).toEqual({ icon: "megaphone", color: null });
   });
 
-  it("names a private child with the same pass, and spends no icon on it", async () => {
+  it("names a private child with the same pass, and stores what it chose", async () => {
     const database = seededDatabase();
     const requests: Array<Record<string, unknown>> = [];
     const published: Array<Record<string, unknown>> = [];
@@ -108,22 +108,23 @@ describe("work-stream naming", () => {
       userId,
     });
 
-    // The name is written and published exactly as it is for a work stream…
+    // Written and published exactly as it is for a work stream, icon included:
+    // there is a row to store it in, so it is stored. What keeps a substream
+    // looking like a substream is the surface, not the absence of a value —
+    // the sidebar's child rows draw the branch line, and the directory payload
+    // behind them carries no appearance at all
+    // (`workstream-sidebar.test.tsx` holds both).
     expect(workstreamRow(database)).toMatchObject({
       title: "Retry budget failures",
       title_status: "automatic",
     });
-    // …and the icon half is dropped, in the write and in the event alike.
-    // Nothing draws a child's own appearance — its rows carry the branch line
-    // and its header shows the parent's mark — so an icon written here is a
-    // shared identity nobody asked for, and one published here is a field the
-    // client discards on arrival.
     expect(published).toEqual([{
       type: "workstream_renamed",
       title: "Retry budget failures",
       titleStatus: "automatic",
+      icon: "megaphone",
     }]);
-    expect(appearance(database)).toBeNull();
+    expect(appearance(database)).toEqual({ icon: "megaphone", color: null });
   });
 
   it("asks the naming agent's own model for a name, with reasoning switched off", async () => {

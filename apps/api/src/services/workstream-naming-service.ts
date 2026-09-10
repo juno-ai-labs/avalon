@@ -383,17 +383,16 @@ async function advanceTitle(env: Env, input: {
   icon: WorkstreamIconKey | null;
   standingTitle: string;
 }): Promise<void> {
-  // A private child has no appearance to choose. Its rows carry the branch
-  // line, its header shows the parent's mark, and no surface anywhere reads a
-  // child's own icon — so the pass asks for one, because it is the work
-  // stream's own pass and one call answers both halves, and then throws that
-  // half away here rather than writing an appearance nothing will ever draw.
-  const namesMainConversation = (input.substreamId ?? "0") === "0";
+  // One pass, one write, whichever conversation is being named. A private
+  // child stores the icon it was given like any other conversation — the row
+  // is there and the model already chose one — and no surface draws it: the
+  // sidebar's child rows carry the branch line, and the payload that feeds
+  // them has no appearance field to carry anything else.
   const result = await createIdentityObjectPort(
     env, input.workspaceId, input.workstreamId, undefined, input.substreamId,
   ).rename({
       title: input.title,
-      icon: namesMainConversation ? input.icon : null,
+      icon: input.icon,
       from: input.from,
       to: input.to,
       now: Date.now(),
