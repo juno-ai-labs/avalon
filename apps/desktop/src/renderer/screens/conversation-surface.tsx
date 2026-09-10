@@ -2043,22 +2043,20 @@ export function ConversationSurface({
           )}
         </ConnectingCardSlot>
         <div className="transcript-column" ref={transcriptContentRef}>
-          <div role="status" className={loadingOlder || (nearHistoryEdge && !feedLive)
+          {/* Over a seed the connecting card, sticky at this same edge, is the
+              affordance: a row here would sit under it saying the same thing. */}
+          <div role="status" className={loadingOlder || (nearHistoryEdge && !feedLive && !feedFromLocalCache)
             ? 'transcript-history-control' : undefined}>
-            {(loadingOlder || (nearHistoryEdge && !feedLive)) && <>
+            {(loadingOlder || (nearHistoryEdge && !feedLive && !feedFromLocalCache)) && <>
               <LoaderCircle aria-hidden="true" className="spin" size={14} />
-              <span>{feedLive
-                ? 'Loading earlier messages…'
-                : feedFromLocalCache ? 'Earlier messages load once Rally connects…' : 'Waiting to reconnect…'}</span>
+              <span>{feedLive ? 'Loading earlier messages…' : 'Waiting to reconnect…'}</span>
             </>}
           </div>
           {olderTranscriptRange && olderMessagesError && !loadingOlder && (
             <div className="transcript-history-control">
               <Button disabled={!feedLive} onClick={() => void loadOlderMessages()}>
                 <RefreshCcw aria-hidden="true" size={14} />
-                {feedLive
-                  ? 'Retry loading earlier messages'
-                  : feedFromLocalCache ? 'Earlier messages load once Rally connects…' : 'Waiting to reconnect…'}
+                {feedLive ? 'Retry loading earlier messages' : 'Waiting to reconnect…'}
               </Button>
             </div>
           )}
