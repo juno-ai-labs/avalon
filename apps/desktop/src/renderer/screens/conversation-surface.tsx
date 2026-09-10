@@ -2105,7 +2105,6 @@ export function ConversationSurface({
             onStop={async () => {
               await stop.mutateAsync();
             }}
-            onTeachTask={() => void navigate('/automations/new')}
             onReorderQueue={reorderQueue}
             queueItems={queueItems}
             sending={sending}

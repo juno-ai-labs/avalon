@@ -306,6 +306,26 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-10 — The composer's action menu drops "Teach a task"
+
+**What changed:** The second item in the message capsule's plus menu is gone,
+along with the `onTeachTask` prop that carried it through `WorkstreamComposer`
+into `ComposerInput`, the work-stream host's `navigate('/automations/new')`
+handler behind it, and the `.composer-teach-task-icon` rule that coloured its
+mark. The menu is back to attachment alone. The route it opened is untouched
+and still reachable: the application menu bar's **New Automation** item emits
+the `automations/new` deep link, and the Slack agent hands out the same link.
+
+**Why:** The entry point was dropped as a product decision, so the shared
+composer no longer offers it. Nothing was rehomed, because the prop was not a
+composer capability to move: it was the work-stream host reaching a product
+route through an optional prop on the shared input, which is what the boundary
+above forbids, and removing the item removes the violation rather than relocating
+it. The reasoning for adding the item was not recorded — it arrived in a pull
+request about work-stream icons, with no note of its own. A future change that
+wants a second action here should add it as a capability the surface owns, not
+as an optional callback a host fills with navigation.
+
 ### 2026-09-10 — Jump to latest hangs above the composer, whatever its height
 
 **What changed:** The control is anchored to the composer dock's top edge from
