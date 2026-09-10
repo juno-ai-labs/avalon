@@ -134,6 +134,7 @@
     "cmp.row.background-selected": "rgba(119, 119, 119, 0.17)",
     "cmp.bubble.background": "#eeeeee",
     "cmp.elicitation.option-background": "#e8e8e8",
+    "cmp.keycap.background": "rgba(119, 119, 119, 0.17)",
     "cmp.bubble.human-background": "#070707",
     "cmp.composer.background": "#fcfcfc",
     "cmp.composer.border-color": "rgba(20, 20, 20, 0.30)",

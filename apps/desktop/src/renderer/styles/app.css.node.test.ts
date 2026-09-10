@@ -817,6 +817,36 @@ describe('global reduced-motion kill switch', () => {
  * app laid out a digest brief in full with a decorative "more" beside it.
  */
 /**
+ * A keycap is a label, not a selection.
+ *
+ * `onboarding.css` re-points `cmp.row.background-selected` at the reader's own
+ * account accent under `html[data-personal-color]`, which is what selection is
+ * supposed to do. The letter beside an option is not selection: it says which
+ * key answers this row, and while it borrowed that fill an accent of `blue`
+ * printed A, B, C, D on pale blue chips. `cmp.keycap.background` carries the
+ * same neutral value with none of that reach, so naming the rejected token as
+ * well as the required one is what makes the revert fail here rather than in
+ * somebody's window — the two are identical for a reader with no accent set,
+ * which is every reader this suite renders.
+ */
+describe('option keycaps', () => {
+  it('fills the letter from the keycap token, not the selected row', () => {
+    const keycap = rule('.app-shell .elicitation-option > kbd');
+    expect(keycap).toContain('background: var(--av-cmp-keycap-background);');
+    expect(keycap).not.toContain('var(--av-cmp-row-background-selected)');
+  });
+
+  /**
+   * And the row underneath still is a selection, so it keeps the accent. A fix
+   * that took the tint off the whole panel would pass the assertion above.
+   */
+  it('leaves the selected option itself drawn in the accent', () => {
+    expect(rule('.app-shell .elicitation-option.is-selected,\n.app-shell .elicitation-option.is-selected:hover'))
+      .toContain('background: var(--av-cmp-row-background-selected);');
+  });
+});
+
+/**
  * The feed's spacing is one scale. A literal that slips back into a feed rule
  * renders correctly and stays invisible until somebody moves `ref.space.unit`
  * and one gap does not move with it, which is how the feed accumulated every

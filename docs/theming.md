@@ -165,6 +165,32 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-10 — A keycap takes its own fill, not the selected row's
+
+**What changed:** `cmp.keycap.background` is a new token — the neutral fill a
+keyboard-shortcut chip is printed on, at the value the selected row already
+resolves to in each appearance (`rgba(119, 119, 119, 0.17)` light,
+`rgba(119, 119, 119, 0.32)` dark). The letter chips in an agent question's
+option list (`.app-shell .elicitation-option > kbd`) draw from it instead of
+from `cmp.row.background-selected`. Nothing moves for a reader with no account
+accent: the two tokens hold the same value, and the chip renders exactly as it
+did.
+
+**Why:** `onboarding.css` re-points `cmp.row.background-selected` at the
+signed-in person's accent under `html[data-personal-color]`, which is the right
+answer for a *selection* — a row this reader picked, drawn in this reader's
+colour. A keycap is not a selection. It is a static label saying which key
+answers this option, and it borrowed the selection fill only because the value
+was the one wanted. So an account accent of `blue` printed A, B, C, D on pale
+blue chips, and every other accent printed its own; the letters read as
+somebody's colour rather than as keys. Splitting the token is what makes that
+structural: the accent can keep re-pointing selection wherever selection is
+drawn, and a keycap is no longer collateral. The value is duplicated rather than
+aliased on purpose — an alias resolves to `var(--av-cmp-row-background-selected)`
+in the generated stylesheet, which is the tint again. Two other keycaps
+(`.new-chat-recipient-shortcut kbd`, `.rally-search-result kbd`) still name
+their own fills and were left as they are; this token is where they should land
+when either is next touched.
 ### 2026-09-10 — The turn gap closes onto the hover row
 
 **What changed:** `sys.space.stack.gap` is `{ref.space.unit}` (4px, was
