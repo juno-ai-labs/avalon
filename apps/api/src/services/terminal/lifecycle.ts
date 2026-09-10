@@ -16,6 +16,7 @@ import { isTerminalProviderNotFound, type TerminalSandboxProvider } from "./prov
 import { TerminalToolError } from "./tools";
 import type { HarnessRunPortFactory } from "../../runtime/harness-run-port";
 import { putStagedResourceObject } from "../resource-object-cleanup";
+import { unlistedResourceMetadata } from "../resource-listing";
 
 const MAX_WORKSPACE_BACKUP_BYTES = 50 * 1_048_576;
 
@@ -563,6 +564,13 @@ export function createTerminalWorkspaceBackup(
           size: bytes.byteLength,
           excluded: [".rally", ".avalon", ".git", "node_modules", ".venv", "vendor/bundle"],
           gitHistory: ".avalon-recovery/repository.bundle",
+          // Nobody asked for this archive; checkout made it so the workspace it
+          // is about to delete stays recoverable. It is still attached, so the
+          // checkout receipt's `backup.resourceId` opens and imports it, but the
+          // artifacts rail and the model's inventory are for what the work
+          // produced, and a compressed copy of the previous workspace is not
+          // that. See `services/resource-listing.ts`.
+          ...unlistedResourceMetadata(),
         }),
         createdAt,
         createdAt,

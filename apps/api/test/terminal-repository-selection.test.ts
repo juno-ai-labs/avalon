@@ -256,6 +256,32 @@ async function fixture(input?: {
   };
 }
 
+/**
+ * The `metadata_json` a lifecycle capture bound into its `INSERT INTO resources`.
+ *
+ * Found by shape rather than by position: both captures bind their metadata as
+ * the one parameter that parses to an object carrying `source`, and an index
+ * would silently follow the wrong column the next time either statement gains one.
+ */
+function insertedResourceMetadata(
+  inserts: ReadonlyArray<ReadonlyArray<string | number | null>>,
+): Record<string, unknown> {
+  const found = inserts.flat().flatMap((value) => {
+    if (typeof value !== "string") return [];
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        && "source" in (parsed as Record<string, unknown>)
+        ? [parsed as Record<string, unknown>]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+  expect(found).toHaveLength(1);
+  return found[0]!;
+}
+
 describe("Terminal model repository selection", () => {
   it("keeps final-diff preservation ownership in WorkspaceDO after D1 retirement", async () => {
     const regional = preRetirementProductSqliteDatabase();
@@ -267,6 +293,7 @@ describe("Terminal model repository selection", () => {
     const payloadPut = vi.fn(async () => undefined);
     const attachRuntimeResource = vi.fn(() => ({ status: 200, bodyJson: JSON.stringify({ ok: true }) }));
     const runtimeStatements: string[] = [];
+    const resourceInserts: Array<Array<string | number | null>> = [];
     const workstreamEnv = createTestEnv({
         DB: sqliteD1(regional),
         AVALON_REGION: "global",
@@ -275,6 +302,9 @@ describe("Terminal model repository selection", () => {
       });
     const env = withWorkspaceRuntimeDatabase(workstreamEnv, W, async (statements) => {
       runtimeStatements.push(...statements.map(({ sql }) => sql));
+      for (const statement of statements) {
+        if (statement.sql.includes("INSERT INTO resources")) resourceInserts.push([...statement.params]);
+      }
       return statements.map(() => ({ columns: [], rows: [], changes: 1 }));
     });
     const provider = {
@@ -294,6 +324,9 @@ describe("Terminal model repository selection", () => {
     expect(runtimeStatements.some((sql) => sql.includes("INSERT INTO resources"))).toBe(true);
     expect(payloadPut).toHaveBeenCalledOnce();
     expect(attachRuntimeResource).toHaveBeenCalledOnce();
+    // The contrast that gives the backup's flag its meaning: a preserved diff is
+    // what the work produced, so it stays in the artifacts rail.
+    expect(insertedResourceMetadata(resourceInserts)).not.toHaveProperty("listing");
   });
 
   it("keeps repository-replacement backup ownership in WorkspaceDO after D1 retirement", async () => {
@@ -305,6 +338,7 @@ describe("Terminal model repository selection", () => {
     const backupSha = await sha256Hex(backupBytes);
     const payloadPut = vi.fn(async () => undefined);
     const runtimeStatements: string[] = [];
+    const resourceInserts: Array<Array<string | number | null>> = [];
     const workstreamEnv = createTestEnv({
         DB: sqliteD1(regional),
         AVALON_REGION: "global",
@@ -312,6 +346,9 @@ describe("Terminal model repository selection", () => {
       });
     const env = withWorkspaceRuntimeDatabase(workstreamEnv, W, async (statements) => {
       runtimeStatements.push(...statements.map(({ sql }) => sql));
+      for (const statement of statements) {
+        if (statement.sql.includes("INSERT INTO resources")) resourceInserts.push([...statement.params]);
+      }
       return statements.map(() => ({ columns: [], rows: [], changes: 1 }));
     });
     const provider = {
@@ -345,6 +382,12 @@ describe("Terminal model repository selection", () => {
     expect(runtimeStatements.some((sql) => sql.includes("INSERT INTO resources"))).toBe(true);
     expect(payloadPut).toHaveBeenCalledOnce();
     expect(attach).toHaveBeenCalledOnce();
+    // Attached, so the receipt's resource id still opens and imports it, and
+    // unlisted, so no rail or model inventory advertises the archive.
+    expect(insertedResourceMetadata(resourceInserts)).toMatchObject({
+      source: "terminal_repository_replacement",
+      listing: "unlisted",
+    });
   });
 
   it("prefers read-only remote authority while keeping local edits available and backs up before replacement", async () => {

@@ -2960,6 +2960,26 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // keeps its `not_before`, as in 47. See docs/text-search.md, "Version skew
   // between producers and the consumer".
   statements: ['UPDATE resource_search_versions SET pending = 1'],
+}, {
+  version: 52,
+  description: 'unlist the Terminal recovery backups already attached',
+  // Repository checkout has always attached its pre-replacement archive as an
+  // ordinary generated resource, so every one made before this version is in
+  // its work stream's artifacts rail and its model inventory. The producer now
+  // marks new ones unlisted; these are the ones already written.
+  //
+  // Scoped by the identity the backup path derives rather than by title, which
+  // carries a repository name. Idempotent, and no wider than the one producer:
+  // `terminal-final-diff:` captures are the work's own output and stay listed.
+  // The `AFTER UPDATE` trigger on `resources` republishes each row's search
+  // document, and a null category there withdraws the ones already indexed.
+  statements: [
+    `UPDATE resources
+        SET metadata_json = json_set(metadata_json, '$.listing', 'unlisted')
+      WHERE provider = 'avalon_generated'
+        AND provider_resource_id LIKE 'terminal-workspace-backup:%'
+        AND COALESCE(json_extract(metadata_json, '$.listing'), '') != 'unlisted'`,
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {

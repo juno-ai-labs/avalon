@@ -108,6 +108,15 @@ comparison of search content/category inputs. Non-search metadata and bookkeepin
 updates preserve the revision and pending/retry state; insert/delete triggers
 remain unchanged. `resource-update-cost.test.ts` verifies a populated v42 upgrade.
 
+WorkspaceDO migration 52 sets `metadata_json.listing` to `unlisted` on the
+Terminal recovery backups already stored, scoped by their
+`terminal-workspace-backup:` provider identity. The key is read by every
+statement that enumerates resources and by none that resolves one by id, so it
+changes presentation without touching the authority or the access decision; the
+migration 33 update trigger republishes each row's search document, where a null
+category withdraws the ones already indexed. See
+[agent attachments](agent-attachments.md).
+
 ### Identity and tenancy
 
 Account presentation and new-user eligibility are added by migration 0099.
@@ -1009,6 +1018,29 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-09-11 — A resource can be reachable without being enumerated
+
+**What changed:** `metadata_json.listing` carries one value, `unlisted`. Every
+statement that enumerates resources applies `listedResourceVisibilitySql`; every
+point lookup deliberately does not. WorkspaceDO migration 52 backfills the
+Terminal recovery backups written before their producer set it.
+
+**Why:** The `resources` table had no way to say that a row exists for recovery
+rather than for reading. Terminal's pre-replacement archive has to stay resolvable
+by id and absent from the rail, the workspace list, the model's inventory and
+search, and those are the same fact only for content someone asked for.
+
+**Considered and rejected:** A typed column on `resources` or on
+`workstream_resource_links`, which is the right shape once a second producer
+needs one; today it is a Durable Object migration and, on the link, a protocol
+and mirror change for a single writer. A distinct `provider` value was rejected
+because `provider` feeds `requiresAttachment` in `authorizationResourceFacts`.
+
+**What a future change has to respect:** Listing is presentation. No read
+decision may be derived from it, and no enumerating statement may omit the
+predicate. Promote it to a column when a producer needs something a single flag
+cannot express, and migrate the stored key in the same change.
+
 ### 2026-09-10 — WorkspaceDO migration 50 stores a Sidekick's memory scope as `sidekick`
 
 **What changed:** `memory_scopes.kind` admits `sidekick` where it admitted
@@ -1025,6 +1057,7 @@ workerd.
 **Why:** [`automation-lifecycle.md`](automation-lifecycle.md#2026-09-10--the-stored-names-follow-the-model-facing-ones)
 records the rename; this entry records that it reached a stored vocabulary and
 how.
+
 
 ### 2026-09-09 — Bound and recover early-access operations
 
