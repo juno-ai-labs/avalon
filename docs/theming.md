@@ -149,11 +149,10 @@ its number stayed on as the single value every theme inherits, which is a
 different claim than the one that was argued for. What followed is the part
 worth recording: rather than the token being re-fitted, each consumer somebody
 actually looked at was overridden back down to the low teens, one rule at a
-time. That left the token deciding nothing except in the two places nobody had
-looked — above **Pinned**, and under `.sidebar-primary-actions` — so the number
-that survived was the one no argument was ever made for. Measured in the running
-client, the gap from the search field to the **Pinned** label was 70px; it is
-now 24px.
+time. That left the token deciding nothing anywhere except one place nobody had
+looked — above **Pinned** — so the number that survived was the one no argument
+was ever made for. Measured in the running client, the gap from the search field
+to the **Pinned** label was 70px; it is now 24px.
 
 **Where 14px comes from.** Not a fresh guess. It is what
 `.grokbot-shell .sidebar-group` already used, and a sidebar group is exactly
@@ -168,12 +167,27 @@ was rejected because it is the same move that produced the bug: a fifth escape
 would have left the token meaning nothing, and the next section added to the
 sidebar would have inherited 60px and needed a sixth.
 
+**One rule still reads as a token consumer and is not** — review caught this,
+and it is why the paragraph above says one place rather than two.
+`.sidebar-primary-actions` (`app.css:703`) declares
+`margin-bottom: var(--av-sys-space-group-gap)`, but its only render site
+(`sidebar.tsx`) puts `sidebar-secondary-actions` on the same element, and
+`.sidebar-secondary-actions` (`app.css:5330`) sets `margin: 0 1px 14px` at equal
+specificity some 4,600 lines later. Source order decides it, so that shorthand
+shadows the longhand — along with the `display` and `gap` beside it, which the
+same rule also replaces. All three declarations at `app.css:703` are dead as
+written, and were carrying 14px long before this change. They are left in place
+rather than swept with the others: deleting them is a no-op only for as long as
+both classes stay on that element, the block does not render, and a change that
+cannot be looked at in a window is not one to make on cascade reasoning alone.
+Whoever removes `conversationOnly` should fix that rule before trusting it.
+
 **Consequences:** `.workstreams-section` moves from 10px to 14px — the one
 visible change beyond **Pinned**, accepted so the breaks in that rail are one
-value rather than three. `.sidebar-primary-actions` and `.projects-section` now
-follow the token too, but `app-shell.tsx` passes `conversationOnly`
-unconditionally, so neither renders in the shipping client and neither could be
-looked at; if that flag ever comes off, they are the two to check first. The
+value rather than three. `.projects-section` now follows the token too, but
+`app-shell.tsx` passes `conversationOnly` unconditionally, so it does not render
+in the shipping client and could not be looked at; if that flag ever comes off,
+it and the shadowed rule above are what to check first. The
 compact rail keeps its explicit `margin-top: 0` because it hides the headings
 these gaps are spacing, which is a different reason than escaping the token. A
 `.sidebar-section` that wants a different break should now say why in a comment
