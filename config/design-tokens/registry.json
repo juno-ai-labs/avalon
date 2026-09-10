@@ -3,6 +3,7 @@
   "description": "Every token a Rally theme may set. A theme file supplies values for these paths and no others.",
   "groups": {
     "cmp.elicitation": "The inset choice list within an agent question, distinct from its surrounding message surface.",
+    "cmp.keycap": "The chip a keyboard shortcut is printed on. It takes a fill of its own rather than the selected row's because it is a label, not a selection: this registry's own entry for `cmp.row.background-selected` licenses a theme to set it to `transparent` and mark selection with the marker alone, and a keycap that followed it there would disappear, having never been a selection. The letter beside an option in an agent question reads this today; the stylesheet's other keycaps still name their own fills and should land here when either is next touched.",
     "ref.color.neutral": "The neutral ramp, ordered by contrast against the surface rather than by lightness, so a step means the same thing whichever way round a theme runs. Fills at the faint end, text at the strong end.",
     "ref.color.line": "The line ramp. Borders are not faint fills: a theme that draws with space needs to flatten its lines without erasing the fills that share a contrast level with them.",
     "ref.space": "The spacing unit. Every margin, padding and gap in the feed is a whole multiple of it, derived in the stylesheet, and the semantic spacing tokens are multiples of it too, so a theme that wants a looser or tighter feed moves one number.",
@@ -663,6 +664,9 @@
       "$type": "color"
     },
     "cmp.elicitation.option-background": {
+      "$type": "color"
+    },
+    "cmp.keycap.background": {
       "$type": "color"
     },
     "cmp.bubble.human-background": {

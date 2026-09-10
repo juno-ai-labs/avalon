@@ -385,6 +385,16 @@
    * surrounding message surface. */
   --av-cmp-elicitation-option-background: #e8e8e8;
 
+  /* The chip a keyboard shortcut is printed on. It takes a fill of its own
+   * rather than the selected row's because it is a label, not a selection:
+   * this registry's own entry for `cmp.row.background-selected` licenses a
+   * theme to set it to `transparent` and mark selection with the marker alone,
+   * and a keycap that followed it there would disappear, having never been a
+   * selection. The letter beside an option in an agent question reads this
+   * today; the stylesheet's other keycaps still name their own fills and
+   * should land here when either is next touched. */
+  --av-cmp-keycap-background: rgba(119, 119, 119, 0.17);
+
   /* The fill behind a person's turn. A theme with one continuous ground can
    * set all three to nothing and let the message sit on the page as plain
    * text. */
@@ -722,6 +732,8 @@
   --av-cmp-bubble-background: #2f2f2f;
 
   --av-cmp-elicitation-option-background: var(--av-sys-color-surface-raised-hover);
+
+  --av-cmp-keycap-background: rgba(119, 119, 119, 0.32);
 
   --av-cmp-bubble-human-background: #5a5a5a;
   --av-cmp-bubble-human-foreground: #fcfcfc;

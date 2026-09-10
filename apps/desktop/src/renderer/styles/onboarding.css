@@ -18,8 +18,16 @@ html[data-personal-color='teal'] { --personal-color: var(--av-sys-color-project-
 html[data-personal-color='green'] { --personal-color: var(--av-sys-color-project-emerald); }
 html[data-personal-color='amber'] { --personal-color: var(--av-sys-color-project-orange); }
 html[data-personal-color='slate'] { --personal-color: var(--av-sys-color-project-black); }
+/* The accent colours marks and controls; it does not fill rows. A selected row
+   used to take it here, which is defensible — the row this reader picked, in
+   this reader's colour — but the fill is `cmp.row.background-selected`, and
+   half of what reads that token is not a selection: an inline mention chip, a
+   resting dictation button, two hovers, and the letter beside an option. Those
+   wore somebody's colour for no reason anyone chose, and splitting one token
+   per borrower to keep the accent on the other half was more names than the
+   effect was worth. So row fills stay neutral in both appearances and the
+   accent keeps the `sys.color.accent.*` group below. */
 html[data-personal-color] {
-  --av-cmp-row-background-selected: color-mix(in srgb, var(--personal-color) 17%, transparent);
   --av-sys-color-accent-base: color-mix(in srgb, var(--personal-color) 35%, var(--av-sys-color-text-default));
   --av-sys-color-accent-strong: color-mix(in srgb, var(--personal-color), var(--av-sys-color-text-default) 20%);
   --av-sys-color-accent-soft: color-mix(in srgb, var(--personal-color), var(--av-sys-color-surface-canvas) 20%);
@@ -138,8 +146,6 @@ html[data-personal-color] { --av-sys-color-accent-on: var(--av-sys-color-text-on
 
 
 .personal-setup .guided-email-field input { padding: 10px 14px; border-radius: 10px; color: var(--av-sys-color-text-default); }
-
-html[data-personal-color][data-theme='dark'] { --av-cmp-row-background-selected: color-mix(in srgb, var(--personal-color) 32%, transparent); }
 
 .invite-email-field { width: min(580px, 100%); text-align: left; }
 .invite-email-field > label { display: block; font-size: 13px; margin-bottom: 10px; color: var(--av-sys-color-text-muted); }
