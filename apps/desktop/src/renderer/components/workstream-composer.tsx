@@ -39,6 +39,16 @@ interface MentionCandidate {
 interface WorkstreamComposerProps {
   /** What the empty box invites; an automation's conversation asks for its instructions. */
   placeholder?: string;
+  /**
+   * The launch surfaces dress this composer as the one they hand off from, so
+   * the element the eye follows into the dock is the same element throughout.
+   * Everything else about it — mentions, attachments, the queue, the draft —
+   * is what an ordinary conversation composer does.
+   */
+  className?: string;
+  footerHint?: string;
+  submitLabel?: string;
+  autoFocus?: boolean;
   api?: Pick<RallyApi, 'getTranscriptionSocketTicket'>;
   workstream: WorkstreamDetail;
   workspaceId?: string;
@@ -87,6 +97,10 @@ const BASE_COMMANDS: ComposerCommand[] = [
 
 export function WorkstreamComposer({
   placeholder = 'Message the work stream…',
+  className,
+  footerHint,
+  submitLabel = 'Send message',
+  autoFocus = false,
   api,
   workstream,
   workspaceId = 'test-workspace',
@@ -412,7 +426,10 @@ export function WorkstreamComposer({
         api={api}
         ariaLabel={placeholder.replace(/…$/u, '')}
         attachments={attachments}
+        autoFocus={autoFocus}
+        {...(className ? { className } : {})}
         error={error}
+        {...(footerHint ? { footerHint } : {})}
         fileInputRef={fileInputRef}
         layout="message-capsule"
         onAttach={onAttach}
@@ -463,7 +480,7 @@ export function WorkstreamComposer({
             )
           : undefined}
         submitDisabled={uploading || (!text.trim() && readyAttachmentCount === 0)}
-        submitLabel="Send message"
+        submitLabel={submitLabel}
         submitting={sending}
         uploading={uploading}
         value={text}

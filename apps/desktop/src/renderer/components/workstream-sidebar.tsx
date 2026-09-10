@@ -9,6 +9,7 @@ import type { WorkstreamDetail } from '../lib/types';
 import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-socket';
 import { COLLAPSED_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '../lib/ui-store';
 import { AvatarStack, IconButton } from './primitives';
+import { PENDING_SUBSTREAM_DRAFT_ID } from './substream-launch';
 import { ResourceIcon } from './markdown-citations';
 import { WorkstreamMark } from './workstream-glyph';
 
@@ -154,7 +155,20 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
               : <Fragment key={child.substreamId}>{row}</Fragment>;
           })}
           {onNewSubstream && (
-            <button className="workstream-context-row workstream-new-substream" onClick={onNewSubstream} title="New substream" aria-label="New substream" type="button">
+            // Current while a substream is being written, because that surface
+            // is where the reader is: the row it was opened from is the one
+            // thing on screen that still says so.
+            <button
+              aria-current={selectedSubstreamId === PENDING_SUBSTREAM_DRAFT_ID ? 'page' : undefined}
+              aria-label="New substream"
+              className={clsx(
+                'workstream-context-row workstream-new-substream',
+                selectedSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && 'is-current',
+              )}
+              onClick={onNewSubstream}
+              title="New substream"
+              type="button"
+            >
               <span className="workstream-context-mark"><IconPlus aria-hidden="true" size={22} stroke={1.5} /></span>
               <span className="workstream-context-copy"><span>New substream</span></span>
             </button>

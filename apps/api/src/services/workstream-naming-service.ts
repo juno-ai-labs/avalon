@@ -95,6 +95,13 @@ export function provisionalWorkstreamTitle(objective: string, fallback: string):
 export interface WorkstreamNamingInput {
   workspaceId: string;
   workstreamId: string;
+  /**
+   * Which of the parent's conversations is being named; the main one by
+   * default. A private child is named from its own opening message, through
+   * its own object, and its rename is published into its own room — the parent
+   * keeps whatever name it already had.
+   */
+  substreamId?: string | undefined;
   objective: string;
   openingMessage: string;
   /** The title creation wrote, and the one that stands if naming produces none. */
@@ -128,6 +135,7 @@ export async function nameWorkstream(env: Env, input: WorkstreamNamingInput): Pr
     await advanceTitle(env, {
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
+      substreamId: input.substreamId,
       from: "naming",
       to: "automatic",
       ...generated,
@@ -185,6 +193,8 @@ async function guarded(
 export async function refreshWorkstreamName(env: Env, input: {
   workspaceId: string;
   workstreamId: string;
+  /** Which conversation to look at again; the main one by default. */
+  substreamId?: string | undefined;
   userId?: string | undefined;
 }): Promise<void> {
   await guarded(env, input.workspaceId, input.workstreamId, async () => {
@@ -192,8 +202,9 @@ export async function refreshWorkstreamName(env: Env, input: {
     // never finished — the isolate went away mid-call — leaves the row in it.
     // This pass is the one thing that comes along afterwards, so it repairs the
     // row rather than stepping over it.
-    const identity = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
-      .identity();
+    const identity = await createIdentityObjectPort(
+      env, input.workspaceId, input.workstreamId, undefined, input.substreamId,
+    ).identity();
     // The eligibility test was a `WHERE` clause because the read was a
     // statement; it is a test on the row here.
     const titleStatus: "naming" | "automatic" | null =
@@ -216,8 +227,9 @@ export async function refreshWorkstreamName(env: Env, input: {
     // from. The retired version got both from one statement because the router
     // rewrote `workstreams` and `messages` onto views side by side; the title
     // half belongs to the identity slice and cannot come through this port yet.
-    const saidCount = await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
-      .saidMessageCount({ messageTypes: { include: ["text"] }, limit: RENAME_AFTER_MESSAGE_COUNT });
+    const saidCount = await createMessageObjectPort(
+      env, input.workspaceId, input.workstreamId, undefined, input.substreamId,
+    ).saidMessageCount({ messageTypes: { include: ["text"] }, limit: RENAME_AFTER_MESSAGE_COUNT });
     if (saidCount < RENAME_AFTER_MESSAGE_COUNT) return;
 
     const generated = await generateName(env, {
@@ -226,7 +238,7 @@ export async function refreshWorkstreamName(env: Env, input: {
       userId: input.userId,
       objective: row.objective,
       openingMessage: "",
-      recentMessages: await loadNamingContext(env, input.workspaceId, input.workstreamId),
+      recentMessages: await loadNamingContext(env, input.workspaceId, input.workstreamId, input.substreamId),
     });
     // Where the two passes differ. The first settles on a failure because a
     // skeleton is on screen waiting for it; here nothing is waiting — an
@@ -239,6 +251,7 @@ export async function refreshWorkstreamName(env: Env, input: {
     await advanceTitle(env, {
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
+      substreamId: input.substreamId,
       from: row.title_status,
       to: generated.title === null ? "automatic" : "settled",
       ...generated,
@@ -258,8 +271,9 @@ async function loadNamingContext(
   env: Env,
   workspaceId: string,
   workstreamId: string,
+  substreamId?: string,
 ): Promise<WorkstreamNameContextMessage[]> {
-  const rows = await createMessageObjectPort(env, workspaceId, workstreamId)
+  const rows = await createMessageObjectPort(env, workspaceId, workstreamId, undefined, substreamId)
     .saidMessages({
       messageTypes: { include: ["text"] },
       order: "oldest",
@@ -362,14 +376,21 @@ async function generateName(env: Env, input: {
 async function advanceTitle(env: Env, input: {
   workspaceId: string;
   workstreamId: string;
+  substreamId?: string | undefined;
   from: "naming" | "automatic";
   to: "automatic" | "settled";
   title: string | null;
   icon: WorkstreamIconKey | null;
   standingTitle: string;
 }): Promise<void> {
-  const result = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
-    .rename({
+  // One pass, one write, whichever conversation is being named. A private
+  // child stores the icon it was given like any other conversation — the row
+  // is there and the model already chose one — and no surface draws it: the
+  // sidebar's child rows carry the branch line, and the payload that feeds
+  // them has no appearance field to carry anything else.
+  const result = await createIdentityObjectPort(
+    env, input.workspaceId, input.workstreamId, undefined, input.substreamId,
+  ).rename({
       title: input.title,
       icon: input.icon,
       from: input.from,
@@ -398,7 +419,7 @@ async function advanceTitle(env: Env, input: {
     title,
     titleStatus: input.to,
     ...(result.icon ? { icon: result.icon } : {}),
-  });
+  }, input.substreamId);
 }
 
 /**

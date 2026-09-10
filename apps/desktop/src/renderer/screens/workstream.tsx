@@ -16,9 +16,8 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useSearchParams } from 'react-router-dom';
-import type { SubstreamPreparationPreview } from '@rally/contracts/substream-creation';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { WorkspaceTarget } from '@rally/contracts/workspace-target';
 import { useAppSession } from '../lib/app-session';
@@ -38,9 +37,16 @@ import { WorkstreamGlyph } from '../components/workstream-glyph';
 import { WorkstreamAppearancePicker } from '../components/workstream-appearance-picker';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import { useCachedWorkstreamAppearance } from '../lib/use-workstreams-query';
+import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/launched-conversation';
+import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
+import { workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { WorkstreamSidebar, type SubstreamRowTarget } from '../components/workstream-sidebar';
-import { SubstreamContext } from '../components/substream-context';
-import { ConversationSurface } from './conversation-surface';
+import {
+  PENDING_SUBSTREAM_DRAFT_ID,
+  type LaunchingSubstream,
+  type SubstreamLaunchProps,
+} from '../components/substream-launch';
+import { ConversationSurface, workspaceMemberFromSession } from './conversation-surface';
 
 // The feed, composer and rail live in `conversation-surface.tsx`, shared with
 // the automation screen. The helpers below are re-exported so the tests and
@@ -51,6 +57,7 @@ export {
   RunFailureNotice,
   WorkstreamErrorState,
   acceptedMessageOverlayDeliveryState,
+  branchProvenance,
   highestVisibleAttentionSequence,
   initialTranscriptAnchorIndex,
   manualElicitationResponse,
@@ -433,6 +440,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const { api, session } = useAppSession();
+  const queryClient = useQueryClient();
   const selectedSubstreamId = searchParams.get('substream') || '0';
   // Parent chrome remains live even on a direct link into a child. Reuse the
   // retained Main connection rather than deriving its inventory from the child.
@@ -456,13 +464,37 @@ export function WorkstreamScreen(): React.JSX.Element {
   const [archiveTarget, setArchiveTarget] = useState<(SubstreamRowTarget & { parentId: string }) | null>(null);
   const [substreamPending, setSubstreamPending] = useState(false);
   const [substreamMenuError, setSubstreamMenuError] = useState<string | null>(null);
-  const [creation, setCreation] = useState<{ operationId: string; parentId: string; title: string; throughTurnId: string | null; preparationWaitMs: number } | null>(null);
-  const [preview, setPreview] = useState<SubstreamPreparationPreview | null>(null);
+  /**
+   * The substream being written, if any. Nothing has been reserved on the
+   * server while this is set: preparation and confirmation both happen on the
+   * keystroke that submits the composer, so leaving the surface is free and a
+   * substream nobody finished writing never exists.
+   */
+  const [creation, setCreation] = useState<{
+    parentId: string;
+    throughTurnId: string | null;
+    /**
+     * Minted once, when the surface opens, and kept across every attempt.
+     *
+     * These are what make a retry a retry. Both halves of creation are
+     * idempotent under them — the operation resumes rather than reserving a
+     * second child, and the turn replays rather than being said twice — and a
+     * lost response is the failure this path actually has, since the composer
+     * hands the words back and the obvious thing to do is press enter again.
+     * Fresh ids per attempt would turn that into a second substream.
+     */
+    operationId: string;
+    clientMessageId: string;
+  } | null>(null);
+  const [launching, setLaunching] = useState<LaunchingSubstream | null>(null);
   const [creationError, setCreationError] = useState<string | null>(null);
-  const [creationPending, setCreationPending] = useState<'prepare' | 'confirm' | null>(null);
   const creationRef = useRef(creation);
   creationRef.current = creation;
   const selectSubstream = (substreamId: string): void => {
+    // Going anywhere is how the launch surface is left. Nothing was reserved
+    // for it, so there is nothing to cancel — only a draft to leave behind,
+    // which its composer keeps under its own key for the next time.
+    resetCreation();
     const next = new URLSearchParams(searchParams);
     next.delete('turn');
     next.delete('sequence');
@@ -523,84 +555,149 @@ export function WorkstreamScreen(): React.JSX.Element {
       if (routeRef.current.id === target.parentId && routeRef.current.visit === visit) setSubstreamPending(false);
     }
   };
+  /**
+   * Whether the attempt on screen has reserved anything on the server.
+   *
+   * Nothing is reserved while the surface is merely open — that is the
+   * flow's own promise — but a submit that failed after `prepare` leaves a
+   * reserved child and a spent summary behind it, and the surface stays open
+   * over it. Leaving is where that gets cancelled, so leaving has to know.
+   */
+  const preparedRef = useRef(false);
   const resetCreation = (): void => {
+    const abandoned = preparedRef.current ? creationRef.current : null;
+    preparedRef.current = false;
     creationRef.current = null;
-    setCreation(null); setPreview(null); setCreationError(null); setCreationPending(null);
-  };
-  const cancelCreation = (): void => {
-    if (creationPending === 'confirm') return;
-    if (api && creation) void api.cancelSubstream(creation.parentId, creation.operationId).catch(() => undefined);
-    resetCreation();
+    setCreation(null); setLaunching(null); setCreationError(null);
+    // Best effort by design: the endpoint refuses an operation that is already
+    // confirming or ready, which is exactly when there is nothing to release.
+    if (api && abandoned) {
+      void api.cancelSubstream(abandoned.parentId, abandoned.operationId).catch(() => undefined);
+    }
   };
   const startCreation = (throughTurnId: string | null): void => {
-    setPreview(null); setCreationError(null); setCreationPending(null);
-    setCreation({ operationId: uuidV7(), parentId: id, title: 'New substream', throughTurnId, preparationWaitMs: 0 });
-  };
-  const updateCreationTitle = (nextTitle: string): void => {
-    const active = creationRef.current;
-    if (!active || creationPending) return;
-    if (api && creationError) void api.cancelSubstream(active.parentId, active.operationId).catch(() => undefined);
-    setCreationError(null);
-    setCreation({ ...active, operationId: uuidV7(), title: nextTitle, preparationWaitMs: 0 });
+    resetCreation();
+    setCreation({
+      parentId: id,
+      throughTurnId,
+      operationId: uuidV7(),
+      clientMessageId: crypto.randomUUID(),
+    });
   };
   useEffect(() => {
     setRenameTarget(null); setArchiveTarget(null); setSubstreamPending(false); setSubstreamMenuError(null);
-    const active = creationRef.current;
-    if (active && active.parentId !== id) {
-      if (api) void api.cancelSubstream(active.parentId, active.operationId).catch(() => undefined);
-      resetCreation();
-    }
-  }, [api, id, selectedSubstreamId]);
-  const prepare = async (): Promise<void> => {
+    // Only when the work stream itself changed. Selecting another conversation
+    // inside it is how the launch surface is left, and that already clears it.
+    if (creationRef.current && creationRef.current.parentId !== id) resetCreation();
+    // Selecting another conversation inside the same work stream still closes
+    // a row's dialogs, which is why this watches the substream as well.
+  }, [id, selectedSubstreamId]);
+  /**
+   * Create the substream the launch surface is holding, and send its first
+   * message.
+   *
+   * Both halves of the creation are on this keystroke: preparation freezes the
+   * main conversation through the branch point and summarizes it, and
+   * confirmation writes the child, installs that context and admits the
+   * opening turn. The person is not waiting in front of either — the surface
+   * below has already drawn the turn they typed, and the substream is being
+   * opened around it.
+   */
+  const createSubstream = async (opening: Parameters<SubstreamLaunchProps['onCreate']>[0]): Promise<void> => {
     const attempt = creationRef.current;
-    if (!api || !attempt?.title.trim() || creationPending) return;
-    const startedAt = performance.now();
-    const trace = startPerfTrace('substream_prepare', { operationId: attempt.operationId });
-    setCreationPending('prepare'); setCreationError(null);
-    try {
-      const prepared = await trace.step('prepare_request', () => api.prepareSubstream(attempt.parentId, {
-        operationId: attempt.operationId, title: attempt.title.trim(), throughTurnId: attempt.throughTurnId,
-      }));
-      const elapsed = Math.max(0, performance.now() - startedAt);
-      trace.end({ outcome: 'completed', workstreamId: attempt.parentId, systemWaitMs: elapsed });
-      if (creationRef.current?.operationId !== attempt.operationId || creationRef.current.parentId !== attempt.parentId) return;
-      setCreation((current) => current?.operationId === attempt.operationId ? { ...current, preparationWaitMs: current.preparationWaitMs + elapsed } : current);
-      setPreview(prepared);
-    } catch (error) {
-      trace.end({ outcome: 'failed', workstreamId: attempt.parentId });
-      if (creationRef.current?.operationId !== attempt.operationId || creationRef.current.parentId !== attempt.parentId) return;
-      const elapsed = Math.max(0, performance.now() - startedAt);
-      setCreation((current) => current?.operationId === attempt.operationId ? { ...current, preparationWaitMs: current.preparationWaitMs + elapsed } : current);
-      setCreationError(error instanceof Error ? error.message : 'The substream preview could not be prepared.');
-    } finally {
-      if (creationRef.current?.operationId === attempt.operationId) setCreationPending(null);
-    }
-  };
-  const confirm = async (): Promise<void> => {
-    const attempt = creationRef.current;
-    if (!api || !preview || !attempt || creationPending) return;
-    const startedAt = performance.now();
+    if (!api || !attempt) throw new Error('This work stream is not ready for a new substream.');
+    const createdAt = new Date().toISOString();
     const trace = startPerfTrace('substream_create', { operationId: attempt.operationId });
-    setCreationPending('confirm'); setCreationError(null);
+    const startedAt = performance.now();
+    // In the same commit as the request, not after it: this is what makes the
+    // substream appear to open on the keystroke rather than on the response.
+    setLaunching({
+      attachments: opening.attachments,
+      createdAt,
+      text: opening.text,
+      startedAt: Date.parse(createdAt),
+    });
+    setCreationError(null);
     try {
-      const result = await trace.step('confirm_request', () => api.confirmSubstream(attempt.parentId, attempt.operationId));
-      if (creationRef.current?.operationId !== attempt.operationId || creationRef.current.parentId !== attempt.parentId) {
-        trace.end({ outcome: 'superseded' }); return;
+      await trace.step('prepare_request', () => api.prepareSubstream(attempt.parentId, {
+        operationId: attempt.operationId, throughTurnId: attempt.throughTurnId,
+      }));
+      // From here the operation holds a reserved child, so leaving the surface
+      // has something to release.
+      if (creationRef.current === attempt) preparedRef.current = true;
+      const created = await trace.step('confirm_request', () => api.confirmSubstream(
+        attempt.parentId,
+        attempt.operationId,
+        {
+          clientMessageId: attempt.clientMessageId,
+          text: opening.text,
+          mentions: opening.mentions,
+          attachmentIds: opening.attachmentIds,
+          confirmedParticipantUserIds: opening.confirmedParticipantUserIds,
+        },
+      ));
+      const current = creationRef.current === attempt;
+      if (!current) trace.end({ outcome: 'superseded' });
+      else trace.annotate({ workstreamId: attempt.parentId });
+      const parentDetail = queryClient.getQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, '0'));
+      const creator = workspaceMemberFromSession(session);
+      // Seeded before the navigation, both of them: the child's screen shows
+      // its full-screen opening state while *either* the detail or the
+      // transcript is missing, so one without the other still flashes it.
+      //
+      // Seeded even for an attempt abandoned mid-flight — by selecting another
+      // conversation, the one way out left once submission has begun. That
+      // substream exists and is working on the message that created it, so the
+      // screen it is eventually opened on should paint what this response
+      // already knows rather than load it again.
+      if (parentDetail && creator && created.opening) {
+        const detail = launchedSubstreamDetail(parentDetail, {
+          creator,
+          title: created.title,
+          createdAt: created.opening.createdAt,
+        });
+        queryClient.setQueryData(workstreamDetailQueryKey(id, created.substreamId), detail);
+        queryClient.setQueryData(
+          orderedTranscriptQueryKey(id, created.substreamId),
+          optimisticOpeningTranscript({
+            turnId: created.opening.turnId,
+            clientMessageId: created.opening.clientMessageId,
+            createdAt: created.opening.createdAt,
+            text: opening.text,
+            mentions: opening.mentions,
+            attachments: opening.attachments,
+          }, creator),
+        );
       }
-      trace.annotate({ workstreamId: attempt.parentId });
+      // Nothing else is this attempt's to do: it is not the one on screen, so
+      // it neither clears that surface nor navigates anybody.
+      if (!current) return;
+      // Created, so there is nothing left to cancel — and `cancelSubstream`
+      // refuses a ready operation anyway.
+      preparedRef.current = false;
+      trace.mark('cache_seed');
       holdCreationTraceUntilSendReady(
         trace,
         attempt.parentId,
-        result.substreamId,
-        attempt.preparationWaitMs + Math.max(0, performance.now() - startedAt),
+        created.substreamId,
+        Math.max(0, performance.now() - startedAt),
       );
       resetCreation();
-      selectSubstream(result.substreamId);
+      selectSubstream(created.substreamId);
     } catch (error) {
       trace.end({ outcome: 'failed', workstreamId: attempt.parentId });
-      if (creationRef.current?.operationId !== attempt.operationId || creationRef.current.parentId !== attempt.parentId) return;
-      setCreationError(error instanceof Error ? error.message : 'The substream could not be created.');
-      setCreationPending(null);
+      // Back to the composer with the words still in it. The optimistic turn
+      // stood for a substream that does not exist, so it cannot stay on screen
+      // next to an error about why it never will. Only the surface's own state
+      // is skipped for an attempt that was abandoned mid-flight; the rejection
+      // is not, because that is what puts the draft and its attachments back —
+      // swallowing it would report a send that never happened, and take the
+      // words with it.
+      if (creationRef.current === attempt) {
+        setLaunching(null);
+        setCreationError(error instanceof Error ? error.message : 'The substream could not be created.');
+      }
+      throw error;
     }
   };
   return (
@@ -610,6 +707,13 @@ export function WorkstreamScreen(): React.JSX.Element {
       parentKind="workstream"
       workstreamContext={parent.data}
       onStartSubstream={startCreation}
+      substreamLaunch={creation?.parentId === id ? {
+        throughTurnId: creation.throughTurnId,
+        launching,
+        ...(creationError ? { error: creationError } : {}),
+        onCancel: resetCreation,
+        onCreate: createSubstream,
+      } : null}
       renderSidebar={(context) => (
         <WorkstreamSidebar
           attachedSidekicks={context.attachedSidekicks}
@@ -618,7 +722,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, appearance: rowAppearance ?? parent.data?.appearance, privateChildren: children.data?.privateChildren }}
           presentUserIds={context.presentUserIds}
           onParticipants={context.openParticipantDialog}
-          selectedSubstreamId={selectedSubstreamId}
+          selectedSubstreamId={creation?.parentId === id ? PENDING_SUBSTREAM_DRAFT_ID : selectedSubstreamId}
           onSelectSubstream={selectSubstream}
           onNewSubstream={() => startCreation(null)}
           onOpenArtifact={context.openArtifact}
@@ -649,25 +753,6 @@ export function WorkstreamScreen(): React.JSX.Element {
       )}
       substreamId={selectedSubstreamId}
     />
-    <Modal
-      description="Only you can see this private substream until you add participants. Review the selected context before creating it."
-      footer={<>
-        <Button className="button-secondary" disabled={creationPending === 'confirm'} onClick={cancelCreation}>Cancel</Button>
-        {preview
-          ? <Button className="button-primary" disabled={creationPending !== null} onClick={() => void confirm()}>{creationPending === 'confirm' ? 'Creating…' : 'Create substream'}</Button>
-          : <Button className="button-primary" disabled={creationPending !== null || !creation?.title.trim()} onClick={() => void prepare()}>{creationPending === 'prepare' ? 'Preparing…' : 'Review context'}</Button>}
-      </>}
-      onOpenChange={(open) => { if (!open) cancelCreation(); }}
-      open={creation?.parentId === id}
-      title="New substream"
-    >
-      {creationError && <InlineError>{creationError}</InlineError>}
-      {!preview ? <label className="form-field"><span>Title</span><input autoFocus disabled={creationPending !== null} onChange={(event) => updateCreationTitle(event.target.value)} value={creation?.title ?? ''} /></label> : <div className="substream-context-preview">
-        <strong>{preview.title}</strong>
-        <p>Context from the main conversation</p>
-        <SubstreamContext context={preview.context} />
-      </div>}
-    </Modal>
     <Modal
       footer={<>
         <Button disabled={substreamPending} onClick={() => { setRenameTarget(null); setSubstreamMenuError(null); }}>Cancel</Button>

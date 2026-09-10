@@ -66,8 +66,11 @@ test("a missing model key refuses the lane unless degradation is chosen", () => 
 // an over-long message is refused into one that creates a work stream and
 // launches a model-backed run — passing nothing and costing a run every time.
 test("the oversize scenario stays one character over the contract ceiling", () => {
+  // `message-limits.ts`, not `index.ts`: the cap moved into a leaf module so
+  // the substream contracts could spend it without closing an import cycle
+  // through `index`, which still re-exports it unchanged.
   const contracts = readFileSync(
-    new URL("../packages/contracts/src/index.ts", import.meta.url),
+    new URL("../packages/contracts/src/message-limits.ts", import.meta.url),
     "utf8",
   );
   const declared = /export const MESSAGE_MAX_CHARACTERS = ([\d_]+);/u.exec(contracts);
