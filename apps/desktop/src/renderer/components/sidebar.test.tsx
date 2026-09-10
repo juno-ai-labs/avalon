@@ -1284,12 +1284,62 @@ describe('Sidebar work-stream markers', () => {
     for (const item of excluded) expect(screen.queryByText(item.name)).toBeNull();
     fireEvent.click(within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' }));
     expect(openSidekicks).toHaveBeenCalledWith('shared');
+    // The Sidekicks window is a separate renderer with its own copy of the
+    // telemetry module, and its surface mounts no route observer, so a marker
+    // set here reaches nothing and is left for this window's next navigation to
+    // consume as `sidebar_automation`.
+    expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
     expect(screen.queryByRole('link', { name: /Daily product brief/u })).toBeNull();
   });
 
-  it('omits the Sidekick strip when none are enabled', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, status: 'paused' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+  it.each([false, true])('offers making the first Sidekick where the shortcuts would be (compact=%s)', (compact) => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    // Named for what it holds: an offer to make one, not shortcuts to any.
+    const strip = screen.getByRole('region', { name: 'Sidekicks' });
     expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
+    // The same tile a Sidekick gets, so it sheds its caption and shrinks to the
+    // rail's square with them rather than keeping a shape of its own.
+    const create = within(strip).getByRole('button', { name: 'New Sidekick' });
+    expect(create).toHaveClass('automation-tile');
+    expect(create.querySelector('.sidekick-new-glyph')).not.toBeNull();
+    // No lifecycle marker: there is no Sidekick yet to have one.
+    expect(create.querySelector('.automation-tile-state')).toBeNull();
+    expect(within(strip).getAllByRole('button')).toHaveLength(1);
+    fireEvent.click(create);
+    expect(openSidekicks).toHaveBeenCalledWith('new');
+    // Strands a marker in this window otherwise; see the Sidekick tile above.
+    expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
+  });
+
+  it('drops the new-Sidekick tile once one is enabled, and names the strip for the shortcuts it holds', () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[automation]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    expect(within(screen.getByRole('region', { name: 'Sidekick shortcuts' })).queryByRole('button', { name: 'New Sidekick' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Sidekicks' })).toBeNull();
+  });
+
+  it('waits for the workspace answer before saying a workspace has no Sidekicks', () => {
+    // The array itself carries the wait, so no caller has to remember a flag.
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={undefined} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
+  });
+
+  // `/sidekicks/new` creates a draft as it opens, and a draft is not active. A
+  // tile that keyed on "no active Sidekick" would therefore still be sitting
+  // there afterwards, and every further press would create another draft and
+  // abandon the one before it.
+  it.each([
+    ['a draft', 'draft'],
+    ['a paused Sidekick', 'paused'],
+  ] as const)('offers nothing rather than a second draft once the workspace has %s', (_label, status) => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, status }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    expect(screen.queryByRole('button', { name: 'New Sidekick' })).toBeNull();
+    // And no empty strip left behind where the tile used to be.
+    expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
+  });
+
+  it('leaves a work-stream-owned Sidekick to the library rather than offering to make a first one', () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, scope: 'workstream' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    expect(screen.queryByRole('button', { name: 'New Sidekick' })).toBeNull();
   });
 
   it('manages Sidekicks through the library instead of listing them in the sidebar', () => {

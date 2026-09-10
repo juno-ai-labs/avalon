@@ -46,6 +46,7 @@ import {
 } from '../lib/format';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
+import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import {
   markSurfaceEntrypoint,
@@ -70,7 +71,7 @@ import { useListMotion } from '../lib/use-list-motion';
 import { Avatar, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 import { ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup } from './sidebar-skeleton';
-import { AutomationGlyph, WorkstreamGlyph } from './workstream-glyph';
+import { AutomationGlyph, HexagonGlyph, WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
   onOpenSearch?: () => void;
@@ -79,7 +80,17 @@ interface SidebarProps {
   /** The responsive or manually selected GrokBot icon rail. */
   compact?: boolean;
   workspace: Workspace;
-  automations: AutomationSummary[];
+  /**
+   * Every Sidekick the person can see, or `undefined` while the workspace
+   * answer that carries them has not arrived.
+   *
+   * The distinction is the prop's to carry rather than a caller's to remember:
+   * an empty array means an empty workspace, and that is what the strip offers
+   * to make the first Sidekick from. Collapsing the two at the call site with
+   * `?? []` is what made a separate loading flag necessary, and a flag a caller
+   * can forget is a flag that reads "empty workspace" on a cold sidebar.
+   */
+  automations: AutomationSummary[] | undefined;
   notes?: NoteSummary[];
   projects?: ProjectSummary[];
   inactiveProjects?: ProjectSummary[];
@@ -384,28 +395,98 @@ function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
   );
 }
 
-function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.Element {
-  const scopeDescription = sidekick.scope === 'workspace' ? ' · Workspace' : '';
+/**
+ * Neither tile marks a surface entrypoint, and that is deliberate.
+ *
+ * `markSurfaceEntrypoint` writes a module-local marker that
+ * `TelemetryRouteObserver` consumes on the *next route change in this
+ * renderer*. Both tiles open the Sidekicks window instead, which is a separate
+ * renderer with its own copy of that module — and whose surface in `App.tsx`
+ * mounts no observer at all — so a marker set here could never reach the visit
+ * it was meant to describe. What it did instead was sit in the main window
+ * until its next unmarked navigation consumed it, reporting that navigation as
+ * `sidebar_automation`. Attributing the Sidekicks window's own visits needs the
+ * entrypoint carried across the window boundary and an observer mounted there;
+ * that is a telemetry change, not this one.
+ */
+
+/**
+ * One tile in the Sidekick strip: a hexagon over a caption, inside the wrapper
+ * the strip sizes and the rail shrinks.
+ *
+ * Shared by the Sidekicks and by the new-Sidekick action below, so the action
+ * is the same tile that sheds its caption and shrinks to the rail's 54px square
+ * with them rather than a second shape to keep in step with this one. A
+ * lifecycle marker is the part that is not shared: an action has no lifecycle,
+ * and `status` is absent rather than neutral for it.
+ */
+function SidekickStripTile({ active = false, glyph, label, name, onClick, title }: {
+  /**
+   * Draws the lifecycle marker. A boolean rather than the state, because
+   * `active` is the only lifecycle the strip renders — the others are excluded
+   * from it — and an action tile has no lifecycle at all.
+   */
+  active?: boolean;
+  glyph: React.ReactNode;
+  /** What the tile is called to a screen reader, which the caption cannot be: it is truncated. */
+  label: string;
+  name: string;
+  onClick: () => void;
+  title: string;
+}): React.JSX.Element {
   return (
     <div className="sidebar-context-target">
       <button
         className="sidebar-row automation-row automation-tile"
-        aria-label={`${sidekick.name}, Active${scopeDescription}`}
-        title={`${sidekick.name} · Active${scopeDescription}`}
-        onClick={() => {
-          markSurfaceEntrypoint('sidebar_automation');
-          void desktopBridge().openSidekicks(sidekick.id);
-        }}
+        aria-label={label}
+        title={title}
+        onClick={onClick}
         type="button"
       >
         <span className="automation-tile-glyph" aria-hidden="true">
-          <AutomationGlyph id={sidekick.id} />
-          <span className="automation-tile-state active"><span className="status-dot" /></span>
+          {glyph}
+          {active && <span className="automation-tile-state active"><span className="status-dot" /></span>}
         </span>
-        <span className="automation-tile-name">{sidekick.name}</span>
-        <span className="sr-only">Active</span>
+        <span className="automation-tile-name">{name}</span>
+        {active && <span className="sr-only">Active</span>}
       </button>
     </div>
+  );
+}
+
+function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.Element {
+  const scopeDescription = sidekick.scope === 'workspace' ? ' · Workspace' : '';
+  return (
+    <SidekickStripTile
+      active
+      glyph={<AutomationGlyph id={sidekick.id} />}
+      label={`${sidekick.name}, Active${scopeDescription}`}
+      name={sidekick.name}
+      onClick={() => void desktopBridge().openSidekicks(sidekick.id)}
+      title={`${sidekick.name} · Active${scopeDescription}`}
+    />
+  );
+}
+
+/**
+ * The strip's own way to make the first Sidekick, standing where a Sidekick's
+ * tile would: the same hexagon, drawn as an empty slot because there is no
+ * Sidekick yet to take a colour or a symbol from, with a plus in it.
+ *
+ * Only while the strip is empty. Once one Sidekick qualifies the strip is a row
+ * of shortcuts that scrolls, and an action tile in it would compete with them
+ * for the one place a person looks to reach a Sidekick; the library window this
+ * opens carries New Sidekick of its own from then on.
+ */
+function NewSidekickTile(): React.JSX.Element {
+  return (
+    <SidekickStripTile
+      glyph={<HexagonGlyph className="sidekick-new-glyph" fill="none" ink="var(--av-sys-color-text-muted)" symbol={Plus} />}
+      label="New Sidekick"
+      name="New Sidekick"
+      onClick={() => void desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET)}
+      title="New Sidekick"
+    />
   );
 }
 
@@ -1099,7 +1180,11 @@ export function Sidebar({
   const batchPreviewGeneration = useRef(0);
   const visibleWorkstreams = workstreams;
   const visibleNotes = useMemo(() => conversationOnly ? [] : notes, [conversationOnly, notes]);
-  const standaloneSidekicks = useMemo(() => automations.filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'active'), [automations]);
+  const standaloneSidekicks = useMemo(() => (automations ?? []).filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'active'), [automations]);
+  // Never had a Sidekick, rather than none running right now. A draft, a paused
+  // one, and a work-stream's own all mean this person has met the concept, and
+  // all three are reached from the library rather than from here.
+  const workspaceHasNoSidekicks = automations?.length === 0;
   // A pinned work stream leaves the recent list entirely rather than appearing
   // twice: the section it moves to is the one whose order the reader controls,
   // and a row in both places would take its order from whichever they saw last.
@@ -1649,9 +1734,27 @@ export function Sidebar({
   useListMotion(scrollRef, compact, layoutSettling);
   useListMotion(commandRef, compact, layoutSettling);
 
-  const sidekickShortcuts = standaloneSidekicks.length > 0 && (
-    <section className="sidebar-automation-strip" aria-label="Sidekick shortcuts" onClick={() => setSidebarOpen(false)}>
-      {standaloneSidekicks.map((sidekick) => <SidekickTile key={sidekick.id} sidekick={sidekick} />)}
+  // Shortcuts when there are any, the offer to make the first Sidekick when this
+  // workspace has never had one, and nothing at all otherwise — which is what a
+  // workspace whose Sidekicks are all paused or still drafts sees, exactly as it
+  // did before the tile existed.
+  //
+  // The offer is keyed on having no Sidekick rather than no *active* one for two
+  // reasons. It would otherwise tell somebody with three paused Sidekicks that
+  // they have none, and invite a fourth instead of pointing at the three they
+  // paused on purpose. And because `/sidekicks/new` creates a draft on arrival,
+  // a tile that stayed up while that draft was not yet active would create
+  // another on every press: the strip would sit there in exactly the state that
+  // makes re-firing it cheap, and each press abandons the draft before it.
+  const sidekickShortcuts = (standaloneSidekicks.length > 0 || workspaceHasNoSidekicks) && (
+    <section
+      aria-label={standaloneSidekicks.length > 0 ? 'Sidekick shortcuts' : 'Sidekicks'}
+      className="sidebar-automation-strip"
+      onClick={() => setSidebarOpen(false)}
+    >
+      {standaloneSidekicks.length > 0
+        ? standaloneSidekicks.map((sidekick) => <SidekickTile key={sidekick.id} sidekick={sidekick} />)
+        : <NewSidekickTile />}
     </section>
   );
 
