@@ -1,3 +1,4 @@
+import * as Tooltip from '@radix-ui/react-tooltip';
 import { act, render, renderHook, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -70,17 +71,19 @@ describe('useRailExitFade', () => {
 describe('RailSurface', () => {
   function renderSurface(leaving: boolean): void {
     render(
-      <RailSurface
-        label="Preview"
-        leaving={leaving}
-        onClose={vi.fn()}
-        onResize={vi.fn()}
-        resizeLabel="Resize Preview"
-        scrimLabel="Dismiss Preview"
-        width={360}
-      >
-        <div>panel</div>
-      </RailSurface>,
+      <Tooltip.Provider>
+        <RailSurface
+          label="Preview"
+          leaving={leaving}
+          onClose={vi.fn()}
+          onResize={vi.fn()}
+          resizeLabel="Resize Preview"
+          scrimLabel="Dismiss Preview"
+          width={360}
+        >
+          <div>panel</div>
+        </RailSurface>
+      </Tooltip.Provider>,
     );
   }
 

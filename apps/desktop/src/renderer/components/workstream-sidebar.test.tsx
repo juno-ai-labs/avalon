@@ -37,6 +37,8 @@ beforeEach(() => {
     observe() {}
     // Radix measures the tooltip arrow through `useSize`, which unobserves on
     // unmount; a stub without it throws during teardown, not during the assert.
+    // Both the artifact rows' `Tip` and the resize handle's `DragHint` mount
+    // one, so every test that opens this sidebar needs it.
     unobserve() {}
     disconnect() {}
   });
@@ -242,6 +244,40 @@ describe('WorkstreamSidebar', () => {
       const row = screen.getByRole('button', { name: `Open ${title}` });
       expect(row.querySelector('.tabler-icon-rosette-asterisk'), title).not.toBeNull();
     }
+  });
+
+  // Same divider, same silence: the double-click that collapses this rail is
+  // written down nowhere else, so which way the hint names has to follow the
+  // state the next one would leave behind.
+  it('names the drag and the double-click, in the direction the next one goes', () => {
+    setup();
+    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+
+    fireEvent.focus(edge);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click to collapse');
+
+    fireEvent.doubleClick(edge);
+    fireEvent.blur(edge);
+    fireEvent.focus(edge);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click to expand');
+  });
+
+  // A pane too narrow for the rail's contents holds it compact and disables the
+  // toggle above; the double-click on the divider is guarded by the same
+  // condition. The hint has to stop offering what the handle would refuse.
+  // The pane narrows before the hint is ever opened: this file's observer stub
+  // keeps only the newest callback, and an open tooltip's own observer is newer
+  // than the sidebar's.
+  it('drops the shortcut a narrow pane would refuse', () => {
+    setup();
+    act(() => { width = 703; resized(); });
+    const edge = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });
+
+    fireEvent.focus(edge);
+
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent('Double-click');
   });
 
   it('drops the artifact section entirely until a work stream has one', () => {

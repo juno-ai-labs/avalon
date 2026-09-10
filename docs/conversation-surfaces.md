@@ -241,6 +241,23 @@ centred by the row's padding, and content of no fixed width — the avatar
 stack, the empty state's icon — by a transform of `calc(18px - 50%)`. It has no
 list motion to hold and so carries no `--sidebar-compact`.
 
+Both dividers say what they are. A grip carries no words, and the double-click
+that collapses the sidebar beside it was written down nowhere, so each handle is
+wrapped in `DragHint` (`components/primitives.tsx`): a Radix tooltip whose
+trigger is the handle's whole pointer target rather than the pill drawn inside
+it, so the hint and the pill appear for the same approach, and whose content is
+centre-aligned, which lands it beside the pill without either side measuring the
+other. The first line names the drag; the second names the double-click in the
+direction the next one would go, collapse while expanded and expand while
+compact. That second line is dropped exactly where the gesture would be refused:
+a window too narrow for the navigation's expanded width, or a pane too narrow
+for the work-stream rail's contents, which are the same conditions that disable
+each footer toggle. Keeping the two in step is the point of the hint, so a new
+guard on either double-click adds itself to the hint in the same change. The
+right sidebar's handle takes the same hint from the same primitive, with one
+difference in what it offers: that panel closes from its own header control, so
+its double-click restores `DEFAULT_RAIL_WIDTH` rather than collapsing anything.
+
 The route host, not the feed, owns identity transitions. A new work stream
 begins with local composer keys; after durable admission its adapter rekeys
 text/files and adopts the server identity without remounting the conversation
@@ -335,6 +352,45 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-10 — The dividers say what they are, and what a double-click does
+
+**What changed:** Every resize handle in the shell now shows a two-line tooltip
+on hover or focus: `Drag to resize`, and under it the quick action. That is the
+navigation's handle, the work-stream sidebar's, and the right sidebar's. The two
+sidebars offer the double-click they have always had, named in the direction the
+next one would go, and the right sidebar's handle gained a double-click of its
+own that restores `DEFAULT_RAIL_WIDTH`. The hint is one primitive, `DragHint` in
+`components/primitives.tsx`, and its second line is omitted wherever the
+double-click is already guarded off.
+
+**Why:** The double-click that collapses either sidebar has been in the code
+since the sidebars were, reachable only by guessing, and the grip pill is the
+one control in the shell with no words on it: it says a divider can be grabbed,
+not what grabbing it does or that there is a faster way. Both are discovery
+problems, and a tooltip is where the answer belongs: it costs nothing until
+somebody is already reaching for the handle, which is the only moment either
+fact matters.
+
+**Considered and rejected:** Making the grip pill itself the tooltip trigger.
+It is 16px wide inside a 12px pointer target that spans the whole divider, so
+the hint would have appeared for a narrower gesture than the one that reveals
+the pill, and hovering the divider anywhere else, which is a grab, would have
+said nothing. Anchoring on the target instead needed no measurement, because
+both dividers already centre their pill in it. Also rejected: leaving the right
+sidebar's handle with a hint and no quick action, which would have made the one
+handle that promises least the one a reader meets in a panel they opened
+deliberately; it has a close control, so resetting the width is the action that
+was missing rather than a collapse.
+
+**Consequences:** The hint is now the only place either double-click is written
+down, so a guard added to one and not the other leaves the tooltip offering an
+action that does nothing. Both sidebars have a test pinning the pairing, the
+navigation against `forcedCompact` and the work-stream rail against a narrow
+pane, and a third pins the right sidebar's reset. A tooltip mounts a Radix popper on
+every handle, which brings its own `ResizeObserver`: a test that stubs that
+global for a sidebar now needs `unobserve` on the stub, and one that keeps only
+the newest observer callback must narrow the pane before opening a hint rather
+than after.
 ### 2026-09-10 — Artifact rows take the renderer's tooltip, through a shared `Tip`
 
 **What changed:** An artifact row in the work-stream sidebar no longer carries a

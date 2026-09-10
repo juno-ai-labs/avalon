@@ -292,6 +292,43 @@ describe('Sidebar work-stream markers', () => {
     expect(useUiStore.getState().sidebarCollapsed).toBe(false);
   });
 
+  // The divider is the only control in the sidebar with no words on it, and the
+  // double-click that collapses it has been reachable only by guessing. The
+  // hint is where both are written down, so which of collapse and expand it
+  // names has to follow the state the next double-click would leave behind.
+  it('names the drag and the double-click on the divider, in the direction the next one goes', () => {
+    useUiStore.getState().setSidebarCollapsed(false);
+    function Navigation() {
+      const compact = useUiStore((state) => state.sidebarCollapsed);
+      return <Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />;
+    }
+    render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
+    const edge = screen.getByRole('separator', { name: 'Resize navigation' });
+
+    fireEvent.focus(edge);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click to collapse');
+
+    fireEvent.doubleClick(edge);
+    fireEvent.blur(edge);
+    fireEvent.focus(edge);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click to expand');
+  });
+
+  // A window too narrow to hold the expanded sidebar pins it compact and
+  // disables the footer toggle, and the double-click on the divider is guarded
+  // by the same condition. The hint is the only place that shortcut is written
+  // down, so it has to stop offering what the handle would refuse to do.
+  it('stops naming the double-click while the window holds navigation compact', () => {
+    useUiStore.getState().setSidebarCollapsed(false);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+
+    fireEvent.focus(screen.getByRole('separator', { name: 'Resize navigation' }));
+
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent('Double-click');
+  });
+
   // The width animates because the width itself is transitioned, and a drag
   // takes that transition off for the length of the gesture. A double-click is
   // two grabs of the same handle, so the second release has to have put it back
