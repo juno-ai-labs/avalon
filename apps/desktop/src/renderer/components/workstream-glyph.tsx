@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { PROJECT_COLOR_RING, type ProjectColorKey, type WorkstreamAppearance as SavedAppearance } from '@rally/contracts';
+import clsx from 'clsx';
 import { glyphInk } from '../lib/project-palette';
 import { PROJECT_ICONS } from './project-icons';
 
@@ -163,15 +164,40 @@ export function WorkstreamGlyph({ id, size = 32, appearance: saved }: { id: stri
   );
 }
 
+/**
+ * The rounded hexagon a Sidekick is drawn in, with one symbol centred in it.
+ *
+ * Separate from `AutomationGlyph` below because the shape is not the identity:
+ * the sidebar's strip also has to draw the hexagon for a Sidekick that does not
+ * exist yet, and that one has no id to seed a fill or a symbol from. Both go
+ * through here so there is one hexagon rather than two paths that drift, and so
+ * a fill and an outline are the same silhouette at the same size.
+ */
+export function HexagonGlyph({ className, fill, ink, symbol: Icon }: {
+  className?: string | undefined;
+  /** The shape's interior. `none` leaves what is underneath it showing. */
+  fill: string;
+  /** What the symbol is drawn in over that fill; see `glyphInk`. */
+  ink: string;
+  symbol: LucideIcon;
+}): React.JSX.Element {
+  return (
+    <svg className={clsx('automation-glyph', className)} viewBox="0 0 100 100" fill="none" aria-hidden="true"
+      style={{ '--glyph-ink': ink } as React.CSSProperties}>
+      <path className="automation-glyph-shape" d="M43 6C47 3 52 3 57 6L86 23C91 26 94 30 94 36L94 66C94 72 91 76 86 79L57 95C52 98 47 98 42 95L14 78C9 75 6 71 6 65L6 35C6 29 9 25 14 22Z" fill={fill} />
+      <Icon x={25} y={25} size={50} strokeWidth={1.9} />
+    </svg>
+  );
+}
+
 /** Scales the shape and symbol together to the containing automation tile. */
 export function AutomationGlyph({ id }: { id: string }): React.JSX.Element {
   const appearance = workstreamAppearance(id);
-  const Icon = WORKSTREAM_ICONS[appearance.iconIndex] ?? Sparkles;
   return (
-    <svg className="automation-glyph" viewBox="0 0 100 100" fill="none" aria-hidden="true"
-      style={{ '--glyph-ink': glyphInk(appearance.color) } as React.CSSProperties}>
-      <path d="M43 6C47 3 52 3 57 6L86 23C91 26 94 30 94 36L94 66C94 72 91 76 86 79L57 95C52 98 47 98 42 95L14 78C9 75 6 71 6 65L6 35C6 29 9 25 14 22Z" fill={`var(--av-sys-color-project-${appearance.color})`} />
-      <Icon x={25} y={25} size={50} strokeWidth={1.9} />
-    </svg>
+    <HexagonGlyph
+      fill={`var(--av-sys-color-project-${appearance.color})`}
+      ink={glyphInk(appearance.color)}
+      symbol={WORKSTREAM_ICONS[appearance.iconIndex] ?? Sparkles}
+    />
   );
 }

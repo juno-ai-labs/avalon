@@ -506,7 +506,14 @@ export interface RallyDesktopBridge {
   closeArtifactPreview: () => Promise<void>;
   /** Open the same artifact in its own window, sharing the preview's session. */
   popOutArtifact: (request: DesktopArtifactWindowRequest) => Promise<void>;
-  openSidekicks: (sidekickId?: string) => Promise<void>;
+  /**
+   * Raise the singleton Sidekicks window, on its library or on one target.
+   *
+   * A target is a stored Sidekick's id, or `NEW_SIDEKICK_TARGET` for the
+   * composer that creates one — main parses it through
+   * `parseSidekicksWindowTarget` rather than routing on it directly.
+   */
+  openSidekicks: (target?: string) => Promise<void>;
   openSettings: (section?: DesktopSettingsSection) => Promise<void>;
   openMeetingNotes: (noteId?: string) => Promise<void>;
   /**

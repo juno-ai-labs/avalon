@@ -90,7 +90,9 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is an automation resolves the workspace scope and the automation's own `automation` scope. |
 | `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (lifecycle badge, scope, email address, Pause, Resume, Delete, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
-| `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | Enabled standalone Sidekick tiles above the account menu open library details; the center rail shows authorized main-conversation attachments and the participant facepile. |
+| `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | Enabled standalone Sidekick tiles above the account menu open library details, and `SidekickStripTile`, the tile shape they and the empty strip's **New Sidekick** action share; the center rail shows authorized main-conversation attachments and the participant facepile. |
+| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink and a symbol; `AutomationGlyph` is that primitive seeded by a Sidekick's id, and the empty strip's tile is the same silhouette outlined around a plus. |
+| `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
 
 ## How it works
 
@@ -125,10 +127,15 @@ captions and shrink to the work-stream rows' 54px square with 9px padding and
 The tiles change shape over the sidebar's own collapse motion, so they arrive
 with the edge rather than a frame ahead of it. Enabled means lifecycle
 `active`, not a run currently in progress and not the stored `loadable` capability.
-Draft, paused, and workstream-owned Sidekicks are excluded. The strip is absent
-when no entries qualify. Each tile reuses the rounded hexagon, stable identity
+Draft, paused, and workstream-owned Sidekicks are excluded. When nothing
+qualifies the strip holds one **New Sidekick** tile instead, which opens the
+library window on `/sidekicks/new`; it goes as soon as one Sidekick qualifies,
+and the strip is absent only while the workspace answer that carries the
+Sidekicks has not arrived. Each tile reuses the rounded hexagon, stable identity
 color, centered symbol, and square lifecycle marker introduced for automation
-shortcuts. Selecting a tile opens its detail in the singleton Sidekicks library
+shortcuts; the New Sidekick tile is the same tile and the same hexagon, outlined
+and dashed with a plus in it rather than filled, and carries no lifecycle
+marker. Selecting a tile opens its detail in the singleton Sidekicks library
 window. Management and execution controls remain on that authorized detail;
 directory summaries alone do not advertise those capabilities. Search sits
 above the scrolling streams in both layouts, and the rail adds New chat under
@@ -562,6 +569,54 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-10 — The empty strip makes the first Sidekick
+
+**What changed:** With no Sidekick enabled, the sidebar's strip holds a single
+**New Sidekick** tile — the same tile shape, with the same hexagon drawn as a
+dashed outline around a plus — instead of being absent. It opens the singleton
+Sidekicks window on the composer. The tile goes once one Sidekick qualifies, and
+the strip stays absent while the workspace socket answer that carries the
+Sidekicks is still in flight, because an unloaded list is not an empty
+workspace. `AutomationGlyph`'s hexagon is now a `HexagonGlyph` primitive taking
+a fill, an ink, and a symbol, and the strip's tile shape is a
+`SidekickStripTile` both tiles render through. `openSidekicks` takes a target
+rather than an id, parsed in main by `parseSidekicksWindowTarget`.
+
+**Why:** Until a Sidekick existed the strip showed nothing, so the one place in
+the product that says what a Sidekick is had nothing to say in the only state
+where somebody still needs telling — the account menu's Sidekicks item and the
+library's own New Sidekick button were the whole path, and neither is where a
+person looks. An action tile that reuses the Sidekick tile is also the cheapest
+thing to remove later: it is a branch in one strip, not a surface.
+
+The two extractions are what keep the action honest rather than approximate. The
+hexagon had the path, the fill, and the identity in one component, so drawing an
+empty one meant a second path; the primitive makes the outline and the fill the
+same silhouette at the same size by construction. The tile had the same problem
+for its collapse behaviour: the rail shrinks the strip's tiles to 54px squares
+and sheds their captions, and a second tile shape would have had to be kept in
+step with rules it did not share. Main parses a window target rather than an id
+because `new` is not one and loosening `IdSchema` to admit it would let any
+string reach the window's hash.
+
+**Considered and rejected:** A filled hexagon in a palette colour, which reads
+as an existing Sidekick — the dashed outline is the same thing the draft
+lifecycle dot says, and at the rail's 36px the outline is what distinguishes it.
+Keeping the tile alongside the shortcuts once Sidekicks exist, which would put a
+button that is not a Sidekick in a row that is scrolled and scanned as a list of
+them; the library window carries New Sidekick from then on. Opening the library
+rather than the composer, which asks a person who just pressed a plus to find a
+second one.
+
+**Consequences:** The strip is no longer proof that a workspace has a Sidekick,
+so a test or a rule that read its presence that way has to read its tiles. A
+`loading` sidebar shows no strip at all; that prop is the work-stream list's
+wait, and it is the right signal only because the socket answers the
+subscription with the work streams, the automations, and the notes together — if
+the Sidekicks ever arrive separately this needs their own wait instead.
+`openSidekicks` now refuses a target that is neither a UUID nor `new` with
+`Invalid Sidekicks window target` rather than a Zod parse error.
 
 ### 2026-09-10 — The rail keeps the Sidekick strip horizontal, at the bottom
 

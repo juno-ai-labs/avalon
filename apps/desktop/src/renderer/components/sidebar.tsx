@@ -46,6 +46,7 @@ import {
 } from '../lib/format';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
+import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import {
   markSurfaceEntrypoint,
@@ -70,7 +71,7 @@ import { useListMotion } from '../lib/use-list-motion';
 import { Avatar, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 import { ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup } from './sidebar-skeleton';
-import { AutomationGlyph, WorkstreamGlyph } from './workstream-glyph';
+import { AutomationGlyph, HexagonGlyph, WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
   onOpenSearch?: () => void;
@@ -384,28 +385,84 @@ function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
   );
 }
 
-function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.Element {
-  const scopeDescription = sidekick.scope === 'workspace' ? ' · Workspace' : '';
+/**
+ * One tile in the Sidekick strip: a hexagon over a caption, inside the wrapper
+ * the strip sizes and the rail shrinks.
+ *
+ * Shared by the Sidekicks and by the new-Sidekick action below, so the action
+ * is the same tile that sheds its caption and shrinks to the rail's 54px square
+ * with them rather than a second shape to keep in step with this one. A
+ * lifecycle marker is the part that is not shared: an action has no lifecycle,
+ * and `status` is absent rather than neutral for it.
+ */
+function SidekickStripTile({ glyph, label, name, onClick, status, title }: {
+  glyph: React.ReactNode;
+  /** What the tile is called to a screen reader, which the caption cannot be: it is truncated. */
+  label: string;
+  name: string;
+  onClick: () => void;
+  status?: { className: string; label: string } | undefined;
+  title: string;
+}): React.JSX.Element {
   return (
     <div className="sidebar-context-target">
       <button
         className="sidebar-row automation-row automation-tile"
-        aria-label={`${sidekick.name}, Active${scopeDescription}`}
-        title={`${sidekick.name} · Active${scopeDescription}`}
-        onClick={() => {
-          markSurfaceEntrypoint('sidebar_automation');
-          void desktopBridge().openSidekicks(sidekick.id);
-        }}
+        aria-label={label}
+        title={title}
+        onClick={onClick}
         type="button"
       >
         <span className="automation-tile-glyph" aria-hidden="true">
-          <AutomationGlyph id={sidekick.id} />
-          <span className="automation-tile-state active"><span className="status-dot" /></span>
+          {glyph}
+          {status && <span className={clsx('automation-tile-state', status.className)}><span className="status-dot" /></span>}
         </span>
-        <span className="automation-tile-name">{sidekick.name}</span>
-        <span className="sr-only">Active</span>
+        <span className="automation-tile-name">{name}</span>
+        {status && <span className="sr-only">{status.label}</span>}
       </button>
     </div>
+  );
+}
+
+function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.Element {
+  const scopeDescription = sidekick.scope === 'workspace' ? ' · Workspace' : '';
+  return (
+    <SidekickStripTile
+      glyph={<AutomationGlyph id={sidekick.id} />}
+      label={`${sidekick.name}, Active${scopeDescription}`}
+      name={sidekick.name}
+      onClick={() => {
+        markSurfaceEntrypoint('sidebar_automation');
+        void desktopBridge().openSidekicks(sidekick.id);
+      }}
+      status={{ className: 'active', label: 'Active' }}
+      title={`${sidekick.name} · Active${scopeDescription}`}
+    />
+  );
+}
+
+/**
+ * The strip's own way to make the first Sidekick, standing where a Sidekick's
+ * tile would: the same hexagon, drawn as an empty slot because there is no
+ * Sidekick yet to take a colour or a symbol from, with a plus in it.
+ *
+ * Only while the strip is empty. Once one Sidekick qualifies the strip is a row
+ * of shortcuts that scrolls, and an action tile in it would compete with them
+ * for the one place a person looks to reach a Sidekick; the library window this
+ * opens carries New Sidekick of its own from then on.
+ */
+function NewSidekickTile(): React.JSX.Element {
+  return (
+    <SidekickStripTile
+      glyph={<HexagonGlyph className="sidekick-new-glyph" fill="none" ink="var(--av-sys-color-text-muted)" symbol={Plus} />}
+      label="New Sidekick"
+      name="New Sidekick"
+      onClick={() => {
+        markSurfaceEntrypoint('sidebar_automation');
+        void desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET);
+      }}
+      title="New Sidekick"
+    />
   );
 }
 
@@ -1649,9 +1706,17 @@ export function Sidebar({
   useListMotion(scrollRef, compact, layoutSettling);
   useListMotion(commandRef, compact, layoutSettling);
 
-  const sidekickShortcuts = standaloneSidekicks.length > 0 && (
+  // The strip holds the new-Sidekick tile while a workspace has none, so the
+  // place Sidekicks are reached from is also where the first one is made. It
+  // waits for `loading` rather than reading an empty list as an empty
+  // workspace: the Sidekicks arrive in the same socket answer the work streams
+  // do, so an unloaded list would show the action for a moment and then replace
+  // it with the tiles it claimed were absent.
+  const sidekickShortcuts = (standaloneSidekicks.length > 0 || loading !== true) && (
     <section className="sidebar-automation-strip" aria-label="Sidekick shortcuts" onClick={() => setSidebarOpen(false)}>
-      {standaloneSidekicks.map((sidekick) => <SidekickTile key={sidekick.id} sidekick={sidekick} />)}
+      {standaloneSidekicks.length > 0
+        ? standaloneSidekicks.map((sidekick) => <SidekickTile key={sidekick.id} sidekick={sidekick} />)
+        : <NewSidekickTile />}
     </section>
   );
 
