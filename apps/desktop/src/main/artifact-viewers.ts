@@ -44,33 +44,10 @@ export interface ArtifactViewHandle {
    */
   destroyed(): boolean;
   setBounds(bounds: PreviewBounds): void;
-  /**
-   * Round the view's own corners.
-   *
-   * Part of the contract because CSS cannot reach a native view: the pane the
-   * renderer draws is rounded, the view composited over it is not, and the
-   * result is a page with square corners sitting inside a rounded box.
-   */
-  setBorderRadius(radius: number): void;
   loadURL(url: string): Promise<void>;
   close(): void;
 }
 
-/**
- * The corner the preview is composited with, in CSS pixels.
- *
- * The pane is full bleed: it reaches the bottom corners of the lightbox that
- * holds it, and a `WebContentsView` is not clipped by the DOM, so a square view
- * would paint the page's own square corners over the dialog's rounded ones and
- * out onto the scrim. This mirrors the lightbox's radius instead, which costs
- * a rounded corner where the view meets the header above it: Electron's API
- * takes one radius for all four, and a seam under a divider is a better artifact
- * than a page overhanging the surface it sits in.
- *
- * Pinned to that rule by a renderer test rather than by a shared constant,
- * since a stylesheet cannot be imported into the main process.
- */
-export const PREVIEW_CORNER_RADIUS = 16;
 
 export interface ArtifactHostWindow {
   /** Whether the window is gone; see `ArtifactViewHandle.destroyed`. */
@@ -311,10 +288,6 @@ export class ArtifactPreviewController {
       this.view = this.createView(request);
       this.artifactId = request.artifactId;
       const created = this.view;
-      // Once, at creation: the corner is a property of the surface rather than
-      // of any one layout, so it must not ride along with the bounds a scroll
-      // recomputes many times a second.
-      created.setBorderRadius(PREVIEW_CORNER_RADIUS);
       this.applyBounds();
       const result = loadArtifactInitialUrl(() => created.loadURL(request.url)).then((loaded) => {
         // DNS, TLS, and terminal navigation failures should not leave an empty

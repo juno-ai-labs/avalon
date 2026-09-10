@@ -481,6 +481,33 @@ rather than workspace authority.
 
 ## Changelog
 
+### 2026-09-10 — The chrome keeps its corner; the page inside it does not
+
+**What changed:** Nothing rounds the composited view any more.
+`setBorderRadius` is off `ArtifactViewHandle`, `PREVIEW_CORNER_RADIUS` is gone,
+and the main process no longer touches the view's corners at all. The lightbox
+keeps its own 16px radius.
+
+**Why:** The entry below rounded the view to match the lightbox, on the
+reasoning that a square view reaching the dialog's rounded bottom corners would
+paint the page out over the scrim. Looked at in a real window with a real page,
+that is not what happens: the view's rectangle is the pane's, which is inside
+the dialog's edge, so a square view *covers* the corner curve rather than
+spilling past it. Nothing reaches the scrim. What the rounding actually bought
+was a rounded page, and the page is the content rather than the frame: chrome is
+what gets a corner, and a viewer inside chrome does not.
+
+**Considered and rejected:** Squaring the lightbox's own corners so the two
+agree. That restyles Rally's frame to match what is being shown inside it, and
+the frame is the one part of this surface that is not the artifact's.
+
+**Consequences:** The dialog's bottom corners are covered by the page while one
+is showing, so its radius reads only at the top. A future change that insets the
+pane, or moves the viewer into a surface whose edge the view would exceed,
+brings the spill risk back, and the view has no rounding left to hide it with:
+check it in a window rather than reasoning about it, which is how both halves of
+this were settled.
+
 ### 2026-09-10 — The page is the whole surface, and its controls are the header's
 
 **What changed:** The detail no longer draws a panel switch, a kind line, or a
