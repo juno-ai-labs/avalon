@@ -52,7 +52,6 @@ const setDebugEnabled = vi.hoisted(() => vi.fn());
 const setMenuBarEnabled = vi.hoisted(() => vi.fn());
 const setLaunchAtLogin = vi.hoisted(() => vi.fn());
 const setProductAnalyticsEnabled = vi.hoisted(() => vi.fn());
-const getTelemetryInspector = vi.hoisted(() => vi.fn());
 const signOut = vi.hoisted(() => vi.fn());
 const leaveWorkspace = vi.hoisted(() => vi.fn());
 const applicationSettingsListeners = vi.hoisted(() => new Set<(settings: unknown) => void>());
@@ -90,7 +89,6 @@ vi.mock('../lib/platform', () => ({
     setMenuBarEnabled,
     setLaunchAtLogin,
     setProductAnalyticsEnabled,
-    getTelemetryInspector,
     onApplicationSettingsChanged: (listener: (settings: unknown) => void) => {
       applicationSettingsListeners.add(listener);
       return () => applicationSettingsListeners.delete(listener);
@@ -152,7 +150,7 @@ function renderSettings(
 }
 
 function openSettingsSection(
-  name: 'Account' | 'Digest' | 'Workspace' | 'Connections' | 'GitHub' | 'MCP tools' | 'Application',
+  name: 'Account' | 'Digest' | 'Workspace' | 'Internet access' | 'Connections' | 'GitHub' | 'MCP tools' | 'Application',
 ): void {
   const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
   fireEvent.click(within(navigation).getByRole('button', { name }));
@@ -338,10 +336,6 @@ describe('Workspace settings', () => {
       productAnalyticsEffective: productAnalyticsEnabled,
       nativeCrashRestartRequired: !productAnalyticsEnabled,
     }));
-    getTelemetryInspector.mockResolvedValue([{
-      name: 'screen_viewed', schemaVersion: 1, policyClass: 'product',
-      propertyNames: ['screen'], route: 'eu', validation: 'accepted', queueState: 'queued',
-    }]);
     setApplicationIcon.mockImplementation(async (activeIcon: string) => ({
       activeIcon,
       isAutomatic: false,
@@ -406,9 +400,37 @@ describe('Workspace settings', () => {
     expect(api.rotateWebhookSecret).not.toHaveBeenCalled();
   });
 
+  it('keeps the network policy on its own page under Workspace', async () => {
+    renderSettings();
+
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    const internetAccess = within(navigation).getByRole('button', { name: 'Internet access' });
+    expect(internetAccess).toHaveClass('settings-navigation-child');
+    // Indented under Workspace, so it has to follow it and precede Connections.
+    const workspaceNavigation = within(navigation).getByRole('button', { name: 'Workspace' });
+    expect(workspaceNavigation.compareDocumentPosition(internetAccess) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(internetAccess.compareDocumentPosition(
+      within(navigation).getByRole('button', { name: 'Connections' }),
+    ) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+
+    openSettingsSection('Workspace');
+    expect(await screen.findByText('Data region', undefined, { timeout: 10_000 })).toBeVisible();
+    // The destructive review-and-confirm flow is not sitting in the middle of
+    // the preferences list, and Workspace does not pay for its read.
+    expect(screen.queryByText('Terminal network access')).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /^Full internet/ })).not.toBeInTheDocument();
+    expect(api.getTerminalWorkspaceSettings).not.toHaveBeenCalled();
+
+    fireEvent.click(internetAccess);
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Internet access' })).toBeVisible();
+    expect(await screen.findByRole('radio', { name: /^Trusted only/ }, { timeout: 10_000 })).toBeChecked();
+    await waitFor(() => expect(api.getTerminalWorkspaceSettings).toHaveBeenCalled());
+  }, 30_000);
+
   it('previews and confirms full Terminal internet access before applying it', async () => {
     renderSettings();
-    openSettingsSection('Workspace');
+    openSettingsSection('Internet access');
     // 10s rather than the suite's 5s `asyncUtilTimeout` (src/renderer/test/setup.ts),
     // and 30s rather than its 15s `testTimeout` on the `it` below. These panes
     // settle several queries deep, and on a CPU-loaded machine — a CI runner, or
@@ -447,7 +469,7 @@ describe('Workspace settings', () => {
       warning: 'Trusted only applies managed and workspace-approved access.',
     });
     renderSettings();
-    openSettingsSection('Workspace');
+    openSettingsSection('Internet access');
 
     expect(await screen.findByText('Workspace-approved domains', undefined, { timeout: 10_000 })).toBeVisible();
     expect(screen.queryByText('Required targets')).not.toBeInTheDocument();
@@ -479,7 +501,7 @@ describe('Workspace settings', () => {
       },
     ));
     renderSettings();
-    openSettingsSection('Workspace');
+    openSettingsSection('Internet access');
     fireEvent.click(await screen.findByRole('radio', { name: /^Full internet/ }, { timeout: 10_000 }));
     fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm network change' }, { timeout: 10_000 }));
@@ -1333,7 +1355,7 @@ describe('Workspace settings', () => {
 
     renderSettings();
     openSettingsSection('Connections');
-    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'All' }));
 
     const xCard = (await screen.findByText('Public X via TwitterAPI.io')).closest('article');
     expect(xCard).not.toBeNull();
@@ -1359,7 +1381,7 @@ describe('Workspace settings', () => {
 
       renderSettings();
       openSettingsSection('Connections');
-      fireEvent.click(screen.getByRole('button', { name: 'All' }));
+      fireEvent.click(screen.getByRole('radio', { name: 'All' }));
 
       const slackCard = (await screen.findByText('Slack')).closest('article');
       expect(slackCard).not.toBeNull();
@@ -1386,7 +1408,7 @@ describe('Workspace settings', () => {
 
     renderSettings();
     openSettingsSection('Connections');
-    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'All' }));
 
     const slackCard = (await screen.findByText('Slack')).closest('article');
     expect(slackCard).not.toBeNull();
@@ -1414,7 +1436,7 @@ describe('Workspace settings', () => {
 
       renderSettings();
       openSettingsSection('Connections');
-      fireEvent.click(screen.getByRole('button', { name: 'All' }));
+      fireEvent.click(screen.getByRole('radio', { name: 'All' }));
 
       const linearCard = (await screen.findByText('Linear')).closest('article');
       expect(linearCard).not.toBeNull();
@@ -1439,7 +1461,7 @@ describe('Workspace settings', () => {
 
     renderSettings();
     openSettingsSection('Connections');
-    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'All' }));
 
     const linearCard = (await screen.findByText('Linear')).closest('article');
     expect(linearCard).not.toBeNull();
@@ -1526,13 +1548,13 @@ describe('Workspace settings', () => {
     const driveCard = screen.getByText('Google Drive + Docs + Sheets').closest('article');
     expect(connectionsHeading.compareDocumentPosition(driveCard!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 
-    const filter = screen.getByRole('group', { name: 'Filter connections' });
-    expect(within(filter).getAllByRole('button').map((button) => button.textContent)).toEqual([
+    const filter = screen.getByRole('radiogroup', { name: 'Filter connections' });
+    expect(within(filter).getAllByRole('radio').map((option) => option.textContent)).toEqual([
       'Not connected',
       'Connected',
       'All',
     ]);
-    expect(within(filter).getByRole('button', { name: 'Not connected' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(filter).getByRole('radio', { name: 'Not connected' })).toBeChecked();
     expect(screen.queryByText('Google Mail + Calendar')).not.toBeInTheDocument();
 
     const reconnectButton = screen.getByRole('button', { name: 'Refresh Google · adam@example.com' });
@@ -1551,7 +1573,7 @@ describe('Workspace settings', () => {
       '00000000-0000-7000-8000-000000000010',
     ));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Connected' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Connected' }));
     await waitFor(() => expect(screen.getByText('Google Mail + Calendar')).toBeVisible());
     expect(screen.queryByText('Google Drive + Docs + Sheets')).not.toBeInTheDocument();
   });
@@ -1575,7 +1597,7 @@ describe('Workspace settings', () => {
     }));
     renderSettings();
     openSettingsSection('Connections');
-    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'All' }));
 
     const rotateButton = await screen.findByRole('button', { name: 'Refresh Inbound webhook' });
     expect(screen.getByRole('table', { name: 'Workspace connections' })).toBeVisible();
@@ -1889,30 +1911,30 @@ describe('Workspace settings', () => {
     expect(screen.getByText(/Restart Rally to remove local native crash dumps and apply the current setting/u)).toBeVisible();
   });
 
-  it('shows a read-only redacted telemetry inspector only in Developer settings', async () => {
+  it('answers About with the app version and nothing a developer would ask', async () => {
     renderSettings();
     openSettingsSection('Application');
-    expect(await screen.findByRole('heading', { name: 'Telemetry inspector' })).toBeVisible();
-    expect(await screen.findByText('screen_viewed')).toBeVisible();
-    expect(screen.getByText('screen')).toBeVisible();
-    expect(screen.getByText(/EU · accepted · queued/u)).toBeVisible();
-    expect(screen.queryByRole('button', { name: /replay|emit/u })).toBeNull();
+
+    expect(await screen.findByRole('heading', { name: 'About' })).toBeVisible();
+    const about = screen.getByRole('heading', { name: 'About' }).parentElement!.nextElementSibling!;
+    expect(within(about as HTMLElement).getByText('Version')).toBeVisible();
+    expect(within(about as HTMLElement).getByText('0.1.0')).toBeVisible();
+    // Build channel, platform, the API base URL and the socket's reconnect
+    // strategy are debugging facts, and the API base URL named the region's
+    // host on a pane anyone can open.
+    for (const retired of ['Build', 'Platform', 'Regional API', 'Realtime']) {
+      expect(screen.queryByText(retired), retired).not.toBeInTheDocument();
+    }
+    expect(screen.queryByText('https://eu.api.rallywith.ai')).not.toBeInTheDocument();
   });
 
-  it('shows telemetry inspector failures and lets the developer retry', async () => {
-    getTelemetryInspector
-      .mockRejectedValueOnce(new Error('Telemetry decisions could not be read.'))
-      .mockResolvedValueOnce([{
-        name: 'screen_viewed', schemaVersion: 1, policyClass: 'product',
-        propertyNames: ['screen'], route: 'eu', validation: 'accepted', queueState: 'queued',
-      }]);
+  it('offers no telemetry inspector in the staff-only Developer section', async () => {
     renderSettings();
     openSettingsSection('Application');
 
-    expect(await screen.findByText('Telemetry decisions could not be read.')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh telemetry inspector' }));
-    expect(await screen.findByText('screen_viewed')).toBeVisible();
-    expect(screen.queryByText('Telemetry decisions could not be read.')).toBeNull();
+    expect(await screen.findByRole('switch', { name: 'Debug enabled' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Telemetry inspector' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Refresh telemetry inspector' })).not.toBeInTheDocument();
   });
 
   it('finds Privacy and diagnostics from telemetry-related settings searches', async () => {
@@ -2381,7 +2403,6 @@ describe('Closing the settings window with Escape', () => {
       lastDeliveredAt: null,
     });
     getApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
-    getTelemetryInspector.mockResolvedValue([]);
   });
 
   it('closes the settings window', () => {
@@ -2456,7 +2477,7 @@ describe('Closing the settings window with Escape', () => {
     // to render a saved value into a writable text field would make Escape
     // permanently dead in that section, and the symptom is a key that quietly
     // stopped working rather than a failing assertion anywhere near the cause.
-    for (const section of ['Account', 'Digest', 'Workspace', 'Connections', 'Application'] as const) {
+    for (const section of ['Account', 'Digest', 'Workspace', 'Internet access', 'Connections', 'Application'] as const) {
       openSettingsSection(section);
       await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(section));
 
@@ -2472,7 +2493,7 @@ describe('Closing the settings window with Escape', () => {
       customDomains: ['packages.example.com'], remainingCustomSlots: 6, failureCode: null,
     });
     renderSettings(workspace, createTestQueryClient(), true);
-    openSettingsSection('Workspace');
+    openSettingsSection('Internet access');
     const domains = await screen.findByLabelText('Additional Terminal domains');
 
     fireEvent.keyDown(document.body, { key: 'Escape' });

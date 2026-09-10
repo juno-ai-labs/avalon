@@ -72,7 +72,7 @@ describe('TelemetryReporter', () => {
     await reporter.applicationOpened('user_launch', 'cold_start');
     const rows = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
     expect(rows.map((row) => row.event.name)).toEqual(['application_lifecycle']);
-    expect(reporter.inspector()).toMatchObject([
+    expect(reporter.decisions()).toMatchObject([
       { name: 'application_lifecycle', validation: 'accepted' },
       { name: 'screen_viewed', validation: 'suppressed' },
       { name: 'application_settings_state_v2', validation: 'suppressed' },
@@ -303,7 +303,7 @@ describe('TelemetryReporter', () => {
       },
       properties: { screen: 'onboarding_welcome' },
     });
-    expect(reporter.inspector().at(-1)).toMatchObject({ validation: 'rejected' });
+    expect(reporter.decisions().at(-1)).toMatchObject({ validation: 'rejected' });
   });
 
   it('records native application install and update transitions as installation lifecycle events', async () => {
@@ -461,7 +461,7 @@ describe('TelemetryReporter', () => {
     const disabled = await harness({ auth, enabled: false });
     await disabled.reporter.semanticProductIntent(properties, undefined, operationId);
     expect(await disabled.spool.ready(new Date('2026-08-12T20:00:01.000Z'))).toEqual([]);
-    expect(disabled.reporter.inspector()).toMatchObject([
+    expect(disabled.reporter.decisions()).toMatchObject([
       { name: 'renderer_perf_flow', validation: 'suppressed' },
     ]);
   });
