@@ -20,6 +20,12 @@ const CAST: DemoCast = {
 const OPERATION_ID = "00000000-0000-7000-8000-0000000000e2";
 const MEMO_ID = "00000000-0000-7000-8000-0000000000f1";
 const RENEWAL_ID = "00000000-0000-7000-8000-0000000000f2";
+const PRESS_ID = "00000000-0000-7000-8000-0000000000f3";
+const WORKSTREAM_IDS: Record<string, string> = {
+  "decision-memo": MEMO_ID,
+  "northgate-renewal": RENEWAL_ID,
+  "press-release": PRESS_ID,
+};
 
 function receipt(overrides: Partial<DemoSeedReceipt> & Pick<DemoSeedReceipt, "actionId" | "kind">): DemoSeedReceipt {
   return {
@@ -27,6 +33,8 @@ function receipt(overrides: Partial<DemoSeedReceipt> & Pick<DemoSeedReceipt, "ac
     workspaceId: "00000000-0000-7000-8000-0000000000e1",
     room: null,
     workstreamId: null,
+    substream: null,
+    substreamId: "0",
     sidekickId: null,
     sidekickRunId: null,
     turnId: null,
@@ -41,27 +49,45 @@ function receipt(overrides: Partial<DemoSeedReceipt> & Pick<DemoSeedReceipt, "ac
 
 /** The placeholder pack's receipts, as the seeder would leave them. */
 function placeholderReceipts(): DemoSeedReceipt[] {
+  const substreamIds = new Map<string, string>();
   return PLACEHOLDER_DEMO_PACK.steps.map((step) => {
     if (step.kind === "sidekick") {
+      // In no room and so in no conversation: both substream columns stay null,
+      // which is what the receipts table's own CHECK requires of a Sidekick.
       return receipt({
         actionId: step.id,
         kind: step.kind,
+        substreamId: null,
         sidekickId: `sidekick-${step.id}`,
         ...(step.firstRun ? { sidekickRunId: `sidekick-run-${step.id}`, runOutcome: "completed" as const } : {}),
       });
     }
-    const workstreamId = step.room === "decision-memo" ? MEMO_ID : RENEWAL_ID;
+    const workstreamId = WORKSTREAM_IDS[step.room]!;
     if (step.kind === "create_workstream") {
       return receipt({ actionId: step.id, kind: step.kind, room: step.room, workstreamId, runOutcome: "completed" });
     }
+    if (step.kind === "create_substream") {
+      substreamIds.set(step.substream, `child-${step.substream}`);
+      return receipt({
+        actionId: step.id, kind: step.kind, room: step.room, workstreamId,
+        substream: step.substream, substreamId: `child-${step.substream}`,
+      });
+    }
+    const inChild = step.substream === undefined
+      ? {}
+      : { substream: step.substream, substreamId: substreamIds.get(step.substream)! };
     if (step.kind === "upload") {
-      return receipt({ actionId: step.id, kind: step.kind, room: step.room, workstreamId, resourceId: `resource-${step.id}` });
+      return receipt({
+        actionId: step.id, kind: step.kind, room: step.room, workstreamId,
+        resourceId: `resource-${step.id}`, ...inChild,
+      });
     }
     return receipt({
       actionId: step.id,
       kind: step.kind,
       room: step.room,
       workstreamId,
+      ...inChild,
       ...(step.assistant?.kind === "ask"
         ? { runOutcome: "needs_input", elicitationId: `elicitation-${step.id}` }
         : step.assistant ? { runOutcome: "completed" } : {}),
@@ -75,9 +101,22 @@ describe("the readiness manifest", () => {
     expect(manifest.views).toHaveLength(1);
     const [view] = manifest.views;
     expect(view?.viewerUserId).toBe(CAST.presenter!.userId);
-    // Newest first: the renewal room's last step comes after the memo's.
-    expect(view?.rooms.map((room) => room.room)).toEqual(["northgate-renewal", "decision-memo"]);
+    // Newest first, by each room's last step in the *main* conversation. The
+    // press-release room's substream steps run last of all and do not count:
+    // a private child never reaches the directory row this order comes from.
+    expect(view?.rooms.map((room) => room.room))
+      .toEqual(["press-release", "northgate-renewal", "decision-memo"]);
+    // Three drafts of one document, in the order they were uploaded, and no
+    // sign of the substream: not in the room list, not in the attachments.
     expect(view?.rooms[0]).toMatchObject({
+      workstreamId: PRESS_ID,
+      harnessStatus: "completed",
+      resourceIds: ["resource-press-v1", "resource-press-v2", "resource-press-v3"],
+      participantUserIds: [CAST.marcus!.userId, CAST.priya!.userId, CAST.dana!.userId],
+      mentioned: false,
+      unseen: false,
+    });
+    expect(view?.rooms[1]).toMatchObject({
       workstreamId: RENEWAL_ID,
       harnessStatus: "needs_input",
       elicitationId: "elicitation-renewal-marcus-2",
@@ -88,7 +127,7 @@ describe("the readiness manifest", () => {
       hasUnread: true,
       mentioned: true,
     });
-    expect(view?.rooms[1]).toMatchObject({
+    expect(view?.rooms[2]).toMatchObject({
       workstreamId: MEMO_ID,
       harnessStatus: "completed",
       resourceIds: ["resource-memo-attach"],

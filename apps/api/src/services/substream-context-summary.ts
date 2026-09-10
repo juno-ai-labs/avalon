@@ -50,7 +50,14 @@ function summaryMessages(messages: readonly SubstreamContextMessage[]): ModelMes
   ];
 }
 
-const sharedGateway = (env: Env): SubstreamSummaryGateway => async (input) => {
+/**
+ * The platform's own gateway: one structured inference through the shared
+ * inference stack. Exported because a caller that must not reach a model —
+ * the demo seeder, whose whole point is that what Rally says is scripted —
+ * passes its own gateway instead, and there needs to be one name for the
+ * behaviour it is replacing.
+ */
+export const substreamSummaryGateway = (env: Env): SubstreamSummaryGateway => async (input) => {
   const inference = await runStructuredInference(env, {
     role: "substream_context_summary",
     routing: { model: input.model, fallbackModels: [] },
@@ -84,7 +91,7 @@ export function createSubstreamContextTransformServices(
   env: Env,
   input: SubstreamAddress & { requestId: string; userId?: UserId },
 ): ContextTransformServices {
-  return createSubstreamContextTransformServicesWithGateway(sharedGateway(env), input);
+  return createSubstreamContextTransformServicesWithGateway(substreamSummaryGateway(env), input);
 }
 
 export function createSubstreamContextTransformServicesWithGateway(
