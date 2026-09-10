@@ -662,7 +662,11 @@ to their marks as the titles fade, the headings close, the search pill closes
 to its icon in place, the titlebar's New chat fades while the rail's slides in
 under Search once the slot has opened, and on expand the rail's New chat
 slides out to the left as the pill reopens. Drag the edge past the threshold
-and confirm the contents snap with it, as the edge does.
+and confirm the contents snap with it, as the edge does. Toggle the
+work-stream sidebar the same way and confirm its rows narrow to their marks as
+the copy fades, the section headings close as the section rules appear, a
+substream's branch line cross-fades into its initial, the participants'
+avatars shrink into the square, and the footer's toggle glides to the centre.
 The main conversation row uses the work-stream title, and carries
 the work stream's own icon in its colour; a substream row carries the branch
 line, which compact replaces with the first character of the substream's title.

@@ -142,10 +142,13 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
                 title={child.title}
                 type="button"
               >
+                {/* Both marks, stacked in the one slot: the stylesheet
+                    cross-fades the branch line into the initial as the rail
+                    narrows, rather than this swapping one element for the
+                    other, which would cut a frame ahead of the edge. */}
                 <span aria-hidden="true" className="workstream-context-mark">
-                  {compact && initial
-                    ? <span className="workstream-substream-initial">{initial}</span>
-                    : <IconBorderCornerPill className="workstream-substream-connector" size={24} stroke={1.5} />}
+                  <IconBorderCornerPill className="workstream-substream-connector" size={24} stroke={1.5} />
+                  {initial && <span className="workstream-substream-initial">{initial}</span>}
                 </span>
                 <span className="workstream-context-copy"><span>{child.title}</span></span>
               </button>
