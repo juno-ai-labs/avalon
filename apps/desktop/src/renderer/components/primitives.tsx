@@ -289,6 +289,88 @@ export function AvatarStack({
   );
 }
 
+export interface SegmentedOption<Value extends string> {
+  readonly value: Value;
+  readonly label: string;
+  /** Native tooltip for a segment whose one-word label needs a sentence. */
+  readonly title?: string;
+}
+
+/**
+ * One exclusive choice, drawn as a row of pills inside a single track.
+ *
+ * Every settings surface that offers three or four mutually exclusive options
+ * in a strip — the appearance preference, the connections filter — draws it
+ * through here, so the track, the selected pill and the interaction states are
+ * decided once. A second strip with its own rules is how the two drifted apart
+ * in the first place.
+ *
+ * It is a radio group, not a row of toggle buttons: the options are exclusive
+ * and exactly one is always chosen, which is what `radiogroup` describes and
+ * what a pressed-button group does not. That brings the pattern's keyboard
+ * contract with it — the arrows move the choice, and only the chosen segment is
+ * a tab stop, so the strip costs one Tab rather than one per option.
+ */
+export function SegmentedControl<Value extends string>({
+  ariaLabel,
+  className,
+  onChange,
+  options,
+  value,
+}: {
+  ariaLabel: string;
+  className?: string;
+  onChange: (value: Value) => void;
+  options: readonly SegmentedOption<Value>[];
+  value: Value;
+}): React.JSX.Element {
+  const selected = options.findIndex((option) => option.value === value);
+  // Nothing matched: the first segment carries the tab stop so the strip stays
+  // reachable rather than dropping out of the tab order entirely.
+  const tabStop = selected === -1 ? 0 : selected;
+  const move = (event: React.KeyboardEvent<HTMLButtonElement>, index: number): void => {
+    // Unmodified keys only, which is all the radiogroup pattern claims. A
+    // modified arrow belongs to the platform — VoiceOver moves with
+    // Ctrl-Option-Arrow — and taking it here would change the setting under
+    // someone who was trying to move past it, then `preventDefault` the move
+    // they actually asked for.
+    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+    const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1
+      : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1
+      : event.key === 'Home' ? -index
+      : event.key === 'End' ? options.length - 1 - index
+      : 0;
+    if (step === 0 && event.key !== 'Home' && event.key !== 'End') return;
+    event.preventDefault();
+    const next = options[(index + step + options.length) % options.length];
+    if (!next) return;
+    onChange(next.value);
+    const strip = event.currentTarget.parentElement;
+    const target = strip?.querySelectorAll<HTMLButtonElement>('button')[
+      (index + step + options.length) % options.length
+    ];
+    target?.focus();
+  };
+  return (
+    <div aria-label={ariaLabel} className={clsx('segmented', className)} role="radiogroup">
+      {options.map((option, index) => (
+        <button
+          aria-checked={option.value === value}
+          key={option.value}
+          onClick={() => onChange(option.value)}
+          onKeyDown={(event) => move(event, index)}
+          role="radio"
+          tabIndex={index === tabStop ? 0 : -1}
+          title={option.title}
+          type="button"
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Badge({ children, className, ...props }: PropsWithChildren<HTMLAttributes<HTMLSpanElement>>): React.JSX.Element {
   return (
     <span className={clsx('badge', className)} {...props}>

@@ -442,6 +442,14 @@
   --av-cmp-tooltip-background: #2a241d;
   --av-cmp-tooltip-foreground: #f7f3ec;
 
+  /* The track behind an exclusive-choice strip. Its one value is the recess
+   * the chosen pill sits in, and the pill is `sys.color.surface.raised`, so
+   * the two have to move apart in both appearances. That is why the track is
+   * not a neutral step: light recesses *down* from the card it sits on and
+   * dark recesses further down again, and the one step that reads as a recess
+   * in dark is the raised fill itself. */
+  --av-cmp-segmented-track: #eeeeee;
+
   /* A switch. The knob is white on a grey track in a light theme, which is
    * about two to one; the lift from `sys.elevation.shadow.sm` is what makes
    * the off state read as a control. */
@@ -745,6 +753,8 @@
 
   --av-cmp-tooltip-background: #efe8dc;
   --av-cmp-tooltip-foreground: #17130d;
+
+  --av-cmp-segmented-track: #111111;
 
   --av-cmp-toggle-track: #2a2318;
   --av-cmp-toggle-knob-off: #8a8070;

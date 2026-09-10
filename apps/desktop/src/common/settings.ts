@@ -2,6 +2,7 @@ export const desktopSettingsSections = [
   'account',
   'digest',
   'workspace',
+  'internet-access',
   'connections',
   'github',
   'custom-mcp',

@@ -12,6 +12,7 @@ without maintaining a second list of section keywords.
 | `apps/desktop/src/renderer/settings/setting-label.tsx` | Shared labels, descriptions and inert focus targets. |
 | `apps/desktop/src/renderer/settings/setting-toggle.tsx` | Registry-backed switch presentation with existing state and mutation bindings. |
 | `apps/desktop/src/renderer/settings/choices.ts` | Digest choices and value-keyed permission labels shared by controls and search. |
+| `apps/desktop/src/renderer/components/primitives.tsx` | `SegmentedControl`, the one exclusive-choice strip the appearance preference and the connections filter both draw. |
 | `apps/desktop/src/renderer/styles/app.css` | Settings layout and reveal treatment; appearance ownership is in [theming](theming.md). |
 | `apps/desktop/src/common/settings.ts` | Section identities shared with the desktop window. |
 | `apps/desktop/src/renderer/settings/digest-provider.ts` | Connection-backed digest destination definitions. |
@@ -41,6 +42,14 @@ accents; all query words must occur. Exact labels rank above prefixes,
 substrings and other metadata. It does not fetch remote indexes or mount
 inactive pages. Results replace navigation while the query is non-empty;
 typing does not change the active page.
+
+Sections are pages, and a page may be indented under the one it belongs to.
+`internet-access` sits under `workspace` and `github` under `connections`; the
+child is a section in its own right, with its own definitions, its own read and
+its own deep link, not a scroll position inside its parent. `sectionLabels` in
+`search-results.tsx` is typed as a total record of the section list, so adding a
+section that nobody named fails the build rather than shipping a search result
+whose page name is blank.
 
 Both sidebars render `SidebarSearch` with the same sizing, typography, icon and
 focus treatment. The main window uses its button mode to open workspace search;
@@ -109,6 +118,39 @@ authorization. Real Electron checks cover positioning, keyboard navigation,
 scrolling and both appearances.
 
 ## Changelog
+
+### 2026-09-10 — Internet access becomes its own page, and one strip draws every exclusive choice
+
+**What changed:** The Terminal outbound-access policy moved out of Workspace
+preferences onto an **Internet access** page indented under it, the way GitHub
+sits under Connections. The Application pane lost the **Telemetry inspector**
+along with its `telemetry:inspector` IPC channel, preload method and bridge
+type, and **About** now lists the version alone rather than build, platform,
+regional API base URL and a realtime line. The appearance picker and the
+connections filter both render the new `SegmentedControl` primitive, and
+`sectionLabels` became a typed total record of the section list.
+
+**Why:** The policy is a review-then-confirm flow that stops running sandboxes,
+and it had been sitting mid-list between a timezone dropdown and an invitation
+form, where a destructive control reads like a preference. About was answering
+questions nobody asks of a shipped app — the API base URL and the socket's
+reconnect strategy are debugging facts, not installation facts — and the
+inspector was a developer pane whose only reader was its own author. Two
+segmented strips two panes apart had grown separate markup, separate CSS and
+separate semantics (`radiogroup` in one, pressed buttons in the other) for the
+same job.
+
+**Considered and rejected:** Leaving the Terminal card in Workspace behind a
+sub-heading keeps the destructive flow one scroll from the invite form.
+Restyling the two strips to match without extracting a primitive is how they
+drifted the first time. Keeping the inspector's IPC channel with the pane
+removed leaves a renderer-reachable telemetry surface with no caller.
+
+**Consequences:** `internet-access` is a section identity like any other: it is
+deep-linkable, its settings carry it, and the Terminal read is gated on it
+rather than on `workspace`. A new section that `sectionLabels` does not name is
+now a type error. An exclusive-choice strip is a `radiogroup` everywhere, so it
+costs one tab stop and its arrows move the choice.
 
 ### 2026-09-08 — Move personal appearance to Account
 
