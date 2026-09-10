@@ -26,9 +26,18 @@ export async function searchAuthorizationKey(subject: AuthorizationSubject, reso
   return `search-authz:v1:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
+/** Work a request hands past its own response, typically `ExecutionContext.waitUntil`. */
+export type DeferredWork = (work: Promise<unknown>) => void;
+
 /** Search trusts regional projected decisions; canonical reads only populate misses or mutation jobs. */
 export class SearchAuthorizationResolver implements AuthorizationResolver {
-  constructor(private readonly env: Env, private readonly authority: AuthorizationResolver = new AuthorizationService(env)) {}
+  constructor(private readonly env: Env, private readonly authority: AuthorizationResolver = new AuthorizationService(env),
+    /**
+     * Member search: a decision the projection does not hold yet is answered
+     * unavailable and filled after the response, so no request waits for a
+     * canonical owner. Callers without it keep the inline fill.
+     */
+    private readonly defer?: DeferredWork) {}
 
   private async write(snapshots: z.infer<typeof SearchAuthorizationSnapshotSchema>[]) {
     if (!snapshots.length) return { written: 0, superseded: 0, kvWriteMs: 0 };
@@ -70,34 +79,48 @@ export class SearchAuthorizationResolver implements AuthorizationResolver {
         && JSON.stringify(parsed.data.resource) === JSON.stringify(resources[index])
         ? parsed.data.decision : null;
     });
-    // KV caches negative lookups too. A miss is not evidence that the durable projection is absent.
     const missedIndexes = resources.flatMap((_, index) => decisions[index] === null ? [index] : []);
-    if (missedIndexes.length && this.env.AVALON_REGION === 'global' && this.env.AUTHORIZATION_CACHE) {
-      try {
-        const stored = await (await authorizationWorkspace(this.env, subject.workspaceId)).readSearchAuthorizationSnapshots({
-          subject, resources: missedIndexes.map((index) => resources[index]!),
-        });
-        for (const [offset, snapshot] of stored.entries()) {
-          if (snapshot) decisions[missedIndexes[offset]!] = snapshot.decision;
+    if (!missedIndexes.length) return decisions as AuthorizationDecision[];
+    const fill = async (): Promise<Map<number, AuthorizationDecision>> => {
+      const resolved = new Map<number, AuthorizationDecision>();
+      let pending = missedIndexes;
+      // KV caches negative lookups too. A miss is not evidence that the durable projection is absent.
+      if (this.env.AVALON_REGION === 'global' && this.env.AUTHORIZATION_CACHE) {
+        try {
+          const stored = await (await authorizationWorkspace(this.env, subject.workspaceId)).readSearchAuthorizationSnapshots({
+            subject, resources: pending.map((index) => resources[index]!),
+          });
+          for (const [offset, snapshot] of stored.entries()) {
+            if (snapshot) resolved.set(pending[offset]!, snapshot.decision);
+          }
+        } catch {
+          // An unavailable projection store must not trigger a more expensive authority walk.
+          for (const index of pending) resolved.set(index, unavailable());
         }
-      } catch {
-        // An unavailable projection store must not trigger a more expensive authority walk.
-        for (const index of missedIndexes) decisions[index] = unavailable();
+        pending = pending.filter((index) => !resolved.has(index));
       }
+      if (pending.length) {
+        try {
+          const loaded = await this.project(subject, pending.map((index) => resources[index]!));
+          pending.forEach((index, offset) => resolved.set(index, loaded[offset]!));
+        } catch { for (const index of pending) resolved.set(index, unavailable()); }
+      }
+      return resolved;
+    };
+    if (this.defer) {
+      // The response never waits for an owner. The fill registers the key and
+      // publishes through the projection, so the next search finds the decision.
+      this.defer(fill().catch(() => undefined));
+      return decisions.map((decision) => decision ?? unavailable());
     }
-    const missing = resources.filter((_, index) => decisions[index] === null);
-    let loaded: AuthorizationDecision[];
-    try {
-      loaded = missing.length ? await this.project(subject, missing) : [];
-    }
-    catch { loaded = missing.map(unavailable); }
-    let index = 0;
-    return decisions.map((decision) => decision ?? loaded[index++]!);
+    const resolved = await fill();
+    return decisions.map((decision, index) => decision ?? resolved.get(index)!);
   }
 }
 
-export function createSearchAccessContext(env: Env, auth: AuthContext) {
-  return new AccessContext({ workspaceId: auth.workspaceId, userId: auth.userId, delegation: null }, new SearchAuthorizationResolver(env));
+export function createSearchAccessContext(env: Env, auth: AuthContext, defer?: DeferredWork) {
+  return new AccessContext({ workspaceId: auth.workspaceId, userId: auth.userId, delegation: null },
+    new SearchAuthorizationResolver(env, undefined, defer));
 }
 
 /** Mutation-driven projection. Jobs contain only the workspace address and reload current owners. */

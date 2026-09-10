@@ -2846,6 +2846,14 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       FROM search_authorization_keys k JOIN authorization_snapshots s USING(cache_key)
       WHERE json_extract(s.snapshot_json, '$.decision.status') = 'unavailable'`,
   ],
+}, {
+  version: 47,
+  description: 'rewrite every indexed resource with its display attributes',
+  // The index now serves a result's title, time and type beside its text.
+  // Re-publishing at the current revision rewrites the lexical row in place
+  // (an equal-revision upsert is admitted while the row is live) and leaves
+  // completed embeddings alone.
+  statements: ['UPDATE resource_search_versions SET pending = 1, not_before = 0'],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {

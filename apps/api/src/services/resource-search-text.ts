@@ -2,13 +2,6 @@ import { z } from 'zod';
 import { classifyAttachmentKind } from '@rally/contracts';
 import type { Env } from '../env';
 
-/** Diagnose versioned snapshot shape drift without including source data in errors. */
-export function resourceSearchRevision(value: unknown): number {
-  const revision = z.number().int().safeParse(value);
-  if (!revision.success) throw new Error('search_resource_revision_invalid');
-  return revision.data;
-}
-
 function isSearchableText(fileName: unknown, mimeType: unknown): boolean {
   const kind = classifyAttachmentKind({
     fileName: typeof fileName === 'string' ? fileName : '',

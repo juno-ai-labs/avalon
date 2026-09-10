@@ -1,13 +1,10 @@
-import { createSearchAccessContext } from './search-authorization';
+import { createSearchAccessContext, type DeferredWork } from './search-authorization';
 import { logInfo } from '../observability/logger';
 import type { SearchRequest, SearchResult } from '@rally/contracts/search';
 import type { AuthContext, Env } from '../env';
-import { ApiError } from '../lib/api-error';
 import { IdSchema, SubstreamIdSchema, asSubstreamId } from '@rally/contracts';
-import { WorkstreamObjectClient } from './workstream-object-client';
-import { ResourceService } from './resource-service';
-import { resourceSearchCategory } from './resource-search-text';
-import { workspaceSearchIndex, searchContentHash, type TextSearchCandidate, type AuthorizedSearchSource } from './text-search';
+import { HttpUrlSchema } from '@rally/contracts/url-schemas';
+import { workspaceSearchIndex, type TextSearchCandidate, type AuthorizedSearchSource } from './text-search';
 import { literalMatchRanges, matchingPassage } from './search-passages';
 
 /** Search uses the same 50-result page as the existing resource directory. */
@@ -15,24 +12,28 @@ const SEARCH_PAGE_SIZE = 50;
 /** A two-line desktop result keeps 60 characters of context on each side. */
 const PREVIEW_CONTEXT_CHARACTERS = 60;
 
-function denied(error: unknown): boolean {
-  return error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 404);
+interface ConversationGroup { parentId: string; substreamId: string; candidates: TextSearchCandidate[] }
+
+export async function searchWorkspace(env: Env, auth: AuthContext, request: SearchRequest, signal?: AbortSignal,
+  defer?: DeferredWork): Promise<SearchResult[]> {
+  return (await searchWorkspacePage(env, auth, request, signal, defer)).results;
 }
 
-export async function searchWorkspace(env: Env, auth: AuthContext, request: SearchRequest, signal?: AbortSignal): Promise<SearchResult[]> {
-  return (await searchWorkspacePage(env, auth, request, signal)).results;
-}
-
-export async function searchWorkspacePage(env: Env, auth: AuthContext, request: SearchRequest, signal?: AbortSignal) {
+/**
+ * One candidate page, admitted through the projected search decisions and
+ * rendered from the index's own attributes. Nothing here reads a Durable
+ * Object or R2: a decision the projection does not hold yet is filled after
+ * the response (`defer`), and a row indexed before the display attributes
+ * existed is omitted until its queued rewrite lands. Not finding something is
+ * the safe failure; the next search finds it.
+ */
+export async function searchWorkspacePage(env: Env, auth: AuthContext, request: SearchRequest, signal?: AbortSignal,
+  defer?: DeferredWork) {
   signal?.throwIfAborted();
   const started = performance.now();
   let complete = true;
-  const omitUnverified = (error: unknown) => {
-    if (error instanceof ApiError && error.code === 'authorization_unavailable') { complete = false; return; }
-    if (!denied(error)) throw error;
-  };
-  const access = createSearchAccessContext(env, auth);
-  const readableGroups = async <T extends { parentId: string; substreamId: string }>(groups: T[]) => {
+  const access = createSearchAccessContext(env, auth, defer);
+  const readableGroups = async (groups: ConversationGroup[]) => {
     const decisions = await access.checkMany(groups.map((group) => ({ kind: 'conversation' as const,
       workspaceId: auth.workspaceId, parentId: IdSchema.parse(group.parentId), substreamId: asSubstreamId(group.substreamId) })));
     return groups.filter((_, index) => {
@@ -41,115 +42,84 @@ export async function searchWorkspacePage(env: Env, auth: AuthContext, request: 
       return decision.status === 'allowed';
     });
   };
-  const resources = new ResourceService(env, auth, undefined, access);
-  // Candidate admission uses projected decisions; directory discovery is not a retrieval prerequisite.
-  const scopes = null;
   const scopeMs = performance.now() - started;
   let retrievalMs = 0;
   let hydrationMs = 0;
+  const passageOf = (text: string) => matchingPassage(text, literalMatchRanges(text, request.query), PREVIEW_CONTEXT_CHARACTERS);
+  const displayTime = (value: number | null | undefined) => typeof value === 'number' ? new Date(value).toISOString() : null;
+  const messageResult = (group: ConversationGroup, candidate: TextSearchCandidate): SearchResult | null => {
+    const separator = candidate.source_id.indexOf('/');
+    const turnId = separator < 0 ? '' : candidate.source_id.slice(separator + 1);
+    if (!turnId || candidate.archived !== false || typeof candidate.text !== 'string' || typeof candidate.title !== 'string'
+      || typeof candidate.occurred_at !== 'number' || typeof candidate.transcript_sequence !== 'number') return null;
+    const passage = passageOf(candidate.text);
+    if (!passage) return null;
+    return {
+      id: candidate.id, category: 'messages', title: candidate.title, sourceLabel: candidate.source_label ?? candidate.title,
+      occurredAt: displayTime(candidate.occurred_at), revision: String(candidate.revision),
+      excerpt: passage.excerpt, excerptStart: passage.excerptStart, highlights: passage.highlights,
+      location: { kind: 'message', workstreamId: group.parentId, substreamId: group.substreamId,
+        turnId, transcriptSequence: candidate.transcript_sequence, range: passage.range },
+    };
+  };
+  const linkResult = (candidate: TextSearchCandidate): SearchResult | null => {
+    const url = HttpUrlSchema.safeParse(candidate.url);
+    if (candidate.archived !== false || typeof candidate.text !== 'string' || typeof candidate.title !== 'string' || !url.success) return null;
+    const passage = passageOf(candidate.text);
+    if (!passage) return null;
+    return { id: candidate.id, category: 'links', title: candidate.title, sourceLabel: candidate.source_label ?? '',
+      occurredAt: null, revision: String(candidate.revision),
+      excerpt: passage.excerpt, excerptStart: passage.excerptStart, highlights: passage.highlights,
+      location: { kind: 'link', url: url.data, range: passage.range } };
+  };
+  // Messages and links are admitted per conversation; the decision is the projected one.
+  const conversationSource = (source: 'messages' | 'conversation_links'): AuthorizedSearchSource<SearchResult> => ({
+    source, scopeIds: null, load: async (candidates) => {
+      const results = new Map<string, SearchResult>();
+      const groups = new Map<string, ConversationGroup>();
+      for (const candidate of candidates) {
+        signal?.throwIfAborted();
+        // Rows written before `substream_id` existed still name the substream first in `source_id`.
+        const substreamId = candidate.substream_id ?? candidate.source_id.slice(0, Math.max(0, candidate.source_id.indexOf('/')));
+        if (!SubstreamIdSchema.safeParse(substreamId).success || !IdSchema.safeParse(candidate.scope_id).success) continue;
+        const key = `${candidate.scope_id}/${substreamId}`;
+        const group = groups.get(key) ?? { parentId: candidate.scope_id, substreamId, candidates: [] };
+        group.candidates.push(candidate);
+        groups.set(key, group);
+      }
+      for (const group of await readableGroups([...groups.values()])) {
+        for (const candidate of group.candidates) {
+          const result = source === 'messages' ? messageResult(group, candidate) : linkResult(candidate);
+          if (result) results.set(candidate.id, result);
+        }
+      }
+      return results;
+    },
+  });
   const sources: AuthorizedSearchSource<SearchResult>[] = [];
-  if (request.category === 'all' || request.category === 'messages' || request.category === 'links') {
-    if (request.category !== 'links') sources.push({ source: 'messages', scopeIds: scopes, load: async (candidates) => {
-      const results = new Map<string, SearchResult>();
-      const groups = new Map<string, { parentId: string; substreamId: string; candidates: Array<TextSearchCandidate & { turnId: string }> }>();
-      for (const candidate of candidates) {
-        signal?.throwIfAborted();
-        const separator = candidate.source_id.indexOf('/');
-        if (separator < 0 || !IdSchema.safeParse(candidate.scope_id).success) continue;
-        const substreamId = candidate.source_id.slice(0, separator);
-        if (!SubstreamIdSchema.safeParse(substreamId).success) continue;
-        const key = `${candidate.scope_id}/${substreamId}`;
-        const group = groups.get(key) ?? { parentId: candidate.scope_id, substreamId, candidates: [] };
-        group.candidates.push({ ...candidate, turnId: candidate.source_id.slice(separator + 1) });
-        groups.set(key, group);
-      }
-      await Promise.all((await readableGroups([...groups.values()])).map(async (group) => {
-        signal?.throwIfAborted();
-        try {
-          const record = await new WorkstreamObjectClient(env, auth, group.parentId, group.substreamId)
-            .admittedSearchTurns(group.candidates.map((candidate) => candidate.turnId));
-          const validated = new Map<string, SearchResult>();
-          for (const candidate of group.candidates) {
-            const turn = record.turns.find((value) => value.turnId === candidate.turnId);
-            if (!turn || turn.revision !== candidate.revision) continue;
-            const text = turn.blocks.filter((block) => block.type === 'text').map((block) => block.text).join('\n');
-            if (candidate.generation && await searchContentHash(text) !== candidate.generation) continue;
-            const passage = matchingPassage(text, literalMatchRanges(text, request.query), PREVIEW_CONTEXT_CHARACTERS);
-            if (!passage) continue;
-            validated.set(candidate.id, {
-              id: candidate.id, category: 'messages', title: record.title, sourceLabel: record.title,
-              occurredAt: turn.createdAtUtc, revision: String(turn.revision),
-              excerpt: passage.excerpt, excerptStart: passage.excerptStart, highlights: passage.highlights,
-              location: { kind: 'message', workstreamId: group.parentId, substreamId: group.substreamId,
-                turnId: turn.turnId, transcriptSequence: turn.transcriptSequence, range: passage.range },
-            });
-          }
-          for (const [id, result] of validated) results.set(id, result);
-        } catch (error) { omitUnverified(error); }
-      }));
-      return results;
-    } });
-    if (request.category !== 'messages') sources.push({ source: 'conversation_links', scopeIds: scopes, load: async (candidates) => {
-      const results = new Map<string, SearchResult>();
-      const groups = new Map<string, { parentId: string; substreamId: string;
-        candidates: Array<{ candidate: TextSearchCandidate; turnId: string; linkId: string }> }>();
-      for (const candidate of candidates) {
-        const [substreamId, turnId, linkId] = candidate.source_id.split('/');
-        if (!SubstreamIdSchema.safeParse(substreamId).success || !substreamId || !turnId || !linkId
-          || !IdSchema.safeParse(candidate.scope_id).success) continue;
-        const key = `${candidate.scope_id}/${substreamId}`;
-        const group = groups.get(key) ?? { parentId: candidate.scope_id, substreamId, candidates: [] };
-        group.candidates.push({ candidate, turnId, linkId });
-        groups.set(key, group);
-      }
-      await Promise.all((await readableGroups([...groups.values()])).map(async (group) => {
-        signal?.throwIfAborted();
-        try {
-          const record = await new WorkstreamObjectClient(env, auth, group.parentId, group.substreamId)
-            .admittedSearchLinks(group.candidates.map(({ turnId, linkId }) => ({ turnId, linkId })));
-          const validated = new Map<string, SearchResult>();
-          for (const { candidate, linkId } of group.candidates) {
-            const link = record.links.find((value) => value.linkId === linkId)?.link;
-            if (!link || link.revision !== candidate.revision) continue;
-            if (candidate.generation && await searchContentHash(link.text) !== candidate.generation) continue;
-            const passage = matchingPassage(link.text, literalMatchRanges(link.text, request.query), PREVIEW_CONTEXT_CHARACTERS);
-            if (!passage) continue;
-            validated.set(candidate.id, { id: candidate.id, category: 'links', title: link.label,
-              sourceLabel: record.title, occurredAt: null, revision: String(link.revision),
-              excerpt: passage.excerpt, excerptStart: passage.excerptStart, highlights: passage.highlights,
-              location: { kind: 'link', url: link.url, range: passage.range } });
-          }
-          for (const [id, result] of validated) results.set(id, result);
-        } catch (error) { omitUnverified(error); }
-      }));
-      return results;
-    } });
-  }
+  if (request.category === 'all' || request.category === 'messages') sources.push(conversationSource('messages'));
+  if (request.category === 'all' || request.category === 'links') sources.push(conversationSource('conversation_links'));
   for (const category of ['links', 'artifacts', 'files'] as const) {
     if (request.category !== 'all' && request.category !== category) continue;
     sources.push({ source: category, scopeIds: [auth.workspaceId], load: async (candidates) => {
       const results = new Map<string, SearchResult>();
-      const page = await resources.searchTexts(candidates.map((candidate) => candidate.source_id));
-      if (!page.complete) complete = false;
-      await Promise.all(candidates.map(async (candidate) => {
+      const admitted = candidates.filter((candidate) => IdSchema.safeParse(candidate.source_id).success);
+      const decisions = await access.checkMany(admitted.map((candidate) => ({ kind: 'resource' as const,
+        workspaceId: auth.workspaceId, resourceId: IdSchema.parse(candidate.source_id) })));
+      admitted.forEach((candidate, index) => {
         signal?.throwIfAborted();
-        try {
-          const record = page.records.get(candidate.source_id);
-          if (!record || Number(record.revision) !== candidate.revision) return;
-          const resource = record.resource;
-          const actualCategory = resourceSearchCategory(resource.provider, resource.canonicalUrl);
-          if (actualCategory !== category) return;
-          if (candidate.generation && await searchContentHash(record.text) !== candidate.generation) return;
-          const passage = matchingPassage(record.text, literalMatchRanges(record.text, request.query), PREVIEW_CONTEXT_CHARACTERS);
-          if (!passage) return;
-          results.set(candidate.id, {
-            id: candidate.id, category, title: resource.title, sourceLabel: resource.title,
-            occurredAt: resource.updatedAt, revision: record.revision,
-            excerpt: passage.excerpt, excerptStart: passage.excerptStart, highlights: passage.highlights,
-            location: { kind: 'resource', resourceId: resource.id, mimeType: resource.mimeType, range: passage.range },
-          });
-        } catch (error) { omitUnverified(error); }
-      }));
+        const decision = decisions[index]!;
+        if (decision.status === 'unavailable') complete = false;
+        if (decision.status !== 'allowed' || typeof candidate.text !== 'string' || typeof candidate.title !== 'string') return;
+        const passage = passageOf(candidate.text);
+        if (!passage) return;
+        results.set(candidate.id, {
+          id: candidate.id, category, title: candidate.title, sourceLabel: candidate.source_label ?? candidate.title,
+          occurredAt: displayTime(candidate.occurred_at), revision: String(candidate.revision),
+          excerpt: passage.excerpt, excerptStart: passage.excerptStart, highlights: passage.highlights,
+          location: { kind: 'resource', resourceId: candidate.source_id, mimeType: candidate.mime_type ?? null, range: passage.range },
+        });
+      });
       return results;
     } });
   }

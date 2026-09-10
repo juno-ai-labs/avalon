@@ -3,6 +3,7 @@ import type { Filter, RankBy } from "@turbopuffer/turbopuffer";
 import { z } from "zod";
 import type { Env } from "../env";
 import { sha256Hex } from "../lib/crypto";
+import type { SearchDocumentDisplay } from "./search-document";
 import { MEMORY_EMBEDDING_MODEL } from "./structured-inference";
 import { SEARCH_CHUNK_MAX_TOKENS, SEARCH_CHUNK_OVERLAP_TOKENS } from "./semantic-chunks";
 
@@ -15,6 +16,7 @@ const SEARCH_DOCUMENT_SCHEMA = {
   source: { type: "string" },
   source_id: { type: "string" },
   scope_id: { type: "string" },
+  substream_id: { type: "string" },
   revision: { type: "uint" },
   deleted: { type: "bool" },
   record_type: { type: "string" },
@@ -22,7 +24,21 @@ const SEARCH_DOCUMENT_SCHEMA = {
   chunk_start: { type: "uint" },
   chunk_end: { type: "uint" },
   chunk_strategies: { type: "[]string" },
+  // Display attributes the read path renders without a canonical reload.
+  // `title`, `source_label` and `archived` stay filterable because a display
+  // patch addresses the rows that still carry the previous values.
+  title: { type: "string" },
+  source_label: { type: "string" },
+  archived: { type: "bool" },
+  url: { type: "string", filterable: false },
+  mime_type: { type: "string", filterable: false },
+  occurred_at: { type: "uint", filterable: false },
+  transcript_sequence: { type: "uint", filterable: false },
 } as const;
+
+/** Every attribute a page needs to render and admit a candidate without a loader. */
+const CANDIDATE_ATTRIBUTES = ["source", "source_id", "scope_id", "substream_id", "revision", "chunk_start", "chunk_end",
+  "text", "title", "source_label", "archived", "url", "mime_type", "occurred_at", "transcript_sequence"] as const;
 
 /** Separate deployments and embedding spaces; EU never falls back to Global. */
 export async function workspaceSearchIndex(env: Env, workspaceId: string): Promise<TextSearchIndex> {
@@ -71,32 +87,51 @@ export interface TextSearchDocument {
   source: string;
   sourceId: string;
   scopeId: string;
+  substreamId?: string | undefined;
   revision: number;
   text: string;
   vector?: number[];
   /** Hash of the complete canonical text for independently delivered chunks. */
   generation?: string;
   chunk?: { start: number; end: number; strategies: string[] };
+  display?: SearchDocumentDisplay | undefined;
 }
 
+/**
+ * A row as the index returns it. Display attributes are optional because rows
+ * written before they existed, and deletion watermarks, carry none; a caller
+ * that needs them omits such a row rather than reloading its source.
+ */
 const CandidateSchema = z.object({
   id: z.string(),
   source: z.string(),
   source_id: z.string(),
   scope_id: z.string(),
+  substream_id: z.string().nullable().optional(),
   revision: z.number().int().nonnegative(),
   generation: z.string().nullable().optional(),
   chunk_start: z.number().int().nonnegative().nullable().optional(),
   chunk_end: z.number().int().nonnegative().nullable().optional(),
+  text: z.string().nullable().optional(),
+  title: z.string().nullable().optional(),
+  source_label: z.string().nullable().optional(),
+  archived: z.boolean().nullable().optional(),
+  url: z.string().nullable().optional(),
+  mime_type: z.string().nullable().optional(),
+  occurred_at: z.number().int().nonnegative().nullable().optional(),
+  transcript_sequence: z.number().int().positive().nullable().optional(),
 });
 export type TextSearchCandidate = z.infer<typeof CandidateSchema>;
+
+/** The display a conversation's rows carry; patched in place when the conversation changes. */
+export interface ConversationDisplay { title: string; archived: boolean }
 
 /** Created by a source's authority resolver, never deserialized from a request. */
 export interface AuthorizedSearchSource<T> {
   source: string;
   /** null searches this workspace namespace; load must authorize every candidate. */
   scopeIds: readonly string[] | null;
-  /** Reload current records and reauthorize after the external search await. */
+  /** Admit the candidates after the external search await and build results from their attributes. */
   load: (candidates: readonly TextSearchCandidate[]) => Promise<ReadonlyMap<string, T>>;
 }
 
@@ -155,6 +190,7 @@ export class TextSearchIndex {
         source: document.source,
         source_id: document.sourceId,
         scope_id: document.scopeId,
+        substream_id: document.substreamId ?? null,
         revision: document.revision,
         text: document.text,
         ...(isSemantic ? { vector: document.vector! } : {}),
@@ -164,6 +200,13 @@ export class TextSearchIndex {
         chunk_start: document.chunk?.start ?? null,
         chunk_end: document.chunk?.end ?? null,
         chunk_strategies: document.chunk?.strategies ?? [],
+        title: document.display?.title ?? null,
+        source_label: document.display?.sourceLabel ?? null,
+        archived: document.display?.archived ?? null,
+        url: document.display?.url ?? null,
+        mime_type: document.display?.mimeType ?? null,
+        occurred_at: document.display?.occurredAt ?? null,
+        transcript_sequence: document.display?.transcriptSequence ?? null,
       })),
       upsert_condition: ["Or", [
         ["revision", "Lt", { $ref_new: "revision" }],
@@ -232,6 +275,43 @@ export class TextSearchIndex {
     ]]);
   }
 
+  /**
+   * A conversation's title or archive state changed: patch every live row that
+   * still shows the previous values. Each pass excludes the rows it patched, so
+   * the loop ends on its own once the conversation's rows agree, however many
+   * there are; a row with no display yet is left for its backfill rewrite.
+   */
+  async patchConversationDisplay(conversation: { scopeId: string; substreamId: string },
+    display: ConversationDisplay): Promise<number> {
+    let patched = 0;
+    const passes: Array<{ source: string; stale: Filter; patch: Record<string, string | boolean> }> = [
+      { source: "messages", patch: { title: display.title, source_label: display.title, archived: display.archived },
+        stale: ["Or", [["title", "NotEq", display.title], ["source_label", "NotEq", display.title], ["archived", "NotEq", display.archived]]] },
+      { source: "conversation_links", patch: { source_label: display.title, archived: display.archived },
+        stale: ["Or", [["source_label", "NotEq", display.title], ["archived", "NotEq", display.archived]]] },
+    ];
+    for (const pass of passes) {
+      for (;;) {
+        const result = await this.lexicalNamespace.write({
+          patch_by_filter: { filters: ["And", [["source", "Eq", pass.source], ["scope_id", "Eq", conversation.scopeId],
+            ["substream_id", "Eq", conversation.substreamId], ["deleted", "Eq", false], ["record_type", "Eq", "document"],
+            pass.stale]], patch: pass.patch },
+          // The provider patches a bounded number of rows per request; the
+          // next pass picks up the rest because patched rows no longer match.
+          patch_by_filter_allow_partial: true,
+        }).catch((error: unknown) => {
+          // A namespace does not exist until its first write; nothing to patch.
+          if (error instanceof Error && "status" in error && error.status === 404) return { rows_patched: 0 };
+          throw new Error("search_index_write_failed");
+        });
+        const rows = result.rows_patched ?? 0;
+        patched += rows;
+        if (rows === 0) break;
+      }
+    }
+    return patched;
+  }
+
   /** Keep a version watermark so a delayed upsert cannot resurrect deleted text. */
   async remove(id: string, revision: number): Promise<void> {
     await this.lexicalNamespace.write({
@@ -273,8 +353,7 @@ export class TextSearchIndex {
     const namespace = options.mode === "semantic" ? this.namespace : this.lexicalNamespace;
     const query = (includeGeneration: boolean) => namespace.query({
       filters: ["And", pageFilters],
-      include_attributes: ["source", "source_id", "scope_id", "revision", "chunk_start", "chunk_end",
-        ...includeGeneration ? ["generation"] : []],
+      include_attributes: [...CANDIDATE_ATTRIBUTES, ...includeGeneration ? ["generation"] : []],
       rank_by: searchRanking(options),
       limit: options.limit,
       consistency: { level: "strong" },

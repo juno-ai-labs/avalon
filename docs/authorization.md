@@ -77,8 +77,11 @@ alternative locations do not need to be read once access is established.
 Search decision snapshots use Global `AUTHORIZATION_CACHE` KV, with WorkspaceDO
 SQLite as the regional fallback (including EU). Keys hash the schema version,
 workspace, user, delegation and exact resource address. New keys never read the
-legacy snapshots. A miss resolves canonical authority once and stores allowed,
-denied or not-found decisions. Cache hits never recheck owners or schedule work.
+legacy snapshots. Member search answers a miss unavailable, omits the candidate,
+and resolves canonical authority once after the response (`waitUntil`), storing
+allowed, denied or not-found decisions; other callers resolve the miss inline.
+Global reads only KV on the request; EU reads the WorkspaceDO snapshot table, one
+warm object, on the request. Cache hits never recheck owners or schedule work.
 There is no TTL, age-based denial, or periodic/demand-driven refresh. Relevant
 WorkspaceDO row mutations and accepted child inventory deliveries transactionally
 record a coalesced push intent. The alarm sends a reference-only
@@ -104,16 +107,17 @@ Registration retains current attachment dependencies before reading owners, so
 a removal during an initial fill still targets that key. Cache-read or
 miss-population failures become unavailable candidates, preserving
 partial search results. Archived conversation content remains excluded by the
-local storage reader, independently of cached authorization.
+index's archive attribute, independently of cached authorization.
 Changes reach cached grants and denials without another search. This deliberately
 accepts eventual consistency for grants and revocations, including queue and KV
 propagation delay. Five minutes remains a design goal, never a refresh trigger.
 
-A cache-admitted message or link uses `readAdmittedSearchContent`, an internal
-content-only RPC that checks the object address and waits only for storage
-readiness. It does not seat an automation viewer, resolve parent authority again,
-or call product authorization. Canonical revision/hash checks and passage
-extraction remain. Normal product reads continue through their own access path.
+A cache-admitted candidate renders from the index: its text, title, time and
+archive state travel with the row, written by the owning object (see
+[text search](text-search.md)). No content RPC runs on the read path.
+`readAdmittedSearchContent` and `resourceSearchRecords` remain callable for one
+release so Workers still rolling out can finish their requests, and are
+otherwise unused. Normal product reads continue through their own access path.
 Legacy snapshot RPCs remain inert for rolling compatibility; the shipped SQLite
 table is reused under the new key prefix and must not be dropped. EU never reads
 Global KV.
@@ -345,6 +349,20 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-09-10 — Fill search decisions after the response
+
+Member search no longer waits for a canonical owner on a projection miss: the
+candidate is omitted, the page is marked incomplete, and the same fill that used
+to run inline (registration, owner walk, publication) runs through `waitUntil`.
+Measured production searches spent seconds in exactly that inline walk across cold
+WorkstreamDO and SubstreamAgent objects. The team chose performance, accepted that
+a first search for an unprojected pair shows less, and kept KV as the security
+layer with a ten-minute propagation bound. Other resolver callers, memory search
+among them, keep the inline fill because nothing hands them a deferral. Content
+and display now come from the index, so the content RPC contract above is inert;
+see the text-search changelog for the read path. A future change must not put an
+owner read back into a member search request to close the first-search gap.
 
 ### 2026-09-09 — Make projection recovery write-owned
 

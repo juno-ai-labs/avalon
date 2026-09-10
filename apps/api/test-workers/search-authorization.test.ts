@@ -267,3 +267,21 @@ describe('projected search authorization', () => {
   });
 
 });
+
+describe('deferred first fills', () => {
+  it('answers a never-projected pair unavailable and fills it after the response', async () => {
+    const fresh = { ...resource, resourceId: crypto.randomUUID() };
+    const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName('global', subject.workspaceId));
+    await workspace.initializeWorkspace(subject.workspaceId, 'wnam');
+    const authority = vi.fn(async (): Promise<AuthorizationDecision[]> => [allowed]);
+    const deferred: Promise<unknown>[] = [];
+    const resolver = new SearchAuthorizationResolver(env, { checkMany: authority }, (work) => { deferred.push(work); });
+    expect(await resolver.checkMany(subject, [fresh])).toEqual([expect.objectContaining({ status: 'unavailable' })]);
+    expect(deferred).toHaveLength(1);
+    await Promise.all(deferred);
+    expect(authority).toHaveBeenCalledTimes(1);
+    // The fill published through the projection; the next search reads it without an owner.
+    expect(await resolver.checkMany(subject, [fresh])).toEqual([allowed]);
+    expect(authority).toHaveBeenCalledTimes(1);
+  });
+});

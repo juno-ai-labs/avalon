@@ -3,7 +3,7 @@ import { SearchDocumentJobSchema, publishSearchIndexingJobs, SearchEmbeddingBatc
 import { embedSearchDocuments } from '../services/search-embedding';
 import { workspaceSearchIndex, searchChunkIdentity, searchDocumentId } from '../services/text-search';
 import { ResourceSearchProjectionSchema } from '../durable-objects/resource-search-projection';
-import { SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
+import { SearchConversationProjectionMessageSchema, SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
 import { AuthorizationProjectionJobSchema } from '../durable-objects/authorization-projection';
 import { projectAuthorization } from '../services/authorization-projection-service';
 import { createSearchIndexingPipeline, indexSemanticBatch } from '../services/search-indexing-pipeline';
@@ -132,7 +132,8 @@ export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: En
   const isSearch = (message: Message<unknown>) =>
     SearchChildJobTypeSchema.safeParse(message.body).success
     || ResourceSearchProjectionSchema.safeParse(message.body).success
-    || SearchProjectionMessageSchema.safeParse(message.body).success;
+    || SearchProjectionMessageSchema.safeParse(message.body).success
+    || SearchConversationProjectionMessageSchema.safeParse(message.body).success;
   // Search shares a tokenizer and processes one document source at a time.
   // Unrelated control effects do not wait behind embedding provider calls.
   await Promise.all([
@@ -258,6 +259,22 @@ async function consumeOne(message: Message<unknown>, env: Env,
       () => loadSearchSource(env, job.reference, false, job.document.id), (texts) => embedSearchDocuments(env, job.reference.workspaceId, texts));
     if (outcome === 'stale') logWarn(env, 'search_embedding_stale', { region: env.AVALON_REGION,
       workspace_id: job.reference.workspaceId, source: job.document.source, source_id: job.document.sourceId, revision: job.document.revision });
+    message.ack();
+    return;
+  }
+  const conversation = SearchConversationProjectionMessageSchema.safeParse(message.body);
+  if (conversation.success) {
+    const job = conversation.data;
+    if (job.region !== env.AVALON_REGION) throw new Error('search_projection_region_mismatch');
+    // The job carries no title: the object is read now, so a delayed or
+    // redelivered message can only ever write the conversation's current display.
+    const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, job.workspaceId,
+      conversationObjectName(job.region, job.workspaceId, job.parentId, job.substreamId));
+    const display = await stub.searchConversationDisplay(job);
+    if (display) {
+      await (await workspaceSearchIndex(env, job.workspaceId))
+        .patchConversationDisplay({ scopeId: job.parentId, substreamId: job.substreamId }, display);
+    }
     message.ack();
     return;
   }

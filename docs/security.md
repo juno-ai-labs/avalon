@@ -22,7 +22,9 @@ retryable failure for direct reads and explicit partial status for search/lists.
 Member search candidate pagination exposes matching-index continuation even when
 no candidate on a page is admitted. Repeated substring queries and correlation
 with known source IDs can reveal content matches; this API does not promise
-concealment of that inference. Canonical admission still controls returned content.
+concealment of that inference. Projected search admission controls returned
+content; excerpts, titles and archive state are served from the index within the
+projection's staleness window rather than reloaded from their owners.
 The operation-level and pagination contracts are detailed in [authorization](authorization.md).
 
 
