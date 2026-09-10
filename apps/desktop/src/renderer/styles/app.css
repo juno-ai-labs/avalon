@@ -767,10 +767,8 @@ pre {
 }
 
 .sidebar-section { margin-top: var(--av-sys-space-group-gap); }
-.workstreams-section { margin-top: 22px; }
 .sidebar-section-heading { align-items: center; display: flex; height: var(--av-cmp-group-label-height); padding: 0 8px; }
 .sidebar-section-heading h2 { flex: 1; min-width: 0; }
-.projects-section { margin-top: 12px; }
 .projects-section > .sidebar-section-heading { display: grid; grid-template-columns: minmax(0, 1fr) 28px; padding: 0 4px 0 8px; }
 .project-sidebar-action.icon-button { border: 0; border-radius: var(--av-sys-size-radius-sm); height: 22px; justify-self: center; width: 22px; }
 .project-sidebar-action.icon-button:hover:not(:disabled) { background: transparent; border-color: transparent; color: inherit; }
@@ -5507,8 +5505,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 }
 .grokbot-shell .workstream-row.is-active { background: var(--av-cmp-row-background-selected); }
 .grokbot-shell .sidebar-scroll { padding-top: 0; }
-.grokbot-shell .workstreams-section { margin-top: 10px; }
-.grokbot-shell .sidebar-group { margin-top: 14px; }
 .grokbot-shell .sidebar-group:first-child { margin-top: 0; }
 .grokbot-shell .sidebar-group-heading { min-height: 30px; padding: 8px 8px 6px; }
 .grokbot-shell .workstream-row .sidebar-row-title {
@@ -5548,7 +5544,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   padding: 4px 20.5px 12px;
 }
 .grokbot-shell .sidebar.is-compact .sidebar-section,
-.grokbot-shell .sidebar.is-compact .workstreams-section,
 .grokbot-shell .sidebar.is-compact .sidebar-group {
   margin-top: 0;
 }
