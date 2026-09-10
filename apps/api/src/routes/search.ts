@@ -33,14 +33,7 @@ searchRoutes.post('/', zValidator('json', SearchRequestSchema), async (c) => {
   if (current.workspaceId !== auth.workspaceId || current.userId !== auth.userId || !current.role) {
     throw new ApiError(403, 'search_access_revoked', 'Workspace access has changed');
   }
-  // Older desktop builds parse search responses strictly and cannot label incomplete results.
-  // Keep their wire shape and retryable failure until they advertise partial-result support.
-  const { complete, ...legacyResult } = results;
-  const supportsPartialResults = c.req.valid('json').supportsPartialResults === true;
-  if (!supportsPartialResults && !complete) {
-    throw new ApiError(503, 'authorization_unavailable', 'Some results could not be authorized. Retry the request.');
-  }
-  return c.json(SearchResponseSchema.parse({ ...legacyResult, ...(supportsPartialResults ? { complete } : {}),
+  return c.json(SearchResponseSchema.parse({ ...results,
     ...('timings' in results ? { timings: { ...results.timings, serverMs: performance.now() - started } } : {}),
   }));
 });
