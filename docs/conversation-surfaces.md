@@ -73,7 +73,10 @@ between: the `cmp.member-message.*` roles that used to restate the fill and ink
 by hand drifted from the palette and could not survive the accent set changing,
 so the feed reads the palette directly. Contrast is still not inferred at render;
 `PALETTE_INK` is a checked-in table that `palette.css.node.test.ts` recomputes
-from the token values.
+from the token values, deciding by APCA rather than the WCAG 2 ratio. Bubble
+prose is the strictest thing that table serves, and on `emerald` and `orange`
+neither ink reaches APCA's Lc 60 for body text — a property of those two fills,
+recorded on `PALETTE_INK`.
 Unprofiled and external senders retain their stable identity-color fallback.
 These bubble overrides apply only inside the conversation feed hosts. Author
 labels use semantic default text while the independently themed dot retains the
@@ -230,6 +233,27 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — Bubble ink follows the palette's APCA table
+
+**What changed:** The paragraph describing how a human message bubble resolves
+its foreground now says the ink is decided by APCA rather than by the WCAG 2
+ratio, and records that `emerald` and `orange` reach neither ink's Lc 60 for body
+text.
+
+**Why:** The bubble reads `PALETTE_INK` through `personalColorInk()`, so the
+palette's move to APCA changed this surface without a line of code here
+changing — six of the eight personal accents now carry white prose where they
+carried black. A reader of this document would otherwise have taken the old
+description at face value. The body-text gap is called out because this is the
+surface where it matters: a bubble is prose at 14px, not a 36px glyph, and the
+palette's own floor is the graphical one. Closing it means darkening those two
+fills, which belongs to the palette rather than to this feed;
+[`theming.md`](theming.md) owns that decision and its 2026-09-10 entry has the
+full trade.
+
+**Consequences:** Nothing here selects an ink of its own. If the body-text gap is
+closed by moving those fills, this surface inherits the fix with no change.
 
 ### 2026-09-10 — The assistant identity line starts where its prose does
 

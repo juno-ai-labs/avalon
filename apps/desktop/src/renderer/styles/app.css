@@ -5349,8 +5349,8 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 .workstream-glyph {
   align-items: center;
-  /* Set per glyph from PALETTE_INK — see glyphInk(). A fixed light foreground
-     is illegible on the brighter half of the ring. */
+  /* Set per glyph from PALETTE_INK — see glyphInk(). A fixed foreground of
+     either colour is illegible on some part of the ring; the table decides. */
   color: var(--glyph-ink, var(--av-sys-color-text-on-inverse));
   display: inline-flex;
   flex: 0 0 auto;
