@@ -21,9 +21,9 @@ import type {
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER, type AccountActionProgress } from '../lib/app-session';
 import type { WorkspaceMember } from '../lib/types';
-import { formatRelative } from '../lib/format';
 import { uuidV7 } from '../lib/telemetry';
 import { Avatar, Button, Modal } from './primitives';
+import { RelativeTime } from './relative-time';
 
 export interface WorkspaceAccountMenuProps {
   activeWorkspace: DesktopWorkspaceSummary;
@@ -352,7 +352,7 @@ export function WorkspaceAccountMenu({
                 )}
                 {staleAt && (
                   <DropdownMenu.Label className="menu-label workspace-counts-stale">
-                    Counts last updated {formatRelative(staleAt)}
+                    Counts last updated <RelativeTime value={staleAt} />
                   </DropdownMenu.Label>
                 )}
                 {presentation === 'workspace' && <DropdownMenu.Separator className="menu-separator" />}

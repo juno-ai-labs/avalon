@@ -3023,13 +3023,25 @@ pre {
    off-centre. Collapsing the children to their glyph height makes the flex
    centring act on what a reader actually sees. */
 .message-block > header > * { line-height: 1; }
-.message-author { font-size: var(--av-sys-font-size-author); font-weight: var(--av-sys-font-weight-emphasis); }
-.human-message .message-author { color: var(--person-accent); }
+/* One identity line for every turn, drawn by `MessageByline`. The name and the
+   time each take one colour and one size whoever is speaking, so Rally's turn
+   and a person's read as the same kind of row; what tells people apart is the
+   accent on the dot and the bubble, never the text. The dot sits inside the
+   name so the two travel together whichever way the line reads. */
+.message-author {
+  align-items: center;
+  color: var(--av-sys-color-text-subtle);
+  display: inline-flex;
+  font-size: var(--av-cmp-feed-byline-font-size);
+  font-weight: var(--av-cmp-feed-byline-author-weight);
+  gap: var(--space-1);
+}
 /* The time and a settled response's total are the same kind of thing — meta
    about the message, not part of it — so they share one rule rather than two
-   that have to be kept equal by hand. */
+   that have to be kept equal by hand. Same size as the name: the line is one
+   element, and it is the weight that separates who from when. */
 .message-block time,
-.message-block .message-work-summary { color: var(--av-ref-color-neutral-8); font-size: var(--av-sys-font-size-meta); }
+.message-block .message-work-summary { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-feed-byline-font-size); font-weight: var(--av-cmp-feed-byline-time-weight); }
 .markdown-body { color: var(--av-ref-color-neutral-13); font-size: var(--av-sys-font-size-prose); line-height: var(--av-sys-font-leading-prose); overflow-wrap: anywhere; }
 .markdown-body > :first-child { margin-top: 0; }
 .markdown-body > :last-child { margin-bottom: 0; }
@@ -4547,7 +4559,12 @@ body:has(.resource-lightbox) .menu-content { z-index: 1004; }
 .suggested-prompt-dismiss { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-8); display: flex; height: 25px; justify-content: center; margin-left: 2px; width: 25px; }
 .suggested-prompt-dismiss:hover { background: var(--av-sys-color-surface-raised); color: var(--av-sys-color-text-default); }
 .suggested-prompt-error { color: var(--av-sys-color-danger-base); font-size: 10px; margin: 4px 8px 0; text-align: left; }
-.message-context-label { color: var(--av-ref-color-neutral-9); font-size: 9px; font-weight: 450; }
+/* Part of the identity line, so it takes the line's size. The 9px it used to
+   carry was fitted against an 8.5px timestamp that no longer exists, and a
+   third size in a three-part line is what made the row read as assembled rather
+   than designed. Its colour and weight still separate it from the two facts
+   either side: this says why the turn reads the way it does, not who or when. */
+.message-context-label { color: var(--av-ref-color-neutral-9); font-size: var(--av-cmp-feed-byline-font-size); font-weight: 450; }
 .template-path { align-items: center; background: transparent; color: var(--av-sys-color-accent-base); display: inline-flex; font-size: 10.5px; gap: 4px; margin-top: 19px; }
 .automation-composer-wrap { bottom: 13px; left: 50%; max-width: 920px; position: fixed; transform: translateX(calc(-50% + var(--av-cmp-sidebar-width) / 2)); width: calc(100% - var(--av-cmp-sidebar-width) - 76px); z-index: 4; }
 .rail-open .automation-composer-wrap { transform: translateX(calc(-50% + var(--av-cmp-sidebar-width) / 2 - var(--rail-slot) / 2)); width: calc(100% - var(--av-cmp-sidebar-width) - var(--rail-slot) - 76px); }
@@ -5236,28 +5253,6 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: fit-content;
 }
 
-/* The identity line starts on the same vertical as the prose under it. The
-   theme used to inset it by 18px, which reads as a hanging indent on a turn
-   that has nothing in that gutter: Rally's turn carries no avatar, so the space
-   held nothing and only broke the left edge the body and the action row share.
-   Any future mark to the left of the name belongs in the header as an element,
-   not as padding here. */
-.agent-message > header {
-  margin-bottom: var(--space-2);
-  opacity: 0.7;
-}
-
-/* The label over a turn is the same kind of thing as the label over a group of
-   navigation rows, so it takes the same four properties: a theme that sets
-   letterspaced small capitals there gets them here without saying so twice. */
-.agent-message .message-author {
-  color: var(--av-ref-color-neutral-11);
-  font-size: var(--av-cmp-feed-author-font-size);
-  font-weight: var(--av-cmp-feed-author-font-weight);
-  letter-spacing: var(--av-sys-label-tracking);
-  text-transform: var(--av-sys-label-transform);
-}
-
 .agent-message .markdown-body {
   color: var(--av-ref-color-neutral-13);
   font-size: 14.5px;
@@ -5417,7 +5412,6 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    a theme that aligns turns to the leading edge leaves the header flush there,
    which is the same relationship on the other side. */
 .human-message > header {
-  gap: var(--space-1);
   justify-content: flex-end;
   margin-bottom: var(--space-1);
   padding-inline-end: var(--turn-bubble-radius);
@@ -5446,10 +5440,6 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   border-radius: var(--av-sys-size-radius-pill);
   height: 5px;
   width: 5px;
-}
-
-.human-message time {
-  font-size: 8.5px;
 }
 
 .human-message-bubble .markdown-body {
@@ -5938,37 +5928,19 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 
 .workstream-screen .human-message-bubble .markdown-body,
 .workstream-screen .human-message-bubble .markdown-body :is(p, strong, em, code, a) { color: var(--av-cmp-bubble-human-foreground); }
-.workstream-screen .human-message .message-author { color: var(--av-sys-color-text-subtle); font-size: 12px; }
-.workstream-screen .human-message time { color: var(--av-sys-color-text-muted); }
 
 /* GrokBot uses four text roles throughout its conversation surfaces rather
-   than per-theme typography. Keep Rally's extra author/time labels on the same
-   label role so the deliberate metadata addition still belongs to the system. */
+   than per-theme typography. The identity line's two — the name and the time —
+   are stated once, through the feed's byline tokens, beside the header rule
+   they belong to rather than restated here per speaker. */
 :is(.workstream-screen, .workstream-launch-screen) {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-.agent-message .message-author {
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0;
-  line-height: 18px;
-  text-transform: none;
 }
 .agent-message .markdown-body,
 .human-message-bubble .markdown-body {
   font-size: 14px;
   font-weight: 420;
   line-height: 20px;
-}
-.human-message .message-author {
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 16px;
-}
-.human-message time {
-  font-size: 12px;
-  font-weight: 420;
-  line-height: 16px;
 }
 :is(.agent-work-timing-label, .tool-summary strong) {
   font-size: 13px;
