@@ -5,9 +5,9 @@ through the `FLAGS` binding on both regional Workers. The binding owns two
 things: which OpenRouter model each agent runs on, and which client-visible
 features the desktop is allowed to offer. Read this document before adding a
 flag, changing an agent's models, or changing what happens when a flag cannot be
-evaluated. One thing overrides a flag rather than being one — a work stream
-pinned to a single model — and it has [its own
-section](#a-conversations-own-model) below.
+evaluated. One thing overrides a flag rather than being one — a conversation,
+a work stream or a substream alike, pinned to a single model — and it has [its
+own section](#a-conversations-own-model) below.
 
 ## Where the code lives
 
