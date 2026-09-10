@@ -44,7 +44,6 @@ const USER_INSTALLATION_PAGE_SIZE = 100;
 const USER_INSTALLATION_PAGE_LIMIT = 10;
 const TOOL_REPOSITORY_SCAN_LIMIT = 1_000;
 const TOOL_REPOSITORY_SCAN_PAGE_SIZE = 100;
-const GITHUB_MAX_PER_PAGE = 100;
 const TOOL_TREE_ENTRY_LIMIT = 200;
 const TOOL_TREE_PATH_DEPTH_LIMIT = 32;
 const GITHUB_CONTENTS_DIRECTORY_LIMIT = 1_000;
@@ -1642,7 +1641,7 @@ async function executeGitHubTool(
     const value = await request(connection, signal, "GET", `${repoPath(args)}/commits`, {
       query: {
         sha: args.sha, path: args.path, author: args.author, since: args.since, until: args.until,
-        per_page: overFetchPerPage(args.perPage), page: args.page,
+        per_page: args.perPage, page: args.page,
       },
     });
     const page = githubListPage("commits", value, args, {
@@ -1660,7 +1659,7 @@ async function executeGitHubTool(
         since: args.since,
         sort: args.sort,
         direction: args.direction,
-        per_page: overFetchPerPage(args.perPage),
+        per_page: args.perPage,
         page: args.page,
       },
     });
@@ -1733,7 +1732,7 @@ async function executeGitHubTool(
     const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls`, {
       query: {
         state: args.state, head: args.head, base: args.base, sort: args.sort, direction: args.direction,
-        per_page: overFetchPerPage(args.perPage), page: args.page,
+        per_page: args.perPage, page: args.page,
       },
     });
     const page = githubListPage("pullRequests", value, args, {
@@ -1750,14 +1749,14 @@ async function executeGitHubTool(
 
   if (name === "pull_requests.list_files") {
     const args = pullRequestPageSchema.parse(rawArgs);
-    const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/files`, { query: { per_page: overFetchPerPage(args.perPage), page: args.page } });
+    const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/files`, { query: { per_page: args.perPage, page: args.page } });
     const page = githubListPage("files", value, args);
     return { output: page, summary: `Listed ${page.count} files on ${args.owner}/${args.repo} pull request #${args.pullNumber}` };
   }
 
   if (name === "pull_requests.list_reviews") {
     const args = pullRequestPageSchema.parse(rawArgs);
-    const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/reviews`, { query: { per_page: overFetchPerPage(args.perPage), page: args.page } });
+    const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/reviews`, { query: { per_page: args.perPage, page: args.page } });
     const page = githubListPage("reviews", value, args);
     return { output: page, summary: `Listed ${page.count} reviews on ${args.owner}/${args.repo} pull request #${args.pullNumber}` };
   }
@@ -2000,20 +1999,6 @@ interface GitHubListPage extends Record<string, unknown> {
 }
 
 /**
- * Ask GitHub for one item beyond the page the caller wants.
- *
- * `hasMore` has to be observed rather than inferred: a page that comes back
- * exactly full is otherwise indistinguishable from the last page, and a model
- * reading `hasMore: false` off a full page stops paging one page early. The
- * extra item is dropped before the page is returned. GitHub's own ceiling is
- * 100, so a caller asking for all 100 leaves no room for it and the full-page
- * heuristic is the only signal available there.
- */
-function overFetchPerPage(perPage: number): number {
-  return Math.min(perPage + 1, GITHUB_MAX_PER_PAGE);
-}
-
-/**
  * The one page shape every GitHub list tool returns.
  *
  * A bare array was the earlier shape, and what it could not express is the
@@ -2028,6 +2013,19 @@ function overFetchPerPage(perPage: number): number {
  * `repositories.list` and `contents.list` already answered in this shape. The
  * rest of the family now does too, so a model that learns one list tool here
  * can read the next one without a second round of trial and error.
+ *
+ * `hasMore` is the full page itself, and it is deliberately the conservative
+ * reading: a page that comes back exactly full may or may not be the last one,
+ * and saying `true` costs one empty page while saying `false` loses whatever
+ * came after it — which is the failure this envelope exists to end, not one to
+ * reintroduce a page at a time. An earlier version asked GitHub for one item
+ * past the page to answer this exactly, and that was wrong: `page` is indexed
+ * in units of the `per_page` actually sent, so requesting 31 to show 30 made
+ * page 2 begin at item 32 and dropped item 31 on every boundary. GitHub's
+ * `Link` header carries the exact answer without moving the boundaries, and
+ * taking it means threading response headers through every request in this
+ * adapter; that is worth doing when something needs `hasMore` to be exact, and
+ * a spare empty page is not that.
  */
 function githubListPage(
   key: string,
@@ -2047,7 +2045,7 @@ function githubListPage(
     count: items.length,
     page: args.page,
     perPage: args.perPage,
-    hasMore: (providerCount ?? fetched.length) >= overFetchPerPage(args.perPage),
+    hasMore: (providerCount ?? fetched.length) >= args.perPage,
     appliedFilters: definedValues(appliedFilters),
   };
 }
@@ -2055,7 +2053,7 @@ function githubListPage(
 /**
  * The same page shape for the two endpoints that answer with an object holding
  * a named array and GitHub's own `total_count`, which makes `hasMore` exact
- * without over-fetching.
+ * rather than conservative.
  */
 function githubCountedListPage(
   key: string,

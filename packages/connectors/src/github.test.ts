@@ -1145,14 +1145,14 @@ describe("GitHub connector", () => {
     expect(calls.at(-1)?.authorization?.startsWith("Basic ")).toBe(true);
   });
 
-  it("lists pull requests without inventing a filter, and says which filters narrowed the page", async () => {
+  it("lists pull requests without inventing a filter, and pages without dropping one", async () => {
     // The failure this covers reached production as a correct-looking answer: a
     // repository with twenty-five open pull requests reported as having none,
     // because the call carried a `head` GitHub matched nothing against and
-    // answered with HTTP 200 and `[]`. Two halves are asserted, because either
-    // alone still loses the answer — the filters are sent only when the caller
-    // actually asked for them, and the page says which ones were applied so an
-    // empty one can be read for what it is.
+    // answered with HTTP 200 and `[]`. Three things are asserted, because each
+    // one alone still loses part of the answer — the filters are sent only when
+    // the caller asked for them, the page says which ones were applied so an
+    // empty one can be read for what it is, and paging returns every item.
     const pullRequests = Array.from({ length: 31 }, (_, index) => ({
       number: index + 1,
       title: `PR ${index + 1}`,
@@ -1161,11 +1161,17 @@ describe("GitHub connector", () => {
       base: { ref: "main" },
     }));
     const seen: URL[] = [];
+    // Paginated the way GitHub paginates: `page` is indexed in units of the
+    // `per_page` actually sent. A stub that ignores those is what let an
+    // off-by-one in the request slip through the first version of this test.
     const fetcher: FetchLike = async (input) => {
       const url = requestUrl(input);
       seen.push(url);
       if (url.pathname !== "/repos/acme/widget/pulls") return jsonResponse({ message: "Not Found" }, 404);
-      return jsonResponse(url.searchParams.get("head") ? [] : pullRequests);
+      if (url.searchParams.get("head")) return jsonResponse([]);
+      const perPage = Number(url.searchParams.get("per_page") ?? 30);
+      const page = Number(url.searchParams.get("page") ?? 1);
+      return jsonResponse(pullRequests.slice((page - 1) * perPage, page * perPage));
     };
     const adapter = githubAdapter(fetcher);
     const context = {
@@ -1181,8 +1187,11 @@ describe("GitHub connector", () => {
     // cannot be used to answer "what is open on this repository".
     expect(seen[0]?.searchParams.get("head")).toBeNull();
     expect(seen[0]?.searchParams.get("base")).toBeNull();
-    // One item beyond the page, so `hasMore` is observed rather than guessed.
-    expect(seen[0]?.searchParams.get("per_page")).toBe("31");
+    // The page asked for is the page shown. Asking for more than `perPage` to
+    // peek at `hasMore` moves GitHub's own page boundaries, because `page`
+    // counts in units of the `per_page` sent, and the peeked-at item is then
+    // skipped rather than returned by the next page.
+    expect(seen[0]?.searchParams.get("per_page")).toBe("30");
     expect(listed.output).toMatchObject({
       count: 30,
       page: 1,
@@ -1190,8 +1199,14 @@ describe("GitHub connector", () => {
       hasMore: true,
       appliedFilters: { state: "open" },
     });
-    expect((listed.output as { pullRequests: unknown[] }).pullRequests).toHaveLength(30);
     expect(listed.summary).toBe("Listed 30 pull requests in acme/widget");
+
+    const second = await adapter.executeTool("pull_requests.list", { owner: "acme", repo: "widget", page: 2 }, context);
+
+    // The item on the boundary. A caller following `hasMore` has to receive it.
+    expect((second.output as { pullRequests: { number: number }[] }).pullRequests.map((pull) => pull.number))
+      .toEqual([31]);
+    expect(second.output).toMatchObject({ count: 1, page: 2, hasMore: false });
 
     const filtered = await adapter.executeTool(
       "pull_requests.list",
@@ -1199,7 +1214,7 @@ describe("GitHub connector", () => {
       context,
     );
 
-    expect(seen[1]?.searchParams.get("head")).toBe("acme:feature-1");
+    expect(seen[2]?.searchParams.get("head")).toBe("acme:feature-1");
     // The whole point of the envelope: an empty page that names the filter that
     // emptied it cannot be read as "this repository has no pull requests".
     expect(filtered.output).toMatchObject({
@@ -1215,14 +1230,18 @@ describe("GitHub connector", () => {
     // the page it shows is shorter than the page it was served. Paging on the
     // shown length ends the list early on exactly the repository where it costs
     // most: one whose issue numbers are mostly pull requests.
+    // Exactly one full page of thirty, of which twenty-four are pull requests:
+    // GitHub has more to serve, and the six that survive the filter must not be
+    // mistaken for the end of the list.
     const served = [
-      ...Array.from({ length: 25 }, (_, index) => ({ number: index + 1, title: `PR ${index + 1}`, pull_request: { url: "u" } })),
+      ...Array.from({ length: 24 }, (_, index) => ({ number: index + 1, title: `PR ${index + 1}`, pull_request: { url: "u" } })),
       ...Array.from({ length: 6 }, (_, index) => ({ number: 100 + index, title: `Issue ${index + 1}` })),
     ];
     const fetcher: FetchLike = async (input) => {
       const url = requestUrl(input);
       expect(url.pathname).toBe("/repos/acme/widget/issues");
-      return jsonResponse(served);
+      const perPage = Number(url.searchParams.get("per_page") ?? 30);
+      return jsonResponse(served.slice(0, perPage));
     };
     const adapter = githubAdapter(fetcher);
     const listed = await adapter.executeTool("issues.list", { owner: "acme", repo: "widget" }, {
