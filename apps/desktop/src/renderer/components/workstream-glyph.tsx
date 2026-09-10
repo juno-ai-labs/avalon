@@ -207,7 +207,7 @@ const MARKER_ORIGIN = 69;
  * is centred on the outline it traces, so the gap this leaves around the
  * painted symbol is half of it.
  */
-const MARKER_KNOCKOUT = 5;
+const MARKER_KNOCKOUT = 7;
 
 /**
  * The rounded hexagon a Sidekick is drawn in, with one symbol centred in it and

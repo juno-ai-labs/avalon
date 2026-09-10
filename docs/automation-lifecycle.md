@@ -680,7 +680,11 @@ radius fixed, which keeps a mark that has to be learned rather than read.
 (`useId`) because SVG ids are document-global and the strip draws one hexagon
 per Sidekick; a fixed id points every hexagon at the first one's mask, which
 looks correct until two markers differ. A second lifecycle marker is another
-`HexagonMarker` constant, not another knockout.
+`HexagonMarker` constant, not another knockout. And `MARKER_KNOCKOUT` is set by
+looking at the tile at both of its sizes rather than derived from anything: the
+gap has to stay a gap at the rail's 36px, where the whole marker is about 7px
+across and the first value tried left under a pixel of it. Narrowing it back to
+a hairline is a regression that only shows in the rail.
 
 ### 2026-09-10 — A Sidekick's hexagon is a picker, and its choice rides the sidebar push
 
