@@ -62,7 +62,10 @@ docs/                      Product, architecture, security, setup, runbooks
    IME composition, dialog, select menu, or unsaved text field has a nearer
    claim on the keystroke; `renderer/lib/window-escape.ts` is the one predicate
    and the hook that installs it, and each window nominates what closing it
-   would cost. The main process also owns the macOS menu bar status item, which
+   would cost. A secondary window answers the keystroke before its screen
+   exists too — `WorkspaceApp` installs a scope-less one while the workspace
+   profile is still in flight or has failed, and stands it down the moment the
+   screen mounts its own. The main process also owns the macOS menu bar status item, which
    is the one surface that exists with no window open — Rally opens at login by
    default and starts hidden — and which therefore reads the regional API for
    itself rather than through a renderer;
@@ -809,8 +812,14 @@ access and no-egress symbolication.
 `useEscapeClosesWindow` hook that installs it — and the Sidekicks window is its
 second caller. The gesture is opt-in per window rather than a property of being
 a window: the meeting and deep-link-error windows do not install the hook and
-still do not answer Escape. The predicate also declines an Escape belonging to
-an in-flight IME composition, which the Settings-only version did not check.
+still do not answer Escape. `WorkspaceApp` installs it for the Settings and
+Sidekicks surfaces while `workspace.data` is absent, so `Opening workspace…` and
+the service-setup error answer Escape rather than being the dead end the
+keystroke exists to leave, and stands down once the screen is there so the two
+installs never both answer — the higher one nominates no scope and would close
+Settings over a draft its pane guard had just refused. The predicate also
+declines an Escape belonging to an in-flight IME composition, which the
+Settings-only version did not check.
 
 **Why:** The gesture was written once for Settings, with its dialog, modifier,
 `preventDefault`, and unsaved-text reasoning inside a 2,500-line screen. Rally
@@ -823,6 +832,19 @@ because a conversation composer's draft is cached on the device and comes back.
 The IME check came with the move: the Sidekicks window's writing surface is a
 chat composer, where an Escape that abandons a candidate is the common case, and
 a window that closed over one would take a sentence with no undo.
+
+The pre-screen install came out of review. Installing inside the screen made the
+gesture a property of the workspace query rather than of the window: while the
+profile was loading, `Opening workspace…` had nothing on it to click and Escape
+did nothing, which is the dead end this entry is about, in the state a person is
+most stuck in. Putting it in `WorkspaceApp` covers both surfaces at once, which
+matters more than it looks — installing for Sidekicks alone would have made two
+structurally identical windows behave differently during load, the exact drift
+the extraction exists to prevent. The `!workspace.data` condition is the whole
+safety argument and should be read before either install is moved: the two must
+never be armed together, because the higher one nominates no scope and would
+close Settings over a half-written invitation the screen's pane guard had just
+refused.
 
 ### 2026-09-03: An automation is a conversation parent, not a sibling authority
 
