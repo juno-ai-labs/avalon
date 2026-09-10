@@ -702,6 +702,55 @@ describe('Grok Bot mention-chip geometry', () => {
   });
 });
 
+/**
+ * Citation markers are drawn in the reader's own accent.
+ *
+ * There is one writer of `--personal-accent` — the shell, from the signed-in
+ * person's presentation — and the stylesheet's job is to have every part of the
+ * marker spend it. A rule left on `brand-base` is the failure this guards: it
+ * survives every render test, because the marker is still there and still a
+ * pill, and only reads as wrong beside the person's own turns in the same feed.
+ * The default that the property falls back to is checked here too, since a
+ * surface with nobody signed in — onboarding, a signed-out shell — is the case
+ * nothing else exercises.
+ */
+describe('citation markers carry the personal accent', () => {
+  it('tints every marker state from the accent and never from the brand', () => {
+    const markers = [
+      rule('.citation-pill,\n.citation-pill-pending'),
+      rule('.citation-pill:hover'),
+      rule('.citation-identity-card'),
+    ];
+
+    for (const marker of markers) {
+      expect(marker).not.toBeNull();
+      expect(marker).toContain('var(--personal-accent)');
+      expect(marker).not.toContain('brand');
+    }
+  });
+
+  it('keeps the marker ink on the page rather than on the fill', () => {
+    // The tint is one of fourteen palette fills now, so an ink chosen for the
+    // fill would have to clear all of them. The paragraph's own ink already
+    // does, at every accent, because a 16% tint is nearly the page behind it.
+    expect(rule('.citation-pill,\n.citation-pill-pending')).toContain('color: var(--av-sys-color-text-default);');
+    expect(rule('.citation-identity-card')).toContain('color: var(--av-sys-color-text-default);');
+    expect(rule('.citation-pill-pending::after')).toContain('var(--av-sys-color-text-default)');
+  });
+
+  it('floors both marker borders on a line colour so the black accent still draws one', () => {
+    // `black` in the dark appearance is close enough to the canvas that a tint
+    // of it is the canvas. Mixed into `transparent` on both fill and edge, the
+    // pill vanished and its digits read as a bare superscript.
+    expect(rule('.citation-pill,\n.citation-pill-pending')).toContain('var(--personal-accent) 30%, var(--av-ref-color-line-4)');
+    expect(rule('.citation-identity-card')).toContain('var(--personal-accent) 24%, var(--av-ref-color-line-4)');
+  });
+
+  it('falls back to the product mark where no one has published an accent', () => {
+    expect(rule(':root')).toContain('--personal-accent: var(--av-sys-color-brand-base);');
+  });
+});
+
 describe('citation card image preview', () => {
   it('fills its box from the center without distorting the image', () => {
     // The shared `.markdown-body img` sets `height: auto` and a prose margin.

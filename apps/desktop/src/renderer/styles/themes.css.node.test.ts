@@ -342,6 +342,12 @@ describe('token references', () => {
     // states differently. The second is read by four rules, which is why it is
     // named rather than repeated.
     '--turn-width-cap', '--composer-width',
+    // The signed-in person's accent: one of the fourteen palette fills, chosen
+    // by a person rather than set by a theme, so no appearance file can carry
+    // it. `onboarding.css` resolves it from the `data-personal-color` attribute
+    // the account gate writes on `<html>`, which is why the definition check
+    // below reads that file too.
+    '--personal-color',
     // The feed's spacing steps, each a multiple of the one `ref.space.unit`
     // token; the multiples are the stylesheet's, not a theme's.
     '--space-1', '--space-2', '--space-3', '--space-4', '--space-5', '--space-6', '--space-7', '--space-8'];
