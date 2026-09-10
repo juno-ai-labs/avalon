@@ -301,6 +301,36 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-10 — Jump to latest hangs above the composer, whatever its height
+
+**What changed:** The control is anchored to the composer dock's top edge from
+underneath (`bottom: calc(100% + var(--space-2))` in `.jump-bottom`) instead of
+sitting a fixed 5px down from that same edge. The gap it leaves is now the same
+above a one-line message capsule and above a six-line draft with a queue over
+it.
+
+**Why:** The dock's height is the composer's, and the composer's is the draft's:
+a wrapped message, a queued row, an error under the field. Measuring downwards
+from the dock's top edge therefore put the control *inside* the field, and
+further inside the taller that field grew, which is worst in the state a reader
+is most likely to be scrolled away in, since a long draft is what pushed the
+transcript up in the first place. Sitting in the field it also read as one of
+the composer's own controls rather than as something belonging to the transcript
+above it.
+
+**Considered and rejected:** Giving the dock padding above the composer and
+keeping the control in it. That reserves the control's height in the layout
+permanently, so the transcript loses 38px whether or not the reader is away from
+the end, and the control is mounted only while they are.
+
+**Consequences:** The control overhangs the transcript rather than the composer,
+which is what a control saying *you are not at the end* is for; on a full feed it
+paints over the last row, and its own background, border and shadow are what keep
+it legible there. It depends on the dock stating no padding above the composer:
+give the dock some and the gap grows by that much silently.
+`app.css.node.test.ts` holds both halves, because jsdom lays nothing out and no
+component test can tell the anchors apart.
+
 ### 2026-09-10 — Multiline composer text spans above its controls
 
 The message capsule now gives wrapped text and explicit newlines the same full
