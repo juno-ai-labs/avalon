@@ -629,6 +629,69 @@ describe('sidebar group breaks follow the group-gap token', () => {
   });
 });
 
+/**
+ * The microphone had both faults a state-on-a-shape can have. Its recording red
+ * was set once, on the shared control, and then silently overpainted in the
+ * message capsule by two shape rules carrying two more classes; and its resting
+ * fill named `cmp.row.background-selected`, which `html[data-personal-color]`
+ * rewrites into the member's own accent, so the one control in the composer
+ * wearing a personal colour looked deliberate to anyone whose account had none.
+ *
+ * Neither is visible in a DOM assertion and neither is visible in a screenshot
+ * taken by the seeded local account, so they are guarded here: the shape rules
+ * must keep standing down while recording, and no rule reaching the microphone
+ * may name a token the account accent rewrites.
+ */
+describe('dictation button recording state', () => {
+  const ACCENT_REWRITTEN = [
+    '--av-cmp-row-background-selected',
+    '--av-sys-color-accent-base',
+    '--av-sys-color-accent-strong',
+    '--av-sys-color-accent-soft',
+    '--av-sys-color-accent-wash',
+    '--av-sys-color-accent-edge',
+    '--av-sys-color-accent-tint',
+  ];
+
+  it('fills with danger and takes the ink that pairs with it', () => {
+    const recording = rule('.microphone-control.is-listening .dictation-button');
+    expect(recording).toContain('background: var(--av-sys-color-danger-base);');
+    expect(recording).toContain('color: var(--av-sys-color-danger-on);');
+  });
+
+  it('lets no rule paint the button while it is recording except that one', () => {
+    const offenders: string[] = [];
+
+    for (const [, selector = '', body = ''] of stylesheet.matchAll(/([^{}]+)\{([^{}]*)\}/gu)) {
+      const prelude = selector.replace(/\/\*[\s\S]*?\*\//gu, ' ').trim();
+      if (!prelude.includes('.dictation-button')) continue;
+      if (prelude.includes('.is-listening')) continue;
+      if (!/(?:^|;|\s)(?:background|color):/u.test(body)) continue;
+      // A shape rule may paint the button at rest, but it has to stand down
+      // once it is recording, or it out-specifies the state by its own classes.
+      if (prelude.includes(':not(.is-listening)')) continue;
+      offenders.push(prelude);
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('gives the microphone no fill the account accent rewrites', () => {
+    const offenders: string[] = [];
+
+    for (const [, selector = '', body = ''] of stylesheet.matchAll(/([^{}]+)\{([^{}]*)\}/gu)) {
+      const prelude = selector.replace(/\/\*[\s\S]*?\*\//gu, ' ').trim();
+      if (!/\.(?:dictation-button|microphone-control|microphone-menu-trigger)\b/u.test(prelude)) continue;
+
+      for (const token of ACCENT_REWRITTEN) {
+        if (body.includes(token)) offenders.push(`${prelude} { ${token} }`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+});
+
 // These rows were built for the home screen's Needs attention section and are
 // now the project space's, which renders three of the six tracks. The project
 // and source rules below are dead until something fills those tracks again; the
