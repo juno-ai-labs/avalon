@@ -14,7 +14,6 @@ import {
   Cog,
   Copy,
   EyeOff,
-  FileStack,
   Globe2,
   GripVertical,
   Info,
@@ -69,9 +68,8 @@ import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { layoutRowAt } from '../lib/list-motion';
 import { useListMotion } from '../lib/use-list-motion';
 import { Avatar, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
-import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
+import { ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup } from './sidebar-skeleton';
-import { ContextNestedMenu } from './nested-menu';
 import { AutomationGlyph, WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
@@ -467,8 +465,7 @@ function WorkstreamRow({
   onMarkUnread,
   onRename,
   onTogglePin,
-  projects,
-  onAddToProject,
+  canDropOnProjects,
 }: {
   debugEnabled: boolean;
   drag?: PinnedRowDrag;
@@ -481,8 +478,11 @@ function WorkstreamRow({
   onMarkUnread: (workstream: WorkstreamSummary) => void;
   onRename: (workstream: WorkstreamSummary) => void;
   onTogglePin: (workstream: WorkstreamSummary, pinned: boolean) => void;
-  projects: ProjectSummary[];
-  onAddToProject: (projectId: string, workstreamId: string) => void;
+  // Whether a project row is on screen to receive this row. A project row is
+  // the only thing a work stream can be dropped on, and the sidebar draws none
+  // in its conversation-only mode — so this is not `projects.length > 0`, and a
+  // row that reads it as such offers a drag that can never land.
+  canDropOnProjects: boolean;
 }): React.JSX.Element {
   const location = useLocation();
   const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
@@ -552,7 +552,7 @@ function WorkstreamRow({
           // on every row the pointer crosses. See `useListMotion`.
           data-motion-hold={drag?.dragging ? '' : undefined}
           data-motion-key={`workstream:${workstream.id}`}
-          draggable={drag !== undefined || projects.length > 0}
+          draggable={drag !== undefined || canDropOnProjects}
           onDragEnd={drag
             // A drag nothing accepted reports `none`. Treated as cancelled when
             // the browser gives no `dataTransfer` at all, because a drop this
@@ -759,22 +759,6 @@ function WorkstreamRow({
           <ContextMenu.Item className="menu-item" onSelect={() => onRename(workstream)}>
             <Pencil aria-hidden="true" size={16} /> Rename
           </ContextMenu.Item>
-          {projects.length > 0 && (
-            <ContextNestedMenu
-              icon={<FileStack aria-hidden="true" size={16} />}
-              label="Add to project"
-              options={projects.map((project) => {
-                const selected = project.workstreamIds.includes(workstream.id);
-                return {
-                  id: project.id,
-                  label: project.name,
-                  icon: <ProjectIcon project={project} />,
-                  selected,
-                  ...(!selected ? { onSelect: () => onAddToProject(project.id, workstream.id) } : {}),
-                };
-              })}
-            />
-          )}
           {/* Named for the state it moves to, the way the note item is. Private
               is not ownership: everyone left in the work stream can still read
               it, write to it, and bring somebody else in. */}
@@ -1430,6 +1414,12 @@ export function Sidebar({
     },
   });
 
+  // A work stream's only drop target is a project row, and the conversation-only
+  // sidebar draws no project section at all — so in that mode a row must not
+  // present itself as draggable however many projects the workspace has, or it
+  // offers a drag that silently does nothing when it is released.
+  const canDropWorkstreamsOnProjects = !conversationOnly && projects.length > 0;
+
   const renderWorkstream = (workstream: WorkstreamSummary): React.JSX.Element => (
     <WorkstreamRow
       debugEnabled={debugEnabled}
@@ -1437,11 +1427,10 @@ export function Sidebar({
       onArchive={setArchiveWorkstreamTarget}
       onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
       onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
-      onAddToProject={(projectId, workstreamId) => void onAddWorkstreamToProject(projectId, workstreamId)}
       onRename={openRename}
       onTogglePin={(target, pin) => void togglePin(target, pin)}
       pinPending={pinPendingWorkstreamId === workstream.id}
-      projects={projects}
+      canDropOnProjects={canDropWorkstreamsOnProjects}
       scopePending={scopePendingWorkstreamId === workstream.id}
       workstream={workstream}
     />
@@ -1750,11 +1739,10 @@ export function Sidebar({
                     onArchive={setArchiveWorkstreamTarget}
                     onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
                     onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
-                    onAddToProject={(projectId, workstreamId) => void onAddWorkstreamToProject(projectId, workstreamId)}
                     onRename={openRename}
                     onTogglePin={(target, pin) => void togglePin(target, pin)}
                     pinPending={pinPendingWorkstreamId === pinned.id}
-                    projects={projects}
+                    canDropOnProjects={canDropWorkstreamsOnProjects}
                     workspace={workspace}
                     scopePending={scopePendingWorkstreamId === pinned.id}
                     workstream={pinned}
@@ -1854,11 +1842,10 @@ export function Sidebar({
                         onArchive={setArchiveWorkstreamTarget}
                         onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
                         onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
-                        onAddToProject={(projectId, workstreamId) => void onAddWorkstreamToProject(projectId, workstreamId)}
                         onRename={openRename}
                         onTogglePin={(target, pin) => void togglePin(target, pin)}
                         pinPending={pinPendingWorkstreamId === item.workstream.id}
-                        projects={projects}
+                        canDropOnProjects={canDropWorkstreamsOnProjects}
                         workspace={workspace}
                         scopePending={scopePendingWorkstreamId === item.workstream.id}
                         workstream={item.workstream}
