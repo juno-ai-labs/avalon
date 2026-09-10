@@ -279,6 +279,15 @@ inspector automatically. The transcript stays where the person left it until
 they click an embed, chip, or other explicit preview control. This applies on
 initial load, reconnect, and while an agent response streams.
 
+**A citation marker is drawn in the reader's own accent** — the colour they
+picked for themselves, which is also the fill of their turns in the same feed —
+rather than in the product's mark. Pills and the identity card tint from
+`--personal-accent`, which the shell publishes and
+[`theming.md`](theming.md) owns; where nobody is signed in the property falls
+back to the brand, so an unauthenticated surface and the exported card are
+unchanged. The accent is the *reader's* and not the cited person's: a marker is
+a citation before it is an identity.
+
 A GFM
 footnote whose definition is one paragraph carrying exactly one link becomes an
 inline numbered pill with a hover popover, and its entry is dropped from the

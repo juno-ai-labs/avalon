@@ -28,6 +28,7 @@ properties without knowing which appearance is active.
 | `apps/desktop/src/main/theme-assets.ts` | The private cache for a remote font declared by an appearance. |
 | `packages/contracts/src/projects.ts` | `PALETTE_INK` — which of the two absolute inks each palette fill carries, and the reasoning behind the rule that picks it. |
 | `apps/desktop/src/renderer/lib/project-palette.ts` | `glyphInk()`, resolving that table to the `palette-ink` token a glyph paints its symbol in. |
+| `apps/desktop/src/renderer/lib/personal-accent.ts` | `usePersonalAccent()` — the one writer of `--personal-accent`, the signed-in person's chosen fill, published on `<html>`. |
 | `apps/desktop/src/renderer/styles/palette.css.node.test.ts` | Recomputes the table from the tokens, and pins the WCAG 2 shortfall and the APCA ties. |
 
 ## How it works
@@ -110,6 +111,23 @@ serves it through `rally-font://`.
   saturated mid-tones, and the resulting shortfall against that standard is
   recorded rather than fixed — see the 2026-09-10 changelog entry for what is
   accepted and why.
+- **The signed-in person's accent is published once, and read as a custom
+  property.** `--personal-accent` is written to the document element by the
+  shell and by nothing else, and `app.css` declares Rally's own mark as its
+  value on `:root` so a surface with nobody signed in — onboarding, a signed-out
+  shell, the export renderer, a component test — keeps rendering. It is not a
+  registry token: it is one of the fourteen palette fills, chosen by a person
+  rather than set by an appearance, so no appearance file can carry it and a
+  theme has no opinion to express about it. Anything that should read as
+  *theirs* spends the property rather than threading the profile through props;
+  a rule that takes a person's colour any other way has to know who is signed
+  in, which is how a surface ends up wearing the last person's accent.
+- **A tint of an accent is floored on a visible colour.** `black` is an accent,
+  and in the dark appearance it is close enough to the canvas that a tint of it
+  disappears. A rule that mixes an accent into `transparent` for both its fill
+  and its edge therefore draws nothing at that one accent; the citation pill
+  mixes its border over `line-4` for exactly this reason, which is also how
+  `.citation-chip` beside it is built.
 - **Both palette inks are absolute.** A fill does not change with the
   appearance, so the ink over it must not either. `palette-ink-light`,
   `palette-ink-dark` and the fills themselves live in `base.json`, where an

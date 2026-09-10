@@ -28,6 +28,16 @@
      beside it makes room over the same span because it is measured from the
      same custom property. */
   --sidebar-collapse-motion: 240ms cubic-bezier(.22, 1, .36, 1);
+
+  /* The signed-in person's accent. Not an `--av-` token: it is one of the
+     fourteen palette fills, chosen by a person rather than set by a theme, and
+     the shell writes it inline on this same element from their stored
+     presentation (`lib/personal-accent.ts`). The declaration here is the value
+     a surface gets when nobody has published one — before sign-in, in
+     onboarding, and in the export renderer, which loads none of this file's
+     runtime. Rally's own mark is the right stand-in there: it is what every
+     accented surface wore before a person had an accent at all. */
+  --personal-accent: var(--av-sys-color-brand-base);
 }
 
 * {
@@ -3462,16 +3472,31 @@ pre {
    in its own box, which reads as a stray space after the punctuation, and the
    keyword's raise sat the marker clear of the line it belongs to.
 
-   The fill is the brand *tint* with brand ink on it, the pairing `.mention-chip`
-   already uses. A solid `brand-base` is the primary submit button's colour —
-   three of them in a paragraph shout louder than the chip a reader is meant to
-   click — and in the Air light theme `brand-on` over `brand-base` is 3.01:1,
-   which fails AA at any size, let alone this one. */
+   The fill is a *tint* of the reader's own accent, with the page's ink on it.
+   A citation marker is the one decoration in an answer a person is meant to
+   click, so it wears the colour they picked for themselves and matches their
+   own turns in the same feed rather than the product's mark; `--personal-accent`
+   falls back to that mark where no one is signed in. It stays a tint, and the
+   ink over it stays `text.default`: a solid accent is the primary submit
+   button's weight — three of them in a paragraph shout louder than the thing
+   they mark — and an ink taken from the fill would have to clear fourteen of
+   them, where lime over lime already failed AA at this size as `brand-on` over
+   `brand-base` did at 3.01:1. Over a 16% tint the page's own ink clears all
+   fourteen because it is the contrast the paragraph around it already has.
+
+   The border mixes over a *line* colour rather than over `transparent`, which
+   is the one thing an accent-coloured tint cannot do without: `black` is an
+   accent a person can choose, and in the dark appearance it is close enough to
+   the canvas that a tint of it — fill and border both — leaves the digits
+   floating as a bare superscript with no marker around them at all. Mixed over
+   `line-4` the pill keeps an outline at every accent, and where the accent has
+   a hue of its own it still dominates the mix. The same pairing draws
+   `.citation-chip` beside it. */
 .markdown-body sup:has(.citation-pill) { font-size: inherit; vertical-align: baseline; }
 .citation-pill,
-.citation-pill-pending { background: color-mix(in srgb, var(--av-sys-color-brand-base) 16%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-brand-base) 30%, transparent); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-brand-ink); display: inline-block; font: inherit; font-size: 0.72em; font-weight: 680; line-height: 1.35; padding: 0 0.42em; text-align: center; vertical-align: 0.32em; }
+.citation-pill-pending { background: color-mix(in srgb, var(--personal-accent) 16%, transparent); border: 1px solid color-mix(in srgb, var(--personal-accent) 30%, var(--av-ref-color-line-4)); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-default); display: inline-block; font: inherit; font-size: 0.72em; font-weight: 680; line-height: 1.35; padding: 0 0.42em; text-align: center; vertical-align: 0.32em; }
 .citation-pill { cursor: pointer; }
-.citation-pill:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 30%, transparent); }
+.citation-pill:hover { background: color-mix(in srgb, var(--personal-accent) 30%, transparent); }
 /* The pill a streaming turn wears until its definition arrives. The geometry
    is shared with the rule above rather than restated, because the whole point
    is that the line does not move when the number lands — a second copy of the
@@ -3486,7 +3511,7 @@ pre {
    know which number it is waiting for; `1ch` is the zero exactly and reads
    wide under every other digit. Its height stays under the line-height, so the
    strut and not the block decides how tall the pill is. */
-.citation-pill-pending::after { animation: citation-pill-pending-shimmer 1.4s ease-in-out infinite; background: color-mix(in srgb, var(--av-sys-color-brand-ink) 26%, transparent); border-radius: 1px; content: ''; display: inline-block; height: 0.74em; vertical-align: -0.06em; width: 0.55em; }
+.citation-pill-pending::after { animation: citation-pill-pending-shimmer 1.4s ease-in-out infinite; background: color-mix(in srgb, var(--av-sys-color-text-default) 26%, transparent); border-radius: 1px; content: ''; display: inline-block; height: 0.74em; vertical-align: -0.06em; width: 0.55em; }
 @keyframes citation-pill-pending-shimmer {
   0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
@@ -3508,7 +3533,14 @@ pre {
    answer, which is exactly what a footnote is not. */
 .markdown-body .footnotes { border-top: 1px solid var(--av-sys-color-border-subtle); color: var(--av-sys-color-text-muted); font-size: 0.9em; margin-top: var(--space-6); padding-top: var(--space-3); }
 
-.citation-identity-card { background: color-mix(in srgb, var(--av-sys-color-brand-base) 10%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-brand-base) 24%, transparent); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-brand-ink); display: inline-block; font-size: 0.92em; font-weight: 580; padding: 3px 9px; }
+/* The block form of a `person:` citation, tinted from the same accent as the
+   markers so the citation family reads as one thing. The accent is the
+   reader's, not the named person's: this card is a citation before it is an
+   identity, and a card that took its subject's colour would put two unrelated
+   fills in one answer. Its border takes the same floor as the pill's, for the
+   same reason: at the `black` accent a tint of the accent is the dark canvas,
+   and a card with neither fill nor edge is a label, not a citation. */
+.citation-identity-card { background: color-mix(in srgb, var(--personal-accent) 10%, transparent); border: 1px solid color-mix(in srgb, var(--personal-accent) 24%, var(--av-ref-color-line-4)); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-default); display: inline-block; font-size: 0.92em; font-weight: 580; padding: 3px 9px; }
 /* Markers are restated because Tailwind's preflight sets `list-style: none` on
    every `ol` and `ul`, and nothing took it back — the rules around this set the
    indent a marker needs and a colour for a marker that was not being drawn, so
