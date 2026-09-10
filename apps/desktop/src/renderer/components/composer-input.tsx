@@ -329,8 +329,10 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
     requestAnimationFrame(() => resizeTextarea());
   });
   const dictationActive = !['idle', 'error'].includes(dictation.state);
-  const dictationBlocking = ['requesting', 'listening'].includes(dictation.state);
-  const dictationEditingBlocked = dictationBlocking || dictation.state === 'finalizing';
+  // Dictation owns the text while it is running: the transcript is written into
+  // the same field, so a caret in there would fight it. Sending is no longer on
+  // this list — `submit` stops dictation and sends what it heard instead.
+  const dictationEditingBlocked = ['requesting', 'listening', 'finalizing'].includes(dictation.state);
   const messageCapsule = layout === 'message-capsule';
 
   const startDictation = (): void => {
@@ -343,9 +345,36 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
     else startDictation();
   };
 
+  // Send while dictation is running stops it and sends what it heard, the tail
+  // still in flight included — a Send button that silently drops the last words
+  // spoken is worse than one that waits a beat for them.
+  //
+  // Awaiting `stop()` and submitting is not enough to get them: the final
+  // transcript reaches the host through `onValueChange`, so the host's own
+  // submit closure is one render behind it, and awaiting inside the click
+  // handler submits the text as it stood when the click landed. Waiting for
+  // dictation to settle and submitting from an effect is that next render, and
+  // it is React's ordering rather than a microtask race.
+  const [sendAfterDictation, setSendAfterDictation] = useState(false);
+  useEffect(() => {
+    if (!sendAfterDictation) return;
+    // A failed stop keeps the draft and shows its error; it does not send.
+    if (dictation.state === 'error') {
+      setSendAfterDictation(false);
+      return;
+    }
+    if (dictation.state !== 'idle') return;
+    setSendAfterDictation(false);
+    void onSubmit();
+  }, [dictation.state, onSubmit, sendAfterDictation]);
+
   const submit = async (): Promise<void> => {
-    if (dictationBlocking || submitDisabled) return;
-    if (dictation.state === 'transcribing' || dictation.state === 'finalizing') await dictation.stop();
+    if (submitDisabled || sendAfterDictation) return;
+    if (dictationActive) {
+      setSendAfterDictation(true);
+      void dictation.stop();
+      return;
+    }
     await onSubmit();
   };
 
@@ -639,8 +668,8 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 first-time reader looks for is the one that was missing. Every
                 host already passes `submitDisabled` for an empty draft, so the
                 disabled state is the one it always computed. */}
-            <button aria-label={submitLabel} className="composer-send" disabled={dictationBlocking || submitDisabled} onClick={() => void submit()} type="button">
-              {submitting ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
+            <button aria-label={submitLabel} className="composer-send" disabled={submitDisabled || sendAfterDictation} onClick={() => void submit()} type="button">
+              {submitting || sendAfterDictation ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
             </button>
           </div>
         </div>
