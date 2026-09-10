@@ -385,6 +385,13 @@
    * surrounding message surface. */
   --av-cmp-elicitation-option-background: #e8e8e8;
 
+  /* The chip a keyboard shortcut is printed on — an option’s letter, a
+   * recipient’s ⌘ number. It is a static label, so it takes a fill of its own
+   * rather than the selected row’s: `cmp.row.background-selected` is what an
+   * account accent re-points at, and every keycap that borrowed it turned the
+   * reader’s personal colour. */
+  --av-cmp-keycap-background: rgba(119, 119, 119, 0.17);
+
   /* The fill behind a person's turn. A theme with one continuous ground can
    * set all three to nothing and let the message sit on the page as plain
    * text. */
@@ -722,6 +729,8 @@
   --av-cmp-bubble-background: #2f2f2f;
 
   --av-cmp-elicitation-option-background: var(--av-sys-color-surface-raised-hover);
+
+  --av-cmp-keycap-background: rgba(119, 119, 119, 0.32);
 
   --av-cmp-bubble-human-background: #5a5a5a;
   --av-cmp-bubble-human-foreground: #fcfcfc;
