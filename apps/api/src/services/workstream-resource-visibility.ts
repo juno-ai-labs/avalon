@@ -1,6 +1,7 @@
 import { classifyAttachmentKind, type AttachmentKind, type ExecutionPrincipal } from "@rally/contracts";
 import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
 import { BOUND_PARAMETER_ID_CHUNK } from "../durable-objects/bound-parameters";
+import { listedResourceVisibilitySql } from "./resource-listing";
 
 export interface VisibleWorkstreamResourceRow extends Record<string, unknown> {
   id: string;
@@ -106,6 +107,12 @@ async function loadVisibleRows(
   const onMessages = new Set(await attachments.resourceIdsOnMessages({
     resourceIds: local.map((link) => link.resource_id),
   }));
+  // Resolving by id is the reachable half of an attachment, so it answers for an
+  // unlisted resource too: that is the path an opened link, a restore, and a
+  // receipt lookup take. Enumeration is the advertised half and applies the
+  // listing predicate, which is why the two halves differ by exactly this
+  // clause rather than by a filter one caller remembers to repeat.
+  const listed = input.resourceIds ? "" : ` AND ${listedResourceVisibilitySql("resource")}`;
   const resources: Array<Record<string, unknown>> = [];
   for (let offset = 0; offset < local.length; offset += RESOURCE_LOOKUP_BATCH) {
     const ids = local.slice(offset, offset + RESOURCE_LOOKUP_BATCH).map((link) => link.resource_id);
@@ -121,7 +128,7 @@ async function loadVisibleRows(
              WHERE note.resource_id = resource.id AND note.workspace_id = resource.workspace_id
                AND note.archived_at IS NULL
                AND (note.scope = 'workspace' OR note.owner_user_id = ?)
-          ))`,
+          ))${listed}`,
     ).bind(input.workspaceId, ...ids, principalUserId(input.principal))
       .all<Record<string, unknown>>();
     resources.push(...(result.results ?? []));

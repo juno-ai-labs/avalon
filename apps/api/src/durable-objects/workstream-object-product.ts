@@ -70,6 +70,7 @@ import {
   resolveNewWorkstreamModelRouting,
 } from "../services/agent-model-flags";
 import { classifyWorkstreamMessage } from "../services/integrations";
+import { listedResourceVisibilitySql } from "../services/resource-listing";
 import {
   canonicalModelMessageJson,
   projectParticipantModelMessage,
@@ -2329,6 +2330,14 @@ export class WorkstreamObjectProductService {
     ).toArray();
     if (links.length === 0) return [];
     const placeholders = links.map(() => "?").join(",");
+    // The member's rail is an enumeration, so it applies the listing predicate
+    // for the reason `loadVisibleRows` does; naming ids is the point lookup that
+    // an already-opened resource and a mutation's own refresh take, and it does
+    // not. Both branches of this method sit above the same statement, so the
+    // clause is chosen with the branch rather than left to the caller.
+    const listed = resourceIds === undefined
+      ? ` AND ${listedResourceVisibilitySql("resource")}`
+      : "";
     const rows = await this.workspaceDatabase(this.root().parent_workspace_key).prepare(
       `SELECT resource.*,
               connection.connector_type AS connector_type,
@@ -2342,7 +2351,7 @@ export class WorkstreamObjectProductService {
             SELECT 1 FROM notes note
              WHERE note.resource_id = resource.id AND note.archived_at IS NULL
                AND (note.scope = 'workspace' OR note.owner_user_id = ?)
-          ))`,
+          ))${listed}`,
     ).bind(
       this.root().parent_workspace_key,
       ...links.map((link) => link.resource_id),
