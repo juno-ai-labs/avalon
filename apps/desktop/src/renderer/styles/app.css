@@ -2815,23 +2815,18 @@ pre {
 /* Every row in this rail is the navigation sidebar's work-stream row: same
    36px leading slot, same title, same fills. Only the mark inside the slot
    differs — the stream's own tinted symbol for the main conversation, the
-   branch line for a substream. */
+   ↳ arrow for a substream, a plus for the row that starts one. */
 .workstream-substream-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .workstream-substream-list:empty { display: none; }
-/* A grid rather than a flex row so that a substream's two marks — its branch
-   line and its initial — stack in the one cell and can cross-fade. */
+/* A grid rather than a flex row so that a substream's two marks — its arrow
+   and its initial — stack in the one cell and can cross-fade. */
 .workstream-context-mark { display: grid; flex: 0 0 36px; height: 36px; place-items: center; }
 .workstream-context-mark > * { grid-area: 1 / 1; }
-/* Tabler's right endpoint is y=4: after flipping the 24px icon it sits 8px
-   below center, so the curve meets the title rather than the slot's floor. */
-.workstream-substream-connector { color: var(--av-cmp-sidebar-border); transform: translateY(-8px) scaleY(-1); transition: opacity var(--sidebar-layout-motion), transform var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
+/* Muted text, not the sidebar-border token the earlier branch line used: the
+   arrow is the only thing that says this row is a substream, and at 10% it
+   read as a smudge beside a title drawn in full ink. */
+.workstream-substream-arrow { color: var(--av-sys-color-text-muted); transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
 .workstream-new-substream { color: var(--av-sys-color-text-muted); }
-/* The same character the main feed's New substream control is drawn with, so
-   the two ways into a substream read as one act; a Tabler plus made the rail's
-   entry look like a different thing from the one on the turn it branches from.
-   It is a glyph, not an icon, so it is sized here rather than by a prop, and it
-   keeps the connector's muted weight beside it rather than the feed row's 10px. */
-.workstream-new-substream-mark { font-size: 22px; line-height: 1; }
 .workstream-context-row:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
 .workstream-context-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; overflow: hidden; transition: flex-grow var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
 /* The navigation sidebar's row title, so the two rails read as one list. */
@@ -2848,13 +2843,11 @@ pre {
 .workstream-context-empty svg { flex-shrink: 0; transition: transform var(--sidebar-layout-motion); }
 .workstream-context-empty > span { transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); white-space: nowrap; }
 .workstream-context-presence { background: var(--av-sys-color-success-base); border-radius: 50%; flex: 0 0 6px; height: 6px; }
-/* Compact drops the title, so the eight-pixel lift has nothing left to meet;
-   the curve settles to the centre of the square as the title goes. It stays
-   the mark only for a substream whose title has no first character; under an
-   initial it fades out while the initial fades in, both drawn in the one
-   cell so neither is swapped for the other. */
-.workstream-context-sidebar.is-compact .workstream-substream-connector { transform: scaleY(-1); }
-.workstream-context-sidebar.is-compact .workstream-context-mark:has(> .workstream-substream-initial) > .workstream-substream-connector { opacity: 0; visibility: hidden; }
+/* Compact drops the title. The arrow stays the mark only for a substream
+   whose title has no first character; under an initial it fades out while
+   the initial fades in, both drawn in the one cell so neither is swapped
+   for the other. */
+.workstream-context-sidebar.is-compact .workstream-context-mark:has(> .workstream-substream-initial) > .workstream-substream-arrow { opacity: 0; visibility: hidden; }
 /* The trim centres the cap height rather than the line box: an uppercase
    letter carries no descender and would otherwise sit a pixel high. */
 .workstream-substream-initial { font-size: 17px; font-weight: 600; opacity: 0; text-box: trim-both cap alphabetic; transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); visibility: hidden; }
