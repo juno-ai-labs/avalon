@@ -77,7 +77,7 @@ export function AutomationHeader({
   const name = definition?.name ?? automation.name;
   const description = definition?.description ?? automation.description;
   const listedRuns = runs ?? automation.recentRuns;
-  // The object runs only an active automation (`automation_not_active`
+  // The object runs only an active automation (`sidekick_not_active`
   // otherwise), so a paused one is not offered a command that always fails.
   const hasTriggers = automation.runnable ?? ((definition?.triggers.length ?? 0) > 0);
   const canRun = automation.lifecycle === 'active' && hasTriggers;

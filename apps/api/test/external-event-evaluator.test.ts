@@ -100,6 +100,6 @@ describe("external event evaluator", () => {
           value: 1,
         }] },
       }],
-    }, { inspectedPlugins, resources, personIds: new Set() })).toThrow("automation_evaluator_invalid");
+    }, { inspectedPlugins, resources, personIds: new Set() })).toThrow("sidekick_evaluator_invalid");
   });
 });

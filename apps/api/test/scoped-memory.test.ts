@@ -516,7 +516,7 @@ describe("scoped agent memory", () => {
     const scopes = await resolveMemoryAccess(routedEnv(env, runInput), runInput);
     expect(scopes.map((scope) => [scope.kind, scope.ownerId, scope.writable])).toEqual([
       ["workspace", WORKSPACE_ID, true],
-      ["automation", AUTOMATION_ONE, true],
+      ["sidekick", AUTOMATION_ONE, true],
     ]);
     // A work-stream run keeps the shape it had: the person's scope and the
     // work stream's, on top of the workspace's.
@@ -549,7 +549,7 @@ describe("scoped agent memory", () => {
     // The second automation's scope is its own, keyed by the automation and
     // not by the workspace both belong to.
     expect((await resolveMemoryAccess(routedEnv(env, second), second)).map((scope) => [scope.kind, scope.ownerId]))
-      .toEqual([["workspace", WORKSPACE_ID], ["automation", AUTOMATION_TWO]]);
+      .toEqual([["workspace", WORKSPACE_ID], ["sidekick", AUTOMATION_TWO]]);
     expect((await memorySearch(routedEnv(env, first), first, "crimson summary")).results)
       .toEqual([expect.objectContaining({ scopeKind: "sidekick" })]);
     expect((await memorySearch(routedEnv(env, second), second, "crimson summary")).results).toEqual([]);

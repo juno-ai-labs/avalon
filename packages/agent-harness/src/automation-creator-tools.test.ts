@@ -224,7 +224,7 @@ describe("submitting a draft that needs evaluator rules", () => {
     const tools = createAutomationsPlugin(readyHost()).tools;
 
     // AutomationAgent refuses this too, but its message reaches the model as a
-    // bare `automation_evaluator_rules_required` tagged an external fault. A
+    // bare `sidekick_evaluator_rules_required` tagged an external fault. A
     // model given that resubmits the same draft; the sentence names the tool.
     await expect(toolNamed(tools, "submit_draft").execute(eventDrivenDraft, toolContext))
       .rejects.toThrow(/Call set_evaluator_rules .* before submitting a ready draft/u);
@@ -247,7 +247,7 @@ describe("submitting a draft that needs evaluator rules", () => {
   it("names the disagreement when a rule binds a source the triggers do not declare", async () => {
     const state = readyHost();
     // Rules staged for a binding key the draft's trigger does not carry: the
-    // object refuses this as a bare `automation_activity_source_unbound`, the
+    // object refuses this as a bare `sidekick_activity_source_unbound`, the
     // second code the pre-check exists to phrase. The sentence has to name the
     // tool and the repair, or the model resubmits the same draft. Staged on
     // the host directly, as `set_evaluator_rules` leaves them: that tool also

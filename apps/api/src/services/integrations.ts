@@ -3,6 +3,7 @@ import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef } from ".
 import type { SidekickSkillSnapshot } from "@rally/contracts";
 import { assertSafePublicUrl } from '../lib/public-web-url';
 import {
+  AUTOMATIONS_PLUGIN_ID,
   AVALON_CURRENT_TIME_TOOL_DEFINITION,
   AVALON_CORE_PLUGIN_ID,
   AVALON_DISCOVERY_PLUGIN_ID,
@@ -1708,10 +1709,10 @@ function createAvalonAutomationsPlugin(
         ));
       }
       const replayCapabilities = [
-        "rally.automation.plugins.inspect",
-        "rally.automation.people.search",
-        "rally.automation.resources.search",
-        "rally.automation.evaluators.set",
+        "rally.sidekick.plugins.inspect",
+        "rally.sidekick.people.search",
+        "rally.sidekick.resources.search",
+        "rally.sidekick.evaluators.set",
       ];
       const receiptPort = createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
       // An automation's own conversation drafts across turns, so what it
@@ -1796,11 +1797,11 @@ function createAvalonAutomationsPlugin(
       // The resources a watch trigger may name, seen as the person the run acts
       // for, with the plugin each one is reached through.
       searchResources: async (query: string) => {
-        if (!authorUserId) throw new Error("automation_draft_author_unavailable");
+        if (!authorUserId) throw new Error("sidekick_draft_author_unavailable");
         const membership = await env.DB.prepare(
           `SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
         ).bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" }>();
-        if (!membership) throw new Error("automation_draft_author_unavailable");
+        if (!membership) throw new Error("sidekick_draft_author_unavailable");
         const page = await new ResourceService(env, {
           sessionId: `run:${input.harnessRunId}`,
           userId: asUserId(authorUserId),
@@ -1836,7 +1837,7 @@ function createAvalonAutomationsPlugin(
       // this is. Read as the person the run acts for, so a room's list is the
       // one that person could open.
       listAutomations: async () => {
-        if (!authorUserId) throw new Error("automation_draft_author_unavailable");
+        if (!authorUserId) throw new Error("sidekick_draft_author_unavailable");
         const workspaceId = asWorkspaceId(input.workspaceId);
         const actor = { userId: asUserId(authorUserId), participantOfOwningWorkstream: true };
         const ids: string[] = [];
@@ -1881,7 +1882,7 @@ function createAvalonAutomationsPlugin(
     },
     draftMutationPort: {
       submitDraft: async (draft: AutomationDraft, _context, target) => {
-        if (!authorUserId) throw new Error("automation_draft_author_unavailable");
+        if (!authorUserId) throw new Error("sidekick_draft_author_unavailable");
         // Where the draft goes. An automation's own conversation edits only
         // itself. A room edits one it owns when the model names it, and
         // otherwise creates one on the first submission, owned by the room.
@@ -1923,7 +1924,7 @@ function createAvalonAutomationsPlugin(
         const membership = await env.DB.prepare(
           `SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
         ).bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" }>();
-        if (!membership) throw new Error("automation_draft_author_unavailable");
+        if (!membership) throw new Error("sidekick_draft_author_unavailable");
         const actorRequest = await new AutomationService(env, {
           sessionId: `run:${input.harnessRunId}`, userId: asUserId(authorUserId),
           workspaceId: asWorkspaceId(input.workspaceId), region: input.region,
@@ -1996,7 +1997,7 @@ async function loadAutomationCreatorPluginCatalog(
     try {
       adapter = registry.get(String(row.connector_type));
     } catch (error) {
-      logStructuredEvent(env, "warn", "automation_creator_connector_unavailable", {
+      logStructuredEvent(env, "warn", "sidekick_creator_connector_unavailable", {
         connector_type: String(row.connector_type),
         connection_id: String(row.id),
         reason: error instanceof Error ? error.message : "unknown",
@@ -5270,7 +5271,7 @@ async function loadRunPromptContext(
         }>;
         defaultBehavior: Record<string, unknown>;
         overrides: Record<string, unknown>;
-        durableTables: Array<Omit<MaterializedMemoryTable, "scopeKind"> & { scopeKind: "sidekick" }>;
+        durableTables: MaterializedMemoryTable[];
       }
     | undefined;
   if (input.automationRun) {
@@ -5297,9 +5298,7 @@ async function loadRunPromptContext(
       // definition declared, created at apply, and any a previous run made.
       // Hard-coded empty before, so a run was never told about tables that
       // existed for it.
-      // The stored kind is `automation`; the model reads the scope as `sidekick`.
-      durableTables: (await automationScopeMemoryTables(env, input.workspaceId, input.automationRun.automationId))
-        .map((table) => ({ ...table, scopeKind: "sidekick" as const })),
+      durableTables: await automationScopeMemoryTables(env, input.workspaceId, input.automationRun.automationId),
     };
   }
   const additionalMessages: ModelMessage[] = [];
@@ -6749,7 +6748,7 @@ async function readAutomationRunDefinition(
   input: WorkstreamWorkflowInput,
 ): Promise<AutomationRunDefinitionV1> {
   const run = input.automationRun;
-  if (!run) throw new Error("automation_run_reference_missing");
+  if (!run) throw new Error("sidekick_run_reference_missing");
   const automation = await durableObjectStubForWorkspace(
     env,
     env.AUTOMATION_DOS,
@@ -6762,6 +6761,8 @@ async function readAutomationRunDefinition(
     runId: run.runId,
   }));
 }
+
+const SIDEKICK_RESULT_PLUGIN_ID = "rally:sidekick-result";
 
 /**
  * The one tool through which a run reaches the room that owns its automation.
@@ -6777,7 +6778,7 @@ function createAutomationPostResultPlugin(
   definition: AutomationRunDefinitionV1,
 ): HarnessPlugin {
   const owningWorkstreamId = definition.owningWorkstreamId;
-  if (!owningWorkstreamId || !input.automationRun) throw new Error("automation_post_result_requires_owning_room");
+  if (!owningWorkstreamId || !input.automationRun) throw new Error("sidekick_post_result_requires_owning_room");
   const run = input.automationRun;
   const tool: HarnessTool = {
     definition: {
@@ -6787,7 +6788,7 @@ function createAutomationPostResultPlugin(
         "Call it once, with the complete result the people in that work stream should read.",
         "Nothing else delivers a result there: a run that does not call this leaves the work stream unchanged.",
       ].join(" "),
-      capability: "rally.automation.result.post",
+      capability: "rally.sidekick.result.post",
       mode: "write",
       idempotency: "safe",
       inputSchema: {
@@ -6809,8 +6810,8 @@ function createAutomationPostResultPlugin(
         workstreamDOName(env.AVALON_REGION, workspaceId, asWorkstreamId(owningWorkstreamId)),
       );
       const authority = await room.authority({ workspaceId, parentId: owningWorkstreamId });
-      if (!authority.exists) throw new Error("automation_owning_room_missing");
-      if (authority.archived) throw new Error("automation_owning_room_archived");
+      if (!authority.exists) throw new Error("sidekick_owning_room_missing");
+      if (authority.archived) throw new Error("sidekick_owning_room_archived");
       const main = await durableObjectStubForWorkspace(
         env,
         env.SUBSTREAM_AGENTS,
@@ -6836,7 +6837,7 @@ function createAutomationPostResultPlugin(
           occurredAt: Date.now(),
         },
       });
-      if (result.outcome === "refused") throw new Error(`automation_post_result_refused:${result.code}`);
+      if (result.outcome === "refused") throw new Error(`sidekick_post_result_refused:${result.code}`);
       const summary = result.outcome === "replayed"
         ? "The result was already posted to the work stream."
         : "Posted the result to the work stream.";
@@ -6844,9 +6845,7 @@ function createAutomationPostResultPlugin(
     },
   };
   return {
-    // The canonical id is the stored identity of a durable activation, so it
-    // keeps the old name; the model reads only the id, short name, and prose.
-    canonicalId: "rally:automation-result",
+    canonicalId: SIDEKICK_RESULT_PLUGIN_ID,
     modelId: "rally_sidekick_result",
     shortWireName: "sidekick",
     displayName: "Sidekick result",
@@ -6877,12 +6876,24 @@ async function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Prom
   });
 }
 
+/**
+ * The canonical ids a stored activation hint may still carry from before the
+ * Sidekick rename. A hint is the id of a plugin this conversation once loaded,
+ * written by an earlier worker; read under the id the plugin has now, so a
+ * drafting conversation resumed across the rename keeps its plugin.
+ */
+const LEGACY_PLUGIN_IDS: ReadonlyMap<string, string> = new Map([
+  ["rally:automations", AUTOMATIONS_PLUGIN_ID],
+  ["rally:automation-result", SIDEKICK_RESULT_PLUGIN_ID],
+]);
+
 async function loadAuthorizedActivationHints(
   scheduling: SchedulingObjectPort,
   eligiblePluginIds: ReadonlySet<string>,
 ): Promise<string[]> {
   const hints = await scheduling.activationHints();
-  return hints.filter((pluginId) => eligiblePluginIds.has(pluginId));
+  return [...new Set(hints.map((pluginId) => LEGACY_PLUGIN_IDS.get(pluginId) ?? pluginId))]
+    .filter((pluginId) => eligiblePluginIds.has(pluginId));
 }
 
 async function persistWorkstreamPluginActivation(

@@ -72,8 +72,8 @@ describe('pluginGroup', () => {
     });
   });
 
-  it('pins the automations plugin to its canonical id regardless of display name', () => {
-    expect(pluginGroup('rally:automations', 'Automations')).toEqual(
+  it('pins the Sidekicks plugin to its canonical id regardless of display name', () => {
+    expect(pluginGroup('rally:sidekicks', 'Automations')).toEqual(
       {
         key: 'name:Automations',
         name: 'Automations',
@@ -84,11 +84,17 @@ describe('pluginGroup', () => {
     );
     // The plug is what the display-name fallback would reach for; the pin is
     // what keeps the row wearing the keyframes mark instead.
-    expect(pluginGroup('rally:automations', 'Scheduled work')).toMatchObject({
+    expect(pluginGroup('rally:sidekicks', 'Scheduled work')).toMatchObject({
       key: 'name:Automations',
       icon: 'automations',
     });
-    expect(pluginGroup('rally:automations', undefined)).toMatchObject({
+    expect(pluginGroup('rally:sidekicks', undefined)).toMatchObject({
+      key: 'name:Automations',
+      icon: 'automations',
+    });
+    // A row a transcript stored before the rename still carries the old id,
+    // and still draws the same glyph.
+    expect(pluginGroup('rally:automations', 'Sidekicks')).toMatchObject({
       key: 'name:Automations',
       icon: 'automations',
     });
