@@ -216,10 +216,9 @@ describe('the Demos page', () => {
     await act(async () => { choose(parts[2]!, MARCUS_ID); });
     expect(buttonNamed('Start preparation').disabled).toBe(true);
     expect(container.textContent).toContain('Sam Burton is in this demo twice');
-    // So does casting the presenter, who is in the demo already.
-    await act(async () => { choose(parts[2]!, PRESENTER_ID); });
-    expect(buttonNamed('Start preparation').disabled).toBe(true);
-    expect(container.textContent).toContain('Adam is in this demo twice');
+    // The presenter is not among the options at all — they are in the demo
+    // already — so that collision is unreachable rather than refused.
+    expect(parts[2]!.textContent).not.toContain('adam@rallywith.ai');
     // Two different people under one name is the other collision: nobody
     // watching could tell which of them a mention names.
     await act(async () => { choose(parts[2]!, NAMESAKE_ID); });
@@ -323,6 +322,56 @@ describe('the Demos page', () => {
     await render();
     expect(container.textContent).toContain('demo-template has no active members; the presenter is cast from them.');
     expect(buttonNamed('New demo').disabled).toBe(true);
+  });
+
+  it('never offers the presenter for a part, and says so when they leave too few colleagues', async () => {
+    // The two lists overlap on purpose — a template member is on the domain
+    // too — so exactly as many candidates as there are parts is a dead end
+    // whenever one of them is presenting.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(respond([], {
+      template: () => Response.json({
+        ...template,
+        members: [
+          { userId: PRESENTER_ID, name: 'Adam', email: 'adam@rallywith.ai', role: 'owner' },
+          { userId: COLLEAGUE_ID, name: 'Blake', email: 'blake@rallywith.ai', role: 'member' },
+        ],
+        // Blake presents but is not castable — an account off the domain that
+        // the template seats anyway — so switching to them frees all three.
+        castCandidates: [
+          { userId: PRESENTER_ID, name: 'Adam', email: 'adam@rallywith.ai' },
+          { userId: DANA_ID, name: 'Ben Diaz', email: 'ben@rallywith.ai' },
+          { userId: MARCUS_ID, name: 'Sam Burton', email: 'kb@rallywith.ai' },
+        ],
+      }),
+    }));
+    await render();
+    await act(async () => { buttonNamed('New demo').click(); });
+    const [presenter, ...parts] = Array.from(container.querySelectorAll('select'));
+    // Three candidates, three parts, and one of them is presenting.
+    expect(parts[0]!.textContent).not.toContain('adam@rallywith.ai');
+    expect(container.textContent).toContain('Adam leaves 2 colleagues to cast them');
+    expect(buttonNamed('Start preparation').disabled).toBe(true);
+
+    // Presenting as somebody who is not a candidate frees all three.
+    await act(async () => { choose(presenter!, COLLEAGUE_ID); });
+    expect(container.textContent).not.toContain('leaves 2 colleagues');
+    expect(parts[0]!.textContent).toContain('adam@rallywith.ai');
+    expect(parts[0]!.textContent).not.toContain('blake@rallywith.ai');
+    expect(buttonNamed('Start preparation').disabled).toBe(true);
+  });
+
+  it('clears a part held by somebody who becomes the presenter', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(respond([]));
+    await render();
+    await act(async () => { buttonNamed('New demo').click(); });
+    const [presenter, ...parts] = Array.from(container.querySelectorAll('select'));
+    await act(async () => { choose(parts[0]!, COLLEAGUE_ID); });
+    expect(parts[0]!.value).toBe(COLLEAGUE_ID);
+    // Blake is presenting now, so the part they were holding is empty rather
+    // than pointing at somebody the dropdown no longer offers.
+    await act(async () => { choose(presenter!, COLLEAGUE_ID); });
+    expect(parts[0]!.value).toBe('');
+    expect(container.textContent).not.toContain('is in this demo twice');
   });
 
   it('says why when there are not enough colleagues to cast, instead of a form that cannot be submitted', async () => {
