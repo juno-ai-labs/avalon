@@ -38,7 +38,7 @@ exists.
 | `packages/agent-harness/src/prompts/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
 | `packages/agent-harness/src/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
 | `apps/api/src/services/artifact-open-service.ts` | The identity-bearing door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. Public reads bypass it and remain anonymous. |
-| `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The rail's site detail: the pane it measures and hands over, the actions, the Data view, and the error log. |
+| `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The site detail: the pane it measures and hands over, the actions it puts in its host's header, and the Data view. |
 | `apps/desktop/src/main/artifact-viewers.ts` | What the desktop will load into an artifact surface, the preview rectangle's clamp and corner, the shared isolation contract, and the overlay rule. |
 
 ## How it works
@@ -357,7 +357,8 @@ facet that holds a stateful artifact's data. It does not own:
   supervisor facet and does not need this binding on the serving Worker.
 - **The model's module throws.** The viewer gets a plain Rally page, never a
   stack trace. The error — message, stack, request path — lands in a bounded
-  per-artifact log (50 entries) the rail shows, so a participant can paste it
+  per-artifact log (50 entries), which no client surface currently reads (see
+  the changelog entry for 2026-09-10), so recovering it means asking for it
   back into chat.
 - **A viewer loses work-stream visibility.** Their next eligible request loses
   its Rally identity and receives the anonymous public representation. A
@@ -410,7 +411,7 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/api exec vitest run test/terminal-site-publish.test.ts` | Kind resolution, the one-file refusal, the storage-class check, content types, the zip, and the asymmetric transition. |
 | `pnpm --filter @rally/api exec vitest run test/terminal-runtime.test.ts` | Directory publish end to end through the runtime, against a simulated sandbox shell. |
 | `pnpm --filter @rally/api exec vitest run test/artifact-open-service.test.ts` | Which authority answers which question at open time, that a refusal mints nothing, and that a missing artifact and an invisible one are indistinguishable. |
-| `pnpm --filter @rally/desktop exec vitest run src/renderer/components/site-resource-detail.test.tsx` | The rail detail: that it measures and hands over rather than embedding, that Copy link carries no code, that the Data panel only exists for a site that keeps data, and that the pane never flashes its unavailable state. |
+| `pnpm --filter @rally/desktop exec vitest run src/renderer/components/site-resource-detail.test.tsx` | The detail: that it measures and hands over rather than embedding, that its actions land in the host's header and each carries a tooltip, that Copy link carries no code, that the data toggle only exists for a site that keeps data and takes the composited view down with it, and that the pane never flashes its unavailable state. |
 | `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, the overlay collapse, and the teardown guards — each surface's lifecycle branch separately, since one guard covering both reads as covered while half of it is dead. |
 | `pnpm --filter @rally/desktop exec vitest run src/main/artifact-preview-wiring.test.ts` | The per-window registry in `index.ts`, which the controller's own suite cannot see: one controller and so one `closed` listener per window, the entry removed only by that listener, and the adapter reporting lifecycle rather than assuming it. |
 | `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. |
@@ -479,6 +480,43 @@ compromise of the serving Worker exposes artifact content and viewer sessions
 rather than workspace authority.
 
 ## Changelog
+
+### 2026-09-10 — The page is the whole surface, and its controls are the header's
+
+**What changed:** The detail no longer draws a panel switch, a kind line, or a
+row of actions. Its four controls (stored data, pop out, copy public link, open
+in browser) are icon buttons portalled into whatever header the host is already
+drawing, through a slot the rail now offers any detail. Stored data is a toggle
+that replaces the page rather than a peer of it, and the pane is full bleed: no
+border, no corner, no gutter, flush to the lightbox's own edges. The error log
+is gone from the client; `PREVIEW_CORNER_RADIUS` now mirrors the lightbox's
+radius rather than the pane's, since the pane no longer has one.
+
+**Why:** Everything Rally drew around the page was a second frame inside the
+lightbox's, and everything it drew above the page competed with content the
+model authored. A live artifact is the one resource whose detail *is* the thing
+itself, so the chrome belongs where the surface already keeps chrome. Two
+defects only visible in a window came out of it: an icon-only action is
+unreadable without its tooltip, and every tooltip in this lightbox was opening
+behind it at `z-index: 1000` against the lightbox's 1001, so they were present
+in the DOM, findable by a test, and invisible to anyone hovering. The data
+toggle also had no pressed state, because `.icon-button` had never had one.
+
+**Considered and rejected:** Hoisting the detail's state into the rail so the
+rail could draw the buttons itself, which spreads one detail's logic across two
+components and grows the rail by a branch per kind of resource. The slot gives
+the rail one capability and no knowledge of any detail. Also rejected: keeping
+the error log behind the new toggle, which is the panel-among-panels shape this
+change exists to remove.
+
+**Consequences:** **A site's thrown errors are no longer visible anywhere in the
+client.** The supervisor still records them and `GET` still serves them; nothing
+reads it. Bringing them back should not restore a permanent tab: the surface
+that fits is one that appears only when the log is non-empty. A detail that
+wants header actions must be rendered inside `DetailHeaderActionsHost`, and a
+host that forgets the slot silently gets no actions rather than a fallback
+layout. The view's corner is now pinned to the lightbox's radius, so restyling
+that dialog means moving the constant with it.
 
 ### 2026-09-10 — The site detail wears the shell's design, and the view is rounded
 

@@ -1,7 +1,9 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { DetailHeaderActionsHost } from './detail-header-actions';
 import {
   formatCell,
   SiteResourceDetail,
@@ -62,16 +64,28 @@ function setup(overrides: Partial<SiteResourceDetailProps> = {}) {
       rows: [{ name: 'Ada', answer: 'yes' }, { name: 'Grace', answer: null }],
       csv: '"name","answer"\r\n"Ada","yes"\r\n"Grace",""',
     })),
-    loadErrors: vi.fn(async () => []),
     surface: surface(),
     ...overrides,
   };
-  // The actions are icon buttons, so they carry tooltips, and the application
-  // mounts one provider for all of them at its root.
-  return {
-    props,
-    ...render(<Tooltip.Provider><SiteResourceDetail {...props} /></Tooltip.Provider>),
-  };
+  return { props, ...render(<Harness props={props} />) };
+}
+
+/**
+ * The detail as its host mounts it: a header slot for the actions it portals
+ * out, and the tooltip provider the application keeps at its root. The target
+ * is state rather than a ref for the reason the rail's is, and rendering it
+ * that way here is what would catch the actions never arriving.
+ */
+function Harness({ props }: { props: SiteResourceDetailProps }): React.JSX.Element {
+  const [target, setTarget] = React.useState<HTMLDivElement | null>(null);
+  return (
+    <Tooltip.Provider>
+      <div data-testid="host-header" ref={setTarget} />
+      <DetailHeaderActionsHost target={target}>
+        <SiteResourceDetail {...props} />
+      </DetailHeaderActionsHost>
+    </Tooltip.Provider>
+  );
 }
 
 describe('showing a live artifact in the rail', () => {
@@ -246,7 +260,23 @@ describe('showing a live artifact in the rail', () => {
   });
 });
 
-describe('the actions beside the preview', () => {
+describe('the actions the host draws in its header', () => {
+  it('puts them in the header slot rather than over the page', async () => {
+    // Drawn in the body they read as part of the artifact being previewed,
+    // which is the reason the host offers a slot at all.
+    const { props } = setup();
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    const header = within(screen.getByTestId('host-header'));
+    for (const name of [/Pop out/u, /Copy public link/u, /Open in browser/u, /stored data/u]) {
+      const action = header.getByRole('button', { name });
+      expect(action).toBeInTheDocument();
+      // Every one of them is an icon alone, so every one of them owes a
+      // tooltip: `data-state` is the trigger Radix wraps it in, and a button
+      // that opted out of its tooltip carries no such attribute.
+      expect(action).toHaveAttribute('data-state');
+    }
+  });
+
   it('labels and copies the canonical public link, which carries no access code', async () => {
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
@@ -281,29 +311,44 @@ describe('the actions beside the preview', () => {
 });
 
 describe('the data a stateful site collected', () => {
-  it('shows the tables, and only offers the panel for a site that keeps data', async () => {
+  it('shows the tables in place of the page, and takes the view down with it', async () => {
+    // The composited view is positioned against the pane. Left up while the
+    // pane is gone it would paint over whatever replaced it, which is the
+    // table a person just asked for.
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('button', { name: /Data/u }));
+    fireEvent.click(screen.getByRole('button', { name: /Show stored data/u }));
     expect(await screen.findByText('Ada')).toBeInTheDocument();
     expect(screen.getByText('yes')).toBeInTheDocument();
+    expect(screen.queryByTestId('site-preview-pane')).not.toBeInTheDocument();
+    await waitFor(() => expect(props.surface.close).toHaveBeenCalled());
   });
 
-  it('offers no data panel for a site that keeps none', async () => {
-    setup({
+  it('returns to the page, and puts the view back over it', async () => {
+    const { props } = setup();
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: /Show stored data/u }));
+    await screen.findByText('Ada');
+    fireEvent.click(screen.getByRole('button', { name: /Hide stored data/u }));
+    expect(await screen.findByTestId('site-preview-pane')).toBeInTheDocument();
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalledTimes(2));
+  });
+
+  it('offers no data toggle for a site that keeps none', async () => {
+    const { props } = setup({
       openArtifact: vi.fn(async () => ({
         openUrl: OPEN_URL, canonicalUrl: CANONICAL, artifactId: ARTIFACT,
         mode: 'static' as const, stateful: false,
       })),
     });
-    await waitFor(() => expect(screen.getByText('Live page')).toBeInTheDocument());
-    expect(screen.queryByRole('button', { name: /Data/u })).not.toBeInTheDocument();
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /stored data/u })).not.toBeInTheDocument();
   });
 
   it('shows an empty stored table as such rather than as a broken panel', async () => {
     const { props } = setup({ describeData: vi.fn(async () => ({ tables: [] })) });
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('button', { name: /Data/u }));
+    fireEvent.click(screen.getByRole('button', { name: /Show stored data/u }));
     expect(await screen.findByText('No data yet')).toBeInTheDocument();
   });
 
@@ -312,36 +357,11 @@ describe('the data a stateful site collected', () => {
     // export a person got from anywhere else.
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('button', { name: /Data/u }));
+    fireEvent.click(screen.getByRole('button', { name: /Show stored data/u }));
     await screen.findByText('Ada');
     fireEvent.click(screen.getByRole('button', { name: /Copy as CSV/u }));
     await waitFor(() => expect(props.surface.copyText)
       .toHaveBeenCalledWith('"name","answer"\r\n"Ada","yes"\r\n"Grace",""'));
-  });
-});
-
-describe('what the site itself threw', () => {
-  it('shows an error a participant can paste back into chat', async () => {
-    const { props } = setup({
-      loadErrors: vi.fn(async () => [{
-        occurredAt: Date.parse('2026-09-01T10:00:00Z'),
-        version: 2,
-        requestPath: '/api/rsvps',
-        message: 'TypeError: rows is not iterable',
-        stack: null,
-      }]),
-    });
-    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('button', { name: /Errors/u }));
-    expect(await screen.findByText('TypeError: rows is not iterable')).toBeInTheDocument();
-    expect(screen.getByText('/api/rsvps')).toBeInTheDocument();
-  });
-
-  it('says a healthy site has thrown nothing', async () => {
-    const { props } = setup();
-    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('button', { name: /Errors/u }));
-    expect(await screen.findByText('No errors')).toBeInTheDocument();
   });
 });
 

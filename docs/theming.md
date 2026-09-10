@@ -213,6 +213,33 @@ further — a name is not a fill either, and colouring it by identity is what ma
 the two speakers' bylines diverge. The avatar and the person's own bubble are
 unaffected and still take the fill.
 
+### 2026-09-10 — A tooltip that opens behind the surface that needs it
+
+**What changed:** Tooltips get `z-index: 1005` under `body:has(.resource-lightbox)`,
+above the lightbox and above the menus that were already lifted over it. An
+icon button with `aria-pressed="true"` now takes the row-selection wash.
+`InsetList`, added earlier the same day, is gone: its one consumer went with the
+artifact error log, and it left `InsetSurface`, which the data table still uses.
+
+**Why:** The resource lightbox sits at `z-index: 1001` and `.tooltip` is 1000,
+so every tooltip inside it opened underneath it. That surface had just become
+the one where it mattered most: its header actions are icons alone, and a
+tooltip is the only name they have. It was invisible to anyone hovering while
+remaining present in the DOM, so a test asserting the trigger exists passed
+throughout. The pressed state is the same class of gap: `.icon-button` had never
+been a toggle, so a toggled one looked exactly like an untoggled one, and the
+raised fill hover uses is the same colour as the surfaces some of these headers
+sit on.
+
+**Considered and rejected:** Raising `.tooltip` globally. The stacking above it
+is a set of deliberate pairings, and a global bump moves tooltips over surfaces
+nobody has looked at them against.
+
+**Consequences:** A new surface layered above 1001 needs its own tooltip rule
+until someone builds a real stacking scale; the four rules under that `:has()`
+are the list to add to. Any icon button that is a toggle now shows it without
+asking for a class.
+
 ### 2026-09-10 — The grouped list is an unscoped primitive
 
 **What changed:** The inset hairline grouping the shell draws around a set of

@@ -915,7 +915,6 @@ export function ConversationSurface({
       openArtifact: (resourceId: string) => api.openArtifact(resourceId),
       describeData: (resourceId: string) => api.describeArtifactData(resourceId),
       loadTable: (resourceId: string, table: string) => api.readArtifactTable(resourceId, table),
-      loadErrors: (resourceId: string) => api.readArtifactErrors(resourceId),
       surface: {
         present: bridge.presentArtifactPreview,
         setBounds: bridge.setArtifactPreviewBounds,

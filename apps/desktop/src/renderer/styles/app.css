@@ -246,6 +246,15 @@ pre {
   color: var(--av-sys-color-text-muted);
 }
 
+/* A toggle has to show which state it is in, and the raised fill above is the
+   same colour as some of the surfaces these headers sit on, so a pressed icon
+   takes the row-selection wash instead: it reads on any of them. */
+.icon-button[aria-pressed='true'],
+.icon-button[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--av-cmp-row-background-selected);
+  color: var(--av-sys-color-text-default);
+}
+
 /* A header icon that is itself the destructive action. Colour lives on the
    glyph so the control stays the same size and padding as its neighbours. */
 .icon-button-danger {
@@ -282,23 +291,6 @@ pre {
   border: .5px solid var(--av-sys-color-border-default);
   border-radius: var(--av-cmp-surface-radius);
 }
-
-/* Rows inside one box. `overflow` is the list's rather than the surface's so a
-   surface that scrolls its own contents can say so without fighting it. */
-.inset-list {
-  display: flex;
-  flex-direction: column;
-  list-style: none;
-  margin: 0;
-  overflow: hidden;
-  padding: 0;
-}
-
-.inset-list > li { padding: 8px 10px; }
-
-/* A hairline between rows, not a border around each: one group with parts
-   rather than a stack of cards. */
-.inset-list > li + li { border-top: .5px solid var(--av-sys-color-border-default); }
 
 .tooltip {
   animation: tooltip-in 100ms ease-out;
@@ -4100,17 +4092,23 @@ pre {
 .resource-lightbox .rail-header { -webkit-app-region: no-drag; padding: 0 14px 0 24px; }
 .resource-lightbox .rail-title h2 { color: var(--av-sys-color-text-default); font-size: 14px; font-weight: 560; }
 .resource-lightbox .rail-scroll { padding: 16px; }
-/* The lightbox body is a fixed height, so a site detail is given all of it:
-   the pane is the thing a person came to look at, and letting it end halfway
-   down left the page floating over an empty half-screen. Conditioned on the
-   detail so an ordinary document keeps flowing from the top. */
-.resource-lightbox .rail-scroll:has(> .site-detail) { display: flex; flex-direction: column; }
+/* The lightbox body is a fixed height, and a site detail is given all of it,
+   gutter included: the pane is the thing a person came to look at, and it ends
+   flush with the dialog's own edge. Conditioned on the detail so an ordinary
+   document keeps its padding and flows from the top. */
+.resource-lightbox .rail-scroll:has(> .site-detail) { display: flex; flex-direction: column; padding: 0; }
 .resource-lightbox .rail-scroll > .site-detail { flex: 1 1 auto; }
 .resource-lightbox .site-detail-pane { min-height: 280px; }
 /* Menus and confirmation dialogs opened by the resource lightbox sit above it. */
 body:has(.resource-lightbox) .dialog-overlay { z-index: 1002; }
 body:has(.resource-lightbox) .dialog-content { z-index: 1003; }
 body:has(.resource-lightbox) .menu-content { z-index: 1004; }
+/* And so do tooltips, which are the only label the header's icon-only actions
+   have. At the stylesheet's own `z-index: 1000` every one of them opened
+   *behind* the lightbox: present in the DOM, findable by a test, and invisible
+   to the person who hovered it. Above the menus too, since a menu item can
+   have one. */
+body:has(.resource-lightbox) .tooltip { z-index: 1005; }
 .attachment-lightbox-content { min-height: 0; overflow: auto; }
 .attachment-lightbox-content.is-image,
 .attachment-lightbox-content.is-video { align-items: center; display: flex; height: 100%; justify-content: center; overflow: hidden; padding: 60px 72px; }
@@ -4359,6 +4357,11 @@ body:has(.resource-lightbox) .menu-content { z-index: 1004; }
 .rail-header { align-items: center; border-bottom: 1px solid var(--av-ref-color-line-2); display: flex; justify-content: space-between; padding: 0 7px 0 11px; }
 .rail-title,
 .rail-header-actions { align-items: center; display: flex; gap: 2px; }
+/* The slot a detail portals its own actions into. It draws nothing itself and
+   collapses when a detail contributes none, so the rail's own controls sit
+   where they always have. */
+.rail-header-detail-actions { align-items: center; display: flex; gap: 2px; }
+.rail-header-detail-actions:not(:empty) { margin-right: 6px; }
 .rail-title { flex: 1; min-width: 0; }
 .rail-title h2 { color: var(--av-sys-color-text-subtle); font-size: 12px; margin: 0 0 0 2px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-header-actions { flex-shrink: 0; }
@@ -4522,44 +4525,25 @@ body:has(.resource-lightbox) .menu-content { z-index: 1004; }
    composited into a sliver. It is also why the pane does not scroll: a
    composited view that chases a scrolling rectangle jitters, and the fix is
    layout rather than synchronization. */
-.site-detail { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
-/* One chrome row: which panel on the left, what this artifact is beside it,
-   and what can be done with it at the far edge. The title belongs to the
-   header this detail renders under, and a second copy of it here is what made
-   the lightbox say the same name twice. */
-.site-detail-toolbar { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
-.site-detail-kind {
-  color: var(--av-sys-color-text-muted);
-  flex: 1 1 auto;
-  font-size: var(--av-cmp-control-font-size);
-  margin: 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* Pinned to the far edge even when the kind wraps away, so the actions do not
-   travel across the row as an artifact resolves. */
-.site-detail-actions { display: flex; flex: 0 0 auto; gap: 3px; margin-left: auto; }
+.site-detail { display: flex; flex-direction: column; min-height: 0; }
+/*
+ * Full bleed: no border, no corner, no gutter. The page is the whole of what
+ * this detail shows, and every edge Rally drew around it was a second frame
+ * inside the lightbox's own. What replaces the border is the header above it.
+ */
 .site-detail-pane {
   position: relative;
-  /* Tall enough to be a viewing area rather than a strip, and elastic so a
-     wider rail gives the page more room. */
   flex: 1 1 auto;
   min-height: 320px;
   display: grid;
   place-items: center;
-  border: .5px solid var(--av-sys-color-border-default);
-  /* The composited view carries this same corner (`PREVIEW_CORNER_RADIUS` in
-     `apps/desktop/src/main/artifact-viewers.ts`). CSS cannot clip a native
-     view, so a rounded pane under a square view just showed its own corners
-     poking out from behind the page. */
-  border-radius: var(--av-cmp-surface-radius);
   background: var(--av-sys-color-surface-raised);
   overflow: hidden;
 }
 .site-detail-status { margin: 0; color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
-.site-data { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+/* The data view is ordinary Rally UI rather than a page, so it keeps the
+   gutter the full-bleed preview gives up. */
+.site-data { display: flex; flex-direction: column; gap: 8px; min-height: 0; padding: 16px; }
 .site-data-export { align-self: flex-start; }
 /* Its own scroller: a model-designed schema can be any width, and a table that
    widened the rail would push the transcript around. The edge and the corner
@@ -4570,13 +4554,6 @@ body:has(.resource-lightbox) .menu-content { z-index: 1004; }
 .site-data-scroll td { padding: 6px 9px; text-align: left; border-bottom: .5px solid var(--av-sys-color-border-default); white-space: nowrap; }
 .site-data-scroll th { position: sticky; top: 0; background: var(--av-sys-color-surface-raised); font-weight: 600; }
 .site-data-scroll tr:last-child td { border-bottom: none; }
-.site-errors { display: flex; flex-direction: column; gap: 8px; }
-.site-errors-refresh { align-self: flex-start; }
-.site-errors code { font-size: var(--av-cmp-control-font-size); color: var(--av-sys-color-text-muted); }
-/* The model's own error text, wrapped rather than clipped: it is the thing a
-   participant pastes back into chat, so all of it has to be selectable. */
-.site-errors p { margin: 4px 0 2px; font-size: var(--av-cmp-control-font-size); overflow-wrap: anywhere; }
-.site-errors small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 /* History under the actions: what the resource is comes first, what it was
    comes after. The rows are their own grid so the version number, the author
    and the time line up down the column rather than per row. */

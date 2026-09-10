@@ -1,15 +1,8 @@
-import { AlertTriangle, Check, Copy, Database, ExternalLink, Maximize2, RefreshCcw } from 'lucide-react';
+import { Check, Copy, Database, ExternalLink, Maximize2 } from 'lucide-react';
 import React from 'react';
 
-import {
-  Button,
-  EmptyState,
-  IconButton,
-  InsetList,
-  InsetSurface,
-  SegmentedControl,
-  type SegmentedOption,
-} from './primitives';
+import { DetailHeaderActions } from './detail-header-actions';
+import { Button, EmptyState, IconButton, InsetSurface, SegmentedControl } from './primitives';
 
 /**
  * The rail's detail for a **live artifact**: a published site Rally serves.
@@ -41,14 +34,6 @@ export interface SiteArtifactTable {
   rowCount: number;
 }
 
-export interface SiteArtifactError {
-  occurredAt: number;
-  version: number;
-  requestPath: string;
-  message: string;
-  stack: string | null;
-}
-
 export interface SiteResourceDetailProps {
   resourceId: string;
   title: string;
@@ -63,7 +48,6 @@ export interface SiteResourceDetailProps {
     rows: Record<string, unknown>[];
     csv: string;
   }>;
-  loadErrors: (resourceId: string) => Promise<SiteArtifactError[]>;
   /** The desktop bridge. Absent where nothing can composite a view. */
   surface: {
     present: (request: {
@@ -79,15 +63,12 @@ export interface SiteResourceDetailProps {
   };
 }
 
-type Panel = 'preview' | 'data' | 'errors';
-
 export function SiteResourceDetail({
   resourceId,
   title,
   openArtifact,
   describeData,
   loadTable,
-  loadErrors,
   surface,
 }: SiteResourceDetailProps): React.JSX.Element {
   const paneRef = React.useRef<HTMLDivElement | null>(null);
@@ -102,7 +83,15 @@ export function SiteResourceDetail({
    * that is about to work.
    */
   const [previewShown, setPreviewShown] = React.useState<boolean | null>(null);
-  const [panel, setPanel] = React.useState<Panel>('preview');
+  /**
+   * The site's stored rows, in place of the page.
+   *
+   * A state rather than a panel among panels: the page *is* this detail, and
+   * everything else it can show is a departure from it. The composited view is
+   * torn down while this is on, because the pane it was measured against is
+   * not on screen to be covered.
+   */
+  const [showingData, setShowingData] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
 
   /**
@@ -161,7 +150,7 @@ export function SiteResourceDetail({
   // Present when the artifact and its pane are both ready, and tear down when
   // the detail closes or the artifact changes — one live preview at a time.
   React.useEffect(() => {
-    if (!access || panel !== 'preview') return undefined;
+    if (!access || showingData) return undefined;
     const bounds = measure();
     if (!bounds) return undefined;
     let cancelled = false;
@@ -186,7 +175,7 @@ export function SiteResourceDetail({
       cancelled = true;
       void surface.close();
     };
-  }, [access, measure, mintAccess, panel, surface]);
+  }, [access, measure, mintAccess, showingData, surface]);
 
   // Native content must remain clipped to its owning scroll viewport and
   // disappear behind nested DOM dialogs; Electron cannot infer either.
@@ -211,98 +200,83 @@ export function SiteResourceDetail({
     };
   }, [measure, previewShown, surface]);
 
-  // A site that keeps no data has no Data panel to offer, so the choice is
-  // built from what this artifact actually is rather than shown and disabled.
-  const panels: SegmentedOption<Panel>[] = [
-    { value: 'preview', label: 'Preview' },
-    ...access?.stateful ? [{ value: 'data' as const, label: <><Database size={14} /> Data</> }] : [],
-    { value: 'errors', label: <><AlertTriangle size={14} /> Errors</> },
-  ];
-
   return (
     <div className="site-detail">
       {/*
-        The actions live in this row rather than under the pane: they are
-        chrome, and a row of bordered buttons below the page reads as part of
-        the page. The title is not repeated here at all, because the header
-        this detail renders under already carries it.
+        Into the host's header, beside its own controls, rather than into a row
+        of this detail's own: chrome drawn over a page reads as the page's.
       */}
-      <div className="site-detail-toolbar">
-        <SegmentedControl label="Which part of this site to show" onChange={setPanel} options={panels} value={panel} />
-        <p className="site-detail-kind">
-          {access?.mode === 'active'
-            ? access.stateful ? 'Live site · keeps data' : 'Live site'
-            : 'Live page'}
-        </p>
-        <div className="site-detail-actions">
+      <DetailHeaderActions>
+        {access?.stateful && (
           <IconButton
-            disabled={!access}
-            label="Pop out"
-            onClick={() => {
-              if (!access) return;
-              void mintAccess().then(
-                async (navigation) => await surface.popOut({
-                  artifactId: navigation.artifactId,
-                  url: navigation.openUrl,
-                  title,
-                }),
-              );
-            }}
+            aria-pressed={showingData}
+            label={showingData ? 'Hide stored data' : 'Show stored data'}
+            onClick={() => setShowingData((showing) => !showing)}
           >
-            <Maximize2 size={15} />
+            <Database size={15} />
           </IconButton>
-          <IconButton
-            disabled={!access}
-            label={copied ? 'Copied' : 'Copy public link'}
-            onClick={() => {
-              if (!access) return;
-              // The canonical public link carries no access code or viewer
-              // identity. Copying it shares the current site with anyone.
-              void surface.copyText(access.canonicalUrl).then(() => {
-                setCopied(true);
-                window.setTimeout(() => setCopied(false), 1_500);
-              });
-            }}
-          >
-            {copied ? <Check size={15} /> : <Copy size={15} />}
-          </IconButton>
-          <IconButton
-            disabled={!access}
-            label="Open in browser"
-            onClick={() => void mintAccess().then(
-              async (navigation) => await surface.openExternal(navigation.openUrl),
-            )}
-          >
-            <ExternalLink size={15} />
-          </IconButton>
-        </div>
-      </div>
-
-      {panel === 'preview' && (
-        <div className="site-detail-pane" data-testid="site-preview-pane" ref={paneRef}>
-          {accessError && <EmptyState description={accessError} title="This site could not be opened" />}
-          {!accessError && !access && <p className="site-detail-status">Opening…</p>}
-          {/*
-            Nothing is rendered *into* the pane when the preview is live: the
-            composited view covers it. This placeholder is what a person sees
-            where no view can be composited — a browser build, or a refused URL.
-          */}
-          {access && previewShown === false && (
-            <EmptyState
-              description="Open it in your browser to see the live page."
-              title="Preview unavailable here"
-            />
+        )}
+        <IconButton
+          disabled={!access}
+          label="Pop out"
+          onClick={() => {
+            if (!access) return;
+            void mintAccess().then(
+              async (navigation) => await surface.popOut({
+                artifactId: navigation.artifactId,
+                url: navigation.openUrl,
+                title,
+              }),
+            );
+          }}
+        >
+          <Maximize2 size={15} />
+        </IconButton>
+        <IconButton
+          disabled={!access}
+          label={copied ? 'Copied' : 'Copy public link'}
+          onClick={() => {
+            if (!access) return;
+            // The canonical public link carries no access code or viewer
+            // identity. Copying it shares the current site with anyone.
+            void surface.copyText(access.canonicalUrl).then(() => {
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1_500);
+            });
+          }}
+        >
+          {copied ? <Check size={15} /> : <Copy size={15} />}
+        </IconButton>
+        <IconButton
+          disabled={!access}
+          label="Open in browser"
+          onClick={() => void mintAccess().then(
+            async (navigation) => await surface.openExternal(navigation.openUrl),
           )}
-        </div>
-      )}
+        >
+          <ExternalLink size={15} />
+        </IconButton>
+      </DetailHeaderActions>
 
-      {panel === 'data' && access && (
-        <SiteDataPanel describeData={describeData} loadTable={loadTable} resourceId={resourceId} surface={surface} />
-      )}
-
-      {panel === 'errors' && (
-        <SiteErrorPanel loadErrors={loadErrors} resourceId={resourceId} />
-      )}
+      {showingData && access
+        ? <SiteDataPanel describeData={describeData} loadTable={loadTable} resourceId={resourceId} surface={surface} />
+        : (
+          <div className="site-detail-pane" data-testid="site-preview-pane" ref={paneRef}>
+            {accessError && <EmptyState description={accessError} title="This site could not be opened" />}
+            {!accessError && !access && <p className="site-detail-status">Opening…</p>}
+            {/*
+              Nothing is rendered *into* the pane when the preview is live: the
+              composited view covers it. This placeholder is what a person sees
+              where no view can be composited — a browser build, or a refused URL.
+            */}
+            {access && previewShown === false && (
+              <EmptyState
+                description="Open it in your browser to see the live page."
+                title="Preview unavailable here"
+              />
+            )}
+          </div>
+        )}
     </div>
   );
 }
@@ -392,45 +366,6 @@ function SiteDataPanel({
       >
         <Copy size={14} /> Copy as CSV
       </Button>
-    </div>
-  );
-}
-
-/** What the site's own code threw, so a participant can paste it into chat. */
-function SiteErrorPanel({
-  loadErrors,
-  resourceId,
-}: Pick<SiteResourceDetailProps, 'loadErrors' | 'resourceId'>): React.JSX.Element {
-  const [errors, setErrors] = React.useState<SiteArtifactError[] | null>(null);
-  const [reloadKey, setReloadKey] = React.useState(0);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    void loadErrors(resourceId)
-      .then((result) => { if (!cancelled) setErrors(result); })
-      .catch(() => { if (!cancelled) setErrors([]); });
-    return () => { cancelled = true; };
-  }, [loadErrors, reloadKey, resourceId]);
-
-  if (!errors) return <p className="site-detail-status">Reading…</p>;
-  if (errors.length === 0) {
-    return <EmptyState description="This site has not thrown an error." title="No errors" />;
-  }
-  return (
-    <div className="site-errors">
-      <Button className="site-errors-refresh" onClick={() => setReloadKey((key) => key + 1)}>
-        <RefreshCcw size={14} /> Refresh
-      </Button>
-      <InsetList>
-        {errors.map((entry) => (
-          <li key={`${entry.occurredAt}-${entry.requestPath}`}>
-            <code>{entry.requestPath}</code>
-            {/* Model-authored text: displayed, never interpreted. */}
-            <p>{entry.message}</p>
-            <small>v{entry.version} · {new Date(entry.occurredAt).toLocaleString()}</small>
-          </li>
-        ))}
-      </InsetList>
     </div>
   );
 }
