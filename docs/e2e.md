@@ -359,20 +359,27 @@ never registers a login item. See [`menu-bar.md`](menu-bar.md).
 ## Local cache acceptance
 
 1. Sign in, open a work stream with some history, open one of its private
-   substreams, and open a project space. Quit Rally. Stop the local API so no
-   socket can connect. Launch Rally again: confirm the sidebar paints its rows
-   rather than skeletons, the landing opens the same first work stream, and
-   its transcript, header, and composer are on screen at once under a small
-   floating card reading `Connecting to <title>…`. Type into the composer and
-   confirm the send button is disabled, Enter keeps the text where it is, and
-   the toolbar hint says sending is available once Rally connects.
+   substreams, and open a project space. Quit Rally. Slow the sockets without
+   touching REST: run the Global Worker on another port and put a TCP proxy on
+   `8787` that forwards every connection at once except a request whose first
+   line is a `/socket/` upgrade, which it holds for eight seconds first, under
+   the first opening attempt's ten-second deadline. A cold
+   launch with the API entirely down stops at the service screen instead,
+   because the session restore and the workspace profile are REST gates above
+   the cache. Launch Rally again: confirm the sidebar paints its rows rather
+   than skeletons, the last route opens, and its transcript, header, and
+   composer are on screen at once under a small floating card reading
+   `Connecting to <title>…` with `Sending is available once Rally connects`
+   beneath it. Type into the composer and confirm the send button is disabled
+   and Enter keeps the text where it is.
 2. Open the substream and the project space the same way and confirm each
    paints with its own card. Confirm no `list_workstreams` or detail request is
    made for what painted.
-3. Wait through the three opening attempts (about seventy seconds) and confirm
-   the card turns into `Rally could not connect to <title>.` with the timeout
-   reason and a **Retry**, while the remembered transcript stays readable.
-4. Start the API and press **Retry**. Confirm the card disappears once the
+3. Raise the hold past the three opening attempts (about seventy seconds) and
+   confirm the card turns into `Rally could not connect to <title>.` with the
+   timeout reason and a **Retry**, while the remembered transcript stays
+   readable.
+4. Drop the hold and press **Retry**. Confirm the card disappears once the
    first snapshot lands, the composer sends, the draft typed under the card is
    still in it, and the transcript shows the live turns without a visible
    collapse or reorder.

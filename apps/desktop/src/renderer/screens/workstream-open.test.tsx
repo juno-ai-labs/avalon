@@ -767,7 +767,8 @@ describe('socket-first work-stream open', () => {
     fireEvent.keyDown(composer, { key: 'Enter' });
     expect(createMessage).not.toHaveBeenCalled();
     expect(composer).toHaveValue('Typed while connecting');
-    expect(screen.getByText('Sending is available once Rally connects')).toBeInTheDocument();
+    // The capsule composer has no footer, so the card carries the reason.
+    expect(document.querySelector('.connecting-card')?.textContent ?? '').toContain('Sending is available once Rally connects');
 
     socket.state = 'connected';
     act(() => {

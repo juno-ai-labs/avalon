@@ -18,6 +18,27 @@ describe('ConnectingCard', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Waiting for a connection to this substream…');
   });
 
+  it('says what waits for the connection under the sentence, until a failure has more to say', () => {
+    const { rerender } = render(
+      <ConnectingCard detail="Sending is available once Rally connects" name="Release notes" state="connecting" subject="work stream" />,
+    );
+
+    expect(screen.getByRole('status')).toHaveTextContent('Connecting to Release notes…');
+    expect(screen.getByText('Sending is available once Rally connects')).toBeInTheDocument();
+
+    rerender(
+      <ConnectingCard
+        detail="Sending is available once Rally connects"
+        error="The live connection timed out after 3 attempts."
+        name="Release notes"
+        state="failed"
+        subject="work stream"
+      />,
+    );
+    expect(screen.getByText('The live connection timed out after 3 attempts.')).toBeInTheDocument();
+    expect(screen.queryByText('Sending is available once Rally connects')).not.toBeInTheDocument();
+  });
+
   it('shows the failure and offers the one action there is', () => {
     const onRetry = vi.fn();
     render(<ConnectingCard error="The live connection timed out after 3 attempts." name="Hiring" onRetry={onRetry} state="failed" subject="project" />);
