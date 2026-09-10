@@ -21,7 +21,8 @@ which state wins.
 | `apps/desktop/src/renderer/lib/format.ts` | `WorkstreamMarkerStatus`, the labels and descriptions, `harnessMarkerStatus`, `MARKER_PRECEDENCE`, `workstreamMarkerStatus`, and `workstreamNeedsAttention`. The ranking exists here and nowhere else. |
 | `apps/desktop/src/renderer/components/primitives.tsx` | `StatusDot` — the one component that draws a marker, for every surface. |
 | `apps/desktop/src/renderer/components/sidebar.tsx` | The sidebar row's compact dot and completed-marker suppression. |
-| `apps/desktop/src/renderer/screens/new-workstream.tsx` | The home screen's **Needs attention** section and its rows. |
+| `apps/desktop/src/renderer/screens/project-space.tsx` | The project space's work-stream rows, which draw the ranked marker. |
+| `apps/desktop/src/renderer/screens/new-workstream.tsx` | The home screen's **Needs attention** section and its rows. **Stale:** the screen no longer renders one, and `workstreamNeedsAttention` has no production caller. Left for a change that can retire the section and its function together, rather than half-removing it here. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The work-stream header's status line, which names the run's own marker rather than this viewer's. |
 | `apps/desktop/src/renderer/components/automation-header.tsx` | The Sidekick run history, the one surface that still draws `scheduled` under its own name. |
 | `config/design-tokens/registry.json` | The `sys.color.workstream` group: one token per state. |
@@ -112,6 +113,16 @@ somebody scanning a list, because either way the agent has the work and nobody
 is being asked for anything. Nobody can act on "about to start" differently from
 "started".
 
+It also finishes a mapping the API had already made. The compat view folds
+`preparing_context` and `waiting_capacity` into `running` on the wire
+(`workstream-runtime-compat-schema.ts`), so `scheduled` was the last
+non-executing run state still drawn as something of its own. Know what it
+actually is before reasoning about it: the **admission window** between the run
+being inserted and the Workflow launching — written at creation and manual
+retry, cleared to `running` at launch — not a resting state. A schedule fires by
+creating work and admitting a run at fire time; between occurrences the row is
+`completed`.
+
 There are two boundaries, not one, and the difference is load-bearing:
 
 - **`harnessMarkerStatus` — the run's own marker.** What the work-stream header
@@ -126,7 +137,18 @@ There are two boundaries, not one, and the difference is load-bearing:
 Both therefore agree about the run, and only the second has an opinion about the
 reader. **That is the fold's real job.** A component that reads `harnessStatus`
 and hands it to `StatusDot` directly is reintroducing the second opinion, and
-`scheduled` is still in `WorkstreamMarkerStatus` for it to reach.
+`scheduled` is still in `WorkstreamMarkerStatus` for it to reach — though
+`harnessMarkerStatus` returns `Exclude<WorkstreamMarkerStatus, 'scheduled'>`, so
+the state cannot come back out of the fold.
+
+**The fold governs presentation, not control.** Run-control affordances keep
+reading the real status on purpose: the composer tests
+`harnessStatus === 'running'` for queued delivery, the `/stop` command, and the
+Stop button, so during the admission window a work stream reads **Running** in
+its header while the composer sends immediately and offers no Stop. That is
+correct rather than an oversight — `stopWithAuthority` needs a live execution to
+fence, and there is none yet — but it is the first thing a reader of the diff
+will take for a bug, so it is written down here.
 
 It is there for the Sidekick **run history**, which lists runs rather than work
 streams: a pending run is exactly what somebody opened that list to find, so it
@@ -298,9 +320,26 @@ run that is admitted as well as one mid-work.
 that had done nothing yet, in a list of rows that were otherwise plain. There is
 nothing for a reader to do about it: the agent has the work either way, nobody
 is being asked for anything, and "about to start" is not a state a person acts
-on differently from "started". On a schedule-driven work stream it is also the
-state the row sits in most of the time, so the marker that was meant to be news
-was permanent furniture.
+on differently from "started".
+
+The stronger reason is that the API had already made this mapping and stopped
+one state short. The compat view folds `preparing_context` and
+`waiting_capacity` into `running` on the wire
+(`workstream-runtime-compat-schema.ts`), so admitted-but-not-launched was the
+last non-executing run state still drawn as something of its own. This finishes
+that mapping in the renderer.
+
+**An earlier draft of this entry claimed `scheduled` is "the state a
+schedule-driven row sits in most of the time". That is wrong, and it is
+recorded here because a wrong *why* in a changelog is what the next person
+builds on.** `scheduled` is the admission window and nothing else: written at
+work-stream creation and manual retry (`workstream-object-product.ts`), cleared
+to `running` the moment the Workflow launches
+(`workstream-harness-run-storage.ts`). A schedule fires by creating work and
+admitting a run at fire time; between occurrences the row is `completed`. So the
+window is seconds, and the honest reading of the visible payoff is smaller than
+that draft implied — mostly the optimistic launch seed in
+`launched-conversation.ts`. The ranking consequence below is the permanent one.
 
 **Considered and rejected:** drawing no marker at all for `scheduled`, treating
 it as a resting state alongside `completed`. That was the first attempt on this
