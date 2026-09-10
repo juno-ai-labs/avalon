@@ -1282,6 +1282,14 @@ describe('Sidebar work-stream markers', () => {
     expect(strip.nextElementSibling).toContainElement(screen.getByRole('button', { name: 'Open account menu' }));
     expect(within(strip).getAllByRole('button')).toHaveLength(2);
     for (const item of excluded) expect(screen.queryByText(item.name)).toBeNull();
+    // Running says so with a play in the success colour, drawn into the hexagon
+    // rather than laid over it. The dot this replaced said only "a state is
+    // true here", and inherited the work-stream marker's radius on the way, so
+    // what a person actually saw was an unnamed dark square.
+    const marker = within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' })
+      .querySelector('.automation-glyph-marker');
+    expect(marker).toHaveClass('lucide-play');
+    expect(marker).toHaveAttribute('fill', 'var(--av-sys-color-success-base)');
     fireEvent.click(within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' }));
     expect(openSidekicks).toHaveBeenCalledWith('shared');
     // The Sidekicks window is a separate renderer with its own copy of the
@@ -1302,8 +1310,10 @@ describe('Sidebar work-stream markers', () => {
     const create = within(strip).getByRole('button', { name: 'New Sidekick' });
     expect(create).toHaveClass('automation-tile');
     expect(create.querySelector('.sidekick-new-glyph')).not.toBeNull();
-    // No lifecycle marker: there is no Sidekick yet to have one.
-    expect(create.querySelector('.automation-tile-state')).toBeNull();
+    // No lifecycle marker: there is no Sidekick yet to have one, so the hexagon
+    // is drawn whole rather than with a state cut out of it.
+    expect(create.querySelector('.automation-glyph-marker')).toBeNull();
+    expect(create.querySelector('mask')).toBeNull();
     expect(within(strip).getAllByRole('button')).toHaveLength(1);
     fireEvent.click(create);
     expect(openSidekicks).toHaveBeenCalledWith('new');
