@@ -10,6 +10,7 @@ import {
   type ProjectIconKey,
 } from '@rally/contracts';
 
+import { ConnectingCard } from '../components/connecting-card';
 import { ProjectAppearancePicker, ProjectIcon } from '../components/project-sidebar-section';
 import {
   Avatar,
@@ -29,6 +30,7 @@ import { isComposingKeyEvent } from '../lib/ime';
 import { useProjectDirectories } from '../lib/use-project-directories';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
+import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 
 export function ProjectSpaceScreen(): React.JSX.Element {
   const { api } = useAppSession();
@@ -59,6 +61,11 @@ export function ProjectSpaceScreen(): React.JSX.Element {
   const [editColorKey, setEditColorKey] = useState<ProjectColorKey>(PROJECT_COLOR_DEFAULT);
   const [editParticipants, setEditParticipants] = useState<Set<string>>(new Set());
   const { active: projects, inactive: inactiveProjects } = useProjectDirectories();
+  // A project has no socket of its own: what it paints is the workspace
+  // directory, and the directory the local cache seeded is what is showing
+  // until the workspace socket's first subscribe answer replaces it.
+  const workspaceSocket = useOptionalWorkspaceSocket();
+  const directoryFromLocalCache = workspaceSocket !== null && workspaceSocket.sidebarConnect === null;
   const resources = useQuery({
     queryKey: ['project-resource-picker'],
     queryFn: ({ signal }) => api!.listResources({ limit: 100, signal }),
@@ -138,6 +145,16 @@ export function ProjectSpaceScreen(): React.JSX.Element {
     }
   };
   return (
+    <div className="project-space-frame">
+    {directoryFromLocalCache && (
+      <div className="connection-card-slot">
+        <ConnectingCard
+          name={project.name}
+          state={workspaceSocket.state === 'unavailable' ? 'offline' : 'connecting'}
+          subject="project"
+        />
+      </div>
+    )}
     <div className="project-space-screen">
       <div className="screen-drag-strip window-drag" />
       <header className="project-space-header window-drag">
@@ -479,6 +496,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
         <ProjectAppearancePicker colorKey={editColorKey} iconKey={editIconKey} onColorChange={setEditColorKey} onIconChange={setEditIconKey} />
         {appearanceError && <InlineError>{appearanceError}</InlineError>}
       </Modal>
+    </div>
     </div>
   );
 }

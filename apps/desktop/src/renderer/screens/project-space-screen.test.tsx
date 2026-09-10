@@ -23,6 +23,11 @@ const api = vi.hoisted(() => ({
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ data: [] }) }));
+/** Null unless a test wants the screen to think the directory is still the local cache's. */
+const workspaceSocket = vi.hoisted(() => ({
+  current: null as null | { sidebarConnect: null | { generation: number }; state: 'connecting' | 'connected' | 'unavailable' },
+}));
+vi.mock('../lib/workspace-socket', () => ({ useOptionalWorkspaceSocket: () => workspaceSocket.current }));
 
 const project = ProjectSummarySchema.parse({
   id: asProjectId('019d3c99-63cc-7a88-8eb4-bf54b091be06'),
@@ -68,6 +73,7 @@ function renderProject(summary = project): QueryClient {
 describe('project space appearance', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    workspaceSocket.current = null;
     api.getWorkspaceMembers.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000002',
       name: 'Morgan Ellis',
@@ -216,4 +222,23 @@ describe('project space appearance', () => {
     fireEvent.click(restore);
     await waitFor(() => expect(api.restoreProject).toHaveBeenCalledWith(archived.id));
   });
+  it('paints a remembered project under a connecting card until the workspace socket answers', async () => {
+    workspaceSocket.current = { sidebarConnect: null, state: 'connecting' };
+    renderProject();
+
+    expect(screen.getByRole('heading', { name: 'Hiring' })).toBeInTheDocument();
+    expect(screen.getByRole('status').textContent ?? '').toContain('Connecting to Hiring…');
+
+    workspaceSocket.current = { sidebarConnect: null, state: 'unavailable' };
+    fireEvent.click(screen.getByRole('button', { name: 'Hiring' }));
+    expect(screen.getByRole('status').textContent ?? '').toContain('Waiting for a connection to Hiring…');
+  });
+
+  it('shows no card once the socket has delivered the directory', () => {
+    workspaceSocket.current = { sidebarConnect: { generation: 1 }, state: 'connected' };
+    renderProject();
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
 });

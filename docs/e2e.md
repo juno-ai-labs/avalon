@@ -356,6 +356,34 @@ never registers a login item. See [`menu-bar.md`](menu-bar.md).
 12. Attempt each role's upgrade without `Origin`, from an unconfigured origin, with an allowed-origin suffix lookalike, and with a ticket for every mismatched WorkspaceDO, WorkstreamDO, or SubstreamAgent audience. Confirm all are rejected; then connect from the exact desktop or development origin with a fresh purpose-specific ticket.
 13. Begin a connector OAuth flow and leave the provider window pending for several minutes. Confirm Electron makes one attempt read and no periodic requests. Complete, deny, and fail separate attempts; in each case confirm the `connector_oauth_attempts` WorkspaceDO topic causes one reconciliation read and the result appears. Disconnect before completion, reconnect after it, and confirm the durable topic waterline reconciles the attempt once.
 
+## Local cache acceptance
+
+1. Sign in, open a work stream with some history, open one of its private
+   substreams, and open a project space. Quit Rally. Stop the local API so no
+   socket can connect. Launch Rally again: confirm the sidebar paints its rows
+   rather than skeletons, the landing opens the same first work stream, and
+   its transcript, header, and composer are on screen at once under a small
+   floating card reading `Connecting to <title>…`. Type into the composer and
+   confirm the send button is disabled, Enter keeps the text where it is, and
+   the toolbar hint says sending is available once Rally connects.
+2. Open the substream and the project space the same way and confirm each
+   paints with its own card. Confirm no `list_workstreams` or detail request is
+   made for what painted.
+3. Wait through the three opening attempts (about seventy seconds) and confirm
+   the card turns into `Rally could not connect to <title>.` with the timeout
+   reason and a **Retry**, while the remembered transcript stays readable.
+4. Start the API and press **Retry**. Confirm the card disappears once the
+   first snapshot lands, the composer sends, the draft typed under the card is
+   still in it, and the transcript shows the live turns without a visible
+   collapse or reorder.
+5. Archive one of the cached work streams from another client while Rally is
+   quit, then launch again. Confirm its row is gone once the subscribe answer
+   lands, and that opening it by deep link before then ends in the card's
+   failure state rather than a working composer.
+6. Sign out. Confirm `rally-local-cache` under the renderer's IndexedDB is
+   empty. Sign in to a second workspace, then leave it, and confirm only that
+   workspace's rows were removed.
+
 ## Desktop dictation acceptance
 
 Configure the regional Worker with an Azure OpenAI realtime deployment backed by `gpt-live-transcribe`, then run the Electron desktop against that Worker.

@@ -144,9 +144,19 @@ are canonical storage services, not authorization layers.
   cached in the renderer's IndexedDB so a restart does not discard them. They are
   workspace content stored unencrypted under Electron's `userData` directory,
   keyed by workspace, they expire after 12 hours, and signing out deletes every
-  one of them. Leaving deletes only that workspace's scope. Nothing else
-  is written there, and no credential ever is.
+  one of them. Leaving deletes only that workspace's scope. No credential is
+  ever written there.
   [`composer-drafts.md`](composer-drafts.md) owns the mechanism.
+- The local cache is the other thing the renderer writes under `userData`: the
+  last first page of the workspace directory and, for every conversation the
+  directory still lists that the reader opened or the socket pool warmed, its
+  detail and opening transcript ranges, in a second unencrypted IndexedDB
+  database keyed by workspace. It is bounded by membership rather than time:
+  the live directory and child rosters retire rows the device missed, an
+  access revocation or archive removes them at once, leaving removes that
+  workspace's scope, and signing out or another account taking over removes
+  all of them. No credential is ever written there.
+  [`local-cache.md`](local-cache.md) owns the mechanism.
 - The macOS menu bar status item is built entirely in the main process, from
   values the regional API returned, and the renderer's only reach into it is
   `application-settings:set-menu-bar-enabled` and
@@ -743,6 +753,7 @@ does not own the subsystems on either side of them:
 | The Slack scope inventory | [`slack-permissions.md`](slack-permissions.md) |
 | Run admission, limits, and the inference ledger | [`agent-harness.md`](agent-harness.md) |
 | The draft cache under `userData` | [`composer-drafts.md`](composer-drafts.md) |
+| The local cache of directory and transcript state under `userData` | [`local-cache.md`](local-cache.md) |
 | The windowless menu bar surface | [`menu-bar.md`](menu-bar.md) |
 | Telemetry contracts, opt-out, identities, crash lifecycle, and destinations | [`telemetry.md`](telemetry.md) |
 | Public-site anonymous identity, event surface, and handoff negative space | [`public-site-telemetry.md`](public-site-telemetry.md) |
@@ -778,6 +789,10 @@ does not own the subsystems on either side of them:
 - **Composer drafts are workspace content stored unencrypted** under `userData`,
   bounded by a 12-hour expiry and deleted on sign-out. No credential is ever
   written there.
+- **The local cache of directory rows and opening transcript ranges is workspace
+  content stored unencrypted** under `userData`, bounded by membership rather
+  than time, deleted per workspace on leaving and entirely on sign-out. No
+  credential is ever written there.
 - **A packaged helper carrying a restricted `com.apple.developer.*` entitlement is
   killed by AMFI only after the app reaches another machine.** The release verifier
   exists because that failure is invisible on the build host.
