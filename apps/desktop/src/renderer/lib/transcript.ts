@@ -1757,11 +1757,11 @@ function thinkingSegment(message: Message): ThoughtEventData | null {
  *
  * The model thinks between every pair of tool calls, so a run that used one
  * plugin four times arrives as four thinking rows around a single grouped
- * plugin row — "thought for 29s / thought for 38s / thought for 17s / thought
+ * plugin row — "Thought for 29s / Thought for 38s / Thought for 17s / Thought
  * for 14s", four spent timers stacked in the feed saying one thing each. What
  * a reader wants from them is the same thing the plugin row gives: that Rally
  * was reasoning, and for how long in total. So the run becomes one row,
- * "thinking for …" while any segment is still going and "thought for …" once
+ * "Thinking for …" while any segment is still going and "Thought for …" once
  * they have all settled.
  *
  * The run is bounded exactly as a plugin group's is — see
