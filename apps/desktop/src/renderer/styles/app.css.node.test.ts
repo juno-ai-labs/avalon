@@ -29,6 +29,30 @@ describe('capsule composer stacking', () => {
   });
 });
 
+/**
+ * The one fixed thing about **Jump to latest** is its own 30px. It hangs over a
+ * composer whose height is the draft's (a queue above the field, an error under
+ * it, a message grown to six lines), so the only edge worth measuring from is
+ * that composer's top, upwards. `top` measures from the same edge downwards: it
+ * reads correctly on a one-line field and sinks the control further into the
+ * composer the taller the composer gets, which is the state a reader is most
+ * likely to be scrolled away in. jsdom lays nothing out, so no component test
+ * can tell the two apart.
+ */
+describe('jump to latest', () => {
+  it('hangs above the composer rather than a fixed distance into the dock', () => {
+    expect(rule('.jump-bottom')).toContain('bottom: calc(100% + var(--space-2));');
+    expect(rule('.jump-bottom')).not.toMatch(/(?:^|;)\s*top:/u);
+  });
+
+  it('keeps the dock edge it measures from the composer\'s own', () => {
+    // `bottom: 100%` lands on the dock's top edge; padding there would be a gap
+    // the control clears as well, silently widening the one it states.
+    expect(rule('.workstream-screen .composer-dock')).toMatch(/padding:\s*0\s/u);
+    expect(rule('.composer-dock')).toMatch(/padding:\s*0\s/u);
+  });
+});
+
 describe('secondary surface focus and layout', () => {
   it('keeps Terminal selection and keyboard focus distinguishable from resting borders', () => {
     expect(rule('.terminal-network-modes > label:has(input:checked)')).toContain('var(--av-sys-color-text-default)');
