@@ -247,7 +247,10 @@ wrapped in `DragHint` (`components/primitives.tsx`): a Radix tooltip whose
 trigger is the handle's whole pointer target rather than the pill drawn inside
 it, so the hint and the pill appear for the same approach, and whose content is
 centre-aligned, which lands it beside the pill without either side measuring the
-other. The first line names the drag; the second names the double-click in the
+other. Its two lines are the citation popover's two lines: the subordinate one
+is dimmed to 0.72 and left at the tooltip's own size, which is how a tooltip
+here says *secondary* and the only way it says it. The first line names the
+drag; the second names the double-click in the
 direction the next one would go, collapse while expanded and expand while
 compact. That second line is dropped exactly where the gesture would be refused:
 a window too narrow for the navigation's expanded width, or a pane too narrow
