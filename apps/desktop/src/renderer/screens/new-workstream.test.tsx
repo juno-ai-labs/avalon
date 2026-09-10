@@ -217,6 +217,7 @@ describe('New work-stream home', () => {
 
     expect(await screen.findByRole('textbox', { name: 'Opening work-stream message' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: /Welcome back/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Suggested work' })).not.toBeInTheDocument();
     expect(api.getWorkOpportunities).not.toHaveBeenCalled();
     expect(workspaceSocket.listWorkstreams).not.toHaveBeenCalled();
@@ -246,6 +247,7 @@ describe('New work-stream home', () => {
     renderProjectScreen(projectId, projects);
 
     expect(await screen.findByRole('textbox', { name: 'Opening work-stream message' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Suggested work' })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Add people' })).not.toBeInTheDocument());
     expect(screen.queryByTitle('Participants are managed by the project')).not.toBeInTheDocument();
