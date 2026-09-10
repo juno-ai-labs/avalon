@@ -477,10 +477,10 @@ const browserBridge: RallyDesktopBridge = {
   async popOutArtifact(request) {
     window.open(request.url, '_blank', 'noopener,noreferrer');
   },
-  async openSidekicks(sidekickId) {
+  async openSidekicks(requested) {
     const target = new URL(window.location.href);
     target.searchParams.set('surface', 'sidekicks');
-    target.hash = sidekickId ? `/sidekicks/${encodeURIComponent(sidekickId)}` : '/sidekicks';
+    target.hash = requested ? `/sidekicks/${encodeURIComponent(requested)}` : '/sidekicks';
     if (browserSidekicksWindow && !browserSidekicksWindow.closed) {
       browserSidekicksWindow.location.href = target.toString();
       browserSidekicksWindow.focus();

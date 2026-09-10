@@ -1287,8 +1287,28 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByRole('link', { name: /Daily product brief/u })).toBeNull();
   });
 
-  it('omits the Sidekick strip when none are enabled', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, status: 'paused' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+  it.each([false, true])('offers making the first Sidekick where the shortcuts would be (compact=%s)', (compact) => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[{ ...automation, status: 'paused' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
+    // The same tile a Sidekick gets, so it sheds its caption and shrinks to the
+    // rail's square with them rather than keeping a shape of its own.
+    const create = within(strip).getByRole('button', { name: 'New Sidekick' });
+    expect(create).toHaveClass('automation-tile');
+    expect(create.querySelector('.sidekick-new-glyph')).not.toBeNull();
+    // No lifecycle marker: there is no Sidekick yet to have one.
+    expect(create.querySelector('.automation-tile-state')).toBeNull();
+    expect(within(strip).getAllByRole('button')).toHaveLength(1);
+    fireEvent.click(create);
+    expect(openSidekicks).toHaveBeenCalledWith('new');
+  });
+
+  it('drops the new-Sidekick tile once one is enabled', () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[automation]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    expect(within(screen.getByRole('region', { name: 'Sidekick shortcuts' })).queryByRole('button', { name: 'New Sidekick' })).toBeNull();
+  });
+
+  it('waits for the workspace answer before saying a workspace has no Sidekicks', () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[]} loading onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
   });
 

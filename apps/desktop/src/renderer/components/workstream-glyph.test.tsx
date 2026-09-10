@@ -1,7 +1,8 @@
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { PROJECT_COLOR_RING, type WorkstreamAppearance } from '@rally/contracts';
-import { resolveWorkstreamAppearance, WorkstreamGlyph, WorkstreamMark, workstreamAppearance, type ResolvableAppearance } from './workstream-glyph';
+import { Plus } from 'lucide-react';
+import { AutomationGlyph, HexagonGlyph, resolveWorkstreamAppearance, WorkstreamGlyph, WorkstreamMark, workstreamAppearance, type ResolvableAppearance } from './workstream-glyph';
 
 describe('workstreamAppearance', () => {
   it('derives a stable color and icon from the work-stream id', () => {
@@ -82,5 +83,37 @@ describe('workstreamAppearance', () => {
     expect(container.querySelector('.workstream-glyph-shape')).toHaveStyle({
       background: 'var(--av-sys-color-project-lime)',
     });
+  });
+});
+
+describe('HexagonGlyph', () => {
+  it('draws a Sidekick and an empty slot as the one silhouette', () => {
+    // The identity glyph and the new-Sidekick slot sit in the same strip at the
+    // same size, so the shapes have to be the same path rather than two that are
+    // kept in step by hand. Asserted against each other rather than against a
+    // copy of the path, which would only prove this file agrees with itself.
+    const identity = render(<AutomationGlyph id="launch-room" />).container;
+    const slot = render(<HexagonGlyph fill="none" ink="var(--av-sys-color-text-muted)" symbol={Plus} />).container;
+
+    const shape = identity.querySelector('.automation-glyph-shape');
+    expect(shape?.getAttribute('d')).toBe(slot.querySelector('.automation-glyph-shape')?.getAttribute('d'));
+    expect(shape).toHaveAttribute('fill', 'var(--av-sys-color-project-lime)');
+    expect(slot.querySelector('.automation-glyph-shape')).toHaveAttribute('fill', 'none');
+  });
+
+  it('carries the symbol and the ink it was given, and stays out of the accessibility tree', () => {
+    const { container } = render(
+      <HexagonGlyph className="sidekick-new-glyph" fill="none" ink="var(--av-sys-color-text-muted)" symbol={Plus} />,
+    );
+    const glyph = container.querySelector<HTMLElement>('.automation-glyph');
+
+    expect(glyph).toHaveClass('sidekick-new-glyph');
+    expect(glyph).toHaveAttribute('aria-hidden', 'true');
+    // `.automation-glyph` draws its symbol in `--glyph-ink`, falling back to the
+    // on-inverse ink a fill needs. An outlined hexagon has no fill to be legible
+    // against, so leaving the variable unset would paint the plus near-white on
+    // the sidebar's own surface.
+    expect(glyph?.style.getPropertyValue('--glyph-ink')).toBe('var(--av-sys-color-text-muted)');
+    expect(container.querySelector('.lucide-plus')).not.toBeNull();
   });
 });
