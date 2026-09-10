@@ -271,4 +271,4 @@ before its workspace read returns, so a surface that needs certainty must check
 particular is presentation-only and always was. The reads a window makes can now
 be older than the window, which is what the reveal-time refresh is for.
 
-Shipped in #TBD.
+Shipped in #673.
