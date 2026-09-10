@@ -92,7 +92,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Delete, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
 | `apps/desktop/src/renderer/components/appearance-picker.tsx` | The one icon-and-colour palette, shared with the work stream's header. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows. |
 | `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | Enabled standalone Sidekick tiles above the account menu open library details, and `SidekickStripTile`, the tile shape they and the empty strip's **New Sidekick** action share; the center rail shows authorized main-conversation attachments and the participant facepile. |
-| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink and a symbol; `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen, and the empty strip's tile is the same silhouette outlined around a plus. |
+| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` it cuts out of the fill along that marker's own outline (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen, and the empty strip's tile is the same silhouette outlined around a plus. |
 | `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
 
 ## How it works
@@ -140,10 +140,13 @@ all, as it did before the tile existed; those are reached from the library. The
 strip is likewise absent while the workspace answer carrying the Sidekicks has
 not arrived, which the list itself reports by being `undefined` rather than
 empty. Each tile reuses the rounded hexagon, stable identity
-color, centered symbol, and square lifecycle marker introduced for automation
-shortcuts; the New Sidekick tile is the same tile and the same hexagon, outlined
-and dashed with a plus in it rather than filled, and carries no lifecycle
-marker. Selecting a tile opens its detail in the singleton Sidekicks library
+color, and centered symbol introduced for automation shortcuts. A running
+Sidekick — lifecycle `active`, which is every Sidekick the strip shows — carries
+a **play** in `success-base` at the bottom right, cut out of the hexagon's own
+fill along the play's outline so the gap around it follows the symbol and shows
+whatever the row is painted in. The New Sidekick tile is the same tile and the
+same hexagon, outlined and dashed with a plus in it rather than filled, and
+carries no lifecycle marker. Selecting a tile opens its detail in the singleton Sidekicks library
 window. Management and execution controls remain on that authorized detail;
 directory summaries alone do not advertise those capabilities. Search sits
 above the scrolling streams in both layouts, and the rail adds New chat under
@@ -160,7 +163,8 @@ These preserve the reference proportions while following light and dark appearan
 padding becomes 14px/18px on our strip. One tile can grow to fit a caption
 up to 92px. The deliberate differences are one horizontally scrolling row
 (the reference wraps an auto-fit grid), lifecycle state instead of message
-state, and the square indicator at bottom right as requested.
+state, and an indicator at bottom right as requested — the reference's dot,
+here the play the changelog below explains.
 
 
 ### Drafting in the conversation
@@ -632,6 +636,75 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-10 — A running Sidekick says so with a play, cut out of its own hexagon
+
+**What changed:** The strip's lifecycle marker is a **play** in
+`success-base` instead of a dot in a disc of `surface-default`. It is drawn
+inside `HexagonGlyph` rather than as a badge positioned over it: the hexagon
+carries an optional `HexagonMarker` — a symbol and a colour — masks its fill
+with that symbol's own outline dilated by a stroke, and paints the symbol solid
+in the hole. `SIDEKICK_RUNNING_MARKER` is the one marker so far.
+`.automation-tile-state` and its three lifecycle rules are gone from `app.css`
+along with the containing block the badge needed; the geometry lives in the
+hexagon's viewBox units, so it scales from the sidebar's 60px to the rail's
+36px with the shape rather than holding a pixel size against it.
+
+**Why:** The dot was drawn as a `.status-dot` inside a `.sidebar-row`, and
+`.sidebar-row .status-dot` restyles that element into the work-stream marker's
+squared-off tick. What a person saw on the strip was therefore not the dot the
+rules here intended but a small dark square with no name, on a Sidekick whose
+state it was supposed to be reporting. Rather than pin the radius back, the
+marker now says the state instead of colour-coding it: a play is what **Resume**
+and **Run now** are already drawn with, so the mark and the controls that
+produce it agree.
+
+The knockout is the part that had to move into the hexagon. A marker has one
+colour and the fill under it is whichever of the fifteen identity colours the
+Sidekick drew, so a marker painted onto the fill is legible on some Sidekicks
+and lost on the ones near its own colour — `success-base` on `project-green`
+being a pairing the strip hands out today. The disc bought that separation, but
+it bought it as a circle around a symbol that is not one, and as an opaque patch
+of `surface-default` sitting over a row that is painted in a hover fill half the
+time. Masking the fill leaves a hole instead, so the gap follows the symbol and
+takes the row's real background — including the hover fill, which is
+translucent and could never have been matched by an opaque badge.
+
+**Considered and rejected:** stroking a `surface-default` halo around the play
+with `paint-order: stroke fill`, which draws the same silhouette with no mask
+and no id, and reintroduces exactly the opaque-patch problem where the marker
+overhangs the hexagon. And leaving the marker a dot in the tile with only its
+radius fixed, which keeps a mark that has to be learned rather than read.
+
+`SidekickStripTile` lost its `active` flag with the badge. It rendered a
+visually hidden "Active" beside the caption, which never reached a screen
+reader: `aria-label` on a button replaces the button's contents in the
+accessible name, and the label the tile already gets carries the state. The
+state now travels two ways and only two — the marker for the eye, the label for
+assistive technology — rather than three, one of which was inert.
+
+**What a future change has to respect:** the mask id is per-render
+(`useId`) because SVG ids are document-global and the strip draws one hexagon
+per Sidekick; a fixed id points every hexagon at the first one's mask, which
+looks correct until two markers differ. A second lifecycle marker is another
+`HexagonMarker` constant, not another knockout. And `MARKER_KNOCKOUT` is set by
+looking at the tile at both of its sizes rather than derived from anything: the
+gap has to stay a gap at the rail's 36px, where the whole marker is about 7px
+across and the first value tried left under a pixel of it. Narrowing it back to
+a hairline is a regression that only shows in the rail.
+
+That constant is also why the knockout copy carries `overflow="visible"`. A
+Lucide icon renders as a nested `<svg>`, which establishes its own viewport, and
+the UA stylesheet clips one to it; `Play` reaches within about 3 of the 24 units
+at the top, so a stroke wider than 6 is cut off square at the top, right and
+bottom rather than following the outline. Review caught it at the shipped 7,
+where the overflow is about half a unit — a third of a pixel at the 60px tile,
+and not visible. Confirmed by rendering the marker at a knockout of 16, where
+the gap is plainly a rectangle with the clip and traces the play without it.
+It is fixed rather than left because the ceiling was the trap: the gap this
+constant claims to leave is only true while the stroke stays inside the box, so
+the next person to widen it would have got nothing on three sides and no
+indication why.
 
 ### 2026-09-10 — A Sidekick's hexagon is a picker, and its choice rides the sidebar push
 
