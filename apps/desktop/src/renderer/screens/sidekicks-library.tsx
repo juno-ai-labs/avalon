@@ -1,10 +1,13 @@
 import { ChevronRight, Plus } from 'lucide-react';
+import { AutomationScreen } from './automation';
+import { SpeechPlaybackProvider } from '../components/speech-playback';
+import { useEscapeClosesWindow } from '../lib/window-escape';
 import { AutomationGlyph } from '../components/workstream-glyph';
 import { SidebarSearch } from '../components/sidebar-search';
 import { desktopBridge } from '../lib/platform';
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { HashRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { EmptyState, InlineError, OpeningState } from '../components/primitives';
@@ -46,4 +49,34 @@ export function SidekicksWindowRedirect(): React.JSX.Element {
     void desktopBridge().openSidekicks().then(() => openFirstWorkstream());
   }, [openFirstWorkstream]);
   return <OpeningState label="Opening Sidekicks…" />;
+}
+
+/**
+ * The Sidekicks window's own routes.
+ *
+ * Here rather than beside the other surfaces in `App`, because the gesture below
+ * only makes sense against these screens and is worth a test that renders them.
+ *
+ * Nothing is swept for unsaved text. The one writing surface in here is a
+ * Sidekick's conversation composer, and its text and attachments are cached on
+ * the device and restored on the next visit, so closing the window costs no
+ * sentence; a sweep would only leave Escape dead in every Sidekick that holds a
+ * draft. The library's search box still holds the keystroke while it has text,
+ * where Escape clears the filter first.
+ */
+export function SidekicksWindow(): React.JSX.Element {
+  const { api } = useAppSession();
+  useEscapeClosesWindow();
+  return (
+    <SpeechPlaybackProvider api={api!}>
+      <HashRouter useTransitions={false}>
+        <Routes>
+          <Route element={<SidekicksLibraryScreen />} path="/sidekicks" />
+          <Route element={<AutomationScreen />} path="/sidekicks/:id" />
+          <Route element={<AutomationScreen />} path="/automations/:id" />
+          <Route element={<Navigate replace to="/sidekicks" />} path="*" />
+        </Routes>
+      </HashRouter>
+    </SpeechPlaybackProvider>
+  );
 }
