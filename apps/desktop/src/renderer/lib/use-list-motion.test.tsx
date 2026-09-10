@@ -228,16 +228,37 @@ describe('useListMotion', () => {
     expect(played('a')[2]?.keyframes[0]).toEqual(expect.objectContaining({ transform: `translate(0px, ${2 * ROW - 12}px)` }));
   });
 
-  it('remembers positions while playing nothing for a reader who asked for less motion', () => {
-    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('prefers-reduced-motion') }));
-    const { rerender } = render(<List rows={['a', 'b', 'c']} />);
-    rerender(<List rows={['c', 'a', 'b']} />);
-    expect(animate).not.toHaveBeenCalled();
-    // The positions the reduced-motion render left are the ones the next
-    // change starts from: `c` travels one slot, not two.
-    vi.unstubAllGlobals();
-    rerender(<List rows={['a', 'c', 'b']} />);
-    expect(played('c')[0]?.keyframes[0]).toEqual(expect.objectContaining({ transform: `translate(0px, ${-ROW}px)` }));
+  describe('for a reader who asked for less motion', () => {
+    // Installed and restored here rather than in the bodies, so a failing
+    // assertion cannot leave the stub in place for the next test; a test that
+    // needs the preference to change flips the flag rather than the stub.
+    let reduced = true;
+    beforeEach(() => {
+      reduced = true;
+      vi.stubGlobal('matchMedia', (query: string) => ({ matches: reduced && query.includes('prefers-reduced-motion') }));
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('remembers positions while playing nothing', () => {
+      const { rerender } = render(<List rows={['a', 'b', 'c']} />);
+      rerender(<List rows={['c', 'a', 'b']} />);
+      expect(animate).not.toHaveBeenCalled();
+      // The positions the reduced-motion render left are the ones the next
+      // change starts from: `c` travels one slot, not two.
+      reduced = false;
+      rerender(<List rows={['a', 'c', 'b']} />);
+      expect(played('c')[0]?.keyframes[0]).toEqual(expect.objectContaining({ transform: `translate(0px, ${-ROW}px)` }));
+    });
+
+    it('plays no entrance and leaves no stand-in', () => {
+      const { rerender, getByTestId } = render(<List insert={['x']} rows={['a']} />);
+      rerender(<List insert={['x']} rows={['x', 'a']} />);
+      rerender(<List insert={['x']} rows={['a']} />);
+      expect(animate).not.toHaveBeenCalled();
+      expect(getByTestId('list').querySelector('[data-motion-stand-in]')).toBeNull();
+    });
   });
 
   it('remembers positions while playing nothing in a hidden window', () => {
@@ -361,16 +382,6 @@ describe('useListMotion', () => {
     const exitAnimation = animate.mock.results[animate.mock.calls.indexOf(exit!)]!.value as FakeAnimation;
     exitAnimation.onfinish?.();
     expect(list.querySelector('[data-motion-stand-in]')).toBeNull();
-  });
-
-  it('plays no entrance and leaves no stand-in for a reader who asked for less motion', () => {
-    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('prefers-reduced-motion') }));
-    const { rerender, getByTestId } = render(<List insert={['x']} rows={['a']} />);
-    rerender(<List insert={['x']} rows={['x', 'a']} />);
-    rerender(<List insert={['x']} rows={['a']} />);
-    expect(animate).not.toHaveBeenCalled();
-    expect(getByTestId('list').querySelector('[data-motion-stand-in]')).toBeNull();
-    vi.unstubAllGlobals();
   });
 
   // The sidebar's rows change shape under CSS transitions for as long as its

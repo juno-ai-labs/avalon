@@ -123,12 +123,16 @@ as its box's width does, and a move planned against positions still in flight
 would fight that travel: every render while the flag holds measures afresh and
 plays nothing, and so does the first render after it clears, so that the last
 positions measured mid-flight are not the ones the next change is planned
-from. The sidebar reads the flag from the platform's own transition events for
-`--sidebar-compact` on the aside — `transitionrun` raises it, `transitionend`
-and `transitioncancel` clear it — rather than from a timer, which would have to
-know the duration and would still be wrong under a drag, which turns the
-transition off, and would leave the flag raised for ever wherever no transition
-runs at all. The one thing a relayout leaves playing is an entrance: it
+from. The sidebar raises the flag in the render that changes the layout, and
+then follows the platform's own transition events for `--sidebar-compact` on
+the aside: `transitionrun` keeps it raised, `transitionend` and
+`transitioncancel` clear it, and a frame after the change — once those events
+have had their chance — the sidebar clears it itself if no transition started,
+as under a drag, which turns them off. The toggle raises it first because
+`transitionrun` is dispatched with the first frame after the change, and a
+render landing before it would plan against rows a frame into their travel. A
+timer was not used: it would have to know a stylesheet's duration and would
+still be wrong under a drag. The one thing a relayout leaves playing is an entrance: it
 travels horizontally only, so the slots it was measured between do not stale
 it, and the rail's New chat row arrives with the very toggle that relays out
 everything else.
@@ -413,7 +417,9 @@ takes a third argument, `layoutSettling`, under which every render measures
 afresh and plays nothing, as does the first render after it clears, and only an
 entrance survives a relayout. The sidebar attaches a second instance to the
 command bar above its scroll box, marks the rail's New chat row there, and
-reports the flag from the aside's own transition events for `--sidebar-compact`.
+reports the flag: raised by the toggle itself, kept by the aside's own
+`transitionrun` for `--sidebar-compact`, and released by its `transitionend`
+or `transitioncancel`, or a frame later when nothing started.
 
 **Why:** The compact toggle was reported as a cut — the box's width glided and
 everything inside it snapped a frame ahead of the edge — and the search and
