@@ -254,6 +254,13 @@ describe("a demo preparation operation", () => {
       cast: { priya: DANA_ID, marcus: PRIYA_ID, dana: MARCUS_ID },
     });
     expect(again.cast).toEqual(started.cast);
+
+    // And it is answered without validating the request against a directory
+    // that has moved since: a client retrying a lost response would otherwise
+    // be refused about a preparation of its own that is running fine.
+    await env.DB.prepare("UPDATE users SET email = ? WHERE id = ?").bind("ben@elsewhere.example.com", DANA_ID).run();
+    await env.DB.prepare("UPDATE users SET name = ? WHERE id = ?").bind("Priya Raman", MARCUS_ID).run();
+    expect((await startDemoOperation(env, request())).cast).toEqual(started.cast);
   });
 
   it("refuses to prepare a demo whose cast stopped being a colleague after the row was written", async () => {
