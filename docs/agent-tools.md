@@ -464,6 +464,57 @@ id" leaves the model guessing. This composes with principle 3: a reference the
 model can reasonably know by name should accept the name, but anywhere the value
 must be a particular identifier, validate the family and hint on mismatch.
 
+### 13. Every parameter says what it is for, and what leaving it out does
+
+A parameter reaches the model as its name, its type, its bounds, and nothing
+else. That is not enough to use one, and the gap is invisible from inside the
+repository, where the name is obvious because you know the API behind it.
+GitHub's `pull_requests.list` takes a `head`, which is neither the head commit
+nor a branch: it is the filter expression `owner:branch`, and GitHub answers
+anything else with HTTP 200 and an empty list rather than an error. Undescribed
+beside eight other parameters, it read as a field to fill in. A run asked for a
+repository's open pull requests filled it in with a branch name, got `[]` twice
+for a repository holding twenty-five of them, reported the repository as having
+none, and went to the terminal for a credential to ask `git` directly.
+
+So every parameter carries a `description`, and four things belong in an
+optional one, none of which is inferable from a name and a `maxLength`:
+
+- **what it selects**, in the provider's own spelling, with a worked value —
+  ``written as `owner:branch`, such as `octocat:my-feature` ``;
+- **what omitting it does**, said as the normal case when it is one: listing a
+  repository's open pull requests means sending no filter at all;
+- **what a wrong value does**, whenever wrong is silent — "a branch with no open
+  pull request returns an empty list rather than an error" is the sentence that
+  ends the failure above at the first call; and
+- **which tool produces the value**, when another tool does. This is the cursor
+  rule in principle 9, generalized: a cursor is the case where guessing is
+  always wrong, not the only case where it is silent.
+
+**Convert the schema in input mode.** `z.toJSONSchema(schema)` defaults to
+`io: "output"`, which describes what a *parse returns* — so every `.default()`
+field is listed as `required`, because the parsed value always has one. A tool
+schema describes what a caller may *send*, which is `io: "input"`. The same
+`pull_requests.list` was demanding `state`, `sort`, `direction`, `perPage`, and
+`page`, five values the executor would have supplied itself; a schema insisting
+on five parameters it does not need reads as an instruction to populate the
+block, which is how the two undescribed filters beside them came to be
+populated too. `z.strictObject` still emits `additionalProperties: false` in
+either mode, so nothing is given up. `defaultedRequiredParameters` holds this at
+zero across every authored tool.
+
+**A silent narrowing is answered in the result, not only in the description.**
+Where a filter can empty a list without erroring, the result says which filters
+were applied, so an empty page can be told apart from an empty repository. See
+principle 8 and the GitHub list envelope in
+[`connectors.md`](connectors.md#github-app).
+
+`apps/api/test/tool-schema-descriptions.test.ts` walks every authored tool for
+both halves. Descriptions are asserted per surface, exactly, rather than at
+zero: GitHub, Terminal, and X are complete and can never regress, and the ten
+surfaces still owed prose can only pay it down. Lower a number when you
+describe a parameter; never raise one.
+
 ## Attachment contract registry
 
 Attachment tools use the shared contracts in
@@ -856,7 +907,11 @@ future agent tool or plugin, not just this family.
     argument reaches durable storage unchecked — which is exactly what
     `automation_set_evaluator_rules` did. Run the check as the first statement of
     the executor and point `validateInput` at the same function.
-13. `capability` is covered by the connector manifest, the descriptor matches it
+13. Every parameter has a `description`, and each optional one says what
+    omitting it does and what a wrong value does when wrong is silent. The
+    schema is converted with `io: "input"`, so nothing the executor defaults is
+    advertised as required.
+14. `capability` is covered by the connector manifest, the descriptor matches it
     in provider type and tool order, the plugin system message is updated, and
     `pnpm lint`, `pnpm typecheck`, and `pnpm test` are green.
 
@@ -874,6 +929,52 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-09-10 — A parameter with no description is a parameter that gets guessed at
+
+**What changed:** Principle 13, and checklist item 13. Every tool parameter
+carries a `description`; an optional one says what omitting it does and what a
+wrong value does where wrong is silent. Tool schemas are converted with
+`z.toJSONSchema(schema, { io: "input" })`. GitHub's 112 parameters are written,
+its list tools answer in one envelope carrying `count`, paging, and an
+`appliedFilters` echo, and `apps/api/test/tool-schema-descriptions.test.ts`
+walks every authored tool for both rules —
+`defaultedRequiredParameters` at zero everywhere,
+`undescribedParameters` at an exact per-surface count that can only fall.
+
+**Why:** A recorded run (2026-09-10) asked for the open pull requests on
+`juno-ai-labs/avalon` and answered that there were none. There were
+twenty-five. Nothing errored: the call carried a `head` filter the model had
+invented, GitHub's `head` wants `owner:branch` and answers anything else with
+HTTP 200 and `[]`, and the connector returned that bare array with the summary
+"Listed pull requests". The model could not attribute the emptiness to its own
+argument, repeated the call, and finally abandoned the connector for a terminal
+credential and `git`. Two defects put it there and neither was visible in any
+log: all 112 GitHub parameters were undescribed, and `z.toJSONSchema`'s default
+output mode advertised the five defaulted parameters beside `head` as required,
+which is a schema asking for the whole block to be filled in.
+
+This is the third instance of one class — the 2026-09-02 blank-cursor loop and
+the 2026-09-03 cursor rule are the same failure on paginating parameters — so
+it is a principle over every parameter rather than a fourth entry about one
+kind. What the earlier two could not have caught is that the danger is not the
+parameter's role but the provider's silence about a wrong value, which no walk
+over names can see.
+
+**Alternative rejected:** describing only the parameters that look risky, which
+is what "cursors and ids" already was. `head` does not look risky; it looks like
+a branch. The 227 parameters still undescribed across ten other surfaces —
+Google's 60 and Slack's 39 the largest — are recorded as an exact per-surface
+count rather than fixed here, because each one needs a sentence somebody has to
+know the provider to write, and a floor would have let a described surface
+regress under it.
+
+**Consequences:** A new tool fails `pnpm test` until its parameters are
+described and its surface is named in that count. Lowering a number is the
+edit that says you paid some of the debt down; raising one is not an
+option. The GitHub list tools no longer return bare arrays, so anything reading
+`output` as an array reads `output.pullRequests`, `output.issues`,
+`output.commits`, `output.files`, or `output.reviews` instead.
 
 ### 2026-09-10 — The attachment twins take the `sidekick` prefix
 

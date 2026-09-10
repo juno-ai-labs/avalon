@@ -1,0 +1,92 @@
+import { describe, expect, it } from "vitest";
+
+import { defaultedRequiredParameters, undescribedParameters } from "@rally/agent-harness";
+import { everyAuthoredToolSchema, toolSurface } from "./helpers/authored-tool-schemas";
+
+/**
+ * What a model can tell about a parameter from the schema alone, walked over
+ * every tool Rally authors.
+ *
+ * The failure this exists for was not an error. A run asked to list a
+ * repository's open pull requests called `github_pull_requests_list` and got
+ * back `[]`, twice, for a repository holding twenty-five of them, then reported
+ * the repository as having none and went to the terminal for a credential to
+ * ask `git` directly. Nothing in the fleet noticed, because nothing had gone
+ * wrong: the connector reached GitHub, GitHub answered HTTP 200, and the answer
+ * was empty because the call carried a `head` filter the model had invented.
+ *
+ * Two schema defects put it there, and both are asserted below because either
+ * alone would have been survivable:
+ *
+ * - **The parameter said nothing.** `head` reached the model as
+ *   `{ type: "string", minLength: 1, maxLength: 250 }`. GitHub's filter wants
+ *   `owner:branch` and answers anything else with an empty list rather than an
+ *   error, and none of that is inferable from a name and two bounds. All 112
+ *   GitHub parameters were in that state.
+ * - **The schema demanded the defaults.** `z.toJSONSchema` was called in its
+ *   `io: "output"` default, which lists every `.default()` field as `required`,
+ *   so the tool advertised `state`, `sort`, `direction`, `perPage`, and `page`
+ *   as mandatory. A schema insisting on five values the executor would have
+ *   chosen itself reads as an instruction to fill in the parameter block, which
+ *   is how the two undescribed filters beside them came to be filled in too.
+ *
+ * The second is a mechanical defect with one right answer, so it is asserted at
+ * zero. The first is prose somebody has to write, and 227 parameters across six
+ * connectors are still owed it — so it is asserted per surface, exactly. A
+ * ratchet rather than a floor: a surface at 0 can never regress, a surface with
+ * debt can only pay it down, and a new tool has to state which it is. Both are
+ * `docs/agent-tools.md` rules; this is where they are held.
+ */
+describe("tool schema parameter descriptions", () => {
+  it("demands no parameter it already supplies a default for", () => {
+    // Flat zero rather than per surface: this one is a call-site mistake with a
+    // single correct fix, `z.toJSONSchema(schema, { io: "input" })`, and there
+    // is no version of it worth carrying as debt.
+    const demanded = everyAuthoredToolSchema().flatMap(({ name, schema }) =>
+      defaultedRequiredParameters(schema).map((finding) => `${name}.${finding}`));
+
+    expect(demanded).toEqual([]);
+  });
+
+  it("leaves no GitHub parameter for a model to guess at", () => {
+    // Named on its own as well as counted below, because this is the surface
+    // the failure happened on and a regression here should say so directly
+    // rather than as a number that moved.
+    const undescribed = everyAuthoredToolSchema()
+      .filter(({ name }) => toolSurface(name) === "github")
+      .flatMap(({ name, schema }) => undescribedParameters(schema).map((finding) => `${name}.${finding}`));
+
+    expect(undescribed).toEqual([]);
+  });
+
+  it("holds every other surface at its recorded count, so the debt can only shrink", () => {
+    const walked = everyAuthoredToolSchema();
+    const counts: Record<string, number> = {};
+    for (const { name, schema } of walked) {
+      const surface = toolSurface(name);
+      counts[surface] = (counts[surface] ?? 0) + undescribedParameters(schema).length;
+    }
+
+    // Every surface Rally serves, with what it still owes. Lower a number when
+    // you describe a parameter; a new surface has to appear here deliberately.
+    // Terminal, X, and the time tool describe everything already, and are the
+    // shape the rest are being brought to.
+    expect(counts).toEqual({
+      elicitation: 0,
+      github: 0,
+      google: 60,
+      granola: 8,
+      linear: 24,
+      memory: 12,
+      notion: 19,
+      rally: 18,
+      slack: 39,
+      table: 26,
+      terminal: 0,
+      time: 0,
+      web: 2,
+      workstream: 19,
+      x: 0,
+    });
+  });
+});
