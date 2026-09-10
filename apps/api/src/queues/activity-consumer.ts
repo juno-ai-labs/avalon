@@ -7,6 +7,7 @@ import { SearchConversationProjectionMessageSchema, SearchProjectionMessageSchem
 import { AuthorizationProjectionJobSchema } from '../durable-objects/authorization-projection';
 import { projectAuthorization } from '../services/authorization-projection-service';
 import { createSearchIndexingPipeline, indexSemanticBatch } from '../services/search-indexing-pipeline';
+import { projectConversationDisplay } from '../services/search-conversation-display';
 import { ConnectorError, connectorOriginUrl, connectorRetryAfterMs } from "@rally/connectors";
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
@@ -270,11 +271,10 @@ async function consumeOne(message: Message<unknown>, env: Env,
     // redelivered message can only ever write the conversation's current display.
     const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, job.workspaceId,
       conversationObjectName(job.region, job.workspaceId, job.parentId, job.substreamId));
-    const display = await stub.searchConversationDisplay(job);
-    if (display) {
-      await (await workspaceSearchIndex(env, job.workspaceId))
-        .patchConversationDisplay({ scopeId: job.parentId, substreamId: job.substreamId }, display);
-    }
+    const index = await workspaceSearchIndex(env, job.workspaceId);
+    // A display that changed under the patch throws, and the retry patches the current one.
+    await projectConversationDisplay(() => stub.searchConversationDisplay(job),
+      (display) => index.patchConversationDisplay({ scopeId: job.parentId, substreamId: job.substreamId }, display));
     message.ack();
     return;
   }
