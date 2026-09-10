@@ -5610,7 +5610,13 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .workstream-screen .human-message .message-author { color: var(--av-sys-color-text-subtle); font-size: 12px; }
 .workstream-screen .human-message time { color: var(--av-sys-color-text-muted); }
 .workstream-screen .agent-message { padding-left: 2px; }
-.workstream-screen .agent-message > header { margin-bottom: 7px; padding-left: 18px; }
+/* The identity line starts on the same vertical as the prose under it. The
+   theme used to inset it by 18px, which reads as a hanging indent on a turn
+   that has nothing in that gutter: Rally's turn carries no avatar, so the space
+   held nothing and only broke the left edge the body and the action row share.
+   Any future mark to the left of the name belongs in the header as an element,
+   not as padding here. */
+.workstream-screen .agent-message > header { margin-bottom: 7px; }
 
 /* GrokBot uses four text roles throughout its conversation surfaces rather
    than per-theme typography. Keep Rally's extra author/time labels on the same
