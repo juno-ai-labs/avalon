@@ -1,6 +1,6 @@
 /** Copy can change without changing intake or delivery logic. Stored requests freeze it for retries. */
 export const accessAcknowledgementContent = {
-  from: 'Adam @ Rally <hi@rally.ai>',
+  from: 'Adam @ Rally <hi@rallywith.ai>',
   subject: 'We got your Rally request',
   markdown: `Thanks so much for requesting access to Rally.
 

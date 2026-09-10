@@ -232,3 +232,14 @@ Cloudflare credential rejected Turnstile creation, and the supplied sender remai
 unverified/unreachable. Production acquisition fails closed when these abuse
 controls are missing. The launch hold remains. See the current owner document
 [private access](private-access.md) for exact behavior and the retained limits.
+
+## Follow-up — approved configuration (2026-09-09)
+
+The team accepted the four proposed application values and the 30 requests/IP/minute
+Worker binding. The `Rally early access` widget now allows only `rallywith.ai`;
+its site key is configured in both site-publishing GitHub environments and its
+secret is installed on the Global API. The team explicitly does not require the
+acknowledgement sender to receive replies: null MX is not itself a launch blocker.
+The team subsequently selected `hi@rallywith.ai`; the Resend dashboard confirms
+`rallywith.ai` is verified. The current owner document supersedes the earlier
+configuration snapshot above. No real acknowledgement was sent by the audit.
