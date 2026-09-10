@@ -544,6 +544,8 @@ jobs:
       # the desktop version".
       - name: Deploy the landing site from the tip of main
         shell: bash
+        env:
+          RALLY_TURNSTILE_SITE_KEY: ${{ vars.RALLY_TURNSTILE_SITE_KEY }}
         run: |
           set -euo pipefail
           site="$RUNNER_TEMP/site-deploy"

@@ -7,7 +7,7 @@ import type { Env, HonoAppEnv } from '../src/env';
 import { errorHandler } from '../src/middleware/errors';
 import { createPrivateAccessRoutes, privateAccessRoutes } from '../src/routes/private-access';
 import { accessOperatorRoutes } from '../src/routes/access-operations';
-import { admitAccessEmail } from '../src/services/access-request-limits';
+import { admitAccessEmail, MAX_ACCESS_EMAILS_PER_HOUR } from '../src/services/access-request-limits';
 import { requestAccess } from '../src/services/access-request-service';
 import ace from '../../ace/src/index';
 import { createTestEnv as aceEnv } from '../../ace/test/helpers/cloudflare-test';
@@ -102,21 +102,20 @@ describe('launch acquisition essentials', () => {
   });
 
   it('coordinates an exact mail budget across concurrent admissions and does not rewind its window', async () => {
-    const admissions = await Promise.all(Array.from({ length: 8 }, () => admitAccessEmail(env, 2)));
-    expect(admissions.filter(Boolean)).toHaveLength(2);
-    expect(await admitAccessEmail(env, 2, start + 3_600_000)).toBe(true);
-    expect(await admitAccessEmail(env, 2, start)).toBe(false);
-    expect(await admitAccessEmail(env, 2, start + 3_600_000)).toBe(true);
-    expect(await admitAccessEmail(env, 2, start + 3_600_000)).toBe(false);
+    const admissions = await Promise.all(Array.from({ length: MAX_ACCESS_EMAILS_PER_HOUR + 2 }, () => admitAccessEmail(env, MAX_ACCESS_EMAILS_PER_HOUR)));
+    expect(admissions.filter(Boolean)).toHaveLength(MAX_ACCESS_EMAILS_PER_HOUR);
+    expect(await admitAccessEmail(env, MAX_ACCESS_EMAILS_PER_HOUR, start + 3_600_000)).toBe(true);
+    expect(await admitAccessEmail(env, MAX_ACCESS_EMAILS_PER_HOUR, start)).toBe(false);
   });
 
   it('retains quota-deferred requests without starting their uncertainty clock, then retries after capacity returns', async () => {
     const mail = mockAccessMail().mockImplementation(async () => Response.json({ id: 'mail' }));
-    await requestAccess(env, 'waiting@example.com', 0);
+    db.prepare('INSERT INTO access_email_budget (id, bucket, count) VALUES (1, ?, ?)').run(Math.floor(start / 3_600_000), MAX_ACCESS_EMAILS_PER_HOUR);
+    await requestAccess(env, 'waiting@example.com');
     expect(row()).toMatchObject({ status: 'pending', firstAttemptAt: null });
     expect(mail).not.toHaveBeenCalled();
     vi.setSystemTime(start + 48 * 60 * 60 * 1000);
-    await requestAccess(env, 'waiting@example.com', 1);
+    await requestAccess(env, 'waiting@example.com');
     expect(row().status).toBe('sent'); expect(mail).toHaveBeenCalledTimes(1);
   });
 
