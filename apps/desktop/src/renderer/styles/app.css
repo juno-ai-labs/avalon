@@ -2837,9 +2837,6 @@ pre {
 .workstream-context-resource-icon > svg { height: 20px; width: 20px; }
 .workstream-context-section { border-top: 0 solid var(--av-cmp-sidebar-border); margin-top: 20px; transition: border-top-width var(--sidebar-layout-motion), margin-top var(--sidebar-layout-motion), padding-top var(--sidebar-layout-motion); }
 .workstream-context-section h2 { margin: 0 8px 6px; }
-.workstream-context-empty { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; gap: 8px; height: 36px; overflow: hidden; padding: 8px; transition: gap var(--sidebar-layout-motion), height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), width var(--sidebar-layout-motion); width: 100%; }
-.workstream-context-empty svg { flex-shrink: 0; transition: transform var(--sidebar-layout-motion); }
-.workstream-context-empty > span { transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); white-space: nowrap; }
 .workstream-context-presence { background: var(--av-sys-color-success-base); border-radius: 50%; flex: 0 0 6px; height: 6px; }
 /* Compact drops the title. The arrow stays the mark only for a substream
    whose title has no first character; under an initial it fades out while
@@ -2850,20 +2847,18 @@ pre {
    letter carries no descender and would otherwise sit a pixel high. */
 .workstream-substream-initial { font-size: 17px; font-weight: 600; opacity: 0; text-box: trim-both cap alphabetic; transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); visibility: hidden; }
 .workstream-context-sidebar.is-compact .workstream-substream-initial { opacity: 1; visibility: visible; }
-/* Copy, headings and the empty state's label close to nothing and fade; the
-   section rule and its spacing arrive over the same interval. */
+/* Copy and headings close to nothing and fade; the section rule and its
+   spacing arrive over the same interval. */
 .workstream-context-sidebar.is-compact .workstream-context-copy { flex-grow: 0; opacity: 0; visibility: hidden; }
 .workstream-context-sidebar.is-compact .workstream-context-section h2 { height: 0; margin-bottom: 0; opacity: 0; visibility: hidden; }
-.workstream-context-sidebar.is-compact .workstream-context-empty > span { opacity: 0; visibility: hidden; }
 .workstream-context-sidebar.is-compact .workstream-context-section { border-top-width: 1px; margin-top: 14px; padding-top: 14px; }
-/* Content of no fixed width — the participants' avatars, the empty state's
-   icon — is carried to the centre of the 36px content box by a transform that
-   travels, not by `justify-content`, which cannot. */
+/* Content of no fixed width — the participants' avatars — is carried to the
+   centre of the 36px content box by a transform that travels, not by
+   `justify-content`, which cannot. */
 .workstream-context-sidebar .workstream-context-row > .avatar-stack,
 .workstream-context-sidebar .workstream-context-row > svg { transition: transform var(--sidebar-layout-motion); }
 .workstream-context-sidebar.is-compact .workstream-context-row > .avatar-stack,
-.workstream-context-sidebar.is-compact .workstream-context-row > svg,
-.workstream-context-sidebar.is-compact .workstream-context-empty > svg { transform: translateX(calc(18px - 50%)); }
+.workstream-context-sidebar.is-compact .workstream-context-row > svg { transform: translateX(calc(18px - 50%)); }
 .workstream-context-sidebar.is-compact .workstream-context-presence { bottom: 8px; position: absolute; right: 10px; width: 6px; }
 .workstream-screen { display: grid; grid-template-rows: 55px minmax(0, 1fr) auto; height: 100%; min-width: 0; position: relative; }
 .workstream-header { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; gap: 12px; justify-content: space-between; min-width: 0; padding: 6px 10px 6px 16px; }
@@ -7144,8 +7139,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 
 /* The two navigation rails share square controls and symmetric gutters. */
 .workstream-context-sidebar.is-compact .workstream-context-scroll { padding-left: 20.5px; padding-right: 20.5px; }
-.workstream-context-sidebar.is-compact .workstream-context-row,
-.workstream-context-sidebar.is-compact .workstream-context-empty { width: 54px; height: 54px; padding: 9px; gap: 0; }
+.workstream-context-sidebar.is-compact .workstream-context-row { width: 54px; height: 54px; padding: 9px; gap: 0; }
 /* The avatars shrink into the square with their overlap; the presence
    border's own fade is restated so the size rule does not replace it. */
 .workstream-context-sidebar .avatar-stack .avatar { transition: border-color 180ms ease, font-size var(--sidebar-layout-motion), height var(--sidebar-layout-motion), width var(--sidebar-layout-motion); }

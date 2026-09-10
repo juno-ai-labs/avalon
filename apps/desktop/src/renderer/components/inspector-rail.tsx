@@ -160,7 +160,7 @@ function ResourceCards({
         return (
           <li className="rail-card resource-row" key={resource.id}>
             <button className="rail-card-main" onClick={() => onSelect ? onSelect(resource.id) : inspect({ type: 'resource', id: resource.id })} type="button">
-              <span className="rail-card-icon"><ResourceIcon type={resource.resourceType} /></span>
+              <span className="rail-card-icon"><ResourceIcon resource={resource} /></span>
               <span><strong>{resource.title}</strong><small>{resource.provider ?? resource.resourceType}</small></span>
             </button>
             {resource.direction === 'source' && (
