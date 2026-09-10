@@ -95,6 +95,7 @@ import {
 } from '../common/application-icons';
 import { logError, logWarn } from '../common/logger';
 import { parseDesktopSettingsSection } from '../common/settings';
+import { parseSidekicksWindowTarget } from '../common/sidekicks';
 import type { DesktopSettingsSection } from '../common/settings';
 import { fontScheme } from '../common/theme-assets';
 import {
@@ -3434,10 +3435,11 @@ function registerIpc(): void {
     if (!request || !isArtifactUrl(request.url, artifactServingDomain())) return;
     openArtifactWindow(request);
   });
-  ipcMain.handle('system:open-sidekicks', async (event, rawId: unknown) => {
+  ipcMain.handle('system:open-sidekicks', async (event, rawTarget: unknown) => {
     assertTrustedIpcSender(event);
-    const id = rawId === undefined ? undefined : IdSchema.parse(rawId);
-    await createSidekicksWindow(id);
+    const target = rawTarget === undefined ? undefined : parseSidekicksWindowTarget(rawTarget);
+    if (rawTarget !== undefined && !target) throw new Error('Invalid Sidekicks window target');
+    await createSidekicksWindow(target ?? undefined);
   });
   ipcMain.handle('system:open-settings', async (event, rawSection: unknown) => {
     assertTrustedIpcSender(event);
@@ -4181,9 +4183,10 @@ async function createSettingsWindow(section?: DesktopSettingsSection): Promise<v
   await loadRenderer(settingsWindow, rendererUrl('settings', section), 'settings');
 }
 
-async function createSidekicksWindow(sidekickId?: string): Promise<void> {
+/** `requestedTarget` is already parsed: a Sidekick id, or the composer. */
+async function createSidekicksWindow(requestedTarget?: string): Promise<void> {
   const target = new URL(rendererUrl('sidekicks'));
-  if (sidekickId) target.hash = `/sidekicks/${sidekickId}`;
+  if (requestedTarget) target.hash = `/sidekicks/${requestedTarget}`;
   if (sidekicksWindow && !sidekicksWindow.isDestroyed()) {
     if (sidekicksWindow.webContents.getURL() !== target.toString()) await loadRenderer(sidekicksWindow, target.toString(), 'sidekicks');
     if (sidekicksWindow.isMinimized()) sidekicksWindow.restore();

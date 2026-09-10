@@ -7003,6 +7003,15 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .automation-tile-state.active .status-dot { background: var(--av-sys-color-success-base); }
 .automation-tile-state.paused .status-dot { background: var(--av-sys-color-workstream-stopped); }
 .automation-tile-state.draft .status-dot { background: transparent; border: 1px dashed var(--av-sys-color-text-muted); }
+/* The new-Sidekick tile's hexagon: the same silhouette as a Sidekick's, drawn
+   as an empty slot rather than an identity, because there is no Sidekick yet to
+   take a fill or a symbol from. Dashed for the reason the draft lifecycle dot
+   above is — the outline is what says "not a Sidekick yet" at 36px, where a
+   solid fill in any colour would read as one. The stroke is in the viewBox's
+   own units, so it scales with the tile like the shape it traces. */
+.sidekick-new-glyph .automation-glyph-shape { stroke: var(--av-sys-color-border-strong); stroke-dasharray: 7 5; stroke-width: 3; }
+.sidebar-row.automation-tile:hover .sidekick-new-glyph .automation-glyph-shape,
+.sidebar-row.automation-tile:focus-visible .sidekick-new-glyph .automation-glyph-shape { stroke: var(--av-sys-color-text-muted); }
 /* The rail keeps the strip where the full sidebar has it — below the list,
    above the account row — and keeps it a horizontally scrolling row: one 54px
    tile centred when there is one, and the next showing past the padding when

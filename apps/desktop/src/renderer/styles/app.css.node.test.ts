@@ -187,6 +187,15 @@ describe('sidebar layout motion', () => {
     expect(rule('.sidebar-automation-strip')).toContain('overflow-x: auto;');
     expect(rule('.app-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target')).toContain('flex-basis: 54px;');
   });
+
+  it('traces the new-Sidekick hexagon in viewBox units, so it scales with the tile', () => {
+    // A pixel stroke would hold its width while the tile shrank from 60px to the
+    // rail's 36px, so the outline would thicken relative to the shape it traces.
+    const slot = rule('.sidekick-new-glyph .automation-glyph-shape');
+    expect(slot).toContain('stroke-width: 3;');
+    expect(slot).not.toMatch(/stroke-width:[^;]*px/u);
+    expect(slot).toContain('stroke-dasharray:');
+  });
 });
 
 describe('work-stream context sidebar layout', () => {
