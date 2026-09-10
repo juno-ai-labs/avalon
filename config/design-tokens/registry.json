@@ -51,6 +51,7 @@
     "cmp.feed": "The reading column's width, and the label over a turn in it.",
     "cmp.markdown": "Rendered markdown. Its colours were already tokens; its *measurements* were not, which is why Air's headings were smaller than the prose beneath them — `.markdown-body` scaled with `sys.font.size.prose` and the headings it contained stayed at a fixed 18/16/14.5/14. A theme that moves its prose size has to be able to move the scale above it, and the rhythm with it. The `article-*` values are the note detail's own scale: a note is read as a document rather than as a turn in a transcript, so its headings run larger than the feed's. Its margins are not tokens: they are the stylesheet's spacing steps, which follow `ref.space.unit`.",
     "cmp.tooltip": "A surface that deliberately opposes the theme: light on a dark theme and dark on a light one, so it cannot be a ramp step in either.",
+    "cmp.segmented": "The track behind an exclusive-choice strip. Its one value is the recess the chosen pill sits in, and the pill is `sys.color.surface.raised`, so the two have to move apart in both appearances. That is why the track is not a neutral step: light recesses *down* from the card it sits on and dark recesses further down again, and the one step that reads as a recess in dark is the raised fill itself.",
     "cmp.toggle": "A switch. The knob is white on a grey track in a light theme, which is about two to one; the lift from `sys.elevation.shadow.sm` is what makes the off state read as a control.",
     "cmp.button": "Neutral primary actions, separate from brand identity and semantic danger or success states.",
     "cmp.control": "Shared secondary controls, independent of message and sidebar geometry.",
@@ -760,6 +761,9 @@
       "$type": "color"
     },
     "cmp.tooltip.foreground": {
+      "$type": "color"
+    },
+    "cmp.segmented.track": {
       "$type": "color"
     },
     "cmp.toggle.track": {

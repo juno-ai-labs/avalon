@@ -106,7 +106,7 @@ export interface TelemetryReporterOptions {
   eventId?: (now: Date) => string;
 }
 
-export interface TelemetryInspectorEntry {
+export interface TelemetryDecision {
   name: string;
   schemaVersion: number;
   policyClass: TelemetryCategory;
@@ -121,7 +121,7 @@ type ResultCode = 'accepted' | 'duplicate' | 'conflict' | 'suppressed' | 'route_
 /** Typed semantic facade. Renderer IPC maps to these methods; provider names,
  * arbitrary event names, and arbitrary property dictionaries never cross it. */
 export class TelemetryReporter {
-  private readonly entries: TelemetryInspectorEntry[] = [];
+  private readonly entries: TelemetryDecision[] = [];
   private flushing: Promise<void> | null = null;
 
   constructor(private readonly options: TelemetryReporterOptions) {}
@@ -404,7 +404,16 @@ export class TelemetryReporter {
     );
   }
 
-  inspector(): TelemetryInspectorEntry[] {
+  /**
+   * Every contract decision this process has made, oldest first.
+   *
+   * This was the Settings **Telemetry inspector**'s feed until that pane and
+   * its IPC channel were removed. The record itself stayed: it is the only
+   * place that distinguishes *suppressed* — the opt-out held — from *rejected*
+   * — the event failed its own schema — and the reporter's tests assert on that
+   * distinction. The spool cannot: both outcomes leave it empty.
+   */
+  decisions(): TelemetryDecision[] {
     return this.entries.map((entry) => ({ ...entry, propertyNames: [...entry.propertyNames] }));
   }
 
@@ -458,7 +467,7 @@ export class TelemetryReporter {
   ): Promise<boolean> {
     const registry = TELEMETRY_EVENTS[name];
     const route = this.options.route();
-    const inspected: TelemetryInspectorEntry = {
+    const decision: TelemetryDecision = {
       name,
       schemaVersion: registry.schemaVersion,
       policyClass: registry.category,
@@ -468,19 +477,19 @@ export class TelemetryReporter {
       queueState: 'none',
     };
     if (registry.category !== 'essential' && !this.options.productAnalyticsEnabled()) {
-      inspected.validation = 'suppressed';
-      this.record(inspected);
+      decision.validation = 'suppressed';
+      this.record(decision);
       return false;
     }
     try {
       const authenticated = resolved?.authenticated ?? await this.options.authenticatedSession().catch(() => null);
       const anonymous = resolved?.anonymous ?? (authenticated ? null : this.options.anonymousSession());
       if (identityScope === 'anonymous-epoch' && !anonymous) {
-        this.record(inspected);
+        this.record(decision);
         return false;
       }
       if ((identityScope === 'platform-user' || identityScope === 'workspace-user') && !authenticated) {
-        this.record(inspected);
+        this.record(decision);
         return false;
       }
       const now = this.options.now();
@@ -515,12 +524,12 @@ export class TelemetryReporter {
         event,
         acceptedAt: now,
       });
-      inspected.validation = 'accepted';
-      inspected.queueState = 'queued';
-      this.record(inspected);
+      decision.validation = 'accepted';
+      decision.queueState = 'queued';
+      this.record(decision);
       return true;
     } catch {
-      this.record(inspected);
+      this.record(decision);
       return false;
     }
   }
@@ -610,8 +619,8 @@ export class TelemetryReporter {
 
   private recordDelivery(
     row: TelemetrySpoolRow,
-    validation: TelemetryInspectorEntry['validation'],
-    queueState: TelemetryInspectorEntry['queueState'],
+    validation: TelemetryDecision['validation'],
+    queueState: TelemetryDecision['queueState'],
   ): void {
     this.record({
       name: row.event.name,
@@ -624,7 +633,7 @@ export class TelemetryReporter {
     });
   }
 
-  private record(entry: TelemetryInspectorEntry): void {
+  private record(entry: TelemetryDecision): void {
     this.entries.push(entry);
     if (this.entries.length > 100) this.entries.splice(0, this.entries.length - 100);
   }
