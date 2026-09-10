@@ -1,5 +1,5 @@
 import { CONVERSATION_LINK_SEARCH_SCHEMA } from './conversation-link-search';
-import { TRANSCRIPT_SEARCH_MIGRATION_STATEMENTS } from './search-projection-outbox';
+import { CONVERSATION_DISPLAY_SEARCH_MIGRATION_STATEMENTS, TRANSCRIPT_SEARCH_MIGRATION_STATEMENTS } from './search-projection-outbox';
 /**
  * Object-local SQL schema for the existing one-room-per-work-stream namespace.
  *
@@ -22,7 +22,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 51;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 52;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2970,6 +2970,11 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
          applied_at INTEGER
        ) STRICT`,
     ],
+  },
+  {
+    version: 52,
+    description: "project conversation title and archive state into the search index",
+    statements: CONVERSATION_DISPLAY_SEARCH_MIGRATION_STATEMENTS,
   },
 ];
 

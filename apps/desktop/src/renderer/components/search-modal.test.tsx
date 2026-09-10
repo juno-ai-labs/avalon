@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SearchResult } from '@rally/contracts/search';
 import { ApiError } from '../lib/api';
 import { SearchModal } from './search-modal';
@@ -13,6 +13,28 @@ const result: SearchResult = {
   location: { kind: 'message', workstreamId: '00000000-0000-7000-8000-000000000001',
     substreamId: '0', turnId: 'turn-1', transcriptSequence: 1, range: { start: 5, end: 10 } },
 };
+/**
+ * jsdom has no IntersectionObserver. This double records what the modal
+ * observes so a test can bring the end of the list into view on purpose.
+ */
+const observers = new Set<{ callback: IntersectionObserverCallback; targets: Element[] }>();
+class FakeIntersectionObserver {
+  private readonly entry: { callback: IntersectionObserverCallback; targets: Element[] };
+  constructor(callback: IntersectionObserverCallback) { this.entry = { callback, targets: [] }; observers.add(this.entry); }
+  observe(target: Element) { this.entry.targets.push(target); }
+  unobserve() {}
+  disconnect() { observers.delete(this.entry); }
+  takeRecords() { return []; }
+}
+// The config unstubs globals after every test, so the double is installed per test.
+beforeEach(() => { observers.clear(); vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver); });
+async function reachEndOfList() {
+  await act(async () => {
+    for (const { callback, targets } of [...observers]) {
+      callback(targets.map((target) => ({ isIntersecting: true, target } as IntersectionObserverEntry)), {} as IntersectionObserver);
+    }
+  });
+}
 function setup(search: React.ComponentProps<typeof SearchModal>['search']) {
   const onSelect = vi.fn();
   const onOpenChange = vi.fn();
@@ -23,23 +45,11 @@ function setup(search: React.ComponentProps<typeof SearchModal>['search']) {
 }
 describe('workspace search modal', () => {
   afterEach(() => { focusManager.setFocused(undefined); });
-  it('keeps verified results visible, marks an incomplete page and retries it', async () => {
-    const search = vi.fn().mockResolvedValueOnce({ results: [result], complete: false })
-      .mockResolvedValue({ results: [result], complete: true });
-    setup(search);
+  it('presents an empty page as no matches without a partial-results state', async () => {
+    setup(async () => ({ results: [] }));
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
-    expect(await screen.findByRole('option')).toHaveTextContent('Alex Danilowicz');
-    expect(screen.getByText('Some results are unavailable.')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry search' }));
-    await waitFor(() => expect(screen.queryByText('Some results are unavailable.')).not.toBeInTheDocument());
-    expect(screen.getByRole('option')).toBeVisible();
-  });
-
-  it('does not present an entirely unverified page as no matches', async () => {
-    setup(async () => ({ results: [], complete: false }));
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
-    expect(await screen.findByText('No verified results available')).toBeVisible();
-    expect(screen.queryByText('No results')).not.toBeInTheDocument();
+    expect(await screen.findByText('No results')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Retry search' })).not.toBeInTheDocument();
   });
 
   it('queries the selected source and opens the highlighted canonical result with Enter', async () => {
@@ -56,7 +66,7 @@ describe('workspace search modal', () => {
     expect(onSelect).toHaveBeenCalledWith(result);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
-  it('waits for explicit continuation and measures through the first result paint', async () => {
+  it('continues past an empty page as its end comes into view and measures through the first result paint', async () => {
     const end = vi.fn();
     const trace = vi.spyOn(perfTrace, 'startPerfTrace').mockReturnValue({
       traceId: 'search-test', mark: vi.fn(), annotate: vi.fn(), end, step: async (_name, run) => run(),
@@ -67,13 +77,14 @@ describe('workspace search modal', () => {
         .mockResolvedValueOnce({ results: [result], nextCursor: null });
       setup(search);
       fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
-      await screen.findByText('Continue searching');
+      await waitFor(() => expect(search).toHaveBeenCalledTimes(1));
       await act(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
       expect(end).not.toHaveBeenCalled();
       await act(async () => { focusManager.setFocused(false); focusManager.setFocused(true); });
       expect(search).toHaveBeenCalledTimes(1);
       expect(screen.queryByText('No results')).not.toBeInTheDocument();
-      fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
+      expect(screen.queryByRole('button', { name: /more results/ })).not.toBeInTheDocument();
+      await reachEndOfList();
       await screen.findByRole('option');
       expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'all', pageSize: 7, cursor: 'next' }, expect.any(AbortSignal));
       await waitFor(() => expect(end).toHaveBeenCalledWith({ outcome: 'completed' }));
@@ -88,8 +99,9 @@ describe('workspace search modal', () => {
     setup(search);
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
     await screen.findByRole('option');
-    fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
+    await reachEndOfList();
     await waitFor(() => expect(finish).toBeDefined());
+    expect(screen.getByText('Loading more…')).toBeVisible();
     expect(screen.getAllByRole('option')).toHaveLength(1);
     expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'all', pageSize: 7, cursor: 'next' }, expect.any(AbortSignal));
     await act(async () => finish!({ results: [{ ...result, id: 'message-2', excerpt: 'Second result', highlights: [] }], nextCursor: null }));
@@ -97,10 +109,23 @@ describe('workspace search modal', () => {
     expect(screen.getAllByRole('option').map((row) => row.textContent)).toEqual([
       expect.stringContaining('Alex Danilowicz'), expect.stringContaining('Second result'),
     ]);
-    expect(screen.queryByRole('button', { name: 'Load more results' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Loading more…')).not.toBeInTheDocument();
   });
 
-  it('keeps prior results on a transient continuation failure and retries the same cursor', async () => {
+  it('loads the next page when the keyboard reaches the last row', async () => {
+    const search = vi.fn<React.ComponentProps<typeof SearchModal>['search']>()
+      .mockResolvedValueOnce({ results: [result], nextCursor: 'next' })
+      .mockResolvedValueOnce({ results: [{ ...result, id: 'message-2', excerpt: 'Second result', highlights: [] }], nextCursor: null });
+    setup(search);
+    const input = screen.getByRole('combobox');
+    fireEvent.change(input, { target: { value: 'danil' } });
+    await screen.findByRole('option');
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2));
+    expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'all', pageSize: 7, cursor: 'next' }, expect.any(AbortSignal));
+  });
+
+  it('keeps prior results on a transient continuation failure, waits for the retry, and retries the same cursor', async () => {
     const search = vi.fn<React.ComponentProps<typeof SearchModal>['search']>()
       .mockResolvedValueOnce({ results: [result], nextCursor: 'next' })
       .mockRejectedValueOnce(new ApiError('Unavailable', 503))
@@ -108,11 +133,13 @@ describe('workspace search modal', () => {
     setup(search);
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
     await screen.findByRole('option');
-    const more = screen.getByRole('button', { name: 'Load more results' });
-    expect(screen.getByRole('listbox')).not.toContainElement(more);
-    fireEvent.click(more);
+    await reachEndOfList();
     const retry = await screen.findByRole('button', { name: 'Retry loading more results' });
+    expect(screen.getByRole('listbox')).not.toContainElement(retry);
     expect(screen.getAllByRole('option')).toHaveLength(1);
+    // A failed cursor is not retried by scrolling; only the button asks again.
+    await reachEndOfList();
+    expect(search).toHaveBeenCalledTimes(2);
     fireEvent.click(retry);
     await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2));
     expect(search.mock.calls[2]?.[0].cursor).toBe('next');
@@ -125,7 +152,7 @@ describe('workspace search modal', () => {
     setup(search);
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
     await screen.findByRole('option');
-    fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
+    await reachEndOfList();
     await screen.findByText('Search could not be completed. Please try again.');
     expect(screen.queryByRole('option')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /more results/ })).not.toBeInTheDocument();

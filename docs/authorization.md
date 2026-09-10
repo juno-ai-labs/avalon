@@ -10,6 +10,7 @@ participants or become a new canonical owner of memberships.
 | --- | --- |
 | `services/authorization-policy.ts` | Typed addresses, subject, four outcomes, proof composition, evidence validation, `AccessContext` |
 | `services/search-authorization.ts` | KV/regional search decisions, read-through misses and mutation-driven push |
+| `durable-objects/search-authorization-universe.ts` | The subjects and resources a push target reaches, read from the WorkspaceDO directories, so a decision is registered before the search that needs it |
 | `services/authorization-service.ts` | Member policy, batch-local owner observations and HTTP disclosure adapter |
 | `durable-objects/authorization-storage.ts` | Exact attachment locations, inventory revision ordering and shipped migration tables |
 | `durable-objects/search-authorization-projection.ts` | Workspace mutation triggers, coalesced push outbox and Queue dispatch |
@@ -77,13 +78,41 @@ alternative locations do not need to be read once access is established.
 Search decision snapshots use Global `AUTHORIZATION_CACHE` KV, with WorkspaceDO
 SQLite as the regional fallback (including EU). Keys hash the schema version,
 workspace, user, delegation and exact resource address. New keys never read the
-legacy snapshots. A miss resolves canonical authority once and stores allowed,
-denied or not-found decisions. Cache hits never recheck owners or schedule work.
+legacy snapshots. Member search answers a miss unavailable, omits the candidate
+without reporting it, and resolves canonical authority once after the response
+(`waitUntil`), storing allowed, denied or not-found decisions; other callers
+resolve the miss inline. A miss is the exception, not the first-search norm:
+every push job first registers the pairs its target reaches (see below), so the
+decision a search needs exists before the search. A KV miss whose decision the
+durable projection already holds is answered from there and republished to KV
+under its generation fence, so a cached negative lookup does not keep missing.
+Global reads only KV on the request; EU reads the WorkspaceDO snapshot table, one
+warm object, on the request. Cache hits never recheck owners or schedule work.
 There is no TTL, age-based denial, or periodic/demand-driven refresh. Relevant
 WorkspaceDO row mutations and accepted child inventory deliveries transactionally
 record a coalesced push intent. The alarm sends a reference-only
 `search_authorization_push_v1` target job to the regional activity queue.
-The consumer reloads registered subjects' canonical decisions and publishes
+The consumer first registers the pairs its target reaches, read from the
+WorkspaceDO's own directories (`search-authorization-universe.ts`): a parent
+reaches its members when workspace-scoped and its participants otherwise, for
+the main feed, every child the inventories or backfill registry name, and every
+attachment-admitted resource located under it; a connection reaches every member
+for one `connection` address; a note reaches every member, an upload the readers
+of its locations and its uploader; a member reaches everything that member could
+read, skipping archived rooms. This is discovery for registration, never a
+grant, and it over-approximates on purpose: a registered denial costs one key,
+a missing grant costs a search result. Connector resources are not registered
+per resource at all. Their readability is exactly their connection's (scope,
+owner, status), so the index row carries `connection_id` and the read path
+admits it by the `(subject, connection)` decision; the busiest workspace holds
+about 81,000 synced resources against 18 connections, which is the difference
+between a projection that fits a Durable Object and one that does not.
+Membership changes name the member: a removal, a departure or an accepted
+invitation publishes a `member` push for that user alone, on top of the
+`member_directory` refresh of every registered key. WorkspaceDO migration 48
+queues one push per live parent, connection and attachment-admitted resource so
+existing workspaces are registered without waiting for a mutation.
+The consumer then reloads the registered subjects' canonical decisions and publishes
 replacements through WorkspaceDO. Registration allocates a monotonically increasing
 per-key generation before authority reads; superseded generations cannot publish.
 A superseded push retries so a newer, failed cache fill cannot consume its durable
@@ -104,16 +133,17 @@ Registration retains current attachment dependencies before reading owners, so
 a removal during an initial fill still targets that key. Cache-read or
 miss-population failures become unavailable candidates, preserving
 partial search results. Archived conversation content remains excluded by the
-local storage reader, independently of cached authorization.
+index's archive attribute, independently of cached authorization.
 Changes reach cached grants and denials without another search. This deliberately
 accepts eventual consistency for grants and revocations, including queue and KV
 propagation delay. Five minutes remains a design goal, never a refresh trigger.
 
-A cache-admitted message or link uses `readAdmittedSearchContent`, an internal
-content-only RPC that checks the object address and waits only for storage
-readiness. It does not seat an automation viewer, resolve parent authority again,
-or call product authorization. Canonical revision/hash checks and passage
-extraction remain. Normal product reads continue through their own access path.
+A cache-admitted candidate renders from the index: its text, title, time and
+archive state travel with the row, written by the owning object (see
+[text search](text-search.md)). No content RPC runs on the read path.
+`readAdmittedSearchContent` and `resourceSearchRecords` remain callable for one
+release so Workers still rolling out can finish their requests, and are
+otherwise unused. Normal product reads continue through their own access path.
 Legacy snapshot RPCs remain inert for rolling compatibility; the shipped SQLite
 table is reused under the new key prefix and must not be dropped. EU never reads
 Global KV.
@@ -168,17 +198,17 @@ not a switch controlling which authorization implementation serves the request.
   `unavailable`. `denied` includes a policy reason; `not_found` means a canonical
   owner established absence; `unavailable` carries a retryable reason.
 - Only disclosure adapters collapse denial and absence into a concealed HTTP
-  404. Direct reads with unavailable authority return HTTP 503. Search and resource
-  lists omit unverified candidates, return verified rows with `complete: false`,
-  and retain normal pagination. Completeness describes evaluated candidates,
-  not whether more pages exist. The desktop marks partial results and offers a
-  retry; it does not describe an unverified empty page as "No results". No IDs,
-  counts, or source metadata from omitted candidates are returned. Provider-wide
-  retrieval errors, cancellation, and failed request authentication still fail
-  the request. The desktop advertises `supportsPartialResults: true`: older
-  strict response parsers retain their original wire shape and retryable failure
-  for incomplete search, rather than silently misrepresenting partial results.
-  Resource page parsers already accept additive fields.
+  404. Direct reads with unavailable authority return HTTP 503. Member search
+  omits an unverified candidate and says nothing about it: the response carries
+  no completeness flag, and the desktop has no partial-results state. The design
+  goal is that the projection is complete before the search, through
+  mutation-side registration; what remains is eventual consistency within the
+  propagation bound, understood and not surfaced. Resource lists keep their own
+  `complete` field and retry. No IDs, counts, or source metadata from omitted
+  candidates are returned. Provider-wide retrieval errors, cancellation, and
+  failed request authentication still fail the request. The request field
+  `supportsPartialResults` is accepted and ignored for desktop builds that still
+  send it.
 - Checks bind canonical observations to the trusted subject, workspace and exact
   resource address. A record for another user or private child cannot authorize a
   read. Policy-version validation remains only in the legacy snapshot wire schema.
@@ -345,6 +375,57 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-09-10 — Republish a durable decision after a cached KV miss
+
+Review found that the deferred fill, on finding the decision in the WorkspaceDO
+snapshot table after a KV miss, kept it only for the request that had already
+answered unavailable; KV caches negative lookups, so the next search missed
+again and read the object again, indefinitely. The fill now writes the stored
+snapshots back through `writeSearchAuthorizationSnapshots`, which keeps the
+generation fence and queues the existing retry when the put fails. A failed
+republish is ignored by the fill because the object has already recorded the
+retry intent.
+
+### 2026-09-10 — Register the projection from mutations and drop the completeness flag
+
+Review of the deferred fill below asked whether the first-search gap was a
+migration artifact. It was not: a key existed only once a search had missed on
+it, so every new member, and every member for every new conversation, saw a
+shorter first page. The team chose complete consistency as the design goal, with
+eventual consistency understood, and asked for the incomplete flag to go. Push
+jobs now register the pairs their target reaches before reloading owners, read
+from the WorkspaceDO directories through `search-authorization-universe.ts`;
+membership mutations publish a `member` push for the user they name; migration
+48 queues a push per live parent, connection and attachment-admitted resource.
+Connector resources gained a `connection` resource kind because registering
+them per resource does not fit: 81,000 synced resources times the member list
+in one Durable Object's SQLite, against 18 connections. The row carries
+`connection_id`, written by the resource producer, and the read path admits it
+by the connection's decision; a connection never changes on a resource after
+insert, so no rewrite trigger was needed. The search response lost `complete`,
+the route lost its 503 for clients without partial-result support, and the
+desktop lost the partial footer and the request flag; the request field is still
+accepted for builds that send it. Rejected: an on-demand fill left inline (the
+measured slow path), a full re-projection on every `member_directory` event (a
+profile edit publishes that topic), and readers-in-index (a larger reversal for
+the same outcome). A future change must keep enumeration an over-approximation
+that the canonical walk decides, never a grant, and must register a new
+readability path here when it adds one.
+
+### 2026-09-10 — Fill search decisions after the response
+
+Member search no longer waits for a canonical owner on a projection miss: the
+candidate is omitted, the page is marked incomplete, and the same fill that used
+to run inline (registration, owner walk, publication) runs through `waitUntil`.
+Measured production searches spent seconds in exactly that inline walk across cold
+WorkstreamDO and SubstreamAgent objects. The team chose performance, accepted that
+a first search for an unprojected pair shows less, and kept KV as the security
+layer with a ten-minute propagation bound. Other resolver callers, memory search
+among them, keep the inline fill because nothing hands them a deferral. Content
+and display now come from the index, so the content RPC contract above is inert;
+see the text-search changelog for the read path. A future change must not put an
+owner read back into a member search request to close the first-search gap.
 
 ### 2026-09-09 — Make projection recovery write-owned
 

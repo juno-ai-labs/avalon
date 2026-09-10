@@ -313,7 +313,8 @@ function fixture(): {
     regionalDatabase: database,
     register: (created) => { openDatabases.push(created); },
   });
-  const memoryRpcs = workspaceObjectRpcs(workspaceObject.instance, [...MEMORY_OBJECT_METHODS, 'publishSync', 'listSearchAuthorizationSnapshots']);
+  const memoryRpcs = workspaceObjectRpcs(workspaceObject.instance, [...MEMORY_OBJECT_METHODS, 'publishSync', 'listSearchAuthorizationSnapshots',
+    'enumerateSearchAuthorization', 'registerSearchAuthorization']);
   const envWith = (rpcs: Record<string, unknown>): Env => createTestEnv({
     DB: sqliteD1(database),
     MEMORY_INDEX: createCloudflareTestBinding<VectorizeIndex>(vector),

@@ -100,8 +100,13 @@ export function createSearchIndexingPipeline(env: Env) {
     let changed = false;
     for (const document of input.documents) {
       const next = current.documents.find((value) => value.id === document.id);
-      if (next?.revision === document.revision && next.text === document.text) continue;
+      const sameContent = next?.revision === document.revision && next.text === document.text;
+      // A display change (a rename, an archive) during the upsert would leave
+      // this row behind a patch that already ran; retrying rewrites it current.
+      const sameDisplay = JSON.stringify(next?.display ?? null) === JSON.stringify(document.display ?? null);
+      if (sameContent && sameDisplay) continue;
       changed = true;
+      if (sameContent) continue;
       // An equal-revision extraction change must remain rewritable on retry.
       // A tombstone here would permanently reject the replacement lexical row.
       if (!next || next.revision > document.revision || next.text === null) {

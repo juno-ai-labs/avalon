@@ -83,6 +83,26 @@ describe("text search authority boundary", () => {
     expect(provider.query).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps archived and pre-rewrite rows from consuming a member candidate page", async () => {
+    provider.query.mockResolvedValueOnce({ rows: [] });
+    const sources = [{ source: "messages", scopeIds: ["room"], load: async () => new Map() }];
+    await index.queryPage(sources, { query: "needle", mode: "substring", limit: 7 });
+    expect(provider.query.mock.calls[0]![0].filters[1][0][1]).toContainEqual(["archived", "Eq", false]);
+    // Semantic chunks carry no display and no `archived` attribute.
+    provider.query.mockResolvedValueOnce({ rows: [] });
+    await index.query(sources, { query: "needle", mode: "semantic", limit: 7, vector: [1, 0] });
+    expect(JSON.stringify(provider.query.mock.calls[1]![0].filters)).not.toContain('"archived"');
+    // A namespace written only before the display attributes shipped has nothing renderable.
+    // Both provider refusals were observed live against an old-schema namespace.
+    provider.query.mockRejectedValueOnce(Object.assign(new Error('400 {"error":"filter error in key `archived`: attribute not found"}'), { status: 400 }));
+    expect(await index.queryPage(sources, { query: "needle", mode: "substring", limit: 7 })).toEqual({ results: [], nextCursor: null });
+    provider.query.mockRejectedValueOnce(Object.assign(new Error('400 {"error":"attribute \u0022title\u0022 not found in schema, cannot be part of `include_attributes`"}'), { status: 400 }));
+    expect(await index.queryPage(sources, { query: "needle", mode: "substring", limit: 7 })).toEqual({ results: [], nextCursor: null });
+    provider.query.mockRejectedValueOnce(Object.assign(new Error("unrelated bad request"), { status: 400 }));
+    await expect(index.queryPage(sources, { query: "needle", mode: "substring", limit: 7 })).rejects.toThrow("search_index_query_failed");
+    expect(provider.query).toHaveBeenCalledTimes(5);
+  });
+
   it("returns an explicit continuation after one rejected candidate page", async () => {
     const row = { id: "first", source: "messages", source_id: "0/turn", scope_id: "room", revision: 1 };
     provider.query.mockResolvedValueOnce({ rows: [row] }).mockResolvedValueOnce({ rows: [] });
@@ -248,5 +268,54 @@ describe("search namespace identity", () => {
     expect(lexical).not.toBe(otherLexical);
     // https://turbopuffer.com/docs/write: the provider's namespace contract.
     for (const name of provider.namespaces) expect(name).toMatch(/^[A-Za-z0-9-_.]{1,128}$/u);
+  });
+});
+
+describe("index-served display", () => {
+  const index = new TextSearchIndex({ apiKey: "test", region: "gcp-us-west1", namespace: "test" });
+  beforeEach(() => {
+    vi.resetAllMocks();
+    provider.write.mockResolvedValue({});
+  });
+
+  it("writes what a result renders as columns and asks for them back with the text", async () => {
+    await index.upsert([{ id: "m", source: "messages", sourceId: "0/turn", scopeId: "room", substreamId: "0", revision: 1, text: "needle",
+      display: { title: "Room", sourceLabel: "Room", occurredAt: 5, transcriptSequence: 2, url: null, mimeType: null, archived: false } }]);
+    expect(provider.write.mock.calls[0]![0].upsert_rows[0]).toMatchObject({ substream_id: "0", title: "Room", source_label: "Room",
+      occurred_at: 5, transcript_sequence: 2, archived: false, url: null, mime_type: null });
+    await index.upsert([{ id: "t", source: "files", sourceId: "r", scopeId: "ws", revision: 1, text: "" }]);
+    expect(provider.write.mock.calls[1]![0].upsert_rows[0]).toMatchObject({ substream_id: null, title: null, archived: null });
+    provider.query.mockResolvedValue({ rows: [] });
+    await index.queryPage([{ source: "messages", scopeIds: null, load: async () => new Map() }], { query: "needle", mode: "substring", limit: 7 });
+    await index.upsert([{ id: "c", source: "files", sourceId: "r2", scopeId: "ws", connectionId: "conn", revision: 1, text: "synced" }]);
+    expect(provider.write.mock.calls[2]![0].upsert_rows[0]).toMatchObject({ connection_id: "conn" });
+    expect(provider.query.mock.calls[0]![0].include_attributes).toEqual(expect.arrayContaining([
+      "text", "title", "source_label", "archived", "occurred_at", "transcript_sequence", "url", "mime_type", "substream_id", "connection_id"]));
+    // Chunks carry no display, and a semantic namespace's schema never gains one.
+    await index.query([{ source: "note", scopeIds: ["private"], load: async () => new Map() }], { query: "needle", mode: "semantic", limit: 7, vector: [1, 0] });
+    expect(provider.query.mock.calls[1]![0].include_attributes).toEqual(["source", "source_id", "scope_id", "revision", "chunk_start", "chunk_end", "generation"]);
+  });
+
+  it("patches a renamed conversation for as long as the provider says rows remain", async () => {
+    provider.write.mockResolvedValueOnce({ rows_patched: 2, rows_remaining: true }).mockResolvedValueOnce({ rows_patched: 1 })
+      .mockResolvedValueOnce({ rows_affected: 0 });
+    expect(await index.patchConversationDisplay({ scopeId: "room", substreamId: "0" }, { title: "New", archived: false })).toBe(3);
+    expect(provider.write).toHaveBeenCalledTimes(3);
+    const first = provider.write.mock.calls[0]![0];
+    expect(first.patch_by_filter.patch).toEqual({ title: "New", source_label: "New", archived: false });
+    expect(first.patch_by_filter_allow_partial).toBe(true);
+    expect(first.patch_by_filter.filters[1]).toEqual(expect.arrayContaining([
+      ["source", "Eq", "messages"], ["scope_id", "Eq", "room"], ["substream_id", "Eq", "0"], ["deleted", "Eq", false]]));
+    expect(JSON.stringify(first.patch_by_filter.filters)).toContain(JSON.stringify(["title", "NotEq", "New"]));
+    expect(provider.write.mock.calls[2]![0].patch_by_filter.filters[1]).toContainEqual(["source", "Eq", "conversation_links"]);
+    expect(provider.write.mock.calls[2]![0].patch_by_filter.patch).toEqual({ source_label: "New", archived: false });
+    // A namespace that was never written has nothing to patch.
+    provider.write.mockRejectedValueOnce(Object.assign(new Error("missing"), { status: 404 }));
+    expect(await index.patchConversationDisplay({ scopeId: "room", substreamId: "0" }, { title: "New", archived: true })).toBe(0);
+    // Neither has one written only before the display attributes shipped (message observed live).
+    provider.write.mockRejectedValueOnce(Object.assign(new Error('400 {"error":"filter error in key `substream_id`: attribute not found"}'), { status: 400 }));
+    expect(await index.patchConversationDisplay({ scopeId: "room", substreamId: "0" }, { title: "New", archived: true })).toBe(0);
+    provider.write.mockRejectedValueOnce(Object.assign(new Error("unrelated bad request"), { status: 400 }));
+    await expect(index.patchConversationDisplay({ scopeId: "room", substreamId: "0" }, { title: "New", archived: true })).rejects.toThrow("search_index_write_failed");
   });
 });

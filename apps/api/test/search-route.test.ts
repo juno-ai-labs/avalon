@@ -5,6 +5,8 @@ import type { HonoAppEnv } from '../src/env';
 import { requireAuth } from '../src/middleware/auth';
 import { errorHandler } from '../src/middleware/errors';
 import { searchRoutes } from '../src/routes/search';
+import { searchAuthorizationKey } from '../src/services/search-authorization';
+import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
 import { createTestEnv } from './helpers/cloudflare-test';
 import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 
@@ -17,7 +19,8 @@ const USER = '00000000-0000-7000-8000-000000000001';
 const WORKSPACE = '00000000-0000-7000-8000-000000000002';
 const opened: DatabaseSync[] = [];
 afterEach(() => { providerQuery.mockReset(); for (const db of opened.splice(0)) db.close(); });
-function fixture() {
+const emptyCache = { get: async () => null } as unknown as KVNamespace;
+function fixture(cache: KVNamespace = emptyCache) {
   const db = migratedSqliteDatabase();
   opened.push(db);
   const now = new Date().toISOString();
@@ -28,7 +31,7 @@ function fixture() {
   db.prepare(`INSERT INTO workspace_members(workspace_id, user_id, role, status, joined_at)
     VALUES (?, ?, 'member', 'active', ?)`).run(WORKSPACE, USER, now);
   const env = createTestEnv({ DB: sqliteD1(db), APP_ENV: 'development', RALLY_DEV_AUTH: 'true',
-    AVALON_REGION: 'global', TURBO_PUFFER_DEV_API_KEY: 'test-only' });
+    AVALON_REGION: 'global', TURBO_PUFFER_DEV_API_KEY: 'test-only', AUTHORIZATION_CACHE: cache });
   const app = new Hono<HonoAppEnv>();
   app.use('*', requireAuth);
   app.route('/search', searchRoutes);
@@ -73,5 +76,49 @@ describe('member search route', () => {
     const response = await request({ query: 'needle', category: 'messages' });
     expect(response.status).toBe(401);
     expect(await response.json()).not.toHaveProperty('results');
+  });
+});
+
+describe('index-served member search', () => {
+  it('renders admitted results from the index and omits what the projection has not decided, without saying so', async () => {
+    const room = '00000000-0000-7000-8000-000000000003';
+    const undecided = '00000000-0000-7000-8000-000000000004';
+    const connection = '00000000-0000-7000-8000-000000000005';
+    const subject = { workspaceId: asWorkspaceId(WORKSPACE), userId: asUserId(USER), delegation: null };
+    const allowed = { status: 'allowed', evidence: [{ owner: 'fixture', revision: '1', validatedAt: 1 }] };
+    const conversation = { kind: 'conversation' as const, workspaceId: asWorkspaceId(WORKSPACE), parentId: room, substreamId: asSubstreamId('0') };
+    const synced = { kind: 'connection' as const, workspaceId: asWorkspaceId(WORKSPACE), connectionId: connection };
+    const snapshots = new Map([
+      [await searchAuthorizationKey(subject, conversation), { version: 1, generation: 1, subject, resource: conversation, decision: allowed, observedAt: 1 }],
+      [await searchAuthorizationKey(subject, synced), { version: 1, generation: 1, subject, resource: synced, decision: allowed, observedAt: 1 }],
+    ]);
+    const cache = { get: vi.fn(async (key: string) => snapshots.get(key) ?? null) } as unknown as KVNamespace;
+    const { request } = fixture(cache);
+    const display = { substream_id: '0', title: 'Planning', source_label: 'Planning', archived: false,
+      occurred_at: Date.parse('2026-09-05T00:00:00Z'), transcript_sequence: 4, url: null, mime_type: null };
+    const file = { title: 'Brief', source_label: 'Brief', archived: false, occurred_at: null, transcript_sequence: null, url: null, mime_type: 'text/plain' };
+    providerQuery.mockResolvedValue({ rows: [
+      { id: 'admitted', source: 'messages', scope_id: room, source_id: '0/turn-1', revision: 3, text: 'the needle sits here', ...display },
+      { id: 'archived', source: 'messages', scope_id: room, source_id: '0/turn-2', revision: 1, text: 'needle', ...display, archived: true },
+      // Indexed before the display attributes existed.
+      { id: 'legacy', source: 'messages', scope_id: room, source_id: '0/turn-3', revision: 1, text: 'needle' },
+      { id: 'undecided', source: 'messages', scope_id: undecided, source_id: '0/turn-4', revision: 1, text: 'needle', ...display },
+      // A connector's rows are admitted by their connection's decision; an attachment needs its own.
+      { id: 'synced', source: 'files', scope_id: WORKSPACE, source_id: '00000000-0000-7000-8000-000000000006', connection_id: connection, revision: 1, text: 'needle in a synced file', ...file },
+      { id: 'attached', source: 'files', scope_id: WORKSPACE, source_id: '00000000-0000-7000-8000-000000000007', revision: 1, text: 'needle in an upload', ...file },
+    ] });
+    const response = await request({ query: 'needle', category: 'all', pageSize: 7 });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { results: Array<{ id: string }> };
+    expect(body).not.toHaveProperty('complete');
+    expect(body).toMatchObject({ nextCursor: null, results: [{
+      id: 'admitted', category: 'messages', title: 'Planning', sourceLabel: 'Planning', occurredAt: '2026-09-05T00:00:00.000Z',
+      revision: '3', excerpt: 'the needle sits here', excerptStart: 0, highlights: [{ start: 4, end: 10 }],
+      location: { kind: 'message', workstreamId: room, substreamId: '0', turnId: 'turn-1', transcriptSequence: 4, range: { start: 4, end: 10 } },
+    }, { id: 'synced', category: 'files', title: 'Brief', location: { kind: 'resource', resourceId: '00000000-0000-7000-8000-000000000006', mimeType: 'text/plain' } }] });
+    expect(body.results.map((row) => row.id)).toEqual(['admitted', 'synced']);
+    expect(cache.get).toHaveBeenCalled();
+    // The field older clients sent is still accepted, and still changes nothing.
+    expect((await request({ query: 'needle', category: 'messages', pageSize: 7, supportsPartialResults: true })).status).toBe(200);
   });
 });

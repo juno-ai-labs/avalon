@@ -120,6 +120,10 @@ class AuthorizationBatch {
     const facts = membership.active && resourceIds.length
       ? await workspace.authorizationResourceFacts({ workspaceId: subject.workspaceId, userId: subject.userId, resourceIds }) : [];
     const factsById = new Map(facts.map((value) => [value.resourceId, value]));
+    const connectionIds = requested.flatMap((entry) => entry.resource.kind === 'connection' ? [entry.resource.connectionId] : []);
+    const connections = membership.active && connectionIds.length
+      ? await workspace.authorizationConnectionFacts({ workspaceId: subject.workspaceId, userId: subject.userId, connectionIds }) : [];
+    const connectionsById = new Map(connections.map((value) => [value.connectionId, value]));
     // Serialize distinct canonical owners rather than inventing another concurrency limit.
     // Resource facts above are batched for the whole page.
     for (const { resource, index } of requested) {
@@ -128,7 +132,8 @@ class AuthorizationBatch {
         decision = !membership.active ? evaluateReadPolicy(fact(false, 'workspace_membership_required', membershipEvidence), Date.now())
           : resource.kind === 'conversation' ? await this.conversation(subject, resource)
             : resource.kind === 'resource' ? await this.resource(subject, resource, factsById.get(resource.resourceId))
-              : { status: 'denied', reason: 'memory_scope_not_accessible', evidence: [] };
+              : resource.kind === 'connection' ? this.connection(resource, connectionsById.get(resource.connectionId))
+                : { status: 'denied', reason: 'memory_scope_not_accessible', evidence: [] };
         if (decision.status !== 'unavailable' && decision.evidence.length) decision = { ...decision, evidence: [membershipEvidence, ...decision.evidence] };
       } catch {
         logWarn(this.env, 'authorization_authority_read_failed', { region: this.env.AVALON_REGION, kind: resource.kind });
@@ -181,6 +186,15 @@ class AuthorizationBatch {
     // Automation existence/scope must remain evidence even when another relationship grants access.
     return evaluateReadPolicy({ kind: 'all', policies: [fact(true, 'not_participant', evidence),
       { kind: 'any', policies, reason: 'not_participant' }] }, Date.now());
+  }
+
+  /** The same predicate `resource()` applies to a connector resource, decided once per connection. */
+  private connection(resource: Extract<AuthorizationResource, { kind: 'connection' }>,
+    facts: Awaited<ReturnType<Awaited<ReturnType<typeof authorizationWorkspace>>['authorizationConnectionFacts']>>[number] | undefined): AuthorizationDecision {
+    if (!facts) throw new Error('authorization_connection_facts_missing');
+    const evidence = { owner: `connection:${resource.connectionId}`, revision: facts.exists ? facts.revision : 'absent', validatedAt: facts.validatedAt };
+    if (!facts.exists) return { status: 'not_found', resource, evidence: [evidence] };
+    return evaluateReadPolicy(fact(facts.allowed, 'connection_not_accessible', evidence), Date.now());
   }
 
   private async resource(subject: AuthorizationSubject, resource: Extract<AuthorizationResource, { kind: 'resource' }>,
