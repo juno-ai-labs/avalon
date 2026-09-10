@@ -14,8 +14,10 @@ properties without knowing which appearance is active.
 | Path | Responsibility |
 | --- | --- |
 | `config/design-tokens/registry.json` | Declares every supported token path, type, and meaning. |
-| `config/design-tokens/themes/light.json` | Rally's light token values and font declarations. |
-| `config/design-tokens/themes/dark.json` | Rally's dark token values and font declarations. |
+| `config/design-tokens/base.json` | Every token that does not change with the appearance: geometry, type, spacing, and the absolute colours. |
+| `config/design-tokens/base.schema.json` | Validates the base file. |
+| `config/design-tokens/themes/light.json` | What the light appearance sets: the tokens that differ from dark, and its font declarations. |
+| `config/design-tokens/themes/dark.json` | The same for dark. |
 | `config/design-tokens/theme.schema.json` | Validates an appearance file. |
 | `scripts/build-theme-assets.mjs` | Generates the renderer stylesheet and remote-font manifest. |
 | `apps/desktop/src/renderer/styles/themes.css` | Generated light and dark custom-property blocks. |
@@ -44,8 +46,11 @@ initial `backgroundColor`, and broadcasts changes so every open window repaints.
 A previous object-shaped preference is accepted only as a migration input: its
 `mode` becomes the scalar preference and its former family value is ignored.
 
-Every visual value originates in the token registry and one of the two
-appearance JSON files. `pnpm tokens:build` regenerates `themes.css` and
+Every visual value originates in the token registry and either `base.json`,
+which holds what does not change with the appearance, or one of the two
+appearance JSON files, which hold only what differs between light and dark. The
+build merges base under each appearance, so the generated stylesheet keeps one
+shape: every block declares every token. `pnpm tokens:build` regenerates `themes.css` and
 `common/theme-assets.ts`; `pnpm tokens:check` rejects drift. Bundled fonts are
 addressed directly. If an appearance declares a remote WOFF2 URL, main fetches
 it once, optionally verifies its integrity, stores it under `userData`, and
@@ -61,8 +66,18 @@ serves it through `rally-font://`.
   not provide a complete token set.
 - **Renderer rules use semantic tokens.** A literal colour in `app.css` works in
   one appearance and bypasses the contrast decisions in the token files.
-- **Both appearance files declare the full registry.** Inheritance between
-  appearances makes a missing dark value silently render with the light value.
+- **An appearance file holds only what differs between light and dark.**
+  Everything else is `base.json`, and `scripts/build-theme-assets.test.mjs`
+  holds the line from both sides: the files partition the registry, both
+  appearances set the same tokens, and a token both appearances set to the same
+  value fails as a base token that drifted. Inheritance between appearances
+  would otherwise make a missing dark value silently render with the light one.
+- **Every token has a reader.** `themes.css.node.test.ts` fails a declared token
+  that no source file names, no token file aliases, and no prefix reader covers.
+- **Spacing is one number.** Every feed spacing token is a multiple of
+  `ref.space.unit`, and `app.css` derives its `--space-N` steps from the same
+  unit. The sidebar's `sys.space.group.gap` is the one spacing token off it,
+  at the 14px its own entry argued for.
 - **The shell owns the canvas background.** Repainting the same image or
   gradient on nested panes creates seams when the sidebar and feed differ in
   size.
@@ -76,10 +91,10 @@ serves it through `rally-font://`.
   recorded rather than fixed — see the 2026-09-10 changelog entry for what is
   accepted and why.
 - **Both palette inks are absolute.** A fill does not change with the
-  appearance, so the ink over it must not either. `palette-ink-light` and
-  `palette-ink-dark` hold the same values in both appearance files, and the
-  `--personal-ink-*` pair swaps which neutral it points at precisely so that it
-  does not invert.
+  appearance, so the ink over it must not either. `palette-ink-light`,
+  `palette-ink-dark` and the fills themselves live in `base.json`, where an
+  appearance cannot move them, and the `--personal-ink-*` pair swaps which
+  neutral it points at precisely so that it does not invert.
 - **A spacing token is re-fitted, never escaped per consumer.** When a shared
   value is wrong for one rule, the fix is the token or a decision written down
   beside the rule — not a literal on that one selector. Overriding each
@@ -118,9 +133,10 @@ an arbitrary URL to it.
 - A remote font response that is empty, exceeds 8 MiB, fails a declared SHA-256
   integrity check, or is not in the generated manifest returns 404 and leaves
   the UI on its fallback font.
-- An appearance JSON file that omits a required token, names an undeclared
-  token, uses an invalid value type, or duplicates the default fails the token
-  build or its tests.
+- A token file that names an undeclared token, leaves a registry token unset
+  between base and the appearances, restates a base token in an appearance,
+  or sets a token to the same value in every appearance fails the token build
+  or its tests.
 
 ## Testing
 
@@ -144,6 +160,50 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-09-10 — Base tokens leave the appearance files, dead tokens leave the registry
+
+**What changed:** Three things to the token set and one to the stylesheet's
+class vocabulary. `config/design-tokens/base.json` now holds every token whose
+value does not change with the appearance (sizes, radii, spacing, type, the
+markdown scale, and the absolute colours: the palette fills, the two inks over
+them, the brand ramp, `text.on-media`, the bubble's foreground and edge);
+`light.json` and `dark.json` hold only what differs, and set the same keys. The
+build merges base under each appearance, so `themes.css` keeps its shape.
+Twenty-four tokens nothing read are gone: `cmp.turn.align/margin/width`, the
+sixteen `cmp.connector.*` fills, `sys.color.success.on`, `warning.strong`,
+`warning.on`, `sys.space.pane.padding` and `sys.font.family.display`, with their
+three empty groups. Eight single-read spacing aliases are gone too, replaced in
+`app.css` by the `--space-N` step they restated: `cmp.bubble.padding`,
+`cmp.feed.padding-x` and `-y`, and the five `cmp.markdown.*-margin` and
+`cell-padding` tokens; `sys.space.row.gap` and
+`cmp.markdown.list-indent` are now unit multiples (4 and 24); `sys.space.group.gap`
+keeps the 14px the sidebar entry of the same date argued for, the one spacing
+token off the unit, and lives in `base.json` like the rest.
+`.grokbot-shell`, the class the shell's rules hang off, is `.app-shell`.
+Three tests were added: the base/appearance partition guards in
+`build-theme-assets.test.mjs`, and "every token has a reader" in
+`themes.css.node.test.ts`.
+
+**Why:** A count after the spacing change found 114 tokens identical in both
+appearances, 65 tokens `app.css` never reads (24 with no reader anywhere), and
+67 read exactly once. Identical values in two files can only ever differ by
+mistake; `base.json` makes "this does not vary by appearance" structural, which
+is what this document had been stating in prose for the palette inks. The merge
+happens in the build rather than by emitting base on `:root` because an alias
+declared on `:root` is substituted there: a base token pointing at an appearance
+token would carry the default appearance's value under a nested `data-theme`,
+the Settings miniatures being exactly that element; the build script's comment
+on whole blocks already records the hazard. The dead connector fills were left
+behind when connector marks moved to masks painted in `currentColor`; the
+turn-alignment trio and `sys.font.family.display` were read by themes that no
+longer exist. The spacing aliases were kept in the previous change on the
+reasoning that a theme might move markdown margins independently of prose; that
+reasoning was Air's, and Air is gone, so a token read once that restates a step
+of the scale is a name with no second reader. `.grokbot-shell` named a theme in
+a product that has one design; the rename says what the class is rather than
+where its numbers came from, and the changelog entries that describe the GrokBot
+reference keep their history.
 
 ### 2026-09-10 — Spacing tokens derive from one unit
 

@@ -20,11 +20,19 @@ const app = readFileSync(resolve(process.cwd(), 'src/renderer/styles/app.css'), 
 const onboarding = readFileSync(resolve(process.cwd(), 'src/renderer/styles/onboarding.css'), 'utf8');
 const tokensDirectory = resolve(process.cwd(), '../../config/design-tokens');
 
+/**
+ * An appearance's tokens with the base file's under them, the way the build
+ * resolves them: the palette fills and both inks are absolute, so they live in
+ * `base.json` rather than in either appearance.
+ */
 function themeValues(theme: 'light' | 'dark'): Record<string, string> {
+  const base = JSON.parse(
+    readFileSync(join(tokensDirectory, 'base.json'), 'utf8'),
+  ) as { tokens: Record<string, string> };
   const file = JSON.parse(
     readFileSync(join(tokensDirectory, 'themes', `${theme}.json`), 'utf8'),
   ) as { tokens: Record<string, string> };
-  return file.tokens;
+  return { ...base.tokens, ...file.tokens };
 }
 
 /** WCAG relative luminance; the sRGB transfer function, not a brightness approximation. */

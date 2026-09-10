@@ -292,6 +292,29 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-10 — The both-host feed rules are the base rules
+
+**What changed:** The 47 `app.css` rules scoped
+`:is(.workstream-screen, .automation-chat-surface)` are un-scoped, and the
+declarations they had been overriding are removed from the base rules under
+them (`.tool-block`, `.tool-block summary`, `.tool-icon`, `.tool-summary` and its
+`strong` and `small`, `.tool-details`, `.agent-message-actions`);
+`.tool-completed .tool-state`, whose only declaration was overridden, is gone,
+as is a second `.human-message .message-author` rule whose every declaration a
+later rule replaced. `.workstream-screen`-only rules are untouched.
+
+**Why:** Those two classes are the only hosts that render the feed, so a rule
+scoped to both was a base rule written as an override, and it forced a base rule
+to exist underneath for it to beat. Twelve base rules had every declaration
+shadowed that way, and the ordering hazards this stylesheet's tests keep
+warning about (two rules tying on specificity, source order deciding) were
+mostly this pattern. A scan before un-scoping found one place where the change
+would have altered which rule won, the human author line, where the
+work-stream theme's own rule already carried the winning value; the duplicate
+was deleted rather than re-ordered. Shell-scoped and work-stream-scoped rules
+stay as overrides because they are ones: the shell has a second sidebar form
+and the work stream has a bubble the automation surface does not.
+
 ### 2026-09-10 — The feed's spacing is one scale and one rhythm
 
 **What changed:** Every margin, padding and gap in the feed is now a whole

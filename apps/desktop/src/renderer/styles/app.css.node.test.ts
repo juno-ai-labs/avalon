@@ -338,7 +338,7 @@ describe('Grok Bot mention-chip geometry', () => {
   it('uses the inserted-chip metrics and the user-turn ink wash', () => {
     const chip = rule('.mention-chip');
     const userChip = rule(
-      ':is(.workstream-screen, .automation-chat-surface) .human-message .mention-chip',
+      '.human-message .mention-chip',
     );
 
     expect(chip).not.toBeNull();
@@ -857,7 +857,7 @@ describe('markdown list markers', () => {
     expect(rule('.meeting-notes-body .markdown-body :is(h1, h2, h3, h4, h5, h6)')).toContain(
       'font-size: 15px',
     );
-    expect(rule(':is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body'))
+    expect(rule('.agent-message .markdown-body'))
       .toContain('14.5px');
   });
 });
@@ -972,13 +972,13 @@ describe('message header meta typography', () => {
    * what a screenshot pass looks past.
    */
   it('insets the human identity line and action row by the bubble corner they are named once for', () => {
-    const block = rule(':is(.workstream-screen, .automation-chat-surface) .human-message');
+    const block = rule('.human-message');
     expect(block).toContain('--turn-bubble-radius:');
-    expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message-bubble'))
+    expect(rule('.human-message-bubble'))
       .toContain('border-radius: var(--turn-bubble-radius);');
-    expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message > header'))
+    expect(rule('.human-message > header'))
       .toContain('padding-inline-end: var(--turn-bubble-radius);');
-    expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message .human-message-actions'))
+    expect(rule('.human-message .human-message-actions'))
       .toContain('padding-inline-end: var(--turn-bubble-radius);');
   });
 
@@ -993,12 +993,11 @@ describe('message header meta typography', () => {
     const themed = rule('.workstream-screen .human-message');
     expect(themed).not.toBeNull();
     expect(themed).toContain('--turn-bubble-radius:');
-    // The two token declarations tie on specificity — `:is()` takes its most
-    // specific argument — so source order is what makes the theme's value win.
-    // Without this, moving the theme rule above the shared one keeps every
-    // assertion here green while restoring the 4px drift they exist to prevent.
+    // The theme rule out-specifies the base rule now that the base is
+    // un-scoped, but it is still asserted to follow it: a base rule that moved
+    // below the theme's would read as the override and be edited as one.
     expect(stylesheet.indexOf('.workstream-screen .human-message {'))
-      .toBeGreaterThan(stylesheet.indexOf(':is(.workstream-screen, .automation-chat-surface) .human-message {'));
+      .toBeGreaterThan(stylesheet.search(/^\.human-message \{/mu));
     expect(rule('.workstream-screen .human-message-bubble'))
       .toContain('border-radius: var(--turn-bubble-radius);');
     // On the value, not one spelling of the property: a literal creeping back
@@ -1013,7 +1012,7 @@ describe('message header meta typography', () => {
     // where a literal inset would creep back in, so its absence is what is
     // asserted, and the shared rule is checked to carry the inset by token.
     expect(rule('.workstream-screen .human-message > header')).toBeNull();
-    expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message > header'))
+    expect(rule('.human-message > header'))
       .not.toMatch(/padding(?:-right|-inline(?:-end)?)?:\s*\d/u);
   });
 
@@ -1034,7 +1033,7 @@ describe('message header meta typography', () => {
     // Same shape as the human rule above: the theme's header rule carried only
     // a margin that disagreed with the shared one by a pixel, and is gone.
     expect(rule('.workstream-screen .agent-message > header')).toBeNull();
-    expect(rule(':is(.workstream-screen, .automation-chat-surface) .agent-message > header'))
+    expect(rule('.agent-message > header'))
       .not.toMatch(/padding(?:-left|-inline(?:-start)?)?:/u);
   });
 });

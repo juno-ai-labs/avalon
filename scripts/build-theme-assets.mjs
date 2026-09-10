@@ -73,13 +73,20 @@ function readJson(path) {
 
 export function readTokenSources() {
   const registry = readJson(join(tokensDirectory, 'registry.json'));
+  // What does not change with the appearance. Merged under every appearance
+  // at build time rather than emitted once on `:root`: an alias declared on
+  // `:root` is substituted there, so a base token that pointed at an
+  // appearance token would freeze the default appearance's value under a
+  // nested `data-theme`. Keeping the split in the sources and the merge in the
+  // output means the stylesheet keeps its one shape, every block whole.
+  const base = readJson(join(tokensDirectory, 'base.json'));
   const themes = readdirSync(themesDirectory)
     .filter((entry) => entry.endsWith('.json'))
     .map((entry) => readJson(join(themesDirectory, entry)));
   // The default theme first: it is emitted as `:root` as well, so it has to be
   // the block every other theme's omissions fall through to.
   themes.sort((a, b) => (a.default ? -1 : b.default ? 1 : a.id.localeCompare(b.id)));
-  return { registry, themes };
+  return { registry, base, themes };
 }
 
 /**
@@ -235,8 +242,8 @@ export const FONT_SCHEME = 'rally-font';
  * What the application needs to know about appearance assets that are not CSS
  * values. Generated rather than parsed from design-token files at runtime.
  */
-export function assetManifest(themes) {
-  const syntax = exportSyntaxPalette(themes);
+export function assetManifest(themes, base) {
+  const syntax = exportSyntaxPalette(themes, base);
   const remote = fontFaces(themes).filter((font) => font.src.url);
 
   const entries = remote.map((font) => [
@@ -297,13 +304,13 @@ export function assetManifest(themes) {
  * points at, so anything still shaped like `{ref.…}` is followed here rather
  * than emitted.
  */
-export function exportSyntaxPalette(themes) {
+export function exportSyntaxPalette(themes, base) {
   const darkAppearances = themes.filter((theme) => theme.appearance === 'dark');
   if (darkAppearances.length !== 1) {
     throw new Error(`expected exactly one dark appearance, found ${darkAppearances.length}`);
   }
   const theme = darkAppearances[0];
-  const values = resolvedTokens(theme, themes);
+  const values = resolvedTokens(theme, themes, base);
   return Object.keys(values)
     .filter((path) => path.startsWith('sys.color.syntax.'))
     .map((path) => {
@@ -320,7 +327,7 @@ export function exportSyntaxPalette(themes) {
     });
 }
 
-export function generate({ registry, themes }) {
+export function generate({ registry, base, themes }) {
   const order = Object.keys(registry.tokens);
   // Every block declares every token, including the ones a theme was content to
   // inherit. Falling through to `:root` works only while `data-theme` is on the
@@ -332,7 +339,7 @@ export function generate({ registry, themes }) {
   // costs a few kilobytes and makes `data-theme` mean the same thing anywhere in
   // the tree.
   const blocks = themes.map((theme) => {
-    const values = resolvedTokens(theme, themes);
+    const values = resolvedTokens(theme, themes, base);
     const lines = [];
     let lastGroup = null;
     for (const path of order) {
@@ -378,7 +385,8 @@ export function generate({ registry, themes }) {
 }
 
 /**
- * A theme's tokens with the default theme's filled in underneath.
+ * A theme's tokens with the default theme's filled in underneath, and the base
+ * tokens under both.
  *
  * Falling through to `:root` works only while `data-theme` is on the document:
  * an alias declared on `:root` is substituted where it is declared, so a nested
@@ -386,9 +394,9 @@ export function generate({ registry, themes }) {
  * resolved colour and redeclaring the ramp beneath it changes nothing. The
  * Settings miniatures are exactly that element.
  */
-export function resolvedTokens(theme, themes) {
+export function resolvedTokens(theme, themes, base = { tokens: {} }) {
   const inherited = defaultTheme(themes).tokens;
-  return { ...inherited, ...theme.tokens };
+  return { ...base.tokens, ...inherited, ...theme.tokens };
 }
 
 /**
@@ -402,7 +410,7 @@ export function resolvedTokens(theme, themes) {
 export function outputs(sources) {
   return [
     { path: stylesheetPath, contents: generate(sources) },
-    { path: manifestPath, contents: assetManifest(sources.themes) },
+    { path: manifestPath, contents: assetManifest(sources.themes, sources.base) },
   ];
 }
 
