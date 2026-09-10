@@ -315,10 +315,16 @@ handler behind it, and the `.composer-teach-task-icon` rule that coloured its
 mark. Outside a debug build that leaves the menu at attachment alone; the
 model picker under it (a separator, a **Model** label, and the radio group,
 rendered only when `model && debugEnabled && model.kind === 'choice'`) is
-untouched, and still the menu's second section where it renders. The route the
-item opened is untouched too, and still reachable: the application menu bar's
-**New Automation** item emits the `automations/new` deep link, and the Slack
-agent hands out the same link.
+untouched, and still the menu's second section where it renders. The create
+screen the item opened is untouched too, and still reached from the product:
+`AutomationScreen` hosts it at both `/automations/new` and `/sidekicks/new`
+(the id `new` is the create), and the Sidekicks library's **New Sidekick**
+button links to the second of those. The menu bar's **New Automation** item and
+the Slack agent emit `rallywithai://automations/new`, which deliberately does
+*not* land there: `app-session.tsx` routes that intent to `#/workstreams/new`,
+because the builder the link once opened is gone and an automation is now
+drafted by asking for one in a work stream. So this removal takes away the only
+composer-side entrance, not the capability.
 
 **Why:** The entry point was dropped as a product decision, so the shared
 composer no longer offers it. Nothing was rehomed, because the prop was not a
