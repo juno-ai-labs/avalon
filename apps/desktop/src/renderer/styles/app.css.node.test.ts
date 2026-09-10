@@ -1763,20 +1763,26 @@ describe('the shared shell primitives and the artifact pane', () => {
     expect(scoped).toEqual([]);
   });
 
-  it('gives the pane the corner the composited view is told to draw', () => {
+  it('draws no edge of its own around the page, and no gutter around the pane', () => {
+    // The border and the corner the pane used to carry were a second frame
+    // inside the lightbox's own, around content that already fills it.
+    const pane = rule('.site-detail-pane');
+    expect(pane).not.toContain('border:');
+    expect(pane).not.toContain('border-radius');
+    expect(rule('.resource-lightbox .rail-scroll:has(> .site-detail)')).toContain('padding: 0');
+  });
+
+  it('rounds the composited view to the corner of the surface it bleeds into', () => {
     // CSS cannot clip a `WebContentsView`: the page is painted above the DOM,
-    // so a rounded pane under a square view just shows its own corners around
-    // the artifact. The main process therefore rounds the view itself, and
+    // so a square view reaching the lightbox's bottom corners would paint the
+    // page out over the scrim. The main process rounds the view itself, and
     // this is what notices when one of the two numbers moves without the
     // other. Read from disk for the reason at the top of this file.
-    expect(rule('.site-detail-pane')).toContain('border-radius: var(--av-cmp-surface-radius)');
-
-    const themes = readFileSync(resolve(process.cwd(), 'src/renderer/styles/themes.css'), 'utf8');
-    const token = /--av-cmp-surface-radius:\s*(\d+)px/u.exec(themes)?.[1];
+    const host = /border-radius:\s*(\d+)px/u.exec(rule('.attachment-lightbox.is-document-viewer') ?? '')?.[1];
     const main = readFileSync(resolve(process.cwd(), 'src/main/artifact-viewers.ts'), 'utf8');
     const applied = /export const PREVIEW_CORNER_RADIUS = (\d+);/u.exec(main)?.[1];
 
-    expect(token).toBeDefined();
-    expect(applied).toBe(token);
+    expect(host).toBeDefined();
+    expect(applied).toBe(host);
   });
 });

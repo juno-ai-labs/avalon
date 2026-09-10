@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { classifyAttachmentKind } from '@rally/contracts';
+import { DetailHeaderActionsHost } from './detail-header-actions';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { formatDateTime, formatSparseRelativeDate } from '../lib/format';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../lib/resource-preview';
@@ -66,7 +67,6 @@ interface InspectorRailProps {
     openArtifact: SiteResourceDetailProps['openArtifact'];
     describeData: SiteResourceDetailProps['describeData'];
     loadTable: SiteResourceDetailProps['loadTable'];
-    loadErrors: SiteResourceDetailProps['loadErrors'];
     surface: SiteResourceDetailProps['surface'];
   };
   workstream?: WorkstreamDetail;
@@ -613,7 +613,6 @@ function InspectorDetail({
       return (
         <SiteResourceDetail
           describeData={siteArtifacts.describeData}
-          loadErrors={siteArtifacts.loadErrors}
           loadTable={siteArtifacts.loadTable}
           openArtifact={siteArtifacts.openArtifact}
           resourceId={resource.id}
@@ -727,6 +726,11 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   if (!props.lightbox && !railOpen && !props.leaving) return null;
 
   const headerTitle = resource?.title ?? (inspector ? 'Details' : props.lightbox ? 'Resources' : railTitle[railVariant]);
+  // State rather than a ref, because a detail's actions are portalled into this
+  // element and a ref's assignment does not re-render the detail that is
+  // waiting for it: with a ref the slot stays empty until something else
+  // happens to re-render.
+  const [detailActionsTarget, setDetailActionsTarget] = useState<HTMLDivElement | null>(null);
 
   const content = (
     <>
@@ -743,6 +747,11 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
           <h2 title={headerTitle}>{headerTitle}</h2>
         </div>
         <div className="rail-header-actions window-no-drag">
+          {/*
+            The detail's own actions, ahead of the rail's: what this resource
+            can do belongs beside the resource, and Close stays at the edge.
+          */}
+          <div className="rail-header-detail-actions" ref={setDetailActionsTarget} />
           {resource && (
             <>
               <DropdownMenu.Root>
@@ -779,6 +788,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
           <IconButton label={props.lightbox ? 'Close resource preview' : 'Close inspector'} onClick={closeRail} ref={closeInspectorRef}>{props.lightbox ? <X size={20} /> : <ChevronsRight size={16} />}</IconButton>
         </div>
       </header>
+      <DetailHeaderActionsHost target={detailActionsTarget}>
       <div className="rail-scroll">
         {props.error && <div className="rail-inline-error"><InlineError>{props.error}</InlineError></div>}
         {inspector ? (
@@ -794,6 +804,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
           <ContextContent {...props} />
         )}
       </div>
+      </DetailHeaderActionsHost>
       <Modal
         description={`${archiveTarget?.title ?? 'This resource'} will leave this work stream. Rally has no way to bring it back yet.`}
         footer={(

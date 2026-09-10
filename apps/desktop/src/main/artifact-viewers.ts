@@ -57,15 +57,20 @@ export interface ArtifactViewHandle {
 }
 
 /**
- * The corner the rail's preview is composited with, in CSS pixels.
+ * The corner the preview is composited with, in CSS pixels.
  *
- * It mirrors `--av-cmp-surface-radius`, which is what `.site-detail-pane`
- * draws its own corner from. The two are pinned together by a renderer test
- * rather than by a shared constant: the token belongs to the design system and
- * cannot be imported into the main process, so the test is what notices if one
- * of them moves.
+ * The pane is full bleed: it reaches the bottom corners of the lightbox that
+ * holds it, and a `WebContentsView` is not clipped by the DOM, so a square view
+ * would paint the page's own square corners over the dialog's rounded ones and
+ * out onto the scrim. This mirrors the lightbox's radius instead, which costs
+ * a rounded corner where the view meets the header above it: Electron's API
+ * takes one radius for all four, and a seam under a divider is a better artifact
+ * than a page overhanging the surface it sits in.
+ *
+ * Pinned to that rule by a renderer test rather than by a shared constant,
+ * since a stylesheet cannot be imported into the main process.
  */
-export const PREVIEW_CORNER_RADIUS = 12;
+export const PREVIEW_CORNER_RADIUS = 16;
 
 export interface ArtifactHostWindow {
   /** Whether the window is gone; see `ArtifactViewHandle.destroyed`. */
