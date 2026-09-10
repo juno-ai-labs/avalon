@@ -137,6 +137,27 @@ describe('SegmentedControl', () => {
     expect(document.activeElement).toBe(options[2]);
   });
 
+  it('leaves a modified arrow to the platform', () => {
+    const onChange = vi.fn();
+    render(<Segmented onChange={onChange} />);
+    const options = screen.getAllByRole('radio');
+    options[1]!.focus();
+
+    // VoiceOver navigates with Ctrl-Option-Arrow, and the window manager and
+    // the OS claim the other three. Acting on those would change the setting
+    // under someone who was trying to move past it — and `preventDefault` would
+    // stop the move they asked for from happening at all.
+    for (const modifier of [{ ctrlKey: true, altKey: true }, { metaKey: true }, { shiftKey: true }]) {
+      for (const key of ['ArrowRight', 'ArrowLeft', 'Home', 'End']) {
+        // `fireEvent` returns false when the handler cancelled the event.
+        expect(fireEvent.keyDown(options[1]!, { key, ...modifier }), `${key} ${JSON.stringify(modifier)}`).toBe(true);
+      }
+    }
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(options[1]);
+  });
+
   it('leaves keys it does not own to the surrounding form', () => {
     const onChange = vi.fn();
     render(<Segmented onChange={onChange} />);
