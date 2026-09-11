@@ -4106,9 +4106,11 @@ pre {
 .resource-lightbox .rail-scroll > .site-detail { flex: 1 1 auto; }
 /* The page follows the dialog's own curve where it reaches it, and nowhere
    else: square against the header, round against the outside edge. The
-   composited view carries the same corner from `PREVIEW_CORNER_RADIUS`, on all
-   four corners rather than these two, because Electron takes one radius for
-   the whole view. These three numbers are pinned together by a test. */
+   composited view is given this same corner, read back off the pane at present
+   time, on all four corners rather than these two, because Electron takes one
+   radius for the whole view. A pane in the plain rail draws no corner here and
+   the view over it is square, which is why the number is read rather than
+   stated in the main process. */
 .resource-lightbox .site-detail-pane {
   min-height: 280px;
   border-bottom-left-radius: 16px;
@@ -4556,7 +4558,10 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   background: var(--av-sys-color-surface-raised);
   overflow: hidden;
 }
-.site-detail-status { margin: 0; color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
+/* Carries its own gutter: it is the first frame of the data view, which is
+   reached by an early return above that view's padded wrapper, and the lightbox
+   body around it has no padding of its own since the preview went full bleed. */
+.site-detail-status { margin: 0; padding: 16px; color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 /* The data view is ordinary Rally UI rather than a page, so it keeps the
    gutter the full-bleed preview gives up. */
 .site-data { display: flex; flex-direction: column; gap: 8px; min-height: 0; padding: 16px; }

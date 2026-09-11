@@ -444,6 +444,30 @@ typed, authorized, receipted tool write.
 
 ## Decision log
 
+### 2026-09-11 — The error log loses its reader, and nothing replaces it yet
+
+**Decided:** The rail's error panel is removed from the client. The supervisor
+still records the 50-entry per-artifact log and `GET .../artifact/errors` still
+serves it; nothing reads either. No agent tool reads it either, so a failing
+site currently has no path back to the model at all.
+
+**Why:** The viewer was rebuilt so that the page fills its surface and Rally
+draws no panel switch over it, and a permanent Errors tab is exactly the shape
+that removal was about: it sat beside the page at equal weight on every artifact
+including the overwhelming majority that have never thrown. The removal was
+asked for directly.
+
+**Changes:** Acceptance criterion 7's second clause ("and the error appears in
+the rail's error log") is not satisfiable until a replacement surface exists;
+the first clause, the plain error page, is unaffected. Non-goal 7's reasoning
+about deferring a model-facing log tool assumed the client surface was carrying
+the repair loop, and that assumption is now false, so whichever comes back first
+is the one that restores it. The shape to bring back is one that appears only
+when the log is non-empty, not a tab; `readArtifactErrors` was deleted from the
+renderer's API client along with the panel rather than left as an unused method,
+so restoring the surface means restoring that call too. Carried in
+juno-ai-labs/avalon#692.
+
 ### 2026-09-01 — The 100 MB storage threshold is dropped, not set
 
 **Decided:** There is no per-artifact storage ceiling in V1. Design decision 12's

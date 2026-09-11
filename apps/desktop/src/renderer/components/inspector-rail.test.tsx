@@ -780,7 +780,6 @@ describe('resource detail content preview', () => {
       })),
       describeData: vi.fn(async () => ({ tables: [] })),
       loadTable: vi.fn(async () => ({ rows: [], csv: '' })),
-      loadErrors: vi.fn(async () => []),
       surface: {
         present: vi.fn(async () => true),
         setBounds: vi.fn(async () => undefined),

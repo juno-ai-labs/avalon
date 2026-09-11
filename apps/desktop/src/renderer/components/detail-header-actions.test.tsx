@@ -18,19 +18,13 @@ function Host({ children }: { children: React.ReactNode }): React.JSX.Element {
 
 describe('a detail contributing actions to its host header', () => {
   it('draws them in the header rather than where they were written', () => {
+    // Also the reason the host holds its target in state: the element does not
+    // exist on the render that declares it, so a detail that read a ref would
+    // find nothing and never be asked again.
     render(<Host><DetailHeaderActions><button type="button">Pop out</button></DetailHeaderActions></Host>);
 
     expect(within(screen.getByTestId('header')).getByRole('button', { name: 'Pop out' })).toBeInTheDocument();
     expect(within(screen.getByTestId('body')).queryByRole('button', { name: 'Pop out' })).not.toBeInTheDocument();
-  });
-
-  it('arrives once the slot does, rather than only if it was there first', () => {
-    // The host's element is state for this reason: it does not exist on the
-    // render that declares it, and a detail that gave up at that point would
-    // contribute nothing for the life of the surface.
-    render(<Host><DetailHeaderActions><button type="button">Pop out</button></DetailHeaderActions></Host>);
-
-    expect(screen.getByRole('button', { name: 'Pop out' })).toBeInTheDocument();
   });
 
   it('draws nothing at all where no host offers a slot', () => {
