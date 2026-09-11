@@ -1043,7 +1043,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
             expiresAt: {
               type: "string",
               format: "date-time",
-              description: "When the fact stops being true, as an ISO 8601 timestamp, for example 2026-12-31T00:00:00Z. Omitting it clears any expiry the memory had rather than keeping it.",
+              description: "Move the expiry to this moment, as an ISO 8601 timestamp, for example 2026-12-31T00:00:00Z. Omitting it keeps the expiry the memory already has; there is no way to remove one through this tool, so a memory that was written with an expiry still disappears at it.",
             },
             rationale: { type: "string", minLength: 1, maxLength: 2_000, description: "Why the memory is changing, in one or two sentences, for the person reviewing what the run did." },
           },
