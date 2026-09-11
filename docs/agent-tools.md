@@ -932,6 +932,38 @@ future agent tool or plugin, not just this family.
 
 ## Changelog
 
+### 2026-09-11 — The recorded description debt is paid down to the one surface nobody walked
+
+**What changed:** 227 of the 239 parameters the entry below recorded as owed
+now carry a description: Google's 60, Slack's 39, the durable tables' 26,
+Linear's 24, Notion's 19, the work-stream resource and artifact-data tools' 19,
+the Sidekick creator and discovery tools' 18, memory's 12, Granola's 8, and the
+web tools' 2. Eleven surfaces move to 0 in
+`tool-schema-descriptions.test.ts`. `multimodal`'s 12 are the remainder and stay
+recorded.
+
+**Why:** The entry below states the rule and pays GitHub, which is the surface
+the failure happened on. The rest were recorded rather than written because each
+sentence needs somebody who knows the provider — and left recorded, they are a
+number that shrinks when nobody is looking at it. The sentence that earns the
+work is the one about a wrong value, and it is only writable per parameter:
+Slack answers a well-formed id for a conversation the credential cannot see with
+zero hits, a Docs `find` that matched nothing reports zero replacements, a
+durable-table filter naming a real column with a value of the wrong shape
+matches no row, and a Sidekick trigger naming an event type its plugin never
+declared simply never fires. Each is HTTP 200 and an empty result, which is
+`head` again on a different provider.
+
+**Alternative rejected:** doing the largest surfaces and leaving the small ones.
+A surface is either at 0 or it is a place a model still has to guess, and the
+guess does not get safer because the surface is small — `web_fetch`'s two
+parameters include the URL every fetched page comes from.
+
+**Consequences:** `multimodal` is the only surface still carrying debt, and it
+is the one the entry below says reached the walk only after a review noticed the
+plugin was never built. Nothing else can be paid down without a new tool first
+adding some.
+
 ### 2026-09-10 — A parameter with no description is a parameter that gets guessed at
 
 **What changed:** Principle 13, and checklist item 13. Every tool parameter
