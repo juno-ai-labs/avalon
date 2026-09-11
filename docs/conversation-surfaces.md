@@ -134,6 +134,12 @@ but cannot submit another stop request. The capsule's rounded overflow clips
 the moving button; tooltips portal outside it. `IconButton` tooltips do not duplicate
 the button's accessible name as a second screen-reader description.
 
+Once a member-requested stop settles, the feed renders it as an intentional
+terminal state with a filled stop-square and no recovery action. The stopped
+prompt remains transcript history; continuing means composing a fresh turn,
+not replaying the stopped request. Failed runs remain a separate state and keep
+their Retry action.
+
 The composer's width is the conversation's, not the pane's, and it is one width
 across every surface that has a composer. A turn is capped at `--turn-width-cap`
 (640px, in `app.css`); `--composer-width` is three quarters of that, and the
@@ -514,6 +520,32 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-11 — An intentional stop does not offer to replay the turn
+
+**What changed:** The terminal stopped notice uses a filled stop-square and no
+longer offers Retry. The stopped prompt stays in transcript history, and a
+person who wants to continue submits a fresh turn from the composer; failed
+runs retain their separate Retry action.
+
+**Why:** Pairing an intentional member stop with an X and a primary Retry button
+made the outcome read like a failure awaiting recovery. The August 20 harness
+entry correctly required stopped to remain visible and distinct from failed,
+but its fresh-retry affordance did not preserve that distinction in the
+finished interface. The removed follow-up also claimed partial tool activity
+was no longer running even though Stop is observed at the post-step boundary
+and the active step settles first.
+
+**Considered and rejected:** Keeping Retry as a quieter link. Any replay action
+still suggests that stopping was an interruption to recover from rather than a
+terminal choice; a new message makes the next intent explicit instead.
+
+**Consequences:** A stopped request is not restored into the composer or
+replayed automatically. Future stopped-state treatments must remain visibly
+distinct from failure and must not add a recovery action; retries belong only
+to failed runs.
+
+Shipped in #717.
 
 ### 2026-09-11 — Stop slides through the composer corner
 
