@@ -584,6 +584,14 @@ interface PinnedRowDrag {
   position: string;
 }
 
+/**
+ * The name of the `+` in the titlebar and its twin in the rail, read as a
+ * tooltip and as the link's own accessible name. It says **work stream** in
+ * every shell, the conversation-only one included: the route it opens starts a
+ * work stream, and the shell that presents one as a chat elsewhere does not
+ * change what the control makes.
+ */
+const NEW_STREAM_LABEL = 'New work stream';
 
 /**
  * What the globe badge means, at the two granularities the two surfaces want.
@@ -1220,10 +1228,10 @@ export function Sidebar({
   // reason does not scroll the reader again.
   const [reveal, setReveal] = useState<{ id: string; pinned: boolean } | null>(null);
   const scrollRef = useRef<HTMLElement | null>(null);
-  // The search row — and, in the rail, the New chat row under it — sit above
-  // the scroll box rather than in it, so search is at the top of the sidebar
-  // however far the list has been scrolled. The bar has a list motion of its
-  // own: the New chat row is inserted by the compact toggle and removed by the
+  // The search row — and, in the rail, the New work stream row under it — sit
+  // above the scroll box rather than in it, so search is at the top of the
+  // sidebar however far the list has been scrolled. The bar has a list motion of
+  // its own: that row is inserted by the compact toggle and removed by the
   // expand, and is seen arriving and leaving.
   const commandRef = useRef<HTMLDivElement | null>(null);
   // Whether the sidebar's contents are still travelling between its two
@@ -1313,6 +1321,12 @@ export function Sidebar({
   const batchPreviewGeneration = useRef(0);
   const visibleWorkstreams = workstreams;
   const visibleNotes = useMemo(() => conversationOnly ? [] : notes, [conversationOnly, notes]);
+  // Resolved here rather than through `NavLink`'s function form, because both
+  // of these links are tooltip triggers: Radix clones the child and merges its
+  // `className`, and a function arrives at the DOM as its own source text with
+  // the link unstyled. It is the same comparison the `returnTo` state below
+  // makes, so the two cannot disagree about which route this is.
+  const onNewStreamRoute = location.pathname === '/workstreams/new';
   const standaloneSidekicks = useMemo(() => (automations ?? []).filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'active'), [automations]);
   // Never had a Sidekick, rather than none running right now. A draft, a paused
   // one, and a work-stream's own all mean this person has met the concept, and
@@ -1862,8 +1876,8 @@ export function Sidebar({
   // and for the reason given there. The compact toggle relays out every row
   // for a reason that is not a move, so it names the layout, and says for how
   // long the rows are still travelling to it. The command bar above the scroll
-  // box is a list of its own, whose New chat row arrives and leaves with the
-  // same toggle.
+  // box is a list of its own, whose New work stream row arrives and leaves with
+  // the same toggle.
   useListMotion(scrollRef, compact, layoutSettling);
   useListMotion(commandRef, compact, layoutSettling);
 
@@ -1916,42 +1930,53 @@ export function Sidebar({
               fade holds `display` for its length, so the link leaves the
               accessibility tree and the tab order by attribute at once
               rather than when the fade ends, or the rail would offer two New
-              chat links for a quarter of a second. */}
-          <NavLink
-            aria-hidden={compact}
-            aria-label="New chat"
-            className={({ isActive }) => clsx('sidebar-new-button window-no-drag', isActive && 'is-active')}
-            hidden={compact}
-            tabIndex={compact ? -1 : undefined}
-            onClick={() => markSurfaceEntrypoint('sidebar_new')}
-            state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
-            to="/workstreams/new"
-          >
-            <Plus aria-hidden="true" size={16} />
-          </NavLink>
+              work stream links for a quarter of a second. */}
+          <Tip describesTrigger={false} label={NEW_STREAM_LABEL} side="bottom">
+            <NavLink
+              aria-hidden={compact}
+              aria-label={NEW_STREAM_LABEL}
+              className={clsx('sidebar-new-button window-no-drag', onNewStreamRoute && 'is-active')}
+              hidden={compact}
+              tabIndex={compact ? -1 : undefined}
+              onClick={() => markSurfaceEntrypoint('sidebar_new')}
+              state={onNewStreamRoute ? undefined : { returnTo: location.pathname }}
+              to="/workstreams/new"
+            >
+              <Plus aria-hidden="true" size={16} />
+            </NavLink>
+          </Tip>
         </div>
 
         {/* Above the scroll box in both layouts, so search stays at the top
             however far the list is scrolled. */}
         <div className="sidebar-commandbar window-no-drag" onClick={() => setSidebarOpen(false)} ref={commandRef}>
           <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace" />
-          {/* The rail's New chat row. Inserted by the compact toggle and
+          {/* The rail's New work stream row. Inserted by the compact toggle and
               removed by the expand, and marked so that it is seen arriving and
               leaving rather than appearing in place: it slides in under the
               search row as the bar opens the slot for it, and out to the left
               as the slot closes. See `useListMotion`. */}
           {compact && (
-            <NavLink
-              aria-label="New chat"
-              className={({ isActive }) => clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', isActive && 'is-active')}
-              data-motion-insert=""
-              data-motion-key="action:new"
-              onClick={() => markSurfaceEntrypoint('sidebar_new')}
-              state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
-              to="/workstreams/new"
-            >
-              <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
-            </NavLink>
+            // `Tip` renders no element of its own, which is what lets this link
+            // stay the command bar's own grid item: the bar is two tracks, and a
+            // wrapper between them would take the slot this row is sized by and
+            // leave the link inside a track meant for it. The planner is not the
+            // reason — it finds a keyed row at any depth. The tip hangs off the
+            // rail's right rather than below, where the row under it would be
+            // covered.
+            <Tip describesTrigger={false} label={NEW_STREAM_LABEL} side="right">
+              <NavLink
+                aria-label={NEW_STREAM_LABEL}
+                className={clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', onNewStreamRoute && 'is-active')}
+                data-motion-insert=""
+                data-motion-key="action:new"
+                onClick={() => markSurfaceEntrypoint('sidebar_new')}
+                state={onNewStreamRoute ? undefined : { returnTo: location.pathname }}
+                to="/workstreams/new"
+              >
+                <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
+              </NavLink>
+            </Tip>
           )}
         </div>
 
@@ -1962,11 +1987,11 @@ export function Sidebar({
           ref={scrollRef}
         >
           {conversationOnly && location.pathname === '/workstreams/new' && (
-            <div aria-current="page" aria-label="New chat draft" className="sidebar-new-chat-draft">
+            <div aria-current="page" aria-label={`${NEW_STREAM_LABEL} draft`} className="sidebar-new-chat-draft">
               <span aria-hidden="true" className="sidebar-new-chat-draft-icon">
                 <Plus size={16} strokeWidth={1.7} />
               </span>
-              <span>New chat</span>
+              <span>{NEW_STREAM_LABEL}</span>
             </div>
           )}
 
@@ -1977,7 +2002,7 @@ export function Sidebar({
               to="/workstreams/new"
             >
               <Plus aria-hidden="true" size={15} />
-              <span>New work stream</span>
+              <span>{NEW_STREAM_LABEL}</span>
             </NavLink>
             {meetingRecordingAvailable && (
               <button className="sidebar-action" onClick={() => void onOpenMeetingNotes()} type="button">
