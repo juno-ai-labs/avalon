@@ -190,7 +190,7 @@ describe('the Demos page', () => {
     expect(container.textContent).toContain('Abandoned');
   });
 
-  it('starts a new demo under names the operator types, defaulted from the pack and unique', async () => {
+  it('starts a new demo by casting a colleague into each part, all of them distinct', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(respond([]));
     await render();
     expect(container.textContent).toContain('No demos yet');
