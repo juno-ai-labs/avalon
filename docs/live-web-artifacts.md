@@ -295,9 +295,12 @@ is the only place that can forward into it.
   on that surface within the five seconds Chromium itself calls activation — an
   `http(s)` link is handed to the default browser instead, and the preview never
   follows it in place, because a pane that says it is showing the artifact must
-  not be showing something else. A redirect is not a press and is refused
-  whatever the activation says; the destination of a `302` is not the URL
-  somebody chose to follow.
+  not be showing something else. **The departure spends the press**, as
+  `window.open` spends it in a browser, so one click buys one departure rather
+  than a five-second licence: a page answering a click with a loop of
+  `window.open` calls gets its first URL opened and no more. A redirect is not a
+  press, is refused whatever the activation says, and spends nothing; the
+  destination of a `302` is not the URL somebody chose to follow.
   **What this closes and what it does not** is the whole of the claim, and is
   written down rather than left as an assumed property of the CSP. No artifact
   can *fetch, load, beacon, or post* off-origin anywhere — that fence is whole.
@@ -305,8 +308,10 @@ is the only place that can forward into it.
   Rally's surfaces, but a person clicking `Read the docs →` cannot see where the
   link points, so a page that wants to leak through a click still can, in
   exactly the way it can in a plain browser tab, where no header closes the
-  channel at all. The gate buys that every handoff is somebody's own press. It
-  does not buy that the URL is one they would have chosen.
+  channel at all. The gate buys that every handoff is somebody's own press, and
+  that a press buys exactly one. It does not buy that the URL is one they would
+  have chosen, and one URL per press is still a channel — a narrow one, paid for
+  a click at a time.
 - **The asset manifest is the only index.** Nothing resolves a path the manifest
   does not name, which is what makes the server module's absence from `assets` a
   real 404 rather than a convention.
@@ -420,8 +425,8 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/api exec vitest run test/terminal-runtime.test.ts` | Directory publish end to end through the runtime, against a simulated sandbox shell. |
 | `pnpm --filter @rally/api exec vitest run test/artifact-open-service.test.ts` | Which authority answers which question at open time, that a refusal mints nothing, and that a missing artifact and an invisible one are indistinguishable. |
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/site-resource-detail.test.tsx` | The detail: that it measures and hands over rather than embedding, that its actions land in the host's header and each carries a tooltip, that Copy link carries no code, that the data toggle only exists for a site that keeps data and takes the composited view down with it, and that the pane never flashes its unavailable state. |
-| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, the activation gate (unattended navigation dropped, an activated link handed over and never followed in place, redirects and disallowed schemes refused either way, and what does and does not count as a press), the overlay collapse, and the teardown guards — each surface's lifecycle branch separately, since one guard covering both reads as covered while half of it is dead. |
-| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-preview-wiring.test.ts` | The per-window registry in `index.ts`, which the controller's own suite cannot see: one controller and so one `closed` listener per window, the entry removed only by that listener, the adapter reporting lifecycle rather than assuming it, and each artifact surface being confined with an activation tracker built from its own input stream. |
+| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, the activation gate (unattended navigation dropped, an activated link handed over and never followed in place, redirects and disallowed schemes refused either way, one press buying one departure and not a loop of them, a refused navigation leaving the press unspent, and what does and does not count as a press), the overlay collapse, and the teardown guards — each surface's lifecycle branch separately, since one guard covering both reads as covered while half of it is dead. |
+| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-preview-wiring.test.ts` | The per-window registry in `index.ts`, which the controller's own suite cannot see: one controller and so one `closed` listener per window, the entry removed only by that listener, the adapter reporting lifecycle rather than assuming it, each artifact surface being confined with an activation tracker built from its own input stream, the consuming call rather than the peeking one reaching the fence, and the external opener's rejection being caught. |
 | `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. |
 | `pnpm --filter @rally/agent-harness exec vitest run` | The skill's shape and the standing policy's byte budget — the prompt bound is what keeps the policy six lines rather than nine. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-stateless-module.test.ts` | A **stateless active** site's isolate on real workerd: that the `ASSETS` stub crosses the loader's env at all, that it serves this artifact's files, that the relative-string read works, and that `fetch()` throws. Scope is the isolate contract, not admission — the fences in front of it are the policy suite's. |
@@ -495,11 +500,12 @@ rather than workspace authority.
 and decides with it. An off-origin navigation is still never followed in place,
 but under transient user activation it is handed to the default browser instead
 of dropped — for both artifact surfaces, and for a `target="_blank"` link, which
-leaves through the same gate without a second window being made. Activation is
+leaves through the same gate without a second window being made. The departure
+spends the activation, so one press admits one departure. Activation is
 reconstructed per surface in the main process from Electron's `input-event`
 stream, because nothing tells the main process about activation when a
 navigation starts. Redirects and schemes outside the process's `http(s)` policy
-are refused whatever the activation says.
+are refused whatever the activation says, and spend nothing.
 
 **Why:** The previous rule refused every off-origin navigation and handed it
 nowhere, so a dashboard full of links was a page whose links did nothing at all
@@ -516,14 +522,22 @@ was the wrong trade once sites became something people are meant to use.
 **Considered and rejected:** Opening every off-origin navigation, which is the
 simple reading of the request and removes the fence entirely: a page could then
 send itself away with nobody present, which is the one case the gate is cheap to
-keep closed. A confirmation dialog showing the destination, which does close the
+keep closed. Treating activation as a five-second window of permission rather
+than something a departure spends, which was the first shape written here and
+was wrong in a way worth recording: `window.open` is called per invocation, so a
+page answering one click with a loop would have put an unbounded number of URLs
+— and so an unbounded amount of what it can see — through the system opener,
+out of a press the person thought followed one link. A confirmation dialog showing the destination, which does close the
 attended case — the only thing that does — but puts a modal in front of every
 link on a dashboard; it remains the upgrade if a leak through a click ever
 stops being theoretical. Honouring activation on `will-redirect`, which hands
 the gate back to the page, since a model-authored handler answers requests on
 this origin and can redirect a same-origin click anywhere.
 
-**Consequences:** The five-second lifespan is transcribed from Chromium's
+**Consequences:** Deciding and spending are one step — `decideArtifactNavigation`
+takes a `takeActivation` callback rather than a boolean — because a caller handed
+a boolean can forget to consume it, and the failure that follows is silent and
+unbounded. The five-second lifespan is transcribed from Chromium's
 `blink::UserActivationState::kActivationLifespan` rather than chosen here, so
 Rally and the page agree about when somebody is acting; a different span would
 make them disagree and is not a free number to change. The gate is only as good
