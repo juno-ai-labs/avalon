@@ -564,6 +564,7 @@ export function WorkspaceSettingsScreen({
     ),
     onSuccess: (settings) => {
       queryClient.setQueryData(['custom-mcp-settings', settings.connectionId], settings);
+      void queryClient.invalidateQueries({ queryKey: ['connection-tool-count', settings.connectionId] });
     },
     onError: async () => {
       await queryClient.invalidateQueries({ queryKey: ['custom-mcp-settings', customMcpSettingsConnectionId] });
@@ -1523,7 +1524,7 @@ export function WorkspaceSettingsScreen({
                             <tr>
                               <th scope="col">Connection</th>
                               <th scope="col">Status</th>
-                              <th className="settings-connection-capabilities" scope="col">Tools</th>
+                              <th className="settings-connection-tools" scope="col">Tools</th>
                               <th scope="col"><span className="sr-only">Actions</span></th>
                             </tr>
                           </thead>
@@ -1538,7 +1539,7 @@ export function WorkspaceSettingsScreen({
                                   </span>
                                 </td>
                                 <td><Badge>{connection.status === 'reconnect_required' ? 'Reconnect required' : connection.status}</Badge></td>
-                                <td className="settings-connection-capabilities">{toolCountByConnection.get(connection.id)?.isError
+                                <td className="settings-connection-tools">{toolCountByConnection.get(connection.id)?.isError
                                   ? 'Unavailable'
                                   : toolCountByConnection.get(connection.id)?.data ?? 'Loading…'}</td>
                                 <td>
