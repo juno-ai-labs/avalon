@@ -28,6 +28,7 @@ import {
   resourceVersionsQueryKey,
   workspaceMemberFromSession,
 } from './workstream';
+import { conversationActivityRow, conversationShowsStoppingRow } from './conversation-surface';
 import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
 import { WorkstreamComposer } from '../components/workstream-composer';
 
@@ -948,6 +949,47 @@ describe('orderedTranscriptOwnsRunTiming', () => {
     expect(orderedTranscriptOwnsRunTiming(snapshot, 'run-one')).toBe(true);
     expect(orderedTranscriptOwnsRunTiming(snapshot, 'run-two')).toBe(false);
     expect(orderedTranscriptOwnsRunTiming(undefined, 'run-one')).toBe(false);
+  });
+});
+
+describe('conversationShowsStoppingRow', () => {
+  it('acknowledges a stop only while the run it would be waiting on is live', () => {
+    expect(conversationShowsStoppingRow('running', true)).toBe(true);
+    expect(conversationShowsStoppingRow('running', false)).toBe(false);
+    expect(conversationShowsStoppingRow('running', undefined)).toBe(false);
+    // The loop clears `stop_requested_at` as it goes idle, but a settled run
+    // can still be read back before the next snapshot lands. A stopping row
+    // over a run that has already stopped promises a wait that is over.
+    expect(conversationShowsStoppingRow('stopped', true)).toBe(false);
+    expect(conversationShowsStoppingRow('completed', true)).toBe(false);
+  });
+});
+
+describe('conversationActivityRow', () => {
+  const running = {
+    status: 'running' as const,
+    compactingThisRun: false,
+    orderedOwnsRunTiming: false,
+    runTiming: { active: true, durationMs: 0, startedAt: Date.parse('2026-08-05T12:00:00.000Z') },
+  };
+
+  it('prefers compaction over the elapsed total, and only for a live run', () => {
+    expect(conversationActivityRow({ ...running, compactingThisRun: true }))
+      .toEqual({ kind: 'compacting' });
+    // The answer carries the props it was decided from, so the call site has
+    // nothing left to assert back.
+    expect(conversationActivityRow(running)).toEqual({ kind: 'timing', timing: running.runTiming });
+    expect(conversationActivityRow({
+      ...running,
+      status: 'completed',
+      compactingThisRun: true,
+      runTiming: { active: false, durationMs: 83_000 },
+    })).toEqual({ kind: 'timing', timing: { active: false, durationMs: 83_000 } });
+  });
+
+  it('leaves the elapsed total to the feed once the ordered transcript draws it', () => {
+    expect(conversationActivityRow({ ...running, orderedOwnsRunTiming: true })).toBeNull();
+    expect(conversationActivityRow({ ...running, runTiming: null })).toBeNull();
   });
 });
 
