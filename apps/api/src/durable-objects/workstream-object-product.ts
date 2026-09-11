@@ -70,7 +70,10 @@ import {
   resolveNewWorkstreamModelRouting,
 } from "../services/agent-model-flags";
 import { classifyWorkstreamMessage } from "../services/integrations";
-import { listedResourceVisibilitySql } from "../services/resource-listing";
+import {
+  isUnlistedResourceMetadata,
+  listedResourceVisibilitySql,
+} from "../services/resource-listing";
 import {
   canonicalModelMessageJson,
   projectParticipantModelMessage,
@@ -2789,12 +2792,25 @@ export class WorkstreamObjectProductService {
   }
 
   /** Attach a resource already durably created by this run in WorkspaceDO. */
+  /**
+   * The outcome of a runtime attachment, as its one consumer needs it.
+   *
+   * `unlisted` is not a failure and is not `readback_failed`: the link
+   * committed and the resource is reachable, and the only thing withheld is the
+   * socket event. Keeping them apart matters because the caller answers a
+   * missing resource with a canonical room resync, which for an unlisted one
+   * would be a round trip to re-derive a rail that is already correct.
+   */
   async attachRuntimeResource(
     workspaceId: string,
     resourceId: string,
     attachedByUserId: string | null,
     relationshipType: ResourceRelationshipType = "generated",
-  ): Promise<WorkstreamResource | null> {
+  ): Promise<
+    | { outcome: "attached"; resource: WorkstreamResource }
+    | { outcome: "unlisted" }
+    | { outcome: "readback_failed" }
+  > {
     const root = this.root();
     if (root.parent_workspace_key !== workspaceId) {
       throw new ApiError(409, "workstream_object_identity_mismatch", "The object identity does not match");
@@ -2837,9 +2853,18 @@ export class WorkstreamObjectProductService {
       },
       () => [{ partitionKey: "common", effect: this.commonEffect(this.root()) }],
     );
+    // A socket event is how the member's rail learns about a resource without
+    // reloading, so it advertises — and the listing rule is about advertising,
+    // not about the shape of the read underneath it. Withholding it here leaves
+    // the live rail agreeing with the enumeration that assembles the initial
+    // detail; publishing it would put the row on screen that the enumeration
+    // deliberately leaves out, until the next reload.
+    if (isUnlistedResourceMetadata(String(resource.metadata_json ?? "{}"))) {
+      return { outcome: "unlisted" };
+    }
     try {
       const attached = await this.readBackAttachedResource(this.runtimeAuth().userId, resourceId);
-      if (attached) return attached;
+      if (attached) return { outcome: "attached", resource: attached };
       logWarn(this.env, "workstream_runtime_resource_readback_failed_after_commit", {
         workspace_id: workspaceId,
         workstream_id: root.workstream_key,
@@ -2856,7 +2881,7 @@ export class WorkstreamObjectProductService {
         reason: error instanceof Error ? error.message : "resource_readback_failed",
       });
     }
-    return null;
+    return { outcome: "readback_failed" };
   }
 
   async detachResource(auth: AuthContext, resourceId: string): Promise<void> {

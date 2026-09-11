@@ -176,11 +176,23 @@ describe("unlisting the recovery backups already attached", () => {
       "terminal-final-diff:stream:1:diff", "Terminal final diff",
       JSON.stringify({ source: "terminal_expiry", summaryOnly: false }), AT, AT);
 
+    // The precondition that makes the search half real: these rows were indexed
+    // some time ago and their projection has gone quiet. The insert trigger
+    // marked them pending when this test seeded them, which a settled workspace
+    // would not still be.
+    database.exec("UPDATE resource_search_versions SET pending = 0");
+    const revisionBefore = Number(database.prepare(
+      "SELECT revision FROM resource_search_versions WHERE resource_id = ?",
+    ).get(BACKUP)!.revision);
+
     applyThrough(database, BACKUP_UNLISTING_VERSION, BACKUP_UNLISTING_VERSION - 1);
 
     const listing = new Map(database.prepare(
       "SELECT id, json_extract(metadata_json, '$.listing') AS listing FROM resources ORDER BY id",
     ).all().map((row) => [row.id as string, row.listing]));
+    const pending = new Map(database.prepare(
+      "SELECT resource_id, pending FROM resource_search_versions",
+    ).all().map((row) => [row.resource_id as string, row.pending]));
     expect(listing.get(BACKUP)).toBe("unlisted");
     expect(listing.get("00000000-0000-7000-8000-0000000000b3")).toBe("unlisted");
     // A preserved diff is the work's own output; the backfill is no wider than
@@ -189,6 +201,40 @@ describe("unlisting the recovery backups already attached", () => {
     // The size the backup path recorded is what makes the archive recoverable.
     expect(JSON.parse(database.prepare("SELECT metadata_json FROM resources WHERE id = ?")
       .get(BACKUP)!.metadata_json as string)).toMatchObject({ size: 139 });
+
+    // Migration 43 narrowed the `AFTER UPDATE` trigger to the columns search
+    // reads plus `metadata_json`'s `description`, so writing `listing` fires
+    // nothing. Without the migration's own upsert a backup indexed before this
+    // upgrade is never re-projected, and stays in search results forever while
+    // absent from every other surface — so the enqueue is the fix, not the
+    // trigger.
+    expect(pending.get(BACKUP)).toBe(1);
+    expect(pending.get("00000000-0000-7000-8000-0000000000b3")).toBe(1);
+    expect(Number(database.prepare(
+      "SELECT revision FROM resource_search_versions WHERE resource_id = ?",
+    ).get(BACKUP)!.revision)).toBe(revisionBefore + 1);
+    // And no wider than the rows it unlists: a listed final diff is left where
+    // the projection already put it.
+    expect(pending.get(PUBLISHED)).toBe(0);
+
+    // `resources_create_semantic_version` watches `metadata_json` wholesale, so
+    // it fires for this write and mints a version. It is attributed rather than
+    // suppressed: the alternative leaves `current_version` ahead of the history
+    // it indexes, and an unattributed row is one nobody can account for later.
+    expect(database.prepare(
+      "SELECT current_version FROM resources WHERE id = ?",
+    ).get(BACKUP)!.current_version).toBe(2);
+    expect(database.prepare(
+      "SELECT version, author_kind, cause FROM resource_versions WHERE resource_id = ? ORDER BY version",
+    ).all(BACKUP).map((row) => [row.version, row.author_kind, row.cause])).toEqual([
+      [1, null, null],
+      [2, "system", null],
+    ]);
+    // The staging column is cleared by the trigger, so the attribution does not
+    // leak onto whatever writes this row next.
+    expect(database.prepare(
+      "SELECT revision_author_kind FROM resources WHERE id = ?",
+    ).get(BACKUP)!.revision_author_kind).toBeNull();
   });
 });
 

@@ -339,12 +339,20 @@ character envelope.
   objects; resource deletion, expiry, or orphan ownership ends the object
   lifecycle.
 - Listing is presentation, never authorization. An unlisted resource is absent
-  from every surface that *enumerates* — the artifacts rail, the workspace
+  from every surface that *advertises* it — the artifacts rail, the workspace
   resource list, `list_resources`, the compaction inventory, the search
-  projection — and unchanged everywhere something resolves it by id, so a
-  reachable resource never becomes unreachable by being unlisted, and an
-  unreachable one never becomes readable by being listed. A new enumerating
-  surface applies `listedResourceVisibilitySql`; a new point lookup does not.
+  projection, and the `resource_attached` socket event — and unchanged
+  everywhere something resolves it by id, so a reachable resource never becomes
+  unreachable by being unlisted, and an unreachable one never becomes readable
+  by being listed.
+- **Advertising is about what the caller does with the answer, not the shape of
+  the read.** A statement that enumerates applies
+  `listedResourceVisibilitySql` and a point lookup does not, but
+  `attachRuntimeResource` is a point lookup whose result is *broadcast*, so it
+  applies the rule too — a by-id read feeding a socket event puts the row on
+  every open client's rail exactly as an enumeration would. Any new caller that
+  turns a resolved resource into something a member sees without asking for it
+  decides the same way.
 - Original content identity describes the exact selected R2 bytes, so a cursor or
   derivative version cannot silently cross into newly hydrated content.
 - A model derivative becomes current only after its content object is complete;
@@ -641,11 +649,12 @@ cheap discovery and continuation paths.
 `metadata_json`. An unlisted resource keeps its work-stream link and every
 by-id path — opened from a link, resolved by `loadVisibleWorkstreamResourcesByIds`,
 imported by `terminal_import_resource`, authorized exactly as before — and
-leaves every enumerating surface: the artifacts rail, `GET /resources`,
-`list_resources`, the inventory appendix compaction leaves behind, and the
-search projection, where a null category also withdraws a row indexed earlier.
-Terminal's repository-replacement backup is the first and only producer, and
-WorkspaceDO migration 52 marks the ones already written.
+leaves every surface that advertises it: the artifacts rail, `GET /resources`,
+`list_resources`, the inventory appendix compaction leaves behind, the
+`resource_attached` socket event, and the search projection, where a null
+category also withdraws a row indexed earlier. Terminal's
+repository-replacement backup is the first and only producer, and WorkspaceDO
+migration 52 marks the ones already written.
 
 **Why:** Attaching a resource had been one fact, and for anything a person or a
 model produced on purpose that was right — you want to find what you made. It is
@@ -670,18 +679,27 @@ authorization one. *A column on `workstream_resource_links`* — the right shape
 this recurs, but a WorkstreamDO migration, a protocol change and a mirror write
 for a single producer, against a JSON key that costs one `UPDATE` to withdraw.
 
-**What a future change has to respect:** The predicate is the enforcement point,
-so a surface that enumerates resources applies it and one that resolves by id
-does not. **There are two statements that read attached links and join
-`resources`, not one** — `loadVisibleRows` here and
-`WorkstreamObjectProductService.resources`, which is what
-`GET /workstreams/:id` and the socket's first frame assemble the member's rails
-from. Each takes an optional id list, and each adds the clause on exactly the
-branch that has none; `RESOURCE_WITH_WATCH_STATE_SQL` omits it entirely because
-it is a point lookup. A third such reader repeats that split rather than
-inventing a filter above the SQL. Nothing may read listing as an access
-decision. Promote the flag to a column when a second producer wants something a
-boolean cannot say; one producer does not justify the schema.
+**What a future change has to respect:** There are **three** places the rule
+lands, and the first two are easy to mistake for one. `loadVisibleRows` here
+and `WorkstreamObjectProductService.resources` both read attached links and join
+`resources`; the first feeds the model's tools and the inventory, the second is
+what `GET /workstreams/:id` and the socket's first frame assemble the member's
+rails from, so fixing only one leaves the other advertising. Each takes an
+optional id list and adds the clause on exactly the branch that has none, while
+`RESOURCE_WITH_WATCH_STATE_SQL` omits it entirely as a point lookup. The third
+is `attachRuntimeResource`, which is a point lookup whose answer is broadcast as
+a `resource_attached` event — SQL shape says nothing there, so it tests the
+metadata directly and withholds the event. Its `unlisted` outcome is
+deliberately not `readback_failed`: the link committed, so asking for a
+canonical resync would re-derive a rail that is already right.
+
+Nothing may read listing as an access decision. And a stored `listing` change
+does **not** invalidate search on its own — migration 43 narrowed the
+`resources` update trigger to the columns search reads plus `metadata_json`'s
+`description`, so any future write that flips `listing` on an indexed row
+enqueues `resource_search_versions` itself, the way migration 51 does. Promote
+the flag to a column when a second producer wants something a boolean cannot
+say; one producer does not justify the schema.
 
 ### 2026-09-11 — `list` can be confined to a set of resource types
 

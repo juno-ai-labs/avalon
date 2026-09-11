@@ -471,7 +471,12 @@ describe("Terminal authority on real workerd", () => {
         direction: "artifact" as const,
       };
       const product = (instance as unknown as {
-        product: { attachRuntimeResource(...args: unknown[]): Promise<typeof resource> };
+        product: {
+          attachRuntimeResource(...args: unknown[]): Promise<{
+            outcome: "attached";
+            resource: typeof resource;
+          }>;
+        };
       }).product;
       const attacher = (instance as unknown as {
         localRuntimeResourceAttacher(
@@ -496,7 +501,7 @@ describe("Terminal authority on real workerd", () => {
         configurable: true,
         value: async (...args: unknown[]) => {
           recorded.push(args);
-          return resource;
+          return { outcome: "attached" as const, resource };
         },
       });
       Object.defineProperty(instance, "broadcast", {
@@ -585,7 +590,12 @@ describe("Terminal authority on real workerd", () => {
         direction: "artifact" as const,
       };
       const product = (instance as unknown as {
-        product: { attachRuntimeResource(...args: unknown[]): Promise<typeof resource> };
+        product: {
+          attachRuntimeResource(...args: unknown[]): Promise<{
+            outcome: "attached";
+            resource: typeof resource;
+          }>;
+        };
       }).product;
       const attacher = (instance as unknown as {
         localRuntimeResourceAttacher(
@@ -596,7 +606,7 @@ describe("Terminal authority on real workerd", () => {
       const captured: unknown[] = [];
       Object.defineProperty(product, "attachRuntimeResource", {
         configurable: true,
-        value: async () => resource,
+        value: async () => ({ outcome: "attached" as const, resource }),
       });
       Object.defineProperty(instance, "flushSemanticRealtimeOutboxBestEffort", {
         configurable: true,
@@ -672,7 +682,12 @@ describe("Terminal authority on real workerd", () => {
         direction: "artifact" as const,
       };
       const product = (instance as unknown as {
-        product: { attachRuntimeResource(...args: unknown[]): Promise<typeof resource | null> };
+        product: {
+          attachRuntimeResource(...args: unknown[]): Promise<
+            | { outcome: "attached"; resource: typeof resource }
+            | { outcome: "readback_failed" }
+          >;
+        };
       }).product;
       const attacher = (instance as unknown as {
         localRuntimeResourceAttacher(
@@ -684,8 +699,11 @@ describe("Terminal authority on real workerd", () => {
       const published: unknown[] = [];
       Object.defineProperty(product, "attachRuntimeResource", {
         configurable: true,
-        value: async (_workspaceId: string, resourceId: string) =>
-          resourceId === readbackFailureId ? null : resource,
+        value: async (_workspaceId: string, resourceId: string) => (
+          resourceId === readbackFailureId
+            ? { outcome: "readback_failed" as const }
+            : { outcome: "attached" as const, resource }
+        ),
       });
       Object.defineProperty(instance, "publishLocalProductEvent", {
         configurable: true,
