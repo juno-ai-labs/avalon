@@ -179,15 +179,21 @@ the loop is the transport.
    revision like everything else. *Rejected:* letting the model resolve the
    channel each run from the instructions. That is the prose-to-tool-call gap
    this PRD exists to close.
-3. **Absence is a value on the wire, and a timestamp has a shape.**
-   `send_message.thread_ts` (and every remaining collapsed branch on a write
-   tool, one connector at a time) is declared
-   `anyOf: [{ type: "string", pattern: "^\\d+\\.\\d+$" }, { type: "null" }]`,
-   and `SlackTimestampSchema` enforces the same pattern. The
-   `tool-schema-sanitization` sweep widens from cursors to every property
-   `droppedNullableBranches` reports, so a new connector cannot ship the shape
-   again. *Rejected:* description-only repair; `agent-tools.md` records that
-   the description was in front of the model four times and lost.
+3. **Absence is a value on the wire, and a timestamp has a shape.** The
+   sanitizer itself stops collapsing a nullable declaration: `@juno-ai/bind`
+   14 rewrites `type: [T, "null"]` to `anyOf: [{ type: T, … }, { type: "null" }]`
+   for every tool of every consumer, and Rally's `tool-schema-sanitization`
+   sweep widens from cursors to every property `droppedNullableBranches`
+   reports, so neither a new connector nor a Bind release can ship the
+   collapsed shape unnoticed. `send_message.thread_ts` additionally gains a
+   `pattern` of `^\\d+\\.\\d+$` on its string branch, and
+   `SlackTimestampSchema` enforces the same pattern, so a value that is not a
+   Slack timestamp fails as a validation error naming the field before any
+   provider call. *Rejected:* converting the 28 collapsed branches one
+   connector at a time, which was the first draft of this decision; it fixes
+   one repository and leaves the next parameter free to ship the shape. Also
+   rejected: description-only repair; `agent-tools.md` records that the
+   description was in front of the model four times and lost.
 4. **A deterministic provider refusal is a validation failure, not an
    external one.** A connector maps provider codes that mean "your arguments
    are wrong" (Slack `invalid_*`, `channel_not_found`, `msg_too_long`, and
@@ -254,11 +260,12 @@ unchanged.
   visibility changes are corrections and ship unflagged; typed Slack channel
   destinations ship behind `sidekick-typed-destinations-enabled`, default off,
   registered in Ace in the phase that introduces them.
-- **Order.** Phase 0, the same day: pause "Hourly joke in #general"; declare
-  `thread_ts` per decision 3; log `provider_error_code`. Phase 1: decisions 4,
-  5, 6, 7. Phase 2: decisions 1 and 2, with the drafting plugin resolving
-  destinations. Phase 3: decision 8 and the remaining collapsed branches, one
-  connector per change. A `plan.md` with acceptance gates follows approval.
+- **Order.** Phase 0, the same day: pause "Hourly joke in #general"; adopt
+  Bind 14 and widen the sweep per decision 3 (shipped alongside this PRD); add
+  the `thread_ts` pattern; log `provider_error_code`. Phase 1: decisions 4, 5,
+  6, 7. Phase 2: decisions 1 and 2, with the drafting plugin resolving
+  destinations. Phase 3: decision 8. A `plan.md` with acceptance gates follows
+  approval.
 - **Proof.** Each phase carries a test that fails when its behavior is broken
   the way production broke: a `test-workers` run against a Slack double that
   refuses `thread_ts: "/"` must end the run after one refusal; the sanitization
