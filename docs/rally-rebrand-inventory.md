@@ -467,25 +467,6 @@ the bodies are four files; the sender is also the half a person sees first.
 other direction and is deliberate pressure to finish the section, not a state to
 settle in.
 
-### 2026-08-25 — Linear and Notion provider registrations completed the cut-over
-
-The existing production Linear and Notion registrations now present Rally's
-name, company metadata, logo, redirects, and webhook hosts. The checked-in
-Linear manifests moved with them, and exact connector tests now pin the Rally
-hosted-MCP identity and Linear native-agent operation names so provider-visible
-metadata cannot silently drift back.
-
-The app registrations, installed grants, client IDs, secrets, refresh tokens,
-scopes, capabilities, and event selections deliberately stay fixed. Linear
-keeps both `with-avalon.com` callback URLs during the domain migration. Existing
-hosted-MCP DCR records remain valid and are not rewritten; new registrations
-and sessions announce Rally.
-
-Creating replacement provider apps or forcing reconnects was rejected: it would
-discard working authority and split installations for a display-name correction.
-Notion's immutable webhook URL required a prepared delete-and-recreate cut-over;
-the replacement was verified active with the same API version and event matrix.
-
 ### 2026-08-25 — Section 9 renamed: the agent stops calling itself Avalon
 
 Five system prompts opened `You are Avalon`, so the product introduced itself by
@@ -570,21 +551,6 @@ Compatibility identifiers, Cloudflare resource names, release buckets, and
 old hostnames were deliberately not swept. Their retirement conditions belong
 to sections 1, 2, 4, and `domain-migration.md`; a brand regeneration must never
 be used as a reason to rename them.
-
-### 2026-08-25 — The Slack app cut-over closed its user-facing slice
-
-The Slack manifest, Worker responses, connector labels, installation-page
-command, and permissions reference now agree on Rally and `/rally`. The provider
-manifest follows the Worker deployment in both regions so Slack cannot deliver
-the new command to old ingress code. Slack CLI 4.6.0 strips this app's immutable
-`pkce_enabled` field during validation and sync, so the provider change is made
-through Slack's App Manifest editor instead.
-
-Compatibility remains where external state requires it: old OAuth redirects,
-the legacy unfurl domain, and the four Avalon denial prefixes already present in
-Slack channel history stay accepted. The support-address hold described in this
-historical entry was closed when `help@rallywith.ai` was confirmed as the sole
-public catch-all. Section 9's non-Slack agent identity remains open.
 
 ### 2026-08-25 — What the sweep's verification could not see
 

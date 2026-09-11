@@ -1454,22 +1454,6 @@ durable-final-turn check was rejected because saving a definition does not repla
 the conversation's reply. A real workerd regression drives the authoring tool,
 checks publication, and requires a completed run with a persisted final turn.
 
-### 2026-09-08 — Retire the temporary Worker class export after the rename
-
-The final rollout stage removes the Worker entrypoint's AutomationDO alias and
-uses SidekickDO in binding types. It requires verified renamed namespaces in both
-regions. The old source-import shim, automation_do schema component, lookup-key
-bytes, routes, and queued-command adapter remain compatibility contracts; none
-are new Cloudflare exports or namespaces.
-
-### 2026-09-08 — Stage the Sidekick namespace rename with operational compatibility
-
-Append the class rename only after the dual-export release is verified. Keep
-`automation_do` schema history and object-name bytes, and translate already-queued
-legacy commands so strict owner class checks do not turn the rollout into a dead
-letter backlog. The tracker accepts both labels before either regional rename;
-removing the old Worker export remains a separately verified third deployment.
-
 ### 2026-09-08 — Fence publication effects and preserve compatibility deployment
 
 Review exposed out-of-order registration replacement, model schemas that could

@@ -279,20 +279,6 @@ exists on `main` is deployed state and must never be renamed, renumbered, or
 edited — the duplicate-prefix warning in
 [`pull-requests.md`](pull-requests.md) exists precisely for this.
 
-### 2026-08-18 — Shared ingress migration receives a unique sequence
-
-**What changed:** The unshipped shared Notion routing migration moved from the
-duplicate `0066` prefix to `0084`.
-
-**Why:** Duplicate numeric prefixes make deployment ordering and operator
-reporting ambiguous even when filename sorting is deterministic.
-
-**Considered and rejected:** Leaving the collision documented. This branch has
-not shipped, so preserving that historical number has no compatibility value.
-
-**Consequences:** Apply `0084_shared_notion_connection_routing.sql`; no data
-transform or compatibility alias is required.
-
 ### 2026-08-12 — The shared callback admits personal hosted MCP OAuth, a user-approved install is one workspace bot grant, and existing bot routes keep their connection
 
 **What changed:** Notion's region-routed callback now completes either a

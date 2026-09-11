@@ -678,24 +678,6 @@ Ace must keep a key that does not end in `-enabled`. Deploying this creates the
 flag with no rules at its `off` default, which changes nothing for anyone until
 a targeting rule is added.
 
-### 2026-08-27 — Memory embeddings stay outside live model routing
-
-**What changed:** Ace does not expose or provision a durable-memory embedding
-role. The inference gateway fixes the model to `qwen/qwen3-embedding-8b` and
-passes no model fallbacks.
-
-**Why:** An embedding-model edit changes the coordinate space. Letting an
-ordinary Flagship rule, rollout, or Ace save change it can make document and
-query vectors incomparable even when they have the same dimensions.
-
-**Considered and rejected:** Managing embeddings like chat inference with an
-empty default fallback list. The empty default does not prevent a later rule or
-operator edit from splitting the vector space.
-
-**Consequences:** Embeddings remain visible in inference diagnostics under the
-static `memory_embedding` feature category, but changing their model requires a
-code change paired with a durable active-memory rebuild.
-
 ### 2026-08-26 — Models makes every agent route editable without flattening rollouts
 
 **What changed:** Ace gained a Models navigation section for all eleven roles
@@ -835,40 +817,6 @@ payload's presence, so a card no longer swallows a drag that was never a rule
 drag (dragged text, a link, a file). No Flagship-side change; the save
 payload this produces was always a valid one, `_clientId` included and
 stripped before it is sent.
-
-### 2026-08-25 — digests-enabled becomes client-visible after all
-
-**What changed:** `digestsEnabled` joined `ClientFeatureFlagsSchema`, resolved
-in `client-feature-flags.ts` through the same `resolveDigestsEnabled` the
-scheduler already called. Electron reads it to hide the Digest settings
-section entirely when it resolves `false`, rather than leaving the section
-visible and quietly ineffective.
-
-**Why:** The entry below this one said "Electron never reads it" as a
-deliberate, considered boundary — nothing about the flag needed a value
-pushed to a connected client, so crossing that boundary looked like
-unnecessary scope. That boundary did not survive contact with the actual
-question an operator asked next: if someone's digest is turned off from
-outside their control, should their settings screen keep claiming it is on?
-Leaving the section visible and silently ineffective was worse than the
-scope of teaching the client to ask.
-
-**Considered and rejected:** A bespoke "is it off for the workspace" check
-combined with "is it off for the user" in the settings screen. Rejected for
-the reason already established for the delivery side: there is one
-evaluation per (person, workspace), not two to combine, and the settings
-screen calls the identical function the scheduler calls rather than
-re-deriving the answer.
-
-**Consequences:** The fan-out this flag was already paying for on every Ace
-save — previously a harmless no-op, since nothing consumed it — now has a
-real client effect. `digestsEnabled` is the second field in
-`ClientFeatureFlagsSchema` that does not default `false`, after
-`controlTowerRefreshSeconds`, and for a different reason: a cadence has no
-off, while this is a feature whose off state is the exception an operator
-opts someone into. A missing workspace (no organization chosen yet) reads as
-`true` — there is nothing to evaluate against, and that gap should never
-read as "hidden."
 
 ### 2026-08-25 — Ace manages a fifth flag, its first that is not presentation-only
 

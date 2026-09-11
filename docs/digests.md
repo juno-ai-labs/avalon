@@ -695,20 +695,6 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
-### 2026-09-09 — Preserve digest identity when introducing authored access mail
-
-**What changed:** The shared Resend caller accepts a trusted per-message From
-override for the authored acknowledgement.
-
-**Why:** New access mail comes from Adam while digests retain their configured
-notification identity.
-
-**Considered and rejected:** Changing the global sender would also rename digest
-and unrelated transactional mail.
-
-**Consequences:** Existing caller resolution is unchanged. [Private access](private-access.md)
-owns freezing the new message's sender and its domain-verification requirement.
-
 ### 2026-09-09 — Seek directly to the activity cursor
 
 **What changed:** Activity reads add a direct sequence lower bound when a cursor
@@ -752,29 +738,6 @@ is still characters — this renderer has no table model.
 
 **Considered and rejected:** Flattening email tables into real HTML tables just
 to honour the tag. That is a second table renderer, not a break-tag fix.
-
-### 2026-08-30 — Sidebar facepile omits the current viewer
-
-**What changed:** A personal sidebar row no longer paints the signed-in person's
-face. If they are the only participant, the trailing slot is empty rather than a
-one-person pile. Overflow subtracts them when they sat past the three painted
-ids. The public globe and each remaining face use the standard tooltip — "This
-is a public work stream", and the person's name.
-
-**Why:** a facepile of yourself is noise, not information: you already know you
-can see the row. The directory preview is still the same payload for every
-participant, so the omission is a render-time filter rather than a per-viewer
-wire field. Native `title` on the globe and on non-present faces was a second
-tooltip language next to the Radix chrome the rest of the row already uses.
-
-**Considered and rejected:** dropping the viewer from WorkspaceDO's preview so
-each recipient got a different id list. Membership is common state for everyone
-who can see the row; a per-viewer cap would split that. Also rejected: keeping
-native `title` beside the Radix tooltip, which would show both on a long hover.
-
-**What a future change has to respect:** the wire may still include the viewer.
-The desktop is what omits them. Do not add a second tooltip language for this
-slot.
 
 ### 2026-08-30 — Facepile order is join time
 
@@ -946,23 +909,6 @@ failure worth removing — all three run over one string in sequence, and a
 disagreement between them shows up as a rewritten code sample in somebody's
 inbox with nothing failing anywhere.
 
-### 2026-08-28 — The reduction leaves indented code alone too
-
-**What changed:** The shared grammar's three passes read one `codeLines`
-classifier, which recognises indented code blocks as well as fenced ones. A
-destination may also carry one level of balanced parentheses.
-
-**Why:** An indented example is the other ordinary way a model shows this
-syntax, and the reduction was rewriting it — a taught `[the deck](resource://abc)`
-arrived here as `the deck`, editing the sample. The parenthesis half is narrower
-and just as visible: stopping at the first `)` truncated
-`…/Function_(mathematics)` in the delivered source list, naming a URL that goes
-nowhere.
-
-**What a future change has to respect:** What counts as code is `codeLines`'
-decision and nothing else's; a caller that grows its own fence tracking is how
-the transcript and the delivered copy start disagreeing about numbering again.
-
 ### 2026-08-28 — The reduction is written for the surface that renders it
 
 **What changed:** `rewriteCitationsAsPlainText` takes a `sources` option:
@@ -984,28 +930,6 @@ to reach it. Both call sites want the reduction and neither wants the list.
 consumer can render, the way `normalizeModelMarkdown` and `normalizeModelText`
 are already two entry points for the same reason. The default is the Markdown
 one, so a caller that renders nothing has to say so.
-
-### 2026-08-28 — The reduction reads code and titled links the way the parser does
-
-**What changed:** Two corrections in `rewriteCitationsAsPlainText`, both in
-`@rally/contracts/citations` rather than here. A `[^1]` inside an inline code
-span no longer counts as a footnote reference, and the inline-link pattern now
-matches a label carrying balanced brackets, an angle-bracketed target, and a
-trailing title.
-
-**Why:** Both were silent leaks of the kind this reduction exists to close, and
-both are reachable from ordinary model output. A message explaining the citation
-syntax — an ordinary thing to ask Rally for — was delivered with a `Sources`
-list it never claimed, and any real footnote beside it was renumbered, so the
-delivered copy and the transcript disagreed about which source was `[1]`. And a
-link the desktop drew as a chip but this pattern did not match arrived with its
-raw `resource://` target in the text: `[the deck](resource://abc "Q3")` is a
-link to every Markdown parser in the path, including the one Rally renders with.
-
-**What a future change has to respect:** The pattern here is meant to be as wide
-as the renderer's parser, not as wide as the guidance's examples. Anything the
-desktop turns into a chip and this leaves alone becomes raw internal syntax in
-front of a recipient.
 
 ### 2026-08-27 — Every email reduces a model's citations before rendering
 

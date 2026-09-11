@@ -347,29 +347,6 @@ health before merging the site/Ace change; later merge deployments are idempoten
 EU receives schema but no public intake/download binding. See
 [private access](private-access.md) for operational limits and erasure.
 
-### 2026-09-08 — Retire the temporary Worker class export after the rename
-
-The final rollout stage removes the Worker entrypoint's AutomationDO alias and
-uses SidekickDO in binding types. It requires verified renamed namespaces in both
-regions. The old source-import shim, automation_do schema component, lookup-key
-bytes, routes, and queued-command adapter remain compatibility contracts; none
-are new Cloudflare exports or namespaces.
-
-### 2026-09-08 — Stage the Sidekick namespace rename with operational compatibility
-
-Append the class rename only after the dual-export release is verified. Keep
-`automation_do` schema history and object-name bytes, and translate already-queued
-legacy commands so strict owner class checks do not turn the rollout into a dead
-letter backlog. The tracker accepts both labels before either regional rename;
-removing the old Worker export remains a separately verified third deployment.
-
-### 2026-09-08 — Keep the Sidekick rename behind a verified compatibility release
-
-The regional configurations retain AutomationDO at v9 while both exports ship.
-A documented prerequisite beside a target rename was insufficient: merge-driven
-deployment would execute the rename immediately. A separate follow-up now owns
-that migration and its tracker updates after both regions are verified.
-
 ### 2026-09-06 — Bundle and share the search tokenizer
 
 **What changed:** Corrected the deployment description for bundled Qwen assets

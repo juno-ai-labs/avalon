@@ -380,14 +380,6 @@ calls; a rule at the consumer holds for all of them.
 A retired workspace still receives revocation messages for its expired
 sessions, each acknowledged with one info line.
 
-### 2026-09-08 — Remove the authorization freshness deadline
-
-The user changed five-minute freshness from a hard bound to a design goal after
-production expiry stalls. Global KV authorization caching is inert. Reads no longer enforce evidence age or reuse persisted
-grants; canonical checks and Queue discovery remain separate. The earlier
-five-minute lease claim is historical and superseded. Session and socket rules
-are unchanged.
-
 ### 2026-09-05 — Parent access and membership incarnation both fence child admission
 
 The child authorization branch now checks Main-derived parent visibility as well
@@ -481,21 +473,6 @@ than its author for a workspace-scoped automation, so a non-author reader's
 socket on such a conversation is outside the walk until that filter is widened
 the way the work-stream list's is. Recorded rather than fixed here: it is the
 list's generosity to change, not the hop's.
-
-### 2026-09-03 — HyperSight leaves the revocation hierarchy
-
-**What changed:** The revocation walk no longer discovers or calls a
-BlockDashboardAgent child, because that Durable Object class and its sockets are
-removed.
-
-**Why:** Keeping a revocation branch for a deleted feature would preserve a
-phantom authority edge and make access audits report a child that can no longer
-exist.
-
-**Consequences:** Revocation still closes WorkspaceDO, WorkstreamDO, and
-SubstreamAgent access. Historical migration records remain immutable.
-
-Shipped in #541.
 
 ### 2026-09-01 — Closing the room socket ends its message authority
 

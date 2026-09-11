@@ -1021,21 +1021,6 @@ option. The GitHub list tools no longer return bare arrays, so anything reading
 `output` as an array reads `output.pullRequests`, `output.issues`,
 `output.commits`, `output.files`, or `output.reviews` instead.
 
-### 2026-09-10 — The attachment twins take the `sidekick` prefix
-
-**What changed:** The attachment and artifact-data tools' second prefix is
-`sidekick` rather than `automation`, so the twins are `sidekick_read_resource`
-and `sidekick_view_resource`, the `suggestedCall` contract admits exactly those,
-and the site-read remediation's no-Terminal branch keys on the same value. The
-Sidekick creator's own tools render under the same prefix, and the memory and
-table tools' `scopeKind` enum offers `sidekick` where it offered `automation`.
-[`automation-lifecycle.md`](automation-lifecycle.md#2026-09-10--the-model-reads-sidekick-everywhere-a-person-does)
-owns the whole rename and its boundary.
-
-**Why:** A tool name is prompt text. The product had renamed automations to
-Sidekicks everywhere a person reads, and a model handed `sidekicks_list` beside
-`automation_read_resource` is being asked to hold two names for one thing.
-
 ### 2026-09-08 — A refusal echoes the value it refused
 
 **What changed:** Principle 5 gains the rule that an error refusing a
