@@ -454,14 +454,20 @@
   --av-cmp-markdown-article-heading-margin: 48px 0 18px;
 
   /* A surface that deliberately opposes the theme: light on a dark theme and
-   * dark on a light one. That does not take it off the ramp — the ramp inverts
-   * with the appearance, so `ref.color.neutral.13` is a near-white in dark and
-   * a near-black in light, and one alias in both appearance files gives the
-   * opposition for free. Holding literals instead is what let it drift warm
-   * while the ramp was hueless; keep it on the ramp so the only tooltip
-   * decision left is which step, and the hue follows the palette. */
+   * dark on a light one. Name a token, never a literal — the ramp inverts with
+   * the appearance, so one alias in both appearance files gives the opposition
+   * for free, and the hue then follows the palette instead of being chosen
+   * twice by hand. The ink is `sys.color.text.on-inverse`, which every other
+   * inverted surface already reads. The fill is a ramp step rather than
+   * `sys.color.surface.inverse-hover`, whose two values it happens to match:
+   * that token is a *hover* state and a tooltip has no rest to hover from, and
+   * the system has no resting `surface.inverse` sibling to point at — which is
+   * also why the inverted controls in `app.css` take their resting fill from
+   * `sys.color.text.default`. Adding that sibling would give this and those
+   * four rules one pair to share; until it exists, prefer the ramp step over
+   * borrowing a state token for its value. */
   --av-cmp-tooltip-background: var(--av-ref-color-neutral-13);
-  --av-cmp-tooltip-foreground: var(--av-ref-color-neutral-1);
+  --av-cmp-tooltip-foreground: var(--av-sys-color-text-on-inverse);
 
   /* The track behind an exclusive-choice strip. Its one value is the recess
    * the chosen pill sits in, and the pill is `sys.color.surface.raised`, so
@@ -777,7 +783,7 @@
   --av-cmp-markdown-article-heading-margin: 48px 0 18px;
 
   --av-cmp-tooltip-background: var(--av-ref-color-neutral-13);
-  --av-cmp-tooltip-foreground: var(--av-ref-color-neutral-1);
+  --av-cmp-tooltip-foreground: var(--av-sys-color-text-on-inverse);
 
   --av-cmp-segmented-track: #111111;
 

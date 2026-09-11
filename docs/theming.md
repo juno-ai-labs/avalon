@@ -180,12 +180,18 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 **What changed:** Four values in the two appearance files.
 `cmp.tooltip.background` and `cmp.tooltip.foreground` were literals —
 `#efe8dc`/`#17130d` in dark and `#2a241d`/`#f7f3ec` in light — and are now
-`{ref.color.neutral.13}` and `{ref.color.neutral.1}` in both. They resolve to
-`#eeeeee` on `#070707` in dark and `#2f2f2f` under `#fcfcfc` in light, so the
+`{ref.color.neutral.13}` and `{sys.color.text.on-inverse}` in both. They resolve
+to `#eeeeee` on `#141414` in dark and `#2f2f2f` under `#fcfcfc` in light, so the
 lightness barely moves and only the hue goes. `.tooltip-arrow` already filled
 from the background token and follows for free. The registry's `cmp.tooltip`
 note, which asserted the surface "cannot be a ramp step in either", is rewritten
 because that premise was wrong and was the reason the literals were there.
+
+The ink is the system's, not a ramp step, because `sys.color.text.on-inverse`
+already exists for exactly this job and every other inverted surface reads it —
+`.meeting-start-button`, `.rally-mention-icon`, the pressed sidekick filters, the
+automation check. A ramp step there would have duplicated it and, in dark, sat
+one step off it, which is this same entry's bug moved up a layer.
 
 **Why:** `#efe8dc` is a warm beige — hue about 38°, saturation about 37% — and
 the entire reference ramp it sits against is hueless, `R === G === B` at every
@@ -214,6 +220,22 @@ warm on purpose-by-omission, not by argument, and a future change that neutralis
 them should treat this entry as the precedent rather than the constraint. What
 that change has to respect is only this: whatever step it lands on, it names the
 ramp rather than a literal.
+
+Also rejected, for the fill: `sys.color.surface.inverse-hover`, which holds
+`#eeeeee`/`#2f2f2f` — the same two values this now resolves to. Pointing at it
+would read as the system token for an inverted surface and would not be one. It
+is a *hover* state, and a tooltip has no rest to hover from, so the tooltip would
+inherit any future change made to how an inverted control responds to a pointer
+— a coupling as arbitrary as the literal, and harder to see. The token that
+should exist is a resting `sys.color.surface.inverse`; the system has none, which
+is also why the inverted controls in `app.css` take their resting fill from
+`sys.color.text.default`, a text token used as a background. Adding that sibling
+— `inverse` at `{ref.color.neutral.14}`, `inverse-hover` re-pointed to
+`{ref.color.neutral.13}`, which it already equals — would give the tooltip and
+those four rules one pair to share, and is the change this entry would rather
+have made. It is left undone because it moves the tooltip's own lightness and
+re-points controls this change had no reason to touch, which makes it a design
+decision rather than a rename.
 
 ### 2026-09-10 — The feed's byline is one size and two weights
 
