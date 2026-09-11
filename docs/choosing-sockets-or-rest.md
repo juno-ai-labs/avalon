@@ -854,9 +854,9 @@ surface. This is event-driven revalidation, not polling and not a second socket.
 
 ### 2026-09-11 — Connector recovery follows the existing workspace socket
 
-**What changed:** Main-feed connection cards now follow the active connections
-query as the workspace socket invalidates it, then latch the first connected
-state they observe.
+**What changed:** Conversation-feed connection cards now follow the active
+connections query as the workspace socket invalidates it, then keep the first
+connected state they observe above the virtualized rows for the feed's lifetime.
 
 **Why:** OAuth completes outside the Electron window. A card that waits for
 focus can remain stale, while a polling card duplicates the workspace change

@@ -608,9 +608,9 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
-### 2026-09-11 — Connector recovery is a first-class main-feed card
+### 2026-09-11 — Connector recovery is a first-class conversation-feed card
 
-**What changed:** The main conversation feed opts into rendering validated
+**What changed:** The live conversation surface opts into rendering validated
 `core_show_connector_connection` tool calls as provider cards with connect,
 reconnect, pending, and connected states. These rows are person-facing and
 therefore remain outside plugin grouping and settled-work accordions.
@@ -620,17 +620,19 @@ unblock the task. Rendering it as an ordinary tool disclosure exposed a wire
 name and JSON instead of the connector the person recognizes.
 
 **Alternative rejected:** Teaching every `MessageBlock` host to render the
-card automatically. OAuth is a product control of the main feed; a shared
+card automatically. OAuth is a product control of the live feed; a shared
 renderer silently acquiring it would put connection controls into future
 read-only or preview surfaces.
 
 **Consequences:** A new transcript host remains neutral until it opts in. The
 card's height is measured by the existing feed virtualizer, and completion of
 the external OAuth flow refreshes the same global connection query used by
-Settings and connector mentions. The completed tool fact retains the validated
-card identity, so reload, paging, recovery, or virtualization cannot downgrade
-an already-shown card into a generic tool disclosure. Adjacent repeats of the
-same connector and scope collapse into the newest row rather than stacking.
+Settings and connector mentions. The completed tool fact carries forward the
+validated card identity, so reload, paging, recovery, or virtualization cannot
+downgrade an already-shown card into a generic tool disclosure. The first
+Connected observation is held above virtualized rows for the feed's lifetime.
+Adjacent repeats of the same connector and scope keep the first row's stable
+anchor instead of stacking.
 
 ### 2026-09-11 — A pending stop says so in words, where the reader is watching
 

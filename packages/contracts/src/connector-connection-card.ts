@@ -44,12 +44,17 @@ export const ConnectorConnectionCardIds = Object.keys(ConnectorConnectionCardCat
   ...ConnectorConnectionCardId[],
 ];
 
+const personalOnlyConnectorIds = ConnectorConnectionCardIds.filter((connectorId) =>
+  !ConnectorConnectionCardCatalog[connectorId].scopes.includes("workspace" as never));
+const personalOrWorkspaceConnectorIds = ConnectorConnectionCardIds.filter((connectorId) =>
+  ConnectorConnectionCardCatalog[connectorId].scopes.includes("workspace" as never));
+
 const ConnectorConnectionCardShape = z.strictObject({
   connectorId: z.enum(ConnectorConnectionCardIds).describe(
-    "Connector to check or show. Use one listed value.",
+    `Connector to check or show. Personal only: ${personalOnlyConnectorIds.join(", ")}. Personal or workspace: ${personalOrWorkspaceConnectorIds.join(", ")}.`,
   ),
   scope: z.enum(ConnectorConnectionCardScopes).describe(
-    "Use personal for the current user's account. Use workspace for the shared workspace account.",
+    "Use personal for the current user's account. Use workspace only for an id described as personal or workspace.",
   ),
 });
 
@@ -71,6 +76,7 @@ export const ConnectorConnectionStateSchema = z.enum([
   "connected",
   "reconnect_required",
   "not_connected",
+  "unavailable",
 ]);
 export const ConnectorConnectionStateResultSchema = z.strictObject({
   connectorId: z.enum(ConnectorConnectionCardIds),
@@ -85,12 +91,15 @@ export const CONNECTOR_CONNECTION_CARD_WIRE_NAME = `core_${CONNECTOR_CONNECTION_
 export const CONNECTOR_CONNECTION_STATE_TOOL_NAME = "get_connector_connection_state";
 export const CONNECTOR_CONNECTION_STATE_WIRE_NAME = `core_${CONNECTOR_CONNECTION_STATE_TOOL_NAME}`;
 
+export function connectorConnectionCardSummary(input: ConnectorConnectionCardInput): string {
+  return `Presented the ${input.connectorId} ${input.scope} connection card`;
+}
+
 /**
  * Recover a card selection from a completed durable tool event.
  *
- * New terminal facts carry the validated selection as structured output. The
- * input remains useful for live events, while the exact generated summary is a
- * compatibility path for facts written before terminal output was retained.
+ * The validated started-event input is carried forward into terminal facts.
+ * The shared summary parser also covers summary-only interrupted-run recovery.
  */
 export function connectorConnectionCardInputFromToolEvent(event: {
   name: string;
@@ -106,8 +115,9 @@ export function connectorConnectionCardInputFromToolEvent(event: {
   }
   for (const connectorId of ConnectorConnectionCardIds) {
     for (const scope of ConnectorConnectionCardScopes) {
-      if (event.summary !== `Presented the ${connectorId} ${scope} connection card`) continue;
-      const parsed = ConnectorConnectionCardInputSchema.safeParse({ connectorId, scope });
+      const candidate = { connectorId, scope };
+      if (event.summary !== connectorConnectionCardSummary(candidate)) continue;
+      const parsed = ConnectorConnectionCardInputSchema.safeParse(candidate);
       if (parsed.success) return parsed.data;
     }
   }

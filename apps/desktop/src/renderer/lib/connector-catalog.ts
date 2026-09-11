@@ -67,7 +67,7 @@ export const connectorProviders = [
     id: 'slack' as const,
     provider: ConnectorConnectionCardCatalog.slack.providerType,
     name: 'Slack',
-    description: 'Messages, files, people, canvases, conversations, and the Rally workspace Agent.',
+    description: 'Search messages, files, people, canvases, and conversations.',
     mark: ConnectorConnectionCardCatalog.slack.iconName,
     scopes: ['you', 'workspace'] as const,
     personalCapabilities: SLACK_PERSONAL_CAPABILITIES,

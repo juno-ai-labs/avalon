@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -116,7 +116,7 @@ describe("instruction probe", () => {
     ]);
     expect(escaped.stdout).not.toContain("planted");
     // A directory named like an instruction file is not one either.
-    rmSync(join(root, "apps"));
+    unlinkSync(join(root, "apps"));
     mkdirSync(join(root, "apps", "api", "AGENTS.md"), { recursive: true });
     const directory = run(root, "report", []);
     const asDirectory = splitInstructionProbeTrailer(directory.stdout, directory.marker).probe;

@@ -1,15 +1,13 @@
 import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
 import type { MentionIdentity } from './api';
 import type { ElicitationData, Message, MessageMention, PluginActivityData, ThoughtEventData, ToolEventData, WorkSpan, WorkTotal, WorkspaceMember } from './types';
-import {
-  CONNECTOR_CONNECTION_CARD_WIRE_NAME,
-  connectorConnectionCardInputFromToolEvent,
-} from '@rally/contracts';
 import { pluginGroup } from './plugin-groups';
 import {
   AutomationActivationV1Schema,
   AutomationDraftProposedV1Schema,
+  CONNECTOR_CONNECTION_CARD_WIRE_NAME,
   ElicitationSchema,
+  connectorConnectionCardInputFromToolEvent,
   type TranscriptActivity,
   type PendingTranscriptInput,
   type TranscriptPluginRun,
@@ -996,7 +994,8 @@ export function composeTranscript(
 /**
  * A repeated presentation call beside the card it just presented is one
  * product control, not two transcript rows. Collapse only an uninterrupted run
- * of the same validated connector and scope, keeping the newest durable fact.
+ * of the same validated connector and scope. Keep the first row's stable id so
+ * an existing message anchor still points at the surviving card.
  * Any intervening conversation row or transcript seam starts a new occasion.
  */
 export function dedupeAdjacentConnectorConnectionCards(messages: readonly Message[]): Message[] {
@@ -1011,6 +1010,7 @@ export function dedupeAdjacentConnectorConnectionCards(messages: readonly Messag
       && card.scope === previousCard.scope) {
       rows[rows.length - 1] = {
         ...message,
+        id: previous.id,
         ...(previous.precededByTranscriptGap ? { precededByTranscriptGap: true } : {}),
         attentionSequenceNumber: message.attentionSequenceNumber
           ?? previous.attentionSequenceNumber,
