@@ -1037,7 +1037,14 @@ function calendarEventWriteInputSchema(includeEventId: boolean): Record<string, 
     location: { type: "string", maxLength: 2000, description: "Where it happens, as free text: a room name, a street address, or a meeting URL. It is a label, so this does not book a room or create a video call." },
     start: { type: "string", minLength: 1, format: "date-time", description: "When it starts, as an RFC 3339 timestamp that includes an offset, for example 2026-08-11T09:00:00-07:00. Call the current-time tool rather than guessing the offset." },
     end: { type: "string", minLength: 1, format: "date-time", description: "When it ends, as an RFC 3339 timestamp that includes an offset, for example 2026-08-11T10:00:00-07:00. It must be after the start." },
-    timeZone: { type: "string", minLength: 1, maxLength: 100, description: "The IANA zone the event is anchored in, for example America/Los_Angeles. Defaults to the calendar's own zone. It decides what the event reads as after a daylight-saving change; it does not shift the offsets already written into start and end." },
+    timeZone: {
+      type: "string",
+      minLength: 1,
+      maxLength: 100,
+      description: includeEventId
+        ? "Re-anchor the event to this IANA zone, for example America/Los_Angeles. It cannot be sent on its own: a zone change is refused unless `start` and `end` are sent with it, so send all three. Omitting it leaves the event in the zone it already has."
+        : "The IANA zone the event is anchored in, for example America/Los_Angeles. Defaults to the calendar's own zone. It decides what the event reads as after a daylight-saving change; it does not shift the offsets already written into start and end.",
+    },
     attendeeEmails: {
       type: "array",
       items: { type: "string", format: "email" },
@@ -1093,7 +1100,7 @@ function sheetValuesWriteInputSchema(append: boolean): Record<string, unknown> {
         type: "array",
         items: { type: "array", items: { type: ["string", "number", "boolean", "null"] }, maxItems: 1000 },
         maxItems: 1000,
-        description: "The cells, as an array of rows in reading order, for example [[\"Name\", \"Owner\"], [\"Launch\", \"Dana\"]]. Every row is one inner array even when there is a single column. `null` leaves that cell as it is; an empty string clears it. At most 10,000 cells in one call."
+        description: "The cells, as an array of rows in reading order, for example [[\"Name\", \"Owner\"], [\"Launch\", \"Dana\"]]. Every row is one inner array even when there is a single column. Every cell in the range you send is written: `null` clears it exactly as an empty string does, so there is no per-cell way to say \"leave this one alone\" — to change part of a row, send a range covering only the cells that change. At most 10,000 cells in one call."
       },
       valueInputOption: { type: "string", enum: ["RAW", "USER_ENTERED"], description: "How Sheets reads the strings you send. USER_ENTERED, the default, parses them the way typing would, so `=SUM(A1:A9)` becomes a formula and `10/6` becomes a date. RAW stores every string as literal text." },
       ...(append ? { insertDataOption: { type: "string", enum: ["INSERT_ROWS", "OVERWRITE"], description: "INSERT_ROWS, the default, inserts new rows and pushes existing content down. OVERWRITE writes into the rows already below the table, replacing anything there." } } : {})
