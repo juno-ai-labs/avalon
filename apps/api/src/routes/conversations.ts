@@ -2,11 +2,13 @@ import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono } from "hono";
 import { requireSendableMessageLength, zValidator } from "../middleware/validation";
 import {
+  AcknowledgeWorkstreamReadRequestSchema,
   AgentModelOverrideSchema,
   IdSchema,
   UpdateWorkstreamRequestSchema,
   WorkstreamResourceSchema,
   WorkstreamBootSchema,
+  WorkstreamSchema,
 } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -141,10 +143,39 @@ conversationRoutes.patch("/:parentId/substreams/:substreamId", zValidator("param
       await new SubstreamCreationService(c.env, getAuth(c)).archive(param.parentId, param.substreamId, body.archived);
     }
     if (body.title !== undefined) {
-      const client = await new ConversationService(c.env, getAuth(c)).writableClient(param.parentId, param.substreamId);
+      const client = await new ConversationService(c.env, getAuth(c)).client(param.parentId, false, param.substreamId);
       await client.update({ title: body.title });
     }
     return c.body(null, 204);
+  });
+/**
+ * Move this person's read waterline in one conversation.
+ *
+ * Substream-addressed because read state is substream-owned: every
+ * `SubstreamAgent` keeps its own attention ordinals and its own
+ * `member_attention` row, and a child's ordinals are deliberately not
+ * comparable to Main's. Addressing the work stream instead, which is what
+ * `PATCH /workstreams/:id/read-state` did, could only ever advance Main, so a
+ * substream's unread divider had nothing that could clear it and stayed above
+ * the reply the person was looking at for as long as the child existed.
+ *
+ * Read-authorized rather than writable: this records what the reader has read
+ * rather than changing the conversation, and an automation's conversation stays
+ * readable once the automation is archived. Refusing the acknowledgement there
+ * would strand that divider the same way.
+ *
+ * Marking a conversation unread by hand stays on the work stream
+ * (`POST /workstreams/:id/read-state/mark-unread`): it is the sidebar's action
+ * on a row whose dot is Main's, taken with no conversation open and therefore
+ * no substream to address. `docs/choosing-sockets-or-rest.md` holds why neither
+ * moved onto the child's socket.
+ */
+conversationRoutes.patch("/:parentId/substreams/:substreamId/read-state",
+  zValidator("param", substreamSocketParam),
+  zValidator("json", AcknowledgeWorkstreamReadRequestSchema), async (c) => {
+    const param = c.req.valid("param");
+    const client = await new ConversationService(c.env, getAuth(c)).client(param.parentId, false, param.substreamId);
+    return c.json(WorkstreamSchema.parse(await client.acknowledgeRead(c.req.valid("json"))));
   });
 conversationRoutes.get("/:parentId", zValidator("param", parentParam), async (c) => {
   const parentId = c.req.valid("param").parentId;

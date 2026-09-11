@@ -1328,13 +1328,24 @@ export class RallyApi {
     return { enqueuedCount: result.enqueuedCount, archivedNoteCount: result.archivedNoteCount };
   }
 
-  async acknowledgeWorkstreamRead(
-    id: string,
+  /**
+   * Tell one conversation how far this person has read it.
+   *
+   * Addressed by conversation rather than by work stream, because that is what
+   * owns the waterline: a substream keeps its own attention ordinals, so an
+   * acknowledgement sent to the work stream advanced Main and left the child's
+   * unread divider with nothing to clear it. The answer is the addressed
+   * conversation's own summary, which is what the caller writes back to that
+   * conversation's cache entry.
+   */
+  async acknowledgeConversationRead(
+    parentId: string,
+    substreamId: string,
     readThroughSequenceNumber: number,
     observedManualUnreadGeneration: number,
     entrypoint?: TelemetrySurfaceEntrypoint,
   ): Promise<WorkstreamSummary> {
-    const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}/read-state`, {
+    const workstream = await this.request(`${this.substreamPath(parentId, substreamId)}/read-state`, {
       method: 'PATCH',
       body: { readThroughSequenceNumber, observedManualUnreadGeneration, entrypoint },
       schema: WireWorkstreamSchema,
@@ -1342,6 +1353,7 @@ export class RallyApi {
     return mapWorkstreamSummary(workstream);
   }
 
+  /** By hand, from the sidebar, where the row's dot is Main's. */
   async markWorkstreamUnread(id: string): Promise<WorkstreamSummary> {
     const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}/read-state/mark-unread`, {
       method: 'POST',

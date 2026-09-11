@@ -465,6 +465,54 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-11 — A substream's unread divider can now be read away
+
+**What changed:** The surface acknowledges reads in whatever conversation it is
+showing. `conversationReadAcknowledgement` in `conversation-surface.tsx` is the
+one place that decides what a conversation owes, addressed to itself, and the
+`if (substreamId !== '0') return` that opened the old callback is gone. The
+request goes to that conversation's own read-state endpoint (see
+[`workstream-durable-object.md`](workstream-durable-object.md)), and its answer
+patches that conversation's own detail entry, which
+`patchCachedWorkstreamViewerState` was already addressing correctly.
+
+**Why:** the feed drew a divider it could not clear. `firstUnreadIndex` is
+computed from the addressed conversation's own `firstUnreadSequenceNumber` and
+handed to `MessageFeed` unconditionally, unlike `onStartSubstream` beside it,
+while the acknowledgement was Main-only. Because sending a turn advances its
+author's own waterline, the **Unread messages** rule came to rest between the
+person's question and Rally's answer to it, which is the least useful place it
+could be and the one it could not leave, for the life of the substream.
+[`workstream-durable-object.md`](workstream-durable-object.md) owns why the
+waterline is the child's.
+
+**Considered and rejected:** suppressing the divider in a substream, which is
+the smaller diff and the wrong half to change: the child's unread state is real,
+it is what the reader wants, and hiding it would have left mentions and the
+opening scroll position reading from a waterline nothing maintains. Also
+rejected: leaving the in-flight key naming only the work stream. It is reset
+whenever the conversation address changes, so two children cannot collide
+today, but a key for a per-conversation request that cannot name the
+conversation is a trap for the next change.
+
+**Also changed:** an acknowledgement that answers out of order no longer rolls
+the waterline back. Two can be in flight, because the send is debounced at
+250ms and keyed on the sequence it carries, so a slower round trip for an
+earlier position lands after a later one; applied in arrival order the earlier answer put
+the divider back above a message that had been read. `patchCachedWorkstreamViewerState`
+now drops an answer older than the entry it holds, ordering on the manual-unread
+generation first and the read-through within it, because both only move forward
+at the authority. It is not specific to substreams, but it undoes this fix when
+it fires.
+
+**What a future change has to respect:** the acknowledgement, the divider, and
+the opening anchor all read the same conversation's viewer fields. A surface
+that starts drawing one of them from the parent's detail entry while the others
+read the child's puts the divider back where it was. And the guard above assumes
+its two fields are monotonic at the authority; a server that ever lowers
+`seen_attention_ordinal` would be silently ignored here.
+
+
 ### 2026-09-11 — The navigation's plus says what it starts, and it starts a work stream
 
 **What changed:** The `+` in the navigation titlebar and its twin in the rail
