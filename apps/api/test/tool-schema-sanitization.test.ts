@@ -79,13 +79,15 @@ describe("tool schema sanitization", () => {
     // authored check below is what closes that, and it is the failure mode this
     // suite exists to catch rather than a hypothetical one.
     //
-    // The sanitizer half stays because the two spellings are not equivalent:
-    // it collapses `type: ["string", "null"]` to `type: "string"` and moves the
-    // nullability into the description — a schema forbidding the value beside
-    // prose permitting it, which is the conflict the fix exists to end. Written
-    // as an assertion because two automated reviews read the two spellings as
-    // equivalent, which is what a reviewer's head is bad at and a test is good
-    // at.
+    // The sanitizer half stays even though `@juno-ai/bind` 14 delivers both
+    // spellings. Under bind 13 it collapsed `type: ["string", "null"]` to
+    // `type: "string"` and moved the nullability into the description, a
+    // schema forbidding the value beside prose permitting it, which is the
+    // conflict the fix exists to end, and a bind release that went back to
+    // that would put the conflict on the wire again with nothing else changed
+    // here. Written as an assertion because two automated reviews read the two
+    // spellings as equivalent, which is what a reviewer's head is bad at and a
+    // test is good at.
     //
     // Every connector, not Google's four: a cursor is a cursor whichever
     // adapter serves it, and the assertion this widened from could pass while
@@ -108,18 +110,34 @@ describe("tool schema sanitization", () => {
     expect(cursors.flatMap(({ connector, tool, cursor }) => {
       const where = `${connector}.${tool.name}.${cursor}`;
       if (!authorsNullBranch(tool, cursor)) return [`${where}: authors no null branch`];
-      // Filtered to the cursor itself. `droppedNullableBranches` reports every
-      // collapsed property on the schema, and a tool that takes a cursor
-      // usually also takes flat-nullable ids and filters that are still
-      // collapsed — Slack's `search_messages` alone carries four. Those are the
-      // backlog the Google entry in `connectors.md` counts, and converting them
-      // is a change per parameter with its own reasoning about what absence
-      // means there. Asserting over them here would fail for work this guard is
-      // not about.
+      // Filtered to the cursor itself, because this assertion is the cursor
+      // contract and names a cursor when it fails. Every other property on
+      // every tool is the registry-wide assertion below.
       return droppedNullableBranches(tool.inputSchema as Record<string, unknown>)
         .filter((finding) => finding.startsWith(`${cursor}: `))
         .map((finding) => `${where.slice(0, where.lastIndexOf("."))}.${finding}`);
     })).toEqual([]);
+  });
+
+  it("delivers every authored null branch, on every tool, in either spelling", () => {
+    // Every property of every authored tool, not only the cursors. Until
+    // `@juno-ai/bind` 14 this could not hold: the sanitizer collapsed the flat
+    // `type: ["string", "null"]` to `type: "string"`, 28 parameters across four
+    // connectors were declared that way, and the guard above was filtered to
+    // cursors so it would not fail for them. What that cost is on record. A
+    // scheduled Sidekick posting to Slack was handed `send_message.thread_ts`
+    // as a bare string with "or send null" in the prose, could not spell "no
+    // thread" in the half of the declaration it treats as binding, and put
+    // `"/"`, `". "` and `".000001"` in it for thousands of refused calls, or
+    // the timestamp of its own previous post, which is how it came to reply to
+    // itself. Bind 14 rewrites that declaration to `anyOf` with a null branch,
+    // so the whole registry is now asserted, and a bind release that collapsed
+    // again fails here naming the tool and the parameter rather than in a
+    // channel.
+    const dropped = everyAuthoredToolSchema().flatMap(({ name, schema }) =>
+      droppedNullableBranches(schema).map((finding) => `${name}: ${finding}`));
+
+    expect(dropped).toEqual([]);
   });
 
   it("leaves no tool with a composition branch the sanitizer strips a constraint from", () => {

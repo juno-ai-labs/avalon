@@ -176,16 +176,23 @@ the key, and wrote down why: *"Schema says min but omit should maybe omit."*
 Prose loses to the machine-readable half, so the schema has to admit the
 answer.
 
-**Declare that alternative as `anyOf`, never as a type array.** Bind's
-sanitizer collapses `type: ["string", "null"]` to `type: "string"` and appends
-"Accepts string or null." to the description — the null branch survives only as
-prose, which is the same two-halves-disagreeing shape the rule above exists to
-remove. `anyOf: [{ type: "string", minLength: 1 }, { type: "null" }]` passes
-through whole. `droppedNullableBranches` reports the difference and
-`apps/api/test/tool-schema-sanitization.test.ts` asserts over it. That assertion
-enumerates the registry, so a new paginated connector tool is enrolled by
-existing rather than by being remembered; what still has to be remembered is a
-cursor named something outside `CURSOR_PARAMETERS`, which no sweep will find.
+**Either spelling reaches the model as a union, and the guard covers every
+parameter.** Since `@juno-ai/bind` 14 the sanitizer rewrites
+`type: ["string", "null"]` to `anyOf: [{ type: "string", minLength: 1 }, { type: "null" }]`
+rather than collapsing it to `type: "string"` with "Accepts string or null."
+appended to the description, which is what Bind 13 did, and which left the
+null branch alive only as prose, the same two-halves-disagreeing shape the rule
+above exists to remove. `anyOf` stays the house spelling for a cursor because it
+says what it means without depending on a dependency's transform, and
+`droppedNullableBranches` still reports a property whose authored null does not
+reach the wire: a multi-type union such as `["string", "number", "null"]` still
+collapses, and so does a nullable type at the parameters root, one in a branch
+of a root union, and one whose sibling `enum` excludes `null`.
+`apps/api/test/tool-schema-sanitization.test.ts` asserts that over every
+property of every authored tool, not only the cursors, so a tool added next
+year is enrolled by existing; what still has to be remembered is a cursor named
+something outside `CURSOR_PARAMETERS`, which the cursor-contract sweep will not
+find.
 
 If using zod for parsing do not just return the zod error object. Provide natural
 language errors and more importantly provide instructions on how to fix the error.
@@ -931,6 +938,39 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-09-11 — A nullable parameter survives in either spelling
+
+**What changed:** Principle 1's second half no longer forbids the type-array
+spelling. `@juno-ai/bind` 14 rewrites `type: ["string", "null"]` to the `anyOf`
+union on the way to the wire, so a flat nullable declaration and an `anyOf` one
+now reach the model alike. The `droppedNullableBranches` assertion in
+`apps/api/test/tool-schema-sanitization.test.ts` widens from the connector
+cursors to every property of every authored tool, and `anyOf` remains the house
+spelling for a cursor.
+
+**Why:** The 2026-09-03 rule below was written around the collapse and left 28
+parameters on four connectors declared the way the sanitizer broke, each
+waiting for its own conversion. One of them was `slack_send_message.thread_ts`,
+and a scheduled Sidekick handed it as a bare string with "or send null" in the
+prose put `"/"`, `". "` and `".000001"` into it for thousands of Slack-refused
+calls, or the timestamp of its own previous post, which is how a joke Sidekick
+came to reply to itself. Fixing the spelling per parameter would have left the
+next connector free to ship the shape again; fixing the sanitizer fixes every
+consumer at once, and the guard now proves it registry-wide.
+
+**Considered and rejected:** rewriting the type array in Rally's own
+`repairRootSchemaForProviders`, which runs before Bind's sanitizer and would
+have worked for this repository alone. The collapse lives in Bind, every
+consumer of Bind hits it, and the transform belongs beside the code it
+replaces. Also rejected: dropping the `anyOf` preference for cursors now that
+both spellings survive. A declaration that says what it means without
+depending on a dependency's transform is the one a reader can trust.
+
+**Consequences:** the guard is registry-wide and fails on a Bind release that
+collapses again, naming the tool and the parameter. A parameter Bind 14 still
+collapses, a multi-type union with `null`, or a nullable type at the root or
+in a root-union branch, is reported the same way and needs its own spelling.
 
 ### 2026-09-10 — A parameter with no description is a parameter that gets guessed at
 

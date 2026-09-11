@@ -49,8 +49,9 @@ const ROOT_UNION_KEYWORDS = ["anyOf", "oneOf"] as const;
  * reaches a provider, and both callers pass one. It is deliberately literal
  * about `type` as a result: an array `type` such as `["object", "null"]` reads
  * as unreadable here, which is wrong for an authored schema and irrelevant for a
- * sanitized one, because Bind collapses a type array to a scalar before this
- * ever sees it. Anyone applying this predicate to an authored schema — a legal
+ * sanitized one, because Bind resolves a type array before this ever sees it , 
+ * a nullable single type into an `anyOf` since bind 14, anything else into a
+ * scalar. Anyone applying this predicate to an authored schema, a legal
  * shape for a third-party MCP server to serve — should sanitize first.
  *
  * Bind 13 handles every clause here, so nothing in the shipped tool surface
@@ -183,18 +184,27 @@ function stableKey(value: unknown): string {
 /**
  * Properties that authored a `null` alternative the sanitizer does not deliver.
  *
- * A parameter whose value may legitimately be "none" has two spellings, and
- * only one of them reaches the model. `type: ["string", "null"]` is collapsed
- * to `type: "string"` here, and the nullability is appended to the description
- * as "Accepts string or null." — a schema forbidding the value beside prose
- * permitting it. `anyOf: [{ type: "string" }, { type: "null" }]` survives whole.
+ * A parameter whose value may legitimately be "none" has two spellings. Since
+ * `@juno-ai/bind` 14 both reach the model as a union: `type: ["string", "null"]`
+ * is rewritten to `anyOf: [{ type: "string", … }, { type: "null" }]` and the
+ * `anyOf` spelling passes through whole. Under bind 13 the flat form was
+ * collapsed to `type: "string"` with the nullability appended to the
+ * description as "Accepts string or null.", a schema forbidding the value
+ * beside prose permitting it, and that is still what happens to the shapes
+ * bind 14 leaves out: a multi-type union such as `["string", "number", "null"]`,
+ * a nullable type at the parameters root, one in a branch of a root union, and
+ * one whose sibling `enum` excludes `null`.
  *
  * That difference is not cosmetic, and it was measured rather than reasoned
- * about. A caller told in prose to omit a cursor while `minLength: 1` said
- * otherwise spent eight calls inventing values — `"x"`, `" "`, `"undefined"`,
- * `"/"` — because absence was not expressible in the half of the declaration
- * it treats as binding. Demoting a null branch into prose reproduces exactly
- * that shape.
+ * about, twice. A caller told in prose to omit a cursor while `minLength: 1`
+ * said otherwise spent eight calls inventing values, `"x"`, `" "`,
+ * `"undefined"`, `"/"`, because absence was not expressible in the half of the
+ * declaration it treats as binding. A scheduled Sidekick handed
+ * `slack_send_message.thread_ts` the same way put `"/"`, `". "` and
+ * `".000001"` in it for thousands of refused calls, or the timestamp of its
+ * own previous post. Demoting a null branch into prose reproduces exactly that
+ * shape, which is why this guard stays after the sanitizer stopped doing it:
+ * it is what fails if a bind release starts again.
  *
  * Reports `property: authored-null-branch-not-delivered` for each one, so a
  * caller can assert over the set it owns.
