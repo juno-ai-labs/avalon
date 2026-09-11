@@ -54,9 +54,12 @@ context, and restores the button.
 - **The renderer never receives the Azure credential.** It holds only its Rally
   session and calls the protected regional endpoint; moving the provider request
   client-side would expose production inference authority.
-- **The UI discloses the AI voice.** The button's accessible label and tooltip
-  identify it as AI-generated, even though the compact visible label remains
-  Speak.
+- **The control is named once.** Its visible label is *Speak*, and its
+  accessible name and its tip are both *Speak response* — one string, spent
+  twice by the action row's `MessageAction`, which
+  [`conversation-surfaces.md`](conversation-surfaces.md) describes. A second
+  string for the same button is how this control ended up saying two different
+  things at once before.
 
 ## Boundary
 
@@ -74,6 +77,14 @@ decision.
 
 ## Failure modes and limits
 
+- **Nothing in the transcript says the voice is synthetic.** The name used to
+  ("Speak response with an AI-generated voice") and no longer does; the visible
+  label never did. A reader who has not played a message cannot learn from this
+  surface that what plays is generated. The agent's `generate_audio` tool
+  discloses its own output, but that is a different path and does not cover
+  this one. Closing this needs somewhere of its own — the speech section of
+  Settings, or a note on first play — because the control's one string is
+  spoken for.
 - Missing Azure inference configuration returns a user-safe 503 and logs no
   message content. Provider rejection before the first byte becomes the normal
   Rally API error; a later provider failure terminates the audio stream.
@@ -143,6 +154,47 @@ later stops before hearing; prefetching the entire response was rejected because
 its abandoned cost grows with message length.
 
 ## Changelog
+
+### 2026-09-10 — Speak says *Speak response*, and the AI disclosure goes with it
+
+**What changed:** The control's one string is now *Speak response*. It had been
+*Speak response with an AI-generated voice*, which was its accessible name and,
+from earlier the same day, its tooltip.
+
+**Why:** Asked for directly: the row's five sentences are read together on
+hover, and this was the only one that ran past its neighbours — *Copy response*,
+*Save response as an image*, *Save response as a PDF*, *New substream from this
+message*. The shorter form matches them.
+
+**Considered and rejected:** Splitting name from tooltip, so the tooltip could
+stay short while the name kept the disclosure. `MessageAction` deliberately
+spends one string on both, and two strings for one control is exactly the drift
+that put *Speak response with an AI-generated voice* and *Play with an
+AI-generated voice* on the same button before this.
+
+**Consequences:** Nothing in the transcript now says the voice is synthetic.
+The agent's `generate_audio` tool still discloses its own output, but that is a
+different path and does not cover this one. If the disclosure is wanted back it
+needs somewhere of its own — the speech section of Settings, or a first-play
+note — because the label is now spoken for.
+
+### 2026-09-10 — The voice disclosure moved off the native title
+
+**What changed:** Speak's `title` attribute is gone. Its disclosure is now the
+app's own tooltip, opened by the action row's `MessageAction` from the same
+string as the accessible label — at the time "Speak response with an
+AI-generated voice", and "Stop speaking" while it plays.
+
+**Why:** The row's other actions gained tooltips, and a native `title` beside
+them would have opened in a different box, after a delay nothing in the app
+sets, and never for a pointer already moving along the row. It also let the
+disclosure exist twice in slightly different words: the label said *Speak
+response with an AI-generated voice* and the title *Play with an AI-generated
+voice*, which is exactly the drift a disclosure invariant should not permit.
+
+**Consequences:** The disclosure is one string. Changing what Speak says means
+changing `description` on its `MessageAction`, and the label and the tooltip
+move together because there is nothing else to move.
 
 ### 2026-08-31 — Stopped PCM players fail explicit reuse
 

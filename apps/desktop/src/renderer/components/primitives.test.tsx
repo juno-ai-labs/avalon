@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEVICE_PREFERENCES_STORAGE_KEY } from '../lib/device-preferences';
-import { AvatarStack, RallyMark, DropdownSelect, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot } from './primitives';
+import { AvatarStack, RallyMark, DropdownSelect, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state, theme }: { size: number; state: string; theme?: string }) => (
@@ -166,6 +166,56 @@ describe('SegmentedControl', () => {
     fireEvent.keyDown(screen.getAllByRole('radio')[1]!, { key: 'a' });
 
     expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('TipGroup', () => {
+  /**
+   * Two controls in one group, the way an action row holds them.
+   *
+   * The second assertion is deliberately synchronous: the point of the group is
+   * that a pointer travelling the row pays the open delay once, so the second
+   * tip has to be open on this tick rather than 450ms from now. Nothing here
+   * waits on wall-clock — the skip window Radix keeps after a tip closes is
+   * 300ms, and these two events are microseconds apart.
+   */
+  it('opens the rest of a row without paying the delay again', async () => {
+    stubResizeObserver();
+    render(
+      <TipGroup>
+        <Tip label="Copy response"><button type="button">Copy</button></Tip>
+        <Tip label="Speak response"><button type="button">Speak</button></Tip>
+      </TipGroup>,
+    );
+    const copy = screen.getByRole('button', { name: 'Copy' });
+    const speak = screen.getByRole('button', { name: 'Speak' });
+
+    fireEvent.pointerMove(copy, { pointerType: 'mouse' });
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Copy response');
+
+    fireEvent.pointerLeave(copy, { pointerType: 'mouse' });
+    fireEvent.pointerMove(speak, { pointerType: 'mouse' });
+
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Speak response');
+  });
+
+  it('keeps a tip from outliving the control it points at', async () => {
+    stubResizeObserver();
+    render(
+      <TipGroup>
+        <Tip label="Copy response"><button type="button">Copy</button></Tip>
+      </TipGroup>,
+    );
+    const copy = screen.getByRole('button', { name: 'Copy' });
+
+    fireEvent.pointerMove(copy, { pointerType: 'mouse' });
+    expect(await screen.findByRole('tooltip')).toBeVisible();
+
+    // Radix would keep this open while the pointer is over the box itself. The
+    // rows these sit on are painted on hover, so the box would outlive the row.
+    fireEvent.pointerLeave(copy, { pointerType: 'mouse' });
+
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
   });
 });
 
