@@ -109,19 +109,8 @@ describe("Granola connector", () => {
   });
 
   it("registers only the workspace webhook scope and retains the one-time signing secret", async () => {
-    const fetcher: FetchLike = async (input, init) => {
-      expect(requestUrl(input).pathname).toBe("/v1/webhook-endpoints");
-      expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${workspaceApiKey}`);
-      expect(JSON.parse(String(init?.body))).toEqual({
-        url: "https://api.example.test/ingest/granola/connection-id",
-        scopes: ["workspace"],
-        events: ["note.access_granted", "note.edited", "note.generated", "note.regenerated"],
-      });
-      return jsonResponse({
-        id: "whe_1234567890abcd",
-        signing_secret: `whsec_${base64(new Uint8Array(32).fill(7))}`,
-      }, 201);
-    };
+    const fetcher = granolaWebhookApi();
+
     await expect(createGranolaWebhookEndpoint(
       workspaceApiKey,
       "https://api.example.test/ingest/granola/connection-id",
@@ -131,6 +120,39 @@ describe("Granola connector", () => {
       id: "whe_1234567890abcd",
       signingSecret: `whsec_${base64(new Uint8Array(32).fill(7))}`,
     });
+    expect(fetcher.requestedPath).toBe("/v1/webhook-endpoints");
+    expect(fetcher.authorization).toBe(`Bearer ${workspaceApiKey}`);
+    expect(fetcher.body).toEqual({
+      url: "https://api.example.test/ingest/granola/connection-id",
+      scopes: ["workspace"],
+      events: ["note.access_granted", "note.edited", "note.generated"],
+    });
+  });
+
+  it("refuses a subscription naming an event type Granola does not define", async () => {
+    // Why `granolaWebhookApi` validates rather than answering 201 to anything:
+    // this registration is the whole Granola workspace connection. It is the
+    // first provider call the setup makes, and Granola fails the entire request
+    // on an unknown event type, so a single wrong name means nobody can connect
+    // Granola at all. That is what happened — `note.regenerated`, which Granola
+    // does not have, was subscribed to for weeks — and the test above passed
+    // throughout, because it compared the request against the same constant
+    // that built it and read its 201 from a stub that accepted anything.
+    //
+    // This asserts the fake would have caught it, so the assertion above means
+    // something. `GRANOLA_WEBHOOK_EVENT_TYPES` is transcribed from Granola's
+    // published enum, not from the adapter.
+    const fetcher = granolaWebhookApi();
+
+    await expect(fetcher("https://public-api.granola.ai/v1/webhook-endpoints", {
+      method: "POST",
+      headers: { authorization: `Bearer ${workspaceApiKey}` },
+      body: JSON.stringify({
+        url: "https://api.example.test/ingest/granola/connection-id",
+        scopes: ["workspace"],
+        events: ["note.generated", "note.regenerated"],
+      }),
+    })).resolves.toMatchObject({ ok: false, status: 400 });
   });
 
   it("verifies Standard Webhooks signatures before parsing Granola events", async () => {
@@ -472,6 +494,53 @@ function workspaceToolContext() {
     principal: { type: "workspace" as const, workspaceId: asWorkspaceId("025a3f3d-6749-495a-8425-7640a0dbf27a") },
     signal: neverAborts(),
   };
+}
+
+/**
+ * Granola's webhook event types, transcribed from its published API enum
+ * (https://docs.granola.ai/webhooks) rather than from the adapter.
+ *
+ * A regeneration is reported as `note.edited`; there is no `note.regenerated`.
+ */
+const GRANOLA_WEBHOOK_EVENT_TYPES = ["note.access_granted", "note.edited", "note.generated"];
+
+interface GranolaWebhookApiFake extends FetchLike {
+  requestedPath: string | null;
+  authorization: string | null;
+  body: unknown;
+}
+
+/**
+ * A stand-in for `POST /v1/webhook-endpoints` that refuses what Granola
+ * refuses.
+ *
+ * A fake that answers 201 to any body cannot fail, and a request built from the
+ * same constant the assertion compares against cannot either — between them
+ * they let an event type Granola does not define ship and take the whole
+ * workspace connection with it. So this one validates the event names and
+ * answers 400 exactly as the provider does, which is what gives the caller's
+ * success its meaning.
+ */
+function granolaWebhookApi(): GranolaWebhookApiFake {
+  const fake: GranolaWebhookApiFake = Object.assign(
+    async (input: Parameters<FetchLike>[0], init?: Parameters<FetchLike>[1]) => {
+      fake.requestedPath = requestUrl(input).pathname;
+      fake.authorization = new Headers(init?.headers).get("authorization");
+      const body = JSON.parse(String(init?.body)) as { events?: unknown };
+      fake.body = body;
+      const events = Array.isArray(body.events) ? body.events : [];
+      const unknown = events.filter((event) => !GRANOLA_WEBHOOK_EVENT_TYPES.includes(String(event)));
+      if (unknown.length > 0) {
+        return jsonResponse({ error: { message: `Unknown event type: ${unknown.join(", ")}` } }, 400);
+      }
+      return jsonResponse({
+        id: "whe_1234567890abcd",
+        signing_secret: `whsec_${base64(new Uint8Array(32).fill(7))}`,
+      }, 201);
+    },
+    { requestedPath: null as string | null, authorization: null as string | null, body: undefined as unknown },
+  );
+  return fake;
 }
 
 function requestUrl(input: string | URL | Request): URL {
