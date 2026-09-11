@@ -858,18 +858,6 @@ this by a different route, since its close button passes
 leave the control unlabelled, which is the trade this change exists to refuse.
 A test that asserts a dialog closes on one Escape is the cheap way to catch the
 defect: that is what failed here.
-### 2026-09-10 — Wrapped text clears the controls by 4px
-
-**What changed:** The reserve at the foot of a capsule's field, on the two
-states where the text spans the controls' row — wrapped text and staged
-attachments — is 39px rather than 34px: the 28px control, the 7px of row padding
-under it, and 4px between the last line and the top of the plus. The field is
-5px taller in those states and unchanged at 44px while it holds one line.
-
-**Why:** At 34px the text ended flush with the controls' top edge. Nothing
-overlapped and nothing was illegible, which is why it survived; it just read as
-one block of text with buttons stuck to the bottom of it rather than as a field
-with its controls under it. The number is the design's.
 
 ### 2026-09-10 — One composer, dressed one way
 
@@ -1613,7 +1601,8 @@ now draws a Tabler `corner-down-right` — the icon form of the same `↳` — i
 muted text, and **New substream** went back to a Tabler `plus`. The eight-pixel
 lift and the vertical flip the branch line needed went with it, and so did the
 `.workstream-new-substream-mark` glyph sizing, since both marks are icons again
-and take a `size` prop. The entry below is superseded: the sidebar's creation
+and take a `size` prop. This supersedes the same-day change that had given both
+New substream controls one glyph: the sidebar's creation
 row and the feed's `↳ New substream` control are no longer one glyph, and the
 arrow's meaning in the rail is "this is a substream", not "start one". A change
 that puts the arrow back on the creation row has to give the substream rows a
@@ -1629,42 +1618,6 @@ not, and whether a creation surface should carry the plus is a separate product
 question about a different surface.
 
 Shipped in #656.
-
-### 2026-09-10 — One glyph for both New substream controls
-
-Superseded by the entry above: the arrow moved to the substream rows and the
-creation row went back to a plus.
-
-The sidebar's **New substream** row drew a Tabler `plus`; the control on a
-settled turn draws a literal `↳`. Two marks for the one act, creating a branch,
-made the rail's entry read as a different feature from the control it duplicates,
-so the row now carries the feed's arrow. The plus was the weaker of the two to
-keep: it says "add a thing here", which is what every other plus in the product
-says, while the arrow says what a substream actually is. Sizing moved into
-`.workstream-new-substream-mark` because a glyph has no `size` prop; a future
-change that restyles either control has to move both, or this collapses back
-into two marks.
-
-### 2026-09-10 — Bubble ink follows the palette's APCA table
-
-**What changed:** The paragraph describing how a human message bubble resolves
-its foreground now says the ink is decided by APCA rather than by the WCAG 2
-ratio, and records that `emerald` and `orange` reach neither ink's Lc 60 for body
-text.
-
-**Why:** The bubble reads `PALETTE_INK` through `personalColorInk()`, so the
-palette's move to APCA changed this surface without a line of code here
-changing — six of the eight personal accents now carry white prose where they
-carried black. A reader of this document would otherwise have taken the old
-description at face value. The body-text gap is called out because this is the
-surface where it matters: a bubble is prose at 14px, not a 36px glyph, and the
-palette's own floor is the graphical one. Closing it means darkening those two
-fills, which belongs to the palette rather than to this feed;
-[`theming.md`](theming.md) owns that decision and its 2026-09-10 entry has the
-full trade.
-
-**Consequences:** Nothing here selects an ink of its own. If the body-text gap is
-closed by moving those fills, this surface inherits the fix with no change.
 
 ### 2026-09-10 — The assistant identity line starts where its prose does
 
@@ -1737,22 +1690,6 @@ actions rather than following the entire content-and-actions component.
 
 **Consequences:** Preserve body → attachments → actions and keep optional header
 metadata before the author so its trailing edge stays aligned with the corner.
-
-### 2026-09-09 — Shared media tiles with host-specific layouts
-
-Attachments and embeds share square media and horizontal file cards. Feed media
-is 108px square, twice the 54px file-card height; the input uses the same
-components at 54px in one scrolling row. Feed grids use media-sized tracks with
-file cards spanning two tracks, replacing full-width file rows to tile mixed
-content while keeping every delivered item visible. Image galleries retain all
-entries and keyboard navigation; still exports retain every title.
-
-This follows the requested compact media style and fixes layout changes when
-consecutive embeds finish streaming. Fixed media dimensions supersede intrinsic
-ratios, and the input's compact row deliberately differs from feed wrapping.
-Video originals load only when opened; gallery placeholders do not fetch full
-originals for thumbnails. Audio uses compact playback controls with full preview
-available. Resource access remains checked against the current citation map.
 
 ### 2026-09-09 — A sidebar travels between its two widths
 
@@ -1828,29 +1765,6 @@ other — or a rail closing on its own — from moving; that re-pairing works by
 position and holds because all three entries carry the same 240ms and curve.
 `prefers-reduced-motion` needs nothing here: the global kill switch in `app.css`
 zeroes every duration.
-
-### 2026-09-09 — Review fixes on the action-row move
-
-**What changed:** The cutoff control's accessible name became "New substream from
-this message", so it contains its visible words. The human row stops hit-testing
-while it is faded out. Both rows share one `prefers-reduced-motion` override. The
-conditional-spread the two new props were passed through became plain assignment.
-
-**Why:** A name that shares no words with the label leaves a person driving by
-voice unable to say what they can see — WCAG 2.5.3, and the one button in the row
-that failed it. The row is inside the article that reveals it, so it can only be
-clicked once revealed *except* during the 120ms fade, and this control creates a
-conversation rather than copying a line; the agent's row is deliberately left
-hit-testable, because it is also visible while speech plays and would otherwise
-take away its own Stop speaking. The spread was justified by
-`exactOptionalPropertyTypes`, which this package sets to `false` — the adjacent
-caller in `conversation-surface.tsx` already passed the same prop plainly.
-
-**Consequences:** A control added to either row states an accessible name that
-contains its visible label. Tests hold the fade's ownership and the source order
-the theme's corner override depends on — both invariants that were previously
-described in prose and provable only by reading pixels.
-
 
 ### 2026-09-09 — Both action rows share one set of button metrics
 
@@ -2011,13 +1925,6 @@ those controls now live entirely outside ConversationSurface. Run history is
 behind More → Run history, while the first view explains how to ask for changes.
 
 
-### 2026-09-08 — Apply live profile colors to message rows
-
-User dots and message bubbles now use the same live sender profile as avatars.
-The previous ID-derived dots and fixed bubble backgrounds ignored account edits.
-Keeping presentation in the shared row lets existing messages repaint on roster
-updates without rewriting historical turns or tinting unrelated surfaces.
-
 ### 2026-09-08 — Remove heading-generated document cards
 
 **What changed:** Removed the H2 card parser, stacked cards, modal paging, and
@@ -2044,29 +1951,6 @@ The CSS contract test guards the scoped stacking declarations; verify pointer
 clicks in a real window because DOM-only tests cannot detect this overlap.
 
 Shipped in #591.
-
-### 2026-09-08 — Sidekick navigation and attachments
-
-The main-window `/sidekicks` adapter opens the dedicated library and returns the
-main window to its workstream route. Opening the account item from an existing
-detail navigates the singleton back to the library. The sidebar recognizes both
-legacy automation details and new Sidekick details. Attachment remove buttons
-have their own class so accessibility labels on the row do not apply button-only
-layout. Disabled email triggers hide the displayed address while preserving its
-permanent owner reservation. Workspace automation pushes invalidate the library
-and attachment REST queries in each open window, keeping cross-window authoring
-and availability changes visible without navigation.
-
-This records the review fixes because stale effects, overbroad revocation, and
-implicit compatibility assumptions can break otherwise valid delegated work.
-Future changes must retain the separate ownership and execution boundaries.
-
-### 2026-09-07 — Sidekick conversations and attachments
-
-Sidekick authoring uses the shared conversation surface in a separate library window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and lists actually attached Sidekicks, with access-checked removal affecting future executions.
-
-This composes knowledge with existing execution machinery while keeping one Sidekick identity and preserving authorization boundaries.
-
 
 ### 2026-09-05 — Correct row identity and retained animation lifecycle
 
@@ -2227,17 +2111,6 @@ resource query and preserves the explicit-open rule. The automation host does
 not opt in, and global navigation keeps its own layout and collapse preference.
 Observing the enclosing pane instead of the resized child prevents a feedback
 loop when space requires icon mode.
-
-### 2026-09-04 — Elicitation prompts join the conversation design
-
-The old shadowed prompt and separately rounded options were missed by the
-GrokBot presentation pass. The shell now uses the installed reference's 16px
-container radius, 12px inset, 8px joined-list radius, thin row dividers, and
-leading letter badges. Light options use the source's `#e8e8e8`; dark options
-adapt the existing raised-hover token. Letter shortcuts supplement numeric
-shortcuts; selection, custom answers, multi-select limits, Skip, Submit, and
-collapse/reopen retain their existing semantics. Unlike the reference's
-immediate single-choice submission, Rally still requires explicit Submit.
 
 ### 2026-09-04 — Review fixes preserve the reference layout without losing behavior
 
@@ -2556,23 +2429,6 @@ reader by the whole delta.
   time; do not reintroduce cached or queued-entry geometry as the authoritative
   row height. Metadata-only Markdown refreshes must also keep the code
   renderer's component identity stable.
-
-### 2026-09-02 — Sidebar participants use GrokBot's compact cluster
-
-**What changed:** Work-stream participant previews now occupy a small overlapping
-circle, wedge, and pill cluster with the overflow count immediately to its right.
-
-**Why:** A horizontal chain of same-shaped avatars consumed the row's title room
-and did not match the compact participant mark used by the reference interface.
-
-**Considered and rejected:** Applying the cluster to every `AvatarStack` would
-also reshape headers, participant controls, and presence surfaces. The sidebar
-opts in so those semantic uses retain their ordinary row layout.
-
-**Consequences:** The directory still decides which three people and overflow
-count are available. Unlike the retired horizontal "who else" strip, the
-cluster represents the full participant preview, including the current person;
-this remains a renderer-only geometry change.
 
 ### 2026-09-01 — Sidebar creation moves into GrokBot's titlebar row, and the work-stream input becomes a compact message capsule
 

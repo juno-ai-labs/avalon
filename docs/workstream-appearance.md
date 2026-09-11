@@ -233,20 +233,6 @@ glyph is the caller's. A third surface adds a treatment beside
 `WorkstreamGlyph`, `WorkstreamMark` and `AutomationGlyph`, and passes it to this
 same picker; it does not fork either one.
 
-### 2026-09-10 — Project colours live in the base token file
-
-**What changed:** The `sys.color.project.*` keys both appearances set to the
-same value moved from `light.json` and `dark.json` to
-`config/design-tokens/base.json`, with every other token the two files agreed
-on ([`theming.md`](theming.md)). The section above told a reader to tune the
-keys per appearance; it now says where each key lives.
-
-**Why:** Two files carrying identical keys can only ever differ by mistake, and
-the token build now fails an appearance file that sets a token both
-appearances agree on. Following the old instruction would trip that test
-rather than change a colour. A key that has to differ by appearance moves into
-both appearance files in the same edit, which the same test also holds.
-
 ### 2026-09-09 — A bare tinted mark beside the filled glyph, read off the row
 
 The work-stream sidebar's main conversation row asked for this identity, and the
@@ -327,7 +313,9 @@ without one.
 
 The URL capability broke the control connection in installed desktop builds.
 Appearance now travels unconditionally and receivers tolerate additive protocol
-changes. This supersedes the capability-based compatibility approach below.
+changes. This supersedes the same-day capability negotiation, in which
+appearance frames were sent only to a client that had declared a socket
+capability, so that older strict readers kept receiving control updates.
 
 ### 2026-09-09 — Rally chooses the icon a work stream starts with, and every unversioned appearance write is row-only
 
@@ -448,15 +436,6 @@ cannot write an unknown key through an older server. Catalog expansion or rollba
 must preserve the accepted stored keys; malformed durable state deliberately fails
 visibly rather than silently replacing shared identity. This change does not add a
 second, permissive interpretation of the server's validated appearance contract.
-
-### 2026-09-08 — Preserve installed-client control updates
-
-Review caught that an optional field remains incompatible with an older strict
-reader. Appearance now requires an explicit socket capability, preserved through
-hibernation, so deploying the server cannot stop older clients receiving title,
-viewer, or private-child changes. A URL capability also leaves older servers able
-to accept newer clients without changing their strict subscribe command. Runtime
-tests cover both frame shapes and the actual workspace directory projection.
 
 ### 2026-09-08 — Shared editable identity
 

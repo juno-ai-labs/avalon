@@ -504,15 +504,6 @@ field.
 
 ## Changelog
 
-### 2026-09-08 — Preserve Terminal replay repair and explicit source kinds
-
-Directory effects now repair Terminal alarms on exact replay: a prior attempt
-can commit its deadline and fail before arming it. Gating arming on a changed
-row strands that deadline. Re-reading the current directory on replay preserves
-recovery without restoring unrelated schedule scans. Source tables now declare
-all affected kinds in one map, and query kinds come from TypeScript metadata
-rather than a second SQL literal, removing silent defaults and disagreement.
-
 ### 2026-09-08 — Index pending resources and reconcile only affected alarm kinds
 
 WorkspaceDO migration 39 adds partial indexes for expired upload drafts and
@@ -529,19 +520,6 @@ skipping no-op replays was rejected: durable source rows must remain authoritati
 and a replay must repair a previous failed post-commit refresh. A scoped reconcile
 must preserve other kinds and surviving retry gates. New alarm-source tables must
 be assigned the kind their writes can change.
-
-### 2026-09-08 — Sidekick publication recovery
-
-Sidekick publication commits its accepted revision, stored `loadable`, and a
-`sidekick_publication` alarm before running external effects. The alarm retries
-unapplied effects at the durable boundary. Registration replacements carry the
-owner generation; an equal-generation replay returns the original event cutoff
-and a stale generation cannot replace current registrations. Lifecycle checks
-remain separate from this effect-ordering fence.
-
-This records the review fixes because stale effects, overbroad revocation, and
-implicit compatibility assumptions can break otherwise valid delegated work.
-Future changes must retain the separate ownership and execution boundaries.
 
 ### 2026-09-05 — A retired object arms nothing, and says so quietly
 
@@ -589,19 +567,6 @@ own because provisioning is not in it.
 **Consequences:** A pause or delete cancels every `automation_run` entry with
 `cancelScheduledAlarmKind`; a new trigger kind arms its entry through
 `admitOccurrence` and nothing else.
-
-### 2026-09-03 — HyperSight refresh leaves the alarm scheduler
-
-**What changed:** The dashboard refresh lane, its due-work row, retry state, and
-alarm derivation were removed from WorkstreamDO and SubstreamAgent.
-
-**Why:** A retired feature must not wake objects or compete with agent-loop and
-delivery work.
-
-**Consequences:** Schema migration deletes any pending dashboard refresh; the
-remaining alarm arbitration covers only live lifecycle work.
-
-Shipped in #541.
 
 ### 2026-09-01 — Substream external settlement becomes an independent derived lane
 
@@ -873,24 +838,6 @@ scheduler's need to find its own prior write.
 **What a future change has to respect:** Scheduler recovery uses exact internal
 identity reads. Product directory reads always retain a concrete viewer or a
 workspace audience and never double as authorization bypasses.
-
-### 2026-08-22 — The automation firing path reads only the object
-
-**What changed:** `runAutomationSchedule` in
-`services/workspace-schedule-execution.ts` no longer reads
-`workstream_authority_control`. The planned work stream comes from the
-directory's exact internal lookup unconditionally, and the losing-claim cleanup that
-deleted a regional `workstreams` row is gone with the branch that reached it.
-
-**Why:** Migration 0090 closed the phase permanently, so both arms had been
-unreachable since — including that cleanup, whose whole subject was a regional
-row the object no longer keeps. The read itself was one D1 round trip per firing
-on a path that fires once per due schedule.
-
-**What a future change has to respect:** a concurrent scheduler losing the
-unique run claim is now settled entirely by the object — nothing regional is
-left behind to compensate for, and re-adding a compensating delete here would
-be deleting a row the authority does not own.
 
 ### 2026-08-22 — An entry that runs and comes back due at the same instant is a failed attempt
 

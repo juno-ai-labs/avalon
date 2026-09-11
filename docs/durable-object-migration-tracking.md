@@ -830,14 +830,6 @@ it does not shape the cost of any run somebody means to make.
 
 ## Changelog
 
-### 2026-09-08 — Retire the temporary Worker class export after the rename
-
-The final rollout stage removes the Worker entrypoint's AutomationDO alias and
-uses SidekickDO in binding types. It requires verified renamed namespaces in both
-regions. The old source-import shim, automation_do schema component, lookup-key
-bytes, routes, and queued-command adapter remain compatibility contracts; none
-are new Cloudflare exports or namespaces.
-
 ### 2026-09-08 — Keep renamed current identities monotonic
 
 Late legacy reports retain their original labels in event history but cannot
@@ -1354,24 +1346,6 @@ Both halves have to be tested below the writer that normalizes the key. A test
 that seeds the old key through `recordReports` proves the migration works
 against a database that never held it — it passes with every one of v3's
 statements removed, which is how this was caught.
-
-### 2026-08-22 — The report tables drop the Applied column
-
-**What changed:** the `Applied` column is gone from the report tables on both the
-overview's Recent reports and an object's Report history. Nothing else moved:
-the reports still carry `appliedVersions`, the registry still stores
-`applied_versions`, and both JSON twins still return the list.
-
-**Why:** it was asked for by the operator who reads this site. Nothing about the
-data changed, so the column was removed from the HTML alone rather than from the
-protocol or the registry schema — the list is one JSON fetch away for anyone who
-needs it, and dropping the field would have made the change irreversible for the
-history already recorded.
-
-**What a future change has to respect:** `appliedVersions` is now carried but
-unrendered. That is deliberate; do not read it as dead weight and delete it from
-`MigrationEvent`, the queue message, or the `migration_events` row on the
-strength of the HTML no longer using it.
 
 ### 2026-08-21 — A deleted class stops looking deployed
 

@@ -181,30 +181,6 @@ For a notarized release candidate, repeat the selected-icon test from an install
 
 ## Changelog
 
-### 2026-09-07 — Verify catalog shipping and real bundle replacement
-
-**What changed:** Included the catalog in electron-builder's ICNS resource filter,
-added a portable matcher regression and catalog/contract consistency checks,
-and exercised the real dynamically loaded plugin across complete app replacement.
-Native checks now cover same-ID image changes, malformed types, and the tile's
-content view without reading the developer's preferences.
-
-**Why:** PR review found that generating the catalog did not ensure packaging
-copied it. Review also questioned whether a mapped ShipIt path changed resource
-lookup; a real bundle test established that NSBundle retains the installation URL,
-where the replacement resources are installed, even after deleting the old binary.
-
-**Considered and rejected:** Global Launch Services discovery is unnecessary for
-in-place updates and could choose another Rally installation. Accepting unknown
-manifest versions would hide incompatible schema changes; additive artwork keeps
-version 1. A compiled-list or cached-image regression must fail the native checks.
-
-**Consequences:** The packaging filter is exercised on Linux as well as macOS.
-The native bundle test must not override resource lookup. A signed notarized
-update cycle remains the release acceptance check beyond these fixtures.
-
-PR: #577.
-
 ### 2026-09-07 — Dock hosts read the installed icon catalog across upgrades
 
 **What changed:** Replaced the compiled selectable-ID allowlist with a versioned

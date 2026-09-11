@@ -432,13 +432,6 @@ best-effort remote revocation.
 
 ## Changelog
 
-### 2026-09-08 — Preserve substream destinations through external handoff
-
-Work-stream links can carry a child ID through the existing workspace-addressed
-handoff. Notification links previously opened Main, losing the place where the
-mention happened. The same workspace activation and membership path is reused;
-there is no new route authority or separate workspace-switch implementation.
-
 ### 2026-09-08 — Demo preparation creates a workspace without a session
 
 **What changed:** `RegionalOnboardingService.createWorkspaceForMember` is the
@@ -477,9 +470,10 @@ invitations, and Log out last with a divider above it. Rows share side padding,
 icon spacing, and minimum height; overflowing lists scroll within the window.
 
 **Why:** The product request explicitly removed About, support links, and Create
-a workspace to shorten the popup. This deliberately reverses the creation part
-of the 2026-09-04 entry: creating an additional workspace is no longer reachable
-from the shipped desktop shell. Moving creation or support to another surface
+a workspace to shorten the popup. This deliberately reverses the creation
+control the compact presentation had gained on 2026-09-04: creating an
+additional workspace is no longer reachable from the shipped desktop shell.
+Moving creation or support to another surface
 was not requested. Initial onboarding still creates a first workspace; the
 legacy component variant is retained, not advertised as a product alternative.
 Review also exposed that moving Log out below an unbounded list could make it
@@ -491,16 +485,6 @@ account actions in the compact presentation.
 The identity bridge now carries revisioned new-account eligibility and appearance
 so a person sees the same avatar and color when activating either region. Global
 remains the writer; regional copies cannot overwrite a newer revision.
-
-
-### 2026-09-04 — Keep workspace capabilities in the compact account presentation
-
-**What changed and why:** The Grok-style account menu now performs discovery on
-open and includes the same flagged switching, invitation, and creation controls
-as the workspace presentation. The prior presentation branch accidentally
-excluded them. Styling is not a capability boundary; nonfunctional usage and
-iOS placeholders were removed instead of pretending Rally implements them.
-
 
 ### 2026-09-02 — A switch signs the account in itself, and the regions are US and EU
 

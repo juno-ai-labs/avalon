@@ -452,16 +452,6 @@ or pushed updates; memory writes retain their canonical path. Memory keys regist
 scope and parent dependencies for targeted retries. The separate visibility probe
 measures KV read visibility without adding probes or freshness checks to searches.
 
-### 2026-09-08 — Verify publication and failure boundaries during review
-
-Review identified timestamp ties, workspace-wide registry scans, and KV network
-I/O under a global object gate. Use per-key generations and publication queues,
-indexed dependencies, and failure isolation at candidate/subject/message level.
-Keep the prior archived-content behavior without rechecking authorization.
-Preserve source timing through discovery coalescing and KV retries, excluding
-untimed initial-fill retries. Alarm arming after committed runtime SQL is
-background work so a scheduling error cannot misreport the write as rejected.
-
 ### 2026-09-08 — Trust eventually consistent search decisions and measure mutation-to-publication latency
 
 Production searches spent seconds walking canonical conversation owners before
@@ -483,14 +473,6 @@ rather than disguising missing upstream time as full source latency. This uses
 existing operational logs rather than adding a measurement service or
 read-time refresh.
 
-### 2026-09-08 — Clarify observable pagination metadata
-
-Review identified that explicit candidate continuation exposes index progress even
-for a fully rejected page, and deterministic positions can be correlated with known
-IDs. Documented that boundary instead of restoring hidden scans or inventing a scan
-cap. The approved member search design admits content once per batch and permits
-explicit continuation; it does not offer index-existence concealment.
-
 ### 2026-09-08 — Use operation-level search admission
 
 Search batches now share one admission decision through canonical content loading,
@@ -500,17 +482,6 @@ the batch. The team explicitly chose to trust correctly implemented platform
 primitives and the agreed propagation model. Repeated checks increased serial RPC
 cost without serving that contract. Every new batch still reads canonical owners;
 there is no cross-request grant cache or code-enforced five-minute expiry.
-
-### 2026-09-08 — Scope authorization observations to a single batch
-
-Review identified repeated owner RPCs within a serial resource batch and later
-checks joining an earlier pending observation. Each check now owns a fresh batch,
-retaining owner observations only inside it. This avoids repeated reads of shared
-owners while preserving a new canonical observation after asynchronous work.
-Runtime regressions cover both boundaries and assert that legacy writes leave the
-snapshot table unchanged. Removed unused synchronous discovery RPCs and stale
-cache test scaffolding. Documented indefinite denial after dead-lettered discovery,
-operator repair, and post-rollout cleanup of inert snapshot storage and bindings.
 
 ### 2026-09-08 — Freshness is a design goal, not a read deadline
 
@@ -535,18 +506,6 @@ unavailable authority. Lists now expose `complete: false`; direct reads retain
 retryable failure. Desktop search and resource pickers label incompleteness and
 retry without exposing unverified candidates. Removed unused `within()` and
 `AuthorizedView` rather than carrying an API without a production caller.
-
-### 2026-09-07 — Verify review findings against canonical authority
-
-Batched page-level evidence reads and removed unbounded distinct-owner fan-out
-because the former batch API issued singleton RPCs for every candidate. Fenced
-Queue cleanup against concurrent intent, preserved retry backoff, and reconciled
-retired child receipts. Stale absence evidence now refreshes canonical inventories
-without resetting Queue progress; this can still require a full workspace scan.
-Fixed private-child email loading and archived owning-room automation grants.
-Removed host wrappers that merely rechecked their own input. Kept the agreed
-five-minute read bound and whole-query retryable failures: silently dropping
-unverifiable rows would misrepresent an incomplete result as complete.
 
 ### 2026-09-07 — Introduce bounded, composable read authority, enabled on deployment
 

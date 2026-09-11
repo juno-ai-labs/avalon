@@ -396,16 +396,6 @@ resident.
 
 ## Changelog
 
-### 2026-09-07 — Ace relays demo preparation to Global
-
-**What changed:** Beside retirement, Ace reads and drives demo preparation
-through Global's public API with Global's `demos` token.
-
-**Why:** Demos are prepared in Global only — the template is a Global
-workspace and the Workflow is bound there — so the Demos page has one region
-to ask. The same relay, the same per-region credential rule, and the same
-recorded exception; nothing new crosses a region.
-
 ### 2026-09-07 — Ace relays workspace retirement to the region that owns the workspace
 
 **What changed:** Ace calls the owning region's public API over HTTPS with
@@ -446,27 +436,6 @@ constraint for allocation.
 not a workspace-content authority. It retains no workspace, user, session, or
 artifact bytes. The region in the hostname selects a regional Worker, which
 performs authorization and reads only that region's Durable Object and R2 state.
-
-### 2026-09-01 — External routing names the region without authorizing it
-
-**What changed:** Current workspace-scoped handoffs carry region and workspace
-coordinates, and the desktop activates the exact regional session before using
-them.
-
-**Why:** Region-only connector callbacks and ID-only resource links were
-ambiguous once one account retained Global and EU workspaces. Using whichever
-session was active either rejected a legitimate callback or opened the route in
-the wrong authority.
-
-**Considered and rejected:** Discovering the region from a resource ID or trying
-stored credentials until one answers. Both violate the rule that object IDs do
-not select regions and turn a link open into cross-region enumeration.
-
-**Consequences:** Public link coordinates remain non-secret. Only ordinary
-regional activation and middleware can convert them into an authorized session;
-a failure leaves the existing region selected.
-
-Shipped in #464.
 
 ### 2026-08-31 — Global discovery retains plural regional workspace routes
 
@@ -564,26 +533,6 @@ and responders stop rather than querying Global as a substitute.
 Shipped in the pull request for this change. See
 [`analytics-lakehouse.md`](analytics-lakehouse.md).
 
-### 2026-08-24 — Ace's operator directory is named as a regional exception
-
-**What changed:** The boundary now explicitly records that Ace directly reads
-EU D1 and transiently exposes matching directory fields to an authorized
-operator, while its queue fan-out continues to carry only opaque IDs and a flag
-key.
-
-**Why:** The earlier text claimed names and full email addresses never crossed
-regions even though Ace's configured EU D1 binding and directory route did
-exactly that. A regional guarantee must describe the deployed read path, not
-only the notification payload.
-
-**Considered and rejected:** Describing Ace as an RPC-only product runtime. Ace
-is a shared internal administrative plane with an explicit direct-directory
-requirement; hiding that distinction would preserve the contradiction.
-
-**Consequences:** Product/API regional access remains RPC-only. Any expansion of
-Ace beyond transient directory lookup and opaque fan-out is a new residency
-decision and must update this exception rather than inherit it silently.
-
 ### 2026-08-24 — Ace fans product-flag keys into regional ownership
 
 **What changed:** The shared Ace consumer reads each D1 workspace directory and
@@ -604,27 +553,6 @@ configurations that are intended to be identical.
 fan-out, but regional queue bodies remain opaque and each regional Worker is the
 only caller of its objects. Earlier reasoning in this document predates the
 running changelog and was not reconstructed.
-
-### 2026-08-24 — EU inference analytics are deferred
-
-**What changed:** Only the Global Worker archives inference into R2, Queue,
-Pipeline, and Data Catalog. EU continues to serve model calls but has no
-inference producer, consumer, Pipeline binding, archive staging, or cross-region
-fallback.
-
-**Why:** Cloudflare cannot place Data Catalog in the EU jurisdiction, and its
-direct R2 Pipeline setup requires a separate service credential obtained through
-Wrangler's interactive OAuth flow. Product direction is to accept the EU
-debugging gap instead of adding that manual credential lifecycle.
-
-**Considered and rejected:** Sending EU content to the Global catalog, which
-would cross the workspace boundary; and provisioning a second long-lived R2
-credential, which would make first deployment and rotation a separate manual
-system.
-
-**Consequences:** Global retains maximal lossless inference evidence. The
-absence of an EU row is expected, and responders must not query D1, Workers
-Logs, the empty EU preflight resources, or Global as a substitute.
 
 ### 2026-08-24 — EU inference analytics stays in EU without Data Catalog
 
@@ -762,28 +690,6 @@ added at the committing service, remain idempotent, and keep recipient identity
 out of semantic event properties. EU public-site funnels are aggregate across
 page loads; Global can form anonymous acquisition paths. The route endpoint
 grants no event or account authority and remains Global-only.
-
-### 2026-08-13 — Terminal activation stays within the Global US target
-
-**What changed:** The Global Worker now declares Terminal supported with the
-verified Daytona `us` target and `daytona-small` snapshot. Its API credential
-remains a regional Worker secret. EU has the same provider values staged as
-regional bindings but remains explicitly unsupported.
-
-**Why:** The operator supplied an enabled Global configuration after validating
-the Daytona bootstrap and corrected stop-before-archive lifecycle, and requested
-that EU be preconfigured without activation. Leaving Global capability
-unsupported would make that integration unavailable; enabling EU against the
-staged US target would cross the regional data boundary.
-
-**Considered and rejected:** Inferring EU capability from the staged values, or
-storing the Daytona API key in Wrangler configuration. The former could route EU
-content to a US target; the latter would commit a provider credential.
-
-**Consequences:** Normal deployments preserve each region's non-secret Terminal
-bindings while Cloudflare retains `DAYTONA_API_KEY` as a regional secret. EU
-requires its own target-specific acceptance record and an explicit capability
-change before activation.
 
 ### 2026-08-13 — EU telemetry control is narrow and keyless, and onboarding telemetry resolves a region immediately
 

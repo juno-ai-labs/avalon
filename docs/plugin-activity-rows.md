@@ -879,25 +879,6 @@ heading chevron's ring reaches beyond its own box, and `.transcript-scroll` is
 change for exactly that reason — review caught it clipping 2px off both
 chevrons and 5px off the focus ring.
 
-### 2026-09-02 — Automations draws Tabler's keyframes glyph
-
-**What changed:** The `rally:automations` activity row draws Tabler's
-`keyframes` icon instead of the generic plug. Like multimodal generation, it is
-pinned in `GROUPED_PLUGIN_IDS` under its canonical id and keeps its own
-**Automations** row, so the glyph does not ride on the display-name heuristic
-that would otherwise land it on the plug.
-
-**Why:** The plug is the glyph for a connector this surface has not learned
-about yet; reading it on a first-party plugin tells a reader nothing about what
-Rally was doing. Automations are a scheduled or triggered sequence, and
-keyframes is the shape that says so.
-
-**Consequences:** The plug stays the fallback for an unrecognized connector. A
-later rename of the plugin's display name keeps the keyframes glyph as long as
-its canonical id stays `rally:automations` — but the row's key is still
-`name:Automations`, so the live pre-canonical row and the canonical block merge
-on that name the way every other row does.
-
 ### 2026-09-02 — A finished run closes behind its own total
 
 **What changed:** `collapseSettledWorkIntoAccordion` is a fourth pass in
@@ -1237,41 +1218,6 @@ that gains or loses it upstream fails the table rather than the render.
 build real elements — but it stays absent from this renderer. The renderer's
 test setup ignores `title` in text queries; a component that puts real page text
 in one would now be missed.
-
-Shipped in #412.
-
-### 2026-08-29 — Four defects review found in the grouped row
-
-**What changed:** A group row now carries `attentionSequenceNumber: null`; a
-plugin id with no display name produces no row rather than one named after the
-id; `AgentWorkTiming` takes the accessible name as `activeName` instead of
-deriving it from the visible verb; and Settings sizes its marks through
-`.provider-icon .connector-mark` and `.settings-connection-name .connector-mark`
-rather than bare classes.
-
-**Why:** All four came out of review on the pull request, and three were
-regressions this feature introduced rather than pre-existing gaps. The group row
-inherited the tool row's ordinal, which is its *turn's* ordinal — the same one
-the turn's text carries — and changing the row's type walked it past the
-`tool_event` exclusion in `highestVisibleAttentionSequence`, so a group scrolling
-into view acknowledged an answer still below the fold through a server-stored
-read receipt. Sniffing `activeVerb === 'working'` to pick an accessible name
-treated "not the default" as "is a plugin row", but thinking rows are the other
-caller that overrides the verb, so an active thought announced the bare word
-"thinking". The two Settings sizes tied `.connector-mark` on specificity and lost
-on source order, so both rules were inert and both marks drew at the shared 16px
-— a difference small enough to survive the visual check that was supposed to
-catch it. The id fallback was the one that was merely wrong rather than new: it
-contradicted this document's own invariant that an internal identifier never
-reaches the feed.
-
-**Consequences:** The read-receipt path now has one rule for both sources of
-`plugin_activity` rows, so neither can acknowledge a turn. A connector whose
-plugin activity never arrives shows nothing rather than a UUID, which is the same
-trade the unattributed tool row already makes. `activeName` is a required
-consideration for any caller that sets `activeVerb`. The stylesheet suite pins
-that a per-surface mark size out-specifies the shared rule, and the Settings
-component test pins that a mark carries no second class to hang one on.
 
 Shipped in #412.
 

@@ -741,8 +741,9 @@ action values outright, and versioning the event. The registry schema is what
 admits an envelope, and a released client keeps sending what its build offers, so
 a removal refuses a current install's events; a new version would add a second
 shape without changing the measurement. Retiring a value here means it stops
-arriving, not that it stops being accepted — the same treatment the
-navigation-shortcut events got.
+arriving, not that it stops being accepted — the same treatment the retired
+`command_shortcuts_revealed` and `command_shortcut_used` events got when the
+sidebar dropped Command-number navigation.
 
 **Consequences:** `suggestionCount` is optional and absent on new rows; its
 absence means "the surface no longer has a Suggestions section", not "nothing
@@ -861,27 +862,6 @@ rotation cost above.
 **Consequences:** Adding an operator router means naming its roles. A role added
 to the map reaches no surface until a router names it.
 
-### 2026-09-07 — Search review corrections
-
-Search emits a flow only for an issued request, retaining its original keystroke timestamp. This avoids counting canceled debounce inputs as searches while preserving the complete user-visible latency.
-
-### 2026-09-07 — Measure search from typing through painted results
-
-**What changed:** The existing `renderer_perf_flow` contract accepts
-`workspace_search` with debounce, request, paint, scope-resolution, retrieval,
-canonical-hydration, and server timing fields. Search uses the same regional
-main-owned delivery path and records no query or result contents.
-
-**Why:** Search appeared empty while serial source authorization was still running.
-The p50 500ms / p90 1000ms target includes client delay and rendering, which server
-logs alone cannot measure. Reusing the governed flow avoids a separate exporter.
-
-**Consequences:** Percentiles should use completed first-result search flows;
-failed and superseded searches remain separately visible. Backend timing fields
-are optional and do not change legacy search responses. See `text-search.md` for
-the retrieval and pagination contracts.
-
-
 ### 2026-09-06 — Retain historical application icon identifiers
 
 **What changed:** Separated current selectable icons from the append-only
@@ -899,12 +879,6 @@ IDs. New artwork receives a fresh ID so historical observations stay distinct.
 
 PR: #566.
 
-### 2026-09-04 — Stop emitting retired navigation-shortcut events
-
-The simplified sidebar no longer has Command-number navigation. Its emitters
-were removed, while ingestion schemas remain compatible with released clients.
-Do not interpret historical events as proof the current UI still offers it.
-
 ### 2026-09-03 — Automation telemetry follows the run reference and one detail surface
 
 **What changed:** The compiler-turn, create-ready revision, template creation,
@@ -921,21 +895,6 @@ screen to attribute.
 
 **Consequences:** `automation_builder` and `automation_builder_started` remain
 in the closed unions for rows already recorded and have no current emitter.
-
-### 2026-09-03 — HyperSight telemetry is retired with the feature
-
-**What changed:** Dashboard run origins, outcome fields, spans, metrics,
-observability bindings, and model-source dimensions were removed from live
-contracts and emitters.
-
-**Why:** Emitting or accepting a deleted feature dimension would preserve a
-false operational contract and split dashboards on data that can no longer be
-produced.
-
-**Consequences:** Historical telemetry remains interpretable, while new events
-contain only live Rally sources.
-
-Shipped in #541.
 
 ### 2026-09-03 — Every substream mutation keeps a named server span
 
@@ -1067,30 +1026,6 @@ Historical events keep their stored value, but current code cannot emit
 
 Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
 the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
-### 2026-08-26 — The packaged Crashpad gate uses its actual run date
-
-**What changed:** The two packaged Crashpad fixture launches now derive their
-timestamps from one clock reading taken during the fixture run, with the second
-launch one minute after the first. A release invariant rejects fixed ISO launch
-dates in the fixture.
-
-**Why:** The original fixture dates had crossed their 14-day deadline when
-release 1.172.0 ran. The production uploader correctly applied the absolute
-local deletion deadline, purged the rotated report, and made no request, so the
-release gate mistook correct retention behavior for a route-final upload
-failure.
-
-**Considered and rejected:** Moving the fixed timestamps farther into the
-future. That only postpones the same failure and makes the fixture's generation
-times unrelated to the launch that created them.
-
-**Consequences:** The packaged gate continues to exercise the production
-retention check rather than bypassing it, while its fresh report remains eligible
-for the upload assertion regardless of the calendar date on which a release
-runs. The two launch times must continue to come from the same run-relative
-clock.
-
-Shipped in the pull request for this change.
 
 ### 2026-08-26 — Renderer performance phases are governed diagnostic events, and cold launch no longer awaits preference reconciliation
 
@@ -1343,20 +1278,6 @@ current identifier parses — always true, however the constant is spelled. It
 now names the superseded spellings as literals and asserts the canonical is
 *not* among them.
 
-### 2026-08-25 — Product event names and the app namespace are Rally
-
-**What changed:** The `avalon_*` product event names are `rally_*`, and the
-PostHog `$app_namespace` is `app.rally.desktop`.
-
-**Why:** The rename. This one is not self-contained: PostHog dashboards, saved
-insights, and cohorts still query the Avalon names, and nothing in this
-repository can alias them — that is a destination-side change, recorded in
-[`rally-rebrand-inventory.md`](rally-rebrand-inventory.md) as outstanding.
-Rejected: emitting both names for a transition period, which doubles event
-volume and leaves every count ambiguous while it runs. A future change that
-renames an event has the same obligation to say what breaks at the
-destination.
-
 ### 2026-08-25 — The envelope schema identifier is com.rally.telemetry.event
 
 **What changed:** `TELEMETRY_ENVELOPE_SCHEMA` in
@@ -1384,30 +1305,6 @@ bump is one edit to the constant plus an entry in the superseded list. The
 superseded identifier is removed only when no spool old enough to hold one can
 still drain, which is a decision about shipped builds rather than about this
 repository.
-
-### 2026-08-24 — Lakehouse delivery fails terminally only when retry cannot help
-
-**What changed:** The analytics projection now recomputes accepted-row integrity,
-marks permanent poison rows rejected, recovers queued as well as pending work,
-uses its partial index newest-first, and starts with new events instead of a
-historical backfill. The catalog's unretractable retention boundary is explicit.
-
-**Why:** Review found that schema evolution and stored-row corruption would burn
-Queue retries, a DLQ transition could strand a queued outbox row forever, and
-the backfill could put live failures behind months of history. Review also
-proved that regional D1 deletion cannot retract an Iceberg projection.
-
-**Considered and rejected:** Treating every throw as transient, guessing a stale
-lease interval, and describing snapshot expiration as row retention. Replaying
-both durable states is safe under at-least-once semantics, while snapshot
-expiration only removes files made unreferenced by a separate row mutation.
-
-**Consequences:** `event_id` remains the logical deduplication key, historical
-accepted rows are not projected, and catalog retention fields remain metadata
-until an automated transactional deletion path is selected.
-
-Shipped in the pull request for this change. See
-[`analytics-lakehouse.md`](analytics-lakehouse.md).
 
 ### 2026-08-24 — Accepted events feed a governed Global analytics lakehouse
 
@@ -1692,53 +1589,6 @@ exporting traces to a third party hands that party the mapping.
 
 Shipped in #203.
 
-### 2026-08-20 — One warmed builder serves every symbolicator build
-
-**What changed:** CI and the API deployment now warm a shared `docker-container`
-BuildKit cache with `docker/build-push-action` before anything builds the
-symbolicator image, and the builds that follow name no cache at all. The
-integration script lost its `AVALON_CONTAINER_CACHE_FROM`/`_TO` plumbing and
-passes `--load` unconditionally, and `deploy-api.yml`'s deploy job gained the
-same warm-up so Wrangler's own container build stops recompiling
-`minidump-stackwalk` from source on every release.
-
-**Why:** The earlier arrangement handed the cache flags to the integration
-script and never worked. The `type=gha` backend authenticates with
-`ACTIONS_RUNTIME_TOKEN`, which the runner injects into JavaScript actions and
-never into a `run:` step, so a cache driven from inside the script imported and
-exported nothing — and `docker build --quiet`, whose output the script captures
-and discards on success, hid every miss. Two consecutive `main` runs an hour
-apart each spent about four minutes on the same pinned crate, which is what the
-cache was added to stop. The deploy job had no cache at all, because Wrangler
-drives that build itself with a fixed `docker build` line that accepts no cache
-flags; the layer it rebuilt is the same one, and the whole cost of the image.
-
-**Considered and rejected:** Exposing `ACTIONS_RUNTIME_TOKEN` to the `run:`
-steps with a third-party runtime-export action — it would keep the cache flags
-where they are, but adds another publisher to a workflow that holds the
-Cloudflare deployment token, to solve a problem an action Docker already
-publishes does not have. Also rejected: teaching Wrangler's build about the
-cache. It builds with a fixed command and takes no such option, so the only
-lever on it is which builder its `docker build` resolves to.
-
-**Consequences:** `install: true` on `docker/setup-buildx-action` is now
-load-bearing in both workflows — without it the plain `docker build` that
-follows runs on a different builder and misses the warm cache entirely. So is
-`load: true` on the warm-up: a remote cache import is lazy and scoped to the
-solve that imported it, so only materializing the image leaves layers a later,
-separate build can reuse. The first version of this change used
-`type=cacheonly`, on the reasoning that the warm-up needs no image, and the
-second CI run measured what that costs — every vertex `CACHED` in 2.4s,
-followed by a full recompile in the lane that came next. The warm-up must stay
-a JavaScript action for the token to reach the cache backend.
-The `crash-symbolicator-container` lane owns the `crash-symbolicator` scope and
-is the only step that exports to it; the deploy job imports from it and has
-always run after that lane. A build that has to be observed still needs
-`--quiet` dropped from the script, which captures and discards docker's output
-on success.
-
-Shipped in the pull request for this change.
-
 ### 2026-08-13 — Telemetry review closes overcount and misattribution paths across connectors, shutdown, automation, and surfaces
 
 **What changed:** Current desktop connector starts emit only the rich V2 intent,
@@ -1800,25 +1650,6 @@ happens to hold it.
 Producers must emit only real transitions, redirect routes do not own
 observations, optional old-client context has an explicit fallback, and privacy
 canonicalization runs before the envelope is built.
-
-### 2026-08-13 — Public-site bootstrap is bound to its pre-identity route
-
-**What changed:** Global now signs the coarse public-site route probe and
-bootstrap consumes that exact short-lived decision. A different Cloudflare
-country on the second request cannot re-route the selected anonymous epoch, and
-an existing conflicting journey is rejected.
-
-**Why:** Region-before-identity is only true when the decision that controls
-browser storage is also authoritative at persistence. Two independent edge
-classifications left a race during network changes.
-
-**Considered and rejected:** Browser-only response comparison, which detects the
-problem after persistence, and a persistent region cookie, which would create
-another residency-bearing browser identifier.
-
-**Consequences:** The public route response and site bootstrap request share a
-strict signed-token contract. Desktop's one-request bootstrap remains unchanged,
-and route-token failures stay isolated from page behavior.
 
 ### 2026-08-13 — Product journeys are instrumented end to end with authoritative outcomes and no duplicate events
 
@@ -2148,29 +1979,6 @@ violate the forward-only deployment rule.
 **Consequences:** Health proves the regional collection plane, not that optional
 delivery or operator access is active. Operations must verify those surfaces
 separately when they are intentionally enabled.
-
-Shipped in the pull request for this change.
-
-### 2026-08-13 — The packaged Crashpad gate owns its bundler
-
-**What changed:** The desktop package now declares the exact `esbuild` version
-used by its packaged Crashpad lifecycle fixture, and the fixture resolves that
-binary through the desktop workspace package.
-
-**Why:** A developer install happened to expose another package's transitive
-binary, but pnpm correctly withheld it from the clean macOS release runner. The
-release therefore stopped before signing even though the fixture passed locally.
-
-**Considered and rejected:** Relying on the root's transitive dependency or
-removing the packaged gate. Neither makes the fixture reproducible on the runner
-that must prove the released native crash path.
-
-**Consequences:** Changes to the fixture's bundler version must update its direct
-desktop dependency and lockfile; release invariants enforce both ownership and
-package-scoped resolution. pnpm starts from the workspace root to resolve the
-filter but runs `esbuild` from the desktop package, so the bundle entry and
-output remain absolute paths. The fixture verifies the bundle immediately
-because a pnpm filter that matches no package can still exit successfully.
 
 Shipped in the pull request for this change.
 

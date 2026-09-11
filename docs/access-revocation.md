@@ -380,14 +380,6 @@ calls; a rule at the consumer holds for all of them.
 A retired workspace still receives revocation messages for its expired
 sessions, each acknowledged with one info line.
 
-### 2026-09-08 — Remove the authorization freshness deadline
-
-The user changed five-minute freshness from a hard bound to a design goal after
-production expiry stalls. Global KV authorization caching is inert. Reads no longer enforce evidence age or reuse persisted
-grants; canonical checks and Queue discovery remain separate. The earlier
-five-minute lease claim is historical and superseded. Session and socket rules
-are unchanged.
-
 ### 2026-09-05 — Parent access and membership incarnation both fence child admission
 
 The child authorization branch now checks Main-derived parent visibility as well
@@ -396,25 +388,6 @@ equal the local mirror, not merely be older than it: removal followed by re-add
 must not revive a previously issued ticket. Workerd regressions cover both
 parent removal while child membership remains active and old-ticket replay
 after re-addition.
-
-### 2026-09-05 — Revocation keeps working against a retired workspace
-
-**What changed:** Nothing in this module. Workspace retirement fences almost
-every method of the objects in this walk, and `revokeSocketAccess` is named as an
-exception on every one of them.
-
-**Why:** Retirement is what a closed workspace gets, and the objects it closes may
-still be holding sockets. A refusal would have failed the hop, which retries and
-then dead-letters — turning a designed-for condition into noise on the one signal
-this module uses as its monitoring.
-
-**Consequences:** A hop against a retired object succeeds and closes what it
-finds; a *new* method this consumer starts calling on those objects is refused by
-default. The classification lives in `ALWAYS_PERMITTED_METHODS` in
-`durable-objects/object-retirement.ts` and in each class's `applyRetirementGate`
-call; [`workspace-retirement.md`](workspace-retirement.md) explains the
-dispositions. (Superseded on 2026-09-08: the consumer now acknowledges a
-refusal rather than needing every method it calls permitted.)
 
 ### 2026-09-04 — Private-child removal has a durable local revocation leg
 
@@ -481,21 +454,6 @@ than its author for a workspace-scoped automation, so a non-author reader's
 socket on such a conversation is outside the walk until that filter is widened
 the way the work-stream list's is. Recorded rather than fixed here: it is the
 list's generosity to change, not the hop's.
-
-### 2026-09-03 — HyperSight leaves the revocation hierarchy
-
-**What changed:** The revocation walk no longer discovers or calls a
-BlockDashboardAgent child, because that Durable Object class and its sockets are
-removed.
-
-**Why:** Keeping a revocation branch for a deleted feature would preserve a
-phantom authority edge and make access audits report a child that can no longer
-exist.
-
-**Consequences:** Revocation still closes WorkspaceDO, WorkstreamDO, and
-SubstreamAgent access. Historical migration records remain immutable.
-
-Shipped in #541.
 
 ### 2026-09-01 — Closing the room socket ends its message authority
 

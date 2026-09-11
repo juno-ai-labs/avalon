@@ -783,36 +783,6 @@ a site reaches the UI both ways — the sidebar test covers both, because a test
 that goes through `MarkdownBody` alone exercises only the citation path and
 passed throughout the window this was broken.
 
-### 2026-09-10 — Line-break review edge cases
-
-**Changed:** Avoid duplicate breaks around bare HTML breaks, keep link labels
-intact for identity resolution, and compose soft breaks with streaming plugins.
-Updated the renderer inventory and documented the single-line queue exception.
-
-**Why:** Review exposed surrounding text newlines that survive the HTML-break
-rewrite and multiply its visible gap. Splitting mention labels also changed the
-shape consumed by chip resolution. Applying the option to the queue would hide
-later lines in its intentionally clipped preview, so that host stays explicit.
-
-**Consequences:** Existing breaks own their adjacent newlines. Human message
-text stays unmodified; these are rendering decisions, not input normalization.
-
-
-### 2026-09-10 — The feed's markdown host rule lost its host prefix
-
-**What changed:** The rule the 2026-08-30 entry below counts against,
-`:is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body`,
-is now `.agent-message .markdown-body`, at (0,2,0) rather than (0,3,0), with
-every other feed rule that carried the two-host prefix
-([`conversation-surfaces.md`](conversation-surfaces.md)).
-
-**Why:** The prefix distinguished nothing (no component applies the second
-class, and the work stream is the only surface that renders a feed) and only
-raised the weight every override had to clear. The embed card's preview rule,
-`.citation-card .citation-card-preview div.markdown-body` at (0,3,1), still
-wins, now by a wider margin; the arithmetic in that entry stays as the record
-of why it was written at that weight.
-
 ### 2026-09-09 — Human messages retain composer line breaks
 
 **Changed:** Human bubbles opt into a shared renderer pass that turns text-node
@@ -962,19 +932,6 @@ number lands — restating the padding or the raise in a second rule is how that
 starts twitching. Its inner block is about a digit wide, deliberately between
 the narrowest figure and the widest, since a skeleton cannot know whether it is
 standing in for `1` or for `12`.
-
-### 2026-09-03 — The dashboard markdown host is removed
-
-**What changed:** HyperSight's dashboard panel and its markdown rendering host
-were deleted.
-
-**Why:** Sharing the renderer did not make the panel an independent primitive;
-retaining the host would leave a hidden feature surface.
-
-**Consequences:** The shared renderer continues to serve the main feed and
-other documented live surfaces.
-
-Shipped in #541.
 
 ### 2026-09-02 — The heading gutter is margin, so an answer is never indented
 
@@ -1370,23 +1327,6 @@ already uses.
 through `personIdFromMentionHref` / `personMentionMarkdownPattern`. A surface
 that matches only one spelling reintroduces the chip/reduction miss for the
 other.
-### 2026-08-30 — Collapsed heading preview fades from 60% to transparent
-
-**What changed:** The collapsed-section mask is a two-stop gradient from
-`color-mix(… text-default 60%, transparent)` at the first pixel to
-`transparent` at the last. The previous mask held full opacity through the
-first 18% of the clip.
-
-**Why:** The 18% hold made the first line read as full-strength body copy
-and then drop off; the preview is supposed to recede from the first pixel
-so the heading above it stays the thing the eye lands on. Starting at 60%
-is the requested strength of that recede. `#000` is still rejected in
-`app.css`; `color-mix` against `text-default` is the token-legal way to
-name 60% alpha.
-
-**What a future change has to respect:** the mask still uses `mask-mode:
-alpha` and a token, not a named or hex black. Do not restore a mid-gradient
-plateau unless the fade is meant to leave a fully-opaque band.
 
 ### 2026-08-30 — Heading collapse keeps footnotes, list structure, and lead text
 
@@ -1463,26 +1403,6 @@ light-theme sample — that token is the receding control tone in every theme.
 The collapse-all control is a sibling of **Worked for**, not a prop on
 `MarkdownBody`, because the header is not inside the body.
 
-### 2026-08-30 — The rail's document wraps to the panel, not to its own max-content
-
-**What changed:** `.rail-surface` names a `minmax(0, 1fr)` column, `.rail-scroll`
-takes `min-width: 0`, and `.inspector-detail-document` is `max-width: 100%` with
-`min-width: 0`. Long markdown in the inspector wraps to the panel instead of
-laying out at max-content and being clipped by `overflow-x: hidden`.
-
-**Why:** Removing the boxed inner preview left the markdown in the rail's own
-scroll. `.rail-surface` is a grid that only named its row tracks, so the
-implicit column was `auto` and would not shrink below the document's
-max-content. The scroller then clipped the unwrapped lines. HyperSight already
-had `min-width: 0` on `.block-dashboard-panel`; the inspector document never got
-the equivalent. The changelog already said the host is sized to the rail; the
-host did not actually constrain its width.
-
-**What a future change has to respect:** do not drop the column track back to
-implicit `auto`. Sizing `.inspector-detail-document` to the rail remains the
-allowed exception; restyling markdown elements does not. A `max-width` other
-than `100%` would be a reading-measure, which this panel is not.
-
 ### 2026-08-30 — The rail shows an image resource, and the document host joins the guard
 
 **What changed:** An image opened in the inspector renders as an `img` in
@@ -1499,21 +1419,6 @@ body. The guard was the rule the changelog already named and did not enforce.
 **What a future change has to respect:** do not style `img` (or any other
 markdown element) as a descendant of `.inspector-detail-document`. Size the
 image through `.inspector-detail-image` on the element itself.
-
-### 2026-08-30 — A hairline separates last-updated from the document
-
-**What changed:** The inspector detail draws `.inspector-detail-rule` between
-last-updated and `.inspector-detail-document`. It is host chrome — a hairline
-using `sys.size.border.hairline` and `sys.color.border.subtle` — not a restyle
-of `.markdown-body`.
-
-**Why:** Last-updated and the body share one scroll, and without a rule they
-read as one caption. Putting the line *inside* the markdown host would have
-been a second opinion about `hr`, which this renderer already owns.
-
-**What a future change has to respect:** the rule stays outside `.markdown-body`.
-Sizing the document host is still the allowed exception; restyling markdown
-elements is not.
 
 ### 2026-08-30 — The rail renders a resource as a document, not a card of one
 

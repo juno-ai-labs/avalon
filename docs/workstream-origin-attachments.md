@@ -376,24 +376,6 @@ step the ingress has to remember.
 
 ## Changelog
 
-### 2026-08-30 — Archive waits for the unlink; Versions distinguishes loading from none
-
-**What changed:** **Archive** stays open until `detachResource` succeeds, keeps
-an inline error on failure, and is absent when the rail has no unlink handler.
-The confirm copy is the dialog's accessible description. **Versions** treats a
-pending history fetch as loading rather than as an empty list, and the document
-host `.inspector-detail-document` joined the markdown-element stylesheet guard.
-
-**Why:** Continue used to fire `mutate` and clear the inspector in the same
-tick, so a refused DELETE left the resource attached while the reader was back
-on the list, and Radix returned focus to a button that had unmounted. The docs
-had also claimed `WorkstreamDetail` lacked `relationship_type`; the client
-already has `relationshipType` and simply does not gate Archive on it.
-
-**What a future change has to respect:** do not call `inspect(null)` until the
-unlink resolves. Pending disables Cancel and Continue the way the sidebar's
-note-archive dialog does.
-
 ### 2026-08-30 — Versions is a header dropdown; Archive stays a confirm modal
 
 **What changed:** The inspector's **Versions** control opens the standard header
