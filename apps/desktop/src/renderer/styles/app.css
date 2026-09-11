@@ -2743,7 +2743,7 @@ pre {
 .onboarding-items > button.is-complete .onboarding-check { background: var(--av-sys-color-brand-base); border-color: var(--av-sys-color-brand-base); }
 .onboarding-items > button.is-complete strong { color: var(--av-sys-color-text-muted); text-decoration: line-through; }
 .onboarding-items > button.is-complete small { opacity: 0.68; }
-.new-workstream-modifiers { display: flex; gap: 6px; margin: 0 auto 8px; max-width: 690px; }
+.new-workstream-modifiers { display: flex; gap: 6px; margin: 0 auto 8px; max-width: var(--composer-width); }
 .participant-modifier,
 .participant-modifier-add { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-2); border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); display: inline-flex; min-height: 34px; }
 .participant-modifier { font-size: 11px; gap: 7px; max-width: 310px; padding: 4px 9px 4px 5px; }
@@ -5198,6 +5198,31 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   .plugin-face-active { opacity: 1; }
 }
 
+/* The widest a turn is ever drawn.
+
+   Named because it is read from two places that cannot see each other. A turn
+   caps at this inside the transcript column, and the composer under that column
+   takes a fraction of the same number — and the composer sits outside the
+   scroller, in a box the column's percentages never reach, so it cannot arrive
+   at the cap any other way than by being handed it. The other two terms of a
+   turn's `max-width` stay literal: they are the column's own shape (a share of
+   it, and an inset from its far edge), which nothing outside the column asks
+   about. It lives in `app.css` rather than in the token registry — on `:root`,
+   beside the spacing scale — because it is the feed's layout arithmetic and not
+   an appearance either theme has an opinion about.
+
+   `--composer-width` is what the second reader takes: the field a person types
+   a turn into, on the conversation and on both launchers that become one, plus
+   the rows that sit above it in a launcher's dock. Four rules read it, which is
+   why it is a name and not four copies of 480px — the launcher's own 690px used
+   to be exactly that, written out in its stack, its banner and its participant
+   row, and the field it sized was a different width from the field the same
+   draft landed in one keystroke later. */
+:root {
+  --turn-width-cap: 640px;
+  --composer-width: calc(var(--turn-width-cap) * .75);
+}
+
 /* Work-stream conversation refinement: continuous transcript, compact human turns,
    quiet tool disclosures, and a low fixed composer. */
 .workstream-screen .transcript-column {
@@ -5206,7 +5231,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 .agent-message {
-  max-width: min(88%, 640px, calc(100% - 82px));
+  max-width: min(88%, var(--turn-width-cap), calc(100% - 82px));
   min-width: 0;
   width: fit-content;
 }
@@ -5253,7 +5278,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
      thing a screenshot pass looks straight past. */
   --turn-bubble-radius: calc(var(--av-sys-size-radius-xl) + 6px);
   margin-left: auto;
-  max-width: min(88%, 640px, calc(100% - 82px));
+  max-width: min(88%, var(--turn-width-cap), calc(100% - 82px));
   min-width: 0;
   width: fit-content;
 }
@@ -5919,7 +5944,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 /* GrokBot uses four text roles throughout its conversation surfaces rather
    than per-theme typography. Keep Rally's extra author/time labels on the same
    label role so the deliberate metadata addition still belongs to the system. */
-:is(.workstream-screen, .new-chat-screen) {
+:is(.workstream-screen, .workstream-launch-screen) {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 .agent-message .message-author {
@@ -6217,9 +6242,47 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   border-color: var(--av-cmp-composer-border-color);
 }
 
-.workstream-screen .composer-stack {
-  max-width: none;
+/* The field is three quarters of the widest a turn is ever drawn, centred over
+   the same column. Full width said nothing about the conversation above it: the
+   composer ran to both edges of the pane while every message in it stopped well
+   short of them, so the one element a person types into was the widest thing on
+   screen. Three quarters rather than the cap itself keeps the field visibly
+   narrower than the turn it becomes.
+
+   Both selectors, because a launcher is a conversation that has not happened
+   yet: `.workstream-screen` is the settled one, `.workstream-launch-screen` is
+   the new-chat screen and the new-substream dock, and the draft in the field
+   moves from the second to the first on one keystroke without the element ever
+   unmounting. A width it changes across that keystroke is a width that moves
+   under the person typing. */
+:is(.workstream-screen, .workstream-launch-screen) .composer-stack {
+  max-width: var(--composer-width);
   width: 100%;
+}
+
+/* The dock is the pane's width, so it is the one box that can tell the field
+   inside it how much pane there is. A container rather than a media query
+   because the pane is not the viewport: two sidebars and the rail take their
+   room out of it, and a query on the window answers for a width nobody is
+   looking at. Named, so the query below cannot drift onto some future container
+   between here and the stack. Only the inline size is contained — the dock's
+   height is still the composer's, which is the draft's. */
+:is(.workstream-screen, .workstream-launch-screen) .composer-dock {
+  container: composer-dock / inline-size;
+}
+
+/* Under a row this narrow the inset stops being a margin and starts being a
+   waste: the field would sit in the middle of a column barely wider than
+   itself. It takes the row instead, inside the dock's own gutters, and the
+   rows a launcher stacks above it come with it or they stop lining up.
+   568px is a 600px pane less a dock's two 16px gutters — a size query reads the
+   container's content box, which is inside them, and `app.css.node.test.ts`
+   holds those numbers to that sum for every dock that states a gutter, because
+   a dock that states a different one crosses at a different pane and puts the
+   width change back into the hand-off. */
+@container composer-dock (width < 568px) {
+  :is(.workstream-screen, .workstream-launch-screen)
+  :is(.composer-stack, .substream-launch-banner, .new-workstream-modifiers) { max-width: none; }
 }
 
 /* A card or a rule, out of the same five values.
@@ -6264,7 +6327,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    shelf. The shared composer keeps its neutral toolbar layout; only the main
    work-stream adapter opts into this grid. Attachments get their own row when
    present, while the empty state remains a single 42px control. */
-:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule {
+:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule {
   --composer-text-padding: 9px 4px 6px;
   align-items: end;
   background: var(--av-cmp-composer-background);
@@ -6282,21 +6345,21 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   overflow: hidden;
 }
 
-:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule:focus-within {
+:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule:focus-within {
   border-color: var(--av-cmp-composer-border-color);
 }
 
 
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments::-webkit-scrollbar { display: none; }
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-attachments::-webkit-scrollbar { display: none; }
 
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments .attachment-tile {
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-attachments .attachment-tile {
   border-radius: 12px;
   flex: 0 0 var(--attachment-media-size);
   height: var(--attachment-media-size);
   width: var(--attachment-media-size);
 }
 
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments .attachment-file-card.is-pending {
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-attachments .attachment-file-card.is-pending {
   background: transparent;
   border-color: var(--av-ref-color-line-4);
   flex: 0 0 220px;
@@ -6306,47 +6369,52 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   width: 100%;
 }
 
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-input-shell {
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-input-shell {
   align-self: end;
   grid-column: 2;
   grid-row: 2;
   min-width: 0;
 }
 
-:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule textarea {
+:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule textarea {
   font-size: 14px;
   font-weight: 420;
   line-height: 20px;
   min-height: 42px;
 }
-:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule .composer-highlight {
+:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule .composer-highlight {
   font-size: 14px;
   font-weight: 420;
   line-height: 20px;
 }
 
-:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule.has-attachments textarea { min-height: 67px; }
+:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments textarea { min-height: 67px; }
 
-:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule[data-multiline='true'] .composer-input-shell,
-:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule.has-attachments .composer-input-shell {
+:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule[data-multiline='true'] .composer-input-shell,
+:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments .composer-input-shell {
   grid-column: 1 / -1;
 }
 
-:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule[data-multiline='true'] :is(textarea, .composer-highlight),
-:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule.has-attachments :is(textarea, .composer-highlight) {
-  padding: 9px 14px 34px;
+/* Wrapped text spans the controls' own grid row, so the reserve at its foot is
+   what keeps the two apart: the 28px control, the 7px of row padding under it,
+   and 4px of air between the last line and the top of the plus. At 34px the
+   text ended flush with that top edge — legible, but the field read as one
+   block of text with buttons stuck to it. */
+:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule[data-multiline='true'] :is(textarea, .composer-highlight),
+:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments :is(textarea, .composer-highlight) {
+  padding: 9px 14px 39px;
 }
 
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-toolbar { display: contents; }
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-toolbar { display: contents; }
 
 /* Attachments and multiline text span the input across the controls' grid row.
    Raise the controls above that shell so the textarea cannot intercept clicks. */
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule :is(.composer-tools, .composer-submit-area) {
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule :is(.composer-tools, .composer-submit-area) {
   position: relative;
   z-index: 1;
 }
 
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools {
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-tools {
   align-self: end;
   gap: 4px;
   grid-column: 1;
@@ -6355,7 +6423,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   padding: 7px;
 }
 
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .icon-button {
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-tools > .icon-button {
   background: var(--av-cmp-row-background-hover);
   border: 0;
   border-radius: 50%;
@@ -6365,7 +6433,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   width: 28px;
 }
 
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .icon-button:hover:not(:disabled) {
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-tools > .icon-button:hover:not(:disabled) {
   background: var(--av-ref-color-neutral-4);
   color: var(--av-ref-color-neutral-13);
 }
@@ -6374,16 +6442,16 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    rule above rounds every tool into a 28px circle, which would crop a model
    name to its first letter — so the pill keeps the row's height and its
    treatment and takes the width its label needs. */
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .model-selector-trigger {
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-tools > .model-selector-trigger {
   border-radius: var(--av-sys-size-radius-pill);
   gap: 3px;
   padding: 0 9px;
   width: auto;
 }
 
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-hint { display: none; }
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-hint { display: none; }
 
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-submit-area {
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-submit-area {
   align-self: end;
   grid-column: 3;
   grid-row: 2;
@@ -6394,7 +6462,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    fills exclude `.is-listening` so the recording fill wins by being the only
    rule painting the button, rather than by out-specifying two selectors that
    describe a shape and have no business knowing about a state. */
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule :is(.composer-send, .microphone-control .dictation-button) {
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule :is(.composer-send, .microphone-control .dictation-button) {
   border-radius: 50%;
   height: 28px;
   width: 28px;
@@ -6404,7 +6472,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    paints alone. The microphone shared this fill back when Send appeared only
    with the first character and something had to look like the primary action
    in an empty composer; nothing does now. */
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-send {
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-send {
   background: var(--av-cmp-composer-send-background);
   color: var(--av-cmp-composer-send-foreground);
 }
@@ -6416,12 +6484,12 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    had selected it. Recording speaks with the danger token; at rest the button
    is chrome, in both appearances — the tokens resolve per theme, so there is
    no dark rule restating this one. */
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .microphone-control:not(.is-listening) .dictation-button {
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .microphone-control:not(.is-listening) .dictation-button {
   background: var(--av-cmp-row-background-hover);
   color: var(--av-sys-color-text-muted);
 }
 
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule :is(.composer-send, .microphone-control .dictation-button):hover:not(:disabled) {
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule :is(.composer-send, .microphone-control .dictation-button):hover:not(:disabled) {
   filter: brightness(.9);
 }
 
@@ -6449,11 +6517,11 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 
 .composer-action-menu-item > svg { height: 16px; stroke-width: 1.9; width: 16px; }
 
-[data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule { border-color: var(--av-cmp-composer-border-color); }
-[data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule:focus-within { border-color: var(--av-cmp-composer-border-color-focus); }
+[data-theme='dark'] :is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule { border-color: var(--av-cmp-composer-border-color); }
+[data-theme='dark'] :is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule:focus-within { border-color: var(--av-cmp-composer-border-color-focus); }
 [data-theme='dark'] .attachment-file-card.is-pending .attachment-file-icon { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
 [data-theme='dark'] .attachment-file-icon.is-spreadsheet { background: var(--av-sys-color-success-wash); color: var(--av-sys-color-success-base); }
-[data-theme='dark'] :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .icon-button {
+[data-theme='dark'] :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-tools > .icon-button {
   background: var(--av-cmp-row-background-hover);
   box-shadow: inset 0 0 0 .5px var(--av-sys-color-border-highlight);
   color: var(--av-sys-color-text-muted);
@@ -6534,7 +6602,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   }
 
   .workstream-screen :is(.human-message, .agent-message) {
-    max-width: min(88%, 640px, calc(100% - 82px));
+    max-width: min(88%, var(--turn-width-cap), calc(100% - 82px));
   }
 
   .workstream-screen .composer-dock {
@@ -6660,18 +6728,27 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   background: none;
   bottom: auto;
   left: auto;
-  padding: 12px 34px 28px;
+  /* 16px on the sides, which is every dock's, because the narrow-row query
+     below measures the container's content box: a dock with wider gutters
+     reaches that row at a wider *pane*, and the field would then change width
+     on the keystroke that submits it — in a band around 600px, the one thing
+     this whole arrangement exists to stop. The hero's old 34px was sized for a
+     690px column that no longer exists, and the two narrow-width media rules
+     that used to equalise it were already saying this. The vertical values stay
+     the launcher's own. */
+  padding: 12px 16px 28px;
   position: relative;
   right: auto;
 }
 
-.workstream-launch-screen .composer-stack {
-  transition: max-width 240ms cubic-bezier(.32, .72, 0, 1);
-}
-
-.workstream-launch-screen:not(.is-launching) .composer-stack {
-  max-width: 690px;
-}
+/* A launcher's field states nothing of its own. It used to: a taller box on a
+   softer corner under a heavier shadow, restated on the new-chat screen as the
+   capsule it was already sitting next to, and travelled back to the
+   conversation's treatment over 240ms when `.is-launching` landed. Three
+   dressings of one component, and the one a person typed their first message
+   into was the odd one out on a screen that shows the conversation behind it.
+   The capsule below is now every surface's, so the transitions have nothing
+   left to travel and the launcher's rules nothing left to say. */
 
 /* Participants are chosen before the work stream exists and are part of the
    header afterwards, so the row leaves rather than moves. */
@@ -6684,41 +6761,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .workstream-launch-screen.is-launching .launch-modifiers {
   max-height: 0;
   opacity: 0;
-}
-
-.launch-composer {
-  transition:
-    background-color 240ms ease,
-    border-color 240ms ease,
-    border-radius 240ms ease,
-    box-shadow 240ms ease;
-}
-
-.launch-composer textarea {
-  transition: min-height 240ms cubic-bezier(.32, .72, 0, 1);
-}
-
-.workstream-launch-screen:not(.is-launching) .launch-composer {
-  background: var(--av-ref-color-neutral-1);
-  border-color: var(--av-ref-color-line-3);
-  border-radius: var(--av-sys-size-radius-xl);
-  box-shadow: var(--av-sys-elevation-shadow-md);
-}
-
-.workstream-launch-screen:not(.is-launching) .launch-composer textarea {
-  min-height: 84px;
-}
-
-.workstream-launch-screen:not(.is-launching) .launch-composer textarea::placeholder {
-  color: var(--av-ref-color-neutral-9);
-}
-
-.workstream-launch-screen:not(.is-launching) .launch-composer .composer-toolbar {
-  padding: 3px 10px 10px;
-}
-
-.workstream-launch-screen:not(.is-launching) .launch-composer .composer-hint {
-  color: var(--av-ref-color-neutral-9);
 }
 
 /* A substream is started inside the conversation it branches out of, so its
@@ -6769,7 +6811,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   display: flex;
   gap: 8px;
   margin: 0 auto;
-  max-width: 690px;
+  max-width: var(--composer-width);
   min-width: 0;
   padding: 0 2px 6px;
   width: 100%;
@@ -6991,23 +7033,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   right: 0;
 }
 
-.new-chat-screen:not(.is-launching) .composer-stack { max-width: none; width: 100%; }
-.new-chat-screen:not(.is-launching) .launch-composer {
-  background: var(--av-cmp-composer-background);
-  border: var(--av-cmp-composer-border-width) solid var(--av-cmp-composer-border-color);
-  border-radius: 22px;
-  box-shadow: var(--av-cmp-composer-shadow);
-}
-.new-chat-screen:not(.is-launching) .launch-composer textarea { min-height: 42px; }
-.new-chat-screen:not(.is-launching) .launch-composer.has-attachments textarea { min-height: 67px; }
-[data-theme='dark'] .new-chat-screen:not(.is-launching) .launch-composer { border-color: var(--av-cmp-composer-border-color); }
-
-@media (max-width: 760px) {
-  .workstream-launch-screen:not(.is-launching) > .launch-dock {
-    padding-left: 16px;
-    padding-right: 16px;
-  }
-}
 
 /* The conversation retains its shared feed/composer geometry. The profile is a sibling. */
 .workstream-screen.automation-screen { grid-template-rows: auto minmax(0, 1fr) auto; }
@@ -7327,4 +7352,4 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .attachment-media-download { position: absolute; right: 154px; top: 23px; z-index: 3; }
 .attachment-lightbox-content.has-gallery { padding-bottom: 130px; }
 
-:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments { grid-column: 1 / -1; grid-row: 1; width: 100%; padding: 10px 12px 2px; }
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-attachments { grid-column: 1 / -1; grid-row: 1; width: 100%; padding: 10px 12px 2px; }
