@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { sanitizeToolSchema } from "@juno-ai/bind/tools";
+
 import {
+  droppedNullableBranches,
   nonObjectRootUnionBranches,
   readableRootUnionBranch,
   repairRootSchemaForProviders,
@@ -627,5 +630,63 @@ describe("readableRootUnionBranch", () => {
       type: "object",
       properties: { a: { type: "object", properties: { inner: { oneOf: [{ type: "string" }] } } } },
     })).toBe(true);
+  });
+});
+
+/**
+ * The shape that had a scheduled Sidekick replying to itself, kept as a
+ * literal: `slack_send_message.thread_ts` as authored, a flat nullable string
+ * with a floor and a description that says to omit it or send `null`.
+ *
+ * Under `@juno-ai/bind` 13 the sanitizer collapsed it to `{ type: "string",
+ * minLength: 1 }` with "Accepts string or null." appended to the description,
+ * and a model that will not leave the key out put `"/"`, `". "` and
+ * `".000001"` in it for thousands of refused calls, or the timestamp of its own
+ * previous post. Bind 14 rewrites it to a union instead. That is the
+ * dependency's behaviour, not this module's, which is why it is asserted here:
+ * a bind release that collapsed again would put the invented values back, and
+ * this file is where that would surface first.
+ */
+const SEND_MESSAGE_THREAD_TS_AS_AUTHORED = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    channel_id: { type: "string", minLength: 1, description: "Where to post the message." },
+    text: { type: "string", minLength: 1, maxLength: 40_000, description: "The message body." },
+    thread_ts: {
+      type: ["string", "null"],
+      minLength: 1,
+      description: "Post as a reply inside an existing thread. Omit it, or send `null`, to post a new top-level message.",
+    },
+  },
+  required: ["channel_id", "text"],
+};
+
+describe("droppedNullableBranches", () => {
+  it("reports nothing for a flat nullable string, which bind 14 delivers as a union", () => {
+    expect(droppedNullableBranches(SEND_MESSAGE_THREAD_TS_AS_AUTHORED)).toEqual([]);
+    // The wire shape itself, so the assertion above cannot pass by the guard
+    // going quiet: the null branch is a value the model can send, and the
+    // description no longer carries the "Accepts string or null." note that
+    // stood in for it.
+    const wire = sanitizeToolSchema(SEND_MESSAGE_THREAD_TS_AS_AUTHORED) as {
+      properties: Record<string, Record<string, unknown>>;
+    };
+    expect(wire.properties.thread_ts).toEqual({
+      anyOf: [{ type: "string", minLength: 1 }, { type: "null" }],
+      description: "Post as a reply inside an existing thread. Omit it, or send `null`, to post a new top-level message.",
+    });
+  });
+
+  it("still reports a multi-type union, which bind 14 collapses as before", () => {
+    // Case (b) of bind's transform #1: no single shape every provider accepts,
+    // so `["string", "number", "null"]` becomes `"string"` with the rest in
+    // prose, and the authored null is gone from the wire.
+    expect(droppedNullableBranches({
+      type: "object",
+      properties: {
+        value: { type: ["string", "number", "null"], description: "Either." },
+      },
+    })).toEqual(["value: authored-null-branch-not-delivered"]);
   });
 });

@@ -168,14 +168,15 @@ const id = { type: "string", minLength: 1 };
  * failing the call.
  *
  * Cursors used to share this and no longer do. It keeps the flat
- * `type: ["string", "null"]`, which Bind's sanitizer collapses, so a caller
- * that will not omit `channel_id` cannot spell "no filter" as a value either
- * and a `minLength: 1` floor is all it is left with. That is the same shape as
- * the cursor failure and it is deliberately not fixed here: absence means
- * "do not filter by this" rather than "start at the beginning", and what a
- * caller should be told to send instead is a decision per parameter rather than
- * a spelling change. It is counted with the rest of that backlog in
- * [`connectors.md`](../../../docs/connectors.md).
+ * `type: ["string", "null"]`. Under Bind 13 the sanitizer collapsed that to
+ * `type: "string"`, so a caller that would not omit `channel_id` could not
+ * spell "no filter" as a value either and a `minLength: 1` floor was all it was
+ * left with, the shape that had a scheduled Sidekick putting `"/"` and
+ * `".000001"` into `send_message.thread_ts` for thousands of refused calls.
+ * Since Bind 14 the flat form reaches the model as `anyOf` with a null branch,
+ * and `apps/api/test/tool-schema-sanitization.test.ts` asserts that for every
+ * property of every tool. What each of these means by `null`, "do not filter
+ * by this", "no thread", is still the description's to say.
  */
 const optionalId = { type: ["string", "null"], minLength: 1 };
 const query = { type: "string", minLength: 1 };
@@ -186,7 +187,8 @@ const boundedLimit = { type: "integer", minimum: 1, maximum: 100 };
  * The description says where the value comes from and the `anyOf` spelling
  * makes "no cursor" a value the caller can send; `GOOGLE_PAGE_TOKEN_SCHEMA` in
  * [`index.ts`](index.ts) has why neither half works alone, and why the flat
- * `type: ["string", "null"]` these used to carry never reached the model.
+ * `type: ["string", "null"]` these used to carry never reached the model under
+ * Bind 13.
  *
  * `optionalId` cannot carry any of it. It also stands in for channel and user
  * ids, which come from somewhere else entirely, so a cursor's wording on it
