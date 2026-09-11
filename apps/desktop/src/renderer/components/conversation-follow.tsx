@@ -1,6 +1,6 @@
-import { ArrowDown, LoaderCircle, RefreshCcw, X } from 'lucide-react';
+import { ArrowDown, Square } from 'lucide-react';
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Button, IconButton } from './primitives';
+import { IconButton } from './primitives';
 
 const ACTIVITY_FRAMES = [{ opacity: 0, transform: 'scale(.92)' }, { opacity: 1, transform: 'scale(1)' }];
 const JUMP_FRAMES = [
@@ -75,24 +75,14 @@ export function JumpToLatestButton({ onJump, visible = true }: { onJump: () => v
  * component becomes a second import path for it, and the next reader
  * cannot tell which one is the real home.
  */
-export function RunStoppedNotice({
-  retrying,
-  onRetry,
-}: {
-  retrying: boolean;
-  onRetry: () => void;
-}): React.JSX.Element {
+export function RunStoppedNotice(): React.JSX.Element {
   return (
     <section aria-label="Run stopped" className="run-stopped-notice" role="status">
-      <span aria-hidden="true" className="run-stopped-icon"><X size={16} /></span>
+      <span aria-hidden="true" className="run-stopped-icon"><Square fill="currentColor" size={12} /></span>
       <div className="run-stopped-copy">
         <strong>Run stopped</strong>
-        <p>This run was stopped by request. Its partial tool activity is no longer running.</p>
+        <p>This run was stopped by request.</p>
       </div>
-      <Button className="button-primary" disabled={retrying} onClick={onRetry}>
-        {retrying ? <LoaderCircle aria-hidden="true" className="spin" size={13} /> : <RefreshCcw aria-hidden="true" size={13} />}
-        Retry
-      </Button>
     </section>
   );
 }
