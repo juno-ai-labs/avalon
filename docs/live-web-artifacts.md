@@ -300,7 +300,13 @@ is the only place that can forward into it.
   than a five-second licence: a page answering a click with a loop of
   `window.open` calls gets its first URL opened and no more. A redirect is not a
   press, is refused whatever the activation says, and spends nothing; the
-  destination of a `302` is not the URL somebody chose to follow.
+  destination of a `302` is not the URL somebody chose to follow. **A press
+  belongs to the document that received it** and is dropped when a main-frame
+  navigation commits, so a click on an in-site link cannot still be live when
+  the next page's `onload` runs. A `target="_blank"` link never gets a second
+  window: off-origin it goes through the gate like any other link, and
+  same-origin it is shown in the surface already open, which is the only answer
+  that keeps the viewer session.
   **What this closes and what it does not** is the whole of the claim, and is
   written down rather than left as an assumed property of the CSP. No artifact
   can *fetch, load, beacon, or post* off-origin anywhere — that fence is whole.
@@ -425,8 +431,8 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/api exec vitest run test/terminal-runtime.test.ts` | Directory publish end to end through the runtime, against a simulated sandbox shell. |
 | `pnpm --filter @rally/api exec vitest run test/artifact-open-service.test.ts` | Which authority answers which question at open time, that a refusal mints nothing, and that a missing artifact and an invisible one are indistinguishable. |
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/site-resource-detail.test.tsx` | The detail: that it measures and hands over rather than embedding, that its actions land in the host's header and each carries a tooltip, that Copy link carries no code, that the data toggle only exists for a site that keeps data and takes the composited view down with it, and that the pane never flashes its unavailable state. |
-| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, the activation gate (unattended navigation dropped, an activated link handed over and never followed in place, redirects and disallowed schemes refused either way, one press buying one departure and not a loop of them, a refused navigation leaving the press unspent, and what does and does not count as a press), the overlay collapse, and the teardown guards — each surface's lifecycle branch separately, since one guard covering both reads as covered while half of it is dead. |
-| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-preview-wiring.test.ts` | The per-window registry in `index.ts`, which the controller's own suite cannot see: one controller and so one `closed` listener per window, the entry removed only by that listener, the adapter reporting lifecycle rather than assuming it, each artifact surface being confined with an activation tracker built from its own input stream, the consuming call rather than the peeking one reaching the fence, and the external opener's rejection being caught. |
+| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, the activation gate (unattended navigation dropped, an activated link handed over and never followed in place, redirects and disallowed schemes refused either way, one press buying one departure and not a loop of them, a refused navigation leaving the press unspent, the press dropped when its document goes, a same-origin `_blank` shown in place, and the exact event set that does and does not arm it), the overlay collapse, and the teardown guards — each surface's lifecycle branch separately, since one guard covering both reads as covered while half of it is dead. |
+| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-preview-wiring.test.ts` | The per-window registry in `index.ts`, which the controller's own suite cannot see: one controller and so one `closed` listener per window, the entry removed only by that listener, the adapter reporting lifecycle rather than assuming it, each artifact surface being confined with an activation tracker built from its own input stream, the consuming call rather than the peeking one reaching the fence, the press being dropped on `did-navigate`, and the external opener's rejection being caught. |
 | `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. |
 | `pnpm --filter @rally/agent-harness exec vitest run` | The skill's shape and the standing policy's byte budget — the prompt bound is what keeps the policy six lines rather than nine. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-stateless-module.test.ts` | A **stateless active** site's isolate on real workerd: that the `ASSETS` stub crosses the loader's env at all, that it serves this artifact's files, that the relative-string read works, and that `fetch()` throws. Scope is the isolate contract, not admission — the fences in front of it are the policy suite's. |
@@ -500,8 +506,11 @@ rather than workspace authority.
 and decides with it. An off-origin navigation is still never followed in place,
 but under transient user activation it is handed to the default browser instead
 of dropped — for both artifact surfaces, and for a `target="_blank"` link, which
-leaves through the same gate without a second window being made. The departure
-spends the activation, so one press admits one departure. Activation is
+leaves through the same gate without a second window being made — or, when it
+points at the site's own origin, is shown in the surface already open. The
+departure spends the activation, so one press admits one departure, and a
+committed main-frame navigation drops it, so a press belongs to the document
+that received it. Activation is
 reconstructed per surface in the main process from Electron's `input-event`
 stream, because nothing tells the main process about activation when a
 navigation starts. Redirects and schemes outside the process's `http(s)` policy
@@ -527,7 +536,18 @@ than something a departure spends, which was the first shape written here and
 was wrong in a way worth recording: `window.open` is called per invocation, so a
 page answering one click with a loop would have put an unbounded number of URLs
 — and so an unbounded amount of what it can see — through the system opener,
-out of a press the person thought followed one link. A confirmation dialog showing the destination, which does close the
+out of a press the person thought followed one link. Letting a press outlive its
+document, which was the same mistake in the other direction: a same-origin
+navigation does not spend the activation, so a click on an ordinary in-site link
+stayed live into the next page, whose `onload` could spend it on a destination
+nobody saw — an unattended handoff, which is the one thing the gate exists to
+refuse. Dropping a same-origin `target="_blank"` link, which left an ordinary
+class of in-site links doing visibly nothing; handing it to the browser instead
+was rejected because a protected site opened there carries no viewer session and
+answers 401. Accepting every representation of a press — `mouseUp`, `keyUp`,
+`char`, `touchStart` — which armed on a press begun off this surface and on a
+touch the person went on to cancel, making the boundary wider than the rule it
+claims to reconstruct. A confirmation dialog showing the destination, which does close the
 attended case — the only thing that does — but puts a modal in front of every
 link on a dashboard; it remains the upgrade if a leak through a click ever
 stops being theoretical. Honouring activation on `will-redirect`, which hands

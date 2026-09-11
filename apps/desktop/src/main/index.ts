@@ -2895,6 +2895,11 @@ function artifactServingDomain(): string {
 function artifactLinkHandoff(contents: WebContents): ArtifactLinkHandoff {
   const activation = new ArtifactUserActivation();
   contents.on('input-event', (_event, input) => activation.record(input.type));
+  // A committed main-frame navigation ends the document the press belonged to.
+  // `did-navigate` is the right event and `did-navigate-in-page` deliberately is
+  // not: a fragment jump leaves the same document on screen, and a browser does
+  // not drop activation for one either.
+  contents.on('did-navigate', () => activation.reset());
   return {
     takeActivation: () => activation.take(),
     // The same scheme policy every other handoff in this process uses: http(s)
@@ -2908,6 +2913,15 @@ function artifactLinkHandoff(contents: WebContents): ArtifactLinkHandoff {
     openExternal: (url) => {
       void shell.openExternal(url).catch((error: unknown) => {
         logWarn('rally', 'could not open an artifact link in the browser', error);
+      });
+    },
+    // Through the same loader the initial presentation uses, so a page that
+    // redeems or redirects on arrival is not mistaken for a failed load. The URL
+    // is never logged: it is model-authored and may carry whatever the page put
+    // in it.
+    navigateInPlace: (url) => {
+      void loadArtifactInitialUrl(() => contents.loadURL(url)).then((loaded) => {
+        if (!loaded) logWarn('rally', 'could not follow a link inside a site preview');
       });
     },
   };
