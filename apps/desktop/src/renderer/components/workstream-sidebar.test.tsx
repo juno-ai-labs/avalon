@@ -222,9 +222,12 @@ describe('WorkstreamSidebar', () => {
     expect(within(sidebar).getByText('Rally is creating this substream')).toBeInTheDocument();
     // Nothing to click: the reader is already on the surface this row stands
     // for, and the row that starts the next substream is no longer the one
-    // saying where they are.
-    expect(within(sidebar).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
-      .not.toContain('Go to substream: New substream');
+    // saying where they are. Asserted as the list's whole button inventory, so
+    // it fails the moment the placeholder becomes navigable rather than
+    // depending on the label a regression would happen to give it.
+    const list = sidebar.querySelector('.workstream-substream-list');
+    expect([...list?.querySelectorAll('button') ?? []].map((button) => button.getAttribute('aria-label')))
+      .toEqual(['Go to substream: Launch risks', 'New substream']);
     const create = screen.getByRole('button', { name: 'New substream' });
     expect(create).not.toHaveAttribute('aria-current');
     expect(create.className).not.toContain('is-current');
