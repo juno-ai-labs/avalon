@@ -69,7 +69,8 @@ export function ConnectorMark({ className, mark }: {
  * that callback's source text and no styling at all. Resolve the class to a
  * string at the call site and the link slots directly; a plain wrapper is the
  * fallback for where that cannot be done, and costs the child its own place in
- * the DOM.
+ * the DOM — it becomes the flex or grid item its parent lays out, and any rule
+ * written `.parent > .child` stops matching.
  */
 export function Tip({
   align,

@@ -1957,9 +1957,13 @@ export function Sidebar({
               search row as the bar opens the slot for it, and out to the left
               as the slot closes. See `useListMotion`. */}
           {compact && (
-            // `Tip` renders no element of its own, so the row the motion planner
-            // keys on is still this link itself; the tip hangs off the rail's
-            // right rather than below, where the row under it would be covered.
+            // `Tip` renders no element of its own, which is what lets this link
+            // stay the command bar's own grid item: the bar is two tracks, and a
+            // wrapper between them would take the slot this row is sized by and
+            // leave the link inside a track meant for it. The planner is not the
+            // reason — it finds a keyed row at any depth. The tip hangs off the
+            // rail's right rather than below, where the row under it would be
+            // covered.
             <Tip describesTrigger={false} label={NEW_STREAM_LABEL} side="right">
               <NavLink
                 aria-label={NEW_STREAM_LABEL}
@@ -1998,7 +2002,7 @@ export function Sidebar({
               to="/workstreams/new"
             >
               <Plus aria-hidden="true" size={15} />
-              <span>New work stream</span>
+              <span>{NEW_STREAM_LABEL}</span>
             </NavLink>
             {meetingRecordingAvailable && (
               <button className="sidebar-action" onClick={() => void onOpenMeetingNotes()} type="button">

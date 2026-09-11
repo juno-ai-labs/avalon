@@ -256,6 +256,12 @@ describe('Sidebar work-stream markers', () => {
     const titlebar = document.querySelector('.sidebar-titlebar');
     expect(titlebar).not.toBeNull();
     const create = within(titlebar as HTMLElement).getByRole('link', { name: 'New work stream' });
+    // Both links are tooltip triggers, and Radix's Slot string-merges the
+    // child's `className`: hand it `NavLink`'s callback form and the class
+    // arrives at the DOM as that callback's source text, leaving the control
+    // unstyled while every other assertion here still passes. Only a real
+    // window shows that, and a window is not a gate the next change runs.
+    expect(create).toHaveClass('sidebar-new-button');
     fireEvent.focus(create);
     expect(screen.getByRole('tooltip')).toHaveTextContent('New work stream');
 
@@ -263,6 +269,7 @@ describe('Sidebar work-stream markers', () => {
     const commandbar = document.querySelector('.sidebar-commandbar');
     expect(commandbar).not.toBeNull();
     const rail = within(commandbar as HTMLElement).getByRole('link', { name: 'New work stream' });
+    expect(rail).toHaveClass('sidebar-new-button', 'sidebar-rail-new-button');
     fireEvent.focus(rail);
     expect(screen.getByRole('tooltip')).toHaveTextContent('New work stream');
 

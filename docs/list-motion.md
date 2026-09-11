@@ -8,9 +8,9 @@ list — and a row that simply vanishes from one slot and materialises in anothe
 reads as two events rather than one move. This module makes it one: the row
 slides out of frame to the left, the rows between its two slots close the gap,
 and it slides back in from the left at its new slot. A row whose arrival or
-departure is itself the change — the rail's New chat row, which the compact
-toggle inserts under the search row and the expand removes — plays the same
-two halves on their own: in from the left when it appears, and out to the
+departure is itself the change — the rail's New work stream row, which the
+compact toggle inserts under the search row and the expand removes — plays the
+same two halves on their own: in from the left when it appears, and out to the
 left, through a stand-in, when it is removed.
 
 Nothing in it knows what a work stream is: the sidebar is its one caller, and
@@ -35,7 +35,7 @@ choreography takes, or before adding motion to another list.
 | --- | --- |
 | [`apps/desktop/src/renderer/lib/list-motion.ts`](../apps/desktop/src/renderer/lib/list-motion.ts) | The arithmetic, pure over measured positions: `planListMotion` decides which rows moved and which were displaced, `exitKeyframes` and `enterKeyframes` are the two halves a removed and an inserted row play, `moverKeyframes` composes them for a row that did both, `shifterKeyframes` is what a displaced row plays, `LIST_MOTION` holds every duration, stagger, and easing, and `layoutRowAt` answers which row is laid out under a pointer while rows are in motion. Owns no timer. |
 | [`apps/desktop/src/renderer/lib/use-list-motion.ts`](../apps/desktop/src/renderer/lib/use-list-motion.ts) | `useListMotion(containerRef, layoutKey?, layoutSettling?)`: measures the rows after every commit, plans against the positions it last saw, and plays the plan through the Web Animations API; plays a marked row's entrance, and its exit on a stand-in it makes and removes. Owns the interruption handling. |
-| [`apps/desktop/src/renderer/components/sidebar.tsx`](../apps/desktop/src/renderer/components/sidebar.tsx) | The one caller today. Marks each work-stream and note row with `data-motion-key`, marks the **Pinned** heading and every recency-group heading as a held row so they travel with the column, holds the row being dragged, resolves a drag's target through `layoutRowAt`, names the compact toggle as the layout and reports — from the aside's own transition events — whether the rows are still travelling to it, attaches the hook to the scroll box, and attaches a second instance to the command bar above it, whose New chat row is marked `data-motion-insert`. |
+| [`apps/desktop/src/renderer/components/sidebar.tsx`](../apps/desktop/src/renderer/components/sidebar.tsx) | The one caller today. Marks each work-stream and note row with `data-motion-key`, marks the **Pinned** heading and every recency-group heading as a held row so they travel with the column, holds the row being dragged, resolves a drag's target through `layoutRowAt`, names the compact toggle as the layout and reports — from the aside's own transition events — whether the rows are still travelling to it, attaches the hook to the scroll box, and attaches a second instance to the command bar above it, whose New work stream row is marked `data-motion-insert`. |
 | [`apps/desktop/src/renderer/components/project-sidebar-section.tsx`](../apps/desktop/src/renderer/components/project-sidebar-section.tsx) | Gives each project's member list its own `data-motion-scope`, since a member is the same row the recent list shows, and marks each project row as held so a reordered project glides with its members. |
 
 ## How it works
@@ -137,7 +137,7 @@ render landing before it would plan against rows a frame into their travel. A
 timer was not used: it would have to know a stylesheet's duration and would
 still be wrong under a drag. The one thing a relayout leaves playing is an entrance: it
 travels horizontally only, so the slots it was measured between do not stale
-it, and the rail's New chat row arrives with the very toggle that relays out
+it, and the rail's New work stream row arrives with the very toggle that relays out
 everything else.
 
 `planListMotion` sorts the rest into two kinds. Within each scope, among the
@@ -302,7 +302,7 @@ event reached is the slot.
 - **An entrance survives a relayout; a move does not.** A move is measured
   between slots the new layout has replaced; an entrance is horizontal, and is
   the change the relayout was made for. A relayout that cancelled entrances
-  would cut the rail's New chat row a frame after it started.
+  would cut the rail's New work stream row a frame after it started.
 - **A caller whose rows change shape under CSS reports the travel.** The hook
   measures on every commit and cannot see a transition; a render that lands
   mid-flight without `layoutSettling` plans against positions still moving,
@@ -344,21 +344,21 @@ step.
   worth paying for a row whose leaving *is* the event and not for every row a
   socket update drops.
 - **A stand-in exits from the row's slot, not from where it was drawn.** The
-  offset an animation was applying is read per connected element, and a
-  removed element has no computed style; a marked row removed mid-shift
-  restarts from its slot, and one removed mid-entrance — the rail's New chat
-  row takes 420ms to arrive, and a toggle reversed inside that window, a
-  double-click on the collapse control, removes it while it is still parked
-  off frame or part-way in — appears at its arrived slot for a frame before
-  leaving. Reading the offset off the entrance's own timing would need the
-  easing curve evaluated by hand, and the case is a fast double-toggle.
+  offset an animation was applying is read per connected element, and a removed
+  element has no computed style; a marked row removed mid-shift restarts from
+  its slot, and one removed mid-entrance — the rail's New work stream row takes
+  420ms to arrive, and a toggle reversed inside that window, a double-click on
+  the collapse control, removes it while it is still parked off frame or
+  part-way in — appears at its arrived slot for a frame before leaving. Reading
+  the offset off the entrance's own timing would need the easing curve evaluated
+  by hand, and the case is a fast double-toggle.
 - **A row that loses its layout counts as gone.** `display: none` and
   unmounting look the same to the hook, so a marked row hidden by a stylesheet
   plays its exit through a stand-in while its own element stays in the
   document.
 - **The entrance lands well after the box has.** Over the sidebar's 240ms
-  collapse the rail's New chat row is parked until 200ms and at rest at 420ms:
-  the slot is seen to open before the row arrives, which is the reading
+  collapse the rail's New work stream row is parked until 200ms and at rest at
+  420ms: the slot is seen to open before the row arrives, which is the reading
   intended, and the numbers are `LIST_MOTION`'s.
 - **A row whose element is replaced mid-animation restarts its motion from its
   slot.** The in-flight offset is read per element, so a row that is unmounted
@@ -391,7 +391,7 @@ step.
 | --- | --- |
 | `apps/desktop/src/renderer/lib/list-motion.test.ts` | The planner's classification — one mover, two movers together, a held row, a heading never being the mover, scopes ranked apart so a block shifts as one, a row that moved between containers, an interrupted offset — and the exact keyframes and options each kind plays, the exit and the entrance on their own included. |
 | `apps/desktop/src/renderer/lib/use-list-motion.test.tsx` | The hook under jsdom: the exit distance measured against the container, shifters starting on the first frame, a row followed across a remount, a held row shifted instead of moved, a render that moved nothing leaving every animation alone, interruption touching only the rows that moved and reading a pending animation's own start, a late cancel not clearing its successor's record, reduced motion and a hidden window both remembering positions while playing nothing, measurement through the container's scroll, a focused row held only while it keeps its element, a row with no layout neither measured nor remembered, a changed layout key measuring afresh, scopes keeping shared keys apart, nothing playing on the first commit, a marked row entering after the gap opens and leaving through a stand-in that is removed when its exit settles, reduced motion leaving no stand-in, a settling layout measuring afresh until the render after it settles, and an entrance surviving a relayout that cancels a move. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams` › `list motion`) | That the sidebar wires it: a pin moves the row's animation with it into the **Pinned** section, a touch moves it with the row from one recency group into another, the reveal's scroll lands before the motion starts, a drag's target is the slot laid out under the pointer while the dragged row is held, a project's members are scoped apart from the recent list under a held project row, the rail's New chat row sits under a search row above the scroll box and is marked as inserted, and the aside's own `transitionrun` for `--sidebar-compact` holds the motion until its `transitionend`. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` (`pinned work streams` › `list motion`) | That the sidebar wires it: a pin moves the row's animation with it into the **Pinned** section, a touch moves it with the row from one recency group into another, the reveal's scroll lands before the motion starts, a drag's target is the slot laid out under the pointer while the dragged row is held, a project's members are scoped apart from the recent list under a held project row, the rail's New work stream row sits under a search row above the scroll box and is marked as inserted, and the aside's own `transitionrun` for `--sidebar-compact` holds the motion until its `transitionend`. |
 
 jsdom lays nothing out and implements neither `Element.prototype.animate` nor
 `getAnimations`. The hook tests install `getBoundingClientRect` and `animate`
