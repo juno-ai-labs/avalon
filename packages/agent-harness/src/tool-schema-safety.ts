@@ -194,21 +194,18 @@ function stableKey(value: unknown): string {
  * `anyOf` spelling passes through whole. Under bind 13 the flat form was
  * collapsed to `type: "string"` with the nullability appended to the
  * description as "Accepts string or null.", a schema forbidding the value
- * beside prose permitting it, and that is still what happens to the shapes
- * bind 14 leaves out: a multi-type union such as `["string", "number", "null"]`,
- * a nullable type at the parameters root, one in a branch of a root union, and
- * one whose sibling `enum` excludes `null`.
+ * beside prose permitting it, and that is still what happens to the five
+ * shapes Bind 14 leaves out, listed once under Principle 1 of
+ * `docs/agent-tools.md`; a multi-type union is the common one.
  *
- * That difference is not cosmetic, and it was measured rather than reasoned
- * about, twice. A caller told in prose to omit a cursor while `minLength: 1`
- * said otherwise spent eight calls inventing values, `"x"`, `" "`,
- * `"undefined"`, `"/"`, because absence was not expressible in the half of the
- * declaration it treats as binding. A scheduled Sidekick handed
- * `slack_send_message.thread_ts` the same way put `"/"`, `". "` and
- * `".000001"` in it for thousands of refused calls, or the timestamp of its
- * own previous post. Demoting a null branch into prose reproduces exactly that
- * shape, which is why this guard stays after the sanitizer stopped doing it:
- * it is what fails if a bind release starts again.
+ * That difference is not cosmetic. It was measured twice, on a Drive cursor
+ * and then on `slack_send_message.thread_ts`, where a scheduled Sidekick
+ * invented values for thousands of refused calls or replied to its own
+ * previous post; the 2026-09-11 entry in `docs/agent-tools.md` and the
+ * Sidekick delivery PRD's `research.md` hold the record. Demoting a null
+ * branch into prose reproduces exactly that shape, which is why this guard
+ * stays after the sanitizer stopped doing it: it is what fails if a bind
+ * release starts again.
  *
  * Reports `path: authored-null-branch-not-delivered` for each one, the path
  * dotted from the root (`thread_ts`, `triggers.items.rrule`, `$defs.Cursor`),
