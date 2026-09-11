@@ -4,6 +4,7 @@ import {
   AutomationSetEvaluatorRulesInputV1Schema,
   automationActivitySourcePluginIds,
   automationDraftAcceptanceBlocker,
+  automationTriggersAdmitResourceType,
   type AutomationDraft,
   type AutomationSetEvaluatorRulesInputV1,
 } from "@rally/contracts";
@@ -395,8 +396,9 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
             const descriptor = plugin.activityTriggers.find((candidate) => candidate.eventType === eventType);
             if (
               resolvedResource
-              && !(descriptor?.resourceRelationships ?? []).some(
-                (relationship) => relationship.resourceType === resolvedResource.resourceType,
+              && !automationTriggersAdmitResourceType(
+                descriptor ? [descriptor] : [],
+                resolvedResource.resourceType,
               )
             ) {
               issues.push({
