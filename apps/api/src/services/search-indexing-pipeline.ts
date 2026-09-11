@@ -1,6 +1,7 @@
 import type { Env } from '../env';
 import { sha256Hex } from '../lib/crypto';
-import { SearchDocumentBatchSchema, type SearchDocument, type SearchDocumentBatch } from './search-document';
+import { logWarn } from '../observability/logger';
+import { ignoredSearchDocumentKeys, SearchDocumentBatchSchema, type SearchDocument, type SearchDocumentBatch } from './search-document';
 import { searchChunkPolicy, SEARCH_EMBEDDING_BATCH_SIZE } from './search-embedding';
 import { semanticChunks, type SemanticChunkPolicy } from './semantic-chunks';
 import { isMemoryEmbeddingModel } from './structured-inference';
@@ -69,7 +70,17 @@ export async function indexSemanticBatch(index: TextSearchIndex, job: SearchEmbe
 /** Source state stays batch-local; the immutable tokenizer is shared by the isolate. */
 export function createSearchIndexingPipeline(env: Env) {
   return async (reference: SearchSourceReference, load: (captureLinks?: boolean) => Promise<SearchDocumentBatch>): Promise<void> => {
-    const input = SearchDocumentBatchSchema.parse(await load());
+    // A producer on a newer build may name fields this build does not. They
+    // are indexed without them (the schema strips, never rejects) and named
+    // here with the source, so a deploy can list from the logs which rows the
+    // skew window wrote behind the contract and re-project exactly those.
+    const raw = await load();
+    const ignored = ignoredSearchDocumentKeys(raw);
+    if (ignored.length) logWarn(env, 'search_document_keys_ignored', { workspace_id: reference.workspaceId,
+      ...(reference.type === 'resource_search_projection_v1' ? { resource_id: reference.resourceId }
+        : { parent_id: reference.parentId, substream_id: reference.substreamId, turn_id: reference.turnId }),
+      ignored_keys: ignored.join(',') });
+    const input = SearchDocumentBatchSchema.parse(raw);
     if (!input.documents.length) {
       if (input.retry) throw new Error('search_source_retry_required');
       return;
