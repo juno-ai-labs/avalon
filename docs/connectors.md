@@ -2,6 +2,11 @@
 
 Connectors are typed adapters behind a registry. A manifest declares OAuth needs, supported personal/workspace scopes, activity and resource types, tools, polling, webhooks, and watches. The adapter owns provider protocol details; Rally owns tenancy, execution principals, persistence, retries, schedules, and audit.
 
+The desktop shows **Reconnect required** only for `needs_reconnect`. Generic
+`error` states, such as a failed background poll, display as healthy because
+they do not establish that authorization needs renewing. `disabled` remains
+distinct. The stored polling diagnosis is retained for investigation.
+
 OAuth deliberately crosses one authority boundary. Regional D1 owns the
 single-use encrypted `oauth_states` row because the callback must be validated
 and routed before a WorkspaceDO can be addressed. The selected WorkspaceDO owns
