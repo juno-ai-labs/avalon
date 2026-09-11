@@ -771,7 +771,7 @@ For a Global-only local acceptance pass:
 8. Open the app's Home tab in Slack, choose **Connect Rally**, and let the local
    site hand off the one-time fragment token to the signed-in desktop. Reopen
    Home and confirm the linked member view.
-9. Optionally choose **Slack → Connect for me** in Rally Settings to authorize
+9. Optionally choose **Slack → Connect only for me** in Rally Settings to authorize
    the personal hosted-MCP tool plane.
 
 The local site is required for account-link handoff because development sets
