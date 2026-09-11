@@ -695,20 +695,6 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
-### 2026-09-09 — Preserve digest identity when introducing authored access mail
-
-**What changed:** The shared Resend caller accepts a trusted per-message From
-override for the authored acknowledgement.
-
-**Why:** New access mail comes from Adam while digests retain their configured
-notification identity.
-
-**Considered and rejected:** Changing the global sender would also rename digest
-and unrelated transactional mail.
-
-**Consequences:** Existing caller resolution is unchanged. [Private access](private-access.md)
-owns freezing the new message's sender and its domain-verification requirement.
-
 ### 2026-09-09 — Seek directly to the activity cursor
 
 **What changed:** Activity reads add a direct sequence lower bound when a cursor
@@ -731,14 +717,6 @@ is claimed fixed here. Audience and other filters retain their existing behavior
 
 Shipped in [#628](https://github.com/juno-ai-labs/avalon/pull/628).
 
-### 2026-09-08 — Deliver substream notifications without publishing child activity
-
-Direct child mention and membership notifications now reach their recipient
-through the existing transport. The parent still suppresses child activity, so
-making a tag audible does not put private conversation excerpts into shared
-activity or digest inputs. Notification links open the addressed child; email
-reply routing remains unchanged.
-
 ### 2026-08-30 — A bare `<br/>` becomes a line break in email prose
 
 **What changed:** `email-markdown.ts` rewrites a bare break tag to `<br>` in the
@@ -752,46 +730,6 @@ is still characters — this renderer has no table model.
 
 **Considered and rejected:** Flattening email tables into real HTML tables just
 to honour the tag. That is a second table renderer, not a break-tag fix.
-
-### 2026-08-30 — Sidebar facepile omits the current viewer
-
-**What changed:** A personal sidebar row no longer paints the signed-in person's
-face. If they are the only participant, the trailing slot is empty rather than a
-one-person pile. Overflow subtracts them when they sat past the three painted
-ids. The public globe and each remaining face use the standard tooltip — "This
-is a public work stream", and the person's name.
-
-**Why:** a facepile of yourself is noise, not information: you already know you
-can see the row. The directory preview is still the same payload for every
-participant, so the omission is a render-time filter rather than a per-viewer
-wire field. Native `title` on the globe and on non-present faces was a second
-tooltip language next to the Radix chrome the rest of the row already uses.
-
-**Considered and rejected:** dropping the viewer from WorkspaceDO's preview so
-each recipient got a different id list. Membership is common state for everyone
-who can see the row; a per-viewer cap would split that. Also rejected: keeping
-native `title` beside the Radix tooltip, which would show both on a long hover.
-
-**What a future change has to respect:** the wire may still include the viewer.
-The desktop is what omits them. Do not add a second tooltip language for this
-slot.
-
-### 2026-08-30 — Facepile order is join time
-
-**What changed:** The three faces on a digest (and every other personal)
-sidebar row are the most recently added participants, not the most recently
-rewritten overlay rows. Overflow counts unresolved ids, and the pile is hidden
-from the row's accessible name.
-
-**Why:** overlay `projected_at` is not join recency, and the original entry's
-"newest" reading collapsed to UUID order after a message. Join time is the
-clock both directory and `summary()` already share.
-
-**Considered and rejected:** a digest-specific clock. Digests are personal work
-streams; they take the same preview as every other personal row.
-
-**What a future change has to respect:** do not sort this pile by overlay
-`projected_at`.
 
 ### 2026-08-30 — Sidebar facepile is the existing AvatarStack, not a compact variant
 
@@ -809,30 +747,6 @@ could fire would pollute the accessible name.
 
 **What a future change has to respect:** `AvatarStack` itself is the sidebar
 facepile. Do not add a size for this slot.
-
-### 2026-08-30 — Digest sidebar rows wear a facepile, not the note lock
-
-**What changed:** A personal work stream's sidebar trailing slot is a compact
-facepile of its participants (three newest, then `+x`), and a workspace-scoped
-row wears a globe. Digest occurrences are personal, so Debug-enabled digest
-rows pick up a one-person pile. The work-stream header **Private** badge is
-unchanged. Notes still wear the lock.
-
-**Why:** the lock on every personal work-stream row was read as "only you",
-which is true of a digest but not of a private work stream that several people
-are in. The pile is the people the row is closed to; the lock stays on notes
-because a note has no participant set to pile.
-
-**Considered and rejected:** keeping the lock on machinery rows so a digest
-still looked like a private note. That reintroduces a second marker for the
-same `scope = 'personal'` column, which is the thing the original private
-marker existed to avoid. Also rejected: a REST fetch of participants for the
-sidebar. The directory already holds viewer rows; the wire carries three ids
-and a count.
-
-**What a future change has to respect:** workspace-scoped rows must not carry
-participant ids. The directory paints a globe, not a pile, and must not send
-what it does not paint.
 
 ### 2026-08-29 — Digest settlement receives only saved canonical result text
 
@@ -946,23 +860,6 @@ failure worth removing — all three run over one string in sequence, and a
 disagreement between them shows up as a rewritten code sample in somebody's
 inbox with nothing failing anywhere.
 
-### 2026-08-28 — The reduction leaves indented code alone too
-
-**What changed:** The shared grammar's three passes read one `codeLines`
-classifier, which recognises indented code blocks as well as fenced ones. A
-destination may also carry one level of balanced parentheses.
-
-**Why:** An indented example is the other ordinary way a model shows this
-syntax, and the reduction was rewriting it — a taught `[the deck](resource://abc)`
-arrived here as `the deck`, editing the sample. The parenthesis half is narrower
-and just as visible: stopping at the first `)` truncated
-`…/Function_(mathematics)` in the delivered source list, naming a URL that goes
-nowhere.
-
-**What a future change has to respect:** What counts as code is `codeLines`'
-decision and nothing else's; a caller that grows its own fence tracking is how
-the transcript and the delivered copy start disagreeing about numbering again.
-
 ### 2026-08-28 — The reduction is written for the surface that renders it
 
 **What changed:** `rewriteCitationsAsPlainText` takes a `sources` option:
@@ -984,28 +881,6 @@ to reach it. Both call sites want the reduction and neither wants the list.
 consumer can render, the way `normalizeModelMarkdown` and `normalizeModelText`
 are already two entry points for the same reason. The default is the Markdown
 one, so a caller that renders nothing has to say so.
-
-### 2026-08-28 — The reduction reads code and titled links the way the parser does
-
-**What changed:** Two corrections in `rewriteCitationsAsPlainText`, both in
-`@rally/contracts/citations` rather than here. A `[^1]` inside an inline code
-span no longer counts as a footnote reference, and the inline-link pattern now
-matches a label carrying balanced brackets, an angle-bracketed target, and a
-trailing title.
-
-**Why:** Both were silent leaks of the kind this reduction exists to close, and
-both are reachable from ordinary model output. A message explaining the citation
-syntax — an ordinary thing to ask Rally for — was delivered with a `Sources`
-list it never claimed, and any real footnote beside it was renumbered, so the
-delivered copy and the transcript disagreed about which source was `[1]`. And a
-link the desktop drew as a chip but this pattern did not match arrived with its
-raw `resource://` target in the text: `[the deck](resource://abc "Q3")` is a
-link to every Markdown parser in the path, including the one Rally renders with.
-
-**What a future change has to respect:** The pattern here is meant to be as wide
-as the renderer's parser, not as wide as the guidance's examples. Anything the
-desktop turns into a chip and this leaves alone becomes raw internal syntax in
-front of a recipient.
 
 ### 2026-08-27 — Every email reduces a model's citations before rendering
 
@@ -1194,25 +1069,6 @@ is edited. The digest's own From address moved with it: with
 `notifications@with-avalon.com` rather than the invitations address it had been
 falling back to.
 
-### 2026-08-20 — The email preview stops querying retired D1 product tables
-
-**What changed:** The preview still uses D1 to enumerate real active members,
-but its body and work-stream labels are representative samples. It no longer
-queries `digest_deliveries` or product columns on `workstreams`, both of which
-are absent after migration 0090.
-
-**Why:** A visual fixture may read identity data without turning D1 back into a
-digest or directory serving surface. The old queries made the preview fail on
-the production schema after the authority cutover.
-
-**Considered and rejected:** Reading WorkspaceDO SQLite files directly. That
-would couple a template preview to local Miniflare object layout and would not
-work for a remote D1 export anyway.
-
-**Consequences:** The preview proves the real template with real recipient and
-workspace names, but not a previously delivered body. Product-content review
-must obtain that body through the product API or an explicit fixture.
-
 ### 2026-08-18 — Slack-only members still receive schedule repair
 
 **What changed:** Digest reconciliation pages across every active member rather
@@ -1284,26 +1140,6 @@ falls back to frozen D1 rows. Digest projection retries from the durable
 Workflow claim. The activity log remains a derived first-party product and never
 becomes the source for reconstructing the normalized provider event.
 
-### 2026-08-18 — Activity audience and system-work-stream lists use WorkspaceDO
-
-**What changed:** Post-cutover activity-event audience resolution asks
-WorkspaceDO for visible work-stream IDs, and renderer list pagination/system-row
-filtering is served from the same object's authoritative directory. D1 retains
-the insertion-ordered `activity_events` log and digest schedules/deliveries, but
-not work-stream audience or sidebar projections.
-
-**Why:** The log is a relational workspace-wide workload, while participant
-visibility and list placement are work-stream product state. Keeping the former
-in D1 does not require copying the latter there.
-
-**Considered and rejected:** Reading every WorkstreamDO for each digest page and
-retaining D1 common/user projections only for audience joins. The former is
-unbounded; the latter restores a second authority solely to make one join local.
-
-**Consequences:** Activity reads perform one bounded WorkspaceDO visibility call
-before their D1 query. A WorkspaceDO outage fails the audience read closed;
-frozen legacy participant rows are never a post-cutover fallback.
-
 ### 2026-08-17 — WorkstreamDO events enter the regional activity log durably
 
 **What changed:** Authoritative work-stream mutations emit first-party activity
@@ -1336,24 +1172,6 @@ the omitted transcript note.
 **Consequences:** Digest telemetry remains best effort around the whole helper;
 required settlement work must never be placed after an uncaught analytics read.
 
-### 2026-08-13 — Digest configuration and delivery become one measurable lifecycle
-
-**What changed:** Durable schedule replacement and terminal delivery settlement
-now emit bounded product events with cadence, target, activity-count, result, and
-first-delivery dimensions.
-
-**Why:** A configured schedule did not show whether it ever delivered, while a
-delivery row alone could not explain the cadence and destination choices that led
-to it.
-
-**Considered and rejected:** Exact schedule times, recipient addresses, activity
-identifiers or bodies, generated summaries, and provider error text. None is
-needed to measure adoption or reliability, and each adds sensitive or
-high-cardinality content.
-
-**Consequences:** Product analytics can join configuration cohorts to delivery
-outcomes without becoming the cursor or delivery source of truth. A retry keeps
-the delivery's stable event identity.
 ### 2026-08-12 — The schedule's work-stream pointer is dropped, now that the window it was waiting on has closed
 
 **What changed:** `0070_drop_digest_schedule_workstream.sql` drops

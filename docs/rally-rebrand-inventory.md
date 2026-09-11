@@ -427,19 +427,6 @@ with this repository. The two halves of that line have different owners.
 
 ## Changelog
 
-### 2026-09-03 — HyperSight is removed rather than renamed again
-
-**What changed:** The inventory no longer treats HyperSight or Block Dashboard
-as a live Rally surface.
-
-**Why:** The product feature, runtime, and operator controls were deleted, so a
-remaining rename task would misstate the work left to do.
-
-**Consequences:** Historical entries retain the names that were accurate when
-those changes shipped.
-
-Shipped in #541.
-
 ### 2026-08-25 — The person-notification emails and both Resend senders
 
 **What changed:** `participant-` and `mention-email-service.ts` say Rally, and
@@ -466,25 +453,6 @@ the bodies are four files; the sender is also the half a person sees first.
 **From: Rally** with an Avalon wordmark. That is the same inconsistency in the
 other direction and is deliberate pressure to finish the section, not a state to
 settle in.
-
-### 2026-08-25 — Linear and Notion provider registrations completed the cut-over
-
-The existing production Linear and Notion registrations now present Rally's
-name, company metadata, logo, redirects, and webhook hosts. The checked-in
-Linear manifests moved with them, and exact connector tests now pin the Rally
-hosted-MCP identity and Linear native-agent operation names so provider-visible
-metadata cannot silently drift back.
-
-The app registrations, installed grants, client IDs, secrets, refresh tokens,
-scopes, capabilities, and event selections deliberately stay fixed. Linear
-keeps both `with-avalon.com` callback URLs during the domain migration. Existing
-hosted-MCP DCR records remain valid and are not rewritten; new registrations
-and sessions announce Rally.
-
-Creating replacement provider apps or forcing reconnects was rejected: it would
-discard working authority and split installations for a display-name correction.
-Notion's immutable webhook URL required a prepared delete-and-recreate cut-over;
-the replacement was verified active with the same API version and event matrix.
 
 ### 2026-08-25 — Section 9 renamed: the agent stops calling itself Avalon
 
@@ -571,21 +539,6 @@ old hostnames were deliberately not swept. Their retirement conditions belong
 to sections 1, 2, 4, and `domain-migration.md`; a brand regeneration must never
 be used as a reason to rename them.
 
-### 2026-08-25 — The Slack app cut-over closed its user-facing slice
-
-The Slack manifest, Worker responses, connector labels, installation-page
-command, and permissions reference now agree on Rally and `/rally`. The provider
-manifest follows the Worker deployment in both regions so Slack cannot deliver
-the new command to old ingress code. Slack CLI 4.6.0 strips this app's immutable
-`pkce_enabled` field during validation and sync, so the provider change is made
-through Slack's App Manifest editor instead.
-
-Compatibility remains where external state requires it: old OAuth redirects,
-the legacy unfurl domain, and the four Avalon denial prefixes already present in
-Slack channel history stay accepted. The support-address hold described in this
-historical entry was closed when `help@rallywith.ai` was confirmed as the sole
-public catch-all. Section 9's non-Slack agent identity remains open.
-
 ### 2026-08-25 — What the sweep's verification could not see
 
 Review of #294 found six misses. All of them are one mechanism failing in two
@@ -623,23 +576,6 @@ The rule for the sections still outstanding: an exclusion check proves the
 blocklist held and nothing more. Pair it with a positive check — after the
 sweep, every remaining occurrence of the old name is enumerated and each one
 individually explained — because that is the only pass that sees a miss.
-
-### 2026-08-25 — Section 9 gains the plugin system messages it missed
-
-A review of #294 flagged the Avalon prose in `terminal/contract.ts` as a stale
-code comment. It is not a comment: it is `TERMINAL_PLUGIN_SYSTEM_MESSAGE`,
-concatenated into the model's prompt by `terminal/plugin.ts`. Section 9 had
-missed it because the audit behind that section searched the harness prompt
-modules, `integrations.ts`, `meeting-notes-service.ts`, and the connectors, and
-a plugin's system message lives in neither the prompt directory nor the plugin
-file that assembles it.
-
-Recorded as a correction rather than a quiet edit, because the near-miss
-generalizes: a prompt is not identifiable by where it lives, only by whether
-something concatenates it into a model request. Any later pass over this
-section should enumerate the *assembly* sites — what feeds `systemMessage`,
-`description`, and the plugin builders — rather than a list of likely
-directories, which is what missed this one.
 
 ### 2026-08-25 — The telemetry envelope identifier is ai.rallywith, and a collapsed supersede list
 

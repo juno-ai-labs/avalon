@@ -61,34 +61,6 @@ its source. Any new producer must carry that source audience through persistence
 and every card surface must preserve dismissal across canonical and realtime
 reconciliation.
 
-### 2026-08-22 — The candidate query's filters move to the suite that runs them
-
-**What changed:** `activity-consumer.ts` no longer branches on
-`authority.phase`. The legacy ID-only activity-queue message is acked without
-being processed, and `routeDirectWatches`, `runMatchingAutomations`,
-`isWorkstreamVisibleToUser` and the candidate query each keep only their object
-arm. The five candidate-exclusion tests move from the Node suite to
-`test-workers/durable-object-runtime.test.ts`, and the Node suite's workspace
-stub answers `routingCandidates` with eligibility and ordering only.
-
-**Why:** Migration 0090 closed the phase permanently, so every non-open arm has
-been unreachable since — including the D1 candidate query those five tests were
-written against. Every producer of the legacy queue message returns before
-sending it once `WORKSPACE_DOS` is bound, so acking one is the whole live
-behaviour: admitting it would build a second connector-event authority out of a
-D1 row nothing has written since the cutover, and leaving it unacked would
-redeliver it forever.
-
-**Rejected:** Teaching the Node stub the dismissal run and the exclusion. It
-would have kept those five tests green while they asserted nothing but the stub
-— the same failure the deleted D1 arm had already produced once here.
-
-**What a future change has to respect:** the invariant above — candidate
-exclusion belongs inside the candidate query — now lives in WorkspaceDO. A new
-exclusion goes in `routingCandidates` and is proved on workerd; adding one to
-the Worker after the call would reintroduce exactly the shrinking-list bug that
-invariant exists to prevent.
-
 ### 2026-08-18 — Routing feedback and candidates use WorkspaceDO indexes
 
 **What changed:** Post-cutover candidate selection, dismissal-run exclusion, and

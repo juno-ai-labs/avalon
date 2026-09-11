@@ -851,37 +851,6 @@ A prepared-snapshot cohort should omit the regional member-authorization and
 upgrade-time snapshot-detail spans but retain the regional authority read; a
 fallback retains the old shape and remains the correctness baseline.
 
-### 2026-09-02 — Ticket transit pays main-room wake and factory phases are lossless
-
-**What changed:** A main-feed ticket request now schedules the recorded
-SubstreamAgent's storage-ready `wake()` without awaiting it and records a
-ticket-correlated completion duration and outcome. The Electron broker supplies
-the phase callback before socket-client construction, holds any synchronous
-construction phases until ownership is recorded, and then relays phases live.
-
-**Why:** The Worker-to-object wake had no chance to overlap ticket transit or
-the client handshake, although both happen before the upgrade needs the room.
-The initial diagnosis attributed missing phases to a renderer listener race.
-Full-path review disproved that cause because renderer construction and listener
-attachment share one uninterrupted turn. The main factory/listener ordering was
-the defensible boundary to harden, while the historical missing-field cause
-remains unknown.
-
-**Considered and rejected:** Awaiting warm-up would merely move room latency
-into the ticket block and couple availability to an optimization. Guessing a
-PAC cache or connection prewarm policy before trustworthy phase data would risk
-stale network policy and optimize an unverified cause. Warming non-main UUIDs
-without first validating a parent-directory record would make ticket requests
-an object-materialization primitive. Renderer buffering was also removed because
-its event order cannot occur and control sockets never attach a phase observer.
-
-**Consequences:** `room_upgrade` remains the authoritative outcome of object
-admission. Main-feed warm-ups emit `workstream_socket_ticket_warm_finished` with
-ticket ID, outcome, and duration without gating ticket issue; non-main tickets
-do not warm. The next packaged-client cohort can compare warm completion with
-room upgrade and should carry any phases observed after factory callback
-registration, while absence still needs version and emission checks.
-
 ### 2026-09-01 — Opening samples are click-scoped and cold wake recovery is named
 
 **What changed:** Background and speculative socket flows remain local while
@@ -1074,27 +1043,6 @@ failed first socket attempt exposes the manual HTTP recovery while reconnecting,
 without adding a fallback timeout. HTTP rows are a recovery cohort and must not
 be mixed into the normal-open distribution.
 
-### 2026-08-25 — Client send readiness has its own opening milestone
-
-**What changed:** A sidebar opening now emits `workstream_send_ready` after the
-painted composer has an installed work-stream handler. It shares the opening
-operation ID and records the workspace command socket state.
-
-**Why:** Feed paint answers the opening question but is only a proxy for the
-separate question of when the client can accept a send. The workspace socket
-may queue a message while connecting or reconnecting, so socket-connected time
-would overstate the user's wait.
-
-**Considered and rejected:** Calling feed visibility send readiness, or waiting
-for a transport connection. The first hides an unmeasured claim; the second
-confuses queue admission with delivery. Server acknowledgement remains the
-existing `workstream_message_send` flow rather than a third reading of readiness.
-
-**Consequences:** Product analytics can compare feed and send-ready percentiles
-by operation ID. A workspace-level service error abandons the click before its
-same-work-stream retry can reuse that clock. Cloudflare spans and renderer phase
-traces remain unchanged.
-
 ### 2026-08-25 — Detail retries separate request identity from opening identity
 
 **What changed:** Each `GET /workstreams/:id` call now keeps the fresh
@@ -1183,20 +1131,6 @@ store. A dedicated outcome value would duplicate `replay_plan = snapshot`.
 **Consequences:** Snapshot latency can be compared by cause. HTTP reads under
 `workstream_open` now represent `sequence_ahead` plus failed or overflowed
 `history_unavailable` snapshot fallbacks, not ordinary replay-cache loss.
-
-### 2026-08-25 — Span attributes are namespaced rally.*
-
-**What changed:** Every product-owned span attribute moved from `avalon.` to
-`rally.` — `rally.workspace.id`, `rally.workstream.id`, `rally.request.id`,
-`rally.flow`, `rally.component`, and the rest.
-
-**Why:** The rename, and a split that had already opened: the renderer's
-`perf-trace` documented `rally.request.id` while the Worker emitted
-`avalon.request.id`, so a filter written from either side missed half the trace.
-One prefix is the point of the namespace. Saved queries filtering `avalon.*`
-stop matching; traces are short-lived, so this ages out rather than needing a
-backfill. A future change adding an attribute uses `rally.` — the namespace is
-what makes a dashboard filter work across components.
 
 ### 2026-08-21 — The renderer half can say whether it was waiting or busy
 

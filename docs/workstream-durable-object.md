@@ -1928,25 +1928,6 @@ until classified; a new effect receiver needs a `drop` entry; a new background
 caller acknowledges the refusal. The always-armed alarm invariant is suspended
 on a retired object.
 
-### 2026-09-08 — An accepted feed upgrade reports its accept time and instance age
-
-**What changed:** `SubstreamAgent`'s accepted socket upgrade answers with two
-internal headers, its own accept duration and milliseconds since this
-instance's constructor began (`instanceAgeMs()` on the migratable base), and
-records `rally.room.instance_age_ms` on its accept flow. The edge strips both.
-
-**Why:** Slow opens whose `room_upgrade` step ran 8–12 s had accepts of under
-220 ms and 0 ms constructor phases; the seconds were the platform activating a
-cold object, and the room needs to say what it saw for the edge to name the
-rest. [`performance-tracing.md`](performance-tracing.md#what-room_upgrade-contains)
-carries the evidence.
-
-**Consequences:** Nothing about admission changed; a rejection carries neither
-header. The age is read before the accept's first yield, so it describes the
-instance, not the accept.
-
-Shipped in #607.
-
 ### 2026-09-08 — Reserve Sidekick skill names across executions
 
 Added migration 46 and conversation-owned name assignment. Recomputing duplicate
@@ -2009,15 +1990,6 @@ change to either header is a change to what the model reads in every
 multi-person room. The backlog a first admission after a long quiet stretch
 appends is unbounded and is a decision the team has not made — a ceiling
 belongs here, as a named constant, when there is a reason to set one.
-
-### 2026-09-08 — Keep access updates local to one directory row
-
-Review exposed unnecessary full-page rebuilding on foreground changes and
-missing Debug-row updates. The access push now selects one authoritative row,
-retains user-only delivery, and uses the directory waterline. The routing guard
-explicitly declares the table private to WorkspaceDO. Directory-read tests now
-own separate workspaces because retained fixtures could fill subsequent pages.
-
 
 ### 2026-09-08 — Sidekick durable boundaries
 
@@ -2393,26 +2365,6 @@ SubstreamAgent, with no dashboard sibling or child. Deleting the Wrangler class
 is irreversible: rollback may restore code, but it cannot restore that
 namespace's deleted objects or the object-local state removed by these forward
 migrations.
-
-Shipped in #541.
-
-### 2026-09-03 — A stored automation run context has no delivery targets
-
-**What changed:** Schema v37 rewrites `runs.execution_context_json` with
-`json_remove('$.automationRunContext.deliveryTargets')` wherever the key is
-present. No table changes shape.
-
-**Why:** The frozen automation run context is copied verbatim into the child's
-execution receipt and never cleared, and the schema it is read back through on
-claim, lease recovery, settlement and retry nests the strict
-`AutomationRunContextV1Schema`, from which `deliveryTargets` was removed on this
-date. The automation object rewrote its own copy in its v13; without the same
-rewrite here, every run dispatched before the deploy stopped parsing. A data
-migration rather than a tolerant read, for the reason recorded in
-[`automation-lifecycle.md`](automation-lifecycle.md): a tolerated key is a dead
-field every future reader has to know to ignore. Proved in
-`apps/api/test/workstream-object-schema.test.ts` by storing a pre-v37 receipt,
-applying the schema, and parsing the row through `WorkstreamWorkflowInputSchema`.
 
 Shipped in #541.
 
@@ -3072,15 +3024,6 @@ still be republished; child inbox receipts deduplicate it. Changes to this
 receipt must retain the real-workerd 100-ID case and must not expand caller IDs
 into individual binds alongside other parameters.
 
-### 2026-08-30 — Person mention Markdown uses `person://`
-
-**What changed:** Composer prepare and related writers emit
-`[@Name](person://<user-id>)`. Readers still accept bare `person:<user-id>`.
-
-**Why:** Aligns person mentions with the URL-style schemes the rest of the
-product teaches (`resource://`), so a model that generalizes does not produce a
-form the chip matcher and notification reducers miss.
-
 ### 2026-08-30 — Suggested context state was retired from every object layer
 
 **What changed:** SubstreamAgent migration 35 drops `suggested_actions` and
@@ -3196,22 +3139,6 @@ everyone who can see the row. Fan-in `IN` lists must use `boundParameterChunks`.
 A control snapshot must not be the authority for ids it does not know,
 including by seeding empty ones that pin the waterline. A workspace-scoped
 row never carries a pile, including leftover ids from when it was personal.
-
-### 2026-08-30 — Sidebar facepile is the existing AvatarStack size
-
-**What changed:** The sidebar trailing slot uses `AvatarStack` at its existing
-24px size. The compact size variant added for that slot is gone. `extraCount`
-remains so a directory list truncated to three ids can still paint `+x`.
-
-**Why:** a second size was a parallel facepile, not reuse of the one the header
-already paints. The Air row is 31px; 24px faces already fit.
-
-**Considered and rejected:** CSS-shrinking only the sidebar stack. That would
-still be a second look. Padding dummy members so native overflow could fire
-would pollute the accessible name.
-
-**What a future change has to respect:** do not add an `Avatar` size for this
-slot. `AvatarStack` with `limit={3}` and `extraCount` is the facepile.
 
 ### 2026-08-30 — Personal sidebar rows carry a bounded participant facepile
 
@@ -4124,30 +4051,6 @@ derived-direction contract.
 **Consequences, and what a future change has to respect:** New relationship
 values require a migration and a direction decision. Resource deletion and R2
 cleanup must account for every version; link changes never own resource bytes.
-
-### 2026-08-26 — Foreground presence is visible as soon as the tooltip opens
-
-**What changed:** The face-pile presence signal now follows Tailwind's
-`animate-ping` treatment: a translucent filled copy of the avatar expands to
-twice its size and fades on a one-second loop. It shares the avatar's stacking
-layer, paints beneath its own solid avatar, and follows face-pile order so a
-participant's ping stays above earlier avatars and below later avatars or the
-overflow badge.
-Reduced-motion users keep a static translucent halo.
-
-**Why:** The tooltip opens after 300 ms, but the previous 550 ms inset phase was
-fully covered by the avatar. A user could hover a correctly present participant,
-see the explanatory tooltip, and see no corresponding sonar pulse.
-
-**Considered and rejected:** Increasing the outlined ring's colour or width
-would make the later visible phase louder without matching the familiar radar
-ping treatment. The halo stays tokenized and subtle while adopting the filled,
-expanding geometry.
-
-**Consequences, and what a future change has to respect:** The looping presence
-signal must use the avatar's face-pile layer without obscuring its own face or
-crossing later avatars or the overflow count, and remain a non-animated outer
-halo in reduced-motion mode.
 
 ### 2026-08-26 — Legacy transcript rows gain faithful canonical projections
 
@@ -5101,53 +5004,6 @@ it is a storage class rather than statements inline in a service so the Node
 suite's agent double runs the real write; a double that modelled it would be
 the second implementation, and the model is what drifts.
 
-### 2026-08-24 — Two reviews on the converted harness runs, and the rule this slice had broken
-
-**What changed:** a code review and a rebase audit, run separately over the same
-branch. Between them:
-
-- Eight lease and liveness fences move from `status = 'running'` to
-  `BUSY_RUN_STATUSES` / `OPEN_RUN_STATUSES`, and two row-level fences in
-  `admitInlineChild` to `BUSY_RUN_STATUS_SET`.
-- `recordReceiptReconciliation`'s replay fallback compares `attempt_id` again.
-- `cancelDescendants` counts the rows its predicate matches instead of reading
-  `cursor.rowsWritten`.
-- A cancelled parent answers `cancelled` rather than `ownership_lost`, and a
-  live child answers `busy` before `cancelled`.
-- `isHarnessStopped` is back to `!= null`.
-- Two comments and a changelog number that the rebase had silently dropped.
-
-**Why:** the fences are the one that matters, because the rule was already
-written down. An earlier slice in this stack narrowed the receipt and
-block-dashboard fences the same way, review caught it, and the entry below
-records the conclusion: *a busy run is any of the three, and `running` alone is
-the wrong default*. This slice was the first written after that and broke it in
-eight places — which is the argument for the named constant rather than eight
-correct literals. A rule that lives only in a changelog is a rule the next
-conversion breaks.
-
-None of it is reachable today. Nothing writes `waiting` or `steering`, a
-terminalized run cannot take a new attempt, `cancelDescendantHarnessRuns` has no
-production caller, and `isHarnessStopped` is only reached for a run that exists.
-That is exactly why they were worth fixing now: each one is a trap set for
-whoever adds the first writer, and the eight would have fired together.
-
-**On the rebase audit, which is the finding worth keeping:** this branch
-converts routed SQL by deleting and rewriting whole functions. When `main`
-changes those same functions, git reports **no conflict** — the branch's side
-wins and the fix vanishes. That happened here: the branch forked before the
-residual-receipt work landed and reverted five commits, and every gate stayed
-green. `pnpm test`, `pnpm lint`, `pnpm typecheck` and CI cannot see it, because
-the reverted code is not the code being tested.
-
-**What a future change has to respect:** a conversion slice that rewrites a
-function `main` has touched needs a diff against `main`'s version of that
-function, not a clean rebase. The audit's method is the cheap version: list
-`main`'s commits since the merge base, intersect their files with the branch's,
-and read both sides of every overlap. A comment on `main` saying "do not narrow
-this back" marks a fix somebody already paid for, and its absence from the
-branch is the tell.
-
 ### 2026-08-24 — The main child answers current reader-audience questions
 
 **What changed:** `SubstreamAgent.readerAudience` exposes the main child's
@@ -5184,7 +5040,7 @@ accepted-content triggers; do not replace them with a service-only check.
 **What changed:** five fixes, from a review of the rebased slice.
 
 - `workstream-scheduling-protocol.ts` folds onto `object-port-protocol.ts`, the
-  way the port folded onto `createObjectPort` in the entry below. It had its own
+  way the scheduling port had already folded onto `createObjectPort`. It had its own
   mapped type, its own `Exhaustive`, its own request envelope, and its own
   `MAX_SCHEDULING_OPERATION_ARGS` — a second copy of a limit that has to change
   in lockstep with the shared one, with nothing enforcing it. 129 lines to 88.
@@ -5204,7 +5060,7 @@ it then ran *every* batch through `commitRuntimeMutation` — whose
 still reach that function and so kept the generation check by their own route;
 the writes that do not — compaction checkpoints, plugin hints, both
 description-evaluation writes, and the receipt and block-dashboard writes beside
-them — had none. The endpoint docstring and the entry below both claimed the
+them — had none. The endpoint docstring had claimed the
 shared refusal restored what the routed path refused, and until now that was
 three-quarters true.
 
@@ -5244,37 +5100,6 @@ emptying the set proves.
 those endpoints have, and both halves of it came from somewhere. If a typed
 authority ever needs to admit a generation-zero object, that is a decision about
 which writes count during import, not a detail to relax here.
-
-### 2026-08-24 — The scheduling port joins the factory, and its writes get the authority fence
-
-**What changed:** `runtime/scheduling-port.ts` is now a contract object handed
-to `createObjectPort` rather than its own copy of the dispatch machinery, and
-`SchedulingPortError` is gone in favour of `ObjectPortError`. The
-`/internal/scheduling` endpoint's docstring records what `objectPortRefusal`
-actually refuses, and `scheduling-authority.test.ts` proves the authority half
-against `persistCompactionCheckpoint`.
-
-**Why:** ordering. This slice was written against a tree where each typed port
-was its own file; the block-dashboard slice landed the one-factory rework
-first, so rebasing onto it left this port as a fifth copy of the thing that
-rework existed to delete — and a copy that had not picked up the `authority_mode`
-check the shared factory's endpoint helper restored. Review had already found
-that gap independently: `persistCompactionCheckpoint`, `recordPluginActivation`
-and the two description-evaluation writes were the first writes moved off the
-routed path whose only fence was `executeWorkstreamRuntimeSql` refusing every
-statement against a `preparing` or `quarantined` object. The wake-up mutations
-keep an equivalent fence through `commitRuntimeMutation`; those four had none.
-
-Review also asked whether the port should carry a substream id, on the reading
-that scheduling calls always resolve to the main child. They do, and that is the
-design rather than an omission — these rows live on the main object, and the
-shared refusal answers a child substream with a 409 instead of serving it from
-an empty table. The docstring now says so where the next reader will look.
-
-**What a future change has to respect:** a new typed authority is a contract
-plus an operation list, never a new dispatch function. Writing one by hand is
-how this port lost a fence that the shared endpoint helper already had, and the
-loss was invisible until someone read two files side by side.
 
 ### 2026-08-24 — Opening a work stream writes, so being added to one can be seen
 
@@ -6267,31 +6092,6 @@ and the race both resolve on the durable retry instead of dropping a message.
 
 Shipped in #256.
 
-### 2026-08-23 — The receipt RPC waits on initialization like its five siblings
-
-**What changed:** `executeToolReceiptOperation` now awaits `this.initialized`
-before dispatching, which every other RPC entry point on `SubstreamAgent`
-already did.
-
-**Why:** two independent reviews flagged it as the one bare method. The stronger
-argument is that the class already documents the invariant it broke — the
-comment on `objectStore`, `terminal` and `toolReceipts` says every handler
-"waits on `initialized` first" as the reason those fields can be `!`-asserted.
-One method not doing so made that sentence false, and the fields it reads are
-assigned inside the `blockConcurrencyWhile` callback.
-
-In practice workerd queues external requests behind that callback, so this is
-unlikely to have been reachable — but an in-isolate self-call reaches the method
-through a stub returned by `durableObjectSelfForId`, and that path does not
-necessarily queue the same way. No test asserts the difference, because an
-honest one would need `blockConcurrencyWhile` not to queue; the value here is
-the restored invariant, not an observable change.
-
-**What a future change has to respect:** nothing inside the boot callback may
-reach a receipt operation, or this await deadlocks. It does not today — the
-callback constructs stores, waits for readiness, settles identity and releases
-dispatch leases, and touches no receipts.
-
 ### 2026-08-23 — The receipt wire's argument cap becomes a named bound
 
 **What changed:** `args: z.array(z.unknown()).max(4)` on
@@ -6484,36 +6284,6 @@ reports workerd's `rowsWritten` rather than a trigger's counter, and
 one-row update of an indexed column, because a caller moving a statement off a
 view and keeping an `=== 1` check would be wrong in exactly that way.
 
-
-### 2026-08-22 — What the compat schema holds that is not compat
-
-**What changed:** Documentation only. `workstream-runtime-compat-schema.ts` is
-now recorded as holding two objects that must outlive the layer it is named for:
-`attachment_tool_receipts`, a real `STRICT` table carrying live product data,
-and `tool_effects_run_call_uq`, the unique index that dedups a replayed tool
-call. Neither appears in `workstream-object-schema.ts` today; retiring the compat
-views has to move both there first.
-
-**Why:** the file's header comment says its statements "deliberately create no
-compatibility data tables", three lines above a `CREATE TABLE`. That sentence is
-how someone decides what a drop migration should drop, and following it deletes
-live attachment-dependency rows. The index has the same shape of problem one
-severity lower: dropping it changes nothing observable at the time and silently
-permits two receipts for one `(run_id, tool_call_id)`. The general rule, worth
-more than either instance: **derive a drop set from what each object is, never
-from the file it lives in.** `_runtime_statement_changes` lives in the same array
-and genuinely is compat machinery that goes.
-
-**Considered and rejected:** editing the header comment alone. It is accurate
-about most of the array and the failure it invites is not a misreading of the
-sentence — it is trusting a file's name to classify its contents. The check has
-to live where the drop set is chosen, so the claim is recorded in the retirement
-PRD's slice-1 inventory as an explicit *keep* and guarded by two specs in
-`workstream-tool-receipt-storage.test.ts`.
-
-**Consequences:** the compat schema is no longer a set that can be dropped
-wholesale. Any future migration that retires part of it must enumerate what it
-drops and justify each object, rather than deriving the list from the array.
 
 ### 2026-08-22 — `tool_position` is a high-water mark, not a row count
 
@@ -6793,63 +6563,6 @@ thirty, and costs no read at all when nothing has been revoked.
 
 Shipped in #229. Owned by [`access-revocation.md`](access-revocation.md).
 
-### 2026-08-22 — The sidebar push takes the sweep every publisher takes
-
-**What changed:** `publishSidebarList` awaits `revalidateBeforePublish(false)`
-before sending, which made `runWorkspaceSql` and both of its callers async.
-
-**Why:** This object has three publish paths and this was the only one sending
-without the authorization sweep. It carries a viewer's whole automation or note
-list — the same class of product data `publishWorkstreamState` sweeps for — to
-sockets that have said nothing since they connected, so a session revoked
-without a membership retraction to publish kept receiving those rows on every
-write until an unrelated publication swept. The interval-gated form, not the
-certain one: a write to `notes` is not a retraction this path can judge.
-
-**Considered and rejected:** Keeping the push synchronous and sweeping on a
-timer of its own, which is a second answer to a question `revalidateBeforePublish`
-already answers, and would let the two intervals disagree about who is still
-allowed to listen. A future publisher added here has to join that sweep too;
-the bound is on the object, not on any one path.
-
-### 2026-08-22 — Agent-owned Terminal calls no longer self-RPC
-
-**What changed:** The main `SubstreamAgent` exposes its resident Bind execution
-to the Terminal stack through an in-object Terminal port and resource-link
-attacher. The Terminal port dispatches into the same identity-fenced
-`runTerminalOperation` used by `/internal/terminal`, so transaction rollback,
-directory outbox publication, stable failures, and alarm scheduling remain
-identical while the executing alarm stays the sole request context. Generated
-resource publication and repository backup dispatch into the same
-`WorkstreamObjectProductService.attachRuntimeResource` body used by the resource
-RPC. Repository helpers receive both resident boundaries rather than quietly
-constructing new remote ones.
-The factory forwards its caller-supplied workspace/work-stream identity, and
-both direct mutation bodies independently fence on external substream ID `0`.
-Terminal plugin construction rejects a partial resident boundary rather than
-falling one of the two paths back to same-object RPC.
-
-**Why:** Post-deploy verification of #224 proved the active alarm was the
-original drain owner for the whole 25-second failed run. It never encountered
-the inverse heartbeat ordering covered by the earlier fix. The trace instead
-showed repeated same-object Terminal RPC events during the successful first
-command, followed by a second tool failing before its executor log. The
-resident loop already had an in-object runtime-SQL executor for this reason;
-Terminal authority was the remaining self-call path.
-
-**Considered and rejected:** Treating self-RPC as harmless because Durable
-Objects serialize storage, or bypassing `commitRuntimeMutation` with direct
-storage calls. Serialization does not make promises and I/O portable between
-events, while a raw call would strand directory deadlines and blur the
-pre-/post-commit retry contract.
-
-**Consequences:** Worker-originated and non-main-substream calls still cross the
-RPC boundary to the main child, but a run executing inside that authority never
-leaves and re-enters it for Terminal state or generated-resource links. The
-operation authority stays single-writer without transferring later D1/provider
-work between Durable Object events, and an accidental local port on another
-child fails closed instead of creating split product state.
-
 ### 2026-08-21 — Heartbeats never join a live run's request context
 
 **What changed:** Both agent objects defer an alarm drain request when their
@@ -7061,52 +6774,6 @@ What a future change has to respect: an object's alarm is derived in exactly one
 place. Adding a wake reason means adding an entry or a derived source, never a
 `setAlarm` call — a second writer produces two answers to "what is earliest",
 and the loser is silently never run.
-
-### 2026-08-21 — Terminal addresses its own tables through a typed port
-
-**What changed:** The Terminal services no longer hold a `D1Database`. A new
-`WorkstreamTerminalStorage` inside the SubstreamAgent is the only reader and
-writer of `terminal_workspace`, `terminal_tasks`,
-`terminal_imported_resources`, `terminal_repository`,
-`terminal_publication_grants`, and `repository_publications`; the services
-reach it through `/internal/terminal` and a typed `TerminalObjectPort` whose
-operation list is derived from the storage class. WorkstreamDO schema
-migration 12 promotes the nine fields that lived in `lifecycle_json` to real
-columns and drops the 32 `_runtime_terminal_*` compatibility view and trigger
-statements. The dead pre-cutover branches in `workspace-scheduler.ts` and
-`connection-service.ts` — which queried tables migration `0090` dropped — go
-with them.
-
-**Why:** The vocabulary the code used stopped describing what it did. A
-statement reading `UPDATE workstream_sandboxes` named a table that had not
-existed in D1 since the legacy product schema was retired; it was rewritten
-onto a compatibility view whose INSTEAD OF triggers converted ISO-8601 to unix
-milliseconds and packed nine fields into a JSON blob. That layer existed so one
-body of code could run against both D1 and the object during the cutover, and
-the cutover is over. Its remaining cost was real: `archive_due_at` — a deadline
-the workspace scheduler sorts alarms by — had no type, no CHECK, and no index,
-because it was a JSON key. Worse, a load-then-claim sequence crossed the Worker
-boundary between its two statements, so the operation lease could be decided on
-state that had already moved; the same sequence now runs inside one
-synchronous object call.
-
-**Considered and rejected:** Keeping the SQL and renaming only the handle. That
-removes the misleading signature and nothing else — the blob, the timestamp
-conversion, and the split transactions all survive. Also rejected: converting
-the whole runtime compatibility vocabulary at once. `tool_invocations`,
-`harness_runs`, `resources`, and `notes` are shared by every subsystem, so
-retiring them is a change per subsystem rather than a wider version of this
-one; `runtime.ts` still reaches `tool_invocations` through the routed handle
-and says so.
-
-**Consequences:** Two invariants the blob could not express are now enforced by
-the table: a lease or a claim without its deadline is rejected, because an
-unreleasable lease holds the workspace forever. `authority_epoch` is gone — the
-compatibility triggers set it equal to `version` on every write and nothing
-read it back. Terminal state is now reachable only with the agent binding, so
-three helpers in `repository.ts` that took `Pick<Env, "DB">` take a full `Env`.
-The Node suite keeps its real-SQL coverage through a local-storage seam on the
-port; what the runtime decides belongs in `test-workers/`.
 
 ### 2026-08-21 — Two workspace tables retired with no reader or writer
 
@@ -7681,41 +7348,6 @@ alternative, and it is what produced the outage. Removing the trade rather than
 picking a side needs resumable execution: a run that checkpoints at a step
 boundary is cheap to interrupt, which is what would make the drain safe to
 leave the alarm again.
-
-### 2026-08-20 — The last maintenance-only RPC goes, and what still blocks the fence drop
-
-**What changed:** `WorkspaceDO.importWorkstreamPins` and its request schema are
-removed. Its only caller was the campaign machinery retired in #190, and it
-refused every phase except `maintenance_importing` and `maintenance_verified`,
-which nothing can enter now that the machinery driving those phases is gone.
-
-**Why:** It was the last piece of import-only surface left on an object that no
-longer imports.
-
-**What a future change has to respect — the legacy D1 serving paths are NOT yet
-removable, for two independent reasons, and the fences cannot be dropped until
-both are resolved:**
-
-1. `services/workstream-service.ts` is still reached post-open, so it is not the
-   dead legacy implementation it appears to be. `slack-agent-service.ts` builds
-   it ungated on two connector paths (`startFromPrompt` answering an open
-   elicitation, and `createSlackWorkstreamSession` creating a work stream for a
-   linked identity — neither has a phase check anywhere near it), and
-   `work-opportunity-service.ts` calls into it from `startDurable`, the Durable
-   Object path itself, for `createFromOpportunity` and — via `startedResponse`
-   — `get`. Deleting the file breaks live Slack ingress and suggested-work
-   starts in an already-open region. Those two callers have to move onto the
-   object client first; that is a product migration, not a cleanup.
-
-2. A freshly seeded local development environment runs at `legacy_open`.
-   Migration 0079 inserts that row, and neither `scripts/seed-local-region.mjs`
-   nor `packages/db/seed.sql` ever changes it, so local development serves the
-   seeded workspace through exactly the branches a removal would delete —
-   while `pnpm test` stays green, because the suites build their own fixtures
-   and never go through the seed. Local seeding has to move to the
-   post-cutover model (the regional half staying SQL, the work-stream half
-   going through the object via `bootstrapWorkstreamRuntimeEnvironment`) before
-   those branches can go.
 
 ### 2026-08-20 — A re-derived projection wins over the version it reuses
 
@@ -8399,29 +8031,6 @@ acknowledges the hash; pagination and discovery read WorkspaceDO; D1 remains
 necessary for membership, relational connector/automation/activity modules,
 migration routing, and external delivery, but cannot serve work-stream
 directory/resource/suggestion state after cutover.
-
-### 2026-08-18 — BlockDashboard becomes the internal HyperSight boundary
-
-**What changed:** The per-block Durable Object is now `BlockDashboardAgent`,
-with `BLOCK_DASHBOARD_AGENTS`, `block-dashboard` routes/object names, and
-`block_dashboard_*` SQL, event, model-role, and error identifiers. Electron and
-the API use the same internal contract while still rendering HyperSight to
-people.
-
-**Why:** The product name described what users see, but it had spread into
-placement, persistence, and transport identifiers. Naming the implementation
-after its block-dashboard responsibility keeps operational traces and ownership
-diagrams explicit without changing the product vocabulary.
-
-**Considered and rejected:** Keeping the old URLs and wire names as aliases.
-This implementation has not shipped, so aliases would create two permanent
-names without protecting external clients.
-
-**Consequences:** Internal code and operators use BlockDashboard exclusively;
-visible copy must remain HyperSight. The unshipped Durable Object baseline and
-class registration use the final name directly, but deployed D1 migration
-`0043_hypersight.sql` stays immutable; migration
-`0078_rename_hypersight_to_block_dashboard.sql` performs the D1 rename.
 
 ### 2026-08-18 — The durable agent cutover is finalized: one schema baseline, durable checkpoint streaming, paged history, a persisted compaction phase, and freshness-safe HyperSight retries
 
