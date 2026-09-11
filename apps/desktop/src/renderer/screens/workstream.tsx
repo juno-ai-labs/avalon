@@ -505,6 +505,18 @@ export function WorkstreamScreen(): React.JSX.Element {
     clientMessageId: string;
   } | null>(null);
   const [launching, setLaunching] = useState<LaunchingSubstream | null>(null);
+  /**
+   * The child preparation reserved for the attempt on screen, once it has
+   * answered with one.
+   *
+   * The rail needs it to keep one row per conversation: readiness publishes the
+   * child to the parent's directory from inside the confirmation, so the real
+   * row can arrive before the response that clears `launching` does, and a
+   * placeholder watching only `launching` would stand beside it. Reserved
+   * children are not readable as conversations, so this is an id to recognize
+   * a row by and never one to navigate to.
+   */
+  const [reservedChildId, setReservedChildId] = useState<string | null>(null);
   const [creationError, setCreationError] = useState<string | null>(null);
   const creationRef = useRef(creation);
   creationRef.current = creation;
@@ -626,7 +638,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     const abandoned = preparedRef.current ? creationRef.current : null;
     preparedRef.current = false;
     creationRef.current = null;
-    setCreation(null); setLaunching(null); setCreationError(null);
+    setCreation(null); setLaunching(null); setCreationError(null); setReservedChildId(null);
     // Best effort by design: the endpoint refuses an operation that is already
     // confirming or ready, which is exactly when there is nothing to release.
     if (api && abandoned) {
@@ -677,12 +689,16 @@ export function WorkstreamScreen(): React.JSX.Element {
     });
     setCreationError(null);
     try {
-      await trace.step('prepare_request', () => api.prepareSubstream(attempt.parentId, {
+      const prepared = await trace.step('prepare_request', () => api.prepareSubstream(attempt.parentId, {
         operationId: attempt.operationId, throughTurnId: attempt.throughTurnId,
       }));
       // From here the operation holds a reserved child, so leaving the surface
-      // has something to release.
-      if (creationRef.current === attempt) preparedRef.current = true;
+      // has something to release — and the rail has an id to recognize that
+      // child's own row by when confirmation publishes it.
+      if (creationRef.current === attempt) {
+        preparedRef.current = true;
+        setReservedChildId(prepared.substreamId);
+      }
       const created = await trace.step('confirm_request', () => api.confirmSubstream(
         attempt.parentId,
         attempt.operationId,
@@ -779,6 +795,9 @@ export function WorkstreamScreen(): React.JSX.Element {
           sidekicks={context.sidekicks}
           sidekicksError={context.sidekicksError}
           workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, appearance: rowAppearance ?? parent.data?.appearance, privateChildren: railChildren }}
+          creatingSubstream={creation?.parentId === id && launching !== null
+            ? { reservedSubstreamId: reservedChildId }
+            : null}
           presentUserIds={context.presentUserIds}
           onParticipants={context.openParticipantDialog}
           selectedSubstreamId={creation?.parentId === id ? PENDING_SUBSTREAM_DRAFT_ID : selectedSubstreamId}

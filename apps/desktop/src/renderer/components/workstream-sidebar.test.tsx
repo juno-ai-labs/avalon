@@ -190,6 +190,91 @@ describe('WorkstreamSidebar', () => {
     expect(onSelectSubstream).toHaveBeenLastCalledWith('0');
   });
 
+  it('holds the place of a substream being created, last and without a destination', () => {
+    const onNewSubstream = vi.fn();
+    render(<Tooltip.Provider><WorkstreamSidebar
+      workstream={{ ...workstream, privateChildren: [{
+        substreamId: asSubstreamId('00000000-0000-7000-8000-000000000097'), title: 'Launch risks', createdByUserId: asUserId(person.id),
+        createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
+      }] }}
+      creatingSubstream={{ reservedSubstreamId: null }}
+      presentUserIds={[]}
+      selectedSubstreamId="new"
+      onSelectSubstream={vi.fn()}
+      onNewSubstream={onNewSubstream}
+      onOpenArtifact={vi.fn()}
+      onParticipants={vi.fn()}
+      onFocusTranscript={vi.fn()}
+    /></Tooltip.Provider>);
+    const sidebar = screen.getByRole('complementary');
+    const rows = [...sidebar.querySelectorAll('.workstream-substream-list > *')];
+    // Last, where a child created now will be listed: the directory orders
+    // children oldest first, so the row does not move when it becomes real.
+    expect(rows.map((row) => row.className)).toEqual([
+      expect.stringContaining('workstream-conversation-row'),
+      expect.stringContaining('workstream-pending-substream'),
+      expect.stringContaining('workstream-new-substream'),
+    ]);
+    const pending = sidebar.querySelector('.workstream-pending-substream');
+    expect(pending).toHaveAttribute('aria-current', 'page');
+    expect(pending?.querySelector('.workstream-context-mark > .tabler-icon-corner-down-right')).not.toBeNull();
+    expect(pending?.querySelector('.title-skeleton')).not.toBeNull();
+    expect(within(sidebar).getByText('Rally is creating this substream')).toBeInTheDocument();
+    // Nothing to click: the reader is already on the surface this row stands
+    // for, and the row that starts the next substream is no longer the one
+    // saying where they are. Asserted as the list's whole button inventory, so
+    // it fails the moment the placeholder becomes navigable rather than
+    // depending on the label a regression would happen to give it.
+    const list = sidebar.querySelector('.workstream-substream-list');
+    expect([...list?.querySelectorAll('button') ?? []].map((button) => button.getAttribute('aria-label')))
+      .toEqual(['Go to substream: Launch risks', 'New substream']);
+    const create = screen.getByRole('button', { name: 'New substream' });
+    expect(create).not.toHaveAttribute('aria-current');
+    expect(create.className).not.toContain('is-current');
+    // Compact hides `.workstream-context-copy` with `visibility: hidden`, which
+    // takes everything inside it out of the accessibility tree — so the row's
+    // only name must not live there. Every other row survives the collapse on
+    // its button's `aria-label`; this one has no button, so the text is on the
+    // row. jsdom applies no stylesheet, so the assertion is where the text sits
+    // rather than whether it computed to hidden.
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
+    expect(sidebar).toHaveClass('is-compact');
+    const name = within(sidebar).getByText('Rally is creating this substream');
+    expect(name.closest('.workstream-pending-substream')).toBe(pending);
+    expect(name.closest('.workstream-context-copy')).toBeNull();
+    expect(pending?.querySelector('.workstream-context-copy')).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('yields the creating row the moment the child it reserved is published', () => {
+    // The child is published to the parent's directory from inside the
+    // confirmation, so its real row can arrive before the response that
+    // navigates. Two rows for one conversation is the thing this list must
+    // never show, and the reserved id is what tells them apart.
+    const reserved = asSubstreamId('00000000-0000-7000-8000-000000000096');
+    render(<Tooltip.Provider><WorkstreamSidebar
+      workstream={{ ...workstream, privateChildren: [{
+        substreamId: reserved, title: 'Retry budget failures', createdByUserId: asUserId(person.id),
+        createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
+      }] }}
+      creatingSubstream={{ reservedSubstreamId: reserved }}
+      presentUserIds={[]}
+      selectedSubstreamId="new"
+      onSelectSubstream={vi.fn()}
+      onNewSubstream={vi.fn()}
+      onOpenArtifact={vi.fn()}
+      onParticipants={vi.fn()}
+      onFocusTranscript={vi.fn()}
+    /></Tooltip.Provider>);
+    const sidebar = screen.getByRole('complementary');
+    expect(sidebar.querySelector('.workstream-pending-substream')).toBeNull();
+    // Current on the published row rather than on nothing: the route still says
+    // `new` for the tick before the response navigates, and the reader is in
+    // that conversation either way.
+    expect(screen.getByRole('button', { name: 'Go to substream: Retry budget failures' }))
+      .toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('button', { name: 'New substream' })).not.toHaveAttribute('aria-current');
+  });
+
   it('keeps the arrow for a substream whose title has no first character', () => {
     render(<Tooltip.Provider><WorkstreamSidebar
       workstream={{ ...workstream, privateChildren: [{

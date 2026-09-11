@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -526,6 +526,68 @@ describe('socket-first work-stream open', () => {
     await waitFor(() => expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId]))
       .toMatchObject({ title: 'Check the pricing page', titleStatus: 'naming' }));
     expect(client.getQueryData(['substream-ordered-transcript', workstreamId, childId])).toBeDefined();
+  });
+
+  it('holds a row in the rail for the substream being created, from the keystroke that creates it', async () => {
+    // The wait is the two round trips of creation, and until this the rail said
+    // nothing about it: the conversation on screen had no row, and the plus row
+    // it was opened from was the only thing still claiming to be where the
+    // reader was.
+    const childId = '00000000-0000-7000-8000-000000000676';
+    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New substream', context: { parts: [] } });
+    let confirm: () => void = () => undefined;
+    api.confirmSubstream.mockReturnValue(new Promise((resolve) => {
+      confirm = () => resolve({
+        substreamId: childId,
+        title: 'Check the pricing page',
+        opening: { turnId: 'turn-child-8', clientMessageId: 'client-8', createdAt: '2026-08-26T14:05:00.000Z' },
+      });
+    }));
+    openConversation(2);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
+    const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
+    expect(sidebar.querySelector('.workstream-pending-substream')).toBeNull();
+    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.change(composer, { target: { value: 'Check the pricing page' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(sidebar.querySelector('.workstream-pending-substream')).not.toBeNull());
+    expect(screen.getByRole('button', { name: 'New substream' })).not.toHaveAttribute('aria-current');
+    confirm();
+    // Gone once the substream exists: from here the rail draws the child's own
+    // row from the parent's directory.
+    await waitFor(() => expect(sidebar.querySelector('.workstream-pending-substream')).toBeNull());
+  });
+
+  it('drops the creating row as soon as the reserved child is published to the rail', async () => {
+    // Readiness publishes the child from inside the confirmation, so the real
+    // row can reach the rail before the response that navigates does. The
+    // reserved id preparation answered with is what keeps that from being two
+    // rows for one conversation.
+    const childId = '00000000-0000-7000-8000-000000000677';
+    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New substream', context: { parts: [] } });
+    // Never resolves: the window under test is the one before confirmation
+    // answers, which is the only time both rows could be drawn.
+    api.confirmSubstream.mockReturnValue(new Promise(() => undefined));
+    const boot = conversationBoot(1);
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [
+        { substreamId: childId, title: 'Retry budget failures', createdByUserId: null, createdAt: '2026-08-26T14:05:00.000Z', updatedAt: '2026-08-26T14:05:00.000Z' },
+      ] });
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
+    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.change(composer, { target: { value: 'Check the retry budget' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(api.confirmSubstream).toHaveBeenCalled());
+    const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
+    await waitFor(() => expect(sidebar.querySelector('.workstream-pending-substream')).toBeNull());
+    expect(within(sidebar).getAllByRole('button', { name: /Retry budget failures/ })).toHaveLength(1);
   });
 
   it('shows no branch context when the substream is started from the sidebar', async () => {
