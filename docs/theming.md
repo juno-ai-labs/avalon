@@ -290,6 +290,67 @@ while the name takes `sys.color.text.subtle` against the time's
 further — a name is not a fill either, and colouring it by identity is what made
 the two speakers' bylines diverge. The avatar and the person's own bubble are
 unaffected and still take the fill.
+
+### 2026-09-11 — Tooltips clear every lightbox, and a pressed icon opts in
+
+**What changed:** Tooltips take `z-index: 1005` under
+`body:has(.attachment-lightbox)`, the class the media, document and artifact
+viewers all carry. An icon button marked `.icon-button-toggle` and
+`aria-pressed="true"` takes the row-selection wash. The media viewer's own
+controls reach for `Tip` directly rather than becoming `IconButton`s.
+
+**Why:** A lightbox sits at `z-index: 1001` and `.tooltip` at 1000, so every
+tooltip inside one opened underneath it: present in the DOM, findable by a test,
+and invisible to anyone hovering. That went unnoticed until these surfaces
+became icon-only chrome, where the tooltip is the control's only name. The
+pressed state is a second gap of the same kind: `.icon-button` had never been a
+toggle, so a toggled one looked exactly like an untoggled one, and the raised
+fill hover uses is the same colour as the surfaces some of these headers sit on.
+
+**Considered and rejected:** Raising `.tooltip` globally. The stacking above it
+is a set of deliberate pairings, and a global bump moves tooltips over surfaces
+nobody has looked at them against. Also rejected: keying the pressed wash on
+`aria-pressed` alone, which was the first shape of this and reached buttons that
+carry the attribute without being visual toggles — the composer's dictation
+button wears it through `transcribing` and `finalizing` while painting itself
+from `.microphone-control.is-listening`, and picked up the wash in the states
+that class does not cover. The opt-in class keeps the paint where it was meant
+and `app.css.node.test.ts` now refuses any rule that claims every pressed icon
+button.
+
+**Consequences:** A new surface layered above 1001 needs its own tooltip rule
+until someone builds a real stacking scale; the rules under that `:has()` are
+the list to add to. A toggle asks for its paint by class, so `aria-pressed` on
+its own stays a semantic, not a visual, decision.
+
+### 2026-09-10 — The grouped list is an unscoped primitive
+
+**What changed:** The inset hairline grouping the shell draws around a set of
+rows is now `InsetSurface` in `primitives.tsx`, backed by an `.inset-surface`
+rule that carries no `.app-shell` ancestor.
+
+**Why:** Every rule the GrokBot rewrite added hangs off `.app-shell`, and a
+Radix portal mounts on `document.body`, outside it. That is invisible until a
+surface renders through one: the live-artifact detail moved into the resource
+lightbox on 2026-09-04 and silently reverted to the pre-rewrite look, drawing
+outlined buttons as a tab strip and a bordered card per error, because none of
+the shell's rules could reach it. Scoping to the shell was never a decision
+about which surfaces get the design; it was a way of keeping the rewrite off the
+old surfaces while it landed, and a portal is not an old surface.
+
+**Considered and rejected:** Adding `.app-shell` to the lightbox, which would
+pull all eighty scoped rules into every dialog that portals, most of which have
+never been looked at in that context. Also rejected: giving the artifact detail
+its own bordered-card rules, which is how a second visual vocabulary starts.
+
+**Consequences:** A new portal surface can reach for this rather than inventing
+a bordered box. It must stay unscoped, which `app.css.node.test.ts` now asserts,
+because scoping it silently returns every portal to the old look with nothing
+failing. The rules the shell still
+scopes (`.elicitation-options` among them) are unchanged: they are the same
+treatment with component-specific values, and generalising them was not worth
+re-QAing a surface this change had no other reason to touch.
+
 ### 2026-09-10 — Recording fills with danger; the microphone stops wearing the account accent
 
 **What changed:** Two rules in `app.css`, no token movement. The composer's

@@ -715,6 +715,23 @@ export function InlineError({ children }: PropsWithChildren): React.JSX.Element 
   );
 }
 
+/**
+ * One hairline box around a group, rather than a card around each member.
+ *
+ * The shell already treats a group this way; this is that treatment as an
+ * unscoped primitive, so a lightbox or any other portal gets it without a
+ * shell ancestor. It draws the container and nothing else: what goes inside is
+ * the caller's, which is what lets a table and a list of thrown errors share
+ * one edge instead of inventing two.
+ */
+export function InsetSurface({
+  children,
+  className,
+  ...props
+}: PropsWithChildren<HTMLAttributes<HTMLDivElement>>): React.JSX.Element {
+  return <div className={clsx('inset-surface', className)} {...props}>{children}</div>;
+}
+
 export function EmptyState({ title, description, action }: { title: string; description: string; action?: ReactNode }): React.JSX.Element {
   return (
     <div className="empty-state">

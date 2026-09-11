@@ -1,6 +1,9 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import * as Tooltip from '@radix-ui/react-tooltip';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { DetailHeaderActionsHost } from './detail-header-actions';
 import {
   formatCell,
   SiteResourceDetail,
@@ -10,6 +13,7 @@ import {
 
 const ARTIFACT = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
 const RESOURCE = '3f2504e0-4f89-41d3-9a0c-0305e82c3302';
+const OTHER_RESOURCE = '3f2504e0-4f89-41d3-9a0c-0305e82c3303';
 const OPEN_URL = `https://${ARTIFACT}-g.rallyusercontent.test/__rally/open#code`;
 const CANONICAL = `https://${ARTIFACT}-g.rallyusercontent.test`;
 
@@ -61,11 +65,33 @@ function setup(overrides: Partial<SiteResourceDetailProps> = {}) {
       rows: [{ name: 'Ada', answer: 'yes' }, { name: 'Grace', answer: null }],
       csv: '"name","answer"\r\n"Ada","yes"\r\n"Grace",""',
     })),
-    loadErrors: vi.fn(async () => []),
     surface: surface(),
     ...overrides,
   };
-  return { props, ...render(<SiteResourceDetail {...props} />) };
+  return { props, ...render(<Harness props={props} />) };
+}
+
+/**
+ * The detail as its host mounts it: a header slot for the actions it portals
+ * out, and the tooltip provider the application keeps at its root. The target
+ * is state rather than a ref for the reason the rail's is, and rendering it
+ * that way here is what would catch the actions never arriving.
+ */
+/** The one control whose pressed state, not its name, says which way it is. */
+function storedDataToggle(): HTMLElement {
+  return screen.getByRole('button', { name: 'Stored data' });
+}
+
+function Harness({ props }: { props: SiteResourceDetailProps }): React.JSX.Element {
+  const [target, setTarget] = React.useState<HTMLDivElement | null>(null);
+  return (
+    <Tooltip.Provider>
+      <div data-testid="host-header" ref={setTarget} />
+      <DetailHeaderActionsHost target={target}>
+        <SiteResourceDetail {...props} />
+      </DetailHeaderActionsHost>
+    </Tooltip.Provider>
+  );
 }
 
 describe('showing a live artifact in the rail', () => {
@@ -183,6 +209,14 @@ describe('showing a live artifact in the rail', () => {
     expect(screen.getByText(/Open it in your browser/u)).toBeInTheDocument();
   });
 
+  it('does not say the artifact\u2019s name again under the header that carries it', async () => {
+    // The rail and the lightbox both draw the resource title in their header.
+    // A second copy here made the lightbox open on the same words twice.
+    const { props } = setup();
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    expect(screen.queryByText('Offsite RSVP')).not.toBeInTheDocument();
+  });
+
   it('says so plainly when the artifact could not be opened', async () => {
     setup({ openArtifact: vi.fn(async () => { throw new Error('You can no longer see this work stream.'); }) });
     expect(await screen.findByText('This site could not be opened')).toBeInTheDocument();
@@ -232,7 +266,44 @@ describe('showing a live artifact in the rail', () => {
   });
 });
 
-describe('the actions beside the preview', () => {
+describe('the actions the host draws in its header', () => {
+  it('puts them in the header slot rather than over the page', async () => {
+    // Drawn in the body they read as part of the artifact being previewed,
+    // which is the reason the host offers a slot at all.
+    const { props } = setup();
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    const header = within(screen.getByTestId('host-header'));
+    for (const name of [/Pop out/u, /Copy public link/u, /Open in browser/u, /Stored data/u]) {
+      const action = header.getByRole('button', { name });
+      expect(action).toBeInTheDocument();
+      // Every one of them is an icon alone, so every one of them owes a
+      // tooltip: `data-state` is the trigger Radix wraps it in, and a button
+      // that opted out of its tooltip carries no such attribute.
+      expect(action).toHaveAttribute('data-state');
+    }
+  });
+
+  it('opens its labels upward, away from the page composited below the header', async () => {
+    // The pane under this header is covered by a native view whenever an
+    // artifact is showing, and that view paints above all renderer DOM. A
+    // label hanging downward is behind the page, and no `z-index` reaches it:
+    // it is not a DOM sibling of the thing covering it.
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    const { props } = setup();
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+
+    // Focus rather than hover: Radix opens on focus without waiting out the
+    // pointer delay, and the side is the same either way.
+    fireEvent.focus(screen.getByRole('button', { name: /Pop out/u }));
+    const tip = await screen.findByRole('tooltip');
+    expect(tip).toHaveAttribute('data-side', 'top');
+    vi.unstubAllGlobals();
+  });
+
   it('labels and copies the canonical public link, which carries no access code', async () => {
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
@@ -267,29 +338,92 @@ describe('the actions beside the preview', () => {
 });
 
 describe('the data a stateful site collected', () => {
-  it('shows the tables, and only offers the panel for a site that keeps data', async () => {
+  it('shows the tables in place of the page, and takes the view down with it', async () => {
+    // The composited view is positioned against the pane. Left up while the
+    // pane is gone it would paint over whatever replaced it, which is the
+    // table a person just asked for.
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('tab', { name: /Data/u }));
+    fireEvent.click(storedDataToggle());
     expect(await screen.findByText('Ada')).toBeInTheDocument();
     expect(screen.getByText('yes')).toBeInTheDocument();
+    expect(screen.queryByTestId('site-preview-pane')).not.toBeInTheDocument();
+    await waitFor(() => expect(props.surface.close).toHaveBeenCalled());
   });
 
-  it('offers no data panel for a site that keeps none', async () => {
-    setup({
+  it('returns to the page, and puts the view back over it', async () => {
+    const { props } = setup();
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    fireEvent.click(storedDataToggle());
+    await screen.findByText('Ada');
+    expect(storedDataToggle()).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(storedDataToggle());
+    expect(await screen.findByTestId('site-preview-pane')).toBeInTheDocument();
+    expect(storedDataToggle()).toHaveAttribute('aria-pressed', 'false');
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalledTimes(2));
+  });
+
+  it('leaves the data view behind when the detail moves to another artifact', async () => {
+    // This element is not keyed on the resource, so a switch reconciles the
+    // same instance. Carried into an artifact that keeps no data, the data
+    // view would render with its toggle gone: the page would be unreachable
+    // until the detail unmounted entirely.
+    const stateless = vi.fn(async () => ({
+      openUrl: OPEN_URL, canonicalUrl: CANONICAL, artifactId: ARTIFACT,
+      mode: 'static' as const, stateful: false,
+    }));
+    const { props, rerender } = setup();
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    fireEvent.click(storedDataToggle());
+    await screen.findByText('Ada');
+
+    rerender(<Harness props={{ ...props, resourceId: OTHER_RESOURCE, openArtifact: stateless }} />);
+
+    expect(await screen.findByTestId('site-preview-pane')).toBeInTheDocument();
+    expect(screen.queryByText('Ada')).not.toBeInTheDocument();
+  });
+
+  it('offers no data toggle for a site that keeps none', async () => {
+    const { props } = setup({
       openArtifact: vi.fn(async () => ({
         openUrl: OPEN_URL, canonicalUrl: CANONICAL, artifactId: ARTIFACT,
         mode: 'static' as const, stateful: false,
       })),
     });
-    await waitFor(() => expect(screen.getByText('Live page')).toBeInTheDocument());
-    expect(screen.queryByRole('tab', { name: /Data/u })).not.toBeInTheDocument();
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /stored data/iu })).not.toBeInTheDocument();
+  });
+
+  it('loads the table a person picks, not only the one it opened on', async () => {
+    // Every other fixture here describes a single table, so the picker's
+    // `onChange` never reaches `loadTable` in CI: the second table is the only
+    // thing that exercises the wiring at all.
+    const { props } = setup({
+      describeData: vi.fn(async () => ({
+        tables: [
+          { name: 'rsvps', columns: [{ name: 'name', type: 'TEXT' }], rowCount: 2 },
+          { name: 'comments', columns: [{ name: 'body', type: 'TEXT' }], rowCount: 1 },
+        ],
+      })),
+      loadTable: vi.fn(async (_resourceId: string, table: string) => ({
+        rows: table === 'comments' ? [{ body: 'Looks good' }] : [{ name: 'Ada' }],
+        csv: table,
+      })),
+    });
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    fireEvent.click(storedDataToggle());
+    await screen.findByText('Ada');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'comments' }));
+
+    expect(await screen.findByText('Looks good')).toBeInTheDocument();
+    expect(props.loadTable).toHaveBeenCalledWith(RESOURCE, 'comments');
   });
 
   it('shows an empty stored table as such rather than as a broken panel', async () => {
     const { props } = setup({ describeData: vi.fn(async () => ({ tables: [] })) });
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('tab', { name: /Data/u }));
+    fireEvent.click(storedDataToggle());
     expect(await screen.findByText('No data yet')).toBeInTheDocument();
   });
 
@@ -298,36 +432,11 @@ describe('the data a stateful site collected', () => {
     // export a person got from anywhere else.
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('tab', { name: /Data/u }));
+    fireEvent.click(storedDataToggle());
     await screen.findByText('Ada');
     fireEvent.click(screen.getByRole('button', { name: /Copy as CSV/u }));
     await waitFor(() => expect(props.surface.copyText)
       .toHaveBeenCalledWith('"name","answer"\r\n"Ada","yes"\r\n"Grace",""'));
-  });
-});
-
-describe('what the site itself threw', () => {
-  it('shows an error a participant can paste back into chat', async () => {
-    const { props } = setup({
-      loadErrors: vi.fn(async () => [{
-        occurredAt: Date.parse('2026-09-01T10:00:00Z'),
-        version: 2,
-        requestPath: '/api/rsvps',
-        message: 'TypeError: rows is not iterable',
-        stack: null,
-      }]),
-    });
-    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('tab', { name: /Errors/u }));
-    expect(await screen.findByText('TypeError: rows is not iterable')).toBeInTheDocument();
-    expect(screen.getByText('/api/rsvps')).toBeInTheDocument();
-  });
-
-  it('says a healthy site has thrown nothing', async () => {
-    const { props } = setup();
-    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('tab', { name: /Errors/u }));
-    expect(await screen.findByText('No errors')).toBeInTheDocument();
   });
 });
 

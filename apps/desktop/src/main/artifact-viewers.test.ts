@@ -236,6 +236,7 @@ describe('the rail preview controller', () => {
     const views: {
       url: string | null;
       bounds: PreviewBounds[];
+      radii: number[];
       closed: boolean;
       destroyed: boolean;
     }[] = [];
@@ -254,6 +255,7 @@ describe('the rail preview controller', () => {
         const state = {
           url: null as string | null,
           bounds: [] as PreviewBounds[],
+          radii: [] as number[],
           closed: false,
           destroyed: false,
         };
@@ -263,6 +265,7 @@ describe('the rail preview controller', () => {
           // every view under it, so the fake cannot let one outlive the other.
           destroyed: () => host.destroyed || state.destroyed,
           setBounds: (bounds: PreviewBounds) => state.bounds.push(bounds),
+          setBorderRadius: (radius: number) => state.radii.push(radius),
           loadURL: async (url: string) => {
             state.url = url;
             if (load) return await load(url);
@@ -279,22 +282,33 @@ describe('the rail preview controller', () => {
 
   it('presents an artifact and positions it over the rail', async () => {
     const { controller, views } = harness();
-    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds })).toBe(true);
+    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 })).toBe(true);
     expect(views).toHaveLength(1);
     expect(views[0]?.url).toBe(`${ORIGIN}/`);
     expect(views[0]?.bounds.at(-1)).toEqual(bounds);
   });
 
+  it('rounds the view once, to the corner its host drew, and not on every scroll', async () => {
+    // The view reaches the bottom corners of the dialog holding it, and CSS
+    // cannot round a native view. The corner belongs to the surface rather
+    // than to a layout: `setBounds` runs on every scroll frame.
+    const { controller, views } = harness();
+    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 })).toBe(true);
+    controller.setBounds({ ...bounds, y: 40 });
+    controller.setBounds({ ...bounds, y: 80 });
+    expect(views[0]?.radii).toEqual([16]);
+  });
+
   it('refuses a URL that is not an artifact, and creates nothing', async () => {
     const { controller, views } = harness();
-    expect(await controller.present({ artifactId: ARTIFACT, url: 'https://rallywith.ai/app', bounds })).toBe(false);
+    expect(await controller.present({ artifactId: ARTIFACT, url: 'https://rallywith.ai/app', bounds, cornerRadius: 16 })).toBe(false);
     expect(views).toHaveLength(0);
     expect(controller.currentArtifactId()).toBeNull();
   });
 
   it('reports a failed navigation and removes the empty composited view', async () => {
     const { controller, views, removed } = harness(DOMAIN, new Error('ERR_NAME_NOT_RESOLVED'));
-    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds })).toBe(false);
+    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 })).toBe(false);
     expect(views[0]?.closed).toBe(true);
     expect(removed).toHaveLength(1);
     expect(controller.currentArtifactId()).toBeNull();
@@ -303,7 +317,7 @@ describe('the rail preview controller', () => {
   it('keeps the view when the bootstrap replaces its load with redemption', async () => {
     const aborted = Object.assign(new Error('ERR_ABORTED (-3)'), { code: 'ERR_ABORTED', errno: -3 });
     const { controller, views, removed } = harness(DOMAIN, aborted);
-    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/__rally/open#code`, bounds }))
+    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/__rally/open#code`, bounds, cornerRadius: 16 }))
       .toBe(true);
     expect(views[0]?.closed).toBe(false);
     expect(removed).toHaveLength(0);
@@ -313,8 +327,8 @@ describe('the rail preview controller', () => {
     let rejectLoad!: (error: Error) => void;
     const load = new Promise<void>((_resolve, reject) => { rejectLoad = reject; });
     const { controller, views, removed } = harness(DOMAIN, null, async () => await load);
-    const first = controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
-    const second = controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    const first = controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
+    const second = controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
     expect(views).toHaveLength(1);
     rejectLoad(new Error('ERR_NAME_NOT_RESOLVED'));
     await expect(Promise.all([first, second])).resolves.toEqual([false, false]);
@@ -327,8 +341,8 @@ describe('the rail preview controller', () => {
     // underneath would still be running.
     const { controller, views } = harness();
     await Promise.all([
-      controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds }),
-      controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds }),
+      controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 }),
+      controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 }),
     ]);
     expect(views).toHaveLength(1);
     expect(views[0]?.closed).toBe(false);
@@ -336,11 +350,12 @@ describe('the rail preview controller', () => {
 
   it('replaces the view when the artifact changes', () => {
     const { controller, views, removed } = harness();
-    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
     controller.present({
       artifactId: OTHER_ARTIFACT,
       url: `https://${OTHER_ARTIFACT}-g.${DOMAIN}/`,
       bounds,
+      cornerRadius: 16,
     });
     expect(views).toHaveLength(2);
     expect(views[0]?.closed).toBe(true);
@@ -352,7 +367,7 @@ describe('the rail preview controller', () => {
     // A WebContentsView composites above the renderer's DOM, so a dialog or the
     // command palette would otherwise be painted over by artifact content.
     const { controller, views } = harness();
-    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
     controller.setOverlayOpen(true);
     expect(views[0]?.bounds.at(-1)).toEqual({ x: 0, y: 0, width: 0, height: 0 });
     controller.setOverlayOpen(false);
@@ -365,7 +380,7 @@ describe('the rail preview controller', () => {
 
   it('stays hidden through a layout change while an overlay is open', () => {
     const { controller, views } = harness();
-    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
     controller.setOverlayOpen(true);
     controller.setBounds({ x: 500, y: 50, width: 400, height: 500 });
     expect(views[0]?.bounds.at(-1)).toEqual({ x: 0, y: 0, width: 0, height: 0 });
@@ -373,14 +388,14 @@ describe('the rail preview controller', () => {
 
   it('clamps a layout update to the window', () => {
     const { controller, views } = harness();
-    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
     controller.setBounds({ x: 900, y: 100, width: 9_000, height: 9_000 });
     expect(views[0]?.bounds.at(-1)).toEqual({ x: 900, y: 100, width: 300, height: 700 });
   });
 
   it('destroys the view and forgets the artifact', () => {
     const { controller, views, removed } = harness();
-    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
     controller.destroy();
     expect(views[0]?.closed).toBe(true);
     expect(removed).toHaveLength(1);
@@ -392,7 +407,7 @@ describe('the rail preview controller', () => {
 
   it('touches nothing when the window it was composited over is already gone', async () => {
     const { controller, views, removed, host } = harness();
-    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
     // How quitting to install an update reaches this controller: Electron
     // destroys the window, and the window's own `closed` handler tears the
     // preview down afterwards. Detaching or closing anything here throws
@@ -407,7 +422,7 @@ describe('the rail preview controller', () => {
 
   it('detaches a view whose contents closed themselves, without closing it again', async () => {
     const { controller, views, removed } = harness();
-    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
     views[0]!.destroyed = true;
     controller.destroy();
     // The window is still alive and still holding the child, so the detach has
@@ -422,11 +437,11 @@ describe('the rail preview controller', () => {
 
   it('replaces a view whose contents closed themselves rather than reporting it live', async () => {
     const { controller, views, removed } = harness();
-    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds })).toBe(true);
+    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 })).toBe(true);
     // An artifact page calling `window.close()`. The handle stays, and it is
     // still this artifact's, so the artifact-ID comparison alone would keep it.
     views[0]!.destroyed = true;
-    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds })).toBe(true);
+    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 })).toBe(true);
     expect(views).toHaveLength(2);
     expect(views[1]?.url).toBe(`${ORIGIN}/`);
     expect(views[1]?.bounds.at(-1)).toEqual(bounds);
@@ -436,7 +451,7 @@ describe('the rail preview controller', () => {
 
   it('stops laying out a view whose contents closed themselves', async () => {
     const { controller, views } = harness();
-    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
     const laidOut = views[0]!.bounds.length;
     // The window is alive, so the window half of the layout guard does not
     // apply. The rail goes on sending layout updates — a resize — because it
@@ -449,13 +464,13 @@ describe('the rail preview controller', () => {
 
   it('refuses to lay out or present over a window that is gone', async () => {
     const { controller, views, host } = harness();
-    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds, cornerRadius: 16 });
     const laidOut = views[0]!.bounds.length;
     host.destroyed = true;
     controller.setBounds({ x: 100, y: 100, width: 200, height: 200 });
     controller.setOverlayOpen(true);
     expect(views[0]?.bounds).toHaveLength(laidOut);
-    expect(await controller.present({ artifactId: 'other', url: `${ORIGIN}/`, bounds })).toBe(false);
+    expect(await controller.present({ artifactId: 'other', url: `${ORIGIN}/`, bounds, cornerRadius: 16 })).toBe(false);
     expect(views).toHaveLength(1);
   });
 });
