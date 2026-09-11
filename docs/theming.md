@@ -213,6 +213,24 @@ further — a name is not a fill either, and colouring it by identity is what ma
 the two speakers' bylines diverge. The avatar and the person's own bubble are
 unaffected and still take the fill.
 
+### 2026-09-11 — The tooltip lift covers both lightboxes
+
+**What changed:** The `z-index: 1005` lift for tooltips is keyed on
+`.attachment-lightbox` rather than `.resource-lightbox`, which covers the media
+and document viewers as well as the artifact one. The media viewer's own
+controls reach for `Tip` directly rather than becoming `IconButton`s.
+
+**Why:** The lift was written for the surface that first needed it, but every
+lightbox sits at 1001 against the stylesheet's tooltip at 1000, and the media
+viewer is where an unlabelled icon is least guessable: its buttons are icons
+over someone's image with nothing else to name them. They stay hand-rolled
+because they carry their own absolute positions and sizes, and `.icon-button`'s
+geometry fights them; `Tip` adds the label and changes nothing else.
+
+**Consequences:** Any new surface layered above 1001 still needs its own rule
+until there is a real stacking scale; the four rules under that `:has()` are the
+list to add to.
+
 ### 2026-09-10 — A tooltip that opens behind the surface that needs it
 
 **What changed:** Tooltips get `z-index: 1005` under `body:has(.resource-lightbox)`,

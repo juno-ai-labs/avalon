@@ -1757,6 +1757,16 @@ describe('workspace search modal geometry', () => {
  * the pane's corner is shared with a native view that CSS cannot reach.
  */
 describe('the shared shell primitives and the artifact pane', () => {
+  it('lifts tooltips over every lightbox, not only the one that needed it first', () => {
+    // A tooltip is the only label an icon-only action has, and `.tooltip` sits
+    // at 1000 against a lightbox's 1001. Keyed on the class both viewers
+    // carry, because the media viewer's buttons are icons over an image with
+    // nothing else to name them.
+    const lifted = rule('body:has(.attachment-lightbox) .tooltip');
+    expect(lifted).toContain('z-index: 1005');
+    expect(rule('.attachment-lightbox')).toContain('z-index: 1001');
+  });
+
   it('leaves the primitives unscoped, so a portal gets them without a shell ancestor', () => {
     expect(rule('.inset-surface')).not.toBeNull();
     const scoped = preludes().filter((prelude) => /\.app-shell[^,]*\.inset-surface\b/u.test(prelude));

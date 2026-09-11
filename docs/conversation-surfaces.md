@@ -604,6 +604,34 @@ passed over the only dock it exists for. It also strips comments before reading 
 declaration, having been fooled once by a comment sitting between the brace and
 the `padding` it documents.
 
+### 2026-09-11 — A preview no longer opens with a tooltip over it, or eats Escape
+
+**What changed:** Both lightboxes prevent the dialog's opening auto-focus and
+keep focus on the content element instead. The attachment lightbox's nine
+icon-only controls (details, download, close, expand, and the gallery arrows)
+gained tooltips, which they had never had.
+
+**Why:** A Radix dialog hands focus to its first control on open, Radix opens a
+tooltip on focus, and every control in this chrome is an icon. So each preview
+opened with a label floating over it that nobody had hovered. Worse, the open
+tooltip is then the topmost dismissable layer, so the first Escape dismissed
+*it* and the preview stayed: closing a preview with the keyboard took two
+presses, and looked like the first one had not registered. The resource
+lightbox has shipped this way since it gained icon actions; the attachment
+lightbox only acquired it when its buttons gained tooltips, and its own tests
+caught it in the same change.
+
+**Considered and rejected:** Leaving the attachment lightbox's icons unlabelled
+to avoid the interaction, which trades a real defect for an unnamed control.
+Also rejected: converting those buttons to `IconButton`. They carry their own
+absolute positions and sizes over the image, and `.icon-button`'s geometry
+fights them; `WithTooltip` wraps them and adds nothing but the label.
+
+**Consequences:** Any future dialog whose first focusable is an icon button
+needs the same `onOpenAutoFocus`, and the two that already tame it
+(`Modal`, the search modal) are why neither showed this. A test that asserts a
+dialog closes on one Escape is the cheap way to catch it: that is what failed
+here.
 ### 2026-09-10 — Wrapped text clears the controls by 4px
 
 **What changed:** The reserve at the foot of a capsule's field, on the two

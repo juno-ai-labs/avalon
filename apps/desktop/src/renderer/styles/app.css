@@ -4112,12 +4112,13 @@ pre {
 body:has(.resource-lightbox) .dialog-overlay { z-index: 1002; }
 body:has(.resource-lightbox) .dialog-content { z-index: 1003; }
 body:has(.resource-lightbox) .menu-content { z-index: 1004; }
-/* And so do tooltips, which are the only label the header's icon-only actions
-   have. At the stylesheet's own `z-index: 1000` every one of them opened
-   *behind* the lightbox: present in the DOM, findable by a test, and invisible
-   to the person who hovered it. Above the menus too, since a menu item can
-   have one. */
-body:has(.resource-lightbox) .tooltip { z-index: 1005; }
+/* And so do tooltips, which are the only label an icon-only action has. At the
+   stylesheet's own `z-index: 1000` every one of them opened *behind* the
+   lightbox: present in the DOM, findable by a test, and invisible to the
+   person who hovered it. Above the menus too, since a menu item can have one.
+   Keyed on `.attachment-lightbox`, which the resource lightbox also carries,
+   so the media and document viewers are covered by the same rule. */
+body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .attachment-lightbox-content { min-height: 0; overflow: auto; }
 .attachment-lightbox-content.is-image,
 .attachment-lightbox-content.is-video { align-items: center; display: flex; height: 100%; justify-content: center; overflow: hidden; padding: 60px 72px; }
