@@ -514,6 +514,20 @@ describe("Slack connector", () => {
     }
   });
 
+  it("puts the channel-or-message choice before the create_conversation parameters", () => {
+    const definition = slackTools.find((tool) => tool.name === "create_conversation");
+    expect(definition).toMatchObject({
+      description: expect.stringContaining("Provide exactly one: `name` for a channel, or `user_ids` for a direct or group message."),
+      inputSchema: {
+        properties: {
+          name: { description: expect.stringContaining("Omit it, or send `null`, when using `user_ids`.") },
+          user_ids: { description: expect.stringContaining("Omit it when using `name`.") },
+          is_private: { description: expect.stringContaining("ignored for direct and group messages") },
+        },
+      },
+    });
+  });
+
   it("uses Slack's query transport for conversations.info", async () => {
     const fetcher: FetchLike = vi.fn(async (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
