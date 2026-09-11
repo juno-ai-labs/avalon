@@ -40,7 +40,14 @@ import {
   openFootnoteReferencePattern,
   personIdFromMentionHref,
 } from '@rally/contracts/citations';
-import { ConnectorEmbedCard, ConnectorMentionChip } from './connector-mentions';
+import {
+  ConnectorConnectionCard,
+  ConnectorEmbedCard,
+  ConnectorMentionChip,
+  connectorConnectionCardInput,
+  connectorConnectionCardProvider,
+  connectorConnectionCardSelectionKey,
+} from './connector-mentions';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
@@ -2390,6 +2397,10 @@ interface MessageBlockProps {
   onAcceptDraft?: (automationId: string) => void;
   acceptingDraftFor?: string | null;
   acceptDraftError?: string | undefined;
+  /** Main-feed opt-in; other transcript hosts keep core tools as neutral rows. */
+  connectorConnectionCards?: boolean;
+  connectedConnectorSelections?: ReadonlySet<string>;
+  onConnectorConnected?: (selectionKey: string) => void;
 }
 
 export function MessageBlock({
@@ -2406,6 +2417,9 @@ export function MessageBlock({
   onAcceptDraft,
   acceptingDraftFor,
   acceptDraftError,
+  connectorConnectionCards = false,
+  connectedConnectorSelections,
+  onConnectorConnected,
 }: MessageBlockProps): React.JSX.Element {
   const presentations = useContext(MemberPresentationContext);
   const profileUserId = message.authorType === 'human' ? message.author?.id
@@ -2429,7 +2443,23 @@ export function MessageBlock({
     } : {}),
   } as React.CSSProperties;
   if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;
-  if (message.messageType === 'tool_event') return <div className="transcript-event" id={`message-${message.id}`}><ToolBlock message={message} /></div>;
+  if (message.messageType === 'tool_event') {
+    const connectionCard = connectorConnectionCards ? connectorConnectionCardInput(message) : null;
+    const connectionCardProvider = connectionCard ? connectorConnectionCardProvider(connectionCard) : null;
+    return (
+      <div className="transcript-event" id={`message-${message.id}`}>
+        {connectionCard && connectionCardProvider ? (
+          <ConnectorConnectionCard
+            latchedConnected={Boolean(connectedConnectorSelections?.has(
+              connectorConnectionCardSelectionKey(connectionCard),
+            ))}
+            {...(onConnectorConnected ? { onConnected: onConnectorConnected } : {})}
+            request={connectionCard}
+          />
+        ) : <ToolBlock message={message} />}
+      </div>
+    );
+  }
   if (message.messageType === 'plugin_activity') return <div className="transcript-event" id={`message-${message.id}`}><PluginActivityBlock message={message} /></div>;
   if (message.messageType === 'work_accordion') {
     return (

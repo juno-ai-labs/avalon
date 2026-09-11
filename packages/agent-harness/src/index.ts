@@ -14,6 +14,7 @@ import {
   isSentinelAutomationResourceId,
   withoutUnusableAutomationResourceIds,
   AutomationDraftSchema,
+  ConnectorConnectionCardInputSchema,
   type AutomationDraft,
 } from "@rally/contracts";
 import { AzureInferenceEndpointSchema } from "@rally/contracts/url-schemas";
@@ -2873,6 +2874,51 @@ export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
   idempotency: "provider_key",
   get inputSchema() {
     return requestElicitationInputJsonSchema();
+  },
+} as const satisfies ToolDefinition;
+
+const connectorConnectionCardInputJsonSchema = memoizedValue(
+  () => z.toJSONSchema(ConnectorConnectionCardInputSchema, { io: "input" }) as Record<string, unknown>,
+);
+
+/** Read the durable connection state for the same trusted catalog selection a card presents. */
+export const AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION = {
+  name: "get_connector_connection_state",
+  description: [
+    "Check Rally's saved connection state for a connector and scope. Call this first.",
+    "Returns connected, reconnect_required, not_connected, or unavailable.",
+    "If connected, continue the task and do not show a card.",
+    "If reconnect_required or not_connected blocks the task, briefly explain why, then call core_show_connector_connection with the same connectorId and scope.",
+    "If unavailable, explain that this connector is not configured in this Rally region and do not show a card.",
+    "This checks Rally's saved state, not the provider directly.",
+  ].join(" "),
+  capability: "connector.connection.read",
+  mode: "read",
+  idempotency: "safe",
+  get inputSchema() {
+    return connectorConnectionCardInputJsonSchema();
+  },
+} as const satisfies ToolDefinition;
+
+/**
+ * Ask Rally's main conversation feed to present one trusted connector card.
+ * The model selects only catalog identity and scope; the client owns all copy,
+ * capabilities, displayed connection state, and the authorization destination.
+ */
+export const AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION = {
+  name: "show_connector_connection",
+  description: [
+    "Show a persistent card that lets the user connect or reconnect a connector.",
+    "Call only after core_get_connector_connection_state returns reconnect_required or not_connected and the missing connection blocks the task.",
+    "Use the same connectorId and scope. Briefly explain what is blocked before this call.",
+    "After this call, do not claim the connector is connected or retry connector-dependent work in this run.",
+    "Never create an authorization URL or ask for credentials.",
+  ].join(" "),
+  capability: "connector.connection.present",
+  mode: "read",
+  idempotency: "safe",
+  get inputSchema() {
+    return connectorConnectionCardInputJsonSchema();
   },
 } as const satisfies ToolDefinition;
 

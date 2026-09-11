@@ -45,6 +45,7 @@ import {
 import {
   adjacentTranscriptRange,
   collapseSettledWorkIntoAccordion,
+  dedupeAdjacentConnectorConnectionCards,
   composeTranscript,
   createTextMessage,
   foldSettledWorkIntoMessages,
@@ -1080,6 +1081,10 @@ export function ConversationSurface({
     queryKey: ['connections'],
     queryFn: ({ signal }) => api!.getConnections(signal),
     enabled: Boolean(api),
+    // OAuth completion publishes the workspace socket's
+    // `connector_connections` topic. Its invalidation refetches this active
+    // query, which lets an in-feed connection card become Connected without a
+    // focus heuristic or polling loop.
     staleTime: 60_000,
   });
   const availableResources = useInfiniteQuery({
@@ -1161,7 +1166,9 @@ export function ConversationSurface({
       return collapseSettledWorkIntoAccordion(
         foldSettledWorkIntoMessages(
           groupThinkingMessages(
-            groupPluginToolMessages(composeTranscript(canonicalTranscript, feedOverlays)),
+            groupPluginToolMessages(dedupeAdjacentConnectorConnectionCards(
+              composeTranscript(canonicalTranscript, feedOverlays),
+            )),
           ),
         ),
       );
@@ -2257,6 +2264,7 @@ export function ConversationSurface({
             />
           ) : (
             <MessageFeed
+              connectorConnectionCards
               citations={citations}
               currentUserId={session?.user.id}
               currentUserName={session?.user.name}
