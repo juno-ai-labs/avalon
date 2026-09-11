@@ -42,6 +42,14 @@ describe('artifact preview wiring', () => {
     // stream; nothing else in this process is told when a person presses
     // something inside model-authored content.
     expect(text).toContain("contents.on('input-event', (_event, input) => activation.record(input.type))");
+    // Spending the press is what keeps one click from becoming a loop of
+    // departures, so the wiring must hand over the consuming call, not the
+    // peeking one.
+    expect(text).toContain('takeActivation: () => activation.take()');
+    expect(text).not.toContain('activated: () => activation.active()');
+    // The OS opener rejects when it cannot launch a URL, and this process only
+    // monitors uncaught exceptions — a discarded rejection would take it down.
+    expect(text).toContain('void shell.openExternal(url).catch(');
   });
 
   it('removes the entry only when the window that owns it closes', () => {

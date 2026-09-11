@@ -2896,11 +2896,20 @@ function artifactLinkHandoff(contents: WebContents): ArtifactLinkHandoff {
   const activation = new ArtifactUserActivation();
   contents.on('input-event', (_event, input) => activation.record(input.type));
   return {
-    activated: () => activation.active(),
+    takeActivation: () => activation.take(),
     // The same scheme policy every other handoff in this process uses: http(s)
     // only, and https only once packaged.
     externalAllowed: isAllowedExternalUrl,
-    openExternal: (url) => { void shell.openExternal(url); },
+    // Caught rather than discarded: the OS opener rejects when it cannot launch
+    // the URL — no registered default browser, a handler that refuses — and an
+    // unhandled rejection takes the main process down, since this process only
+    // *monitors* uncaught exceptions. Failing to follow a link must cost a log
+    // line, not the window somebody was reading.
+    openExternal: (url) => {
+      void shell.openExternal(url).catch((error: unknown) => {
+        logWarn('rally', 'could not open an artifact link in the browser', error);
+      });
+    },
   };
 }
 
