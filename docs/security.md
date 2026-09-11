@@ -62,6 +62,7 @@ the source credentials, memory, authoring conversation, or run history.
 | `apps/api/src/lib/crypto.ts` | AES-GCM credential envelopes and key-version handling. |
 | `apps/api/src/services/terminal/` | The isolated Daytona execution boundary, network compiler, authority-fenced lifecycle, resource bridge, and trusted GitHub publisher. |
 | `apps/desktop/scripts/mac-signature-policy.mjs`, `apple-notarization.mjs`, `finalize-macos-release.mjs` | Entitlement rules, notarization, and the release verifier. |
+| `apps/ios/Rally/Auth/KeychainStore.swift`, `apps/ios/Rally/Rally.entitlements` | iOS session secrets and APNs/associated-domain entitlements. Owned with [`ios-client.md`](ios-client.md). |
 | `.gitleaks.toml`, `scripts/gitleaks-allowlist.test.mjs` | The scan's bounded exceptions and the test that keeps them honest. |
 
 The renderer socket-ticket lint rule follows immutable awaited ticket aliases,
@@ -75,6 +76,14 @@ The renderer, inbound internet, connector providers, monitored URLs, model
 output, and connector payloads are untrusted. The Electron main process and
 regional Worker are trusted only within their narrow responsibilities. D1 and R2
 are canonical storage services, not authorization layers.
+
+iOS has no renderer. The comparable split is the SwiftUI process (untrusted for
+secrets it does not need) versus the Keychain (identity and workspace refresh
+tokens) versus the regional Worker. Google credentials stay in
+`ASWebAuthenticationSession`. Refresh tokens are
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and are never written to
+UserDefaults or iCloud. Socket tickets still travel as `Sec-WebSocket-Protocol`,
+same as desktop.
 
 ### Electron
 
@@ -953,6 +962,29 @@ exception has a regression test rejecting other keys and longer values, rather
 than allowing arbitrary webhook secrets or excluding the fixture file.
 
 PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
+
+### 2026-09-11 — iOS holds sessions in the Keychain, not a renderer
+
+**What changed:** The iOS client stores identity and workspace sessions with
+`KeychainStore` (`AfterFirstUnlockThisDeviceOnly`). It reuses the desktop Google
+PKCE start/exchange and the same JWT audience. There is no preload, CSP, or
+`safeStorage` path on iOS.
+
+**Why:** Copying Electron's encrypted file envelope onto a phone would have
+invented a second secret format without the main-process isolation that makes
+the desktop envelope make sense. The Keychain is the platform primitive that
+already matches "refresh tokens never sit in UserDefaults." Reusing
+`avalon-desktop` as the audience avoids a Worker change just to put the same
+member on a second device.
+
+**Considered and rejected:** A `WKWebView` around the desktop renderer, which
+would have put OAuth and session state in web storage on iOS. Also rejected:
+shipping refresh tokens in `UserDefaults` behind a debug flag.
+
+**Consequences:** A security change that tightens renderer isolation does not
+automatically cover iOS. iOS review is Keychain accessibility, URL scheme
+admission, associated domains, and the ticket-as-subprotocol rule. APNs tokens
+are stored locally until the Worker grows an iOS topic; they are not a session.
 
 ### 2026-09-11 — The five prompt trust labels are gone
 
