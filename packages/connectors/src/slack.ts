@@ -170,13 +170,13 @@ const id = { type: "string", minLength: 1 };
  * Cursors used to share this and no longer do. It keeps the flat
  * `type: ["string", "null"]`. Under Bind 13 the sanitizer collapsed that to
  * `type: "string"`, so a caller that would not omit `channel_id` could not
- * spell "no filter" as a value either and a `minLength: 1` floor was all it was
- * left with, the shape that had a scheduled Sidekick putting `"/"` and
- * `".000001"` into `send_message.thread_ts` for thousands of refused calls.
- * Since Bind 14 the flat form reaches the model as `anyOf` with a null branch,
- * and `apps/api/test/tool-schema-sanitization.test.ts` asserts that for every
- * property of every tool. What each of these means by `null`, "do not filter
- * by this", "no thread", is still the description's to say.
+ * spell "no filter" as a value either, and `send_message.thread_ts` in that
+ * shape is what a scheduled Sidekick invented values for (the Sidekick
+ * delivery PRD's `research.md` has the record). Since Bind 14 the flat form
+ * reaches the model as `anyOf` with a null branch, and
+ * `apps/api/test/tool-schema-sanitization.test.ts` asserts that for every
+ * declaration of every tool. What each of these means by `null`, "do not
+ * filter by this", "no thread", is still the description's to say.
  */
 const optionalId = { type: ["string", "null"], minLength: 1 };
 const query = { type: "string", minLength: 1 };

@@ -1,6 +1,6 @@
 # Agent harness
 
-Rally's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. The owning `SubstreamAgent` Durable Object hosts every work-stream loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite; there is no pre-cutover drain or Workflow fallback for this surface. WorkspaceDO is authoritative for workspace connector/resource/memory/policy state and cross-work-stream products; regional D1 retains identity, membership, routing, migration and operational records, while R2 stores large outputs. Separate non-workstream loops may still use Cloudflare Workflows.
+Rally's production loop is an adapter over `@juno-ai/bind` 14.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. The owning `SubstreamAgent` Durable Object hosts every work-stream loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite; there is no pre-cutover drain or Workflow fallback for this surface. WorkspaceDO is authoritative for workspace connector/resource/memory/policy state and cross-work-stream products; regional D1 retains identity, membership, routing, migration and operational records, while R2 stores large outputs. Separate non-workstream loops may still use Cloudflare Workflows.
 
 Each substream owns one persistent server-side, tool-using loop. A run is a
 subordinate execution receipt for one activation of that loop; it never creates
@@ -1283,22 +1283,22 @@ scalar type plus `"null"` is rewritten to `anyOf: [{type: T, …}, {type: "null"
 instead of collapsed to `type: T` with "Accepts T or null." appended to the
 description. The type-bearing keywords move onto the typed branch, annotations
 stay on the node, and the branch re-enters the walk so the retype-to-object,
-pattern, enum and `required` transforms still apply to it. A genuine multi-type
-union still collapses, and so does a nullable type at the parameters root, in a
-branch of a root union, or in a composition branch whose `required` reaches
-the enclosing node. The loop patch this repository carries (`acceptMessage`,
+pattern, enum and `required` transforms still apply to it. The five shapes
+that keep the collapse, a multi-type union the common one, are listed once
+under Principle 1 of [`agent-tools.md`](agent-tools.md). The loop patch this
+repository carries (`acceptMessage`,
 `beforeToolMessageAccepted`, `onStepSettled`) targets files that are
 byte-identical between 13.0.0 and 14.0.0; it was regenerated rather than
 renamed, since pnpm keys a patch by exact version and the old file's hunks were
 inexact (below). The lockfile changes only the Bind entries.
 
 **Why:** The collapse left a caller unable to say "none" in the half of a
-declaration it treats as binding. Measured twice: a Drive cursor took `"x"`,
-`" "`, `"undefined"`, `"null"` and `"/"`, and then a scheduled Sidekick posting
-to Slack was handed `send_message.thread_ts` the same way and put `"/"`,
-`". "` and `".000001"` into it for thousands of refused calls, about four
-thousand a day for a week, or used the timestamp of its own previous post and
-replied to itself. Every consumer of Bind has the same defect, so the rewrite
+declaration it treats as binding, and it had been measured twice: on a Drive
+cursor, and then on `send_message.thread_ts`, where a scheduled Sidekick
+invented values for thousands of refused calls or replied to its own previous
+post. The `agent-tools.md` entry of the same date and `research.md` in
+[the Sidekick delivery PRD](PRDs/2026-09-11_sidekick-delivery-reliability/research.md)
+hold the record. Every consumer of Bind has the same defect, so the rewrite
 belongs in Bind rather than in this repository's pre-sanitizer corrector, and
 `droppedNullableBranches` becomes the guard that Bind keeps delivering it.
 
