@@ -798,6 +798,20 @@ throws, without moving enforcement out of `executeTool`. Dynamic hosted-MCP
 tools do not use a static connector validator because their live provider schema
 is the only input contract Rally owns.
 
+**An event type that declares no `resourceRelationships` cannot be narrowed to a
+resource, and the containers it would have named cannot be found.** Declaring
+the relationship is what makes a resource type reachable: the registration
+reconciler builds a watch's evaluator set from it, the accept-side validator
+admits a rule's `resourceId` only against it, and `resources_search`
+offers only the types some trigger declares — everything else is a refusal
+acceptance is certain to reach, so offering it is worse than omitting it. Name
+the container an event happens *inside* (a repository, channel, project, page,
+folder, file, thread), never the thing the event produced. *A repository was two
+rows among the eighty thousand files, commits and check runs its own events had
+materialized, all matching its name and all fresher than it; the drafting agent
+searched, found no repository, and saved a pull-request Sidekick with no event
+trigger at all.*
+
 ## Boundary
 
 This document owns the connector registry and the contract every adapter meets:

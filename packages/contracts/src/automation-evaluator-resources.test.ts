@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  automationBindableResourceTypes,
+  automationTriggersAdmitResourceType,
   isSentinelAutomationResourceId,
   withoutUnusableAutomationResourceIds,
 } from "./automation-evaluators";
@@ -91,6 +93,52 @@ describe("dropping a resource id a rule cannot use", () => {
     expect(sourceOf(withoutUnusableAutomationResourceIds(unknownEvent, lookup))).toHaveProperty("resourceId");
     expect(withoutUnusableAutomationResourceIds("not rules", lookup)).toBe("not rules");
     expect(withoutUnusableAutomationResourceIds({ evaluators: "nope" }, lookup)).toEqual({ evaluators: "nope" });
+  });
+});
+
+describe("the resource types a rule may name", () => {
+  const githubTriggers = [
+    {
+      eventType: "github.pull_request.opened",
+      eventFamilies: [],
+      resourceRelationships: [{ relationship: "repository", resourceType: "github_repository" }],
+    },
+    {
+      eventType: "github.release.published",
+      eventFamilies: [],
+      resourceRelationships: [
+        { relationship: "repository", resourceType: "github_repository" },
+        { relationship: "application", resourceType: "github_repository" },
+      ],
+    },
+    { eventType: "github.check_run.completed", eventFamilies: [], resourceRelationships: [] },
+  ];
+
+  it("is the containers the triggers declare, each named once with every way it is reached", () => {
+    expect(automationBindableResourceTypes(githubTriggers)).toEqual([
+      { resourceType: "github_repository", relationships: ["repository", "application"] },
+    ]);
+  });
+
+  it("is empty for triggers that declare no relationship, so nothing is offered that cannot be bound", () => {
+    expect(automationBindableResourceTypes([githubTriggers[2]!])).toEqual([]);
+    expect(automationBindableResourceTypes([])).toEqual([]);
+  });
+
+  it("admits only a declared type, which is the question both validators ask", () => {
+    expect(automationTriggersAdmitResourceType(githubTriggers, "github_repository")).toBe(true);
+    // The events themselves produce these, in their tens of thousands. None is
+    // a container a rule can narrow itself to.
+    for (const produced of ["github_pull_request", "github_file", "github_check_run", "uploaded_file"]) {
+      expect(automationTriggersAdmitResourceType(githubTriggers, produced), produced).toBe(false);
+    }
+  });
+
+  it("leaves out a relationship it cannot read, because it runs before the schema parse too", () => {
+    expect(automationBindableResourceTypes([
+      { eventType: "e", resourceRelationships: [null, "repository", { relationship: "repository" }, { resourceType: "" }] },
+      { eventType: "f", resourceRelationships: [{ resourceType: "slack_channel" }] },
+    ])).toEqual([{ resourceType: "slack_channel", relationships: [] }]);
   });
 });
 

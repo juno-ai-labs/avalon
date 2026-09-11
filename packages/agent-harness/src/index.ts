@@ -2918,7 +2918,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "resources_search",
-    description: "Search authorized resources and return canonical resource IDs with their source plugin and binding relationship.",
+    description: "Search the resources an event rule can be narrowed to, and return canonical resource IDs with their source plugin and binding relationship. Only a container an event declares a relationship to is searchable here: a repository, channel, project, page, folder, file or mail thread. The files, commits, check runs, messages and pull requests that events themselves produce are not, and neither are uploads, notes or generated documents. An empty result means no resource can narrow this rule: write the rule with a filter field from sidekick_plugin_inspect instead, and omit resourceId.",
     capability: "rally.sidekick.resources.search",
     mode: "read",
     idempotency: "safe",
