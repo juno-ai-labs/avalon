@@ -74,6 +74,10 @@ field whose value only exists after creation. A visible explanation describes
 this handoff. Conditional network-domain and repository-default controls show
 why they are inapplicable when searched, rather than leaving a search destination missing.
 
+The Connections pane ends at the connector grid, without a page-level success
+or error log. Connection status remains on the cards, and setup dialogs retain
+their own validation feedback.
+
 ## Invariants
 
 - Labels and descriptions belong to definitions. Duplicating them in a keyword
