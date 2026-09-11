@@ -1,4 +1,4 @@
-import { createRef } from 'react';
+import { act, createRef } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -91,6 +91,69 @@ function renderComposer(
     </Tooltip.Provider>,
   );
 }
+
+describe('WorkstreamComposer Stop action', () => {
+  it('retains the hidden slot and guards pending stops while keeping their tooltip accessible', async () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    const onStop = vi.fn(async () => undefined);
+    const composer = (detail: WorkstreamDetail): React.JSX.Element => (
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[creator]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={async () => undefined}
+          onStop={onStop}
+          sending={false}
+          uploading={false}
+          workstream={detail}
+        />
+      </Tooltip.Provider>
+    );
+    const view = render(composer(workstream));
+    const slot = view.container.querySelector('.composer-stop-slot');
+    expect(slot).toHaveAttribute('inert');
+    expect(slot).toHaveAttribute('data-visible', 'false');
+    // jsdom does not implement inert focus/hit testing; Electron covers that.
+    const button = view.container.querySelector<HTMLButtonElement>('.stop-button')!;
+    expect(button).toBeInTheDocument();
+
+    view.rerender(composer({ ...workstream, harnessStatus: 'running' }));
+    expect(slot).not.toHaveAttribute('inert');
+    expect(slot).toHaveAttribute('data-visible', 'true');
+    expect(screen.getByRole('button', { name: 'Stop the current run' })).toBe(button);
+    act(() => button.focus());
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Stop the current run');
+    expect(button).toHaveAccessibleName('Stop the current run');
+    expect(button).not.toHaveAccessibleDescription();
+    fireEvent.click(button);
+    expect(onStop).toHaveBeenCalledTimes(1);
+
+    view.rerender(composer({ ...workstream, harnessStatus: 'running', stopRequested: true }));
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    expect(button).not.toBeDisabled();
+    act(() => { button.blur(); button.focus(); });
+    expect(button).toHaveFocus();
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Stopping after this response…');
+    expect(button).toHaveAccessibleName('Stopping after this response…');
+    expect(button).not.toHaveAccessibleDescription();
+    fireEvent.click(button);
+    expect(onStop).toHaveBeenCalledTimes(1);
+
+    view.rerender(composer(workstream));
+    expect(view.container.querySelector('.stop-button')).toBe(button);
+    expect(slot).toHaveAttribute('inert');
+    expect(slot).toHaveAttribute('data-visible', 'false');
+  });
+});
 
 describe('WorkstreamComposer over a remembered conversation', () => {
   it('lets a message be written but not sent while sending is blocked', () => {

@@ -4326,8 +4326,33 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .model-selector-item { justify-content: space-between; min-height: 30px; }
 .model-selector-item > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-selector-item > svg { color: var(--av-sys-color-accent-base); flex: 0 0 auto; }
-.message-delivery-controls { align-items: center; display: flex; gap: 2px; }
-.stop-button { background: transparent; border-color: transparent; color: var(--av-sys-color-text-muted); font-size: 10.5px; }
+/* Keep the slot mounted so a running-state reversal reverses both transitions.
+   The negative margin cancels the submit row's gap while the slot is closed. */
+.composer-stop-slot {
+  flex: 0 0 auto;
+  width: 0;
+  margin-left: -5px;
+  transform: translateX(35px);
+  visibility: hidden;
+  transition: width 240ms ease, margin-left 240ms ease, transform 240ms ease, visibility 240ms;
+}
+.composer-stop-slot[data-visible='true'] {
+  width: 28px;
+  margin-left: 0;
+  transform: translateX(0);
+  visibility: visible;
+}
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-stop-slot .stop-button {
+  background: var(--av-cmp-row-background-hover);
+  border: 0;
+  border-radius: 50%;
+  color: var(--av-sys-color-text-muted);
+  height: 28px;
+  width: 28px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer-stop-slot { transition: none; }
+}
 .composer-send { align-items: center; background: var(--av-cmp-composer-send-background); border-radius: var(--av-cmp-composer-send-radius); color: var(--av-cmp-composer-send-foreground); display: flex; height: 28px; justify-content: center; width: 28px; }
 .composer-error-slot { padding-top: 7px; }
 .composer-error-slot .inline-error { background: var(--av-sys-color-danger-wash); border: 1px solid var(--av-sys-color-danger-edge); border-radius: var(--av-sys-size-radius-sm); margin: 0; padding: 6px 8px; }
@@ -6405,8 +6430,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   padding: 1px 8px 7px;
 }
 
-.workstream-screen .composer-tools .icon-button,
-.workstream-screen .composer-submit-area .button {
+.workstream-screen .composer-tools .icon-button {
   color: var(--av-ref-color-neutral-10);
 }
 
@@ -6545,6 +6569,12 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   padding: 7px;
 }
 
+/* Keep both groups centered even if a future control changes the row height.
+   Multiline and attachment composers keep their controls on the bottom row. */
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule:not(.has-attachments):not([data-multiline='true']) :is(.composer-tools, .composer-submit-area) {
+  align-self: center;
+}
+
 /* Geometry is unconditional; the resting paint below is not. Both capsule
    fills exclude `.is-listening` so the recording fill wins by being the only
    rule painting the button, rather than by out-specifying two selectors that
@@ -6576,7 +6606,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   color: var(--av-sys-color-text-muted);
 }
 
-:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule :is(.composer-send, .microphone-control .dictation-button):hover:not(:disabled) {
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule :is(.composer-send, .microphone-control .dictation-button, .stop-button):hover:not(:disabled):not([aria-disabled='true']) {
   filter: brightness(.9);
 }
 
