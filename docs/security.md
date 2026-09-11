@@ -965,44 +965,6 @@ without a per-member fan-out; the desktop's wording is the remaining gap
 confirmation on retirement is a client-side ceremony; the server-side
 comparison of the confirmation with the path is a consistency check, not a
 second factor.
-### 2026-09-08 — Remove socket URL capabilities
-
-The broker discards query data instead of rejecting connections carrying an
-unknown configuration flag. Regional origin, target identity, ticket subprotocol,
-and renderer ownership checks remain. All socket receivers ignore unknown types
-and extra fields while validating known data; stored and outgoing contracts are
-unchanged. This supersedes the query allowlist described below.
-
-### 2026-09-08 — Sidekick authoring and loading
-
-Conversational publication resolves the current workspace membership role and
-owning-workstream participation through the same actor path as management routes.
-A ready model submission publishes under that actor, while automation run contexts
-do not receive the authoring plugin. Loading uses owner authorization for the
-execution principal and the entire conversation audience. Catalog metadata is
-escaped and treated as data; admitted instructions remain subordinate to platform
-policy and the current request. Neither loading nor attachment grants access to
-the source credentials, memory, authoring conversation, or run history.
-
-This records the review fixes because stale effects, overbroad revocation, and
-implicit compatibility assumptions can break otherwise valid delegated work.
-Future changes must retain the separate ownership and execution boundaries.
-
-### 2026-09-07 — Specify the ordinary-read freshness boundary
-
-Documented the approved five-minute evidence lease for member search and resource
-reads so socket revocation guarantees are not mistaken for immediate invalidation
-of reusable read proofs. Session admission, mutation and socket policies retain
-their existing authority paths.
-
-### 2026-09-07 — Sidekick conversation window
-
-The Sidekicks library needs the same conversational socket transport as the main
-window. Its trusted renderer may open broker sockets; each socket remains scoped
-to the requesting webContents and validated regional routes. Settings and external
-content still cannot open sockets. The window uses the existing workspace/session
-broadcasts and closes on logout.
-
 
 ### 2026-09-04 — Appearance files can no longer execute code
 
@@ -1070,8 +1032,8 @@ round trip added no enforcement and cost a visible reload. It stays for other
 targets because an ended membership leaves its session row alive and the
 platform is what refuses that link before the window moves.
 
-**Consequences:** The 2026-09-01 entry “External workspace targets cannot rely
-on local authority” still holds for every target that is not active. Shipped
+**Consequences:** The rule that external workspace targets cannot rely on local
+authority still holds for every target that is not active. Shipped
 in #484.
 ### 2026-09-02 — Conversation rail gets a bounded window-geometry capability
 
@@ -1788,28 +1750,6 @@ remain excluded from logs.
 
 Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
 [context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
-
-### 2026-08-12 — The unsigned-challenge boundary applies by protocol shape
-
-**What changed:** The Notion webhook setup boundary now points to the connector
-architecture rule for future providers with the same unsigned, operator-mediated
-secret handoff. It also states that configured or authenticated signing-secret
-exchanges do not need the one-time setup flow.
-
-**Why:** Naming only Notion made a reusable trust boundary look product-specific.
-The risk comes from the protocol shape: the value delivered by an unsigned request
-becomes authority over every later webhook, while edge observability can record the
-request before application redaction.
-
-**Considered and rejected:** Applying the workflow to every webhook connector.
-That adds no protection when the signing secret is already configured or exchanged
-over an authenticated control plane, and would obscure the exact condition that
-makes the nonce necessary.
-
-**Consequences:** Security review for a new webhook connector must classify its
-subscription handshake before choosing storage or operator tooling. A matching
-provider cannot use query-string reuse, logging, or a public reveal endpoint as its
-plaintext handoff.
 
 Earlier entries do not exist. This document predates the changelog rule in
 [`module-documents.md`](module-documents.md#starting-one), and the reasoning behind

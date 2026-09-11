@@ -282,26 +282,6 @@ Two traps:
 
 ## Changelog
 
-### 2026-09-09 — Preserve all image embeds in exports
-
-Still rendering presents image embeds as titled file cards and styles the file wrapper. An exported message retains every delivered resource without fetching live previews or depending on gallery navigation.
-
-### 2026-08-30 — Export trust names the closed break-tag exception
-
-**What changed:** The export contract and this document now state that the
-shared Markdown renderer may emit an empty `<br>` from a bare break tag while
-every other source HTML remains text.
-
-**Why:** The break-tag affordance changed the markup crossing the renderer-to-
-main bridge, but the older trust wording still claimed that every source tag
-was text. The window remains safe because the rewrite is a closed empty-element
-case and its CSP still forbids script.
-
-**What a future change has to respect:** Keep the common contract, main-process
-interpolation comment, and this trust model aligned. Adding another generated
-element requires reviewing the bridge and export-window CSP, not merely widening
-the Markdown rewrite.
-
 ### 2026-08-30 — Mermaid diagrams save as source
 
 **What changed:** A `mermaid` fence remains the ordinary highlighted code block
@@ -316,20 +296,6 @@ reproduce the diagram and keeps the established no-suspension export contract.
 **What a future change has to respect:** rendering diagrams into exports means
 preparing the SVG before serialization and awaiting it explicitly. Do not make
 the detached root race an effect or add a fixed wait.
-
-### 2026-08-30 — The card composes the tile the way the app composes it
-
-**What changed:** the export `.citation-card` takes the app's `gap: 9px` and
-drops `justify-content: space-between`, leaving `.citation-card-text`'s own
-`margin-top: auto` to push the title block to the foot.
-
-**Why:** review noticed the two had drifted — the app moved to a 9px gap with an
-auto margin when the preview landed between badge and title, and this file kept
-the 26px gap and the `space-between` from the version before it. The palette
-here is deliberately the card's own; the *proportions* are not, and
-`space-between` only agrees with the app while the card has exactly two
-children, which is a coincidence of the preview being absent rather than a
-layout rule.
 
 ### 2026-08-29 — The card draws no preview, because it can never have one
 

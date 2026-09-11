@@ -389,25 +389,6 @@ must not revive a previously issued ticket. Workerd regressions cover both
 parent removal while child membership remains active and old-ticket replay
 after re-addition.
 
-### 2026-09-05 — Revocation keeps working against a retired workspace
-
-**What changed:** Nothing in this module. Workspace retirement fences almost
-every method of the objects in this walk, and `revokeSocketAccess` is named as an
-exception on every one of them.
-
-**Why:** Retirement is what a closed workspace gets, and the objects it closes may
-still be holding sockets. A refusal would have failed the hop, which retries and
-then dead-letters — turning a designed-for condition into noise on the one signal
-this module uses as its monitoring.
-
-**Consequences:** A hop against a retired object succeeds and closes what it
-finds; a *new* method this consumer starts calling on those objects is refused by
-default. The classification lives in `ALWAYS_PERMITTED_METHODS` in
-`durable-objects/object-retirement.ts` and in each class's `applyRetirementGate`
-call; [`workspace-retirement.md`](workspace-retirement.md) explains the
-dispositions. (Superseded on 2026-09-08: the consumer now acknowledges a
-refusal rather than needing every method it calls permitted.)
-
 ### 2026-09-04 — Private-child removal has a durable local revocation leg
 
 **What changed:** WorkstreamDO participant add/remove operations persist a

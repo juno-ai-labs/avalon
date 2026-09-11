@@ -896,12 +896,13 @@ member's or an operator's history grows. Abandon checked, walked, then wrote,
 and a driver publishing Ready in between would have been retired as a
 candidate. `DEMO_PREPARATION_WORKFLOW` in the production boot contract would
 have taken Global offline on a deploy without the binding — a demo tool's
-binding must never do that. The seeded-run entry below claimed Retry
-recovered a failed seeded run; the derived client message id, the very thing
-that makes replay safe, is what makes that impossible. The 2026-09-05
-withholding entry below said discovery pays "none at all for a member in no
-demo", which was never true: the read is what answers the question, and it is
-made for every member in any workspace but the template.
+binding must never do that. The seeded-run entry, now part of the entry
+below, claimed Retry recovered a failed seeded run; the derived client message
+id, the very thing that makes replay safe, is what makes that impossible. The
+withholding entry, now part of the entry below, said discovery pays "none at
+all for a member in no demo", which was never true: the read is what answers
+the question, and it is made for every member in any workspace but the
+template.
 
 **Considered and rejected:** Deriving the shareable set from the adapter's
 `revoke` hook — Google has one and is the one provider that must not call it,

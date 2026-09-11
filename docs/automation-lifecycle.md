@@ -1454,17 +1454,6 @@ durable-final-turn check was rejected because saving a definition does not repla
 the conversation's reply. A real workerd regression drives the authoring tool,
 checks publication, and requires a completed run with a persisted final turn.
 
-### 2026-09-08 — Fence publication effects and preserve compatibility deployment
-
-Review exposed out-of-order registration replacement, model schemas that could
-not express instruction-only definitions, and discovery checks that revoked runs
-for unused sources. Publication now orders registration effects, validates new
-loads separately from active-source revocation, and resolves the real managing
-actor. Keeping v9 deployment configuration prevents merge automation from
-skipping the verified compatibility release; the later class rename must also
-update migration tracking. Permanent email claims and separate stored loading
-policy remain intact rather than conflating visibility with execution rights.
-
 ### 2026-09-07 — Sidekicks compose reusable knowledge with optional execution, and the strip's tiles are the enabled standalone ones
 
 **What changed:** Sidekicks broaden automation ownership to instructions that
@@ -2249,37 +2238,6 @@ unreachable by the shared predicate and removed on 2026-09-03; only the third
 remains). Those depend on the accepting
 person's chosen connections rather than on the submitted draft, so they cannot
 move to submission the way this one could; the class is narrowed, not closed.
-
-### 2026-09-01 — The disposition classifier gets a corpus, and it is a gate
-
-**What changed:** A fixed corpus of real-shaped results, each with the
-disposition a person would have chosen and the reasoning for it, lives in
-`packages/agent-harness/src/prompts/automation-result-disposition-corpus.ts`.
-`scripts/score-automation-disposition-corpus.mjs` scores it against a live
-model and exits non-zero on any miss; a unit test keeps the corpus itself
-honest.
-
-**Why:** This classifier is the only thing between every automation in the
-fleet and every destination it has. Nothing about a disposition raises an
-error, retries, or reaches a dead-letter queue — a result judged `done` simply
-never arrives, and the person waiting for it has no way to know it existed. A
-regression is silent in exactly the direction nobody checks, which is what
-makes this a release gate rather than a nice-to-have.
-
-**Considered and rejected:** Scoring in the ordinary test suite. It needs a
-real model, and a suite that cannot run without provider credentials is a suite
-people learn to skip. Also rejected: one pass rate. A swallowed result and a
-spurious exposure are not interchangeable — the first is invisible, the second
-is a row somebody ignores — and a single number lets a release trade one for
-the other unnoticed, so they are counted and reported separately.
-
-**Consequences:** The unit test guards the corpus, not the model: it refuses a
-case expecting an arm that case's own reach never offers, and it requires all
-three arms to appear, because a classifier that answered `done` to everything
-would pass a corpus of nothing but `done` — and that is precisely the broken
-model this exists to catch. Every case carries a `why`, because when one starts
-failing the question is whether the model drifted or the case was wrong, and
-only a recorded reason answers it later without re-arguing the corpus.
 
 ### 2026-09-01 — Who an automation runs as becomes state somebody can take over
 

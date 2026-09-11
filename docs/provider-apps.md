@@ -552,18 +552,3 @@ both Workers. A personal MCP outage or DCR change is diagnosed at the hosted
 server boundary, not by editing the public connection dashboard.
 
 Shipped in #139.
-
-### 2026-08-12 — Notion's user approver installs a Rally workspace bot
-
-**What changed:** The registration guide now distinguishes Notion's required
-`owner=user` OAuth parameter from Rally's workspace-only connection scope. An
-Rally owner or administrator authorizes the selected pages, the regional row has
-no user owner, and the installed bot is the provider actor.
-
-**Why:** The provider dashboard and token response name the approving user, which
-made it tempting to classify the connection as personal. That classification was
-wrong for the product surface: the integration bot authors mutations and the
-selected pages are intended as a shared Rally workspace capability. Changing the
-provider parameter was rejected because it would break the public OAuth contract
-rather than change Rally's authorization model.
-
