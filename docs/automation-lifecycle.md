@@ -302,12 +302,27 @@ event happens *inside* — a repository, a channel, a project, a page, a folder,
 Drive file, a mail thread — never the files, commits, check runs, messages or
 pull requests the events themselves produce, and never a resource with no
 connection to bind through, which is every upload, note and generated document.
-The accept-side validator, the drafting tool's pre-flight check, and the
-normalizer that drops an unusable id all ask that one function, and so does
-`resources_search`: it searches that set and nothing else. An empty result there
-is the answer that no resource can narrow this rule, and the rule is written with
-a filter leaf instead — one repository is `repository equals owner/name`, which
-every GitHub event declares a filter field for.
+The accept-side validator, the drafting tool's pre-flight check, the normalizer
+that drops an unusable id, and the reconciler that turns a watched work-stream
+resource into registrations all ask that one function, and so does
+`resources_search`: it searches that set and nothing else, and reports it as
+`searchableResourceTypes` beside the rows.
+
+That field is what an empty answer has to be read against, because after the
+filter an empty page has two unrelated causes. With types listed, the query
+matched none of them and another wording may: the container exists and the rule
+should still name it. With no types listed, no resource can narrow a rule in this
+workspace at all, and only then is the rule written with a filter leaf instead —
+one repository is `repository equals owner/name`, which every GitHub event
+declares a filter field for. Telling the model the second when the first is true
+is how a search miss reaches a person as "the automation system cannot bind
+this", which is the sentence the whole path exists to stop repeating.
+
+A declared relationship is not a promise that anything materializes the type:
+Granola declares `granola_folder` and writes only `granola_note`, so a Granola
+workspace searches a type that has no rows. That reads as the first case above
+and is indistinguishable from a miss from here; it is a connector-side gap, and
+[`connectors.md`](connectors.md) carries the invariant it violates.
 
 **Inbound email** arrives at the automation's permanent address
 ([`workstream-email-addresses.md`](workstream-email-addresses.md)). The regional
@@ -712,12 +727,16 @@ normalizer now all read it rather than each walking `resourceRelationships`
 itself. `resources_search` reads it too: it passes those types to
 `ResourceService.list`, whose new optional `resourceTypes` confines a page to
 them, and an empty admissible set returns nothing rather than everything. Each
-returned row carries the `relationships` it is reached through, which the tool's
-description had promised since it was written and never sent. The description now
-also says what an empty result means, so the model writes the rule with a filter
-field instead of hunting for an id. [`connectors.md`](connectors.md) carries the
-matching invariant, because declaring a relationship is now also what makes a
-container findable while somebody is drafting.
+returned row carries the `relationships` it is reached through — resolved
+against its own plugin's declarations rather than the workspace-wide union — and
+the answer carries `searchableResourceTypes`, which is what separates "this query
+matched nothing" from "nothing here could ever match". The description stops
+enumerating a vocabulary by hand and points at that field instead;
+`plugin_inspect` now projects `resourceRelationships`, so the refusal that tells
+the model to read the relationships it lists is finally true.
+[`connectors.md`](connectors.md) carries the matching invariant, because
+declaring a relationship is now also what makes a container findable while
+somebody is drafting.
 
 **Why:** `resources_search` offered every resource in the workspace, ordered by
 recency, ten at a time. Connector activity materializes a resource per file,
@@ -735,9 +754,24 @@ being different answers, which is the defect class this path already carries
 scars from. The set is derived from the drafting catalog the model inspects, not
 from a list of types maintained beside it, so a connector that declares a new
 relationship is searchable the moment it declares it and no second place has to
-learn about it.
+learn about it. Review found the fifth caller that had been walking
+`resourceRelationships` alone — WorkspaceDO's watched-resource reconciler — which
+is the same point made against the change itself, so it reads the function now
+too.
 
-What a future change has to respect: an empty `resourceTypes` means *nothing
+The first draft of the tool description told the model an empty result meant no
+resource could narrow the rule. That is only true when the admissible set is
+itself empty, and stating it unconditionally would hand a person "the automation
+system cannot bind this" on a mistyped query — the exact sentence this entry
+exists because of. Hence `searchableResourceTypes`: the tool reports what it
+searched, and the two cases stop looking alike.
+
+What a future change has to respect. `ruleTriggersCanNameAResource` is
+deliberately narrower than the length test it replaced: a relationship entry
+with no `resourceType` cannot equal any resource's type, so an id written
+against it could only ever be refused. That is unreachable through a parsed
+descriptor and is asserted in the contracts test rather than left as a trap.
+An empty `resourceTypes` means *nothing
 matches*, not *no filter*. A caller that means "every type" omits the field, and
 the product's own resource list does. Confining the page also costs the early
 exit the old query got from a common term — SQLite now scans the table rather

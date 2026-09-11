@@ -1845,9 +1845,17 @@ function createAvalonAutomationsPlugin(
         // generated documents, which have no connection to bind through at all.
         // Offering those is what buried the one repository somebody asked for
         // under eighty thousand of its own events.
-        const bindable = automationBindableResourceTypes(
-          catalog.flatMap((entry) => entry.activityTriggers),
+        //
+        // Kept per plugin rather than as one union, because a row's
+        // relationship is its own plugin's answer: two plugins declaring the
+        // same resource type would otherwise each be described with the
+        // other's relationship words. The union is only what search filters on.
+        const bindableByPlugin = new Map(
+          catalog.map((entry) => [entry.pluginId, automationBindableResourceTypes(entry.activityTriggers)]),
         );
+        const searchableResourceTypes = [...new Set(
+          [...bindableByPlugin.values()].flatMap((bindable) => bindable.map((entry) => entry.resourceType)),
+        )];
         const page = await new ResourceService(env, {
           sessionId: `run:${input.harnessRunId}`,
           userId: asUserId(authorUserId),
@@ -1855,11 +1863,7 @@ function createAvalonAutomationsPlugin(
           region: input.region,
           role: membership.role,
           analyticsWorkspaceId: null,
-        }).list({
-          query,
-          limit: 10,
-          resourceTypes: bindable.map((entry) => entry.resourceType),
-        });
+        }).list({ query, limit: 10, resourceTypes: searchableResourceTypes });
         const connectionIds = [...new Set(page.items.map((item) => item.connectionId).filter((id): id is string => id !== null))];
         const plugins = new Map<string, string>();
         if (connectionIds.length > 0) {
@@ -1869,23 +1873,31 @@ function createAvalonAutomationsPlugin(
           ).bind(input.workspaceId, ...connectionIds).all<{ id: string; model_plugin_id: string | null }>();
           for (const row of rows.results ?? []) if (row.model_plugin_id) plugins.set(row.id, row.model_plugin_id);
         }
-        const relationshipsByResourceType = new Map(
-          bindable.map((entry) => [entry.resourceType, entry.relationships]),
-        );
         return {
-          resources: page.items.map((item) => ({
-            id: item.id,
-            title: item.title,
-            resourceType: item.resourceType,
-            provider: item.provider,
-            pluginId: item.connectionId === null ? null : plugins.get(item.connectionId) ?? null,
-            // How the event reaches it — `repository`, `channel`, `project`.
-            // The tool has always said it returns this; until now it returned
-            // an empty `sourceBindingKeys` and nothing else, so the model saw
-            // an id with no account of what naming it would narrow.
-            relationships: relationshipsByResourceType.get(item.resourceType) ?? [],
-            sourceBindingKeys: [],
-          })),
+          // What this tool searched, so an empty `resources` can be told apart
+          // from an empty workspace. A query that matched nothing among types
+          // that exist is a query to rewrite; no types at all is the only case
+          // where no resource could ever narrow the rule, and saying the
+          // second when the first is true is how a search miss reaches a person
+          // as "the automation system cannot bind this".
+          searchableResourceTypes,
+          resources: page.items.map((item) => {
+            const pluginId = item.connectionId === null ? null : plugins.get(item.connectionId) ?? null;
+            const bindable = pluginId === null ? undefined : bindableByPlugin.get(pluginId);
+            return {
+              id: item.id,
+              title: item.title,
+              resourceType: item.resourceType,
+              provider: item.provider,
+              pluginId,
+              // How the event reaches it — `repository`, `channel`, `project`.
+              // The tool has always said it returns this; until now it returned
+              // an empty `sourceBindingKeys` and nothing else, so the model saw
+              // an id with no account of what naming it would narrow.
+              relationships: bindable?.find((entry) => entry.resourceType === item.resourceType)?.relationships ?? [],
+              sourceBindingKeys: [],
+            };
+          }),
         };
       },
     },

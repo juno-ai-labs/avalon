@@ -20,6 +20,7 @@ import {
   WorkspaceExternalEventMatchResultSchema,
   asAutomationId,
   asWorkspaceId,
+  automationTriggersAdmitResourceType,
   IdSchema,
   UserIdSchema,
   SubstreamIdSchema,
@@ -6466,9 +6467,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         && resource.resource_type
         && connection?.status === "active"
         && manifest?.supportsWatches
-        ? manifest.activityTriggers.filter((descriptor) => descriptor.resourceRelationships.some(
-            (relationship) => relationship.resourceType === resource.resource_type,
-          ))
+        ? manifest.activityTriggers.filter(
+            (descriptor) => automationTriggersAdmitResourceType([descriptor], resource.resource_type!),
+          )
         : [];
       await this.applyExternalEventRegistrations({
         schemaVersion: 1,

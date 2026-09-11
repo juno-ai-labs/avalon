@@ -2438,6 +2438,15 @@ export function executeAutomationCreatorDiscoveryTool(
           label: trigger.label,
           description: trigger.description,
           filterFields: trigger.filterFields,
+          // Present only where the event declares one, so presence is the
+          // answer to "can a rule on this event name a resource". The
+          // evaluator tool refuses a resource whose type is not here and says
+          // to read the relationships this tool lists — which it did not list,
+          // so the model was sent to a projection that omitted the one field
+          // the refusal was about.
+          ...(trigger.resourceRelationships?.length
+            ? { resourceRelationships: trigger.resourceRelationships }
+            : {}),
           ...(trigger.openFilterFields ? { openFilterFields: true } : {}),
         })),
       },
@@ -2918,7 +2927,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "resources_search",
-    description: "Search the resources an event rule can be narrowed to, and return canonical resource IDs with their source plugin and binding relationship. Only a container an event declares a relationship to is searchable here: a repository, channel, project, page, folder, file or mail thread. The files, commits, check runs, messages and pull requests that events themselves produce are not, and neither are uploads, notes or generated documents. An empty result means no resource can narrow this rule: write the rule with a filter field from sidekick_plugin_inspect instead, and omit resourceId.",
+    description: "Search the resources an event rule can be narrowed to. Returns canonical resource IDs with their source plugin and the relationship each is reached through, alongside searchableResourceTypes: every resource type this workspace's connected plugins declare a relationship to, which is the whole of what this tool searches. Anything an event produces rather than contains is outside it. Read an empty answer by that field: with types listed, this query matched none of them and another wording may — with none listed, no resource can narrow a rule here at all, so write the rule with a filter field from sidekick_plugin_inspect and omit resourceId.",
     capability: "rally.sidekick.resources.search",
     mode: "read",
     idempotency: "safe",

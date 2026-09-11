@@ -14,6 +14,9 @@ const triggers = {
   plugin_webhook: [
     { eventType: "deploy.finished", eventFamilies: [], resourceRelationships: [] },
   ],
+  plugin_malformed: [
+    { eventType: "thing.happened", eventFamilies: [], resourceRelationships: [{ relationship: "page" }] },
+  ],
 } as const;
 const lookup = (pluginId: string) => (triggers as Record<string, readonly unknown[]>)[pluginId] as never;
 
@@ -86,6 +89,19 @@ describe("dropping a resource id a rule cannot use", () => {
     expect(sourceOf(kept)).toHaveProperty("resourceId", "3d1f8c2a-5b6e-4c7d-8e9f-0a1b2c3d4e5f");
   });
 
+  it("drops an id on a relationship that names no resource type, which no resource can match", () => {
+    // Narrower than the length test this replaced, and deliberately so: a
+    // relationship with no `resourceType` cannot equal any resource's type, so
+    // acceptance would refuse every id written against it. Unreachable through
+    // a parsed descriptor — the schema requires both fields — and this path
+    // runs before that parse.
+    const stripped = withoutUnusableAutomationResourceIds(
+      rule("plugin_malformed", { kind: "event_type", eventType: "thing.happened" }, "3d1f8c2a-5b6e-4c7d-8e9f-0a1b2c3d4e5f"),
+      lookup,
+    );
+    expect(sourceOf(stripped)).not.toHaveProperty("resourceId");
+  });
+
   it("leaves an unknown plugin or event alone for the validator to describe", () => {
     const unknownPlugin = rule("plugin_nowhere", { kind: "event_type", eventType: "x" }, "3d1f8c2a-5b6e-4c7d-8e9f-0a1b2c3d4e5f");
     expect(sourceOf(withoutUnusableAutomationResourceIds(unknownPlugin, lookup))).toHaveProperty("resourceId");
@@ -135,9 +151,17 @@ describe("the resource types a rule may name", () => {
   });
 
   it("leaves out a relationship it cannot read, because it runs before the schema parse too", () => {
+    // One shape per assertion: a single bundled `toEqual` says something broke
+    // without saying which shape did.
+    for (const unreadable of [null, "repository", { relationship: "repository" }, { resourceType: "" }, { resourceType: 7 }]) {
+      expect(
+        automationBindableResourceTypes([{ eventType: "e", resourceRelationships: [unreadable] }]),
+        JSON.stringify(unreadable) ?? "undefined",
+      ).toEqual([]);
+    }
+    // A readable entry beside an unreadable one still counts.
     expect(automationBindableResourceTypes([
-      { eventType: "e", resourceRelationships: [null, "repository", { relationship: "repository" }, { resourceType: "" }] },
-      { eventType: "f", resourceRelationships: [{ resourceType: "slack_channel" }] },
+      { eventType: "e", resourceRelationships: [null, { resourceType: "slack_channel" }] },
     ])).toEqual([{ resourceType: "slack_channel", relationships: [] }]);
   });
 });
