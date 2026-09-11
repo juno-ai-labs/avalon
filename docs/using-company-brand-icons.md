@@ -105,6 +105,10 @@ light/dark art that would fix it. One contrasting neutral is legible in both
 appearances, needs no appearance-specific artwork, and needs no component that
 knows which appearance is on — which [`theming.md`](theming.md) forbids anyway.
 
+Connector icon badges (`.provider-icon`) use the neutral raised surface, default
+border, and default text tokens. They follow light and dark appearance without
+a lime brand tint, for both company marks and generic connector glyphs.
+
 ### Sizing
 
 `.connector-mark` carries a default size and sits low in `app.css`, so a

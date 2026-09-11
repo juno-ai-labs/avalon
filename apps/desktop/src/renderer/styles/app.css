@@ -2538,10 +2538,8 @@ pre {
 .provider-card-heading > div:last-child { display: flex; flex-direction: column; min-width: 0; }
 .provider-card-heading strong { font-size: 14px; font-weight: 500; }
 .provider-card-heading span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); margin-top: 1px; }
-/* The card keeps its tinted chip — this is a control a person clicks, unlike a
-   transcript row's bare mark — and only the glyph inside it becomes the real
-   company mark. `--av-sys-color-brand-ink` is the chip's own foreground, so the
-   mark is painted in it like the line icon it replaced.
+/* Connector badges use neutral theme surfaces and ink, including generic
+   connector glyphs, so their chrome follows the active appearance.
 
    Sized through the surface that owns it, as every other mark here is: a bare
    `.provider-mark` ties with `.connector-mark` on specificity and loses on
@@ -2550,10 +2548,10 @@ pre {
 
 .provider-icon {
   align-items: center;
-  background: color-mix(in srgb, var(--av-sys-color-brand-base) 11%, var(--av-sys-color-surface-raised));
-  border: 1px solid color-mix(in srgb, var(--av-sys-color-brand-base) 26%, var(--av-ref-color-line-2));
+  background: var(--av-sys-color-surface-raised);
+  border: 1px solid var(--av-sys-color-border-default);
   border-radius: var(--av-sys-size-radius-md);
-  color: var(--av-sys-color-brand-ink);
+  color: var(--av-sys-color-text-default);
   display: flex;
   height: 36px;
   justify-content: center;
