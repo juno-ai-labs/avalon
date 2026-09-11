@@ -570,6 +570,25 @@ its transaction was accepted. The durable consequence is still published on
 the sequenced feed to every reader, including that caller. Socket deltas keep
 their newest-value ordering; commands keep their correlated operation ordering.
 
+REST also remains right for the one mutation that selects a child but must not
+be replayed into it: **a read acknowledgement**, which carries how far this
+person has read the conversation on screen and is addressed
+`PATCH /conversations/:parentId/substreams/:substreamId/read-state`. Three
+things disqualify it from the socket, and a future mutation that shares all
+three belongs on REST beside it. The command contract above requires a
+reconnect resend, and this is the one command a reconnect must *not* resend: its
+waterline was computed against a snapshot the reconnect has replaced, so a
+replay reads past a mark made in between. Its caller needs read-your-write,
+because the answer it gets back is the next scroll's input. And a child's viewer
+state reaches no push at all (only Main entries in `substream_user_directory`
+produce the parent's viewer overlay), so there is no later broadcast to correct
+an optimistic apply against, which the ordering rules above assume there is.
+`mark_opened` is the nearest thing on the socket and needs none of the three: it
+is one-way, carries no cursor, and the client settles its own attachment.
+Marking a conversation unread stays on the work stream for a different reason
+again: the sidebar takes that action with no conversation open, so there is no
+child to address.
+
 REST remains right when no child socket exists yet or the mutation belongs to a
 different authority: create a work stream, rename/archive it, manage
 participants or resources, pin it, invite a member, or change workspace
@@ -747,6 +766,7 @@ describes behaviour to replace, not a pattern to copy into something new.**
 | Sending a message | Command frame on the admitted SubstreamAgent socket, answered with a private receipt | Yes. The command is scoped by the socket attachment and remains idempotent across reconnect. |
 | Connector list in workspace settings | `GET /connections`, re-read on every window refocus (`refetchOnWindowFocus: 'always'`) | **No.** The one focus revalidation in the client; the global default is off. See below. |
 | Substream-local commands | `create_message`, elicitation answer, pending-input reorder, stop, and retry use the addressed SubstreamAgent socket with private operation receipts | Yes. |
+| Read acknowledgement | `PATCH /conversations/:parentId/substreams/:substreamId/read-state`, addressed to the conversation whose waterline it moves | Yes, as the stated exception. It selects a child the open socket already selects, and stays on REST because it must not be resent on reconnect, needs read-your-write, and has no corrective push behind it. See **Why child commands use the owning socket**. |
 | Parent/bootstrap mutations | REST | Yes. |
 
 ## Known divergences
@@ -841,19 +861,10 @@ whose dot is Main's, taken with no conversation open and nothing to address.
 
 **Considered and rejected:** carrying it on the open child socket, which is what
 **Why child commands use the owning socket** says for a mutation whose authority
-the connection already selects. Three things argue the other way and none of
-them is the size of the diff. The command contract above requires a stable
-operation id, a private receipt, and a **reconnect resend**, and a read
-acknowledgement is the one mutation here that must *not* be resent after a
-reconnect, because the waterline it carries was computed against a snapshot the
-reconnect has replaced and a mark made meanwhile would be read straight past.
-The caller needs read-your-write, since the answer is the next scroll's input
-and a re-send follows a lost one. And a child's viewer state reaches no push at
-all (only Main entries in `substream_user_directory` produce the parent's viewer
-overlay), so there is no later broadcast to correct an optimistic apply against,
-which is the condition the socket path's ordering rules assume. `mark_opened` is
-the nearest precedent on the socket and it needs none of the three: it is
-one-way, carries no cursor, and the client settles its own attachment.
+the connection already selects. The three things that disqualify it are now
+written into that section rather than left here, because an author adding an
+endpoint reads the rule and not the changelog. Also rejected: leaving the
+exception in this entry alone, for the same reason.
 
 **What a future change has to respect:** if child viewer state ever gains a push
 of its own, the third reason above lapses and the first two do not.

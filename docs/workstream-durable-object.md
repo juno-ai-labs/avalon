@@ -355,7 +355,10 @@ object stores it on the socket attachment and refuses every write on that
 socket with `409 conversation_parent_archived` while still serving reads, and
 the Worker's `writableClient` refuses REST writes the same way. That is how a
 child never outlives its parent's archive without the child ever asking the
-parent again.
+parent again. The one write that is not a write to the conversation is the
+reader's own read waterline, which resolves a read-authorized client and is
+admitted while the parent is archived: a conversation that can still be read
+has to be markable as read, or the divider it draws is one nobody can clear.
 
 Rally uses deterministic `idFromName` identities, so a separate opaque
 child-ID mapping is unnecessary. The active main child is recorded by the D1
@@ -1197,7 +1200,7 @@ misrouted product statement now fails because the table or column is absent.
 - **The object jurisdiction matches the immutable workspace region.** Product-object constructors fail closed when `ctx.id.jurisdiction` is not `us` for Global or `eu` for EU.
 - **`WorkstreamDO` and `AutomationDO` run no model and own no transcript.** Putting an agent in a parent recreates one serialization bottleneck across substreams.
 - **A conversation's parent decides who may read it; the conversation decides who may write.** The Worker asks the parent's `authorizeViewer` and seats the reader, and the socket admission carries the parent's decision down as `parentKind` and `parentArchived`. Answering a read from the conversation's participant list alone would hide an automation's chat from a workspace member the automation admits.
-- **A child never writes after its parent's archive.** The parent reports `archived`, the ticket carries it, the conversation object refuses writes on that socket with `409 conversation_parent_archived`, and the Worker's `writableClient` refuses REST writes. A write path that admits on the participant row alone lets a run keep changing a room that was closed.
+- **A child never writes to *the conversation* after its parent's archive.** The parent reports `archived`, the ticket carries it, the conversation object refuses writes on that socket with `409 conversation_parent_archived`, and the Worker's `writableClient` refuses REST writes. A write path that admits on the participant row alone lets a run keep changing a room that was closed. The reader's own `member_attention` row is outside this: it records what that person has read rather than changing the room, an archived automation's conversation stays readable, and its read-state route therefore resolves a read-authorized client deliberately.
 - **A child is reserved by its parent before it is addressed.** `reserveChild` (or `AutomationDO.create` for `"0"`) runs before the object is initialized, so `listChildren` is complete and revocation can reach every socket. A child that exists only in its own namespace is one nothing can enumerate.
 - **A child's outbox row is deleted when the Queue accepts it, and retry is the Queue's from there.** The receiver's receipt makes a redelivery a no-op. Keeping the row, loading it back, or acknowledging it from the consumer reintroduces the attempt ledger, the load-back RPC, and the acknowledge RPC this design deleted, all of which existed to distrust a primitive that already retries.
 - **`AutomationDO` forwards nothing its children say.** An automation's conversation and its runs produce no sidebar rows, no activity, and no notifications; the workspace hears the automation's own row. Forwarding a run's `directory_common` would put every run in the work-stream directory.
@@ -1703,46 +1706,55 @@ directory write at all.
 
 ### 2026-09-11 — A read is acknowledged by the conversation that was read
 
-**What changed:** `PATCH /workstreams/:id/read-state` is gone, replaced by
+**What changed:** a read is acknowledged at
 `PATCH /conversations/:parentId/substreams/:substreamId/read-state`, which
 resolves the addressed child through `ConversationService` and calls
-`acknowledgeRead` on that object. The desktop's
-`acknowledgeConversationRead` sends the substream it is showing, and the
-surface no longer refuses to acknowledge anything but Main.
-`WorkstreamService.acknowledgeRead` is deleted with the route.
-`POST /workstreams/:id/read-state/mark-unread` stays where it is.
+`acknowledgeRead` on that object. `PATCH /workstreams/:id/read-state` stays
+behind as a Main-only draining shim for released desktops and is no longer used
+by current code; `WorkstreamService.acknowledgeRead` is deleted.
+`POST /workstreams/:id/read-state/mark-unread` does not move.
 
 **Why:** read state is substream-owned. Every `SubstreamAgent` carries its own
-`next_attention_ordinal` and its own `member_attention` row, and the
-2026-09-08 entry below settled that a child's ordinals are deliberately not
-comparable to Main's. The acknowledgement was nevertheless addressed to the
-work stream, and the route built its object client with the substream hard-coded
-to `"0"`, so the client refused to send one from a child at all rather than
-advance the wrong waterline. Both halves were self-consistent and the product
-was not: the child's snapshot carries the child's own
-`firstUnreadSequenceNumber`, the feed draws its unread divider from it, and
-nothing that a reader could do would move `seen_attention_ordinal` there. Since
-appending a turn advances its own author's waterline
-(`appendPreparedParticipantMessage`), what a person saw was a divider pinned
-directly above Rally's reply to them, surviving every reopen and reconnect, and
-clearing only when they sent another message into that substream.
+`next_attention_ordinal` and its own `member_attention` row, and the 2026-09-08
+entry below settled that a child's ordinals are deliberately not comparable to
+Main's. The acknowledgement was nevertheless addressed to the work stream, and
+the route built its object client with the substream hard-coded to `"0"`, so the
+client refused to send one from a child at all rather than advance the wrong
+waterline. Both halves were self-consistent and the product was not: a
+substream drew an unread divider from a waterline nothing a reader did could
+move. [`conversation-surfaces.md`](conversation-surfaces.md) has what that
+looked like on screen.
 
 **Considered and rejected:** carrying the substream on the work-stream route,
 which keeps read state in the family whose own comment says it holds the work
 stream as a workspace object and would put a second substream-addressing family
 beside `/conversations`. Also rejected: aggregating child attention into Main so
 one waterline could serve both, which is the merge the 2026-09-08 entry refused
-for the same reason it refused child viewer aggregation. Making the
-acknowledgement a socket command is discussed in
+for the same reason it refused child viewer aggregation. Also rejected: deleting
+the old route outright. The Worker deploys ahead of the desktop, the updater
+installs on quit, and nothing refuses a client by version, so a build open while
+this ships would send there until its window closed; a 404 would not merely
+leave its dividers up, because that client re-requests a socket snapshot on a
+failed acknowledgement and the snapshot re-runs the send, which sustains itself.
+`architecture.md` kept WorkspaceDO's `create_message` for the same reason on
+2026-09-01. Making the acknowledgement a socket command is argued in
 [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md).
 
 **Consequences:** the acknowledgement is read-authorized rather than writable,
 so an automation's conversation can still record a read after the automation is
-archived, which is the state it stays readable in. A child's viewer effect still
+archived, which is the state it stays readable in. That is a carve-out from the
+archive invariant above, and the Invariants section now says so; a change that
+"tidies" this route onto `writableClient` reintroduces the stuck divider for
+archived Sidekicks, which is what the archived-automation case in
+`conversation-read-state.test.ts` exists to catch. A child's viewer effect still
 does not reach the parent's overlay, so the sidebar row's dot remains Main's
-alone and nothing about this change lights it from a substream. Manual
-mark-unread is still Main-only, which is now a boundary rather than an
-accident: the sidebar takes that action with no conversation open.
+alone and nothing here lights it from a substream. An automation parent now pays
+`authorizeViewer` and its `admitParticipant` seat write per acknowledgement
+rather than per boot, which is the cost of closing the addressing accident where
+a Sidekick's acks skipped its parent's decision entirely. Manual mark-unread is
+still Main-only, which is now a boundary rather than an accident: the sidebar
+takes that action with no conversation open. The shim goes when no build that
+sends to it is still running.
 
 ### 2026-09-11 — A human turn tells the model who sent it
 
@@ -2265,10 +2277,11 @@ schema-bounded except `resourceLinks`, capped at
 `WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT` (10,000 links, of which roughly
 1,700 fill a message), so that is the one field that can cross the 120,000-byte
 guard; the guard drops the envelope with a warn rather than retrying it
-forever, and the number is the team's to set. A child never writes after its
-parent's archive, enforced by the socket admission's `parentArchived` and the
-Worker's `writableClient`, so a change that admits a write from a participant
-row alone reopens that. `workstream_authority_routes` and the `workstreams`
+forever, and the number is the team's to set. A child never writes to the
+conversation after its parent's archive, enforced by the socket admission's
+`parentArchived` and the Worker's `writableClient`, so a change that admits a
+write from a participant row alone reopens that; the reader's own read waterline
+is the one carve-out, and the Invariants section says why. `workstream_authority_routes` and the `workstreams`
 anchor are keyed by the parent id of either kind, because D1 migrations are
 immutable and every reader keys on the same column; the column name is a
 misnomer to live with. The child root keeps four dead columns (`origin_type`,

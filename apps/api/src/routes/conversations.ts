@@ -143,7 +143,7 @@ conversationRoutes.patch("/:parentId/substreams/:substreamId", zValidator("param
       await new SubstreamCreationService(c.env, getAuth(c)).archive(param.parentId, param.substreamId, body.archived);
     }
     if (body.title !== undefined) {
-      const client = await new ConversationService(c.env, getAuth(c)).writableClient(param.parentId, param.substreamId);
+      const client = await new ConversationService(c.env, getAuth(c)).client(param.parentId, false, param.substreamId);
       await client.update({ title: body.title });
     }
     return c.body(null, 204);
