@@ -84,7 +84,11 @@ test("privacy manifest and 1024 App Store icon are present", () => {
   assert.equal(icon.toString("ascii", 1, 4), "PNG");
   assert.equal(icon.readUInt32BE(16), 1024);
   assert.equal(icon.readUInt32BE(20), 1024);
+  assert.notEqual(icon[25], 6, "App Store icons cannot carry an alpha channel");
   assert.ok(statSync(iconPath).size > 10_000);
+
+  const darkDesktop = join(repoRoot, "apps/desktop/resources/app-icons/dark.png");
+  assert.equal(existsSync(darkDesktop), true, "iOS App Icon is the Electron dark selectable icon");
 });
 
 test("required Swift surfaces exist for a complete conversation client", () => {
@@ -104,6 +108,13 @@ test("required Swift surfaces exist for a complete conversation client", () => {
     "Rally/Features/History/HistoryPanel.swift",
     "Rally/Features/Settings/SettingsScreen.swift",
     "Rally/Features/Voice/VoiceBar.swift",
+    "Rally/Features/Chat/FeedProjection.swift",
+    "Rally/Network/WorkspaceSocket.swift",
+    "Rally/App/MainShell.swift",
+    "Rally/Features/Projects/ProjectsScreen.swift",
+    "Rally/Features/Notes/NotesScreen.swift",
+    "Rally/Features/Sidekicks/SidekicksScreen.swift",
+    "Rally/Features/Workspace/DirectorySheets.swift",
     "RallyTests/RallyContractTests.swift",
     "RallyUITests/LaunchUITests.swift",
     "fastlane/ExportOptions.plist",
@@ -121,4 +132,51 @@ test("required Swift surfaces exist for a complete conversation client", () => {
   const model = read("Rally/App/AppModel.swift");
   assert.doesNotMatch(model, /openingMessage: text\.isEmpty \? " " : text/);
   assert.match(model, /openingMessage: text/);
+});
+
+test("iOS feed kinds and shell cover the Electron conversation and directory", () => {
+  const conversation = read("Rally/Features/Chat/ConversationScreen.swift");
+  for (const kind of [
+    "text",
+    "thought",
+    "toolEvent",
+    "pluginActivity",
+    "workAccordion",
+    "elicitation",
+    "system",
+    "automationActivation",
+    "omitted",
+  ]) {
+    assert.match(conversation, new RegExp(`case \\.${kind}`), kind);
+  }
+  const feed = read("Rally/Features/Chat/FeedProjection.swift");
+  assert.match(feed, /messageType == "suggestion"/);
+  assert.match(feed, /kind: \.workAccordion/);
+  assert.match(feed, /\.pluginActivity/);
+  const shell = read("Rally/App/MainShell.swift");
+  assert.match(shell, /ProjectsScreen/);
+  assert.match(shell, /NotesScreen/);
+  assert.match(shell, /SidekicksScreen/);
+  const history = read("Rally/Features/History/HistoryPanel.swift");
+  assert.match(history, /Pin/);
+  assert.match(history, /Archive/);
+  assert.match(history, /Unread/);
+  assert.match(history, /Rename/);
+  const settings = read("Rally/Features/Settings/SettingsScreen.swift");
+  assert.match(settings, /Digest/);
+  assert.match(settings, /Connections/);
+  const desktopApp = readFileSync(join(repoRoot, "apps/desktop/src/renderer/App.tsx"), "utf8");
+  for (const route of [
+    "/workstreams/new",
+    "/workstreams/:id",
+    "/projects/:projectId",
+    "/notes/:id",
+    "/sidekicks",
+    "/sidekicks/:id",
+    "/automations/:id",
+    "/settings",
+    "/meeting",
+  ]) {
+    assert.match(desktopApp, new RegExp(route.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
 });

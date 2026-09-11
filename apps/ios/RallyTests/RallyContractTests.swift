@@ -87,6 +87,148 @@ final class ChatMappingTests: XCTestCase {
     }
 }
 
+final class FeedProjectionTests: XCTestCase {
+    func testProjectsEveryDesktopFeedKind() throws {
+        let json = """
+        [
+          {
+            "turnId": "human",
+            "actor": "human",
+            "transcriptSequence": 1,
+            "createdAtUtc": "2026-09-11T12:00:00Z",
+            "blocks": [{ "type": "text", "text": "Hello", "messageType": "text" }]
+          },
+          {
+            "turnId": "think",
+            "actor": "assistant",
+            "transcriptSequence": 2,
+            "createdAtUtc": "2026-09-11T12:00:01Z",
+            "blocks": [
+              { "type": "thinking", "streaming": false },
+              { "type": "tool", "toolName": "search", "pluginId": "web", "status": "completed" },
+              { "type": "text", "text": "Done." }
+            ]
+          },
+          {
+            "turnId": "ask",
+            "actor": "assistant",
+            "transcriptSequence": 3,
+            "createdAtUtc": "2026-09-11T12:00:02Z",
+            "blocks": [{
+              "type": "text",
+              "messageType": "elicitation",
+              "structuredContent": {
+                "id": "e1",
+                "prompt": "Which one?",
+                "responseType": "radio",
+                "status": "open",
+                "options": [{ "id": "a", "label": "Alpha", "value": "a" }]
+              }
+            }]
+          },
+          {
+            "turnId": "sys",
+            "actor": "system",
+            "entryKind": "status",
+            "statusKind": "assistant_turn_failed",
+            "transcriptSequence": 4,
+            "createdAtUtc": "2026-09-11T12:00:03Z",
+            "blocks": []
+          },
+          {
+            "turnId": "auto",
+            "actor": "assistant",
+            "transcriptSequence": 5,
+            "createdAtUtc": "2026-09-11T12:00:04Z",
+            "blocks": [{ "type": "text", "messageType": "automation_activation", "text": "Ran the digest" }]
+          },
+          {
+            "turnId": "omit",
+            "actor": "assistant",
+            "transcriptSequence": 6,
+            "createdAtUtc": "2026-09-11T12:00:05Z",
+            "blocksOmitted": true,
+            "blocks": []
+          },
+          {
+            "turnId": "suggest",
+            "actor": "assistant",
+            "transcriptSequence": 7,
+            "createdAtUtc": "2026-09-11T12:00:06Z",
+            "blocks": [{ "type": "text", "messageType": "suggestion", "text": "hidden" }]
+          }
+        ]
+        """.data(using: .utf8)!
+        let turns = try JSONCoding.decoder.decode([TranscriptTurn].self, from: json)
+        let rows = FeedProjection.rows(from: turns)
+        let kinds = rows.map(\.kind)
+        XCTAssertTrue(kinds.contains(.text))
+        XCTAssertTrue(kinds.contains(.workAccordion))
+        XCTAssertTrue(kinds.contains(.elicitation))
+        XCTAssertTrue(kinds.contains(.system))
+        XCTAssertTrue(kinds.contains(.automationActivation))
+        XCTAssertTrue(kinds.contains(.omitted))
+        XCTAssertFalse(rows.contains { $0.text == "hidden" })
+        XCTAssertEqual(rows.first { $0.kind == .system }?.statusKind, "assistant_turn_failed")
+        XCTAssertEqual(rows.first { $0.kind == .elicitation }?.elicitation?.options.count, 1)
+        let accordion = try XCTUnwrap(rows.first { $0.kind == .workAccordion })
+        XCTAssertTrue(accordion.nested.contains { $0.kind == .thought })
+        XCTAssertTrue(accordion.nested.contains { $0.kind == .pluginActivity })
+    }
+
+    func testKeepsStreamingThoughtsOutOfAccordion() throws {
+        let json = """
+        [
+          {
+            "turnId": "t",
+            "actor": "assistant",
+            "transcriptSequence": 1,
+            "createdAtUtc": "2026-09-11T12:00:00Z",
+            "blocks": [
+              { "type": "thinking", "streaming": true },
+              { "type": "text", "text": "partial", "streaming": true }
+            ]
+          }
+        ]
+        """.data(using: .utf8)!
+        let turns = try JSONCoding.decoder.decode([TranscriptTurn].self, from: json)
+        let rows = FeedProjection.rows(from: turns)
+        XCTAssertEqual(rows.map(\.kind), [.thought, .text])
+    }
+}
+
+final class DirectoryDecodeTests: XCTestCase {
+    func testMembersPageNestedUser() throws {
+        let json = """
+        { "items": [{ "role": "admin", "user": { "id": "u1", "name": "Ada", "email": "ada@juno-labs.com" } }] }
+        """.data(using: .utf8)!
+        struct Page: Decodable { var items: [RallyMember] }
+        let page = try JSONCoding.decoder.decode(Page.self, from: json)
+        XCTAssertEqual(page.items.first?.id, "u1")
+        XCTAssertEqual(page.items.first?.name, "Ada")
+        XCTAssertEqual(page.items.first?.role, "admin")
+    }
+
+    func testSearchResultsShape() throws {
+        let json = """
+        {
+          "results": [{
+            "id": "r1",
+            "category": "messages",
+            "title": "Ship iOS",
+            "excerpt": "Hello Rally",
+            "location": { "kind": "message", "workstreamId": "wsr_9", "substreamId": "0", "turnId": "t", "transcriptSequence": 1, "range": { "start": 0, "end": 1 } }
+          }]
+        }
+        """.data(using: .utf8)!
+        struct Response: Decodable { var results: [RallySearchHit] }
+        let response = try JSONCoding.decoder.decode(Response.self, from: json)
+        XCTAssertEqual(response.results.first?.kind, "messages")
+        XCTAssertEqual(response.results.first?.snippet, "Hello Rally")
+        XCTAssertEqual(response.results.first?.workstreamId, "wsr_9")
+    }
+}
+
 final class ConversationBootTests: XCTestCase {
     func testDecodesRestBoot() throws {
         let json = """
