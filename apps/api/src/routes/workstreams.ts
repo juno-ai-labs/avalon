@@ -3,7 +3,6 @@ import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
 import { requireSendableMessageLength, zValidator } from "../middleware/validation";
 import {
-  AcknowledgeWorkstreamReadRequestSchema,
   AddParticipantRequestSchema,
   ApplyWorkstreamBatchRequestSchema,
   CreateWorkstreamRequestSchema,
@@ -217,10 +216,15 @@ workstreamRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", 
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
   return c.json(WorkstreamSchema.parse(await client.update(c.req.valid("json"))));
 });
-workstreamRoutes.patch("/:id/read-state", zValidator("param", idParam), zValidator("json", AcknowledgeWorkstreamReadRequestSchema), async (c) => {
-  const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
-  return c.json(WorkstreamSchema.parse(await client.acknowledgeRead(c.req.valid("json"))));
-});
+/**
+ * Mark a work stream unread from the sidebar, where no conversation is open.
+ *
+ * Main's, and only Main's: the sidebar row's dot is drawn from Main's viewer
+ * overlay, and this is addressed with no conversation on screen to name a
+ * substream with. Acknowledging a read is the opposite case (the reader has a
+ * conversation open, which may be a child) and lives on that conversation:
+ * `PATCH /conversations/:parentId/substreams/:substreamId/read-state`.
+ */
 workstreamRoutes.post("/:id/read-state/mark-unread", zValidator("param", idParam), async (c) => {
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
   return c.json(WorkstreamSchema.parse(await client.markUnread()));

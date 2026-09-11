@@ -1701,6 +1701,49 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-11 — A read is acknowledged by the conversation that was read
+
+**What changed:** `PATCH /workstreams/:id/read-state` is gone, replaced by
+`PATCH /conversations/:parentId/substreams/:substreamId/read-state`, which
+resolves the addressed child through `ConversationService` and calls
+`acknowledgeRead` on that object. The desktop's
+`acknowledgeConversationRead` sends the substream it is showing, and the
+surface no longer refuses to acknowledge anything but Main.
+`WorkstreamService.acknowledgeRead` is deleted with the route.
+`POST /workstreams/:id/read-state/mark-unread` stays where it is.
+
+**Why:** read state is substream-owned. Every `SubstreamAgent` carries its own
+`next_attention_ordinal` and its own `member_attention` row, and the
+2026-09-08 entry below settled that a child's ordinals are deliberately not
+comparable to Main's. The acknowledgement was nevertheless addressed to the
+work stream, and the route built its object client with the substream hard-coded
+to `"0"`, so the client refused to send one from a child at all rather than
+advance the wrong waterline. Both halves were self-consistent and the product
+was not: the child's snapshot carries the child's own
+`firstUnreadSequenceNumber`, the feed draws its unread divider from it, and
+nothing that a reader could do would move `seen_attention_ordinal` there. Since
+appending a turn advances its own author's waterline
+(`appendPreparedParticipantMessage`), what a person saw was a divider pinned
+directly above Rally's reply to them, surviving every reopen and reconnect, and
+clearing only when they sent another message into that substream.
+
+**Considered and rejected:** carrying the substream on the work-stream route,
+which keeps read state in the family whose own comment says it holds the work
+stream as a workspace object and would put a second substream-addressing family
+beside `/conversations`. Also rejected: aggregating child attention into Main so
+one waterline could serve both, which is the merge the 2026-09-08 entry refused
+for the same reason it refused child viewer aggregation. Making the
+acknowledgement a socket command is discussed in
+[`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md).
+
+**Consequences:** the acknowledgement is read-authorized rather than writable,
+so an automation's conversation can still record a read after the automation is
+archived, which is the state it stays readable in. A child's viewer effect still
+does not reach the parent's overlay, so the sidebar row's dot remains Main's
+alone and nothing about this change lights it from a substream. Manual
+mark-unread is still Main-only, which is now a boundary rather than an
+accident: the sidebar takes that action with no conversation open.
+
 ### 2026-09-11 — A human turn tells the model who sent it
 
 **What changed:** `ParticipantModelAuthor`'s human arm carries `userId` and

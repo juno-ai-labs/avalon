@@ -824,6 +824,40 @@ read survives, and it is not a precedent.
 
 ## Changelog
 
+### 2026-09-10 — Read acknowledgement is addressed by conversation and stays on REST
+
+**What changed:** `PATCH /workstreams/:id/read-state` moved to
+`PATCH /conversations/:parentId/substreams/:substreamId/read-state`, so the
+acknowledgement names the conversation whose waterline it moves.
+`POST /workstreams/:id/read-state/mark-unread` did not move.
+
+**Why:** read state is per-conversation in the authority (a `member_attention`
+row per `SubstreamAgent`) and was per-work-stream in the API, so a substream's
+read could not be recorded at all. The two operations now sit in different
+families on purpose, and the rule above is what splits them: a read is
+acknowledged by a reader who has that conversation open, so the conversation is
+addressable and is what decides; marking unread is the sidebar's action on a row
+whose dot is Main's, taken with no conversation open and nothing to address.
+
+**Considered and rejected:** carrying it on the open child socket, which is what
+**Why child commands use the owning socket** says for a mutation whose authority
+the connection already selects. Three things argue the other way and none of
+them is the size of the diff. The command contract above requires a stable
+operation id, a private receipt, and a **reconnect resend**, and a read
+acknowledgement is the one mutation here that must *not* be resent after a
+reconnect, because the waterline it carries was computed against a snapshot the
+reconnect has replaced and a mark made meanwhile would be read straight past.
+The caller needs read-your-write, since the answer is the next scroll's input
+and a re-send follows a lost one. And a child's viewer state reaches no push at
+all (only Main entries in `substream_user_directory` produce the parent's viewer
+overlay), so there is no later broadcast to correct an optimistic apply against,
+which is the condition the socket path's ordering rules assume. `mark_opened` is
+the nearest precedent on the socket and it needs none of the three: it is
+one-way, carries no cursor, and the client settles its own attachment.
+
+**What a future change has to respect:** if child viewer state ever gains a push
+of its own, the third reason above lapses and the first two do not.
+
 ### 2026-09-10 — A seed from the local cache paints first and moves no ledger
 
 **What changed:** The sidebar lists, both project directories, and each
