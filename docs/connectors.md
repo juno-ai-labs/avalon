@@ -72,6 +72,17 @@ and Rally never copies that response into source. The shared
 mechanism and provider recipe are in
 [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
+### Settings tool counts
+
+The Connections tables show numeric counts under the Tools heading using `GET /connections/:id/tool-count`.
+The visible-connection authorization check runs before counting. Static connectors
+count agent tools matching the connection's grants and scope; dynamic connectors
+read their live inventory through the normal credential-refresh boundary, including
+any server tool policy. Each row loads independently so a slow provider does not
+hold up the table. Counts refresh when Settings regains focus. A failed inventory
+displays “Unavailable”, including after an earlier successful read, never a stale
+count or a fabricated zero.
+
 ### Credential freshness
 
 Every adapter entry point that authenticates to a provider — `executeTool`, `healthCheck`, `hydrateResource`, `poll`, `pollingActivity.pollStream`, and `revoke` — takes an `AuthorizedConnectorConnection` rather than a `ConnectorConnectionContext`. The difference is a brand that cannot be produced by writing an object literal, because the symbol keying it is declared in `packages/connectors/src/types.ts` and never exported. Refreshing an expiring credential before calling a provider is therefore not a step a caller can forget: it is a value a caller cannot otherwise obtain.
@@ -962,6 +973,15 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-11 — Connections report tool counts
+
+Settings now counts the tools granted to each connection, including live MCP
+inventory and its tool policy. Counting permission capabilities understated what
+one connection exposes. Counts load separately from the connection list so a
+provider outage cannot block Settings; an unreadable inventory remains unavailable
+rather than being reported as zero. Future connectors must use their agent tool
+surface for this count, not a separately maintained number.
 
 ### 2026-09-11 — Google, Slack, Linear, Notion, and Granola describe their parameters
 
