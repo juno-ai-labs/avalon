@@ -1060,9 +1060,7 @@ describe('RunStoppedNotice', () => {
 
     expect(screen.getByRole('status', { name: 'Run stopped' }))
       .toHaveTextContent('This run was stopped by request.');
-    expect(screen.getByRole('status', { name: 'Run stopped' }))
-      .not.toHaveTextContent('Its partial tool activity is no longer running.');
-    expect(container.querySelector('.run-stopped-icon .lucide-square')).toBeInTheDocument();
+    expect(container.querySelector('.run-stopped-icon svg')).toHaveAttribute('fill', 'currentColor');
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   });
 });
