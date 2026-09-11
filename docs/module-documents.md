@@ -280,18 +280,27 @@ Close with a trailer naming the pull request, and the PRD or issue where one
 exists. One line, no heading.
 
 The entry is written and committed before the pull request exists, so its number
-is not knowable at the time. **Adding or correcting that trailer once the pull
-request is open is the one edit the append-only rule permits** — it is about
-finding the change, not about restating why it was made, which is the same
-carve-out [`prds.md`](prds.md#completed-prds-are-frozen) makes for a frozen PRD.
-Write the four fields on the branch, and land the link either by amending before
-the push or in the next commit on the same branch. Nothing above the trailer
-changes.
+is not knowable at the time. Write the four fields on the branch, and land the
+link once the pull request is open — by amending before the push or in the next
+commit on the same branch. The entry stays open for revision until the pull
+request merges (see [Rules](#rules)); after that, **correcting the trailer is the
+one edit the frozen entry permits** — it is about finding the change, not about
+restating why it was made, which is the same carve-out
+[`prds.md`](prds.md#completed-prds-are-frozen) makes for a frozen PRD.
 
 ### What earns an entry
 
-Not every commit. The test: **would a competent engineer, seeing this code fresh,
-plausibly undo it — and be wrong to?** If yes, write the entry.
+Not every commit, and not most of them. The test: **would a competent engineer,
+seeing this code fresh, plausibly undo it — and be wrong to?** If yes, write the
+entry. If the diff explains itself, do not.
+
+The bar is deliberately high, because this section only works while it is short.
+A reader who stops after three entries should have read the three that matter
+most, and every entry that records a small thing pushes a large one further down.
+When the changelogs were consolidated in September 2026, roughly one entry in ten
+recorded a change the diff already explained, and one in ten recorded a commit
+that another entry in the same document already covered. The rules below exist
+to stop both.
 
 Always worth an entry:
 
@@ -306,8 +315,46 @@ Always worth an entry:
   pick it back up.
 - A fix for a production incident, with what actually broke.
 
-Not worth an entry: a rename, a typo, a formatting pass, a dependency bump, or
-any change that leaves the module's behavior and reasoning exactly as they were.
+Never worth an entry, however large the diff:
+
+- **A rename**, unless it leaves a compatibility constraint behind — an export
+  kept for an old caller, a stored key still read, a Durable Object class that
+  cannot be swapped without losing its objects. The entry is then about the
+  constraint, not the name.
+- **A typo, wording, or formatting change**, or a cosmetic restyle that changes
+  no behavior.
+- **A dependency bump or tooling change**, unless it narrowed a contract the
+  module relies on.
+- **A test-only or CI-only change.** What a suite covers is recorded in
+  **Testing**; adding one is not a decision about the module.
+- **Documentation-only work**: a body catching up with the code, a clarification,
+  a correction to an earlier entry's wording. Fix the body; do not log that you
+  fixed it.
+- **Rebase and merge bookkeeping**: a migration renumbered after a collision, a
+  file restored, a heading repaired.
+- **A bug fix that changes no invariant** and had no production incident behind
+  it. The pull request holds it.
+- **A "review fixes" list.** Review changes the entry for the change under
+  review; it does not get an entry of its own.
+
+Two tests catch the rest. If **Why** would say nothing that **What changed** did
+not already say, there is no entry. If **Consequences** would say that nothing
+changes for anyone touching the module next, there is no entry.
+
+### Granularity
+
+- **One entry per pull request per document.** A pull request that makes several
+  changes to one module writes one entry with several paragraphs, not several
+  entries. The changelog records decisions, and a pull request is the unit a
+  decision ships in; commits and review rounds are how it got written, and the
+  record does not need to show the seams.
+- **A cross-cutting change has one owning document.** The full entry goes in the
+  document that owns the mechanism that changed. Every other document the change
+  touched updates its body, and gets an entry only if the change moved *that*
+  module's boundary or invariants — a short one, pointing at the owner's entry
+  for the reasoning. A dozen copies of the same paragraph is not a dozen records.
+- **The four fields are required.** An entry that cannot fill them is a pull
+  request description, and that is where it belongs.
 
 ### Rules
 
@@ -316,12 +363,15 @@ any change that leaves the module's behavior and reasoning exactly as they were.
   memory loses first.
 - **Newest first.** The entries that explain today's code sit at the top, so a
   reader who stops after three has read the three most likely to matter.
-- **Append-only.** Never rewrite or delete an entry, and never edit an old one to
-  agree with a newer decision. An entry that turned out to be wrong is still the
-  true record of what was believed, and knowing that a design was tried and
-  failed is worth as much as knowing what replaced it. The trailer is the sole
-  exception, and only to fill in a link that could not exist yet — see
-  [The shape of an entry](#the-shape-of-an-entry).
+- **Open until merge, frozen after.** While the pull request is open, its entry
+  is revised freely: a review finding changes the entry for the change it found,
+  a later commit on the same branch extends it, and the trailer is filled in when
+  the number exists. Once the pull request merges, never rewrite or delete the
+  entry, and never edit it to agree with a newer decision. An entry that turned
+  out to be wrong is still the true record of what was believed, and knowing that
+  a design was tried and failed is worth as much as knowing what replaced it. The
+  trailer is the sole exception after merge, and only to fill in a link that
+  could not exist yet — see [The shape of an entry](#the-shape-of-an-entry).
 - **A reversal is a new entry**, dated the day it was reversed, naming the entry
   it overturns and saying why the first answer did not hold.
 - **Never invent a why.** When you change a module whose reasoning you do not
@@ -335,6 +385,12 @@ any change that leaves the module's behavior and reasoning exactly as they were.
 - **Length follows consequence.** Three lines for a limit change, a dozen for a
   design replaced. If an entry outgrows the section it explains, the argument
   belongs in a PRD and the entry links to it.
+- **Consolidation is a deliberate pass, not a habit.** The changelogs were
+  consolidated once, in September 2026, to the granularity above: entries one
+  commit had split across several headings were merged, and entries that failed
+  the test above were dropped. An entry that `git log` shows and the document
+  does not went in that pass. Do not repeat it piecemeal; if the rules drift
+  again, fix the rules and run one pass.
 
 ### Starting one
 
