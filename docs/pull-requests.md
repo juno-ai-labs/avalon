@@ -2,18 +2,13 @@
 
 This document defines the **required shape of every pull request description**
 in this repository, and the rules for opening and landing the pull request
-itself. Read it before opening a PR. The diff shows *how* something changed; the
-description is the durable record of *what* changed and *why*, and it is the
+itself. Read it before opening a PR. The diff shows _how_ something changed; the
+description is the durable record of _what_ changed and _why_, and it is the
 reviewer's map through the change.
 
 [`.github/pull_request_template.md`](../.github/pull_request_template.md)
 pre-fills a new PR with this shape. The template is the layout; this document is
 the specification behind it, and the two are updated together.
-
-[`.claude/skills/ship-pr/SKILL.md`](../.claude/skills/ship-pr/SKILL.md) walks an
-agent through this process end to end — writing the description against this
-spec, running a review swarm, waiting for CI, merging, and confirming the
-resulting deploy. Invoke it as `/ship-pr`.
 
 ## Required sections
 
@@ -40,6 +35,7 @@ Every PR description **must** include these sections, in this order, as Markdown
 
    Include what is genuinely relevant and skip what is not. The test: a reader
    should come away understanding why this change is worth making now.
+
 3. **Key changes** — The substantive changes, grouped by area with bold
    lead-ins (`**Worker:**`, `**Desktop renderer:**`, `**Connectors:**`,
    `**Contracts:**`). Every reviewer-relevant change appears here.
@@ -48,7 +44,7 @@ Every PR description **must** include these sections, in this order, as Markdown
    approach rather than the obvious alternative. This is the non-obvious
    mechanics a reviewer would otherwise reverse-engineer from the diff.
 5. **Notable internals** — The subtle, easy-to-miss parts a future maintainer
-   needs. If a reviewer would ask "wait, why does *that* work?", answer it here.
+   needs. If a reviewer would ask "wait, why does _that_ work?", answer it here.
 
 ## Optional sections
 
@@ -114,12 +110,8 @@ pass `--draft` to `gh pr create`, do not set `draft: true` through the API, and
 do not use GitHub's "Create draft pull request" button. If a change is not ready
 for a reviewer to read, leave it on the branch and open the PR when it is.
 
-A draft suppresses review requests and reads as "not my turn" to everyone
-looking at the queue, so a PR that is in fact finished sits untouched until
-someone notices it was never marked ready. Opening ready keeps the queue honest:
-if a PR is open, it wants a review. Use the description — **Reviewer notes** for
-deferred work, **Validation** for a known-failing check — to say what is still
-in flight, rather than the draft state.
+Use the description — **Reviewer notes** for deferred work, **Validation** for a
+known-failing check — to say what is still in flight, rather than the draft state.
 
 If you inherit a draft PR, mark it ready (`gh pr ready <n>`) rather than leaving
 it in that state.
@@ -127,8 +119,11 @@ it in that state.
 ## Branch style and merge style
 
 These are two different rules that point in opposite directions, and both are
-deliberate. **Rebase the branch while the pull request is open; merge the pull
-request when it lands.**
+deliberate.
+
+**Only rebase a branch if there is a conflict otherwise merge the pull request.**
+Do not rebase just because `main` has moved; only rebase when there is a conflict
+or a dependency on new changes in `main`.
 
 ### While the pull request is open: rebase
 
@@ -147,12 +142,10 @@ merge commits interleaving unrelated work into it. That also keeps the branch's
 own history bisectable and makes it obvious which `main` the change was tested
 against.
 
-Always `--force-with-lease` rather than `--force`, so a push is refused if
-someone else has touched the branch since you last fetched it. Rebase when the
-branch needs `main`'s content — a conflict, a dependency on something that just
-landed — not on a schedule and not as a pre-merge ritual; a clean branch merges
-as it is, per [A moving `main` is not a reason to hold a clean
-merge](#a-moving-main-is-not-a-reason-to-hold-a-clean-merge) below.
+Rebase when the branch needs `main`'s content — a conflict, a dependency on
+something that just landed — not on a schedule and **not as a pre-merge ritual**;
+a clean branch merges as it is, per [A moving `main` is not a reason to hold a
+clean merge](#a-moving-main-is-not-a-reason-to-hold-a-clean-merge) below.
 
 Two things to know before rebasing:
 
@@ -163,9 +156,6 @@ Two things to know before rebasing:
   compare against the pre-rebase state (`git diff <backup-ref> HEAD`) and
   re-commit anything the rebase dropped. Keeping to rebases from the start
   avoids the situation entirely.
-- **Force-pushing marks inline review threads outdated**, because the commits
-  they were anchored to no longer exist. Summary comments survive. Prefer to
-  rebase when a review round is finished rather than in the middle of one.
 
 ### When the pull request lands: merge
 
@@ -187,7 +177,9 @@ A branch is ready to merge as soon as two conditions are met: the pull request's
 own head is green, and the repository's own merge requirements are satisfied —
 no conflict, plus whatever reviews and required checks branch protection asks
 for. `main` having advanced since those checks started is **not** a third
-condition. Do not rebase, force-push, and wait for a replacement run purely to
+condition.
+
+Do not rebase, force-push, and wait for a replacement run purely to
 have CI observe a head that sits on the newest `main`: by the time that run
 finishes `main` has usually moved again, so each attempt costs a cycle and
 reopens the same gap it just closed. What that gap is, and what it is worth, is
@@ -212,13 +204,13 @@ is red, and `CLEAN` means nothing is left. A branch can be `MERGEABLE` and
 `BLOCKED` at the same time, so read both fields rather than treating the first
 as the whole answer.
 
-Leave branch protection's *Require branches to be up to date before merging*
+Leave branch protection's _Require branches to be up to date before merging_
 off, because turning it on encodes exactly the chase this section forbids. It is
 also the setting that produces the `BEHIND` state: with it off, `BEHIND` never
 appears, which is the mechanical reason this section's rule can be a binary on
 mergeability rather than a judgement about distance from `main`.
 
-Rebase before merging a *mergeable* branch only when something concrete about
+Rebase before merging a _mergeable_ branch only when something concrete about
 `main`'s new commits interacts with this change — a migration prefix that now
 collides per **Database migrations** above, a rename or signature change landing
 in the same files, a contract both sides edited. That is a judgement about two
@@ -237,7 +229,7 @@ Know where that risk actually lands here. `.github/workflows/ci.yml` triggers on
 `pull_request` only: **nothing runs the suite on `main` after a merge.** The
 deployment workflows that do trigger on a push to `main` are path-filtered and
 verify a deployment, not the tree. So the first run to exercise the merged
-content is the *next* pull request's, which merges its branch into the `main`
+content is the _next_ pull request's, which merges its branch into the `main`
 this change just became part of — soon, on a repository this active, and by
 someone who did not write it. That is the cost being accepted, and it is why the
 exceptions above are worth applying with some care rather than waved through.
@@ -262,7 +254,7 @@ work as new commits.
 - Reference files, tables, bindings, and migrations by their real names so a
   reviewer can jump straight to them.
 - A **required** section with genuinely nothing to say keeps its heading and
-  gets `N/A — <reason>`. Only *optional* sections disappear entirely.
+  gets `N/A — <reason>`. Only _optional_ sections disappear entirely.
 
 ## Skeleton
 
@@ -278,6 +270,7 @@ work as new commits.
 ## Key changes
 
 **<Area>:**
+
 - <change>
 
 ## Implementation details
@@ -288,15 +281,23 @@ work as new commits.
 
 - <the subtle parts>
 
-## Key design decisions          <!-- optional -->
-## Architecture highlights       <!-- optional -->
-## Database migrations           <!-- optional; required when the PR adds one -->
-## Regional impact               <!-- optional -->
-## Security and trust model      <!-- optional -->
-## Provider configuration        <!-- optional -->
-## Related or new documentation  <!-- optional -->
-## Reviewer notes                <!-- optional -->
-## Validation                    <!-- optional -->
+## Key design decisions <!-- optional -->
+
+## Architecture highlights <!-- optional -->
+
+## Database migrations <!-- optional; required when the PR adds one -->
+
+## Regional impact <!-- optional -->
+
+## Security and trust model <!-- optional -->
+
+## Provider configuration <!-- optional -->
+
+## Related or new documentation <!-- optional -->
+
+## Reviewer notes <!-- optional -->
+
+## Validation <!-- optional -->
 ```
 
 ## Worked example
@@ -321,13 +322,16 @@ user having to remember to turn anything back on.
 ## Key changes
 
 **Data model:**
+
 - Added `workstream_participant_mutes` (`workstream_id`, `user_id`,
   `muted_until`).
 
 **Worker:**
+
 - `PUT /workstreams/:id/mute` sets or clears the window.
 
 **Desktop renderer:**
+
 - Added a mute item to the work-stream header menu (1h / 8h / until cleared).
 
 ## Implementation details
