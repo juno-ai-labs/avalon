@@ -372,21 +372,14 @@ export interface AutomationBindableResourceType {
  * The resource types a rule may narrow itself to, given the triggers it could
  * match.
  *
- * This is the one answer to "may this rule name that resource". A `resourceId`
- * is admitted only where the event's own descriptor declares a relationship to
+ * The one answer to "may this rule name that resource": a `resourceId` is
+ * admitted only where the event's own descriptor declares a relationship to
  * that resource's type, so every type outside this set is a refusal the
- * validators are certain to reach. Three callers ask the question and each
- * used to spell the answer out again: the normalizer that drops an unusable id
- * before the parse, the accept-side validator, and the drafting tool's
- * pre-flight check.
- *
- * The fourth caller is why it became a function. `resources_search`
- * offered the model every resource in the workspace, including the tens of
- * thousands of files, commits, check runs and pull requests that connector
- * activity produces and that no rule can bind, so the container a rule
- * actually wanted was crowded out of the result entirely. Search now asks this
- * same set what is worth offering, which is what keeps "what search returns"
- * and "what acceptance admits" from being two different answers.
+ * validators are certain to reach. Every caller asks it here rather than
+ * walking `resourceRelationships` again — the normalizer, both validators, the
+ * watched-resource reconciler, and the search that decides what to offer at
+ * all. Why that last one forced the extraction is in
+ * `docs/automation-lifecycle.md`'s changelog.
  *
  * Shape-tolerant in the way {@link withoutUnusableAutomationResourceIds} is:
  * it reads descriptors both before and after their schema parse, so a
@@ -417,7 +410,7 @@ export function automationBindableResourceTypes(
 /**
  * Whether a rule matching these triggers may name a resource of this type.
  *
- * The predicate both validators ask, kept beside the set rather than rederived
+ * The predicate every validator asks, kept beside the set rather than rederived
  * at each call site: search offering a type acceptance would refuse, or
  * refusing one it would admit, is the single defect this pair exists to make
  * unrepresentable.

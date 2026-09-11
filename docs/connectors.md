@@ -963,6 +963,23 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-09-11 — A declared relationship is what makes a container findable
+
+**What changed:** The invariant above, and nothing in the adapters. A resource
+type reaches a Sidekick's evaluator rules only where some activity trigger
+declares a `resourceRelationships` entry for it, and as of
+[`automation-lifecycle.md`](automation-lifecycle.md)'s entry of the same date
+that set is also the whole of what the drafting search offers.
+
+**Why:** Declaring the relationship used to decide one thing — whether a watch
+routed events — and it now decides two, so an adapter that omits one makes the
+container invisible to whoever is drafting as well as inert once drafted. It is
+recorded here because the decision belongs to the adapter author, who has no
+reason to read the Sidekick module's changelog, and because the tree already
+carries one instance of the failure in the other direction: `granola_folder` is
+declared and never written, which is a relationship pointing at nothing and an
+empty search with no way to say why.
+
 ### 2026-09-10 — GitHub list tools answer in an envelope, and every parameter is described
 
 **What changed:** All 112 GitHub tool parameters carry a `description`; the
