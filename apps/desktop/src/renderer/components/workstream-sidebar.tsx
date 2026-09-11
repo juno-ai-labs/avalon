@@ -202,8 +202,18 @@ export function WorkstreamSidebar({ workstream, creatingSubstream = false, prese
               <span aria-hidden="true" className="workstream-context-mark">
                 <IconCornerDownRight className="workstream-substream-arrow" size={22} stroke={1.5} />
               </span>
-              <span className="workstream-context-copy">
-                <TitleSkeleton label="Rally is creating this substream" />
+              {/* The row's name, and outside the copy below on purpose: compact
+                  hides that element with `visibility: hidden`, which takes
+                  everything inside it out of the accessibility tree as well as
+                  off the screen. Every other row survives that because its name
+                  is an `aria-label` on the button; this one has no button to
+                  carry one, so the text sits on the row itself. */}
+              <span className="sr-only">Rally is creating this substream</span>
+              {/* Decorative from here: a pulsing bar standing in for a title
+                  nothing has chosen yet, with the skeleton's own label
+                  suppressed so the row is not announced twice. */}
+              <span aria-hidden="true" className="workstream-context-copy">
+                <TitleSkeleton />
               </span>
             </div>
           )}

@@ -534,7 +534,12 @@ conversation is the one thing the creation path refuses to invent. Keeping
 **New substream** current as well, which would mark two rows.
 
 **Consequences:** The row is a `div`, not a button — there is nowhere to
-navigate to, because the reader is already on the surface it stands for. The
+navigate to, because the reader is already on the surface it stands for. Its
+name is therefore screen-reader-only text on the row itself rather than an
+`aria-label` on a control, and it sits outside `.workstream-context-copy`
+because the compact rail hides that element with `visibility: hidden`, which
+takes what is inside it out of the accessibility tree as well as off the screen;
+the skeleton beside it is `aria-hidden`, so the row is named once. The
 swap is seamless only because readiness broadcasts the parent's directory before
 confirmation answers; if that ever inverts, the rail will blink between the
 pending row and the real one and this is where to look.

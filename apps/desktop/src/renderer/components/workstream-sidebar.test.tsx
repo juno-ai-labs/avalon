@@ -228,6 +228,18 @@ describe('WorkstreamSidebar', () => {
     const create = screen.getByRole('button', { name: 'New substream' });
     expect(create).not.toHaveAttribute('aria-current');
     expect(create.className).not.toContain('is-current');
+    // Compact hides `.workstream-context-copy` with `visibility: hidden`, which
+    // takes everything inside it out of the accessibility tree — so the row's
+    // only name must not live there. Every other row survives the collapse on
+    // its button's `aria-label`; this one has no button, so the text is on the
+    // row. jsdom applies no stylesheet, so the assertion is where the text sits
+    // rather than whether it computed to hidden.
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse work-stream sidebar' }));
+    expect(sidebar).toHaveClass('is-compact');
+    const name = within(sidebar).getByText('Rally is creating this substream');
+    expect(name.closest('.workstream-pending-substream')).toBe(pending);
+    expect(name.closest('.workstream-context-copy')).toBeNull();
+    expect(pending?.querySelector('.workstream-context-copy')).toHaveAttribute('aria-hidden', 'true');
   });
 
   it('keeps the arrow for a substream whose title has no first character', () => {
