@@ -165,8 +165,9 @@ The batch, document and display schemas strip keys they do not name rather
 than reject them. A deploy runs the objects and the Queue consumer on different
 builds for minutes (see [version skew](#version-skew-between-producers-and-the-consumer)),
 so a consumer must index a document from a producer ahead of it with the fields
-it understands, and it logs `search_document_keys_ignored` with the stripped key
-paths when that happens. A field is therefore added in one deploy and
+it understands, and it logs `search_document_keys_ignored` naming the source
+(the resource, or the parent, substream and turn) and the stripped key paths
+when that happens. A field is therefore added in one deploy and
 back-filled by a re-projection migration in a later one: a re-projection that
 ships beside the field it needs is partly consumed by the old build and leaves
 rows without it, and the log is what says whether that happened.
@@ -350,6 +351,7 @@ reloaded from a canonical source.
 - Every writer of a conversation's display writes the current state it reads beside the text: the producer at upsert time, the patch job when it runs. A display job names the conversation and never carries a title, so a delayed or redelivered job cannot write an old one; the pipeline's post-write fence retries an upsert whose display changed underneath it, and the patch job re-reads the display after patching and retries when it changed, so two overlapping deliveries for one conversation converge on the newest state rather than the last to run.
 - A resource result's time is the resource's `updated_at` as of its last search-input change. Bookkeeping writes (processing state, webhook provenance, hydration stamps) bump `updated_at` without requeueing the row, on purpose, so the index shows when the content last changed rather than when the row was last touched.
 - Public cursors identify consumed candidate positions and never grant access. Fully rejected pages may expose continuation; index-existence concealment is not part of this member-only API.
+- A field added to the search document ships in one deploy and is back-filled by a re-projection migration in a later one, never the same one: the consumer strips what it does not know, so a re-projection consumed during the skew window writes rows without the field. The Queue envelope schemas stay strict, so a new envelope field is a new message type rather than an added key.
 
 - One tokenizer is retained per isolate (about 26 MiB after releasing construction
   tables in a local Node 22 heap measurement). Its model stays closure-private; only the policy wrapper is
@@ -433,13 +435,26 @@ leaves its row exactly as it was (for that deploy, without `connection_id` and
 the display attributes, so search omits it) until the source next mutates,
 which for a connector resource can be never.
 
-The schemas now strip unknown keys, so the window produces rows written to the
-old contract instead of dead letters, and the consumer names the stripped keys
-in `search_document_keys_ignored`. What it does not produce is a row with the
-new field: the deploy rule in [One Queue pipeline](#one-queue-pipeline) exists
-because only a re-projection that runs after the window rewrites those rows.
-Clearing the intent on successful indexing rather than on publish would make a
-dead letter recoverable by the object itself; that is the open question below.
+The batch, document and display schemas now strip unknown keys, so the window
+produces rows written to the old contract instead of dead letters, and the
+document phase names the source and the stripped keys in
+`search_document_keys_ignored`, which is what the 2026-09-10 retry log lacked:
+the rows a future window writes behind the contract can be listed from that
+log and re-projected on their own. The embedding phase parses through the same
+tolerant schemas but does not log; it compares identity and content hash and
+writes none of the stripped fields. What the window does not produce is a row
+with the new field: the deploy rule in [One Queue pipeline](#one-queue-pipeline)
+exists because only a re-projection that runs after the window rewrites those
+rows. The Queue envelope schemas (`SearchDocumentJobSchema`,
+`SearchEmbeddingBatchSchema`, the source and display messages) stay strict on
+purpose: an old consumer must retry an envelope it does not recognize rather
+than acknowledge it, so a new envelope field is a new message type, not an
+added key, and is not covered by this tolerance. Migration 53 re-queues only
+turns still present in `participant_transcript_turns`; a deletion tombstone
+whose job dead-lettered is not repaired by that pass, which no code path can
+produce today because nothing deletes a turn. Clearing the intent on
+successful indexing rather than on publish would make a dead letter
+recoverable by the object itself; that is the open question below.
 
 Turbopuffer requires a valid embedding for live documents in a vector-enabled
 namespace. Callers must retain failed projection work for retry. The service does
@@ -609,12 +624,13 @@ budgets require team policy; no arbitrary new caps are introduced here.
 ### 2026-09-11 — Tolerate document fields from a newer build, and re-project the rows the skew lost
 
 **What changed:** The search batch, document and display schemas are plain
-objects that strip keys they do not name, where they were strict. The document
-phase logs `search_document_keys_ignored` with the stripped key paths.
+objects that strip keys they do not name, where they were strict; the Queue
+envelope schemas stay strict. The document phase logs
+`search_document_keys_ignored` naming the source and the stripped key paths.
 WorkspaceDO migration 51 marks every resource pending and SubstreamAgent
 migration 53 re-queues every committed turn, the same passes migrations 47 and
 52 ran. The rule that a new document field ships in one deploy and its
-re-projection in a later one is written into the pipeline section.
+re-projection in a later one is an invariant above.
 
 **Why:** The 2026-09-10 deploy that added `display`, `substreamId` and
 `connectionId` produced 535 `search_indexing_retry` warnings in twenty-five
@@ -630,7 +646,13 @@ that adds a field would do the same.
 **Considered and rejected:** Keeping the schemas strict and lengthening the
 retry schedule, so a rejected job outlives the window; a consumer isolate's
 lifetime is not bounded by anything this repository controls, so no delay is
-known to be enough. Re-marking pending only for workspaces active in the
+known to be enough. Rejecting on every attempt but the last and stripping only
+then, which would keep the self-healing the strict schema had (most of the 535
+rejected deliveries landed on a new isolate on a later attempt) without a new
+number; the consumer does not know the queue's retry budget, so the budget
+would be a second copy of a Wrangler setting kept in step by hand, and the
+rows it still strips on the last attempt need the same follow-up re-projection
+either way. Re-marking pending only for workspaces active in the
 window; no source we have lists them (the log carries no id, the dead-letter
 queue has no consumer and expires in 24 hours), and a list that misses one
 leaves a stale row nobody will notice, where a full pass at the cost migration
@@ -645,8 +667,14 @@ and a number the team has to set, which is more than an incident fix.
 **Consequences:** A consumer behind its producers now writes rows to the
 contract it knows, silently except for the log, so a field that has to reach
 existing rows must be back-filled by a migration in the deploy after the one
-that adds it. Both new migrations are lazy until the fleet is force-migrated,
-like 47 and 52. `pending` still clears on publish; a dead letter still needs a
+that adds it; because the log names the source, that back-fill can be targeted
+next time where this one could not be. Both new migrations are lazy until the
+fleet is force-migrated, like 47 and 52, and migration 53 does not repair a
+dead-lettered deletion tombstone, which nothing produces today. Migration 53
+carries its own copy of migration 52's statement rather than sharing a
+constant: 52's text is hashed into a receipt on every migrated object, and an
+edit to a shared constant would fail every SubstreamAgent constructor in both
+regions. `pending` still clears on publish; a dead letter still needs a
 redrive or a re-projection until the open question is taken up.
 
 Shipped in #691.

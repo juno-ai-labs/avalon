@@ -72,15 +72,15 @@ export function createSearchIndexingPipeline(env: Env) {
   return async (reference: SearchSourceReference, load: (captureLinks?: boolean) => Promise<SearchDocumentBatch>): Promise<void> => {
     // A producer on a newer build may name fields this build does not. They
     // are indexed without them (the schema strips, never rejects) and named
-    // here, so a deploy can see from the logs which rows the skew window wrote
-    // behind the contract and whether a re-projection has to follow it.
-    const parseBatch = (batch: unknown) => {
-      const ignored = ignoredSearchDocumentKeys(batch);
-      if (ignored.length) logWarn(env, 'search_document_keys_ignored', { region: env.AVALON_REGION,
-        workspace_id: reference.workspaceId, ignored_keys: ignored.join(',') });
-      return SearchDocumentBatchSchema.parse(batch);
-    };
-    const input = parseBatch(await load());
+    // here with the source, so a deploy can list from the logs which rows the
+    // skew window wrote behind the contract and re-project exactly those.
+    const raw = await load();
+    const ignored = ignoredSearchDocumentKeys(raw);
+    if (ignored.length) logWarn(env, 'search_document_keys_ignored', { workspace_id: reference.workspaceId,
+      ...(reference.type === 'resource_search_projection_v1' ? { resource_id: reference.resourceId }
+        : { parent_id: reference.parentId, substream_id: reference.substreamId, turn_id: reference.turnId }),
+      ignored_keys: ignored.join(',') });
+    const input = SearchDocumentBatchSchema.parse(raw);
     if (!input.documents.length) {
       if (input.retry) throw new Error('search_source_retry_required');
       return;
@@ -107,7 +107,7 @@ export function createSearchIndexingPipeline(env: Env) {
     }
     // An edit or deletion can commit during fan-out. Remove this stale
     // generation before retrying; newer revisions are never removed by this job.
-    const current = parseBatch(await load(false));
+    const current = SearchDocumentBatchSchema.parse(await load(false));
     let changed = false;
     for (const document of input.documents) {
       const next = current.documents.find((value) => value.id === document.id);

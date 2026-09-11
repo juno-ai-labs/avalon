@@ -311,7 +311,7 @@ describe('re-projection after the consumer version skew', () => {
     });
   });
 
-  it('requeues every committed turn at its current revision and keeps a newer pending one', async () => {
+  it('requeues every committed turn at its current revision, recreating a drained reference and advancing a stale one', async () => {
     const stub = env.MIGRATION_PROBE_DO!.getByName('search-reprojection-upgrade-from-v52');
     await stub.ping();
     const identity = { workspaceId, workstreamId: '00000000-0000-7000-8000-000000009e04' };
@@ -329,19 +329,21 @@ describe('re-projection after the consumer version skew', () => {
           text: `Searchable ${turnId}`, createdAtUtc: '2026-09-10T00:00:00Z', attentionOrdinal: ordinal });
       }
       const sql = state.storage.sql;
+      // Both turns have been edited past the revision a fresh append records.
+      sql.exec(`UPDATE participant_transcript_turns SET revision = 4 WHERE turn_id = 'lost-turn'`);
+      sql.exec(`UPDATE participant_transcript_turns SET revision = 5 WHERE turn_id = 'waiting-turn'`);
       // The lost turn's reference was drained before its job dead-lettered; the
-      // waiting one carries an edit the trigger recorded ahead of the row.
+      // waiting one still holds a reference from before its latest edit, in
+      // dispatch backoff.
       sql.exec(`DELETE FROM durable_outbox WHERE message_id = 'search-turn:lost-turn'`);
-      sql.exec(`UPDATE durable_outbox SET source_version = 9, not_before = 456 WHERE message_id = 'search-turn:waiting-turn'`);
+      sql.exec(`UPDATE durable_outbox SET source_version = 2, not_before = 456 WHERE message_id = 'search-turn:waiting-turn'`);
     });
     await runInDurableObject(stub, (_instance, state) => {
       applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
         component: 'substream_agent_do', workerVersionId: 'reprojection', now: 2_000 });
-      const sql = state.storage.sql;
-      const revision = sql.exec<{ revision: number }>(`SELECT revision FROM participant_transcript_turns WHERE turn_id = 'lost-turn'`).one().revision;
-      expect(outbox(sql)).toEqual([
-        { message_id: 'search-turn:lost-turn', source_version: revision, state: 'pending', not_before: 0 },
-        { message_id: 'search-turn:waiting-turn', source_version: 9, state: 'pending', not_before: 0 },
+      expect(outbox(state.storage.sql)).toEqual([
+        { message_id: 'search-turn:lost-turn', source_version: 4, state: 'pending', not_before: 0 },
+        { message_id: 'search-turn:waiting-turn', source_version: 5, state: 'pending', not_before: 0 },
       ]);
     });
   });

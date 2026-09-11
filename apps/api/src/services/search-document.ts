@@ -55,20 +55,32 @@ export const SearchDocumentBatchSchema = z.object({
 export type SearchDocumentBatch = z.infer<typeof SearchDocumentBatchSchema>;
 
 /**
- * The key paths a parse of this batch would strip: what a producer on a newer
- * build sent that this build's contract does not name. Empty on every batch
- * from a producer at or behind this build.
+ * The key paths a parse of this batch strips: what a producer on a newer build
+ * sent that this build's contract does not name, at any depth, found by
+ * comparing the input with what the schema kept rather than by naming the
+ * nesting here, so a field added anywhere in the shape is reported. Empty for
+ * a producer at or behind this build, and empty for a batch the schema
+ * rejects, which the caller's own parse then reports.
  */
 export function ignoredSearchDocumentKeys(input: unknown): string[] {
-  const unknownKeys = (value: unknown, shape: Record<string, unknown>, path: string) =>
-    value !== null && typeof value === 'object' && !Array.isArray(value)
-      ? Object.keys(value).filter((key) => !Object.hasOwn(shape, key)).map((key) => `${path}${key}`)
-      : [];
-  const keys = unknownKeys(input, SearchDocumentBatchSchema.shape, '');
-  const documents = (input as { documents?: unknown } | null)?.documents;
-  for (const document of Array.isArray(documents) ? (documents as unknown[]) : []) {
-    keys.push(...unknownKeys(document, SearchDocumentSchema.shape, 'documents.'));
-    keys.push(...unknownKeys((document as { display?: unknown } | null)?.display, SearchDocumentDisplaySchema.shape, 'documents.display.'));
-  }
-  return [...new Set(keys)];
+  const parsed = SearchDocumentBatchSchema.safeParse(input);
+  if (!parsed.success) return [];
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === 'object' && !Array.isArray(value);
+  const ignored = new Set<string>();
+  const walk = (raw: unknown, kept: unknown, path: string) => {
+    if (Array.isArray(raw)) {
+      if (Array.isArray(kept)) raw.forEach((item, index) => walk(item, kept[index], path));
+      return;
+    }
+    if (!isRecord(raw) || !isRecord(kept)) return;
+    for (const [key, value] of Object.entries(raw)) {
+      // A key set to undefined carries nothing, whichever build sent it.
+      if (value === undefined) continue;
+      if (Object.hasOwn(kept, key)) walk(value, kept[key], `${path}${key}.`);
+      else ignored.add(`${path}${key}`);
+    }
+  };
+  walk(input, parsed.data, '');
+  return [...ignored];
 }
