@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { PROJECT_COLOR_RING, type WorkstreamAppearance } from '@rally/contracts';
 import { glyphInk } from '../lib/project-palette';
 import { Plus } from 'lucide-react';
@@ -138,27 +138,16 @@ describe('HexagonGlyph', () => {
 });
 
 /**
- * A marker explains itself in a tooltip, and Radix refuses one outside a
- * provider. The app mounts one at its root; a test rendering a hexagon on its
- * own supplies the same thing rather than the marker carrying a provider of its
- * own, which would be a second one inside every window.
+ * Every surface that draws a hexagon draws it inside the app's tooltip
+ * provider, and a marker's words are shown by that surface's own tooltip, so a
+ * test renders one the same way rather than in a bare tree the product never
+ * has.
  */
 function renderGlyph(ui: React.ReactNode): ReturnType<typeof render> {
   return render(<Tooltip.Provider>{ui}</Tooltip.Provider>);
 }
 
-/** Radix positions a tooltip with a `ResizeObserver`, which jsdom does not have. */
-function stubResizeObserver(): void {
-  vi.stubGlobal('ResizeObserver', class {
-    observe(): void {}
-    unobserve(): void {}
-    disconnect(): void {}
-  });
-}
-
 describe('HexagonGlyph markers', () => {
-  afterEach(() => vi.unstubAllGlobals());
-
   it('cuts the marker out of the fill it sits on rather than painting over it', () => {
     // `launch-room` draws `lime`, and the running marker is `success-base`. Two
     // greens: painted straight onto the fill the play would be a shape only its
@@ -218,19 +207,29 @@ describe('HexagonGlyph markers', () => {
       .toEqual(ids.map((id) => `url(#${id})`));
   });
 
-  it('says what the symbol stands for when a pointer rests on it', async () => {
-    stubResizeObserver();
-    const { container } = renderGlyph(<AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />);
-    const marker = container.querySelector('.automation-glyph-marker');
+  it('reports the pointer arriving on the marker, and leaving it', () => {
+    // The hexagon does not draw the explanation — a tile has one tooltip slot
+    // and the surface owns it — so what it owes the surface is this: the play
+    // is drawn in the viewBox rather than positioned by the rail, so nothing
+    // out there has an element to watch.
+    const hovered: boolean[] = [];
+    const { container } = renderGlyph(
+      <AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} onMarkerHover={(over) => hovered.push(over)} />,
+    );
+    const target = container.querySelector('.automation-glyph-marker')!.parentElement!;
 
-    fireEvent.pointerMove(marker!.parentElement!, { pointerType: 'mouse' });
+    fireEvent.pointerMove(target, { pointerType: 'mouse' });
+    fireEvent.pointerLeave(target);
 
-    // A play is the one mark in this window that says something other than what
-    // it looks like: it is drawn on every active Sidekick, including the ones
-    // sitting idle between triggers, so "running" is exactly the reading the
-    // sentence has to correct.
-    expect(await screen.findByRole('tooltip'))
-      .toHaveTextContent('Active — in service and waiting on its triggers.');
+    expect(hovered).toEqual([true, false]);
+  });
+
+  it('carries the words the surface shows, so a marker cannot ship unexplained', () => {
+    // A play reads as *running right now*, and the marker is on every active
+    // Sidekick including the ones idle between triggers, so `waiting` is the
+    // correction the sentence exists to make.
+    expect(SIDEKICK_RUNNING_MARKER.description)
+      .toBe('Active — in service and waiting on its triggers.');
   });
 
   it('takes the pointer on the whole marker box rather than on the play inside it', () => {
