@@ -179,6 +179,16 @@ export interface HexagonMarker {
   symbol: LucideIcon;
   /** A theme token; see `docs/theming.md`. */
   color: string;
+  /**
+   * What the marker means, for the surface to show when the pointer is on it.
+   * The symbol is the whole of what a reader sees, and a symbol nobody can name
+   * is a mark to be learned rather than read. The words are the marker's, next
+   * to its shape and its colour, for the same reason its geometry is the
+   * hexagon's — whoever adds the second marker states its meaning here or ships
+   * an unexplained one. Where they are drawn is the surface's, because the
+   * surface owns the one tooltip a tile has; see the `<g>` below.
+   */
+  description: string;
 }
 
 /**
@@ -186,10 +196,20 @@ export interface HexagonMarker {
  * triggers. Green because it is the healthy state, and a play because that is
  * already what the product's own **Resume** and **Run now** controls are drawn
  * with, so the marker and the buttons that produce it say the same thing.
+ *
+ * The description spends its words on the half a play gets wrong. A play reads
+ * as *running right now*, and this marker is on every Sidekick the strip shows
+ * whether or not one has a run in flight: `waiting` is the correction, and the
+ * lifecycle rather than the run is what the mark reports. The wording follows
+ * the work-stream markers' own `statusDescription` — the state named, then one
+ * clause on what it means — so the two families of mark in this window explain
+ * themselves the same way, and it stays short enough to wrap to two lines in
+ * the width `.sidekick-tile-tooltip` holds a tile's tooltip to.
  */
 export const SIDEKICK_RUNNING_MARKER: HexagonMarker = {
   symbol: Play,
   color: 'var(--av-sys-color-success-base)',
+  description: 'Active — in service and waiting on its triggers.',
 };
 
 /**
@@ -236,7 +256,7 @@ const MARKER_KNOCKOUT = 7;
  * one, and an opaque patch of the default surface sat over a row that is
  * painted in a hover fill half the time. A hole shows whatever is behind it.
  */
-export function HexagonGlyph({ className, fill, ink, marker, symbol: Icon }: {
+export function HexagonGlyph({ className, fill, ink, marker, onMarkerHover, symbol: Icon }: {
   className?: string | undefined;
   /** The shape's interior. `none` leaves what is underneath it showing. */
   fill: string;
@@ -244,6 +264,14 @@ export function HexagonGlyph({ className, fill, ink, marker, symbol: Icon }: {
   ink: string;
   /** The state to mark, or nothing where there is no state to mark. */
   marker?: HexagonMarker | undefined;
+  /**
+   * That the pointer is on the marker. Only the hexagon knows where the marker
+   * is — the play is drawn in this viewBox so it scales with the tile, rather
+   * than positioned by the surface — so only the hexagon can say when it is
+   * being pointed at. What the surface does with that is its own business, and
+   * one with nothing to say passes nothing.
+   */
+  onMarkerHover?: ((over: boolean) => void) | undefined;
   symbol: LucideIcon;
 }): React.JSX.Element {
   // SVG ids are document-global and the strip draws one of these per Sidekick,
@@ -277,11 +305,39 @@ export function HexagonGlyph({ className, fill, ink, marker, symbol: Icon }: {
       <path className="automation-glyph-shape" d="M43 6C47 3 52 3 57 6L86 23C91 26 94 30 94 36L94 66C94 72 91 76 86 79L57 95C52 98 47 98 42 95L14 78C9 75 6 71 6 65L6 35C6 29 9 25 14 22Z" fill={fill} mask={marker ? `url(#${maskId})` : undefined} />
       <Icon x={25} y={25} size={50} strokeWidth={1.9} />
       {marker && (
-        // Solid rather than stroked: at the rail's 36px the marker is about 7px
-        // across, where a 2-unit outline is most of the symbol and the shape
-        // stops reading as a play at all.
-        <marker.symbol className="automation-glyph-marker" fill={marker.color} size={MARKER_BOX} stroke="none"
-          x={MARKER_ORIGIN} y={MARKER_ORIGIN} />
+        /*
+          The marker's hover target, and nothing more. What it *means* is the
+          marker's own (`description`), and where that gets shown belongs to the
+          surface: a tile has one tooltip slot, and a second Radix root inside
+          the first one's trigger cannot share it. Radix dispatches a global
+          "close everything else" the moment a root decides to open — before the
+          controlled prop it then asks for is refused — so two roots nested like
+          this do not resolve to one tooltip, they resolve to whichever decided
+          last, and a caller that vetoes the outer one gets no tooltip at all
+          rather than the right one. Both were seen in the window: the marker's
+          sentence replaced by the tile's name, and then replaced by nothing.
+
+          So the hexagon says *that* the pointer is on the marker, and the
+          surface above chooses what its one tooltip says. It also keeps the
+          pointer out of it: no `stopPropagation`, which reaches past React to
+          the sidebar's own `window` listeners.
+        */
+        <g onPointerLeave={() => onMarkerHover?.(false)} onPointerMove={() => onMarkerHover?.(true)}>
+          {/*
+            The target is the marker's whole box rather than the play inside it.
+            SVG hit-tests what is painted, and the play is about 7px across at
+            the rail's 36px — a target a pointer lands on by accident, not one it
+            can be rested on. A transparent fill is still a fill, so the rect
+            answers `visiblePainted` while painting nothing; `fill="none"` would
+            be invisible to the pointer too.
+          */}
+          <rect fill="transparent" height={MARKER_BOX} width={MARKER_BOX} x={MARKER_ORIGIN} y={MARKER_ORIGIN} />
+          {/* Solid rather than stroked: at the rail's 36px the marker is about 7px
+              across, where a 2-unit outline is most of the symbol and the shape
+              stops reading as a play at all. */}
+          <marker.symbol className="automation-glyph-marker" fill={marker.color} size={MARKER_BOX} stroke="none"
+            x={MARKER_ORIGIN} y={MARKER_ORIGIN} />
+        </g>
       )}
     </svg>
   );
@@ -298,12 +354,14 @@ export function HexagonGlyph({ className, fill, ink, marker, symbol: Icon }: {
  * the identity decides (the fill, its ink, and the symbol) and passes through
  * whatever state marker the caller wants cut out of that fill.
  */
-export function AutomationGlyph({ id, appearance: saved, marker }: {
+export function AutomationGlyph({ id, appearance: saved, marker, onMarkerHover }: {
   id: string;
   appearance?: SavedAppearance;
   /** The Sidekick's lifecycle, where the surface shows one; see `HexagonMarker`. */
   marker?: HexagonMarker | undefined;
+  /** Passed through; see `HexagonGlyph`. */
+  onMarkerHover?: ((over: boolean) => void) | undefined;
 }): React.JSX.Element {
   const { Icon, color, colorKey } = resolveWorkstreamAppearance(id, saved);
-  return <HexagonGlyph fill={color} ink={glyphInk(colorKey)} marker={marker} symbol={Icon} />;
+  return <HexagonGlyph fill={color} ink={glyphInk(colorKey)} marker={marker} onMarkerHover={onMarkerHover} symbol={Icon} />;
 }
