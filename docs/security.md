@@ -855,6 +855,41 @@ incident response that may prompt it.
 
 ## Changelog
 
+### 2026-09-11 — The five prompt trust labels are gone
+
+**What changed:** `renderUntrustedSlackOriginMessage`,
+`renderUntrustedInboundEmailMessage`, `renderUntrustedExternalEventMessage`,
+`renderUntrustedAutomationResultMessage` and `renderTriggerActivityMessage` are
+deleted from `packages/agent-harness/src/prompts/workstream.ts`. Slack
+surrounding context, an inbound trigger email, the event that started an
+external-event run, a Sidekick's delivered result and a trigger activity now
+reach the model as plain `role: "user"` messages with no `UNTRUSTED …` header.
+The external-event message keeps the non-trust half of its old preamble, because
+that sentence exists to stop a run answering that the event's fields were "not
+provided". The Sidekick result keeps its name-and-timestamp attribution line.
+
+**Why:** The team's judgement is that the labels were not earning their place: a
+Sidekick is first-party code running under an authorized principal, and marking
+its own summary `UNTRUSTED` read as Rally distrusting itself. Requested
+directly, and reaffirmed after the exposure below was put in writing.
+
+**What this leaves:** role placement, not labelling, is now the whole of the
+control on these five paths — the content is still user-role and still cannot
+outrank the system prompt. Ingress screening (a sender must resolve to an active
+workspace member) is unchanged. The tool-narrowing guards were already removed on
+2026-09-03, so for a run whose trigger content comes from outside the workspace —
+a GitHub pull-request title read by a Sidekick, say — nothing now marks that text
+before the owning room's agent reads it while holding write-mode connector tools.
+That is an accepted trade, recorded here rather than argued again.
+
+**What a future change has to respect:** the remaining markings are load-bearing
+for something else. `COMPACTION_SUMMARY_PROMPT` in
+`packages/agent-harness/src/bind-runtime.ts` still tells a summarizer that
+content "marked untrusted keeps that marking"; after this change that rule only
+matches `UNTRUSTED RECENT TRANSCRIPT`, `UNTRUSTED PROVIDER ACTIVITY` and the
+attachment manifests. Removing those two renderers as well would leave the rule
+matching nothing, and the rule should go in the same change if it ever does.
+
 ### 2026-09-09 — Repository instruction files reach the model, and after a compaction the prefix
 
 **What changed:** The Terminal plugin reads a checkout's `AGENTS.md` files

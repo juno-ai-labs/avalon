@@ -6435,9 +6435,9 @@ describe("Durable Objects in the Workers runtime", () => {
         expect(row!.message_type).toBe("automation_activation");
         // Never mid-run: a person watching the room is doing something.
         expect(row!.mode).toBe("queue");
-        // What the woken agent reads. The untrusted wrapper travels with it —
-        // an activation quotes connector content and is not an instruction.
-        expect(row!.bind_payload_json).toContain("UNTRUSTED SIDEKICK RESULT");
+        // What the woken agent reads: the delivering Sidekick's name and the
+        // result body, as a user-role message.
+        expect(row!.bind_payload_json).toContain("Candidate email intake");
         expect(row!.bind_payload_json).toContain("The board deck went out.");
       });
     });
