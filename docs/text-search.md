@@ -121,7 +121,13 @@ values until none does.
 Older clients omit `pageSize` and retain the array response shape with up to 50
 results from one candidate batch. They receive no pagination or timing fields and
 do not trigger hidden refill scans. The 250ms typing debounce, REST, and final
-workspace membership check remain unchanged. Search decisions are cached in regional KV/SQLite and updated by DO mutation pushes through the activity queue. A read never waits for a refresh: a miss is filled after the response. Decisions do not expire by age. No search-result cache is introduced.
+workspace membership check remain unchanged. Search decisions are cached in regional KV/SQLite and updated by DO mutation pushes through the activity queue. A read never waits for a refresh: a miss is filled after the response. Decisions do not expire by age. The server caches no search result; the desktop
+holds a settled query's pages for 30 seconds (`SEARCH_RESULT_CACHE_MS` in
+`search-modal.tsx`), so a repeat of the same workspace, member, category and
+words inside that window repaints without a request. A cache hit runs no
+`queryFn`, so it opens no `renderer_perf_flow` flow: the measured population is
+the requests, and the targets below describe those rather than every search a
+reader performs.
 
 The user-facing targets are p50 <= 500ms and p90 <= 1000ms from the last
 keystroke to painted results, including debounce. An empty page with continuation
@@ -358,7 +364,7 @@ reloaded from a canonical source.
   frozen. Input fragments must be cleared before every count returns or throws.
 - Chunk offsets use the sorted code-point boundary array directly; do not add
   a per-character Map and its transient construction pairs.
-- Source loaders admit each candidate batch before rendering it. A new request admits again; an admitted result may finish after a concurrent revocation, which reaches the projection within its push delay rather than before the next page.
+- Source loaders admit each candidate batch before rendering it. A new request admits again; an admitted result may finish after a concurrent revocation, which reaches the projection within its push delay rather than before the next page. A repeat served from the desktop's 30-second window is not a new request and readmits nothing, so that window is added to the push delay for an excerpt already on screen. It is bounded to the excerpt: opening the row is a fresh authorized read either way, and signing out (`queryClient.clear()`) or changing workspace or member drops the window rather than extending it.
 - Namespace identity includes the embedding model and dimensions. Mixing spaces
   makes vector distances meaningless.
 - Deleted revisions win against replayed upserts at the same revision. Removing
@@ -643,6 +649,43 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-11 — Hold a settled search for 30 seconds on the desktop
+
+Every settled query was a Turbopuffer page and a projection read, including the
+ones a reader did not mean to ask for: backspacing over a term and typing it
+back, crossing the tabs and returning to All, closing the modal and reopening it
+on the same words. `staleTime: 0, gcTime: 0` made each of those a full round
+trip for a list that had just been on screen. The modal now holds a settled
+query's pages for 30 seconds, the team's number.
+
+This reverses the "no search-result cache is introduced" line this document
+carried, and the comment beside those options — "a search result must be
+reauthorized when this modal opens again" — was the decision, not an oversight.
+What it protected is narrower than it reads. A page is admitted per candidate
+through the projected decision, and that projection is already eventually
+consistent: a revocation reaches it within its push delay, so an admitted result
+could already outlive the access behind it. The window adds 30 seconds to a
+delay that exists, for an excerpt the reader is already looking at, and acting
+on the row is authorized when it happens — a message hydrates its canonical
+transcript, a file goes through `/search/resources/:id/preview`, both of which
+re-check. Sign-out clears the client (`queryClient.clear()`) and the modal is
+keyed by workspace and member, so neither a departure nor a switch carries the
+window across. A future change that widens what a row shows, or that lets one be
+acted on without its own read, has to revisit the number rather than inherit it.
+
+A server-side cache was rejected rather than deferred. Results are admitted per
+subject, so one member's page is not another's; a per-subject cache would have to
+live in KV or the Cache API for an isolate that probably will not serve that
+member again, and it would move an authorization-shaped decision to the side of
+the boundary where a mistake is shared. The client cache costs two options and
+is deleted by reverting them.
+
+The measurement changes with it, and the document now says so: a cache hit never
+runs `queryFn`, so it opens no `renderer_perf_flow` flow. The p50/p90 targets
+describe the searches that reach the Worker. Emitting a flow for cache hits was
+considered and left out — it would report the trivially fast path into the same
+percentiles the targets were written against, and flatter them.
 
 ### 2026-09-11 — Tolerate document fields from a newer build, and re-project the rows the skew lost
 
