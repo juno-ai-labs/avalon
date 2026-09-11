@@ -32,24 +32,33 @@ schema rule, a test, or a file; show them prose and keep the code to yourself.
 ## The cast
 
 Four roles, and the pack's prose names people by **role token** — `@{priya}` —
-never by name, because the operator types a different name over each one for
-every demo. A name written into the text would read as a stranger.
+never by name, because a different colleague is cast into each part for every
+demo. A name written into the text would read as a stranger.
 
-| Token | Opens as | Plays |
+| Token | Labelled | Plays |
 | --- | --- | --- |
-| `presenter` | the real person signing in | the customer being presented to |
-| `priya` | Emma Shipman | product |
-| `marcus` | Sam Burton | sales |
-| `dana` | Ben Diaz | legal |
+| `presenter` | — | the real person signing in, who is showing the demo |
+| `priya` | Product | product |
+| `marcus` | Sales | sales |
+| `dana` | Legal | legal |
+
+The **label** is `roleLabels[token]` in the pack, and it is what the New demo
+form titles that part's dropdown. A role token is this pack's own character name
+and says nothing about the part; the label is what tells an operator which
+colleague belongs in it, and a colleague put in the wrong part has the pack's
+scripted words attributed to them under their real name
+([`docs/demo-workspaces.md`](../../../docs/demo-workspaces.md#casting-a-demo)).
 
 **The presenter never speaks.** They are who the demo is waiting for, and a pack
 that has them talking has them opening rooms — which changes what their home
 screen shows and makes the readiness block below stop being derivable. Pull them
 in with a mention instead.
 
-Reuse the three personas unless a fourth person is genuinely the scenario. A new
-role adds a field to the operator's New demo form and changes `apps/ace`'s tests
-as well as everything below; say so before doing it.
+Reuse the three parts unless a fourth person is genuinely the scenario. A new
+role needs a label, adds a dropdown to the operator's New demo form, and changes
+`apps/ace`'s tests as well as everything below; say so before doing it. It also
+raises the number of colleagues a demo cannot be prepared without: every part is
+played by a different signed-in account on the company's domain.
 
 ## What they said, and what it is
 
