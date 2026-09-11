@@ -616,6 +616,31 @@ describe("Terminal resource bridge", () => {
     expect(row.current_version).toBe(2);
   });
 
+  it("links a redirected publication to the producing run as well as the owning room", async () => {
+    // Visibility is resolved from the links the run's own object holds, so a
+    // document linked only to the room is one its own run cannot read back:
+    // publish then import on the id just returned would answer
+    // `resource_not_found`, and "publish a refresh, then diff it against the
+    // last one" is the natural shape of the work these Sidekicks do.
+    const SIDEKICK = "10000000-0000-4000-8000-00000000000b";
+    const produced: string[] = [];
+    const state = fixture(async (input) => { produced.push(input.workstreamId); });
+    const published = await state.bridgeFor(S).publishResource(
+      { ...context, workstreamId: SIDEKICK },
+      { filePath: "open-pr-dashboard.html" },
+      new TextEncoder().encode("<h1>Refreshed</h1>"),
+    );
+
+    // The room owns the identity...
+    const row = state.database.prepare(
+      "SELECT provider_resource_id FROM resources WHERE id = ?",
+    ).get(String(published.resourceId)) as { provider_resource_id: string };
+    expect(row.provider_resource_id).toBe(`terminal:${S}:open-pr-dashboard.html`);
+    // ...and the producing conversation still holds a link, through the
+    // in-object attacher, so the run can resolve what it just wrote.
+    expect(produced).toEqual([SIDEKICK]);
+  });
+
   it("keeps an internal capture in the run's own conversation when publication is redirected", async () => {
     // The command-log and checkout-backup captures name their own namespace
     // rather than deriving one from a path. They are recovery artifacts the run
