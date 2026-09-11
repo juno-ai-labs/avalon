@@ -205,7 +205,38 @@ export function patchCachedWorkstreamViewerState(
   substreamId = '0',
 ): void {
   const { viewer } = workstreamSummaryState(summary);
-  patchCachedWorkstream(queryClient, workstreamId, (row) => withDerivedUnread({ ...row, ...viewer }), substreamId);
+  patchCachedWorkstream(queryClient, workstreamId, (row) => (
+    supersededViewerState(row, summary) ? row : withDerivedUnread({ ...row, ...viewer })
+  ), substreamId);
+}
+
+/**
+ * Whether an answer is older than what the entry already holds.
+ *
+ * These responses have no waterline of their own, and more than one can be in
+ * flight: the read acknowledgement is debounced at 250ms and keyed on the
+ * sequence it carries, so a slower round trip for an earlier position can land
+ * after a later one. Applied in arrival order, the earlier answer rolls the
+ * waterline back and the unread divider returns above a message that has been
+ * read, until something else moves it again.
+ *
+ * Both fields only move forward at the authority, which is what lets arrival
+ * order be corrected here rather than fenced upstream: `seen_attention_ordinal`
+ * is written with `MAX`, and the manual-unread generation is a version that
+ * only increments. So within one generation the higher read-through is the
+ * later answer, and across generations the higher generation is, whatever its
+ * read-through says. A mark-unread does not lower the read-through; it raises
+ * the generation, which is why the two are compared in that order rather than
+ * together.
+ */
+function supersededViewerState(
+  row: Pick<WorkstreamSummary, 'readThroughSequenceNumber' | 'manualUnreadGeneration'>,
+  viewer: Pick<WorkstreamSummary, 'readThroughSequenceNumber' | 'manualUnreadGeneration'>,
+): boolean {
+  if (viewer.manualUnreadGeneration !== row.manualUnreadGeneration) {
+    return viewer.manualUnreadGeneration < row.manualUnreadGeneration;
+  }
+  return viewer.readThroughSequenceNumber < row.readThroughSequenceNumber;
 }
 
 /** Workspace-only fields use WorkspaceDO's own directory/page ordering. */
