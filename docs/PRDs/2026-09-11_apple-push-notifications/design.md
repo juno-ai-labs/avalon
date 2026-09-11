@@ -28,7 +28,7 @@ SubstreamAgent / WorkstreamObjectProduct mutation
   -> processWorkstreamNotificationIntent (conversation-effect-service.ts, existing)
        counts live devices for the recipient in this region's D1
        -> PUSH_DELIVERY_QUEUE.send({ region, workspaceId, intentId, recipientUserId, enqueuedAt })
-       -> Slack as today; email only per open question 1
+       -> Slack as today; email only when neither push nor Slack reached anyone (prd.md decision 12)
   -> consumePushDeliveryQueue
        WorkspaceDO.readNotificationIntentForDelivery(intentId)  -> kind, effect payload, fence data
        re-run the fence: active member (D1), directory listable, child authorizeViewer
@@ -96,20 +96,20 @@ unknown id.
 Two guards, two reasons, and they compose so that a long mention is shortened
 rather than dropped:
 
-- **The product number.** `PUSH_BODY_PREVIEW_CHARACTERS` in `@rally/contracts`
-  is a product limit — it is the text on the person's screen — so per
-  [`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md)
-  the PRD sets it and the code cites the PRD. The product owner has not named it
-  (`prd.md` open question 3); it is needed before the producer lands and is
-  not a defensive placeholder.
+- **The product number.** `PUSH_BODY_PREVIEW_CHARACTERS = 1000` in
+  `@rally/contracts`, a product limit set by `prd.md` key design decision 14
+  and cited to it in the code comment; it is the text on the person's screen,
+  not a defensive placeholder. The producer-side body is cut there, with a
+  visible mark.
 - **The protocol floor.** Whatever that number is, the renderer always fits the
   body to Apple's 4,096-byte payload ceiling (a published limit, read
   2026-09-11 from the APNs *Sending notification requests* reference) by
-  measuring the serialized payload and shortening the body, with a visible
-  mark, until it fits. The transport still refuses a payload over the ceiling
-  with `payload_too_large` on the log row — that path is now reachable only by
-  a title or link so long that no body fits, which is a bug to see, not a
-  mention to lose.
+  measuring the serialized payload and shortening the body further, with the
+  same mark, until it fits — 1,000 characters of multi-byte text plus a long
+  title and link can exceed it. The transport still refuses a payload over the
+  ceiling with `payload_too_large` on the log row — that path is now reachable
+  only by a title or link so long that no body fits, which is a bug to see, not
+  a mention to lose.
 
 ## Schema
 
@@ -273,7 +273,9 @@ Per message:
    effect service does), never a silent skip.
 2. If `push-notifications-enabled` is off for the recipient, ack and log
    `push_delivery_skipped reason=flag_off`. The producer also checks, so this is
-   the rolling-deploy and turned-off-mid-flight case.
+   the rolling-deploy and turned-off-mid-flight case. There is deliberately no
+   presence check here in v1 (`prd.md` decision 13); when one is wanted it is
+   one more condition at this step.
 3. Read the intent back: `WorkspaceDO.readNotificationIntentForDelivery`. An
    unknown or reaped id is acked with `reason=intent_missing`.
 4. **Re-run the access fence, the same one `processWorkstreamNotificationIntent`
