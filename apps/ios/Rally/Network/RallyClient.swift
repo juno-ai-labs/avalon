@@ -134,12 +134,32 @@ actor RallyClient {
         try await get(path: "/workstreams?limit=\(limit)", as: RallyWorkstreamPage.self)
     }
 
-    func createWorkstream(openingMessage: String, clientMessageId: String, operationId: String, attachmentIds: [String] = []) async throws -> RallyCreatedWorkstream {
+    func createWorkstream(
+        openingMessage: String,
+        clientMessageId: String,
+        operationId: String,
+        attachmentIds: [String] = [],
+        projectId: String? = nil
+    ) async throws -> RallyCreatedWorkstream {
         struct Body: Encodable {
             var openingMessage: String
             var participantUserIds: [String]
             var clientMessageId: String
             var attachmentIds: [String]
+            var projectId: String?
+
+            enum CodingKeys: String, CodingKey {
+                case openingMessage, participantUserIds, clientMessageId, attachmentIds, projectId
+            }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(openingMessage, forKey: .openingMessage)
+                try container.encode(participantUserIds, forKey: .participantUserIds)
+                try container.encode(clientMessageId, forKey: .clientMessageId)
+                try container.encode(attachmentIds, forKey: .attachmentIds)
+                try container.encodeIfPresent(projectId, forKey: .projectId)
+            }
         }
         return try await post(
             path: "/workstreams",
@@ -147,7 +167,8 @@ actor RallyClient {
                 openingMessage: openingMessage,
                 participantUserIds: [],
                 clientMessageId: clientMessageId,
-                attachmentIds: attachmentIds
+                attachmentIds: attachmentIds,
+                projectId: projectId
             ),
             as: RallyCreatedWorkstream.self,
             headers: [APIConfiguration.operationHeader: operationId]
@@ -170,6 +191,123 @@ actor RallyClient {
         struct Page: Decodable { var items: [RallyOpportunity] }
         let page: Page = try await get(path: "/work-opportunities", as: Page.self)
         return page.items
+    }
+
+    func pinWorkstream(id: String) async throws {
+        struct Page: Decodable { var items: [RallyWorkstream]? }
+        _ = try await request(method: "PUT", path: "/workstreams/\(id)/pin", body: Optional<Empty>.none, as: Page.self)
+    }
+
+    func unpinWorkstream(id: String) async throws {
+        struct Page: Decodable { var items: [RallyWorkstream]? }
+        _ = try await request(method: "DELETE", path: "/workstreams/\(id)/pin", body: Optional<Empty>.none, as: Page.self)
+    }
+
+    func patchWorkstream(id: String, title: String? = nil, archived: Bool? = nil, scope: String? = nil) async throws -> RallyWorkstream {
+        struct Body: Encodable {
+            var title: String?
+            var archived: Bool?
+            var scope: String?
+        }
+        return try await request(method: "PATCH", path: "/workstreams/\(id)", body: Body(title: title, archived: archived, scope: scope), as: RallyWorkstream.self)
+    }
+
+    func markWorkstreamUnread(id: String) async throws {
+        _ = try await request(method: "POST", path: "/workstreams/\(id)/read-state/mark-unread", body: Optional<Empty>.none, as: RallyWorkstream.self)
+    }
+
+    func listNotes() async throws -> [RallyNote] {
+        let page: RallyNotePage = try await get(path: "/notes?limit=100", as: RallyNotePage.self)
+        return page.items.filter { $0.archivedAt == nil }
+    }
+
+    func getNote(id: String) async throws -> RallyNote {
+        try await get(path: "/notes/\(id)", as: RallyNote.self)
+    }
+
+    func createNote(id: String, title: String) async throws -> RallyNote {
+        struct Body: Encodable { var id: String; var title: String; var scope: String }
+        return try await post(path: "/notes", body: Body(id: id, title: title, scope: "personal"), as: RallyNote.self)
+    }
+
+    func listSidekicks() async throws -> [RallySidekick] {
+        let page: RallySidekickPage = try await get(path: "/sidekicks", as: RallySidekickPage.self)
+        return page.items
+    }
+
+    func createSidekick() async throws -> String {
+        struct Created: Decodable { var automationId: String }
+        struct Body: Encodable {}
+        let created: Created = try await post(path: "/sidekicks", body: Body(), as: Created.self)
+        return created.automationId
+    }
+
+    func createProject(name: String) async throws -> RallyProject {
+        struct Body: Encodable {
+            var name: String
+            var iconKey: String
+            var colorKey: String
+            var scope: String
+        }
+        return try await post(
+            path: "/projects",
+            body: Body(name: name, iconKey: "briefcase", colorKey: "lime", scope: "personal"),
+            as: RallyProject.self
+        )
+    }
+
+    func listMembers() async throws -> [RallyMember] {
+        struct Page: Decodable { var items: [RallyMember] }
+        let page: Page = try await get(path: "/workspace/members", as: Page.self)
+        return page.items
+    }
+
+    func searchWorkspace(query: String) async throws -> [RallySearchHit] {
+        struct Body: Encodable {
+            var query: String
+            var category: String
+        }
+        struct Response: Decodable { var results: [RallySearchHit]? }
+        let response: Response = try await post(
+            path: "/search",
+            body: Body(query: query, category: "all"),
+            as: Response.self
+        )
+        return response.results ?? []
+    }
+
+    func getDigest() async throws -> RallyDigest {
+        try await get(path: "/digest", as: RallyDigest.self)
+    }
+
+    func updateDigest(_ digest: RallyDigest) async throws -> RallyDigest {
+        struct Target: Encodable {
+            var type: String
+            var connectionId: String?
+        }
+        struct Body: Encodable {
+            var enabled: Bool
+            var days: [Int]
+            var times: [Int]
+            var deliveryTargets: [Target]
+        }
+        return try await request(
+            method: "PUT",
+            path: "/digest",
+            body: Body(
+                enabled: digest.enabled,
+                days: digest.days,
+                times: digest.times,
+                deliveryTargets: [Target(type: "email", connectionId: nil)]
+            ),
+            as: RallyDigest.self
+        )
+    }
+
+    func addParticipant(workstreamId: String, userId: String) async throws {
+        struct Body: Encodable { var userId: String }
+        struct Participant: Decodable { var id: String? }
+        _ = try await post(path: "/workstreams/\(workstreamId)/participants", body: Body(userId: userId), as: Participant.self)
     }
 
     func uploadResource(data: Data, fileName: String, mimeType: String, draftId: String) async throws -> UploadedResource {
@@ -384,15 +522,56 @@ struct TranscriptTurn: Decodable, Sendable {
     var turnId: String?
     var transcriptSequence: Int?
     var actor: String?
+    var entryKind: String?
     var createdAtUtc: String?
     var clientMessageId: String?
     var blocks: [TranscriptBlock]?
+    var blocksOmitted: Bool?
+    var authorSnapshot: AuthorSnapshot?
+    var statusKind: String?
+
+    struct AuthorSnapshot: Decodable, Sendable {
+        var displayName: String?
+    }
 }
 
 struct TranscriptBlock: Decodable, Sendable {
     var type: String?
     var text: String?
     var streaming: Bool?
+    var messageType: String?
+    var structuredContent: [String: JSONValue]?
+    var toolName: String?
+    var pluginId: String?
+    var status: String?
+    var error: String?
+    var attachments: [RallyAttachment]?
+    var mentions: [RallyMention]?
+}
+
+enum JSONValue: Decodable, Sendable, Equatable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() { self = .null; return }
+        if let value = try? container.decode(Bool.self) { self = .bool(value); return }
+        if let value = try? container.decode(Double.self) { self = .number(value); return }
+        if let value = try? container.decode(String.self) { self = .string(value); return }
+        if let value = try? container.decode([String: JSONValue].self) { self = .object(value); return }
+        if let value = try? container.decode([JSONValue].self) { self = .array(value); return }
+        self = .null
+    }
+
+    var string: String? {
+        if case .string(let value) = self { return value }
+        return nil
+    }
 }
 
 struct UploadedResource: Decodable, Sendable {

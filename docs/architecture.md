@@ -31,7 +31,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/main` | Window and Settings lifecycle, custom-protocol login completion, encrypted session storage, file selection, the macOS status item, main-owned telemetry/crash handling, and raw Node transport for work-stream socket swarms. |
-| `apps/ios` | Native SwiftUI iPhone/iPad client: Keychain sessions, Google PKCE through `ASWebAuthenticationSession`, conversation feed socket, TestFlight archive. Owned by [`ios-client.md`](ios-client.md). |
+| `apps/ios` | Native SwiftUI iPhone/iPad client: Keychain sessions, Google PKCE through `ASWebAuthenticationSession`, conversation feed and workspace directory sockets, TestFlight archive. Owned by [`ios-client.md`](ios-client.md). |
 | `apps/desktop/src/preload` | The packaged CommonJS preload — the only channel between a sandboxed renderer and main. |
 | `apps/desktop/src/renderer` | Both React surfaces. Talks only to the configured regional API. Keeps a local cache of the directory and each opened conversation so a space, a stream, and a substream paint before their socket answers; [`local-cache.md`](local-cache.md) owns it. |
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |

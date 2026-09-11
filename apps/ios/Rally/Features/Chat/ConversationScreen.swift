@@ -4,7 +4,6 @@ import SwiftUI
 struct ConversationScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.rallyColors) private var colors
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         @Bindable var model = model
@@ -19,7 +18,18 @@ struct ConversationScreen: View {
                             Task { await model.send() }
                         }
                     } else {
-                        MessageList(messages: model.messages, isConnecting: model.isConnectingConversation)
+                        MessageList(
+                            messages: model.messages,
+                            isConnecting: model.isConnectingConversation,
+                            firstUnreadSequence: model.firstUnreadSequence,
+                            hasOlder: model.hasOlderTranscript,
+                            jumpToken: model.jumpToLatestToken
+                        )
+                    }
+                    if model.messages.contains(where: { $0.statusKind == "assistant_turn_failed" }) {
+                        Button("Retry") { Task { await model.retryHarness() } }
+                            .font(RallyType.button())
+                            .padding(.bottom, 4)
                     }
                     ComposerBar(
                         text: $model.composerText,
@@ -50,11 +60,32 @@ struct ConversationScreen: View {
                 }
                 .presentationDetents([.height(220)])
             }
+            .sheet(isPresented: $model.isSearchPresented) {
+                SearchSheet()
+            }
+            .sheet(isPresented: $model.isInspectorPresented) {
+                InspectorSheet()
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if model.messages.count > 6 {
+                    Button {
+                        model.jumpToLatest()
+                    } label: {
+                        Label("Jump to latest", systemImage: "arrow.down")
+                            .labelStyle(.iconOnly)
+                            .frame(width: 44, height: 44)
+                            .rallyGlass(in: Circle())
+                    }
+                    .accessibilityLabel("Jump to latest")
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 88)
+                }
+            }
         }
     }
 
     private var topBar: some View {
-        HStack {
+        HStack(spacing: 8) {
             Button {
                 model.isHistoryPresented = true
             } label: {
@@ -65,9 +96,28 @@ struct ConversationScreen: View {
                     .rallyGlass(in: Circle())
             }
             .accessibilityLabel("History")
+            Button {
+                model.isSearchPresented = true
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(colors.textPrimary)
+                    .frame(width: 36, height: 36)
+            }
+            .accessibilityLabel("Search")
             Spacer()
             WorkspacePill()
             Spacer()
+            Button {
+                model.isInspectorPresented = true
+            } label: {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(colors.textPrimary)
+                    .frame(width: 36, height: 36)
+            }
+            .accessibilityLabel("Details")
+            .disabled(model.currentWorkstream == nil)
             Button {
                 model.openNewChat()
             } label: {
@@ -79,7 +129,7 @@ struct ConversationScreen: View {
             }
             .accessibilityLabel("New chat")
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 12)
         .frame(height: 44)
     }
 }
@@ -98,6 +148,7 @@ struct WorkspacePill: View {
                 .padding(.vertical, 7)
                 .padding(.horizontal, 14)
                 .background(Capsule().fill(colors.sendFillEnabled))
+                .lineLimit(1)
         }
         .buttonStyle(RallyPressableStyle(scale: 0.96))
         .accessibilityLabel("Workspace and settings")
@@ -183,12 +234,25 @@ struct FlexibleChips: View {
 struct MessageList: View {
     var messages: [RallyChatMessage]
     var isConnecting: Bool
+    var firstUnreadSequence: Int?
+    var hasOlder: Bool
+    var jumpToken: Int
+    @Environment(AppModel.self) private var model
     @Environment(\.rallyColors) private var colors
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 20) {
+                    if hasOlder {
+                        Button("Load earlier messages") {
+                            Task { await model.loadOlder() }
+                        }
+                        .font(RallyType.caption())
+                        .foregroundStyle(colors.link)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 8)
+                    }
                     if isConnecting {
                         ProgressView()
                             .tint(colors.textSecondary)
@@ -196,7 +260,10 @@ struct MessageList: View {
                             .padding(.top, 24)
                             .accessibilityLabel("Loading conversation")
                     }
-                    ForEach(messages) { message in
+                    ForEach(Array(messages.enumerated()), id: \.element.id) { _, message in
+                        if let unread = firstUnreadSequence, message.sequence == unread {
+                            UnreadDivider()
+                        }
                         MessageRow(message: message)
                             .id(message.id)
                     }
@@ -206,13 +273,35 @@ struct MessageList: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: messages.last?.text) { _, _ in
-                if let id = messages.last?.id {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(id, anchor: .bottom)
-                    }
-                }
+                scrollToLatest(proxy)
+            }
+            .onChange(of: jumpToken) { _, _ in
+                scrollToLatest(proxy)
             }
         }
+    }
+
+    private func scrollToLatest(_ proxy: ScrollViewProxy) {
+        if let id = messages.last?.id {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo(id, anchor: .bottom)
+            }
+        }
+    }
+}
+
+struct UnreadDivider: View {
+    @Environment(\.rallyColors) private var colors
+
+    var body: some View {
+        HStack {
+            Rectangle().fill(RallyPalette.linkBlue).frame(height: 1)
+            Text("Unread")
+                .font(RallyType.caption())
+                .foregroundStyle(RallyPalette.linkBlue)
+            Rectangle().fill(RallyPalette.linkBlue).frame(height: 1)
+        }
+        .accessibilityLabel("Unread messages below")
     }
 }
 
@@ -224,10 +313,29 @@ struct MessageRow: View {
 
     var body: some View {
         Group {
-            if message.role == .user {
-                UserBubble(text: message.text)
-            } else {
-                AssistantResponse(text: message.text, isStreaming: message.isStreaming && !reduceMotion, cursorOn: cursorOn)
+            switch message.kind {
+            case .text:
+                if message.role == .user {
+                    UserBubble(message: message)
+                } else {
+                    AssistantResponse(message: message, cursorOn: cursorOn && !reduceMotion)
+                }
+            case .thought:
+                MachineryRow(icon: "ellipsis.bubble", title: message.isStreaming ? "Thinking" : "Thought", detail: message.text)
+            case .toolEvent:
+                MachineryRow(icon: "wrench", title: message.toolName ?? "Tool", detail: message.toolStatus ?? message.text)
+            case .pluginActivity:
+                MachineryRow(icon: "puzzlepiece.extension", title: message.pluginName ?? "Plugin", detail: message.isStreaming ? "Working" : "Worked")
+            case .workAccordion:
+                WorkAccordion(message: message)
+            case .elicitation:
+                ElicitationCard(message: message)
+            case .system:
+                SystemNotice(message: message)
+            case .automationActivation:
+                AssistantResponse(message: message, cursorOn: false, authorOverride: message.authorName ?? "Sidekick")
+            case .omitted:
+                OmittedPlaceholder(text: message.text)
             }
         }
         .onAppear { startCursor() }
@@ -245,34 +353,53 @@ struct MessageRow: View {
 }
 
 struct UserBubble: View {
-    var text: String
+    var message: RallyChatMessage
     @Environment(\.rallyColors) private var colors
 
     var body: some View {
-        HStack {
-            Spacer(minLength: 48)
-            Text(text)
-                .font(RallyType.body())
-                .foregroundStyle(colors.textPrimary)
-                .padding(.vertical, 12)
-                .padding(.horizontal, 16)
-                .background(
-                    UnevenRoundedRectangle(
-                        cornerRadii: .init(topLeading: 20, bottomLeading: 20, bottomTrailing: 6, topTrailing: 20)
-                    )
-                    .fill(colors.surface1)
-                )
-                .textSelection(.enabled)
+        VStack(alignment: .trailing, spacing: 6) {
+            if let name = message.authorName, message.role == .external {
+                Text(name)
+                    .font(RallyType.caption())
+                    .foregroundStyle(colors.textSecondary)
+            }
+            HStack {
+                Spacer(minLength: 48)
+                VStack(alignment: .trailing, spacing: 8) {
+                    if !message.text.isEmpty {
+                        Text(message.text)
+                            .font(RallyType.body())
+                            .foregroundStyle(colors.textPrimary)
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 16)
+                            .background(
+                                UnevenRoundedRectangle(
+                                    cornerRadii: .init(topLeading: 20, bottomLeading: 20, bottomTrailing: 6, topTrailing: 20)
+                                )
+                                .fill(colors.surface1)
+                            )
+                            .textSelection(.enabled)
+                    }
+                    if !message.attachments.isEmpty {
+                        AttachmentChips(attachments: message.attachments)
+                    }
+                    if let delivery = message.deliveryState {
+                        Text(delivery.replacingOccurrences(of: "_", with: " "))
+                            .font(RallyType.caption())
+                            .foregroundStyle(colors.textSecondary)
+                    }
+                }
+            }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("You, \(text)")
+        .accessibilityLabel("You, \(message.text)")
     }
 }
 
 struct AssistantResponse: View {
-    var text: String
-    var isStreaming: Bool
+    var message: RallyChatMessage
     var cursorOn: Bool
+    var authorOverride: String? = nil
     @Environment(\.rallyColors) private var colors
 
     var body: some View {
@@ -281,30 +408,212 @@ struct AssistantResponse: View {
                 .stroke(colors.textPrimary, lineWidth: 1.4)
                 .frame(width: 24, height: 24)
                 .accessibilityHidden(true)
-            (Text(text) + (isStreaming ? Text("▍").foregroundStyle(cursorOn ? colors.textPrimary : .clear) : Text("")))
+            if let authorOverride {
+                Text(authorOverride)
+                    .font(RallyType.caption())
+                    .foregroundStyle(colors.textSecondary)
+            }
+            (Text(message.text) + (message.isStreaming ? Text("▍").foregroundStyle(cursorOn ? colors.textPrimary : .clear) : Text("")))
                 .font(RallyType.body())
                 .foregroundStyle(colors.textPrimary)
                 .lineSpacing(6)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
-            if !isStreaming, !text.isEmpty {
-                MessageActions(text: text)
+            if !message.attachments.isEmpty {
+                AttachmentChips(attachments: message.attachments)
+            }
+            if !message.isStreaming, !message.text.isEmpty {
+                MessageActions(message: message)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityLabel(isStreaming ? "Rally is writing. \(text)" : "Rally, \(text)")
+        .accessibilityLabel(message.isStreaming ? "Rally is writing. \(message.text)" : "Rally, \(message.text)")
+    }
+}
+
+struct MachineryRow: View {
+    var icon: String
+    var title: String
+    var detail: String
+    @Environment(\.rallyColors) private var colors
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(colors.textSecondary)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(RallyType.bodySmall())
+                    .foregroundStyle(colors.textPrimary)
+                if !detail.isEmpty, detail != title {
+                    Text(detail)
+                        .font(RallyType.caption())
+                        .foregroundStyle(colors.textSecondary)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(colors.surface1))
+        .accessibilityLabel("\(title). \(detail)")
+    }
+}
+
+struct WorkAccordion: View {
+    var message: RallyChatMessage
+    @Environment(\.rallyColors) private var colors
+
+    var body: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(message.nested) { row in
+                    MessageRow(message: row)
+                }
+            }
+            .padding(.top, 8)
+        } label: {
+            Label("Worked", systemImage: "chevron.right.circle")
+                .font(RallyType.bodySmall())
+                .foregroundStyle(colors.textSecondary)
+        }
+        .tint(colors.textSecondary)
+        .accessibilityLabel("Worked, \(message.nested.count) steps")
+    }
+}
+
+struct ElicitationCard: View {
+    var message: RallyChatMessage
+    @Environment(AppModel.self) private var model
+    @Environment(\.rallyColors) private var colors
+    @State private var textAnswer = ""
+    @State private var selected: Set<String> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(message.elicitation?.prompt ?? message.text)
+                .font(RallyType.body())
+                .foregroundStyle(colors.textPrimary)
+            let elicitation = message.elicitation
+            let closed = elicitation?.status != "open"
+            if let elicitation, elicitation.responseType == "text" || elicitation.responseType.isEmpty {
+                TextField("Your answer", text: $textAnswer, axis: .vertical)
+                    .disabled(closed)
+                    .padding(10)
+                    .background(colors.surface2, in: RoundedRectangle(cornerRadius: 10))
+            } else if let elicitation {
+                ForEach(elicitation.options) { option in
+                    let value = option.value ?? option.label ?? option.id
+                    Button {
+                        if elicitation.responseType == "multi" {
+                            if selected.contains(value) { selected.remove(value) } else { selected.insert(value) }
+                        } else {
+                            selected = [value]
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: selected.contains(value) ? "checkmark.circle.fill" : "circle")
+                            Text(option.label ?? value)
+                            Spacer()
+                        }
+                        .foregroundStyle(colors.textPrimary)
+                    }
+                    .disabled(closed)
+                }
+            }
+            if !closed {
+                HStack {
+                    Button("Skip") {
+                        Task { await model.answerElicitation(message.elicitation ?? RallyElicitation(id: message.id, prompt: message.text, responseType: "text", options: [], status: "open", answer: nil), answer: nil, skipped: true) }
+                    }
+                    Spacer()
+                    Button("Submit") {
+                        let answer: String?
+                        if message.elicitation?.responseType == "text" || message.elicitation?.responseType.isEmpty == true {
+                            answer = textAnswer
+                        } else {
+                            answer = selected.sorted().joined(separator: ",")
+                        }
+                        Task { await model.answerElicitation(message.elicitation ?? RallyElicitation(id: message.id, prompt: message.text, responseType: "text", options: [], status: "open", answer: nil), answer: answer, skipped: false) }
+                    }
+                    .disabled(textAnswer.isEmpty && selected.isEmpty && (message.elicitation?.responseType == "text" || message.elicitation?.responseType.isEmpty == true))
+                }
+                .font(RallyType.button())
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(colors.surface1))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(colors.divider))
+        .accessibilityLabel("Rally needs input. \(message.text)")
+    }
+}
+
+struct SystemNotice: View {
+    var message: RallyChatMessage
+    @Environment(AppModel.self) private var model
+    @Environment(\.rallyColors) private var colors
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Text(message.text)
+                .font(RallyType.caption())
+                .foregroundStyle(colors.textSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+            if message.statusKind == "assistant_turn_failed" {
+                Button("Retry") { Task { await model.retryHarness() } }
+                    .font(RallyType.bodySmall())
+            }
+        }
+        .padding(.vertical, 4)
+        .accessibilityLabel(message.text)
+    }
+}
+
+struct OmittedPlaceholder: View {
+    var text: String
+    @Environment(\.rallyColors) private var colors
+
+    var body: some View {
+        Text(text)
+            .font(RallyType.bodySmall())
+            .foregroundStyle(colors.textSecondary)
+            .padding(12)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+                    .foregroundStyle(colors.divider)
+            )
+            .accessibilityLabel(text)
+    }
+}
+
+struct AttachmentChips: View {
+    var attachments: [RallyAttachment]
+    @Environment(\.rallyColors) private var colors
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(attachments) { item in
+                Label(item.fileName, systemImage: "paperclip")
+                    .font(RallyType.caption())
+                    .foregroundStyle(colors.textSecondary)
+            }
+        }
     }
 }
 
 struct MessageActions: View {
-    var text: String
+    var message: RallyChatMessage
+    @Environment(AppModel.self) private var model
     @Environment(\.rallyColors) private var colors
     @State private var copied = false
 
     var body: some View {
         HStack(spacing: 20) {
             Button {
-                UIPasteboard.general.string = text
+                UIPasteboard.general.string = message.text
                 copied = true
             } label: {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
@@ -313,7 +622,15 @@ struct MessageActions: View {
             }
             .accessibilityLabel(copied ? "Copied" : "Copy")
             .sensoryFeedback(.success, trigger: copied)
-            ShareLink(item: text) {
+            Button {
+                model.speak(message)
+            } label: {
+                Image(systemName: model.speakingMessageId == message.id ? "speaker.wave.2.fill" : "speaker.wave.2")
+                    .font(.system(size: 18))
+                    .foregroundStyle(colors.textSecondary)
+            }
+            .accessibilityLabel(model.speakingMessageId == message.id ? "Stop speaking" : "Speak")
+            ShareLink(item: message.text) {
                 Image(systemName: "square.and.arrow.up")
                     .font(.system(size: 18))
                     .foregroundStyle(colors.textSecondary)

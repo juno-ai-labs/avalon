@@ -1,0 +1,109 @@
+import SwiftUI
+
+struct SearchSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.rallyColors) private var colors
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        @Bindable var model = model
+        NavigationStack {
+            List {
+                if model.searchHits.isEmpty {
+                    ContentUnavailableView("Search this workspace", systemImage: "magnifyingglass", description: Text("Messages, links, and files Rally can see."))
+                        .listRowBackground(colors.canvas)
+                } else {
+                    ForEach(model.searchHits) { hit in
+                        Button {
+                            Task { await model.openSearchHit(hit) }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(hit.title ?? "Result")
+                                    .font(RallyType.conversationTitle())
+                                    .foregroundStyle(colors.textPrimary)
+                                if let snippet = hit.snippet {
+                                    Text(snippet)
+                                        .font(RallyType.caption())
+                                        .foregroundStyle(colors.textSecondary)
+                                        .lineLimit(3)
+                                }
+                                if let kind = hit.kind {
+                                    Text(kind)
+                                        .font(RallyType.caption())
+                                        .foregroundStyle(colors.textTertiary)
+                                }
+                            }
+                        }
+                        .listRowBackground(colors.canvas)
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(colors.canvas)
+            .navigationTitle("Search")
+            .searchable(text: $model.searchQuery, prompt: "Search")
+            .onSubmit(of: .search) {
+                Task { await model.search() }
+            }
+            .onChange(of: model.searchQuery) { _, _ in
+                Task { await model.search() }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+struct InspectorSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.rallyColors) private var colors
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if let stream = model.currentWorkstream {
+                    Section("Work stream") {
+                        LabeledContent("Title", value: stream.title)
+                        if let email = stream.emailAddress {
+                            LabeledContent("Email", value: email)
+                        }
+                        LabeledContent("Visibility", value: stream.scope == "public" ? "Public" : "Private")
+                        Button(stream.scope == "public" ? "Make private" : "Make public") {
+                            Task { await model.setScope(stream, scope: stream.scope == "public" ? "private" : "public") }
+                        }
+                    }
+                    Section("People") {
+                        ForEach(model.members) { member in
+                            Button {
+                                Task { await model.addParticipant(userId: member.id) }
+                            } label: {
+                                VStack(alignment: .leading) {
+                                    Text(member.name)
+                                        .foregroundStyle(colors.textPrimary)
+                                    if let email = member.email {
+                                        Text(email)
+                                            .font(RallyType.caption())
+                                            .foregroundStyle(colors.textSecondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    ContentUnavailableView("Open a work stream", systemImage: "info.circle", description: Text("Details, people, and resources show up here."))
+                        .listRowBackground(colors.canvas)
+                }
+            }
+            .navigationTitle("Details")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
