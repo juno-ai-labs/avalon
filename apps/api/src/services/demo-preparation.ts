@@ -39,7 +39,7 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { logInfo, logWarn } from "../observability/logger";
 import { copyTemplateConnections } from "./demo-connection-copy";
 import { DEMO_PRESENTER_ROLE, DemoPackSchema, PLACEHOLDER_DEMO_PACK, demoCastRoles, type DemoPack } from "./demo-pack";
-import { assertDemoPersonas, ensureDemoPersonas } from "./demo-personas";
+import { DEMO_CAST_EMAIL_DOMAIN, assertDemoCastNamesDistinct, listDemoCastCandidates, readDemoCast } from "./demo-cast";
 import { checkDemoReadiness, demoReadinessManifest } from "./demo-readiness";
 import {
   applyDemoSeedAction,
@@ -218,9 +218,9 @@ async function statusesOf(env: Env, records: OperationRecord[]): Promise<DemoOpe
     }
     for (const row of receipts.results ?? []) confirmedByOperation.set(row.operation_id, Number(row.confirmed));
   }
-  // Who the cast are, by the name the directory carries: the operator names a
-  // persona when they start a demo and reads it back here for every demo they
-  // have ever prepared, so it is one read per chunk rather than one per role.
+  // Who the cast are, by the name the directory carries: a name is read back
+  // here for every demo ever prepared, so it is one read per chunk rather than
+  // one per role.
   const castIds = [...new Set(records.flatMap(
     (record) => Object.values(parseJsonObject(record.cast_json)).filter((value): value is string => typeof value === "string"),
   ))];
@@ -259,10 +259,11 @@ export async function listDemoOperations(env: Env): Promise<DemoOperationStatus[
 }
 
 /**
- * What the New demo form is built from: the pack's roles with the name each is
- * offered under, and the template's active members, who the presenter is
- * chosen from. Only the presenter comes from this list — every other role is
- * played by a persona the operator names.
+ * What the New demo form is built from: the pack's roles, the template's
+ * active members, who the presenter is chosen from, and the colleagues every
+ * other role can be cast from. The presenter comes from the first list
+ * because they are handed the template's connections; the rest come from the
+ * second, which is the whole company rather than whoever the template seats.
  */
 export async function demoTemplate(env: Env): Promise<{
   workspaceId: string;
@@ -270,10 +271,16 @@ export async function demoTemplate(env: Env): Promise<{
     version: string;
     roles: string[];
     presenterRole: string | null;
-    castDefaults: Record<string, string>;
+    roleLabels: Record<string, string>;
   };
   members: { userId: string; name: string; email: string; role: "owner" | "admin" | "member" }[];
+  castCandidates: { userId: string; name: string; email: string }[];
+  castEmailDomain: string;
 }> {
+  // Demos are prepared where the template lives, and this answer is the
+  // company's directory: an EU call could do nothing with it but read out
+  // every European colleague's name and address.
+  requireDemoRegion(env);
   const rows = await env.DB.prepare(
     `SELECT member.user_id, user.name, user.email, member.role
        FROM workspace_members member JOIN users user ON user.id = member.user_id
@@ -289,7 +296,7 @@ export async function demoTemplate(env: Env): Promise<{
       version: pack.version,
       roles: [...pack.roles],
       presenterRole: pack.roles.includes(DEMO_PRESENTER_ROLE) ? DEMO_PRESENTER_ROLE : null,
-      castDefaults: { ...pack.castDefaults },
+      roleLabels: { ...pack.roleLabels },
     },
     members: (rows.results ?? []).map((row) => ({
       userId: row.user_id,
@@ -297,6 +304,8 @@ export async function demoTemplate(env: Env): Promise<{
       email: row.email,
       role: row.role,
     })),
+    castCandidates: await listDemoCastCandidates(env),
+    castEmailDomain: DEMO_CAST_EMAIL_DOMAIN,
   };
 }
 
@@ -321,16 +330,16 @@ function requireDriver(env: Env): Workflow {
  * connections, so a presenter outside the template would be handed its
  * credentials. Answers their name, which the cast may not reuse.
  */
-async function assertTemplatePresenter(env: Env, presenterUserId: string): Promise<{ name: string; timezone: string }> {
+async function assertTemplatePresenter(env: Env, presenterUserId: string): Promise<{ name: string }> {
   const member = await env.DB.prepare(
-    `SELECT user.name AS name, user.timezone AS timezone
+    `SELECT user.name AS name
        FROM workspace_members member JOIN users user ON user.id = member.user_id
       WHERE member.workspace_id = ? AND member.user_id = ? AND member.status = 'active'`,
-  ).bind(DEMO_TEMPLATE_WORKSPACE_ID, presenterUserId).first<{ name: string; timezone: string | null }>();
+  ).bind(DEMO_TEMPLATE_WORKSPACE_ID, presenterUserId).first<{ name: string }>();
   if (!member) {
     throw new ApiError(422, "demo_presenter_not_in_template", "The presenter is not an active member of the template");
   }
-  return { name: member.name, timezone: member.timezone ?? "America/Los_Angeles" };
+  return { name: member.name };
 }
 
 /**
@@ -378,12 +387,15 @@ async function launchAttempt(env: Env, operationId: string, attempt: number): Pr
  * Start one preparation, or return the one this operation id already started.
  *
  * Operation identity, not a concurrency limit: two different ids are two demos.
- * The request names every role of the pack in service but the presenter's and
- * nothing else, each under a different name, and the presenter must be an
- * active member of the template — refused here, before a row is written, and
- * checked again by the first phase in case membership moved in between. The
- * named roles are then minted as this operation's personas, so what the row
- * stores is the user ids every phase after this works in.
+ * A submission of an id that already has a row is answered with that row's
+ * progress and validates nothing, so a client retrying a lost response meets
+ * its own preparation rather than a refusal about a directory that has moved.
+ *
+ * A first submission casts every role of the pack in service but the
+ * presenter's and nothing else, each to a different colleague, and the
+ * presenter must be an active member of the template — all refused here,
+ * before a row is written, and checked again by the first phase in case either
+ * moved in between.
  */
 export async function startDemoOperation(
   env: Env,
@@ -392,39 +404,53 @@ export async function startDemoOperation(
 ): Promise<DemoOperationStatus> {
   requireDemoRegion(env);
   requireDriver(env);
+  // A repeat of an operation id is that operation, answered before this
+  // request is validated at all. The cast on the row was checked when it was
+  // written, and checking what this submission says against a directory that
+  // has moved since — somebody renamed, somebody's address changed — would
+  // refuse a retry of a preparation that is running perfectly well. The
+  // conflict-safe insert below is what settles two concurrent first requests;
+  // this settles the second submission of one that already landed.
+  const started = await demoOperationStatus(env, input.operationId);
+  if (started) return started;
   const pack = activeDemoPack();
   const castRoles = demoCastRoles(pack.roles);
-  const names: Record<string, string> = {};
+  const bound: Record<string, string> = {};
   for (const role of castRoles) {
-    const name = input.cast[role]?.trim();
-    if (!name) throw new ApiError(422, "demo_pack_role_unbound", `Nobody is cast as "${role}"`);
-    names[role] = name;
+    const userId = input.cast[role];
+    if (!userId) throw new ApiError(422, "demo_pack_role_unbound", `Nobody is cast as "${role}"`);
+    bound[role] = userId;
   }
   for (const role of Object.keys(input.cast)) {
     if (role === DEMO_PRESENTER_ROLE) {
-      // The presenter is an account, not a name: they sign in and the demo is
-      // their own view of it.
-      throw new ApiError(422, "demo_presenter_named", "The presenter is chosen from the template, not named");
+      // The presenter is named by their own field: they are cast from the
+      // template's members, which is a narrower list than the cast's.
+      throw new ApiError(422, "demo_presenter_cast", "The presenter is chosen from the template, not cast");
     }
     if (!castRoles.includes(role)) throw new ApiError(422, "demo_pack_role_unknown", `The pack has no role "${role}"`);
   }
   const presenter = await assertTemplatePresenter(env, input.presenterUserId);
-  // Two people under one name in one workspace: a mention resolves to a user
-  // id, but nobody watching the demo can tell which of them was named, and the
-  // presenter reading their own name on somebody else's message is worse.
-  const spoken = [...Object.values(names), ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? [presenter.name] : [])]
-    .map((name) => name.toLowerCase());
-  if (new Set(spoken).size !== spoken.length) {
-    throw new ApiError(422, "demo_cast_duplicate", "Each pack role must be played under a different name");
-  }
-  // Minted before the row: the cast is stored as user ids, the way every phase
-  // after this reads it. Derived identity makes this idempotent, so a repeated
-  // submission of the same operation id meets the people it made the first
-  // time rather than a second set.
+  // Every cast id is a colleague, read here so the names below are the
+  // directory's rather than the request's.
+  const people = await readDemoCast(env, {
+    cast: bound,
+    presenterRole: pack.roles.includes(DEMO_PRESENTER_ROLE) ? DEMO_PRESENTER_ROLE : null,
+  });
   const cast = {
     ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? { [DEMO_PRESENTER_ROLE]: input.presenterUserId } : {}),
-    ...await ensureDemoPersonas(env, { operationId: input.operationId, names, timezone: presenter.timezone }),
+    ...bound,
   };
+  // One person cannot play two parts: the seeded conversation has them
+  // answering themselves, and the readiness barrier reads one directory row
+  // for two roles.
+  const seated = Object.values(cast);
+  if (new Set(seated).size !== seated.length) {
+    throw new ApiError(422, "demo_cast_duplicate", "Each pack role must be played by a different person");
+  }
+  assertDemoCastNamesDistinct([
+    ...Object.values(people).map((person) => person.name),
+    ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? [presenter.name] : []),
+  ]);
   const at = nowIso();
   const inserted = await env.DB.prepare(
     `INSERT INTO demo_operations
@@ -769,12 +795,18 @@ async function phaseBody(
         `SELECT id FROM users WHERE id = ? AND platform_user_id IS NOT NULL`,
       ).bind(record.presenter_user_id).first<{ id: string }>();
       if (!presenter) throw new ApiError(409, "demo_presenter_unknown", "The presenter is not a signed-in member of this region");
-      await assertTemplatePresenter(env, record.presenter_user_id);
-      await assertDemoPersonas(env, {
-        operationId: record.operation_id,
+      const presenterMember = await assertTemplatePresenter(env, record.presenter_user_id);
+      const people = await readDemoCast(env, {
         cast,
         presenterRole: pack.roles.includes(DEMO_PRESENTER_ROLE) ? DEMO_PRESENTER_ROLE : null,
       });
+      // Against the directory as it reads now, not as the start request found
+      // it: everybody's name is rewritten from their platform identity each
+      // time they sign in, and this operation may be a retry days later.
+      assertDemoCastNamesDistinct([
+        ...Object.values(people).map((person) => person.name),
+        ...(pack.roles.includes(DEMO_PRESENTER_ROLE) ? [presenterMember.name] : []),
+      ]);
       const connections = await workspaceRuntimeDatabase(env, DEMO_TEMPLATE_WORKSPACE_ID).prepare(
         `SELECT COUNT(*) AS count FROM connector_connections WHERE workspace_id = ? AND scope = 'workspace'`,
       ).bind(DEMO_TEMPLATE_WORKSPACE_ID).first<{ count: number }>();

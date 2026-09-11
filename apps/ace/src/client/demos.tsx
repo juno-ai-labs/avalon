@@ -86,13 +86,13 @@ export function castRolesOf(template: DemoTemplate): string[] {
 }
 
 /**
- * The names the form opens with: the pack's own defaults, in role order. They
- * are a suggestion the operator types over — the cast are invented people, and
- * the names are the ones the company being presented to will read — so the
- * form is submittable as it opens and nothing about it is fixed.
+ * The cast the form opens with: nobody. Every role is played by a colleague
+ * now, so a default is not a suggestion to type over — it is a real person
+ * seated in a demo workspace because the operator did not look. The form is
+ * deliberately not submittable until each part has been cast.
  */
-export function defaultCastNames(template: DemoTemplate): Record<string, string> {
-  return Object.fromEntries(castRolesOf(template).map((role) => [role, template.pack.castDefaults[role] ?? '']));
+export function emptyCast(template: DemoTemplate): Record<string, string> {
+  return Object.fromEntries(castRolesOf(template).map((role) => [role, '']));
 }
 
 /**
@@ -194,23 +194,45 @@ function NewDemoForm({ template, onStarted, onFailed, onCancel }: {
   const [operationId] = useState(() => crypto.randomUUID());
   const [companyName, setCompanyName] = useState('');
   const [presenterUserId, setPresenterUserId] = useState(template.members[0]?.userId ?? '');
-  const [cast, setCast] = useState<Record<string, string>>(() => defaultCastNames(template));
+  const [cast, setCast] = useState<Record<string, string>>(() => emptyCast(template));
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
 
   const roles = castRolesOf(template);
+  const nameOfCandidate = (userId: string): string =>
+    template.castCandidates.find((candidate) => candidate.userId === userId)?.name ?? '';
   const presenterName = template.members.find((member) => member.userId === presenterUserId)?.name ?? '';
-  // The presenter is a real person in the demo, so their name is one of the
-  // names that has to be unique; the API refuses the collision either way.
-  const spoken = [...roles.map((role) => cast[role] ?? ''), ...(template.pack.presenterRole ? [presenterName] : [])]
-    .map((name) => name.trim())
+  // The presenter is in the demo already, so they are not offered for a part.
+  // The two lists overlap — a template member is usually on the company's
+  // domain too — and whoever is presenting comes out of this one.
+  const castable = template.castCandidates.filter((candidate) => candidate.userId !== presenterUserId);
+  // The presenter is in the demo too, so they are one of the people who has to
+  // be cast once and read unambiguously. They are not offered for a part and a
+  // part they held is cleared when they start presenting, so their half of
+  // this is unreachable from the form — it is the invariant that is stated
+  // here, not the reachable half of it, and the API refuses either collision
+  // whatever the page sends.
+  const seated = [...roles.map((role) => cast[role] ?? ''), ...(template.pack.presenterRole ? [presenterUserId] : [])]
+    .filter((userId) => userId !== '');
+  const twice = seated.find((userId, index) => seated.indexOf(userId) !== index) ?? '';
+  const spoken = [...roles.map((role) => nameOfCandidate(cast[role] ?? '')), ...(template.pack.presenterRole ? [presenterName] : [])]
     .filter((name) => name !== '');
   const folded = spoken.map((name) => name.toLowerCase());
-  // Shown as it was typed, not as it was compared.
-  const duplicate = spoken.find((_name, index) => folded.indexOf(folded[index]!) !== index) ?? '';
+  // Shown as the directory has it, not as it was compared.
+  const sharedName = twice === '' ? spoken.find((_name, index) => folded.indexOf(folded[index]!) !== index) ?? '' : '';
+  // Enough people to cast is a question about the presenter, not the company —
+  // the page's own guard has already refused a company that could not cast this
+  // pack at all. This one is recoverable where that one is not: a presenter who
+  // is themselves a candidate leaves one fewer, and choosing a different
+  // presenter gives them back.
+  const tooFew = castable.length < roles.length;
+  // The form opens with every part uncast, so this is the state it is in when
+  // it appears. Left unsaid, Start is simply dead on arrival with nothing to
+  // read — and the parts are three dropdowns that look alike.
+  const uncast = roles.filter((role) => (cast[role] ?? '') === '').length;
   const complete = companyName.trim().length > 0 && presenterUserId !== ''
-    && roles.every((role) => (cast[role] ?? '').trim() !== '')
-    && duplicate === '';
+    && roles.every((role) => (cast[role] ?? '') !== '')
+    && twice === '' && sharedName === '' && !tooFew;
 
   const start = async (): Promise<void> => {
     if (!complete || starting) return;
@@ -223,7 +245,7 @@ function NewDemoForm({ template, onStarted, onFailed, onCancel }: {
           operationId,
           companyName: companyName.trim(),
           presenterUserId,
-          cast: Object.fromEntries(roles.map((role) => [role, (cast[role] ?? '').trim()])),
+          cast: Object.fromEntries(roles.map((role) => [role, cast[role] ?? ''])),
         }),
       });
       onStarted(await responseBody(response, (value) => DemoOperationStatusSchema.parse(value)));
@@ -236,33 +258,56 @@ function NewDemoForm({ template, onStarted, onFailed, onCancel }: {
   };
 
   return <form className="ace-form" aria-label="New demo" onSubmit={(event) => { event.preventDefault(); void start(); }}>
-    <div className="section-title"><div><h3>New demo</h3><p>Pack {template.pack.version}. The workspace will be named after the company. The presenter is the person who will show the demo; everyone else is invented for it, and you name them.</p></div></div>
+    <div className="section-title"><div><h3>New demo</h3><p>Pack {template.pack.version}. The workspace will be named after the company. The presenter is the person who will show the demo; everyone else is a colleague seated in it, and they will see it in their own account.</p></div></div>
     <div className="demo-form-grid">
       <Field label="Company"><input maxLength={80} placeholder="Alto Capital" value={companyName} onChange={(event) => setCompanyName(event.target.value)} /></Field>
-      <Field label="Presenter"><select value={presenterUserId} onChange={(event) => setPresenterUserId(event.target.value)}>
+      <Field label="Presenter"><select value={presenterUserId} onChange={(event) => {
+        // Whoever is now presenting cannot also play a part; a part they were
+        // holding is cleared rather than left in a dropdown that no longer
+        // offers them.
+        setPresenterUserId(event.target.value);
+        setCast((current) => Object.fromEntries(Object.entries(current).map(
+          ([role, userId]) => [role, userId === event.target.value ? '' : userId],
+        )));
+      }}>
         {template.members.map((member) => <option key={member.userId} value={member.userId}>{member.name} · {member.email}</option>)}
       </select></Field>
-      {roles.map((role, index) => <Field key={role} label={`User ${index + 1}`}>
-        <input
-          autoComplete="off"
-          maxLength={80}
-          placeholder={template.pack.castDefaults[role] ?? 'A name'}
-          value={cast[role] ?? ''}
-          onChange={(event) => setCast((current) => ({ ...current, [role]: event.target.value }))}
-        />
+      {roles.map((role, index) => <Field key={role} label={template.pack.roleLabels[role] ?? `User ${index + 1}`}>
+        <select value={cast[role] ?? ''} onChange={(event) => setCast((current) => ({ ...current, [role]: event.target.value }))}>
+          <option value="">Choose a colleague…</option>
+          {castable.map((candidate) => <option key={candidate.userId} value={candidate.userId}>{candidate.name} · {candidate.email}</option>)}
+        </select>
       </Field>)}
     </div>
     <p className="ace-form-note">Operation <code>{operationId}</code></p>
-    {duplicate !== '' && <p className="queue-error" role="alert">Two people are called {duplicate}. Each name in the demo has to be different.</p>}
+    {uncast > 0 && !tooFew && <p className="ace-form-note" role="status">{uncast} {uncast === 1 ? 'part is' : 'parts are'} still uncast. Every part is played by somebody, and by somebody different.</p>}
+    {tooFew && <p className="queue-error" role="alert">This pack has {roles.length} parts besides the presenter, and {presenterName || 'the presenter'} leaves {castable.length} {castable.length === 1 ? 'colleague' : 'colleagues'} to cast them. Present it as somebody else, or wait until more of the company has signed in.</p>}
+    {twice !== '' && <p className="queue-error" role="alert">{nameOfCandidate(twice) || presenterName} is in this demo twice. Each part is played by a different person.</p>}
+    {sharedName !== '' && <p className="queue-error" role="alert">Two people in this demo are called {sharedName}. Nobody watching could tell which of them a mention names, so cast somebody else.</p>}
     {error && <p className="queue-error" role="alert">{error}</p>}
     <div className="ace-form-actions">
-      <Button disabled={!complete || starting} type="submit" variant="primary">{starting ? 'Starting…' : 'Start preparation'}</Button>
+      <Button
+        disabled={!complete || starting}
+        title={complete || starting ? undefined
+          : companyName.trim() === '' ? 'Name the company this demo is for'
+            : tooFew ? 'There are not enough colleagues to cast every part'
+              : uncast > 0 ? `${uncast} ${uncast === 1 ? 'part is' : 'parts are'} still uncast`
+                : 'Two people in this demo are the same person or share a name'}
+        type="submit"
+        variant="primary"
+      >{starting ? 'Starting…' : 'Start preparation'}</Button>
       <Button onClick={onCancel} type="button">Cancel</Button>
     </div>
   </form>;
 }
 
-type TemplateState = { state: 'loading' } | { state: 'ready'; template: DemoTemplate } | { state: 'unavailable'; reason: string };
+type TemplateState =
+  | { state: 'loading' }
+  | { state: 'ready'; template: DemoTemplate }
+  /** The template could not be read; Refresh is the remedy. */
+  | { state: 'unavailable'; reason: string }
+  /** It was read and there is nobody to cast from; Refresh changes nothing. */
+  | { state: 'uncastable'; reason: string };
 
 export function DemosView(): React.JSX.Element {
   const [operations, setOperations] = useState<DemoOperationStatus[]>([]);
@@ -308,13 +353,32 @@ export function DemosView(): React.JSX.Element {
     setTemplate({ state: 'loading' });
     try {
       const template = await responseBody(await fetch('/api/demos/template'), (value) => DemoTemplateSchema.parse(value));
-      // The cast is named rather than chosen, so the one person the form needs
-      // from the template is the presenter: they own the demo and sign into
-      // it. No members at all is the first-run state before `demo-template`
-      // is populated, and a form that can never be submitted is worse than
-      // saying so.
+      // Two ways the form cannot be filled, both worth saying rather than
+      // rendering. No template members is the first-run state before
+      // `demo-template` is populated, and the presenter is cast from those
+      // alone. Fewer colleagues than the pack has parts is a company that
+      // has not signed in yet — nothing about the template, which read fine.
       if (template.members.length === 0) {
-        setTemplate({ state: 'unavailable', reason: 'demo-template has no active members; the presenter is cast from them.' });
+        setTemplate({ state: 'uncastable', reason: 'demo-template has no active members, and the presenter is cast from them.' });
+        return;
+      }
+      // A form whose dropdowns cannot be filled can never be submitted, and
+      // saying so beats leaving the operator to discover it a part at a time.
+      //
+      // Deliberately the company's count, not the count minus whoever is
+      // presenting: this asks whether *anybody* could cast this pack, which is
+      // the only question answerable before a presenter is chosen. Whether
+      // *this* presenter can is the form's own question (`tooFew`), and it has
+      // an answer this one does not — present as somebody else. Refusing the
+      // form here on `parts + 1` would hide that, in the case where the
+      // template seats a presenter who is not on the cast domain and every
+      // candidate is free.
+      const parts = castRolesOf(template).length;
+      if (template.castCandidates.length < parts) {
+        setTemplate({
+          state: 'uncastable',
+          reason: `The pack has ${parts} parts besides the presenter, and only ${template.castCandidates.length} @${template.castEmailDomain} ${template.castCandidates.length === 1 ? 'account has' : 'accounts have'} signed in to this region; each part is played by a different person.`,
+        });
         return;
       }
       setTemplate({ state: 'ready', template });
@@ -377,10 +441,11 @@ export function DemosView(): React.JSX.Element {
   return <>
     <aside className="queue-list demo-list"><header><p>Demo workspaces</p><h1>Demos</h1><small>{loading ? 'Reading preparations…' : `${live} live · ${operations.length} ${operations.length === 1 ? 'operation' : 'operations'}`}</small></header>
       <div className="queue-list-actions">
-        <Button disabled={!canCompose} onClick={() => { setComposing(true); setSelectedId(null); }} title={template.state === 'unavailable' ? template.reason : undefined} type="button" variant="primary">New demo</Button>
+        <Button disabled={!canCompose} onClick={() => { setComposing(true); setSelectedId(null); }} title={template.state === 'unavailable' || template.state === 'uncastable' ? template.reason : undefined} type="button" variant="primary">New demo</Button>
         <Button onClick={refresh} type="button">Refresh</Button>
       </div>
       {template.state === 'unavailable' && <p className="queue-error" role="alert">Template unavailable: {template.reason.replace(/\.?$/u, '.')} New demos cannot be started until it can be read; Refresh tries again.</p>}
+      {template.state === 'uncastable' && <p className="queue-error" role="alert">Nobody to cast: {template.reason.replace(/\.?$/u, '.')} The template read fine, so Refresh only helps once that has changed.</p>}
       {offlineSince && <p className="demo-stale" role="status">Offline since {formatClock(offlineSince)}. Showing the state read at {readAt ? formatClock(readAt) : '—'}; the page keeps trying every few seconds, or Refresh now.</p>}
       {listError && !offlineSince && <p className="queue-error" role="alert">{listError}</p>}
       <div className="queues demos">
@@ -389,9 +454,9 @@ export function DemosView(): React.JSX.Element {
           <div><strong>{operation.companyName}-demo</strong><small>{operationHeadline(operation)}{operation.presenterName ? ` · ${operation.presenterName}` : ''} · started {formatClock(operation.createdAt)}</small></div>
           <b aria-hidden="true">›</b>
         </button>)}
-        {!loading && operations.length === 0 && !listError && <EmptyState title="No demos yet" description={template.state === 'ready' ? "Start one with New demo. It is prepared from the template and published when the presenter's view matches the pack." : 'Nothing has been prepared. New demo needs the template, which could not be read.'} />}
+        {!loading && operations.length === 0 && !listError && <EmptyState title="No demos yet" description={template.state === 'ready' ? "Start one with New demo. It is prepared from the template and published when the presenter's view matches the pack." : template.state === 'uncastable' ? 'Nothing has been prepared. New demo needs people to cast, and there are not enough yet.' : 'Nothing has been prepared. New demo needs the template, which could not be read.'} />}
       </div>
-      <footer><span className={connected ? 'healthy-dot' : 'status-dot'} />{offlineSince ? 'Reconnecting…' : listError ? 'Regional API unavailable' : template.state === 'unavailable' ? 'Regional API connected · template unavailable' : 'Regional API connected'}</footer>
+      <footer><span className={connected ? 'healthy-dot' : 'status-dot'} />{offlineSince ? 'Reconnecting…' : listError ? 'Regional API unavailable' : template.state === 'unavailable' ? 'Regional API connected · template unavailable' : template.state === 'uncastable' ? 'Regional API connected · nobody to cast' : 'Regional API connected'}</footer>
     </aside>
     <main className="queue-detail demo-detail">
       {composing && template.state === 'ready' ? <div className="queue-messages"><NewDemoForm template={template.template} onCancel={() => setComposing(false)} onFailed={() => { void load(); }} onStarted={(operation) => {
@@ -442,6 +507,8 @@ export function DemosView(): React.JSX.Element {
             ? <EmptyState title="Reading the template…" description="The template's members are being read from the regional API." />
             : template.state === 'unavailable'
               ? <EmptyState title="The template could not be read" description={<>{template.reason.replace(/\.?$/u, '.')} New demos cannot be started until it can be read; Refresh tries again.{operations.length > 0 ? ' Existing preparations are listed on the left.' : ''}</>} />
+              : template.state === 'uncastable'
+                ? <EmptyState title="There is nobody to cast" description={<>{template.reason.replace(/\.?$/u, '.')} The template itself read fine, so this changes when the people do.{operations.length > 0 ? ' Existing preparations are listed on the left.' : ''}</>} />
               : <EmptyState title="Select a demo" description={operations.length > 0 ? 'Choose a preparation on the left, or start a new one.' : 'Start one with New demo.'} />}
       </div>}
     </main>

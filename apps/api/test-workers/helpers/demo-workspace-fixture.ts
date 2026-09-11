@@ -56,10 +56,7 @@ export const DEMO_MEMO_TITLE = "Insights pricing — decision memo";
 export const DEMO_TEST_PACK = DemoPackSchema.parse({
   version: "workerd-test",
   roles: ["presenter", "priya", "marcus"],
-  // The names the New demo form would open on; this suite binds the roles to
-  // members it seats itself, so they are only here because the schema wants a
-  // name for every role the operator would type over.
-  castDefaults: { priya: "Priya Raman", marcus: "Marcus Hale" },
+  roleLabels: { priya: "Product", marcus: "Sales" },
   steps: [
     {
       kind: "create_workstream",

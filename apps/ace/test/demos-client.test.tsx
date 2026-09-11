@@ -3,7 +3,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DemosView, currentPhase, defaultCastNames, operationHeadline } from '../src/client/demos';
+import { DemosView, currentPhase, emptyCast, operationHeadline } from '../src/client/demos';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,10 +14,13 @@ const OPERATION_ID = '00000000-0000-7000-8000-0000000000e2';
 const WORKSPACE_ID = '00000000-0000-7000-8000-0000000000f1';
 const PRESENTER_ID = '00000000-0000-7000-8000-0000000000a1';
 const COLLEAGUE_ID = '00000000-0000-7000-8000-0000000000a5';
-// The cast are personas the region minted for this operation, not accounts.
+// The cast are colleagues on the company's domain, seated in the demo.
 const PRIYA_ID = '00000000-0000-7000-8000-0000000000a2';
 const MARCUS_ID = '00000000-0000-7000-8000-0000000000a3';
 const DANA_ID = '00000000-0000-7000-8000-0000000000a4';
+// A second colleague whose display name is somebody else's: two of them in one
+// demo is a mention nobody watching can attribute.
+const NAMESAKE_ID = '00000000-0000-7000-8000-0000000000a6';
 
 function operation(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -27,7 +30,7 @@ function operation(overrides: Record<string, unknown> = {}): Record<string, unkn
     presenterName: 'Adam',
     packVersion: 'placeholder-2026-09',
     cast: { presenter: PRESENTER_ID, priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID },
-    castNames: { presenter: 'Adam', priya: 'Emma Shipman', marcus: 'Sam Burton', dana: 'Ben Diaz' },
+    castNames: { presenter: 'Adam', priya: 'Priya Raman', marcus: 'Sam Burton', dana: 'Ben Diaz' },
     workspaceId: WORKSPACE_ID,
     workspaceName: 'Alto Capital-demo',
     status: 'running',
@@ -56,12 +59,23 @@ const template = {
     version: 'placeholder-2026-09',
     roles: ['presenter', 'priya', 'marcus', 'dana'],
     presenterRole: 'presenter',
-    castDefaults: { priya: 'Emma Shipman', marcus: 'Sam Burton', dana: 'Ben Diaz' },
+    roleLabels: { priya: 'Product', marcus: 'Sales', dana: 'Legal' },
   },
   members: [
-    { userId: PRESENTER_ID, name: 'Adam', email: 'adam@example.com', role: 'owner' },
-    { userId: COLLEAGUE_ID, name: 'Blake', email: 'blake@example.com', role: 'member' },
+    { userId: PRESENTER_ID, name: 'Adam', email: 'adam@rallywith.ai', role: 'owner' },
+    { userId: COLLEAGUE_ID, name: 'Blake', email: 'blake@rallywith.ai', role: 'member' },
   ],
+  // Ordered by address, as the regional API answers: the presenter is on the
+  // company's domain too, so they are in this list as well as the members'.
+  castCandidates: [
+    { userId: PRESENTER_ID, name: 'Adam', email: 'adam@rallywith.ai' },
+    { userId: COLLEAGUE_ID, name: 'Blake', email: 'blake@rallywith.ai' },
+    { userId: DANA_ID, name: 'Ben Diaz', email: 'ben@rallywith.ai' },
+    { userId: MARCUS_ID, name: 'Sam Burton', email: 'kb@rallywith.ai' },
+    { userId: PRIYA_ID, name: 'Priya Raman', email: 'priya@rallywith.ai' },
+    { userId: NAMESAKE_ID, name: 'Sam Burton', email: 'sam.burton@rallywith.ai' },
+  ],
+  castEmailDomain: 'rallywith.ai',
 };
 
 function respond(operations: unknown[], options: { template?: Response | (() => Response) } = {}): (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> {
@@ -98,6 +112,11 @@ function type(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+function choose(select: HTMLSelectElement, value: string): void {
+  Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, value);
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
 describe('the Demos page', () => {
   beforeEach(() => {
     container = document.createElement('div');
@@ -121,7 +140,7 @@ describe('the Demos page', () => {
     // demo carries, and the cast is on the page once the form is gone.
     expect(container.textContent).toContain('Adam: northgate-renewal');
     expect(container.textContent).toContain('the mention has not arrived');
-    expect(container.textContent).toContain('Emma Shipman, Sam Burton, Ben Diaz');
+    expect(container.textContent).toContain('Priya Raman, Sam Burton, Ben Diaz');
     expect(container.textContent).toContain('9 of 9 actions confirmed');
     // Retry is for a preparation that has stopped, not one that is working.
     expect(buttonNamed('Retry').disabled).toBe(true);
@@ -171,35 +190,48 @@ describe('the Demos page', () => {
     expect(container.textContent).toContain('Abandoned');
   });
 
-  it('starts a new demo under names the operator types, defaulted from the pack and unique', async () => {
+  it('starts a new demo by casting a colleague into each part, all of them distinct', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(respond([]));
     await render();
     expect(container.textContent).toContain('No demos yet');
     await act(async () => { buttonNamed('New demo').click(); });
     const company = container.querySelector<HTMLInputElement>('input[placeholder="Alto Capital"]')!;
     await act(async () => { type(company, 'Alto Capital'); });
-    // One person is chosen — the presenter, who signs in — and the rest are
-    // named, opening on the pack's defaults so the form is submittable as it is.
-    expect(Array.from(container.querySelectorAll('select')).map((select) => select.value)).toEqual([PRESENTER_ID]);
-    const names = Array.from(container.querySelectorAll<HTMLInputElement>('.demo-form-grid input'))
-      .filter((input) => input !== company);
-    expect(names.map((input) => input.value)).toEqual(['Emma Shipman', 'Sam Burton', 'Ben Diaz']);
-    expect(container.textContent).toContain('User 1');
-    expect(container.textContent).toContain('User 3');
-    expect(container.textContent).not.toContain('Cast: Priya');
-
-    // Two people under one name blocks Start and says which name.
-    await act(async () => { type(names[1]!, 'Emma Shipman'); });
-    expect(buttonNamed('Start preparation').disabled).toBe(true);
-    expect(container.textContent).toContain('Two people are called Emma Shipman');
-    // So does the presenter's own name, who is in the demo too.
-    await act(async () => { type(names[1]!, 'Adam'); });
-    expect(buttonNamed('Start preparation').disabled).toBe(true);
-    // An empty name is not a person either.
-    await act(async () => { type(names[1]!, '  '); });
+    // Every part is cast from the same list of colleagues, and none of them is
+    // chosen for the operator: a default here would seat a real person in a
+    // demo workspace because nobody looked.
+    const [presenter, ...parts] = Array.from(container.querySelectorAll('select'));
+    expect(presenter!.value).toBe(PRESENTER_ID);
+    expect(parts.map((select) => select.value)).toEqual(['', '', '']);
+    expect(parts[0]!.textContent).toContain('Priya Raman · priya@rallywith.ai');
+    // Each dropdown says which part it is: a colleague put in the wrong one
+    // has the pack's scripted words attributed to them under their own name.
+    expect(container.textContent).toContain('Product');
+    expect(container.textContent).toContain('Legal');
+    // An uncast part says so rather than leaving Start dead with nothing to read.
+    expect(container.textContent).toContain('3 parts are still uncast');
+    expect(buttonNamed('Start preparation').title).toBe('3 parts are still uncast');
     expect(buttonNamed('Start preparation').disabled).toBe(true);
 
-    await act(async () => { type(names[1]!, ' Michael Holliway ');  });
+    await act(async () => { choose(parts[0]!, PRIYA_ID); });
+    await act(async () => { choose(parts[1]!, MARCUS_ID); });
+    // An uncast part blocks Start on its own.
+    expect(buttonNamed('Start preparation').disabled).toBe(true);
+
+    // One person playing two parts blocks it, and says who.
+    await act(async () => { choose(parts[2]!, MARCUS_ID); });
+    expect(buttonNamed('Start preparation').disabled).toBe(true);
+    expect(container.textContent).toContain('Sam Burton is in this demo twice');
+    // The presenter is not among the options at all — they are in the demo
+    // already — so that collision is unreachable rather than refused.
+    expect(parts[2]!.textContent).not.toContain('adam@rallywith.ai');
+    // Two different people under one name is the other collision: nobody
+    // watching could tell which of them a mention names.
+    await act(async () => { choose(parts[2]!, NAMESAKE_ID); });
+    expect(buttonNamed('Start preparation').disabled).toBe(true);
+    expect(container.textContent).toContain('Two people in this demo are called Sam Burton');
+
+    await act(async () => { choose(parts[2]!, DANA_ID); });
     const start = buttonNamed('Start preparation');
     expect(start.disabled).toBe(false);
     await act(async () => { start.click(); });
@@ -208,8 +240,8 @@ describe('the Demos page', () => {
     const body = JSON.parse(String(startCall?.[1]?.body)) as { operationId: string; companyName: string; presenterUserId: string; cast: Record<string, string> };
     expect(body.companyName).toBe('Alto Capital');
     expect(body.presenterUserId).toBe(PRESENTER_ID);
-    // Names, not ids, and the presenter is not among them.
-    expect(body.cast).toEqual({ priya: 'Emma Shipman', marcus: 'Michael Holliway', dana: 'Ben Diaz' });
+    // Account ids, not names, and the presenter is not among them.
+    expect(body.cast).toEqual({ priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID });
     expect(body.operationId).toMatch(/^[0-9a-f-]{36}$/u);
     expect(container.textContent).toContain('Alto Capital-demo');
   });
@@ -294,7 +326,70 @@ describe('the Demos page', () => {
   it('says why when the template seats nobody to present, instead of a form that cannot be submitted', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(respond([], { template: () => Response.json({ ...template, members: [] }) }));
     await render();
-    expect(container.textContent).toContain('demo-template has no active members; the presenter is cast from them.');
+    expect(container.textContent).toContain('demo-template has no active members, and the presenter is cast from them.');
+    // Not "the template could not be read": it read fine, and Refresh will not change it.
+    expect(container.textContent).toContain('Nobody to cast');
+    expect(container.textContent).not.toContain('Template unavailable');
+    expect(buttonNamed('New demo').disabled).toBe(true);
+  });
+
+  it('never offers the presenter for a part, and says so when they leave too few colleagues', async () => {
+    // The two lists overlap on purpose — a template member is on the domain
+    // too — so exactly as many candidates as there are parts is a dead end
+    // whenever one of them is presenting.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(respond([], {
+      template: () => Response.json({
+        ...template,
+        members: [
+          { userId: PRESENTER_ID, name: 'Adam', email: 'adam@rallywith.ai', role: 'owner' },
+          { userId: COLLEAGUE_ID, name: 'Blake', email: 'blake@rallywith.ai', role: 'member' },
+        ],
+        // Blake presents but is not castable — an account off the domain that
+        // the template seats anyway — so switching to them frees all three.
+        castCandidates: [
+          { userId: PRESENTER_ID, name: 'Adam', email: 'adam@rallywith.ai' },
+          { userId: DANA_ID, name: 'Ben Diaz', email: 'ben@rallywith.ai' },
+          { userId: MARCUS_ID, name: 'Sam Burton', email: 'kb@rallywith.ai' },
+        ],
+      }),
+    }));
+    await render();
+    await act(async () => { buttonNamed('New demo').click(); });
+    const [presenter, ...parts] = Array.from(container.querySelectorAll('select'));
+    // Three candidates, three parts, and one of them is presenting.
+    expect(parts[0]!.textContent).not.toContain('adam@rallywith.ai');
+    expect(container.textContent).toContain('Adam leaves 2 colleagues to cast them');
+    expect(buttonNamed('Start preparation').disabled).toBe(true);
+
+    // Presenting as somebody who is not a candidate frees all three.
+    await act(async () => { choose(presenter!, COLLEAGUE_ID); });
+    expect(container.textContent).not.toContain('leaves 2 colleagues');
+    expect(parts[0]!.textContent).toContain('adam@rallywith.ai');
+    expect(parts[0]!.textContent).not.toContain('blake@rallywith.ai');
+    expect(buttonNamed('Start preparation').disabled).toBe(true);
+  });
+
+  it('clears a part held by somebody who becomes the presenter', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(respond([]));
+    await render();
+    await act(async () => { buttonNamed('New demo').click(); });
+    const [presenter, ...parts] = Array.from(container.querySelectorAll('select'));
+    await act(async () => { choose(parts[0]!, COLLEAGUE_ID); });
+    expect(parts[0]!.value).toBe(COLLEAGUE_ID);
+    // Blake is presenting now, so the part they were holding is empty rather
+    // than pointing at somebody the dropdown no longer offers.
+    await act(async () => { choose(presenter!, COLLEAGUE_ID); });
+    expect(parts[0]!.value).toBe('');
+    expect(container.textContent).not.toContain('is in this demo twice');
+  });
+
+  it('says why when there are not enough colleagues to cast, instead of a form that cannot be submitted', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(respond([], {
+      template: () => Response.json({ ...template, castCandidates: template.castCandidates.slice(0, 2) }),
+    }));
+    await render();
+    expect(container.textContent).toContain('The pack has 3 parts besides the presenter, and only 2 @rallywith.ai accounts have signed in');
+    expect(container.textContent).toContain('Nobody to cast');
     expect(buttonNamed('New demo').disabled).toBe(true);
   });
 });
@@ -311,7 +406,7 @@ describe('what an operation says about itself', () => {
     expect(operationHeadline(operation({ phases: [] }) as never)).toBe('Starting');
   });
 
-  it('opens the form on the pack\'s own default names, and never on the presenter\'s role', () => {
-    expect(defaultCastNames(template as never)).toEqual({ priya: 'Emma Shipman', marcus: 'Sam Burton', dana: 'Ben Diaz' });
+  it('opens the form with every part uncast, and never asks for the presenter\'s', () => {
+    expect(emptyCast(template as never)).toEqual({ priya: '', marcus: '', dana: '' });
   });
 });
