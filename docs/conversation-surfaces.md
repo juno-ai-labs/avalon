@@ -136,9 +136,11 @@ container named `composer-dock`, so that threshold follows the *pane*, which
 narrows when a sidebar expands and widens when one collapses, where a viewport
 media query would have answered for a width nobody is looking at. A size query
 measures the container's content box, so the number in the query is that pane
-width less the conversation dock's two gutters, and `app.css.node.test.ts` holds
-the two to that sum; a launcher's dock states wider gutters, so it reaches the
-same row a little sooner.
+width less a dock's two 16px gutters. Every dock states the same gutter, because
+a dock that states a different one crosses at a different *pane* — and a launcher
+that crosses somewhere else puts the width change back into the hand-off, in a
+band of pane widths either side of the threshold. `app.css.node.test.ts` holds
+the threshold and every dock's gutter to that one sum.
 
 The feed's vertical rhythm is one primitive: a row owns the space above it,
 chosen by what precedes it, and no row sets a bottom margin. `MessageFeed`
@@ -432,6 +434,43 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-11 — Every dock crosses the narrow row at the same pane
+
+**What changed:** The substream and project launchers' dock states `padding: 12px
+16px 28px` rather than `12px 34px 28px`, so its horizontal gutter is the 16px
+every other dock states, and the `@media (max-width: 760px)` rule that existed
+only to equalise those gutters at narrow widths is gone. The vertical values are
+untouched. `app.css.node.test.ts` now reads every rule that pads a dock and holds
+each one's side value to the same `threshold + 2 × gutter = 600px` sum.
+
+**Why:** A size query measures the container's content box, so a dock's own
+gutters decide which *pane* width the narrow-row branch starts at: 16px sides put
+it at a 600px pane, 34px sides at 636px. Between those two the launcher was on
+the narrow branch while the conversation it becomes was not, so the field
+changed width on the keystroke that submits it — 552px to 480px at a 620px pane,
+and 522px to 558px at 590px — which is the exact defect the one-width change was
+made to remove, surviving inside it in a 36px band. Raised by an automated review
+on the pull request; it had been recorded as an accepted residue in the entry
+below, which was the wrong call: the residue was the bug. The hero's 34px was
+sized for a 690px column that no longer exists, and the two narrow-width media
+rules that already equalised it were saying so.
+
+**Consequences:** On a pane narrow enough for the full-row branch, a launcher's
+field, banner and participant row sit 16px from the pane's edges rather than
+34px, which is where the conversation's field already sat. Nothing moves at any
+wider pane, where the field is 480px centred and the dock's gutters are not what
+positions it. The dock padding still transitions across `.is-launching`, with
+only the vertical values left to travel.
+
+**Also in this change, because the test that should have caught it did not:**
+the gutter scan reads rules out of the stylesheet rather than looking each
+selector up with `rule()`, which returns the *first* match for a name — and this
+launcher dock's selector is written twice, once in a narrow-width media block and
+once as the rule itself, so the lookup answered for the wrong one and the scan
+passed over the only dock it exists for. It also strips comments before reading a
+declaration, having been fooled once by a comment sitting between the brace and
+the `padding` it documents.
 
 ### 2026-09-10 — Wrapped text clears the controls by 4px
 
