@@ -266,7 +266,7 @@ is written regardless — and differ only in what happens afterwards.
 | | Destination | New infrastructure | EU submissions | Cost |
 | --- | --- | --- | --- | --- |
 | **A** | Ace page + content-free ping to the existing operator Slack channel | none | identical treatment | small |
-| **B** | A dedicated internal Slack channel carrying the text | one Slack app, two secrets per region | needs a residency decision | medium |
+| **B** | Dedicated internal Slack channels carrying the text | two channel ids; the existing app and token | needs a residency decision | small |
 | **C** | Forwarded into Juno Labs' own Rally workspace as a work stream | one address or webhook, held as a secret | needs a residency decision | medium |
 | **D** | A Linear issue per submission | one Linear credential | needs a residency decision | medium |
 
@@ -280,15 +280,45 @@ triaged. Nothing a member typed leaves its region; no new secret, no new app, no
 residency decision. The cost is a click: the channel says *something arrived*,
 and Ace says what it was.
 
-**Option B — a dedicated Slack channel carrying the text.** Feedback lands where
-the team already is, can be reacted to and threaded, and needs no second
-surface to read. It must not reuse `notifyOps`: that notifier's invariant is
-explicitly that a notice never carries a message body, a person's name, or a
-workspace name, and it exists because the operator channel is shared across
-regions and is the thing that reports on Slack being broken. So this is a
-*second* internal Slack app with its own token, channel, and renderer — and a
-renderer that escapes `mrkdwn` properly, because the text is member-authored and
-must not be able to form a `@channel`, a link, or a convincing extra field.
+**Option B — dedicated Slack channels carrying the text.** Feedback lands where
+the team already is, can be reacted to and threaded, and needs no second surface
+to read. Routing by kind is part of the appeal: `#connector-requests` is a demand
+signal a whole team can watch accumulate, and `#user-feedback` is a different
+conversation with different readers.
+
+**It reuses the existing internal Slack app.** That app holds `chat:write`, and
+`chat:write` posts to any channel the bot is a member of — so the two new
+channels cost an invite each, not an installation. What it does *not* reuse is
+`notifyOps` itself, for two reasons that are about the function rather than the
+app:
+
+- **Its renderer is content-free by contract.** `OpsNotification.fields` is
+  documented as codes, counts, and opaque ids only, and the operator channel is
+  shared by both regions precisely because that holds. Member text does not go
+  through it.
+- **Its renderer would mangle the text anyway.** Every field is collapsed to one
+  line and cut at 200 characters with a visible mark — correct for an error code,
+  wrong for the paragraph that is the entire point of the submission.
+
+So the change is a decomposition, not a new integration. `notifyOps` today mixes
+one mechanism with one policy: posting a bounded `chat.postMessage` with the
+token in a header, under a five-second deadline, escaped for `mrkdwn`, never
+throwing, logging its own outcome — and, on top of that, the content-free
+operator notice. Split them. The mechanism becomes
+`postInternalSlackMessage(env, { channel, text })`, keeping the `APP_ENV` guard,
+the deadline, the outcome rows, and `escapeMrkdwn` exactly as they are;
+`notifyOps` becomes one policy over it, and feedback delivery a second, with its
+own renderer — one that quotes the body as a block rather than a field — and its
+own channel id per kind.
+
+That is the platform move the repository asks for: one primitive, two policies,
+and a third caller later costs a channel id. The concrete cost is two env vars
+per region, an invite per channel, and a renderer.
+
+One coupling to accept knowingly: one token now serves both alerting and
+feedback, so rotating it or removing the app from the workspace breaks both.
+At this size that is the cheaper trade than a second app to administer, and it
+is one env var away from being undone.
 
 **Option C — forward it into Rally.** The submission becomes a turn in a work
 stream in Juno Labs' own Rally workspace, where a Sidekick reads it: groups the
@@ -310,13 +340,22 @@ repetitive, and forty issues named "Jira" is worse than no issues. Filing one
 belongs downstream of triage, as a thing a person or a Sidekick does with a
 count in hand. Recorded here as considered and rejected as an intake path.
 
-**Recommendation: A now, C next.** A is the durable half and it is nearly free —
-the storage and the Ace page are needed under every other option, `notifyOps`
-already exists and needs no secret, and it makes no residency decision, which
-means it cannot make the *wrong* residency decision. C is then a second change
-that adds a forward for the regions whose content is allowed to move, and it
-gets to be a genuine dogfooding story rather than a plumbing exercise. B is a
-subset of C's value that costs a new Slack app; D is a triage action.
+**Recommendation: A's storage plus B's channels, then C.** The row is written
+under every option and is not negotiable (decision 2), so A's durable half is
+phase 1 regardless. B is then the cheapest thing that makes a submission
+*visible to a human* — two channel ids and an invite, on an app that already
+exists — and it beats A's pointer-into-Ace on the only axis that matters early,
+which is whether anyone actually reads what people sent. Ace's Feedback page
+still earns its place as the queryable record and the triage surface, but it can
+follow rather than lead.
+
+C stays the interesting one and stays second: a Sidekick that groups the
+fortieth Jira request with the first thirty-nine is worth more than a channel
+full of individually-read messages, but it is worth building once there is
+enough volume for grouping to mean something. Its risk is also the quietest — a
+forward that silently stops leaves rows accumulating that nobody is reading —
+which is another reason the durable row and a channel someone watches come
+first. D remains a triage action, not an intake path.
 [Open questions](#open-questions) carries the decision.
 
 ### 5. Deduplication is per member, per kind, per subject
@@ -408,11 +447,19 @@ not one this document takes.
   submission cannot form a mention, a channel-wide ping, a link, or a line the
   reader takes for a field, which is the treatment `renderOpsNotification`
   already applies to its own values.
-- **No new secret is required by option A.** B, C, and D each add exactly one
-  credential, which lives as a Worker secret in the regions that use it, never
-  as a `VITE_` name and never in a URL — a token in a URL is exported on every
-  outbound-fetch span. See [`security.md`](../../security.md#secrets) and the
-  same invariant in [`ops-alerting.md`](../../ops-alerting.md).
+- **Options A and B add no credential.** Both post as the internal Slack app
+  that is already configured; B adds channel ids, which are configuration rather
+  than secrets. C and D each add exactly one credential, living as a Worker
+  secret in the regions that use it, never behind a `VITE_` name and never in a
+  URL — a token in a URL is exported on every outbound-fetch span, which is why
+  the existing notifier refuses an incoming webhook and puts its token in a
+  header. See [`security.md`](../../security.md#secrets) and
+  [`ops-alerting.md`](../../ops-alerting.md).
+- **Splitting `notifyOps` must not widen what the operator channel may carry.**
+  The extracted mechanism takes a channel and a rendered string; the
+  content-free rule stays in the operator policy above it, where its invariant
+  is documented, so the split cannot quietly become a licence for an error path
+  to post a message body.
 - **Absent configuration is a supported state.** A region with no destination
   configured still accepts and stores submissions; delivery answers `skipped`.
   Nothing about a Slack setting may take an intake route offline.
@@ -432,9 +479,9 @@ Option A needs none — `OPS_SLACK_BOT_TOKEN` and `OPS_SLACK_CHANNEL_ID` are
 already configured where they are configured, and a region without them answers
 `skipped` as it does today.
 
-Option B needs a second internal Slack app with `chat:write` and nothing else,
-installed once, invited to one channel, with its token and channel id set per
-region. Option C needs either the target work stream's permanent address or a
+Option B needs no new app: the existing internal Slack app is invited to
+`#connector-requests` and `#user-feedback`, and their channel ids are set per
+region beside the token that is already there. Option C needs either the target work stream's permanent address or a
 generic-webhook URL and signing secret from Juno Labs' own Rally workspace.
 Option D needs a Linear API credential and a target team. In each case the
 change ships before the secret exists and does nothing until it is set.
@@ -456,7 +503,10 @@ Suggested sequencing, which a `plan.md` will carry once this PRD is approved:
 1. The primitive — contract, migration, route, service, both entry points,
    inline acknowledgement, settings-registry entry, telemetry. Submissions are
    stored and readable by SQL only.
-2. Ace's Feedback page across both regions, and the content-free operator ping.
+2. Delivery to a channel someone watches: the internal Slack post mechanism
+   split out of `notifyOps`, a renderer that carries the body as a quoted block,
+   and one channel id per kind. Ace's Feedback page across both regions follows
+   here as the queryable record and triage surface.
 3. Whichever destination the product owner chooses, for the regions whose
    content may reach it.
 
