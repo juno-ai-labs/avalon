@@ -80,6 +80,7 @@ let automationOrdinal = 0;
 let AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-0000000000ad");
 
 const WEBHOOK_CONNECTION_ID = "00000000-0000-7000-8000-00000000ad70";
+const GRANOLA_CONNECTION_ID = "00000000-0000-7000-8000-00000000ad80";
 
 const WEBHOOK_DEFINITION: AutomationDraft = {
   name: "Deploy watcher",
@@ -103,6 +104,43 @@ const WEBHOOK_DEFINITION: AutomationDraft = {
   followUpQuestion: null,
   elicitation: null,
   ready: true,
+};
+
+const GRANOLA_DEFINITION: AutomationDraft = {
+  name: "Meeting notes to tickets",
+  description: "Turns a meeting transcript into tickets",
+  overview: "Watches for new Granola transcripts",
+  instructions: "File a ticket for each action item.",
+  triggers: [{
+    type: "connector_activity",
+    connectorType: "granola",
+    sourceBindingKey: "granola_notes",
+    suggestedSourcePluginId: "plugin_granola",
+    eventTypes: ["note.generated"],
+    deterministicFilters: {},
+  }],
+  requiredCapabilities: [],
+  expectedOutputs: [],
+  defaultBehavior: {},
+  recommendedPlugins: [],
+  memoryTables: [],
+  suggestedScope: "personal",
+  followUpQuestion: null,
+  elicitation: null,
+  ready: true,
+};
+
+const GRANOLA_RULES = {
+  schemaVersion: 1 as const,
+  evaluators: [{
+    evaluatorKey: "new_transcript",
+    source: {
+      sourceBindingKey: "granola_notes",
+      suggestedSourcePluginId: "plugin_granola",
+      event: { kind: "event_type" as const, eventType: "note.generated" },
+    },
+    when: { kind: "always" as const },
+  }],
 };
 
 const DEFINITION: AutomationDraft = {
@@ -246,6 +284,33 @@ async function seedWebhookConnection(): Promise<void> {
       WEBHOOK_CONNECTION_ID,
       WORKSPACE_ID,
       JSON.stringify({ eventTypes: ["deploy.finished", "deploy.failed"] }),
+      NOW,
+      NOW,
+    );
+  });
+}
+
+/**
+ * A Granola connection at either scope.
+ *
+ * Granola is the connector whose events are bought once for the whole account:
+ * the webhook endpoint is registered against the workspace API key, so a
+ * personal connection reads notes perfectly well and receives nothing.
+ */
+async function seedGranolaConnection(scope: "personal" | "workspace"): Promise<void> {
+  await runInDurableObject(workspaceStub(), (_instance, state) => {
+    state.storage.sql.exec(
+      `INSERT OR REPLACE INTO connector_connections
+         (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+          display_name, granted_scopes_json, status, cursor_json, config_json,
+          created_at, updated_at, model_plugin_id)
+       VALUES (?, ?, 'granola', ?, ?, 'granola-account', 'Granola', ?, 'healthy',
+               '{}', '{}', ?, ?, 'plugin_granola')`,
+      GRANOLA_CONNECTION_ID,
+      WORKSPACE_ID,
+      scope,
+      scope === "personal" ? AUTHOR_ID : null,
+      JSON.stringify([scope === "personal" ? "granola.personal.read" : "granola.workspace.read"]),
       NOW,
       NOW,
     );
@@ -700,6 +765,40 @@ describe("AutomationDO", () => {
       .find((text) => text.includes("EVENT THAT STARTED THIS RUN"));
     expect(eventInput).toContain("checkout deployed");
     expect(eventInput).toContain("\"service\": \"checkout\"");
+  });
+
+  it("refuses a transcript rule on a personal Granola connection and applies the same rule on a workspace one", async () => {
+    await seedGranolaConnection("personal");
+    await createDraft();
+    await automationStub().submitDefinition({
+      ...addressed(),
+      draft: GRANOLA_DEFINITION,
+      evaluatorRules: AutomationSetEvaluatorRulesInputV1Schema.parse(GRANOLA_RULES),
+      submittedByRunId: null,
+    });
+
+    // The connection reads notes and receives nothing, so a `note.generated`
+    // rule bound to it would register and then wait forever. Refusing here is
+    // what turns a Sidekick that silently never runs into a Sidekick that
+    // cannot be published until its source can actually deliver.
+    // The message names the scope that would work, because "cannot receive
+    // events" is not something the person reading it can act on.
+    await expect(apply()).rejects.toMatchObject({
+      code: "sidekick_connection_delivers_no_events",
+      message: "Granola sends events only to a workspace connection, and this Sidekick uses a personal one",
+    });
+    expect((await automationRow()).lifecycle).toBe("draft");
+    expect(await activeRegistrations()).toBe(0);
+
+    // The same definition, the same rule, on the scope Granola delivers on.
+    await seedGranolaConnection("workspace");
+    const detail = await apply();
+
+    expect(detail).toMatchObject({
+      lifecycle: "active",
+      connectorBindings: { plugin_granola: GRANOLA_CONNECTION_ID },
+    });
+    expect(await activeRegistrations()).toBe(1);
   });
 
   it("refuses to apply a revision naming a plugin the workspace has no connection for", async () => {

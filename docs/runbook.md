@@ -1052,7 +1052,15 @@ where to look when one misbehaves.
   below `effective_after_event_sequence`, so it predates the apply that
   registered the rule), or `sidekick_occurrence_replayed` (a redelivery). No
   delivery at all means the matcher found no active registration, which
-  `WorkspaceDO.workspace_external_event_registrations` will show.
+  `WorkspaceDO.workspace_external_event_registrations` will show. A registration
+  that *is* there and has still never matched means no event of that type ever
+  reached the workspace: check that the connection the registration names can
+  receive one at all. A Sidekick applied before
+  `sidekick_connection_delivers_no_events` existed may hold a rule on a
+  connection whose scope its connector does not deliver on — a personal Granola
+  connection, whose webhook endpoint is bought against the workspace API key, is
+  the case that occurred — and re-applying it now refuses until the workspace
+  connection it needs exists.
 - **Mail did not start a run.** `inbound_email_receipts` on the object holds
   one row per Resend email id with the refusal code
   (`sidekick_not_active`, `sidekick_email_route_mismatch`,

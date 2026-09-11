@@ -3323,6 +3323,21 @@ const ConnectorManifestBaseSchema = z.object({
   userDelivery: ConnectorUserDeliverySchema.optional(),
   capabilities: z.array(ConnectorCapabilitySchema).default([]),
   supportedScopes: z.array(ScopeSchema),
+  /**
+   * The connection scopes this connector's activity can actually be delivered
+   * on. Omitted means every scope in `supportedScopes`, the same default
+   * `capabilityConnectionScopes` gives a capability.
+   *
+   * A connector whose provider subscription is bought once for the whole
+   * account declares the narrower set here: Granola registers its webhook
+   * endpoint against the workspace API key, so a personal Granola connection
+   * calls tools perfectly well and never delivers an event. That fact used to
+   * live only inside the adapter's `normalize`, which runs on a delivery that
+   * in this case never arrives, so nothing upstream could see it: the drafting
+   * catalog offered the personal connection as a trigger source and apply bound
+   * a rule to it that could not fire.
+   */
+  activityConnectionScopes: z.array(ScopeSchema).optional(),
   oauthRequired: z.boolean(),
   activityTriggers: z.array(ConnectorActivityTriggerDescriptorSchema),
   resourceTypes: z.array(z.string()),
@@ -3333,6 +3348,31 @@ const ConnectorManifestBaseSchema = z.object({
 });
 
 export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((manifest, context) => {
+  if (manifest.activityConnectionScopes) {
+    if (manifest.activityConnectionScopes.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "A connector that narrows its activity scopes must leave at least one",
+        path: ["activityConnectionScopes"]
+      });
+    }
+    const outside = manifest.activityConnectionScopes
+      .filter((scope) => !manifest.supportedScopes.includes(scope));
+    if (outside.length > 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Activity scopes must be connection scopes this connector supports: ${outside.join(", ")}`,
+        path: ["activityConnectionScopes"]
+      });
+    }
+    if (manifest.activityTriggers.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Activity scopes narrow activity this connector does not declare",
+        path: ["activityConnectionScopes"]
+      });
+    }
+  }
   const activityTypes = new Set<string>();
   for (const [index, trigger] of manifest.activityTriggers.entries()) {
     if (activityTypes.has(trigger.eventType)) {
@@ -3666,6 +3706,31 @@ export type ParsedConnectorActivityTriggerDescriptor = z.output<typeof Connector
 /** Input permits legacy manifests that omit `surfaces`; parsing normalizes them. */
 export type ConnectorManifestInput = z.input<typeof ConnectorManifestSchema>;
 export type ConnectorManifest = z.infer<typeof ConnectorManifestSchema>;
+
+/**
+ * Whether activity from this connector can reach Rally on a connection of this
+ * scope.
+ *
+ * The one answer to "could a trigger bound here ever fire", asked wherever a
+ * connection is about to be treated as an event source: the drafting catalog
+ * that decides which triggers a model may see, and the apply that binds a rule
+ * to a connection. Both used to ask only whether the *connector* had triggers,
+ * which is a different question, and the gap between the two is a Sidekick
+ * published as active whose rule no event can match.
+ *
+ * Structural in what it accepts so a caller holding a parsed manifest, an
+ * authored one, or the two fields alone can ask it without importing an
+ * adapter.
+ */
+export function connectorActivitySupportsScope(
+  manifest: {
+    readonly supportedScopes: readonly Scope[];
+    readonly activityConnectionScopes?: readonly Scope[] | undefined;
+  },
+  scope: Scope,
+): boolean {
+  return (manifest.activityConnectionScopes ?? manifest.supportedScopes).includes(scope);
+}
 
 /**
  * The machine-readable half of a thrown tool failure, reduced to what is safe

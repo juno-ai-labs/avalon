@@ -1,11 +1,17 @@
-import type { ConnectorActivityTriggerDescriptorV2 } from "@rally/contracts";
+import { connectorActivitySupportsScope } from "@rally/contracts";
+import type { ConnectorActivityTriggerDescriptorV2, Scope } from "@rally/contracts";
 
 
-/** The connector adapter shape this needs: its manifest's declared triggers. */
+/**
+ * The connector adapter shape this needs: its manifest's declared triggers,
+ * and the connection scopes those triggers can be delivered on.
+ */
 interface TriggerSource {
   manifest: {
     type: string;
     activityTriggers: readonly ConnectorActivityTriggerDescriptorV2[];
+    supportedScopes: readonly Scope[];
+    activityConnectionScopes?: readonly Scope[] | undefined;
   };
 }
 
@@ -39,7 +45,9 @@ function configuredEventTypes(configJson: string | null | undefined): string[] {
 export function connectorActivityTriggerDescriptors(
   adapter: TriggerSource,
   connectionConfigJson: string | null | undefined,
+  connectionScope: Scope,
 ): ConnectorActivityTriggerDescriptorV2[] {
+  if (!connectorActivitySupportsScope(adapter.manifest, connectionScope)) return [];
   if (adapter.manifest.type !== "generic_webhook") return [...adapter.manifest.activityTriggers];
   const eventTypes = configuredEventTypes(connectionConfigJson);
   return (eventTypes.length > 0 ? eventTypes : ["webhook.received"]).map((eventType) => ({

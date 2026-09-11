@@ -1782,13 +1782,18 @@ export class SidekickDO extends ConversationParentDurableObject {
       (pluginId) => {
         const connection = connectionsByPlugin.get(pluginId);
         return connection
-          ? connectorActivityTriggerDescriptors(registry.get(connection.connector_type), connection.config_json)
+          ? connectorActivityTriggerDescriptors(
+            registry.get(connection.connector_type),
+            connection.config_json,
+            connection.scope === "workspace" ? "workspace" : "personal",
+          )
           : undefined;
       },
     ));
     const blocker = automationDraftAcceptanceBlocker(definition, rules);
     if (blocker) throw new ApiError(422, blocker, "The automation's definition cannot be applied");
     const selectedByBinding = new Map(Object.entries(selections.activitySourcePluginIds));
+    const externalTriggers = definition.triggers.filter(isExternalEventTrigger);
     const inspectedPlugins = new Map<string, {
       pluginId: string;
       activityTriggers: ReturnType<typeof registry.get>["manifest"]["activityTriggers"];
@@ -1797,7 +1802,34 @@ export class SidekickDO extends ConversationParentDurableObject {
     for (const evaluator of rules.evaluators) {
       const connection = connectionsByPlugin.get(evaluator.source.suggestedSourcePluginId);
       if (!connection) throw new ApiError(422, "sidekick_plugin_unavailable", "An evaluator names a plugin with no connection");
-      const descriptors = connectorActivityTriggerDescriptors(registry.get(connection.connector_type), connection.config_json);
+      const adapter = registry.get(connection.connector_type);
+      const descriptors = connectorActivityTriggerDescriptors(
+        adapter,
+        connection.config_json,
+        connection.scope === "workspace" ? "workspace" : "personal",
+      );
+      // A connection this connector cannot deliver activity on has no
+      // descriptors, and a rule against it would register successfully and then
+      // never match — the failure a person experiences as a Sidekick that runs
+      // for nobody. Name it here rather than letting the rule fall through to
+      // the generic "no such event type" the empty list would otherwise
+      // produce, because the answer is the connection, not the rule.
+      //
+      // The message names the scopes that *do* deliver, read from the same
+      // manifest the subtraction read. Whoever sees this cannot act on "cannot
+      // receive events" — the remedy is a differently scoped connection, and
+      // for a workspace one that is an administrator's to make, so the one
+      // sentence a person gets has to say which.
+      if (externalTriggers.length > 0 && descriptors.length === 0) {
+        const delivering = adapter.manifest.activityConnectionScopes ?? adapter.manifest.supportedScopes;
+        throw new ApiError(
+          422,
+          "sidekick_connection_delivers_no_events",
+          delivering.length > 0
+            ? `${adapter.manifest.displayName} sends events only to a ${delivering.join(" or ")} connection, and this Sidekick uses a ${connection.scope} one`
+            : `${adapter.manifest.displayName} does not send events`,
+        );
+      }
       const eventFamilies: Record<string, string[]> = {};
       for (const descriptor of descriptors) {
         for (const family of descriptor.eventFamilies) {
@@ -1852,7 +1884,6 @@ export class SidekickDO extends ConversationParentDurableObject {
         resourceType: resource.resource_type,
       });
     }
-    const externalTriggers = definition.triggers.filter(isExternalEventTrigger);
     const validated = externalTriggers.length === 0
       ? []
       : validateDraftEvaluatorRules(rules, {

@@ -587,6 +587,11 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       type: "granola",
       displayName: "Granola",
       supportedScopes: ["personal", "workspace"],
+      // Granola's webhook endpoint is registered against the workspace API key
+      // and is the only way a note reaches Rally. A personal connection is MCP
+      // OAuth: it reads notes on request and subscribes to nothing, so a
+      // trigger bound to one waits forever.
+      activityConnectionScopes: ["workspace"],
       oauthRequired: true,
       capabilities: [
         { id: GranolaCapabilities.workspaceRead, kind: "tool" },
