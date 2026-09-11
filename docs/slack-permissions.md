@@ -39,7 +39,7 @@ contracts; activation acknowledgement follows
   the fixed workspace model-tool bundle, and Rally checks that the installation
   still has the complete set.
 - **Personal Slack connection** — an individual connects Slack to Rally for
-  user-attributed tools. These scopes are optional. The **Connect for me** button
+  user-attributed tools. These scopes are optional. The **Connect only for me** button
   and the Slack account link both request the full personal set, so a member who
   connects from either place grants the same capabilities; only a connection made
   before that convergence carries a narrower grant. A personal token does not
@@ -267,7 +267,7 @@ the Slack product surface, the ingress, or the registration:
   diagnosis, not a gate, and a call that needs a missing scope fails on Slack's
   answer rather than on Rally's record of it.
 - **A personal token may be missing scopes this document lists.** Connections made
-  before **Connect for me** and the account link converged on the full set carry a
+  before **Connect only for me** and the account link converged on the full set carry a
   narrower grant, and the tool fails at Slack rather than being hidden.
 - **A provider-side acknowledgement failure does not discard an admitted request.**
   The `eyes` reaction is logged when it fails; the work still runs.
