@@ -351,7 +351,7 @@ reloaded from a canonical source.
 - Every writer of a conversation's display writes the current state it reads beside the text: the producer at upsert time, the patch job when it runs. A display job names the conversation and never carries a title, so a delayed or redelivered job cannot write an old one; the pipeline's post-write fence retries an upsert whose display changed underneath it, and the patch job re-reads the display after patching and retries when it changed, so two overlapping deliveries for one conversation converge on the newest state rather than the last to run.
 - A resource result's time is the resource's `updated_at` as of its last search-input change. Bookkeeping writes (processing state, webhook provenance, hydration stamps) bump `updated_at` without requeueing the row, on purpose, so the index shows when the content last changed rather than when the row was last touched.
 - Public cursors identify consumed candidate positions and never grant access. Fully rejected pages may expose continuation; index-existence concealment is not part of this member-only API.
-- A field added to the search document ships in one deploy and is back-filled by a re-projection migration in a later one, never the same one: the consumer strips what it does not know, so a re-projection consumed during the skew window writes rows without the field. The Queue envelope schemas stay strict, so a new envelope field is a new message type rather than an added key.
+- The search document contract changes additively across deploys. A field is added in one deploy and back-filled by a re-projection migration in a later one, never the same one: the consumer strips what it does not know, so a re-projection consumed during the skew window writes rows without the field. Stripping tolerates nothing else: a renamed or removed field leaves a required key missing on the old build, which is the 2026-09-10 failure again, so a field is removed only once no build that requires it can still consume, and a rename is an add followed by that removal. The Queue envelope schemas stay strict, so a new envelope field is a new message type rather than an added key.
 
 - One tokenizer is retained per isolate (about 26 MiB after releasing construction
   tables in a local Node 22 heap measurement). Its model stays closure-private; only the policy wrapper is
@@ -441,15 +441,38 @@ document phase names the source and the stripped keys in
 `search_document_keys_ignored`, which is what the 2026-09-10 retry log lacked:
 the rows a future window writes behind the contract can be listed from that
 log and re-projected on their own. The embedding phase parses through the same
-tolerant schemas but does not log; it compares identity and content hash and
-writes none of the stripped fields. What the window does not produce is a row
-with the new field: the deploy rule in [One Queue pipeline](#one-queue-pipeline)
-exists because only a re-projection that runs after the window rewrites those
-rows. The Queue envelope schemas (`SearchDocumentJobSchema`,
-`SearchEmbeddingBatchSchema`, the source and display messages) stay strict on
-purpose: an old consumer must retry an envelope it does not recognize rather
-than acknowledge it, so a new envelope field is a new message type, not an
-added key, and is not covered by this tolerance. Migration 53 re-queues only
+tolerant schemas but does not log. It does write the stripped fields: a chunk
+row is built from the whole document, so it carries `substream_id`,
+`connection_id` and every display column exactly as the lexical row does. What
+makes that harmless is that nothing reads them off a chunk row: the display
+columns are requested only in substring mode, which reads the lexical
+namespace, and `connection_id` is not filterable, so it admits nothing. That is
+also why a re-projection leaves chunk rows alone (`countSemanticChunks`
+short-circuits the upsert when the chunk ids already exist) and why a future
+change that starts reading an attribute off a chunk row has to add the
+embedding phase to the log and to the re-projection. What the window does not
+produce is a row with the new field: the deploy rule in
+[One Queue pipeline](#one-queue-pipeline) exists because only a re-projection
+that runs after the window rewrites those rows.
+
+The tolerance is additive only. A renamed or removed document field leaves a
+required key missing on the old build, which is a ZodError, five retries and a
+dead letter with the publish intent already cleared: the incident again. The
+invariant above says how a removal is sequenced. The Queue envelope schemas
+(`SearchDocumentJobSchema`, `SearchEmbeddingBatchSchema`, the source and
+display messages) stay strict, and a field added to one of them reproduces the
+incident one level up, on the message rather than the document. That is a
+deliberate boundary rather than an oversight: a document field is payload the
+index stores and the same build's read path reads back, so an old consumer
+that drops one writes a row the next re-projection repairs; an envelope field
+is an instruction to the consumer, and an old build that drops one runs a job
+it only half understands, which no re-projection notices. Strictness is not
+what tells the job kinds apart (each fails the other's required fields), so a
+new envelope field is a new message type, which the old build retries as
+unrecognized rather than acknowledging. One transitive change to note: the
+`document` inside `SearchEmbeddingBatchSchema` is derived from the document
+schema and is therefore tolerant now, while the envelope around it is not.
+Migration 53 re-queues only
 turns still present in `participant_transcript_turns`; a deletion tombstone
 whose job dead-lettered is not repaired by that pass, which no code path can
 produce today because nothing deletes a turn. Clearing the intent on
@@ -668,7 +691,14 @@ and a number the team has to set, which is more than an incident fix.
 contract it knows, silently except for the log, so a field that has to reach
 existing rows must be back-filled by a migration in the deploy after the one
 that adds it; because the log names the source, that back-fill can be targeted
-next time where this one could not be. Both new migrations are lazy until the
+next time where this one could not be. The tolerance is additive only: a
+renamed or removed field still dead-letters on the old build, so removals are
+sequenced behind the last build that requires the field. The Queue envelopes
+stay strict on purpose, because an envelope field is an instruction and a
+document field is payload; a field added to a job is a new message type.
+Chunk rows carry the display and connection attributes the embedding phase
+writes without logging; nothing reads them off a chunk row today, and a
+change that starts to must extend the log and the re-projection to that phase. Both new migrations are lazy until the
 fleet is force-migrated, like 47 and 52, and migration 53 does not repair a
 dead-lettered deletion tombstone, which nothing produces today. Migration 53
 carries its own copy of migration 52's statement rather than sharing a
