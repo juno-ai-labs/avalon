@@ -557,7 +557,12 @@ adapter separately proves its controls and identity transition.
 only, so neither a settled run's stale `stopRequested` nor an absent one
 acknowledges a wait that is over — and the feed slot's own order, compaction
 over the elapsed total, and neither once the ordered transcript draws the run's
-rows. Any visible
+rows. Those are decisions in isolation, and a decision agreeing with itself is
+not the behaviour: `workstream-open.test.tsx` renders the whole screen over a
+running, stop-requested detail and asserts the row is in `.composer-dock` and
+not in `.transcript-scroll`. Assert the box, not only the sentence — the text
+alone passes just as well in the scroller that hides it from a reader who has
+scrolled up, which is the defect that shipped to review. Any visible
 change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 

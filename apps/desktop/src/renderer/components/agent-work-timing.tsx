@@ -51,13 +51,36 @@ export interface AgentWorkTimingProps {
   icon?: React.ReactNode;
 }
 
-export function AgentCompactionIndicator(): React.JSX.Element {
+/**
+ * An activity row that names a state rather than timing one.
+ *
+ * `AgentWorkTiming` below counts, so its orb parks and its label changes tense;
+ * these rows do neither. They are always running, always say one sentence, and
+ * that sentence is both the visible label and the accessible name — there is no
+ * ticking number for a live region to read out, which is the whole reason the
+ * timing row needs a separate `activeName`.
+ *
+ * One component rather than one per state: the two callers below differed only
+ * in their sentence, and a third state copying the pair a third time is how the
+ * `role`, the live-region attributes, and the orb's props drift apart.
+ *
+ * `name` is the sentence a screen reader hears where that differs from the one
+ * on screen. Compaction is the case: the row reads "Compacting conversation
+ * context…" beside an orb that supplies the subject visually, and a reader who
+ * hears the line without the orb needs "Rally is" in front of it. It defaults
+ * to `label`, because a row whose visible line already names its subject — the
+ * pending stop does — would otherwise be made to say it twice.
+ */
+function ActivityStatusRow({ label, name = label }: {
+  label: string;
+  name?: string;
+}): React.JSX.Element {
   const appearance = useAppearance();
 
   return (
     <div
       aria-atomic="true"
-      aria-label="Rally is compacting the conversation context"
+      aria-label={name}
       aria-live="polite"
       className="agent-work-timing agent-work-timing-active"
       role="status"
@@ -70,10 +93,17 @@ export function AgentCompactionIndicator(): React.JSX.Element {
         state="solving"
         theme={appearance}
       />
-      <span aria-hidden="true" className="agent-work-timing-label">
-        Compacting conversation context…
-      </span>
+      <span aria-hidden="true" className="agent-work-timing-label">{label}</span>
     </div>
+  );
+}
+
+export function AgentCompactionIndicator(): React.JSX.Element {
+  return (
+    <ActivityStatusRow
+      label="Compacting conversation context…"
+      name="Rally is compacting the conversation context"
+    />
   );
 }
 
@@ -99,27 +129,7 @@ export function AgentCompactionIndicator(): React.JSX.Element {
  * worth printing is how much longer, and nothing here can know it.
  */
 export function RunStoppingIndicator(): React.JSX.Element {
-  const appearance = useAppearance();
-
-  return (
-    <div
-      aria-atomic="true"
-      aria-label={STOPPING_LABEL}
-      aria-live="polite"
-      className="agent-work-timing agent-work-timing-active"
-      role="status"
-    >
-      <ThinkingOrb
-        aria-hidden="true"
-        className="agent-work-timing-orb"
-        size={20}
-        speed={1}
-        state="solving"
-        theme={appearance}
-      />
-      <span aria-hidden="true" className="agent-work-timing-label">{STOPPING_LABEL}</span>
-    </div>
-  );
+  return <ActivityStatusRow label={STOPPING_LABEL} />;
 }
 
 /**
