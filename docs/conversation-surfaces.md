@@ -122,6 +122,18 @@ launcher that dressed its field differently made the element a person types
 their first message into the odd one out on a screen already showing the
 conversation it becomes, and it made the hand-off a costume change.
 
+The run's Stop action is an icon after Send, sharing the microphone's circular
+neutral background, with a tooltip that explains the
+current action or pending stop. Its mounted, inert-when-hidden slot animates its
+width and horizontal translation together: the microphone and Send move left
+as Stop slides through the capsule's clipped right corner, and return as it
+slides out. Both control groups center in the single-line row; multiline and
+attachment layouts keep them bottom-aligned. CSS transitions reverse in place on rapid state changes and are
+removed for reduced motion. A pending stop shows a spinner and remains hoverable for its tooltip
+but cannot submit another stop request. The capsule's rounded overflow clips
+the moving button; tooltips portal outside it. `IconButton` tooltips do not duplicate
+the button's accessible name as a second screen-reader description.
+
 The composer's width is the conversation's, not the pane's, and it is one width
 across every surface that has a composer. A turn is capped at `--turn-width-cap`
 (640px, in `app.css`); `--composer-width` is three quarters of that, and the
@@ -502,6 +514,15 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-11 — Stop slides through the composer corner
+
+The text Stop action widened and raised the trailing control row, leaving the
+leading controls visibly lower. Stop now uses the same icon geometry after
+Send, with its action and pending state explained by a tooltip. A mounted slot
+animates width and translation through the clipped capsule corner, so removing
+the action does not snap the microphone and Send back into place. Keep hidden
+controls inert, pending stops guarded, and single-line control groups centered.
 
 ### 2026-09-11 — A rail fades what it cannot fit, and only when it cannot fit it
 

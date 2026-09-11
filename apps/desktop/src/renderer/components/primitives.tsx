@@ -250,7 +250,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
 
   if (!showTooltip) return button;
 
-  return <Tip label={label} side={tooltipSide}>{button}</Tip>;
+  return <Tip describesTrigger={false} label={label} side={tooltipSide}>{button}</Tip>;
 });
 
 interface DragHintProps {
