@@ -1767,6 +1767,24 @@ describe('the shared shell primitives and the artifact pane', () => {
     expect(rule('.attachment-lightbox')).toContain('z-index: 1001');
   });
 
+  it('paints a pressed icon only where a button opted into being a toggle', () => {
+    // `aria-pressed` is on icon buttons that are not visual toggles: the
+    // composer's dictation button carries it through `transcribing` and
+    // `finalizing` while painting itself from `.microphone-control.is-listening`,
+    // so a rule keyed on the attribute alone washes it during the states that
+    // class does not cover.
+    // A rule qualified by something else (`.grokbot-computer-button`, say) is
+    // a component painting its own control and is fine. What must not exist is
+    // one that claims every pressed icon button in the tree.
+    const bare = preludes()
+      .flatMap((prelude) => prelude.split(','))
+      .map((selector) => selector.trim())
+      .filter((selector) => /^\.icon-button\[aria-pressed='true'\](?::[a-z-]+(?:\([^)]*\))?)*$/u.test(selector));
+    expect(bare).toEqual([]);
+    expect(rule(".icon-button-toggle[aria-pressed='true']:hover:not(:disabled)"))
+      .toContain('var(--av-cmp-row-background-selected)');
+  });
+
   it('leaves the primitives unscoped, so a portal gets them without a shell ancestor', () => {
     expect(rule('.inset-surface')).not.toBeNull();
     const scoped = preludes().filter((prelude) => /\.app-shell[^,]*\.inset-surface\b/u.test(prelude));
