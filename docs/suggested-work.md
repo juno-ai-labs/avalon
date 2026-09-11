@@ -540,28 +540,7 @@ prevents a future caller from treating that classification as a hidden route.
 four Suggested Work items on the home screen. Existing work streams can prevent
 a duplicate suggestion but cannot receive the evidence.
 
-### 2026-08-24 — Workspace-visible activity enters every member's private context
-
-**What changed:** Suggested Work now fans an unrestricted workspace connector
-event into one personal admission window per active member. Each inference sees
-that member's workspace-visible and private work streams. The source retains its
-workspace audience, so it may route into any target the member can read; a
-restricted source in the same kind of window remains unable to broaden.
-
-**Why:** A workspace event is readable by every member, but the former single
-workspace window could inspect only workspace-scoped work streams. It therefore
-could not recognize that the public event belonged to one member's private work.
-
-**Considered and rejected:** One workspace inference over the union of every
-member's private work streams, or keeping both workspace and personal copies.
-The first leaks private titles across users; the second creates duplicate
-opportunities and competing routing decisions.
-
-**What a future change has to respect:** The admission audience and source
-audience answer different questions. Public evidence may be evaluated separately
-in every member's authorized context, but those contexts must never be merged.
-
-### 2026-08-24 — Admission context carries an explicit reader audience
+### 2026-08-24 — Admission context carries an explicit reader audience, and workspace-visible activity enters every member's private context
 
 **What changed:** Suggested Work's admission read now sends WorkspaceDO either a
 workspace audience or the exact personal audience member. Workspace admission
@@ -569,21 +548,40 @@ can inspect only workspace-scoped work streams; personal admission can inspect
 everything that member may already view. The enabled `route_existing` decision
 may create a card again only after a separate source-to-target audience check.
 
+An unrestricted workspace connector event now fans into one personal admission
+window per active member. Each inference sees that member's workspace-visible
+and private work streams. The source retains its workspace audience, so it may
+route into any target the member can read; a restricted source in the same kind
+of window remains unable to broaden.
+
 **Why:** The previous workspace call passed `userId = null`, and WorkspaceDO
 interpreted null as “do not apply visibility.” That exposed private work-stream
 titles and objectives to a workspace inference even though no workspace reader
 had permission to see them.
+
+Once scoped correctly, a workspace event is readable by every member, but a
+single workspace window could inspect only workspace-scoped work streams. It
+therefore could not recognize that the public event belonged to one member's
+private work.
 
 **Considered and rejected:** Picking a representative member for workspace
 admission or filtering after the 20-row recency limit. The first borrows private
 permissions the batch does not own; the second lets hidden rows consume the
 bounded candidate set.
 
+One workspace inference over the union of every member's private work streams,
+or keeping both workspace and personal copies. The first leaks private titles
+across users; the second creates duplicate opportunities and competing routing
+decisions.
+
 **What a future change has to respect:** Every cross-work-stream inference read
 must name its audience before SQL executes. Workspace and personal are distinct
 authorization cases, not null and non-null variants of one optional predicate.
 Permission to inspect a target does not by itself authorize moving source content
-there; the source audience must contain every target reader.
+there; the source audience must contain every target reader. The admission
+audience and source audience answer different questions. Public evidence may be
+evaluated separately in every member's authorized context, but those contexts
+must never be merged.
 
 ### 2026-08-24 — Suggested-work telemetry follows WorkspaceDO authority
 
@@ -609,22 +607,6 @@ of truth.
 from data visible to the acting member. Missing optional context skips the
 detailed event (with the legacy successful-start fallback) and can never turn a
 successful suggestion action into an HTTP 500.
-
-### 2026-08-23 — The batching window and the ranking pipeline get workerd suites
-
-**What changed:** `test-workers/opportunity-batching-window.test.ts` asserts the
-aggregation arithmetic — the ten-minute debounce, the one-hour cap measured from
-the first event, one window per partition, and a replayed source counted once.
-
-**Why:** the debounce and the cap are the product behaviour, and they had no
-test at all: the two that covered them ran the Worker-side D1 arm, which
-migration 0090 made unreachable, and went with it. `docs/potential-bugs.md`
-carried the gap until now.
-
-**What a future change has to respect:** elapsed time is simulated by ageing the
-window's `first_event_at`, not by passing a clock. `enqueueOpportunitySource`
-takes `now` as a default parameter and the RPC does not forward one, so a test
-that supplied a clock would be exercising a signature production never calls.
 
 ### 2026-08-23 — The ranking pipeline is asserted against the object that runs it
 
@@ -713,7 +695,7 @@ accepting a stale lease while a window is still processing.
 **Consequences:** Terminal retries converge without extra rows. Active work
 still requires the exact current lease.
 
-### 2026-08-18 — Suggested work becomes WorkspaceDO-owned Workflow compute
+### 2026-08-18 — Suggested work becomes WorkspaceDO-owned Workflow compute, admitted from connector-event Workflows
 
 **What changed:** The complete opportunity graph and resolved per-user product
 state moved into WorkspaceDO SQLite. Local alarms claim due admission/ranking
@@ -724,15 +706,26 @@ in the new SubstreamAgent before its first run is dispatched. The maintenance
 importer copies all D1 rows in foreign-key order before D1 writers are
 permanently fenced, then route activation scrubs the source product rows.
 
+Unclaimed connector evidence reaches batching from the per-event Workflow after
+its normalized body has committed to WorkspaceDO. The regional Queue consumer no
+longer runs watches, automations, or suggestion admission inline. Pending batch
+rows fence the 24-hour D1 handoff redaction until the admission source has been
+snapshotted.
+
 **Why:** Opportunities and their evidence are scoped to one workspace, while a
 regional D1 scheduler made cost and correctness depend on fleet-wide scans. A
 workspace-local transaction can persist the opportunity, provenance, user
-resolution, and ranking invalidation atomically.
+resolution, and ranking invalidation atomically. Queue callbacks should remain
+short admission bridges, while semantic admission can take seconds and must have
+durable retries independent of Queue redelivery; the source event itself belongs
+to one workspace object.
 
 **Considered and rejected:** Using D1 as a read projection, running model work
 inside the DO alarm, and periodically waking dormant workspaces. Projections
 restore dual authority, inference blocks the object's control plane, and idle
-alarms spend money without improving a user-visible result.
+alarms spend money without improving a user-visible result. Also rejected:
+increasing Queue retries around inference and retaining connector bodies
+indefinitely in D1 for the delayed batch reader.
 
 **Consequences:** Workflow payloads contain only fenced object pointers. D1
 still supplies active membership/last-seen and verified connector identity
@@ -740,24 +733,7 @@ inputs, but no opportunity content, provenance, or user state remains or is read
 after cutover; only redacted opportunity ID anchors satisfy the unshipped
 workstream foreign key. Restricted personal connector evidence remains in the
 opportunity snapshot but is never widened into a workstream-visible origin
-resource.
-
-### 2026-08-18 — Connector-event Workflows admit suggested work
-
-**What changed:** Unclaimed connector evidence reaches batching from the
-per-event Workflow after its normalized body has committed to WorkspaceDO. The
-regional Queue consumer no longer runs watches, automations, or suggestion
-admission inline. Pending batch rows fence the 24-hour D1 handoff redaction until
-the admission source has been snapshotted.
-
-**Why:** Queue callbacks should remain short admission bridges, while semantic
-admission can take seconds and must have durable retries independent of Queue
-redelivery. The source event itself belongs to one workspace object.
-
-**Considered and rejected:** Increasing Queue retries around inference and
-retaining connector bodies indefinitely in D1 for the delayed batch reader.
-
-**Consequences:** New connector suggestion sources must be reconstructible from
+resource. New connector suggestion sources must be reconstructible from
 WorkspaceDO or materialize a bounded batch snapshot before the handoff expires;
 they must not extend D1 event-body retention.
 

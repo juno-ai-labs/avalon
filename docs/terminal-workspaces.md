@@ -1949,13 +1949,15 @@ write guidance; stale cards converge from receipt authority; and latency
 consumers can distinguish provider work from acquisition and total wait. The
 production matrix must still be rerun in both regions after deployment.
 
-### 2026-08-21 — Terminal writes republish the directory deadline again
+### 2026-08-21 — Terminal writes republish the directory deadline again, and policy transitions keep their per-path lease semantics
 
 **What changed:** `/internal/terminal` runs each operation through
 `commitRuntimeMutation` and then `scheduleNextAlarm`, the way
 `/internal/runtime-sql` always did. Operations that cannot move a deadline —
 reads, and the task, import, and publication writes — are exempted by name;
-anything else, including anything added later, publishes.
+anything else, including anything added later, publishes. Separately,
+`settlePolicyTransition` takes `clearOperationLease` instead of always clearing
+the mutation lease.
 
 **Why:** the typed port called its storage method directly, which committed the
 row and told nobody. `workspace_workstream_directory.next_terminal_action_at`
@@ -1970,6 +1972,13 @@ stop, archive, and expire produced no other directory-affecting write, so the
 chain stalled after whatever value was published last, and nothing ever cleared
 a stale one.
 
+The lease change: the five D1 statements `settlePolicyTransition` replaced were
+not uniform. The stop and the two failure paths that lose the sandbox released
+the lease; the rollback and the settle that only records the applied revision
+left it with its holder. Folding them into one operation quietly made all five
+release it, which is a change to a mutual-exclusion guard that nothing asked
+for.
+
 **Considered and rejected:** treating every operation as directory-affecting.
 Task settlement runs once per command, and republishing the whole directory row
 plus a per-participant effect on that path is real parent work for a projection
@@ -1977,28 +1986,17 @@ that cannot have changed. The exemption list is explicit and the default falls
 the other way, so a new operation over-publishes rather than stranding the
 scheduler.
 
+For the lease: keeping the uniform clear and documenting it. The lease is what
+stops two runs mutating one workspace; changing when it drops belongs in a
+change that argues for it, not in a refactor.
+
 **Consequences:** an operation added to `WorkstreamTerminalStorage` publishes a
 directory effect unless it is named in `NON_DIRECTORY_OPERATIONS`. Adding a name
 there is a claim that the operation cannot change `terminal_workspace`, and it
 is only checked by review.
 
-### 2026-08-21 — Policy transitions keep their per-path lease semantics
-
-**What changed:** `settlePolicyTransition` takes `clearOperationLease` instead
-of always clearing the mutation lease.
-
-**Why:** the five D1 statements it replaced were not uniform. The stop and the
-two failure paths that lose the sandbox released the lease; the rollback and the
-settle that only records the applied revision left it with its holder. Folding
-them into one operation quietly made all five release it, which is a change to a
-mutual-exclusion guard that nothing asked for.
-
-**Considered and rejected:** keeping the uniform clear and documenting it. The
-lease is what stops two runs mutating one workspace; changing when it drops
-belongs in a change that argues for it, not in a refactor.
-
-**Consequences:** each call site states its own answer, and the two that keep
-the lease are the two that leave a sandbox a run may still be using.
+Each `settlePolicyTransition` call site states its own answer, and the two that
+keep the lease are the two that leave a sandbox a run may still be using.
 
 ### 2026-08-21 — Terminal addresses its own tables through a typed port
 
@@ -2182,35 +2180,7 @@ lifecycle changes require compensation, and a branch ref remains stable across
 base refreshes and sandbox generations. Remote branch creation belongs to an
 actual model push, and recovery archives must retain local commit history.
 
-### 2026-08-13 — Standard Git and GitHub CLI replace a second publication gate
-
-**What changed:** Full-access repository sandboxes now receive a short-lived,
-single-repository write token through Daytona secret substitution. Rally
-creates or restores a persisted `avalon/adjective-adjective-adjective-noun`
-branch, switches to it before every model-facing operation, and lets the model
-use normal `git push` and `gh pr` commands. Read-only credentials still enforce
-remote immutability. Publication provenance no longer parses request prose or
-limits a run to one update.
-
-**Why:** Models are trained on standard Git and GitHub CLI workflows, and a PR
-commonly receives several commits or updates. GitHub cannot scope an
-installation token to one branch; emulating that with a proxy and a second
-single-use authorization state machine would add complexity while fighting the
-desired model behavior.
-
-**Considered and rejected:** A smart-HTTP/API proxy, one token per push, and a
-prose-derived single-publication grant. The connector's explicit read-only or
-full-access policy is the authorization boundary. Future changes must preserve
-automatic branch preparation and policy-triggered credential rotation, but must
-not reintroduce a participant chooser or bespoke Git command surface.
-
-**Consequences:** A full-access model credential is repository-scoped rather
-than branch-scoped. The system prompt tells the model to push only the prepared
-branch and target its base; repository rulesets remain an optional provider-side
-backstop. Existing typed publication receipts remain available for convergence,
-not as the only write route.
-
-### 2026-08-13 — The model chooses repositories behind a recovery boundary
+### 2026-08-13 — The model chooses repositories behind a recovery boundary, and standard Git and GitHub CLI replace a second publication gate
 
 **What changed:** Terminal adds `checkout_repository` as its ninth tool. The
 model chooses an exact authorized repository, sees whether its remote access is
@@ -2219,15 +2189,35 @@ different sandbox repository, Rally saves a verified attached recovery archive
 and only then destroys the old sandbox. The participant transcript chooser was
 removed; repository policy now lives in connector Settings.
 
+Full-access repository sandboxes receive a short-lived, single-repository
+write token through Daytona secret substitution. Rally creates or restores a
+persisted `avalon/adjective-adjective-adjective-noun` branch, switches to it
+before every model-facing operation, and lets the model use normal `git push`
+and `gh pr` commands. Read-only credentials still enforce remote immutability.
+Publication provenance no longer parses request prose or limits a run to one
+update.
+
 **Why:** The chooser interrupted and eventually timed out runs even though the
 model could search GitHub itself. Silent replacement was not acceptable either:
 a model-selected repository change can invalidate the sandbox authority
 fingerprint and otherwise discard untracked work.
 
+Models are trained on standard Git and GitHub CLI workflows, and a PR commonly
+receives several commits or updates. GitHub cannot scope an installation token
+to one branch; emulating that with a proxy and a second single-use
+authorization state machine would add complexity while fighting the desired
+model behavior.
+
 **Considered and rejected:** Resuming through another participant elicitation,
 keeping one repository forever, and permitting replacement after only a Git
 diff. Those respectively preserve the interruption, prevent legitimate
 cross-task work, or lose untracked source, databases, and generated artifacts.
+
+For publication: a smart-HTTP/API proxy, one token per push, and a
+prose-derived single-publication grant. The connector's explicit read-only or
+full-access policy is the authorization boundary. Future changes must preserve
+automatic branch preparation and policy-triggered credential rotation, but
+must not reintroduce a participant chooser or bespoke Git command surface.
 
 **Consequences:** A repository switch may cost one bounded archive transfer and
 a fresh sandbox generation. Checkout fails closed above 50 MiB compressed, so
@@ -2237,6 +2227,12 @@ repository-selection paths must call the same policy and backup boundary rather
 than writing selection rows directly. GitHub repository permissions are not a
 substitute for the publisher's exact-ref checks because GitHub does not issue
 branch-scoped installation tokens.
+
+A full-access model credential is repository-scoped rather than branch-scoped.
+The system prompt tells the model to push only the prepared branch and target
+its base; repository rulesets remain an optional provider-side backstop.
+Existing typed publication receipts remain available for convergence, not as
+the only write route.
 
 ### 2026-08-13 — Worker-safe uploads and durable repository requests fix first use
 
@@ -2372,123 +2368,45 @@ regional-jurisdiction guarantee. A custom snapshot is considered only after a
 meaningful cohort shows installation—not unavoidable create or verification—is
 the material tail-latency source.
 
-### 2026-08-13 — Live Daytona verification hardens the managed default snapshot
-
-**What changed:** Terminal now uses Daytona's managed `daytona-small` snapshot.
-First creation idempotently creates the private workspace, installs only missing
-SQLite/`gh`/pnpm/`tsx` capabilities through Trusted-only hosts, and executes the
-full compatibility manifest. Provider HTTP calls have a bounded client deadline,
-delete response loss is reconciled from observed absence, and the command
-envelope uses a shell-neutral exit variable. The manifest also probes Git,
-`gh`, and passwordless sudo.
-
-**Why:** A live `daytona-small` probe proved provider policy read-back and
-deletion, but also showed that the stock image has no `/workspace`, SQLite CLI,
-pnpm, or `gh`; toolbox commands stay unprivileged even when sandbox creation asks
-for root; and Daytona's default zsh treats `status` as read-only. Registry
-inspection showed the full 0.9/0.10 images are roughly 6.9 GiB compressed, while
-the separate slim image is much smaller.
-
-**Considered and rejected:** Owning a custom snapshot based on Daytona's slim
-image, a generic Node image, VM sandboxes, unconditional runtime installation on
-every cold start, and trusting a requested sandbox user. They respectively make
-Rally own refresh/activation compatibility, recreate Daytona conventions, buy
-unused isolation features, slow every first use, or conflict with observed
-toolbox identity.
-
-**Consequences:** Rally accepts the managed snapshot's larger footprint in
-exchange for Daytona's common, coordinated path. The bootstrap skips capabilities
-Daytona already supplies and fails closed if a managed update breaks sudo,
-workspace ownership, a promised runtime, or a manager fixture.
-
-### 2026-08-13 — Review hardens recovery, authority, and fail-closed transitions
-
-**What changed:** Sandbox creation now verifies Daytona's observed egress
-policy; command observation is named, bounded, sanitized before persistence, and
-recoverable after response loss; resource imports record intent before transfer
-and verify existing bytes before reuse. Network-policy changes stop or quarantine
-every current sandbox before committing the new revision without stamping a
-late generation as verified. Expiry reconciles a lost delete response from
-provider absence, and Bind preserves ambiguous command receipts for exact
-reattachment. GitHub publication
-revalidates the immutable repository ID, current work-stream participation, and
-explicit non-negated intent. The desktop exposes recovery actions and canonical
-workspace-domain changes while keeping the managed baseline internal,
-repository replacement confirmation, transcript continuation, and live
-lifecycle refresh.
-
-**Why:** Adversarial review found places where requested provider state was
-mistaken for observed state, a first failure could leave another sandbox running
-under broader egress, ambiguous command outcomes invited duplicate execution,
-and mutable repository names or stale participant grants could cross authority
-boundaries. It also found UI paths that could discard retained files or strand a
-blocked run without explaining how to recover.
-
-**Considered and rejected:** Trusting Daytona create input as read-back,
-stopping sandboxes only until the first provider failure, converting unknown
-command results into ordinary failures, authorizing PR publication from keyword
-proximity alone, and silently replacing a retained workspace. Each made a
-provider or UI race look successful without proving the corresponding security
-or durability invariant.
-
-**Consequences:** Provider activation requires real read-back and redirect/private
-network probes. Policy mutations may quarantine or delete a sandbox that cannot
-be stopped safely, but never commit an unverified revision. Exact command replay
-reattaches to the same named session; changed calls stop on ambiguity. Repository
-replacement is explicit, preserves a final diff where possible, and resumes the
-requesting work stream once.
-
-### 2026-08-13 — Resource paths and first-use policy are verified at the boundary
-
-**What changed:** Automatic imports now write to the exact path already checked
-for root/symlink containment. Generated resources resolve beneath
-`AVALON_RESOURCE_DIR`, must be non-empty stable regular files, and are checked by
-size and SHA-256 before and after transfer. The snapshot probe requires both
-host-owned working directories, and first sandbox creation compares Daytona's
-reported allow-list with the compiled workspace policy before use.
-
-**Why:** Deriving a title-based sibling after containment validation checked the
-wrong import path; repository-relative publication bypassed the promised output
-directory; and accepting an unverified create response could make Trusted only
-a UI claim rather than an enforced provider fact.
-
-**Considered and rejected:** Trusting snapshot convention, resource titles, or
-the create request as evidence. Each is an input or intention, not observed
-state at the boundary where bytes or network access are granted.
-
-**Consequences:** Snapshot activation fails until `.rally/tmp` and
-`.rally-output` exist. Publication performs two bounded file inspections, and a
-create-policy mismatch discards the sandbox and leaves durable failed state.
-
-### 2026-08-13 — Named command sessions close the Worker response-loss window
-
-**What changed:** Terminal retains each stable Daytona command session until its
-terminal result is durable. A matching incomplete Bind receipt can re-enter the
-frozen `run_command` executor, verify the task's sandbox generation and command
-hash, and observe that session's sole command before returning one final result.
-
-**Why:** A Worker can disappear after Daytona accepted or finished a command but
-before the tool receipt is complete. Treating that as an ordinary ambiguous
-write would strand the agent; deleting the session before D1 terminalization
-would also remove the evidence needed to prove whether replay is safe.
-
-**Considered and rejected:** A second Terminal-command Workflow, continuation
-table, WebSocket event pipeline, and model-facing poll protocol. The existing
-harness Workflow retry plus Daytona's stable named session provides the required
-recovery boundary with less orchestration state.
-
-**Consequences:** Bind may re-enter only `run_command` and the convergent
-`publish_branch_and_pr` operation after an exact matching incomplete receipt.
-Any generation, input, canonical-policy, session, repository, ref, or grant
-ambiguity still fails closed, and provider-session cleanup happens only after D1
-records a terminal result.
-
-### 2026-08-13 — Terminal adds lazy, authority-fenced Daytona workspaces
+### 2026-08-13 — Terminal adds lazy, authority-fenced Daytona workspaces, verified live and hardened by review
 
 **What changed:** Rally gains a deferred eight-tool Terminal plugin backed by
 one private Daytona sandbox per work stream, workspace egress policy, generated
 resource exchange, read-only GitHub bootstrap, one trusted pull-request
 publisher, participant-visible state, and scheduled stop/archive/expiry.
+
+Terminal uses Daytona's managed `daytona-small` snapshot. First creation
+idempotently creates the private workspace, installs only missing
+SQLite/`gh`/pnpm/`tsx` capabilities through Trusted-only hosts, and executes
+the full compatibility manifest, which also probes Git, `gh`, and passwordless
+sudo. Provider HTTP calls have a bounded client deadline, delete response loss
+is reconciled from observed absence, and the command envelope uses a
+shell-neutral exit variable.
+
+Terminal retains each stable Daytona command session until its terminal result
+is durable. A matching incomplete Bind receipt can re-enter the frozen
+`run_command` executor, verify the task's sandbox generation and command hash,
+and observe that session's sole command before returning one final result.
+
+Automatic imports write to the exact path already checked for root/symlink
+containment. Generated resources resolve beneath `AVALON_RESOURCE_DIR`, must be
+non-empty stable regular files, and are checked by size and SHA-256 before and
+after transfer. The snapshot probe requires both host-owned working
+directories, and first sandbox creation compares Daytona's reported allow-list
+with the compiled workspace policy before use.
+
+Review hardening: sandbox creation verifies Daytona's observed egress policy;
+command observation is named, bounded, sanitized before persistence, and
+recoverable after response loss; resource imports record intent before
+transfer and verify existing bytes before reuse. Network-policy changes stop or
+quarantine every current sandbox before committing the new revision without
+stamping a late generation as verified. Expiry reconciles a lost delete
+response from provider absence, and Bind preserves ambiguous command receipts
+for exact reattachment. GitHub publication revalidates the immutable
+repository ID, current work-stream participation, and explicit non-negated
+intent. The desktop exposes recovery actions and canonical workspace-domain
+changes while keeping the managed baseline internal, repository replacement
+confirmation, transcript continuation, and live lifecycle refresh.
 
 **Why:** General work-stream agents often need trained CLI/code behavior for
 calculation, transformation, artifact creation, repository inspection, and
@@ -2496,17 +2414,87 @@ small edits. Reimplementing every CLI as a custom tool would make the surface
 less familiar to models, while handing a sandbox broad credentials or exposing
 its control plane would make that convenience an authority escalation.
 
+A live `daytona-small` probe proved provider policy read-back and deletion, but
+also showed that the stock image has no `/workspace`, SQLite CLI, pnpm, or
+`gh`; toolbox commands stay unprivileged even when sandbox creation asks for
+root; and Daytona's default zsh treats `status` as read-only. Registry
+inspection showed the full 0.9/0.10 images are roughly 6.9 GiB compressed,
+while the separate slim image is much smaller.
+
+A Worker can disappear after Daytona accepted or finished a command but before
+the tool receipt is complete. Treating that as an ordinary ambiguous write
+would strand the agent; deleting the session before D1 terminalization would
+also remove the evidence needed to prove whether replay is safe.
+
+Deriving a title-based sibling after containment validation checked the wrong
+import path; repository-relative publication bypassed the promised output
+directory; and accepting an unverified create response could make Trusted only
+a UI claim rather than an enforced provider fact.
+
+Adversarial review found places where requested provider state was mistaken
+for observed state, a first failure could leave another sandbox running under
+broader egress, ambiguous command outcomes invited duplicate execution, and
+mutable repository names or stale participant grants could cross authority
+boundaries. It also found UI paths that could discard retained files or strand
+a blocked run without explaining how to recover.
+
 **Considered and rejected:** A user-visible/PTY coding harness; Cloudflare
-Dynamic Workers as the only execution substrate; one sandbox per command; a cold
-filesystem copy in R2; CIDR/proxy egress; model-facing revisions, polling,
+Dynamic Workers as the only execution substrate; one sandbox per command; a
+cold filesystem copy in R2; CIDR/proxy egress; model-facing revisions, polling,
 directory listing, or lifecycle tools; and GitHub write credentials inside the
-work-stream sandbox. Each either expands product scope, duplicates trained shell
-behavior, costs more state churn, or weakens the authorization boundary.
+work-stream sandbox. Each either expands product scope, duplicates trained
+shell behavior, costs more state churn, or weakens the authorization boundary.
+
+For the snapshot: owning a custom snapshot based on Daytona's slim image, a
+generic Node image, VM sandboxes, unconditional runtime installation on every
+cold start, and trusting a requested sandbox user. They respectively make
+Rally own refresh/activation compatibility, recreate Daytona conventions, buy
+unused isolation features, slow every first use, or conflict with observed
+toolbox identity.
+
+For command recovery: a second Terminal-command Workflow, continuation table,
+WebSocket event pipeline, and model-facing poll protocol. The existing harness
+Workflow retry plus Daytona's stable named session provides the required
+recovery boundary with less orchestration state.
+
+For boundary verification: trusting snapshot convention, resource titles, or
+the create request as evidence. Each is an input or intention, not observed
+state at the boundary where bytes or network access are granted.
+
+For the review round: trusting Daytona create input as read-back, stopping
+sandboxes only until the first provider failure, converting unknown command
+results into ordinary failures, authorizing PR publication from keyword
+proximity alone, and silently replacing a retained workspace. Each made a
+provider or UI race look successful without proving the corresponding
+security or durability invariant.
 
 **Consequences:** A region is truthfully unavailable until its real Daytona
 acceptance probe passes. Future runtimes/managers require a prompt update, a
-snapshot-manifest probe, and provider acceptance together. Any new Terminal tool
-must retain the documented argument/output/error contract and authority fence.
+snapshot-manifest probe, and provider acceptance together. Any new Terminal
+tool must retain the documented argument/output/error contract and authority
+fence.
+
+Rally accepts the managed snapshot's larger footprint in exchange for
+Daytona's common, coordinated path. The bootstrap skips capabilities Daytona
+already supplies and fails closed if a managed update breaks sudo, workspace
+ownership, a promised runtime, or a manager fixture.
+
+Bind may re-enter only `run_command` and the convergent
+`publish_branch_and_pr` operation after an exact matching incomplete receipt.
+Any generation, input, canonical-policy, session, repository, ref, or grant
+ambiguity still fails closed, and provider-session cleanup happens only after
+D1 records a terminal result.
+
+Snapshot activation fails until `.rally/tmp` and `.rally-output` exist.
+Publication performs two bounded file inspections, and a create-policy
+mismatch discards the sandbox and leaves durable failed state.
+
+Provider activation requires real read-back and redirect/private network
+probes. Policy mutations may quarantine or delete a sandbox that cannot be
+stopped safely, but never commit an unverified revision. Exact command replay
+reattaches to the same named session; changed calls stop on ambiguity.
+Repository replacement is explicit, preserves a final diff where possible, and
+resumes the requesting work stream once.
 
 Shipped in the pull request for this change. Design:
 [`docs/PRDs/2026-08-12_daytona-terminal-git-github/prd.md`](PRDs/2026-08-12_daytona-terminal-git-github/prd.md).

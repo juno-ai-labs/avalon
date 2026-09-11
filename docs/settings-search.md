@@ -166,20 +166,22 @@ checks every selector in a grouped rule. Reading only the final selector could
 hide a nested painter behind an allowed panel. Search input props now stay on
 the input, and its wrapper focus rule is separate from the global focus rule.
 
-### 2026-09-07 — Match sidebar interaction colors
+### 2026-09-07 — Settings shares the main sidebar's search control and interaction colors
 
-Settings navigation and search results now share the main sidebar's color
-rules, including its canvas and border. Separate neutral and raised-surface
-tokens made Settings hover and selected states look different. Grouped selectors
-keep the main window authoritative instead of maintaining a second palette.
+**What changed:** Settings uses the main sidebar's search component and visual
+treatment, and its navigation and search results share the main sidebar's color
+rules, including its canvas and border.
 
-### 2026-09-07 — Share the sidebar search control
+**Why:** The separate Settings input had drifted in height, border and
+typography, and separate neutral and raised-surface tokens made Settings hover
+and selected states look different from the same states in the main window.
 
-Settings now uses the main sidebar's search component and visual treatment.
-The separate Settings input had drifted in height, border and typography;
-sharing the component prevents that drift while preserving local settings
-discovery. Copying the main sidebar's styles into a second control was rejected
-because later appearance changes would still have to be made twice.
+**Considered and rejected:** Copying the main sidebar's styles into a second
+control, or maintaining a second palette. Later appearance changes would still
+have to be made twice, which is how the drift happened the first time.
+
+**Consequences:** Grouped selectors keep the main window authoritative for both
+the control and its colors, while local settings discovery is preserved.
 
 ### 2026-09-05 — Verify review findings before merging (#557)
 

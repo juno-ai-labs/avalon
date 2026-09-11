@@ -706,6 +706,7 @@ not perform.
 **Consequences:** The reveal event's available count remains capped at nine and
 the use event taxonomy must stay aligned with the pinned-then-recent target
 builder. Product analytics opt-out suppresses both.
+
 ### 2026-08-12 — Command numbering continues into recent work
 
 **What changed:** The `⌘1` through `⌘9` sequence now starts with the manually
