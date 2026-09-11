@@ -41,7 +41,10 @@ import { everyAuthoredToolSchema, toolSurface } from "./helpers/authored-tool-sc
  * it only after a review noticed the walk never built the plugin — it returns
  * `null` without the Azure inference pair — so its three served tools and their
  * twelve undescribed parameters passed both guards by not being looked at.
- * `EXPECTED_TOOLS` in the helper now carries a sentinel for it.
+ * `EXPECTED_TOOLS` in the helper now carries a sentinel for it. Two run-state
+ * tools stay outside the walk on purpose, and the helper's own comment names
+ * them and says why, so "every authored tool" is a boundary rather than a
+ * claim nobody checked.
  */
 describe("tool schema parameter descriptions", () => {
   it("demands no parameter it already supplies a default for", () => {

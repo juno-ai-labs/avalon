@@ -1302,6 +1302,13 @@ describe("GitHub connector", () => {
       .toEqual([]);
     expect(schema.properties.head?.description).toContain("owner:branch");
     expect(schema.properties.head?.description).toContain("empty list rather than an error");
+
+    // The same ambiguity one level up, on the tool rather than a parameter: an
+    // empty check list reads as "nothing has reported on this commit", and that
+    // is only true when nothing narrowed the query.
+    const checks = createGitHubConnector(githubConfig(async () => jsonResponse({})))
+      .agentPlugin.tools.find((tool) => tool.name === "checks.list_for_ref");
+    expect(checks?.description).toContain("no narrowing entries in appliedFilters");
   });
 });
 
