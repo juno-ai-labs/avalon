@@ -1151,7 +1151,7 @@ describe('Workspace settings', () => {
     fireEvent.click(await enabledConnectAction(mailCard!, 'Connect only for me'));
 
     await waitFor(() => expect(api.getConnectorOAuthAttempt).toHaveBeenCalledWith('a'.repeat(43)));
-    await enabledConnectAction(mailCard!, 'Connect for me');
+    await enabledConnectAction(mailCard!, 'Connect only for me');
     expect(screen.queryByText('Google authorization was cancelled.')).not.toBeInTheDocument();
     expect(api.getConnectorOAuthAttempt).toHaveBeenCalledWith('a'.repeat(43));
   });
