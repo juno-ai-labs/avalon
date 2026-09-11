@@ -1,7 +1,7 @@
 import type { Env } from '../env';
 import { ApiError } from '../lib/api-error';
 import { accessAcknowledgementContent } from './access-request-content';
-import { markdownToEmailHtml, markdownToEmailText } from './email-markdown';
+import { markdownToEmailText } from './email-markdown';
 import { sendResendEmail } from './resend';
 import { admitAccessEmail, MAX_ACCESS_EMAILS_PER_HOUR } from './access-request-limits';
 
@@ -68,7 +68,10 @@ export async function requestAccess(env: Env, email: string, mailLimit = MAX_ACC
       recipientEmail: email,
       subject: row.acknowledgement_subject,
       from: row.acknowledgement_from,
-      html: `<div style="background:#111210;color:#ecebe5;padding:32px;font-family:Arial,sans-serif">${markdownToEmailHtml(row.acknowledgement_markdown)}</div>`,
+      // Text only, deliberately: this is one person writing to one recipient, and
+      // the styled part made it arrive looking like a campaign. The stored copy is
+      // still reduced rather than sent verbatim, so a row frozen with the earlier
+      // Markdown retries as prose instead of `**` and `<br/>`.
       text: markdownToEmailText(row.acknowledgement_markdown),
       idempotencyKey: `rally-access-request/${row.id}/${row.acknowledgement_generation}`,
       category: 'access_request', region: 'global', sender: 'transactional',

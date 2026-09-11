@@ -77,7 +77,8 @@ describe('private access against regional migrations', () => {
     expect(message.subject).toBe('We got your Rally request');
     expect(message.text).toContain('3 things they already want to share or collaborate on');
     expect(message.text).not.toContain('**');
-    expect(message.html).toContain('3 things they already want to share or collaborate on</strong>');
+    expect(message.text).toContain('— Adam\nRally');
+    expect(message.html).toBeUndefined();
   });
 
   it('retains failed requests and retries the original content and provider key', async () => {
