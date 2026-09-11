@@ -248,6 +248,28 @@ describe('menu bar menu', () => {
     expect(labels(template(emptyMenuBarContent))).toContain('Recent');
   });
 
+  it('draws no header without rows under it, whatever a caller passes', () => {
+    // The guarantee `pushGroup` exists to hold: a header with a rule on either
+    // side and nothing between them reads as a menu that failed to draw.
+    for (const content of [
+      emptyMenuBarContent,
+      { recents: workstreams },
+      { pinned: [pinnedStream('p', 'Acme renewal')] },
+      { recents: workstreams, pinned: [pinnedStream('p', 'Acme renewal')] },
+    ]) {
+      for (const overrides of [{}, { signedIn: false }]) {
+        const items = template(content, overrides);
+        items.forEach((item, index) => {
+          if (item.type !== 'header') return;
+          const next = items[index + 1];
+          expect(next).toBeDefined();
+          expect(next?.type).not.toBe('separator');
+          expect(next?.type).not.toBe('header');
+        });
+      }
+    }
+  });
+
   it('heads every group, and puts each empty state directly under its header', () => {
     const items = template(emptyMenuBarContent);
 

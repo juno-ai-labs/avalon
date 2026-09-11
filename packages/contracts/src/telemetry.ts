@@ -176,11 +176,11 @@ const surfaceEntrypoint = z.enum([
  * current menu offers this".
  */
 export const TELEMETRY_MENU_BAR_ACTIONS = [
-  // Retired with the Suggestions section and the two New rows.
-  "new_workstream", "new_automation", "suggested_work",
+  // Retired with the Suggestions section and the three New rows.
+  "new_workstream", "new_automation", "suggested_work", "new_meeting_note",
   // Retired spellings, from before the product was named Rally.
   "open_avalon", "quit_avalon",
-  "new_meeting_note", "recent_workstream", "pinned_workstream", "open_rally", "quit_rally",
+  "recent_workstream", "pinned_workstream", "open_rally", "quit_rally",
 ] as const;
 
 export type TelemetryMenuBarAction = (typeof TELEMETRY_MENU_BAR_ACTIONS)[number];
