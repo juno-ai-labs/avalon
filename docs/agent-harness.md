@@ -300,6 +300,12 @@ tool receipts before validating a resumed draft. Its first submission from a
 work stream creates the room's Sidekick and posts the proposal card; from a
 Sidekick's own chat it submits a revision to that Sidekick.
 
+`HarnessPlugin.displayName` remains trusted, code-authored prompt metadata.
+`activityDisplayName` and `connectorType` are participant-only host metadata;
+Bind's plugin conversion does not copy either into the model catalog or active
+instruction headings. A configured custom MCP label belongs in that activity
+field, never in `displayName`.
+
 A hosted-MCP connection may supply `HarnessPlugin.loadTools` instead of a
 code-authored tool array. It still appears through the same static trusted
 catalog entry. After `load_plugin` reauthorizes the connection, the harness

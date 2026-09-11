@@ -135,11 +135,14 @@ can see what is being held back rather than watching it disappear.
   request with `redirect: "manual"` and treats a 3xx as an answer, so a server
   cannot have Rally re-send a bearer token or a configured header to another
   host by answering with a `Location`.
-- **The connector's trusted catalog prose names no server.** A connector's
-  agent-plugin descriptor is code-authored and may not interpolate connection
-  labels ([`connectors.md`](connectors.md)), so every custom MCP plugin
-  describes itself the same way and is distinguished by its workspace-local
-  model plugin id (`plugin_custom_mcp`, `plugin_custom_mcp_2`, …).
+- **The configured name identifies participant activity only.** Live runs use
+  the saved name after removing controls, bidi formatting, and line breaks while preserving
+  Unicode joiners, falling back
+  to `Custom MCP server` when empty. `HarnessPlugin.activityDisplayName` is
+  separate from the static model-facing `displayName`, descriptions, aliases,
+  and system messages. Automation catalogs also retain the static model name.
+  Transcript activities carry `connectorType` independently so a custom server
+  named Slack keeps a plug icon and a connection-specific row.
 
 ## Boundary
 
@@ -183,6 +186,7 @@ workspace hitting it is a conversation rather than a refusal.
 ```bash
 pnpm --filter @rally/connectors exec vitest run src/custom-mcp.test.ts
 pnpm --filter @rally/api exec vitest run test/custom-mcp-connection.test.ts
+pnpm --filter @rally/api exec vitest run test/connector-catalog-discovery.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/screens/workspace-settings.test.tsx
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts \
   test-workers/workstream-schema-migration.test.ts
@@ -196,6 +200,8 @@ pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts \
   server, the rollback when it refuses, the policy update, the administrator
   boundary, and the unreadable-catalog response. It stubs `globalThis.fetch`,
   because the registry builds the adapter from the environment.
+- `connector-catalog-discovery.test.ts` checks configured server names, control
+  character removal, and the unnamed fallback without changing trusted prose.
 - The workerd suite carries the schema half: migration 31 rebuilds
   `connector_connections`, and only a populated object shows whether its
   dependents survived.
@@ -231,29 +237,27 @@ the endpoint and the header are one decision and are captured together.
 
 ## Open questions
 
-- **A person cannot tell two custom MCP plugins apart from the model's side.**
-  `connectorPluginPresentation` falls back to the adapter's own descriptor for
-  every connector but Google, so two connections produce two catalog entries
-  with the same display name, description, and search aliases, distinguished
-  only by `plugin_custom_mcp` and `plugin_custom_mcp_2`. The descriptor's own
-  instruction — load this when a request names that server's work — is then not
-  answerable from the catalog, and because this is the first connector built for
-  many connections per workspace, that is the ordinary state rather than an edge
-  one.
-
-  The general problem is a plugin-catalog decision: workspace-supplied prose in
-  a descriptor is untrusted text presented to the model as trusted. A narrower
-  follow-up would not need that decision — the connection's display name alone,
-  already bounded to 180 characters and already rendered to people, stripped of
-  control characters, into `displayName` and `searchAliases` only, with the
-  description and system message left exactly as authored here. That admits no
-  new prose into the instruction surface while making the entries
-  distinguishable.
+- **Model discovery still uses generic custom MCP names.** Configured names
+  are participant metadata, not trusted catalog text. Making them searchable
+  needs a separately framed untrusted-data surface.
 - **Editing a connection is add-and-remove.** There is no route to change an
   endpoint, replace headers, or rename a server; a change means a new connection
   and deleting the old one.
 
 ## Changelog
+
+### 2026-09-11 — Name the server in participant activity
+
+Activity for a configured server now says “Using Engineering MCP” when that is
+its saved name. The request exposed a gap: the connection had a name but every
+run used the generic connector title. Reusing the model-facing name was rejected
+because that field enters trusted prompt headings, and inferring the icon from
+the saved name would let a server named Slack join Slack's branded activity.
+Participant labels therefore use a separate field, shared Unicode normalization
+on live and canonical paths, and explicit connector identity. Model catalogs
+remain static; any future named discovery must frame those labels as untrusted
+data. The fallback comes from the adapter's manifest name.
+
 
 ### 2026-09-03 — Rally connects MCP servers it does not ship
 

@@ -33,6 +33,7 @@ import {
 } from "./types";
 
 export const CUSTOM_MCP_CONNECTOR_TYPE = "custom_mcp";
+export const CUSTOM_MCP_DISPLAY_NAME = "Custom MCP server";
 
 export const CustomMcpCapabilities = {
   /** The one grant a custom server's live tools are written against. */
@@ -258,7 +259,7 @@ export function createCustomMcpConnector(config: CustomMcpConnectorConfig): Conn
     dynamicAgentTools: passthrough.dynamicAgentTools,
     manifest: {
       type: CUSTOM_MCP_CONNECTOR_TYPE,
-      displayName: "Custom MCP server",
+      displayName: CUSTOM_MCP_DISPLAY_NAME,
       supportedScopes: ["personal", "workspace"],
       // Whether this connection authorizes through OAuth is a property of the
       // connection, not of the connector: the same server may be reached with a
@@ -269,7 +270,7 @@ export function createCustomMcpConnector(config: CustomMcpConnectorConfig): Conn
         kind: "tool",
         description: "Call the tools this MCP server advertises.",
       }],
-      activityTriggers: defineConnectorActivityTriggers("Custom MCP server", {
+      activityTriggers: defineConnectorActivityTriggers(CUSTOM_MCP_DISPLAY_NAME, {
         digestible: [],
         operational: [],
       }),

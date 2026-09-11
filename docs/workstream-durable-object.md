@@ -1702,6 +1702,13 @@ writes, while WorkspaceDO directory traffic is bounded by semantic metadata
 changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
+Plugin activity rows retain an optional `connector_type` column (SubstreamAgent
+migration 54). The transcript snapshot, range, and activity projections expose
+it as `connectorType`, separately from the participant-facing `label`. Existing
+rows retain null and their original labels; later activity revisions preserve
+the type when an older caller omits it. This lets the desktop distinguish custom
+MCP identity without trusting the saved name or reading WorkspaceDO on replay.
+
 ## Changelog
 
 ### 2026-09-11 — A read is acknowledged by the conversation that was read

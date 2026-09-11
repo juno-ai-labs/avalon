@@ -2834,7 +2834,7 @@ describe("canonical ordered work-stream transcript", () => {
     await transcript.commitBindTransition(reserved.transition, NOW + 3, reserved.executionFence);
     transcript.upsertActivity({
       activityId: pluginId, parentActivityId: assistantId, scope: "plugin", subjectId: "github",
-      callIndex: 0, label: "GitHub", action: "start", revision: 1,
+      callIndex: 0, label: "GitHub", connectorType: "custom_mcp", action: "start", revision: 1,
       occurredAtUtc: new Date(NOW + 3).toISOString(),
     });
     await transcript.upsertToolLifecycle({
@@ -2880,7 +2880,11 @@ describe("canonical ordered work-stream transcript", () => {
       pluginId,
       toolId,
     ]);
+    expect(snapshot.activities.find((activity) => activity.activityId === pluginId)?.connectorType).toBe("custom_mcp");
+    expect(snapshot.pluginRuns.find((run) => run.pluginRunId === pluginId)?.connectorType).toBe("custom_mcp");
+    expect(transcript.transcriptActivity(pluginId)?.connectorType).toBe("custom_mcp");
     const loaded = transcript.range(snapshot, { startInclusive: 1, endExclusive: 2 });
+    expect(loaded.pluginRuns.find((run) => run.pluginRunId === pluginId)?.connectorType).toBe("custom_mcp");
     expect(loaded.activities.map((activity) => activity.activityId)).toEqual([
       rootId,
       assistantId,

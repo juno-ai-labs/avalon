@@ -933,6 +933,8 @@ export const AutomationPluginIconSchema = z.enum([
 export type AutomationPluginIcon = z.infer<typeof AutomationPluginIconSchema>;
 
 export const AutomationPluginActivitySchema = z.object({
+  canonicalId: z.string().min(1).optional(),
+  connectorType: z.string().optional(),
   pluginId: ModelPluginIdSchema,
   displayName: z.string().min(1).max(200),
   icon: AutomationPluginIconSchema,
