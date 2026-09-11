@@ -320,11 +320,11 @@ function mapConnection(connection: WireConnection): WorkstreamConnection {
     displayName: connection.displayName,
     scope: connection.scope === 'personal' ? 'you' : 'workspace',
     ...(connection.ownerName ? { ownerName: connection.ownerName } : {}),
-    status: connection.status === 'healthy'
-      ? 'healthy'
+    status: connection.status === 'needs_reconnect'
+      ? 'reconnect_required'
       : connection.status === 'disabled'
         ? 'disabled'
-        : 'reconnect_required',
+        : 'healthy',
     capabilities: connection.grantedCapabilities,
     ...(connection.settingsKind ? { settingsKind: connection.settingsKind } : {}),
     ...(connection.userDelivery ? { userDelivery: connection.userDelivery } : {}),
