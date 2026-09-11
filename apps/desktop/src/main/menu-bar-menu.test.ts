@@ -14,7 +14,6 @@ import {
 function actions(): MenuBarActions {
   return {
     selected: vi.fn(),
-    newMeetingNote: vi.fn(),
     openWorkstream: vi.fn(),
     openRally: vi.fn(),
     quit: vi.fn(),
@@ -39,7 +38,6 @@ function template(
     signedIn?: boolean;
     sectionHeaders?: boolean;
     actions?: MenuBarActions;
-    meetingRecordingAvailable?: boolean;
     now?: Date;
   } = {},
 ): MenuItemConstructorOptions[] {
@@ -47,7 +45,6 @@ function template(
     appName: 'Rally',
     content: { ...emptyMenuBarContent, ...content },
     signedIn: overrides.signedIn ?? true,
-    meetingRecordingAvailable: overrides.meetingRecordingAvailable ?? true,
     sectionHeaders: overrides.sectionHeaders ?? true,
     now: overrides.now ?? NOW,
     actions: overrides.actions ?? actions(),
@@ -77,23 +74,18 @@ function pinnedStream(id: string, title: string): { id: string; title: string; l
 }
 
 describe('menu bar menu', () => {
-  it('removes the meeting action when Meeting Recording Enabled is false', () => {
-    const items = template(emptyMenuBarContent, { meetingRecordingAvailable: false });
-
-    expect(labels(items)).not.toContain('New Meeting/Note');
-    // Without it the menu now opens straight on a section header, so the
-    // leading rule has to be suppressed rather than drawn against nothing.
-    expect(labels(items).at(0)).toBe('Pinned');
-  });
-
-  it('offers no way to start a work stream or an automation', () => {
-    // Both rows were removed: the menu is for getting back to work already in
-    // flight, and starting either belongs in the app, which the last two rows
-    // open.
+  it('starts nothing: the menu opens straight on its first section', () => {
+    // Every row that started something is gone — a meeting or note, a work
+    // stream, an automation. This surface reopens what already exists; starting
+    // belongs in the app, which the last two rows open.
     const drawn = labels(template({ recents: workstreams }));
 
-    expect(drawn).not.toContain('New Work Stream');
-    expect(drawn).not.toContain('New Automation');
+    for (const label of ['New Meeting/Note', 'New Work Stream', 'New Automation']) {
+      expect(drawn).not.toContain(label);
+    }
+    // Nothing precedes the first header, so the leading rule has to be
+    // suppressed rather than drawn against nothing.
+    expect(drawn.at(0)).toBe('Pinned');
   });
 
   it('offers nothing to do with suggested work', () => {
@@ -120,8 +112,6 @@ describe('menu bar menu', () => {
     // Pinned above Recent, and the recent list under the sidebar's own headings
     // rather than one flat "Recent" block.
     expect(labels(items)).toEqual([
-      'New Meeting/Note',
-      '—',
       'Pinned',
       'Acme renewal',
       'Board deck',
@@ -167,8 +157,6 @@ describe('menu bar menu', () => {
     });
 
     expect(labels(items)).toEqual([
-      'New Meeting/Note',
-      '—',
       'Pinned',
       'Pin a work stream to see it here',
       '—',
@@ -225,8 +213,6 @@ describe('menu bar menu', () => {
     // It has nothing to say to a stranger, and the one message that state needs
     // is already on the Recent row.
     expect(labels(items)).toEqual([
-      'New Meeting/Note',
-      '—',
       'Recent',
       'Sign in to Rally',
       '—',
@@ -303,7 +289,7 @@ describe('menu bar menu', () => {
       { recents: workstreams, pinned: [pinnedStream('p', 'Acme renewal')] },
       { recents: [{ id: 'a', title: 'Old', lastActivityAt: at(400 * DAY) }] },
     ]) {
-      for (const overrides of [{}, { signedIn: false }, { meetingRecordingAvailable: false }]) {
+      for (const overrides of [{}, { signedIn: false }]) {
         const drawn = labels(template(content, overrides));
         expect(drawn.some((label, index) => label === '—' && drawn[index + 1] === '—')).toBe(false);
         expect(drawn.at(0)).not.toBe('—');
@@ -342,14 +328,12 @@ describe('menu bar menu', () => {
 
     // Headers carry no handler, so activating everything must not produce a
     // stray call.
-    expect(items.filter((item) => item.click).length).toBe(5);
-    expect(menuActions.newMeetingNote).toHaveBeenCalledTimes(1);
+    expect(items.filter((item) => item.click).length).toBe(4);
     expect(menuActions.openWorkstream).toHaveBeenNthCalledWith(1, 'pinned-a');
     expect(menuActions.openWorkstream).toHaveBeenNthCalledWith(2, 'workstream-0');
     expect(menuActions.openRally).toHaveBeenCalledTimes(1);
     expect(menuActions.quit).toHaveBeenCalledTimes(1);
     expect(vi.mocked(menuActions.selected).mock.calls.map(([action]) => action)).toEqual([
-      'new_meeting_note',
       'pinned_workstream',
       'recent_workstream',
       'open_rally',
@@ -362,9 +346,9 @@ describe('menu bar menu', () => {
     vi.mocked(menuActions.selected).mockImplementation(() => { throw new Error('telemetry unavailable'); });
     const items = template(emptyMenuBarContent, { actions: menuActions });
 
-    activate(items.find((item) => item.label === 'New Meeting/Note'));
+    activate(items.find((item) => item.label === 'Open Rally'));
 
-    expect(menuActions.newMeetingNote).toHaveBeenCalledOnce();
+    expect(menuActions.openRally).toHaveBeenCalledOnce();
   });
 
   it('reads the macOS version that decides whether section headers exist', () => {
