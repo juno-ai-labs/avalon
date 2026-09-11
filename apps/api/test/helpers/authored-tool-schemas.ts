@@ -23,6 +23,17 @@ import { createTestConnectorRegistry, unconfiguredConnectorTypes } from "./conne
  * The completeness checks throw rather than assert, so a caller cannot forget
  * to make them: any suite that walks this gets them, in the same call that
  * hands over the schemas.
+ *
+ * **What it does not reach, said plainly rather than claimed away.** Two tools
+ * are built against live run state rather than registered, and neither can be
+ * constructed from a schema walk's fixtures: `run_subagent` needs an attempt
+ * lease, an abort signal, and a run-authority snapshot, and `post_result` needs
+ * a Sidekick run definition with an owning room. Standing those up here would
+ * buy two schemas at the price of a guard that breaks whenever the run
+ * machinery moves, which is a bad trade for a walk whose whole value is that it
+ * keeps working untended. They are the boundary of "every authored tool", and
+ * anything else missing from this walk is a defect in it — the multimodal
+ * plugin was exactly that, and reached this list only after a review noticed.
  */
 export interface AuthoredToolSchema {
   name: string;
