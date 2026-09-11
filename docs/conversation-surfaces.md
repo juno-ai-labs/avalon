@@ -362,6 +362,24 @@ that wait. Live capture retains its existing socket backpressure failure.
 The frame-size and rate limits live in `@rally/contracts/realtime-transcription`,
 shared with the proxy. Audio is not persisted to disk.
 
+While dictation is running the composer's text belongs to it: the field is
+read-only and the mention and device controls are disabled. Send is not on that
+list. Pressing it, or Enter, stops dictation and sends the transcript once it
+settles, tail included — the composer submits from an effect keyed on the
+settled state rather than from the click handler, because the final transcript
+arrives through `onValueChange` and the host's submit closure only carries it on
+the render after that.
+
+Stopping is reachable even while the draft is empty. It has to be: the field
+holds nothing until the first partial arrives, and on a provider that returns
+text only at the final commit it holds nothing for the whole recording, so
+guarding Send on `submitDisabled` first would lock it in exactly the case the
+recording holds the most. `submit` therefore takes the dictation branch before
+that guard, and the effect applies the guard afterwards, against the draft the
+transcript produced. A silent recording ends in the hook's "No speech was
+detected" error rather than an empty transcript; either way a dictation error
+ends the attempt without sending, and the draft and the error stay on screen.
+
 ## Testing
 
 Shared components have fixture-level component tests for settled, streaming,
@@ -371,6 +389,95 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — Send during dictation stops it and sends what it heard
+
+**What changed:** A live recording no longer disables Send. Pressing it (or
+Enter, which runs the same `submit`) stops dictation and sends the transcript
+including the tail still in flight. `dictationBlocking` is gone; the states it
+named now only gate *editing*, under the name `dictationEditingBlocked`, because
+the transcript is written into the same field a caret would be fighting for.
+While the stop drains, Send shows its sending spinner and is disabled, so the
+wait looks like work rather than a dead button.
+
+**Why:** Stopping and sending was two deliberate acts with an indefinite gap
+between them — the recording had to be stopped, finalization watched, and only
+then could the message go. Nothing about that gap is the user's problem to
+manage. Send already meant "I am done talking".
+
+**Considered and rejected:** Sending the text as it stands and letting the tail
+land in an emptied composer, or be dropped. It is the fastest option and it
+loses the last words the user spoke, which is the one thing a Send button must
+never do quietly. Also rejected: `await dictation.stop()` inside the click
+handler and then submitting. That is the obvious shape and it is wrong: the
+final transcript reaches the host through `onValueChange`, so the host's submit
+closure captured at click time still holds the pre-stop draft, and the tail is
+dropped exactly as if it had never been drained. `stop()` resolving is not the
+moment the text exists — the render after it is.
+
+**Found in review:** three defects in the first cut, two of them caught by the
+PR's bot reviewers and one by a human reading the same diff. Guarding `submit` on `submitDisabled` before the dictation branch
+made Send unreachable for a recording that had not produced a partial yet —
+which is the whole recording, on a provider that only returns text at the final
+commit. And `void dictation.stop()` discarded a promise that rejects when
+finalization fails, so a failed stop reached the renderer's `unhandledrejection`
+telemetry and was filed as a JavaScript defect. Stopping now comes before the
+empty-draft guard, and one `stopDictation` helper consumes the rejection for
+every fire-and-forget stop in the component, the five that predate this change
+included.
+
+The third was the window those two opened onto. A pending send had no way out
+but the hook settling, and finalization runs to a 60-second completion timeout:
+for that whole window Send spins, Enter returns on the pending flag, and the
+field is read-only because `finalizing` blocks editing. Most of that predates
+this change — stopping from the microphone already left the composer read-only
+while finalizing — but Send became a second entrance to it and Enter stopped
+falling through, so the composer could be wholly unusable for a minute with
+nothing to press. A microphone press now cancels the pending send first,
+leaving the drain to finish on its own, so one control always answers and the
+transcript comes back to the draft rather than being posted.
+
+**What a future change has to respect:** the submit that follows dictation runs
+from an effect keyed on the settled dictation state, not from the click handler.
+Anything that moves it back into the handler, however it awaits, reintroduces
+the stale-closure drop. `workstream-composer-dictation.test.tsx` holds the line
+by asserting on the finalized text rather than on the call, and its harness's
+`stop` delivers the transcript before it settles precisely so that shape fails.
+A dictation error is not a send: the draft stays, the error shows, nothing is
+submitted.
+
+### 2026-09-10 — Send is permanent chrome, not a control the first keystroke summons
+
+**What changed:** The capsule composer's Send button renders whether or not
+there is anything to send, `disabled` when there is not. `showSubmit` and the
+`has-submit` class it drove are gone from `composer-input.tsx`, and with them
+the CSS branch that gave the microphone the filled send treatment in an empty
+composer: Send keeps that fill permanently, and the microphone is neutral
+chrome at rest in every state. No host changed — both already passed
+`submitDisabled` for an empty draft, so the disabled state is the one they
+were computing all along. This reverses the "a non-empty draft adds Send" half
+of the 2026-09-01 capsule entry; the rest of that entry stands.
+
+**Why:** An empty composer had no visible way to send. Enter still submitted and
+the affordance appeared with the first character, which is fine for someone who
+already knows and useless for someone looking for it — the one moment a reader
+scans for a Send button is before they have typed. It also moved the microphone
+sideways mid-keystroke, so the control under the cursor changed identity while
+the pointer was on it.
+
+**Considered and rejected:** Keeping Send hidden and teaching the empty state
+some other way (a hint, a tooltip on the microphone). That trades a control for
+prose in the surface where space was the original constraint, and prose does not
+answer "where do I click". Also rejected: hiding Send but reserving its box, so
+the microphone would not move. That keeps the invisible-affordance problem and
+adds a permanent gap next to it, which is the cost of the button with none of
+its use.
+
+**What a future change has to respect:** every host of `ComposerInput` must keep
+passing a `submitDisabled` that is true for an empty draft. Both hosts also
+guard inside their own submit, so a host that stops computing the prop correctly
+gets a Send button that looks live and does nothing, rather than an empty
+message — a quiet failure, and the reason the prop is worth keeping honest.
 
 ### 2026-09-10 — The capsule shows the model control again, as a pill
 
@@ -400,6 +507,7 @@ attachment button plus its 7px padding either side is exactly the 42px the
 column was fixed at. One with a control spends its label's width out of the text
 column. Both were checked in a real window, on the launcher, an existing work
 stream, and a substream.
+
 
 ### 2026-09-10 — The dividers say what they are, and what a double-click does
 
@@ -461,6 +569,7 @@ every handle, which brings its own `ResizeObserver`: a test that stubs that
 global for a sidebar now needs `unobserve` on the stub, and one that keeps only
 the newest observer callback must narrow the pane before opening a hint rather
 than after.
+
 ### 2026-09-10 — Artifact rows take the renderer's tooltip, through a shared `Tip`
 
 **What changed:** An artifact row in the work-stream sidebar no longer carries a
