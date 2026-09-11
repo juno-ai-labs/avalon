@@ -207,9 +207,18 @@ export function SiteResourceDetail({
         of this detail's own: chrome drawn over a page reads as the page's.
       */}
       <DetailHeaderActions>
+      {/*
+        Every one of these opens *upward*. The pane below the header is covered
+        by a composited `WebContentsView` whenever a live artifact is showing,
+        and that view paints above all renderer DOM: a tooltip hanging down from
+        this header lands behind the page, and no `z-index` reaches it, because
+        it is not a DOM sibling. Radix flips to the other side only when there
+        is no room above, and this dialog is inset from the top of the window.
+      */}
         {access?.stateful && (
           <IconButton
             aria-pressed={showingData}
+            tooltipSide="top"
             label={showingData ? 'Hide stored data' : 'Show stored data'}
             onClick={() => setShowingData((showing) => !showing)}
           >
@@ -219,6 +228,7 @@ export function SiteResourceDetail({
         <IconButton
           disabled={!access}
           label="Pop out"
+          tooltipSide="top"
           onClick={() => {
             if (!access) return;
             void mintAccess().then(
@@ -235,6 +245,7 @@ export function SiteResourceDetail({
         <IconButton
           disabled={!access}
           label={copied ? 'Copied' : 'Copy public link'}
+          tooltipSide="top"
           onClick={() => {
             if (!access) return;
             // The canonical public link carries no access code or viewer
@@ -250,6 +261,7 @@ export function SiteResourceDetail({
         <IconButton
           disabled={!access}
           label="Open in browser"
+          tooltipSide="top"
           onClick={() => void mintAccess().then(
             async (navigation) => await surface.openExternal(navigation.openUrl),
           )}
