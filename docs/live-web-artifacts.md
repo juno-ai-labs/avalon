@@ -39,6 +39,7 @@ exists.
 | `packages/agent-harness/src/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
 | `apps/api/src/services/artifact-open-service.ts` | The identity-bearing door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. Public reads bypass it and remain anonymous. |
 | `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The site detail: the pane it measures and hands over, the actions it puts in its host's header, and the Data view. |
+| `apps/desktop/src/renderer/components/detail-header-actions.tsx` | The slot a rail or lightbox offers in its header, and the portal any detail fills it through. Not artifact-specific: it is what keeps this detail's controls out of the page it is showing. |
 | `apps/desktop/src/main/artifact-viewers.ts` | What the desktop will load into an artifact surface, the preview rectangle's clamp and corner, the shared isolation contract, and the overlay rule. |
 
 ## How it works
@@ -481,63 +482,40 @@ rather than workspace authority.
 
 ## Changelog
 
-### 2026-09-11 — The page rounds where it meets the dialog's outside edge
+### 2026-09-11 — The page's corner is the pane's, and the pane's host decides it
 
-**What changed:** `setBorderRadius` is back on the view handle and
-`PREVIEW_CORNER_RADIUS` is 16px again, and the renderer's pane rounds its
-*bottom* pair to the same number under `.resource-lightbox`.
+**What changed:** The renderer reads the corner it drew on the pane and sends it
+with the presentation; the controller applies whatever it is given. The pane
+rounds only its bottom pair, and only under `.resource-lightbox`, so a pane in
+the plain rail states no corner and gets a square view. The main process holds
+no radius of its own.
 
-**Why:** The entry below left the page square on the reasoning that a square
-view covers the dialog's corner curve rather than spilling past it. It does, and
-that is the problem: what a person sees at the bottom of the lightbox is a
-square page corner sitting inside a frame that is round, with the dialog's own
-curve and shadow visible around it as a notch. The page reaches that edge, so
-the page has to follow it.
+**Why:** The view reaches the bottom corners of the dialog holding it, and CSS
+cannot round a native view: square there, the page squares off a frame that is
+round, with the dialog's own curve and shadow visible around it as a notch.
+Getting there took two wrong turns worth recording. First the view was rounded
+uniformly to the lightbox's radius, which also rounded the top corners against
+the header. Then it was left square on the reasoning that a square view covers
+the curve rather than spilling past it, which is true and is exactly the defect.
+The constant that survived those rounds was still wrong in a third way: it
+assumed the lightbox, and `SiteResourceDetail` also renders in the plain
+inspector rail, where the pane draws no corner and a rounded view would show
+four notches against a square pane.
 
-Only the bottom pair should round: the top edge meets the header, not the
-outside. CSS can say exactly that and does. Electron's `setBorderRadius` takes
-one radius for all four corners, so the composited view rounds its top corners
-too, and a 16px wedge of the lightbox's surface shows where the page meets the
-header. That is the closest the platform allows, and it is a seam under a
-divider rather than a corner hanging off the surface.
+**Considered and rejected:** Keeping the radius in the main process and scoping
+the stylesheet to both hosts, which leaves two answers to one question and
+requires the main process to know which surface it is drawing into. A smaller
+radius to shrink the top wedge: the bottom would then stop matching the dialog
+and leave a sliver of frame showing. Extending the view's rectangle upward to
+hide its top corners behind the header: the view composites *above* the DOM, so
+it would cover the header rather than tuck under it.
 
-**Considered and rejected:** A smaller radius to shrink the top wedge, which
-would stop the bottom corners matching the dialog and leave a sliver of frame
-showing under the page. Extending the view's rectangle upward so its top corners
-hide behind the header: the view composites *above* the DOM, so it would cover
-the header rather than tuck under it.
-
-**Consequences:** Three numbers in three files that cannot import one another
-(the dialog's radius, the pane's bottom pair, the main process's constant) must
-stay equal; `app.css.node.test.ts` fails if any one moves. If Electron ever
-takes per-corner radii, the top pair is the one to set to zero.
-
-### 2026-09-10 — The chrome keeps its corner; the page inside it does not
-
-**What changed:** Nothing rounds the composited view any more.
-`setBorderRadius` is off `ArtifactViewHandle`, `PREVIEW_CORNER_RADIUS` is gone,
-and the main process no longer touches the view's corners at all. The lightbox
-keeps its own 16px radius.
-
-**Why:** The entry below rounded the view to match the lightbox, on the
-reasoning that a square view reaching the dialog's rounded bottom corners would
-paint the page out over the scrim. Looked at in a real window with a real page,
-that is not what happens: the view's rectangle is the pane's, which is inside
-the dialog's edge, so a square view *covers* the corner curve rather than
-spilling past it. Nothing reaches the scrim. What the rounding actually bought
-was a rounded page, and the page is the content rather than the frame: chrome is
-what gets a corner, and a viewer inside chrome does not.
-
-**Considered and rejected:** Squaring the lightbox's own corners so the two
-agree. That restyles Rally's frame to match what is being shown inside it, and
-the frame is the one part of this surface that is not the artifact's.
-
-**Consequences:** The dialog's bottom corners are covered by the page while one
-is showing, so its radius reads only at the top. A future change that insets the
-pane, or moves the viewer into a surface whose edge the view would exceed,
-brings the spill risk back, and the view has no rounding left to hide it with:
-check it in a window rather than reasoning about it, which is how both halves of
-this were settled.
+**Consequences:** Electron still takes one radius for all four corners, so a
+rounded pane shows a wedge of the dialog's surface where the page meets the
+header; that is the closest the platform allows. Any new host for this detail
+gets the corner it draws, with no main-process change. The stylesheet test pins
+the dialog's radius to the pane's bottom pair, and asserts the main process
+names no radius at all.
 
 ### 2026-09-10 — The page is the whole surface, and its controls are the header's
 
@@ -547,8 +525,8 @@ in browser) are icon buttons portalled into whatever header the host is already
 drawing, through a slot the rail now offers any detail. Stored data is a toggle
 that replaces the page rather than a peer of it, and the pane is full bleed: no
 border, no corner, no gutter, flush to the lightbox's own edges. The error log
-is gone from the client; `PREVIEW_CORNER_RADIUS` now mirrors the lightbox's
-radius rather than the pane's, since the pane no longer has one.
+is gone from the client. What rounds the composited view moved twice more after
+this; the entry above is the shipped answer.
 
 **Why:** Everything Rally drew around the page was a second frame inside the
 lightbox's, and everything it drew above the page competed with content the
@@ -582,18 +560,19 @@ that dialog means moving the constant with it.
 renders through a portal, where none of the shell's scoped rules apply: a tab
 strip of outlined buttons, a bordered card per thrown error, and its own copy of
 the resource title under the header that already carried it. It now uses the two
-unscoped primitives (`SegmentedControl`, `InsetSurface`/`InsetList`), carries no
+unscoped grouping primitive (`InsetSurface`), carries no
 title of its own, and puts Pop out, Copy public link, and Open in browser in one
 chrome row beside the panel switch instead of a row of buttons under the page,
 where they read as part of the artifact rather than as Rally's. The pane takes
 the whole lightbox body rather than ending halfway down it.
 
-`ArtifactViewHandle` gained `setBorderRadius`, applied once at creation with
-`PREVIEW_CORNER_RADIUS`. A `WebContentsView` composites above the DOM and CSS
-cannot clip it, so the rounded pane was drawing its own corners around a square
-page. The corner is set on the view rather than sent with the bounds because
-bounds are recomputed on every scroll frame and the corner is a property of the
-surface, not of a layout.
+`ArtifactViewHandle` gained `setBorderRadius`, applied once at creation. A
+`WebContentsView` composites above the DOM and CSS cannot clip it, so the
+rounded pane was drawing its own corners around a square page. The corner is set
+on the view rather than sent with the bounds because bounds are recomputed on
+every scroll frame and the corner is a property of the surface, not of a layout.
+Where the number itself comes from moved after this; the 2026-09-11 entry above
+is the shipped answer.
 
 **Consequences:** The number lives in two places that cannot import each other,
 the main process and a design token, so `app.css.node.test.ts` pins them

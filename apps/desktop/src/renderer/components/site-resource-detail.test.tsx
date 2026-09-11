@@ -77,6 +77,11 @@ function setup(overrides: Partial<SiteResourceDetailProps> = {}) {
  * is state rather than a ref for the reason the rail's is, and rendering it
  * that way here is what would catch the actions never arriving.
  */
+/** The one control whose pressed state, not its name, says which way it is. */
+function storedDataToggle(): HTMLElement {
+  return screen.getByRole('button', { name: 'Stored data' });
+}
+
 function Harness({ props }: { props: SiteResourceDetailProps }): React.JSX.Element {
   const [target, setTarget] = React.useState<HTMLDivElement | null>(null);
   return (
@@ -268,7 +273,7 @@ describe('the actions the host draws in its header', () => {
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
     const header = within(screen.getByTestId('host-header'));
-    for (const name of [/Pop out/u, /Copy public link/u, /Open in browser/u, /stored data/u]) {
+    for (const name of [/Pop out/u, /Copy public link/u, /Open in browser/u, /Stored data/u]) {
       const action = header.getByRole('button', { name });
       expect(action).toBeInTheDocument();
       // Every one of them is an icon alone, so every one of them owes a
@@ -339,7 +344,7 @@ describe('the data a stateful site collected', () => {
     // table a person just asked for.
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('button', { name: /Show stored data/u }));
+    fireEvent.click(storedDataToggle());
     expect(await screen.findByText('Ada')).toBeInTheDocument();
     expect(screen.getByText('yes')).toBeInTheDocument();
     expect(screen.queryByTestId('site-preview-pane')).not.toBeInTheDocument();
@@ -349,10 +354,12 @@ describe('the data a stateful site collected', () => {
   it('returns to the page, and puts the view back over it', async () => {
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('button', { name: /Show stored data/u }));
+    fireEvent.click(storedDataToggle());
     await screen.findByText('Ada');
-    fireEvent.click(screen.getByRole('button', { name: /Hide stored data/u }));
+    expect(storedDataToggle()).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(storedDataToggle());
     expect(await screen.findByTestId('site-preview-pane')).toBeInTheDocument();
+    expect(storedDataToggle()).toHaveAttribute('aria-pressed', 'false');
     await waitFor(() => expect(props.surface.present).toHaveBeenCalledTimes(2));
   });
 
@@ -367,7 +374,7 @@ describe('the data a stateful site collected', () => {
     }));
     const { props, rerender } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('button', { name: /Show stored data/u }));
+    fireEvent.click(storedDataToggle());
     await screen.findByText('Ada');
 
     rerender(<Harness props={{ ...props, resourceId: OTHER_RESOURCE, openArtifact: stateless }} />);
@@ -384,13 +391,39 @@ describe('the data a stateful site collected', () => {
       })),
     });
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    expect(screen.queryByRole('button', { name: /stored data/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /stored data/iu })).not.toBeInTheDocument();
+  });
+
+  it('loads the table a person picks, not only the one it opened on', async () => {
+    // Every other fixture here describes a single table, so the picker's
+    // `onChange` never reaches `loadTable` in CI: the second table is the only
+    // thing that exercises the wiring at all.
+    const { props } = setup({
+      describeData: vi.fn(async () => ({
+        tables: [
+          { name: 'rsvps', columns: [{ name: 'name', type: 'TEXT' }], rowCount: 2 },
+          { name: 'comments', columns: [{ name: 'body', type: 'TEXT' }], rowCount: 1 },
+        ],
+      })),
+      loadTable: vi.fn(async (_resourceId: string, table: string) => ({
+        rows: table === 'comments' ? [{ body: 'Looks good' }] : [{ name: 'Ada' }],
+        csv: table,
+      })),
+    });
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    fireEvent.click(storedDataToggle());
+    await screen.findByText('Ada');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'comments' }));
+
+    expect(await screen.findByText('Looks good')).toBeInTheDocument();
+    expect(props.loadTable).toHaveBeenCalledWith(RESOURCE, 'comments');
   });
 
   it('shows an empty stored table as such rather than as a broken panel', async () => {
     const { props } = setup({ describeData: vi.fn(async () => ({ tables: [] })) });
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('button', { name: /Show stored data/u }));
+    fireEvent.click(storedDataToggle());
     expect(await screen.findByText('No data yet')).toBeInTheDocument();
   });
 
@@ -399,7 +432,7 @@ describe('the data a stateful site collected', () => {
     // export a person got from anywhere else.
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('button', { name: /Show stored data/u }));
+    fireEvent.click(storedDataToggle());
     await screen.findByText('Ada');
     fireEvent.click(screen.getByRole('button', { name: /Copy as CSV/u }));
     await waitFor(() => expect(props.surface.copyText)

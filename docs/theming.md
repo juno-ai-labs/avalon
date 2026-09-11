@@ -213,56 +213,43 @@ further — a name is not a fill either, and colouring it by identity is what ma
 the two speakers' bylines diverge. The avatar and the person's own bubble are
 unaffected and still take the fill.
 
-### 2026-09-11 — The tooltip lift covers both lightboxes
+### 2026-09-11 — Tooltips clear every lightbox, and a pressed icon opts in
 
-**What changed:** The `z-index: 1005` lift for tooltips is keyed on
-`.attachment-lightbox` rather than `.resource-lightbox`, which covers the media
-and document viewers as well as the artifact one. The media viewer's own
+**What changed:** Tooltips take `z-index: 1005` under
+`body:has(.attachment-lightbox)`, the class the media, document and artifact
+viewers all carry. An icon button marked `.icon-button-toggle` and
+`aria-pressed="true"` takes the row-selection wash. The media viewer's own
 controls reach for `Tip` directly rather than becoming `IconButton`s.
 
-**Why:** The lift was written for the surface that first needed it, but every
-lightbox sits at 1001 against the stylesheet's tooltip at 1000, and the media
-viewer is where an unlabelled icon is least guessable: its buttons are icons
-over someone's image with nothing else to name them. They stay hand-rolled
-because they carry their own absolute positions and sizes, and `.icon-button`'s
-geometry fights them; `Tip` adds the label and changes nothing else.
-
-**Consequences:** Any new surface layered above 1001 still needs its own rule
-until there is a real stacking scale; the four rules under that `:has()` are the
-list to add to.
-
-### 2026-09-10 — A tooltip that opens behind the surface that needs it
-
-**What changed:** Tooltips get `z-index: 1005` under `body:has(.resource-lightbox)`,
-above the lightbox and above the menus that were already lifted over it. An
-icon button with `aria-pressed="true"` now takes the row-selection wash.
-`InsetList`, added earlier the same day, is gone: its one consumer went with the
-artifact error log, and it left `InsetSurface`, which the data table still uses.
-
-**Why:** The resource lightbox sits at `z-index: 1001` and `.tooltip` is 1000,
-so every tooltip inside it opened underneath it. That surface had just become
-the one where it mattered most: its header actions are icons alone, and a
-tooltip is the only name they have. It was invisible to anyone hovering while
-remaining present in the DOM, so a test asserting the trigger exists passed
-throughout. The pressed state is the same class of gap: `.icon-button` had never
-been a toggle, so a toggled one looked exactly like an untoggled one, and the
-raised fill hover uses is the same colour as the surfaces some of these headers
-sit on.
+**Why:** A lightbox sits at `z-index: 1001` and `.tooltip` at 1000, so every
+tooltip inside one opened underneath it: present in the DOM, findable by a test,
+and invisible to anyone hovering. That went unnoticed until these surfaces
+became icon-only chrome, where the tooltip is the control's only name. The
+pressed state is a second gap of the same kind: `.icon-button` had never been a
+toggle, so a toggled one looked exactly like an untoggled one, and the raised
+fill hover uses is the same colour as the surfaces some of these headers sit on.
 
 **Considered and rejected:** Raising `.tooltip` globally. The stacking above it
 is a set of deliberate pairings, and a global bump moves tooltips over surfaces
-nobody has looked at them against.
+nobody has looked at them against. Also rejected: keying the pressed wash on
+`aria-pressed` alone, which was the first shape of this and reached buttons that
+carry the attribute without being visual toggles — the composer's dictation
+button wears it through `transcribing` and `finalizing` while painting itself
+from `.microphone-control.is-listening`, and picked up the wash in the states
+that class does not cover. The opt-in class keeps the paint where it was meant
+and `app.css.node.test.ts` now refuses any rule that claims every pressed icon
+button.
 
 **Consequences:** A new surface layered above 1001 needs its own tooltip rule
-until someone builds a real stacking scale; the four rules under that `:has()`
-are the list to add to. Any icon button that is a toggle now shows it without
-asking for a class.
+until someone builds a real stacking scale; the rules under that `:has()` are
+the list to add to. A toggle asks for its paint by class, so `aria-pressed` on
+its own stays a semantic, not a visual, decision.
 
 ### 2026-09-10 — The grouped list is an unscoped primitive
 
 **What changed:** The inset hairline grouping the shell draws around a set of
-rows is now `InsetSurface`/`InsetList` in `primitives.tsx`, backed by an
-`.inset-surface` rule that carries no `.app-shell` ancestor.
+rows is now `InsetSurface` in `primitives.tsx`, backed by an `.inset-surface`
+rule that carries no `.app-shell` ancestor.
 
 **Why:** Every rule the GrokBot rewrite added hangs off `.app-shell`, and a
 Radix portal mounts on `document.body`, outside it. That is invisible until a
