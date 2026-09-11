@@ -35,11 +35,16 @@ const SEARCH_VISIBLE_PAGE_SIZE = Math.ceil((360 - 16) / (52 + 2));
  * row is still admitted at that moment — opening a message hydrates its
  * canonical transcript and a file goes through `/search/resources/:id/preview`,
  * both of which re-check — so the window exposes the excerpt already on screen,
- * not the content behind it. A new term, a signed-out session
- * (`queryClient.clear()`) and a different workspace or member (this component
- * is keyed by both) all leave the window rather than extend it.
+ * not the content behind it, and a link row is the exception that proves it:
+ * opening one hands the URL the admitted page already carried to the browser
+ * and asks nobody, which is as true of a row still on screen as of a cached
+ * one. A new term, a signed-out session (`queryClient.clear()`) and a different
+ * workspace or member (this component is keyed by both) all leave the window
+ * rather than extend it.
  */
 const SEARCH_RESULT_CACHE_MS = 30_000;
+/** A page, stamped with the moment the Worker admitted it. */
+interface AdmittedSearchPage extends SearchResponse { admittedAt: number }
 const ICONS = { messages: MessageSquare, links: Link, artifacts: Shapes, files: File };
 
 interface SearchModalProps {
@@ -99,8 +104,8 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
   const response = useInfiniteQuery({
     queryKey: ['workspace-search', workspaceId, category, settledQuery],
     initialPageParam: undefined as string | undefined,
-    getNextPageParam: (page: SearchResponse) => page.nextCursor ?? undefined,
-    queryFn: async ({ signal, pageParam }): Promise<SearchResponse> => {
+    getNextPageParam: (page: AdmittedSearchPage) => page.nextCursor ?? undefined,
+    queryFn: async ({ signal, pageParam }): Promise<AdmittedSearchPage> => {
       if (!pageParam && !trace.current) {
         trace.current = startPerfTrace('workspace_search', { startedAt: inputAt.current ?? performance.now() });
       }
@@ -122,14 +127,29 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
         currentTrace?.annotate({ searchScopeMs: totals.scope, searchRetrievalMs: totals.retrieval,
           searchHydrationMs: totals.hydration, searchServerMs: totals.server });
       }
-      return page;
+      return { ...page, admittedAt: Date.now() };
     },
     enabled: open && settledQuery.length > 0 && settledQuery === normalized,
     // Reopening on the same words repaints the last pages rather than
     // reauthorizing them; after the window one keystroke's worth of results is
-    // read again. `gcTime` matches so the pages a changed term left behind are
-    // still there when the reader backspaces onto them.
-    staleTime: SEARCH_RESULT_CACHE_MS,
+    // read again.
+    //
+    // The deadline is absolute, anchored on the first page. Every page of one
+    // infinite query shares a single `dataUpdatedAt`, so a plain number would
+    // let each continuation renew the freshness of every page before it: scroll
+    // for two minutes and the first page — admitted at the start, never
+    // readmitted since — would still repaint, which is not the 30 seconds the
+    // team agreed to. It is expressed relative to `dataUpdatedAt` because
+    // `timeUntilStale` adds it to that, so this resolves to the one instant
+    // `admittedAt + SEARCH_RESULT_CACHE_MS`, and goes negative — stale — for a
+    // continuation fetched after the window had already closed.
+    staleTime: (query) => {
+      const admittedAt = query.state.data?.pages[0]?.admittedAt;
+      return admittedAt === undefined ? 0 : admittedAt + SEARCH_RESULT_CACHE_MS - query.state.dataUpdatedAt;
+    },
+    // Matches so the pages a changed term left behind are still there when the
+    // reader backspaces onto them; a first page older than the window is kept
+    // but stale, so reuse re-reads it rather than repainting it.
     gcTime: SEARCH_RESULT_CACHE_MS,
     retry: false,
     // Focus changes must not restart candidate pages while the reader is choosing.

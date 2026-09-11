@@ -124,7 +124,8 @@ do not trigger hidden refill scans. The 250ms typing debounce, REST, and final
 workspace membership check remain unchanged. Search decisions are cached in regional KV/SQLite and updated by DO mutation pushes through the activity queue. A read never waits for a refresh: a miss is filled after the response. Decisions do not expire by age. The server caches no search result; the desktop
 holds a settled query's pages for 30 seconds (`SEARCH_RESULT_CACHE_MS` in
 `search-modal.tsx`), so a repeat of the same workspace, member, category and
-words inside that window repaints without a request. A cache hit runs no
+words inside that window repaints without a request; the window runs from the
+first page's admission, so paging does not extend it. A cache hit runs no
 `queryFn`, so it opens no `renderer_perf_flow` flow: the measured population is
 the requests, and the targets below describe those rather than every search a
 reader performs.
@@ -364,7 +365,7 @@ reloaded from a canonical source.
   frozen. Input fragments must be cleared before every count returns or throws.
 - Chunk offsets use the sorted code-point boundary array directly; do not add
   a per-character Map and its transient construction pairs.
-- Source loaders admit each candidate batch before rendering it. A new request admits again; an admitted result may finish after a concurrent revocation, which reaches the projection within its push delay rather than before the next page. A repeat served from the desktop's 30-second window is not a new request and readmits nothing, so that window is added to the push delay for an excerpt already on screen. It is bounded to the excerpt: opening the row is a fresh authorized read either way, and signing out (`queryClient.clear()`) or changing workspace or member drops the window rather than extending it.
+- Source loaders admit each candidate batch before rendering it. A new request admits again; an admitted result may finish after a concurrent revocation, which reaches the projection within its push delay rather than before the next page. A repeat served from the desktop's 30-second window is not a new request and readmits nothing, so that window is added to the push delay for an excerpt already on screen. The window runs from the first page's admission, not from the last continuation, because the pages of one query share a single freshness stamp and paging would otherwise renew a page nobody had readmitted. What it exposes is the excerpt: a message row hydrates its canonical transcript on open and a file row goes through `/search/resources/:id/preview`, both authorized reads. A **link** row is the exception and always has been — opening one hands the URL the admitted page already carried to the browser and asks nobody, so a revoked link is openable from a row on screen whether or not it came from the window. Signing out (`queryClient.clear()`) or changing workspace or member drops the window rather than extending it.
 - Namespace identity includes the embedding model and dimensions. Mixing spaces
   makes vector distances meaningless.
 - Deleted revisions win against replayed upserts at the same revision. Removing
@@ -673,6 +674,23 @@ re-check. Sign-out clears the client (`queryClient.clear()`) and the modal is
 keyed by workspace and member, so neither a departure nor a switch carries the
 window across. A future change that widens what a row shows, or that lets one be
 acted on without its own read, has to revisit the number rather than inherit it.
+
+Two corrections came out of review, and both are recorded here because the first
+draft of this entry claimed more than the code did. **The deadline is absolute.**
+Every page of one infinite query shares a single freshness stamp, so a plain
+`staleTime` let each continuation renew every page before it — scroll for two
+minutes and the first page, admitted at the start, still repainted unadmitted.
+It is now anchored on the first page's admission and expressed relative to that
+shared stamp, since `timeUntilStale` adds it to that rather than to now. Tracking
+freshness per page was the alternative; the library has one stamp per query, and
+an absolute deadline gets the guarantee the team agreed to without shadowing it.
+**And "every row action re-checks" was false for links.** A message and a file
+row do; a link row hands the URL the admitted page already carried to the browser
+and asks nobody. That is not something the window introduced — it is equally true
+of a row still on screen — so it is called out rather than fixed here: adding an
+authorization round trip to opening a link is a change to the product's behaviour
+on every path, not a cache concern, and it would have widened this change to make
+its own safety argument look tidier.
 
 A server-side cache was rejected rather than deferred. Results are admitted per
 subject, so one member's page is not another's; a per-subject cache would have to
