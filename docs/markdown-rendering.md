@@ -282,11 +282,10 @@ initial load, reconnect, and while an agent response streams.
 **A citation marker is drawn in the reader's own accent** — the colour they
 picked for themselves, which is also the fill of their turns in the same feed —
 rather than in the product's mark. Pills and the identity card tint from
-`--personal-accent`, which the shell publishes and
-[`theming.md`](theming.md) owns; where nobody is signed in the property falls
-back to the brand, so an unauthenticated surface and the exported card are
-unchanged. The accent is the *reader's* and not the cited person's: a marker is
-a citation before it is an identity.
+`--personal-color`, the account accent [`theming.md`](theming.md) owns, with a
+`var()` fallback to the brand so a surface with nobody signed in, and the
+exported card, are unchanged. The accent is the *reader's* and not the cited
+person's: a marker is a citation before it is an identity.
 
 A GFM
 footnote whose definition is one paragraph carrying exactly one link becomes an
@@ -747,6 +746,28 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-09-11 — Citation markers take the reader's accent
+
+**What changed:** `.citation-pill`, `.citation-pill-pending`, the pill's hover
+and `.citation-identity-card` tint from `--personal-color` — the account accent
+already published on `<html>` — instead of `brand.base`, and take
+`text.default` as their ink instead of `brand.ink`. The two borders and the
+hover fill gained a floor. Nothing about the grammar, the matrix, the positions
+or the streaming skeleton changed; this is only which colour a marker is. The
+property, its writer and the floors are in [`theming.md`](theming.md).
+
+**Why:** The markers were the product's lime a few lines above the reader's own
+turn, which is the one place a reader is being asked to follow a thread between
+two things. Taking their accent makes a marker read as part of what they are
+reading rather than as the product's own furniture. The identity card follows
+the *reader* and not the person it names, so that one answer never holds two
+unrelated fills — which is the problem this change exists to remove.
+
+**What a future change has to respect:** the saved card in
+`main/message-export.ts` keeps its own literal pill. That document is fixed
+light paper, loads none of the application stylesheet, and does not follow the
+appearance either, so it has no accent to follow.
 
 ### 2026-09-10 — A published site gets its own mark
 

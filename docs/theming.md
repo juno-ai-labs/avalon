@@ -28,7 +28,8 @@ properties without knowing which appearance is active.
 | `apps/desktop/src/main/theme-assets.ts` | The private cache for a remote font declared by an appearance. |
 | `packages/contracts/src/projects.ts` | `PALETTE_INK` — which of the two absolute inks each palette fill carries, and the reasoning behind the rule that picks it. |
 | `apps/desktop/src/renderer/lib/project-palette.ts` | `glyphInk()`, resolving that table to the `palette-ink` token a glyph paints its symbol in. |
-| `apps/desktop/src/renderer/lib/personal-accent.ts` | `usePersonalAccent()` — the one writer of `--personal-accent`, the signed-in person's chosen fill, published on `<html>`. |
+| `apps/desktop/src/renderer/styles/onboarding.css` | `--personal-color` — the signed-in person's chosen fill, resolved from `data-personal-color` on `<html>`, and the `sys.color.accent.*` group derived from it. |
+| `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | `AccountOnboardingGate` — the one writer of that attribute, mounted above every surface. |
 | `apps/desktop/src/renderer/styles/palette.css.node.test.ts` | Recomputes the table from the tokens, and pins the WCAG 2 shortfall and the APCA ties. |
 
 ## How it works
@@ -111,23 +112,26 @@ serves it through `rally-font://`.
   saturated mid-tones, and the resulting shortfall against that standard is
   recorded rather than fixed — see the 2026-09-10 changelog entry for what is
   accepted and why.
-- **The signed-in person's accent is published once, and read as a custom
-  property.** `--personal-accent` is written to the document element by the
-  shell and by nothing else, and `app.css` declares Rally's own mark as its
-  value on `:root` so a surface with nobody signed in — onboarding, a signed-out
-  shell, the export renderer, a component test — keeps rendering. It is not a
-  registry token: it is one of the fourteen palette fills, chosen by a person
-  rather than set by an appearance, so no appearance file can carry it and a
-  theme has no opinion to express about it. Anything that should read as
-  *theirs* spends the property rather than threading the profile through props;
-  a rule that takes a person's colour any other way has to know who is signed
-  in, which is how a surface ends up wearing the last person's accent.
+- **The signed-in person's accent has one writer, and it is
+  `--personal-color`.** `AccountOnboardingGate` writes `data-personal-color` on
+  `<html>` and `onboarding.css` resolves it to a palette fill; anything that
+  should read as *theirs* spends that property, with
+  `var(--personal-color, …)` supplying what a surface gets before sign-in or
+  where no presentation is stored. Do not add a second property carrying the
+  same value from a second writer: the gate is mounted above `SessionGate`, so
+  it covers the settings, Sidekicks and meeting windows as well as the main
+  one, and a writer attached to anything below it — `AppShell`, say — silently
+  misses three windows the same person has open at the same time. It is not a
+  registry token either: it is one of the fourteen palette fills, chosen by a
+  person rather than set by an appearance, so no appearance file can carry it.
 - **A tint of an accent is floored on a visible colour.** `black` is an accent,
-  and in the dark appearance it is close enough to the canvas that a tint of it
-  disappears. A rule that mixes an accent into `transparent` for both its fill
-  and its edge therefore draws nothing at that one accent; the citation pill
-  mixes its border over `line-4` for exactly this reason, which is also how
-  `.citation-chip` beside it is built.
+  and in the dark appearance it lands within a few points of the canvas, so a
+  tint of it over `transparent` is the ground it sits on. Every state that has
+  to *read* at that accent — an edge, a hover — mixes over a line or surface
+  token instead; the citation markers do, and `.citation-chip` beside them is
+  built from the same pairing. A resting fill may still mix over `transparent`
+  where something else holds its shape, which is what keeps a marker from
+  cutting a hole in the card behind it.
 - **Both palette inks are absolute.** A fill does not change with the
   appearance, so the ink over it must not either. `palette-ink-light`,
   `palette-ink-dark` and the fills themselves live in `base.json`, where an
@@ -198,6 +202,58 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-09-11 — Citation markers take the account accent, and its tints get a floor
+
+**What changed:** `.citation-pill`, `.citation-pill-pending`, the pill's hover
+and `.citation-identity-card` tint from `--personal-color` — the account accent
+that `onboarding.css` already resolves — instead of `brand.base`, with
+`var(--personal-color, var(--av-sys-color-brand-base))` keeping today's
+rendering where nobody has an accent. They take `text.default` as their ink
+instead of `brand.ink`. The two borders mix over `line-4` and the hover fill
+over `surface-raised`, rather than all three over `transparent`. The rule-local
+guard in `themes.css.node.test.ts` now reads `onboarding.css` alongside
+`app.css`, since that is where the property is defined.
+
+**Why:** The markers were the product's lime beside the reader's own turn in
+the same feed — two unrelated colours a few lines apart, in the one place the
+eye is being asked to follow a thread. The accent they picked is the colour
+they already read as *theirs*.
+
+The first attempt at this shipped a second property, `--personal-accent`,
+written by a hook in `AppShell`. Review caught both halves of why that was
+wrong. `--personal-color` already carried the same value from the same source,
+so the renderer would have had two `<html>`-level properties and two writers
+for one fact. And `AppShell` is the wrong altitude: `App.tsx` returns before it
+for `?surface=settings`, `?surface=sidekicks` and `?surface=meeting`, each a
+real window, so those three would have kept the brand on the marker while the
+person's own bubble — written per message, not through the shell — followed
+their accent. `AccountOnboardingGate` sits above `SessionGate` and therefore
+above every surface, which is why the attribute it writes is the one to spend.
+
+The ink moved off `brand.ink` because the tint under it is one of fourteen
+fills now, and an ink chosen for a fill would have to clear all of them —
+`brand.on` over `brand.base` was already 3.01:1 in a retired theme. Over a 16%
+tint the paragraph's own ink is the contrast the paragraph already has, at every
+accent.
+
+The floors are the part the accent swap could not do without. `black` in the
+dark appearance is `#45454d` against a `#070707` canvas: at 30% over
+`transparent` its edge vanished and the digits read as a bare superscript, and
+the hover moved about eleven points of luminance, which is not an affordance.
+Mixing the edge over `line-4` and the hover over `surface-raised` keeps both
+legible at every accent while a real hue still dominates its own mix. Raising
+the percentages instead would have been a number nobody here can justify, and
+would have shouted at the other seven accents.
+
+**What a future change has to respect:** one writer, and it is above every
+surface — a second property or a lower writer is how three windows disagree
+about who is signed in. Any accent tint that has to be *seen* needs a floor;
+the resting fill is the deliberate exception, because its border holds its
+shape and transparency is what lets a marker sit on a card without cutting a
+hole in it. The exported message card (`main/message-export.ts`) keeps its
+literal olive pill: that document is fixed light paper that does not follow the
+appearance either, and it loads none of this stylesheet.
 
 ### 2026-09-11 — A mask is not a colour
 

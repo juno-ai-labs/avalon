@@ -705,17 +705,18 @@ describe('Grok Bot mention-chip geometry', () => {
 /**
  * Citation markers are drawn in the reader's own accent.
  *
- * There is one writer of `--personal-accent` — the shell, from the signed-in
- * person's presentation — and the stylesheet's job is to have every part of the
- * marker spend it. A rule left on `brand-base` is the failure this guards: it
- * survives every render test, because the marker is still there and still a
- * pill, and only reads as wrong beside the person's own turns in the same feed.
- * The default that the property falls back to is checked here too, since a
- * surface with nobody signed in — onboarding, a signed-out shell — is the case
- * nothing else exercises.
+ * `--personal-color` is the signed-in person's palette fill, resolved by
+ * `onboarding.css` from the attribute the account gate writes on `<html>`. The
+ * stylesheet's job is to have every part of a marker spend it, with the same
+ * fallback where nobody has one. A rule left on `brand-base` is the failure
+ * this guards: it survives every render test, because the marker is still
+ * there and still a pill, and only reads as wrong beside the person's own
+ * turns in the same feed.
  */
 describe('citation markers carry the personal accent', () => {
-  it('tints every marker state from the accent and never from the brand', () => {
+  const ACCENT = 'var(--personal-color, var(--av-sys-color-brand-base))';
+
+  it('tints every marker state from the accent and never from the brand fill', () => {
     const markers = [
       rule('.citation-pill,\n.citation-pill-pending'),
       rule('.citation-pill:hover'),
@@ -724,8 +725,10 @@ describe('citation markers carry the personal accent', () => {
 
     for (const marker of markers) {
       expect(marker).not.toBeNull();
-      expect(marker).toContain('var(--personal-accent)');
-      expect(marker).not.toContain('brand');
+      expect(marker).toContain(ACCENT);
+      // The brand survives only as the fallback inside that `var()`; a marker
+      // that names it anywhere else is one this change missed.
+      expect(marker?.split(ACCENT).join('')).not.toContain('brand');
     }
   });
 
@@ -738,16 +741,16 @@ describe('citation markers carry the personal accent', () => {
     expect(rule('.citation-pill-pending::after')).toContain('var(--av-sys-color-text-default)');
   });
 
-  it('floors both marker borders on a line colour so the black accent still draws one', () => {
-    // `black` in the dark appearance is close enough to the canvas that a tint
-    // of it is the canvas. Mixed into `transparent` on both fill and edge, the
-    // pill vanished and its digits read as a bare superscript.
-    expect(rule('.citation-pill,\n.citation-pill-pending')).toContain('var(--personal-accent) 30%, var(--av-ref-color-line-4)');
-    expect(rule('.citation-identity-card')).toContain('var(--personal-accent) 24%, var(--av-ref-color-line-4)');
-  });
-
-  it('falls back to the product mark where no one has published an accent', () => {
-    expect(rule(':root')).toContain('--personal-accent: var(--av-sys-color-brand-base);');
+  it('floors the borders and the hover fill so the black accent still draws both', () => {
+    // `black` in the dark appearance lands within a few points of the canvas.
+    // Mixed into `transparent`, the pill's edge vanished and its digits read as
+    // a bare superscript; the hover moved by about eleven points of luminance,
+    // which is not an affordance. The resting fill stays transparent on
+    // purpose, so a marker over a card does not cut a hole in it.
+    expect(rule('.citation-pill,\n.citation-pill-pending')).toContain(`${ACCENT} 30%, var(--av-ref-color-line-4)`);
+    expect(rule('.citation-identity-card')).toContain(`${ACCENT} 24%, var(--av-ref-color-line-4)`);
+    expect(rule('.citation-pill:hover')).toContain(`${ACCENT} 30%, var(--av-sys-color-surface-raised)`);
+    expect(rule('.citation-pill,\n.citation-pill-pending')).toContain(`${ACCENT} 16%, transparent`);
   });
 });
 
