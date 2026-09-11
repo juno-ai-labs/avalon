@@ -345,6 +345,42 @@ describe("Linear connector", () => {
     });
   });
 
+  /**
+   * The descriptions for `read_issue`, `update_issue`, and `create_comment` say
+   * Linear takes either the UUID or the team-prefixed key (`ENG-142`) as an
+   * issue id, because both executors hand the argument straight to Linear's
+   * `String!` id. This pins the half that is ours: the connector forwards the
+   * key byte-for-byte rather than validating, normalizing, or rejecting it.
+   * What Linear does with it is Linear's contract, and is not assertable here.
+   */
+  it("forwards a team-prefixed issue key to Linear unchanged", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const fetcher: FetchLike = async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown> };
+      sent.push(request.variables);
+      if (request.query.includes("RallyReadIssue")) {
+        return jsonResponse({ data: { issue: { id: "issue-1", identifier: "ENG-142", comments: { nodes: [] } } } });
+      }
+      return jsonResponse({
+        data: { issueUpdate: { success: true, issue: { id: "issue-1", identifier: "ENG-142", title: "Ship" } } },
+      });
+    };
+    const adapter = linearAdapter(fetcher);
+    const context = {
+      connection: linearConnection([LinearCapabilities.read, LinearCapabilities.write]),
+      principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID } as const,
+      signal: neverAborts(),
+    };
+
+    await adapter.executeTool("read_issue", { issueId: "ENG-142" }, context);
+    await adapter.executeTool("update_issue", { issueId: "ENG-142", title: "Ship" }, context);
+
+    expect(sent).toEqual([
+      { id: "ENG-142" },
+      { id: "ENG-142", input: { title: "Ship" } },
+    ]);
+  });
+
   it("uses Linear's canonical stateId field when updating workflow state", async () => {
     let variables: Record<string, unknown> | null = null;
     const fetcher: FetchLike = async (_input, init) => {

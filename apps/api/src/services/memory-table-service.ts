@@ -1023,22 +1023,26 @@ async function invalidateRows(
   return { output: result, summary: `Invalidated ${args.rows.length} durable rows`, providerOperationId: mutationId };
 }
 
-const filterJsonSchema = { $ref: "#/$defs/filterNode" };
+const filterJsonSchema = {
+  $ref: "#/$defs/filterNode",
+  description: "Return only rows matching this condition. One predicate is `{\"column\": \"state\", \"op\": \"eq\", \"value\": \"open\"}`; combine several with `{\"all\": [ … ]}` for and, `{\"any\": [ … ]}` for or, nested at most four levels deep — beyond that the filter is refused. Omit it for every row. A column the table does not have, and a value whose type its column will not take, are both refused with an error naming the column — so call table_describe first and match each column's declared type. What is silent is a well-formed condition nothing satisfies: that returns an empty page, which is an answer about the rows rather than a fault in the filter.",
+};
 const filterNodeJsonSchema = {
   anyOf: [
     {
       type: "object",
       additionalProperties: false,
       properties: {
-        column: { type: "string" },
+        column: { type: "string", description: "The column to test, spelled exactly as table_describe gives it." },
         op: {
           type: "string",
           enum: [
             "eq", "neq", "in", "not_in", "gt", "gte", "lt", "lte", "between",
             "contains", "not_contains", "starts_with", "ends_with", "is_null", "is_not_null",
           ],
+          description: "How to compare. `eq` and `neq` test one value; `in` and `not_in` test a list; `gt`, `gte`, `lt`, and `lte` order it; `between` takes a `from` and a `to` and includes both; `contains`, `not_contains`, `starts_with`, and `ends_with` match text; `is_null` and `is_not_null` take no value at all.",
         },
-        value: {},
+        value: { description: "What to compare against, shaped by the operator: one value for `eq` and `neq`, a non-empty list for `in` and `not_in`, an object `{\"from\": …, \"to\": …}` for `between` — an array is refused there, and both bounds are required — and nothing at all for `is_null` and `is_not_null`. Match the column's own type: a datetime column wants an ISO 8601 timestamp such as `2026-09-10T00:00:00Z` and a date column a plain `2026-09-10`, and anything else is refused rather than matched against." },
       },
       required: ["column", "op"],
     },
@@ -1062,11 +1066,11 @@ const columnJsonSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    name: { type: "string" },
-    description: { type: "string" },
-    type: { type: "string", enum: ["string", "url", "number", "integer", "boolean", "datetime", "date"] },
-    required: { type: "boolean" },
-    searchable: { type: "boolean" },
+    name: { type: "string", description: "The column's name as every later call spells it, for example repository_full_name. Pick it once: renaming a column later is not possible." },
+    description: { type: "string", description: "What this column holds, written for a run a year from now that has only the schema to go on, for example \"Owner and repository, as owner/name\"." },
+    type: { type: "string", enum: ["string", "url", "number", "integer", "boolean", "datetime", "date"], description: "The column's type, which decides how filters compare it. Use datetime for an ISO 8601 timestamp and date for a plain calendar date; string holds either as text and compares it character by character." },
+    required: { type: "boolean", description: "Refuse a row that leaves this column empty. Use it for the columns a row is meaningless without." },
+    searchable: { type: "boolean", description: "Include this column in the free-text search that table_query's `search` runs. Set it on the prose columns; a numeric or boolean column gains nothing from it. A table with no searchable column returns nothing for every search, and columns cannot be changed later, so decide it here." },
   },
   required: ["name", "description", "type", "required", "searchable"],
 };
@@ -1089,7 +1093,14 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
         inputSchema: {
           type: "object",
           additionalProperties: false,
-          properties: { query: { type: "string", minLength: 1, maxLength: MEMORY_RECALL_QUERY_LIMIT } },
+          properties: {
+            query: {
+              type: "string",
+              minLength: 1,
+              maxLength: MEMORY_RECALL_QUERY_LIMIT,
+              description: "What the table would be about, in plain words, for example \"repositories already reviewed\". It matches each table's name, purpose, and usage instructions rather than the rows inside them, so words that only appear in a row find nothing; when no table matches, the answer is an empty list rather than an error.",
+            },
+          },
           required: ["query"],
         },
       },
@@ -1117,7 +1128,17 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
         capability: "table.read",
         mode: "read",
         idempotency: "safe",
-        inputSchema: { type: "object", additionalProperties: false, properties: { memoryTableId: { type: "string" } }, required: ["memoryTableId"] },
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            memoryTableId: {
+              type: "string",
+              description: "The table to describe, as the `memoryTableId` table_search returned for it. The table's name is not its id.",
+            },
+          },
+          required: ["memoryTableId"],
+        },
       },
       execute: async (raw) => {
         const args = DescribeSchema.parse(raw);
@@ -1137,14 +1158,42 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
           additionalProperties: false,
           $defs: { filterNode: filterNodeJsonSchema },
           properties: {
-            memoryTableId: { type: "string" },
-            memoryTableRowIds: { type: "array", minItems: 1, maxItems: 100, items: { type: "string" } },
-            search: { type: "string" },
+            memoryTableId: { type: "string", description: "The table to read, as the `memoryTableId` table_search returned for it." },
+            memoryTableRowIds: {
+              type: "array",
+              minItems: 1,
+              maxItems: 100,
+              items: { type: "string" },
+              description: "Read exactly these rows, as `memoryTableRowId` values an earlier query returned, at most 100. Use it to reread rows after a revision conflict. A row id that no longer exists is simply absent from the result rather than an error, so check that every id you sent came back.",
+            },
+            search: {
+              type: "string",
+              description: "Free-text words matched against the columns declared `searchable` at create time, for example \"timeout\". Call table_describe to see which columns those are: a table with none returns nothing for any search, which reads as an empty table rather than a mistake.",
+            },
             filter: filterJsonSchema,
-            orderBy: { type: "array", items: { type: "object", additionalProperties: false, properties: { column: { type: "string" }, direction: { type: "string", enum: ["asc", "desc"] } }, required: ["column", "direction"] } },
-            select: { type: "array", items: { type: "string" } },
-            pageSize: { type: "integer", minimum: 1, maximum: 100 },
-            cursor: { type: "string" },
+            orderBy: {
+              type: "array",
+              description: "Sort the rows, most significant key first. Omit it for the table's own insertion order.",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  column: { type: "string", description: "A column name from table_describe, spelled exactly." },
+                  direction: { type: "string", enum: ["asc", "desc"], description: "`asc` for smallest or earliest first, `desc` for largest or most recent first." },
+                },
+                required: ["column", "direction"],
+              },
+            },
+            select: {
+              type: "array",
+              items: { type: "string" },
+              description: "Return only these columns, spelled as table_describe gives them, for example [\"repository_full_name\", \"reviewed_at\"]. Omit it for every column. `memoryTableRowId` and each row's revision always come back regardless.",
+            },
+            pageSize: { type: "integer", minimum: 1, maximum: 100, description: "Maximum rows to return in one page. Defaults to 50, or to the number of `memoryTableRowIds` when those are given." },
+            cursor: {
+              type: "string",
+              description: "Continue an earlier query: pass back the exact cursor that call returned, with its other arguments unchanged. Omit it for the first page, and stop when a result returns no cursor. It is an opaque token, not a row number, so never construct or increment one.",
+            },
           },
           required: ["memoryTableId"],
         },
@@ -1164,11 +1213,21 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
         inputSchema: {
           type: "object", additionalProperties: false,
           properties: {
-            scopeKind: { type: "string", enum: MEMORY_SCOPE_KINDS },
-            name: { type: "string" }, description: { type: "string" }, usageInstructions: { type: "string" },
-            columns: { type: "array", items: columnJsonSchema },
-            keyColumns: { type: "array", items: { type: "string" } },
-            rationale: { type: "string" },
+            scopeKind: {
+              type: "string",
+              enum: MEMORY_SCOPE_KINDS,
+              description: "How long the table should outlive this run, narrowest first: `workstream` for this work stream alone, `sidekick` for future runs of this installed Sidekick, `user` for one person, `workspace` for everyone here. Not every run authorizes every kind; a refusal names the ones this run does have.",
+            },
+            name: { type: "string", description: "A short name for the table, for example \"Reviewed repositories\". A table already under this name in the chosen scope is reopened rather than duplicated, but only when this call declares it identically — same description, usage instructions, key columns, and columns. Any other difference is refused as a name conflict, and since columns cannot be added to a table later, a table that turns out to be too narrow needs a new name rather than a re-create." },
+            description: { type: "string", description: "What the table holds and why it exists, in a sentence or two. This is what table_search matches, so write the words someone would look for." },
+            usageInstructions: { type: "string", description: "How a later run should use this table: when to insert, when to update, and what each unusual column means. Write it for a run that has never seen this table and cannot ask you." },
+            columns: { type: "array", items: columnJsonSchema, description: "The table's columns, at least one. Columns cannot be added or renamed afterwards, so declare the ones the work will need rather than the minimum for the first row." },
+            keyColumns: {
+              type: "array",
+              items: { type: "string" },
+              description: "The columns that together identify one real thing, for example [\"repository_full_name\"]. Rows are deduplicated on them, so two runs inserting the same thing produce one row. Choose values a later run can rebuild from the outside world; a key including a timestamp or a random id deduplicates nothing.",
+            },
+            rationale: { type: "string", description: "Why this table is being created, in one or two sentences, for the person reviewing what the run did." },
           },
           required: ["scopeKind", "name", "description", "usageInstructions", "columns", "keyColumns", "rationale"],
         },
@@ -1184,7 +1243,15 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
         idempotency: "provider_key",
         inputSchema: {
           type: "object", additionalProperties: false,
-          properties: { memoryTableId: { type: "string" }, rows: { type: "array", items: { type: "object" } }, rationale: { type: "string" } },
+          properties: {
+            memoryTableId: { type: "string", description: "The table to insert into, as the `memoryTableId` table_search or table_create returned." },
+            rows: {
+              type: "array",
+              items: { type: "object" },
+              description: "The rows to insert, each an object keyed by column name exactly as table_describe spells it, for example [{\"repository_full_name\": \"acme/site\", \"reviewed_at\": \"2026-09-10T00:00:00Z\"}]. A key that is not a column is refused. A row whose natural key already exists is skipped rather than duplicated or reported as an error, so the result lists only what this call actually inserted.",
+            },
+            rationale: { type: "string", description: "Why these rows are being written, in one or two sentences, for the person reviewing what the run did." },
+          },
           required: ["memoryTableId", "rows", "rationale"],
         },
       },
@@ -1200,9 +1267,22 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
         inputSchema: {
           type: "object", additionalProperties: false,
           properties: {
-            memoryTableId: { type: "string" },
-            rows: { type: "array", items: { type: "object", additionalProperties: false, properties: { memoryTableRowId: { type: "string" }, expectedRevision: { type: "integer", minimum: 1, description: "Copy revision exactly from table_query for this memoryTableRowId." }, values: { type: "object" } }, required: ["memoryTableRowId", "expectedRevision", "values"] } },
-            rationale: { type: "string" },
+            memoryTableId: { type: "string", description: "The table holding these rows, as the `memoryTableId` table_query returned." },
+            rows: {
+              type: "array",
+              description: "The rows to patch, each naming one row and the columns to change on it.",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  memoryTableRowId: { type: "string", description: "The row to patch, copied exactly from the latest table_query result." },
+                  expectedRevision: { type: "integer", minimum: 1, description: "Copy revision exactly from table_query for this memoryTableRowId." },
+                  values: { type: "object", description: "Only the columns to change, keyed by column name as table_describe spells them, for example {\"reviewed_at\": \"2026-09-10T00:00:00Z\"}. Columns left out keep their current values. A natural-key column cannot be changed, and a key that is not a column is refused." },
+                },
+                required: ["memoryTableRowId", "expectedRevision", "values"],
+              },
+            },
+            rationale: { type: "string", description: "Why these rows are changing, in one or two sentences, for the person reviewing what the run did." },
           },
           required: ["memoryTableId", "rows", "rationale"],
         },
@@ -1212,16 +1292,28 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
     {
       definition: {
         name: "invalidate_rows",
-        description: "Reversibly invalidate authorized rows. Copy memoryTableRowId and expectedRevision from table_query; after a revision conflict, call table_query with memoryTableRowIds and retry from those exact results.",
+        description: "Retire authorized rows so they stop being returned. This is final for these tools: nothing restores an invalidated row, a later update on one is refused, and its natural key stays taken — so re-inserting the same fact is silently skipped as a duplicate rather than bringing it back. Copy memoryTableRowId and expectedRevision from table_query; after a revision conflict, call table_query with memoryTableRowIds and retry from those exact results.",
         capability: "table.write",
         mode: "write",
         idempotency: "provider_key",
         inputSchema: {
           type: "object", additionalProperties: false,
           properties: {
-            memoryTableId: { type: "string" },
-            rows: { type: "array", items: { type: "object", additionalProperties: false, properties: { memoryTableRowId: { type: "string" }, expectedRevision: { type: "integer", minimum: 1, description: "Copy revision exactly from table_query for this memoryTableRowId." } }, required: ["memoryTableRowId", "expectedRevision"] } },
-            reason: { type: "string" },
+            memoryTableId: { type: "string", description: "The table holding these rows, as the `memoryTableId` table_query returned." },
+            rows: {
+              type: "array",
+              description: "The rows to invalidate, each named by id and by the revision this call expects it to still be at.",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  memoryTableRowId: { type: "string", description: "The row to invalidate, copied exactly from the latest table_query result." },
+                  expectedRevision: { type: "integer", minimum: 1, description: "Copy revision exactly from table_query for this memoryTableRowId." },
+                },
+                required: ["memoryTableRowId", "expectedRevision"],
+              },
+            },
+            reason: { type: "string", description: "Why these rows no longer hold, in one or two sentences, for the person reviewing what the run did. Nothing here brings a row back, and its natural key stays taken, so be sure before sending this." },
           },
           required: ["memoryTableId", "rows", "reason"],
         },
