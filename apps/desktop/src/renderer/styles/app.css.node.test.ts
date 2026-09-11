@@ -501,10 +501,17 @@ describe('clipped lines in both navigation rails', () => {
 
     expect(fade).not.toBeNull();
     expect(fade).toContain('animation: clipped-line-fade linear both;');
-    expect(fade).toContain('animation-timeline: scroll(self inline);');
-    expect(fade?.indexOf('animation-duration: auto;')).toBeGreaterThan(
-      fade?.indexOf('animation: clipped-line-fade') ?? 0,
-    );
+    // Both longhands, by position rather than presence. The shorthand resets
+    // `animation-timeline` as well as `animation-duration`, and reinstating the
+    // timeline *above* it is the reordering that silently costs the condition:
+    // the timeline falls back to the document's, `auto` then computes to `0s`
+    // against it, `both` holds the 100% keyframe from the first frame, and
+    // every line takes the mask whether or not it clips anything. Confirmed in
+    // Chromium 141, which is the engine this renderer runs on. A `toContain`
+    // for either longhand is order-blind and passes straight through that.
+    const shorthand = fade?.indexOf('animation: clipped-line-fade') ?? 0;
+    expect(fade?.indexOf('animation-duration: auto;')).toBeGreaterThan(shorthand);
+    expect(fade?.indexOf('animation-timeline: scroll(self inline);')).toBeGreaterThan(shorthand);
   });
 
   it('holds the one mask at both ends of the keyframe, because nothing here moves', () => {

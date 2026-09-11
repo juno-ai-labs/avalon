@@ -184,12 +184,21 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 ### 2026-09-11 — A mask is not a colour
 
 **What changed:** `themes.css.node.test.ts` reads the property name alongside
-the value and skips `mask`, `mask-image` and their `-webkit-` spellings when it
-looks for literal colours in `app.css`. The `Invariants` bullet above records
-the exemption. Two cases were added to the guard's own self-check — a mask that
-is let through, and the same gradient on `background-image` that is not — and
-the property pattern admits digits so that a custom property like `--space-1`
-stays in scope.
+the value and skips exactly `mask`, `mask-image` and their `-webkit-` spellings
+when it looks for literal colours in `app.css`. The `Invariants` bullet above
+records the exemption. The guard's own self-check gained cases for a mask that
+is let through, the same gradient on `background-image` that is not, a
+`-mask`-suffixed custom property that is *not* exempt, `mask-composite` which is
+not a mask image, and three custom-property spellings that stay in scope.
+
+Both halves of the pattern were corrected after review. The exemption is
+anchored at both ends: an unanchored `-mask` suffix also exempted
+`--overlay-mask` and anything else named that way, and a custom property is
+painted wherever it is substituted, so that spelling would have handed a literal
+colour a way *out* of the guard rather than describing a mask. And the property
+capture is `[\w-]+` rather than a lowercase class: keying on the colon alone had
+seen every declaration, and the narrower class silently dropped `--BRAND` and
+`--Brand_Color` out of the scan entirely.
 
 **Why:** The navigation and work-stream rails now fade a line they cannot fit
 rather than ellipsizing it, and the mask that does it needs one fully opaque
