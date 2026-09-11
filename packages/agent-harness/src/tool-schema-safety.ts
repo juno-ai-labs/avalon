@@ -38,7 +38,7 @@ const ROOT_UNION_KEYWORDS = ["anyOf", "oneOf"] as const;
  *   and both easy to get wrong in opposite directions:
  *   - It is `anyOf`/`oneOf` only. A branch carrying its own **`allOf`** is
  *     accepted by all nine models, Grok included — an intersection is not a
- *     union — and Bind 13 deliberately keeps it. Rejecting it here would make
+ *     union — and Bind 14 deliberately keeps it. Rejecting it here would make
  *     the repair below delete a root union the sanitizer had preserved,
  *     destroying a constraint to fix a problem that does not exist.
  *   - The objection reaches the branch's **own** keywords only — a composition
@@ -49,12 +49,15 @@ const ROOT_UNION_KEYWORDS = ["anyOf", "oneOf"] as const;
  * reaches a provider, and both callers pass one. It is deliberately literal
  * about `type` as a result: an array `type` such as `["object", "null"]` reads
  * as unreadable here, which is wrong for an authored schema and irrelevant for a
- * sanitized one, because Bind resolves a type array before this ever sees it , 
- * a nullable single type into an `anyOf` since bind 14, anything else into a
- * scalar. Anyone applying this predicate to an authored schema, a legal
- * shape for a third-party MCP server to serve — should sanitize first.
+ * sanitized one, because Bind resolves a type array before this ever sees it.
+ * In a branch of a root union, the only position this is applied to, a nullable
+ * type collapses to its scalar even under Bind 14: the `anyOf` rewrite skips
+ * that position deliberately, since a branch carrying its own union is exactly
+ * what this predicate rejects. Every other array collapses to its first
+ * non-null member. Anyone applying this predicate to an authored schema, a
+ * legal shape for a third-party MCP server to serve, should sanitize first.
  *
- * Bind 13 handles every clause here, so nothing in the shipped tool surface
+ * Bind 14 handles every clause here, so nothing in the shipped tool surface
  * currently trips it. It is kept as the statement of the rule itself: the
  * clauses cost roughly two hundred live provider requests to establish, and
  * they are what a future sanitizer regression would be measured against.
@@ -152,7 +155,8 @@ function stableKey(value: unknown): string {
  * to `{ description: "choose a" }` and `{ type: "object", required: ["query"] }`
  * to `{ type: "object" }` — neither empty, and the constraint just as gone.
  *
- * **Bind 12 and 13 repair all of those**: a branch's `required` now resolves
+ * **Bind 12 and 13 repaired all of those, and 14 keeps the repair**: a
+ * branch's `required` now resolves
  * against its parent's `properties`, and the referenced subschemas are copied
  * down, so the constraint reaches the wire. Two forms still report, and the
  * second is now the more consequential:
@@ -712,14 +716,25 @@ export function nonObjectRootUnionBranches(schema: Record<string, unknown>): str
  * composition branch the sanitizer took a constraint out of.
  *
  * The trees are *nearly* parallel, so the same path indexes both — but not
- * identical, and the difference matters. Bind 13 removes a root composition
- * outright when no branch of it can be made usable. That is provider-safe and
- * deliberate, and it is still an authored constraint that did not reach the
- * wire, so a vanished keyword is reported rather than skipped. Treating the two
- * trees as structurally identical, which an earlier version of this walk did,
- * meant a whole erased union slipped past both checks: `walkPair` stopped at the
- * missing array, and `nonObjectRootUnionBranches` had nothing left to find
- * because the union it would have judged was gone.
+ * identical, and the two differences matter.
+ *
+ * Bind, since 13, removes a root composition outright when no branch of it
+ * can be made usable. That is provider-safe and deliberate, and it is still an
+ * authored constraint that did not reach the wire, so a vanished keyword is
+ * reported rather than skipped. Treating the two trees as structurally
+ * identical, which an earlier version of this walk did, meant a whole erased
+ * union slipped past both checks: `walkPair` stopped at the missing array, and
+ * `nonObjectRootUnionBranches` had nothing left to find because the union it
+ * would have judged was gone.
+ *
+ * Bind 14 rewrites a nullable node into `anyOf: [<typed branch>, {type:
+ * "null"}]` and moves its `properties` and `items` onto the typed branch. A
+ * walk that read the sanitized node literally found no `properties` there and
+ * stopped, so an emptied composition under a nullable object or array property
+ * went unreported. `deliveredStructure` looks through that one shape, and only
+ * when the authored node carries no `anyOf` of its own: an authored union is a
+ * composition to inspect, not a rewrite to see past, and Bind declines the
+ * rewrite on any node that carries a composition, so the two never coincide.
  */
 function walkPair(
   authored: unknown,
@@ -729,11 +744,15 @@ function walkPair(
   found: string[],
 ): void {
   if (!isPlainObject(authored) || !isPlainObject(sanitized) || depth > MAX_DEPTH) return;
+  // The node the authored structure is read against: the sanitized node, or
+  // the typed branch of its nullable rewrite. An authored `anyOf` is never
+  // looked through, since it is the composition the loop below inspects.
+  const structure = Array.isArray(authored.anyOf) ? sanitized : (deliveredStructure(sanitized) ?? sanitized);
   const childDepth = depth + 1;
   for (const keyword of COMPOSITION_KEYWORDS) {
     const authoredBranches = authored[keyword];
     if (!Array.isArray(authoredBranches)) continue;
-    const sanitizedBranches = sanitized[keyword];
+    const sanitizedBranches = structure[keyword];
     if (!Array.isArray(sanitizedBranches)) {
       found.push(`${path}/${keyword} (composition dropped)`);
       continue;
@@ -750,11 +769,11 @@ function walkPair(
     });
   }
   for (const keyword of SUBSCHEMA_KEYWORDS) {
-    walkPair(authored[keyword], sanitized[keyword], `${path}/${keyword}`, childDepth, found);
+    walkPair(authored[keyword], structure[keyword], `${path}/${keyword}`, childDepth, found);
   }
   for (const keyword of SUBSCHEMA_MAP_KEYWORDS) {
     const authoredMap = authored[keyword];
-    const sanitizedMap = sanitized[keyword];
+    const sanitizedMap = structure[keyword];
     if (!isPlainObject(authoredMap) || !isPlainObject(sanitizedMap)) continue;
     // Keys here are property names, never keywords: a parameter literally named
     // `oneOf` is a subschema to descend into, not a composition to inspect.
@@ -764,7 +783,7 @@ function walkPair(
   }
   for (const keyword of SUBSCHEMA_OR_LIST_KEYWORDS) {
     const authoredValue = authored[keyword];
-    const sanitizedValue = sanitized[keyword];
+    const sanitizedValue = structure[keyword];
     if (Array.isArray(authoredValue) && Array.isArray(sanitizedValue)) {
       authoredValue.forEach((entry, index) => {
         walkPair(entry, sanitizedValue[index], `${path}/${keyword}/${index}`, childDepth, found);
