@@ -126,7 +126,7 @@ describe('AutomationHeader', () => {
   it('shows the next scheduled time even without current trigger summaries', () => {
     renderHeader({ ...draft, lifecycle: 'active', nextRunAt: '2026-09-08T12:00:00.000Z', triggerSummaries: [] });
     expect(screen.getByText('When to expect it')).toBeVisible();
-    expect(screen.getByText(/^Next /)).toBeVisible();
+    expect(document.querySelector('.automation-runs-next')).toHaveTextContent(/^Next /u);
     expect(screen.queryByRole('list', { name: 'Triggers' })).toBeNull();
   });
 

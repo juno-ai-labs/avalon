@@ -317,7 +317,6 @@ describe('MessageBlock human identity', () => {
     const other = screen.getByLabelText('Message from Sam');
     const otherAccent = other.style.getPropertyValue('--person-accent');
     expect(own).toHaveAttribute('data-profile-color', 'violet');
-    expect(own.style.getPropertyValue('--person-accent')).toBe('var(--av-sys-color-text-default)');
     expect(own.style.getPropertyValue('--person-dot')).toBe('var(--av-sys-color-project-violet)');
     expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--personal-ink-light)');
     // `violet` takes white ink and `lime` black, so the repaint has to move the
@@ -361,10 +360,9 @@ describe('MessageBlock human identity', () => {
     // answer included.
     expect(response.querySelector('.message-author')).toHaveTextContent('Adam');
     expect(response.querySelector('time')).toBeInTheDocument();
-    // And it carries the accent that line is drawn with. The dot's background
-    // and the name's colour both resolve through `--person-accent`; a row that
-    // does not state it paints a transparent dot and an uncoloured name, which
-    // is a header that renders and cannot be seen.
+    // And it carries the accent its dot is drawn with. The dot's background
+    // resolves through `--person-accent`; a row that does not state it paints a
+    // transparent dot, which is half a byline.
     expect(response.style.getPropertyValue('--person-accent')).not.toBe('');
     expect(screen.getByLabelText('Elicitation response')).toHaveClass('human-message-bubble');
     expect(screen.getByLabelText('Elicitation response')).toHaveTextContent('Compare offer vs. RSPA');
@@ -533,8 +531,10 @@ describe('MessageBlock human identity', () => {
     render(<MessageBlock {...actions} message={{ ...baseMessage, contextLabel: 'Expanded by Rally' }} />);
     const header = screen.getByLabelText('Message from Adam').querySelector('header')!;
     expect(header.lastElementChild).toHaveClass('message-author');
-    expect(header.querySelector('.message-context-label')?.nextElementSibling).toHaveClass('message-author-dot');
-    expect(header.querySelector('.message-author-dot')?.nextElementSibling).toBe(header.lastElementChild);
+    // The dot travels inside the name rather than beside it, so the pair reads
+    // as one part and cannot be separated by the context label.
+    expect(header.querySelector('.message-author')?.firstElementChild).toHaveClass('message-author-dot');
+    expect(header.querySelector('.message-context-label')?.nextElementSibling).toBe(header.lastElementChild);
   });
 
   it('renders sent attachments below and outside the rounded human text bubble', () => {

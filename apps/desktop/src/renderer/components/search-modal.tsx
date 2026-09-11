@@ -5,9 +5,9 @@ import { File, Link, MessageSquare, Search, Shapes } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { SearchCategory, SearchRequest, SearchResponse, SearchResult } from '@rally/contracts/search';
 import { Button } from './primitives';
+import { RelativeTime } from './relative-time';
 import { ApiError } from '../lib/api';
 import { isComposingKeyEvent } from '../lib/ime';
-import { formatRelative } from '../lib/format';
 
 const TABS: Array<{ id: SearchCategory; label: string }> = [
   { id: 'all', label: 'All' }, { id: 'messages', label: 'Messages' },
@@ -214,7 +214,7 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
                 <span className={`rally-search-result-icon is-${result.category}`}><Icon size={18} aria-hidden="true" /></span>
                 <div className="rally-search-result-copy">
                   <div className="rally-search-result-excerpt"><HighlightedExcerpt result={result} /></div>
-                  <div className="rally-search-result-source">{result.sourceLabel || result.title}{result.occurredAt && <> · {formatRelative(result.occurredAt)}</>}</div>
+                  <div className="rally-search-result-source">{result.sourceLabel || result.title}{result.occurredAt && <> · <RelativeTime value={result.occurredAt} /></>}</div>
                 </div>
               </div>;
             })}
