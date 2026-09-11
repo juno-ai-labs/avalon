@@ -678,6 +678,56 @@ describe("droppedNullableBranches", () => {
     });
   });
 
+  it("walks nested declarations and names them by their path", () => {
+    // The shape `submit_draft` authors: a dozen nullable fields under
+    // `triggers.items.properties`. A guard that read only the root passed
+    // while a bind regression confined to the recursive rewrite would have
+    // collapsed every one of them.
+    const nested = {
+      type: "object",
+      properties: {
+        triggers: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              rrule: { type: ["string", "null"], description: "Recurrence." },
+              // Case (b): still collapsed by bind 14, so still reported, and
+              // reported by its full path rather than as a root property.
+              window: { type: ["string", "number", "null"], description: "Either." },
+            },
+          },
+        },
+        filter: {
+          // A nullable object: its own properties now live on the typed branch
+          // of the delivered union, and the walk has to look through it.
+          type: ["object", "null"],
+          properties: {
+            teamId: { type: ["string", "null"], minLength: 1, description: "Team." },
+            mode: { type: ["string", "boolean", "null"], description: "Either." },
+          },
+        },
+        variants: {
+          anyOf: [
+            { type: "object", properties: { cursor: { type: ["string", "null"], minLength: 1, description: "Cursor." } } },
+            { type: "object", properties: { page: { type: ["integer", "boolean", "null"], description: "Either." } } },
+          ],
+          description: "Authored as a union.",
+        },
+      },
+      $defs: {
+        Cursor: { type: ["string", "null"], minLength: 1, description: "Cursor." },
+        Either: { type: ["string", "number", "null"], description: "Either." },
+      },
+    };
+    expect(droppedNullableBranches(nested)).toEqual([
+      "triggers.items.window: authored-null-branch-not-delivered",
+      "filter.mode: authored-null-branch-not-delivered",
+      "variants.anyOf[1].page: authored-null-branch-not-delivered",
+      "$defs.Either: authored-null-branch-not-delivered",
+    ]);
+  });
+
   it("still reports a multi-type union, which bind 14 collapses as before", () => {
     // Case (b) of bind's transform #1: no single shape every provider accepts,
     // so `["string", "number", "null"]` becomes `"string"` with the rest in
