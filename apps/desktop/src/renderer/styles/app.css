@@ -4365,7 +4365,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   transform: translateX(0);
   visibility: visible;
 }
-.composer-stop-slot .stop-button {
+:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-stop-slot .stop-button {
   background: var(--av-cmp-row-background-hover);
   border: 0;
   border-radius: 50%;
@@ -4373,7 +4373,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   height: 28px;
   width: 28px;
 }
-.composer-stop-slot .stop-button[aria-disabled='true'] { opacity: .5; }
 @media (prefers-reduced-motion: reduce) {
   .composer-stop-slot { transition: none; }
 }
@@ -6454,8 +6453,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   padding: 1px 8px 7px;
 }
 
-.workstream-screen .composer-tools .icon-button,
-.workstream-screen .composer-submit-area .button {
+.workstream-screen .composer-tools .icon-button {
   color: var(--av-ref-color-neutral-10);
 }
 
@@ -6592,12 +6590,9 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   grid-column: 3;
   grid-row: 2;
   padding: 7px;
-  /* Match the capsule's inside corner; Stop travels behind this curved edge.
-     Tooltips portal out, so only the moving controls are clipped. */
-  clip-path: inset(0 round 0 21px 21px 0);
 }
 
-/* A single-line pill centers both control groups in the same grid row.
+/* Keep both groups centered even if a future control changes the row height.
    Multiline and attachment composers keep their controls on the bottom row. */
 :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule:not(.has-attachments):not([data-multiline='true']) :is(.composer-tools, .composer-submit-area) {
   align-self: center;
