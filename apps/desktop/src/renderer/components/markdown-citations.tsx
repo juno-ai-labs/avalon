@@ -524,9 +524,10 @@ export function rehypeCitationEmbedRows(rendersCard: (resourceId: string) => boo
  * it just does not navigate. The reader loses the click, not the source's name,
  * which is the whole point of showing a marker at all.
  */
-function CitationPill({ citation, number, onOpen }: {
+function CitationPill({ citation, number, onOpen, still }: {
   citation: FootnoteCitation;
   number: React.ReactNode;
+  still?: boolean;
   onOpen?: () => void;
 }): React.JSX.Element {
   const opens = citation.target.scheme === 'external' ? 'Opens in your browser' : 'Opens in preview';
@@ -542,7 +543,7 @@ function CitationPill({ citation, number, onOpen }: {
             className="citation-pill"
             onClick={onOpen}
             type="button"
-          >{number}</button>
+          >{still ? number : '*'}</button>
         </Tooltip.Trigger>
         <Tooltip.Portal>
           <Tooltip.Content className="tooltip citation-pill-popover" collisionPadding={12} side="top" sideOffset={6}>
@@ -661,6 +662,7 @@ const FOOTNOTE_CELLS: Matrix<FootnoteArgs> = {
     <CitationPill
       citation={args.citation}
       number={args.number}
+      still={args.render.still}
       onOpen={resolved(args) ? opener(args.render, args.target) : undefined}
     />
   ),
@@ -668,10 +670,11 @@ const FOOTNOTE_CELLS: Matrix<FootnoteArgs> = {
     <CitationPill
       citation={args.citation}
       number={args.number}
+      still={args.render.still}
       onOpen={opener(args.render, args.target)}
     />
   ),
-  person: (args) => <CitationPill citation={args.citation} number={args.number} />,
+  person: (args) => <CitationPill citation={args.citation} number={args.number} still={args.render.still} />,
   // Unreachable through the pinned grammar, which refuses a definition whose one
   // link names no known scheme. Defined anyway, because "cannot happen" is not a
   // thing the type system can check and a superscript is the honest fallback.
