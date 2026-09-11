@@ -585,31 +585,6 @@ longer than an hour on a menu nobody has touched. The refresh triggered by the
 pointer reaching the status item is what corrects it, and waking the process on
 a timer to redraw a menu nobody is looking at was not worth the wake.
 
-### 2026-09-11 — The menu-bar action enum is typed from the registry
-
-**What changed:** `TELEMETRY_MENU_BAR_ACTIONS` is now exported from the
-telemetry registry and `TelemetryReporter.menuBarActionSelected` takes its
-parameter type from it. `open_rally` and `quit_rally` were added to the admitted
-set.
-
-**Why:** the producer's union and the registry's enum were two hand-written
-copies of one list, and they had drifted: the desktop emitted `open_rally` and
-`quit_rally` while the registry admitted only `open_avalon` and `quit_avalon`,
-so every Open Rally and Quit Rally selection was refused at ingestion. Nothing
-failed loudly, because a rejected envelope is a collector-side outcome and the
-desktop's own types were internally consistent.
-
-**Considered and rejected:** renaming the emitter to the `avalon` spelling.
-Rally is the product name; the `avalon` values are what an older build sent, and
-they stay admitted for exactly that reason. Retiring them would refuse a
-released client's events.
-
-**Consequences:** the two lists cannot drift again — a value the desktop can
-emit is a value the registry admits, by construction. Historical
-`open_avalon`/`quit_avalon` rows are from builds predating the rename; the
-counts for those two rows are missing for the period between the rename and this
-change, and that gap is real rather than a drop in usage.
-
 ### 2026-08-13 — Native navigation carries its proven entrypoint into the renderer
 
 **What changed:** Main-to-renderer deep-link messages now carry a closed

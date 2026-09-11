@@ -1304,42 +1304,6 @@ injection string reaches a user-role message and never the system one, now
 through the renderers that remain. A new renderer carrying outside content still
 belongs in that test — the role rule is unchanged and is now the only rule.
 
-### 2026-09-10 — The canonical plugin ids and capability strings follow
-
-**What changed:** The drafting plugin's canonical id is `rally:sidekicks` and
-the result plugin's is `rally:sidekick-result`; the creator tools' capabilities
-are `rally.sidekick.*`; the codes the drafting tools throw are `sidekick_*`
-(`sidekick_draft_not_submitted`, `sidekick_evaluator_rules_required`, ...). A
-stored activation hint under either old id is translated to the new one when a
-run restores its hints, so a resumed drafting conversation keeps its plugin.
-[`automation-lifecycle.md`](automation-lifecycle.md#2026-09-10--the-stored-names-follow-the-model-facing-ones)
-carries the whole list and the boundary that remains.
-
-**Why:** The previous entry kept the canonical ids as persisted identity. The
-translation at the one place hints are read is cheaper than a second name, and
-it is the same shape the harness already uses for a renamed field.
-
-### 2026-09-10 — The model reads Sidekick everywhere a person does
-
-**What changed:** The drafting plugin is `rally_sidekicks` to the model with its
-tools under the `sidekick_` prefix, `sidekicks_list` replaces `automations_list`
-and answers `sidekickId`s, the result plugin is `rally_sidekick_result` holding
-`sidekick_post_result`, the run's task context carries its definition under
-`sidekick`, the memory and table tools speak the scope kind `sidekick` for the
-stored `automation`, and the prompt sections, untrusted headers, classifier
-prompts, and plugin policy say Sidekick. Canonical plugin ids, canonical tool
-names, capability strings, stored scope kinds, and error codes are unchanged.
-[`automation-lifecycle.md`](automation-lifecycle.md#2026-09-10--the-model-reads-sidekick-everywhere-a-person-does)
-carries the full list, the boundary, and why.
-
-**Why:** The rename had stopped at the plugin's display name, so one system
-message called the same thing a Sidekick and an automation. Renaming at the
-serialization boundary, as the Avalon rebrand did for `matchedRallyUserId`,
-moves only the half the model sees.
-
-**Consequences:** The `automationWorkstream` and `semanticTrigger` golden hashes
-moved, each verified against a rename-only reversal before regeneration.
-
 ### 2026-09-09 — A host port for context that lives in the prefix after a compaction
 
 **What changed:** `RunHarnessInput.residentContext` carries two host operations.
@@ -1369,12 +1333,6 @@ system message at zero; a host must answer against the head the harness named
 or refuse, and the harness refuses a position that is not a user message. The
 compacted system message is always `renderSystemPrompt(section)`, never a copy
 of the running system message, so the two branches cannot drift.
-
-### 2026-09-09 — Publish membership changes to memory search
-
-Membership directory sync now queues replacement projections, so query reads can
-trust stored grants without repeating D1 membership checks. Removed the older
-paragraph that incorrectly described read-time reauthorization.
 
 ### 2026-09-09 — Project memory search access
 
@@ -1614,19 +1572,6 @@ both places, and this entry records the code. Picking it up means passing a
 stream event are gone; a row's plugin comes from `tool_invocations` only. The
 retired memory rule about "a work stream an automation created" has no subject
 left: a run is a substream under the automation, never a work stream.
-
-### 2026-09-03 — The harness no longer has a HyperSight execution mode
-
-**What changed:** The Block Dashboard role, prompt/plugin surface, run origin,
-result-delivery path, and scheduling hooks were removed from the harness.
-
-**Why:** Retaining a dormant harness mode would keep the feature executable
-through internal callers after its product surface disappeared.
-
-**Consequences:** Work-stream, automation, and inline-child runs use the same
-remaining harness boundaries without HyperSight-specific branching.
-
-Shipped in #541.
 
 ### 2026-09-03 — A run delivers its own result, and no trigger narrows its tools
 
@@ -1943,33 +1888,6 @@ deploy cannot separate them. `run_scopes.scope_hash` and
 build a run was admitted on; no migration was needed and none of the columns
 moved. Anyone reinstating a comparison here must compare stored against stored,
 or exclude the build fields, or it will fail every run that outlives a deploy.
-
-### 2026-09-02 — Every tool schema is corrected to a plain object root at the wire
-
-**What changed:** `toModelToolDefinitions` now runs
-`repairRootSchemaForProviders` over each tool's `parameters` on the way to the
-provider. It was previously applied at one call site, over dynamic connector
-tools only, and it deleted the root union rather than merging it.
-[`agent-tools.md`](agent-tools.md#changelog) carries the measured rule, the two
-Azure error strings behind it, and the authoring consequence.
-
-**Why:** A root-level combinator on a tool's `parameters` fails the whole
-request on Azure OpenAI, every tool in it, and `openai/gpt-5.6-sol` is fenced to
-Azure with no second candidate to fall back to — so the first production run to
-choose it died before its first turn. Tool schemas reach this function from four
-independent places: this repository, a connector adapter, a hosted MCP server,
-and a skill. Only two of those are visible to a build-time test, and a rule that
-four sets of authors have to remember is one that will be forgotten. The single
-chokepoint every tool already passes through is the only place a guarantee can
-actually be made.
-
-**What a future change has to respect:** the correction belongs here rather than
-at the sources, and the build-time gate in
-`apps/api/test/tool-schema-sanitization.test.ts` stays anyway. They are not
-redundant — the corrector keeps a third-party schema from taking down a run, and
-the gate keeps this repository's own tools from silently depending on the
-corrector to be shippable. Removing either one leaves a gap the other does not
-cover.
 
 ### 2026-09-02 — A blanked optional argument is normalized to an omission
 
@@ -2429,34 +2347,6 @@ always pays for the documents section; the 8,000-byte ceiling in
 run-context assembly and must cover any new external delivery origin. Prompt
 assembly joins optional sections without blank tombstones, while preserving
 blank lines inside authorized task data.
-
-### 2026-08-29 — External delivery reads the exact saved terminal turn
-
-**What changed:** Work-stream terminal side effects reload `finalTurnId`
-directly from the canonical transcript instead of fetching the latest 250
-messages and searching them. For `needs_input`, they reload the oldest open
-elicitation through its canonical transcript turn so the saved structured
-prompt remains actionable externally. The shared transcript-turn schema now
-accepts the durable loop's structured assistant IDs. When no saved turn exists,
-connector status and suppressed automation receipts settle but no external
-result body is synthesized. A named-but-missing turn leaves a durable diagnostic
-without putting status cleanup behind an endless retry.
-
-**Why:** A completed assistant turn was durable under its stable structured ID,
-but generic message hydration still required a UUID. Settlement retried before
-Slack delivery on every attempt. The bounded recent-message search also made
-external delivery depend on transcript length instead of the terminal fact it
-was given.
-
-**What was rejected:** Generating fallback failure/completion prose inside the
-delivery layer, or searching a wider transcript page. The first publishes text
-that is not canonical; the second remains a page-size-dependent lookup for an
-exact key.
-
-**What a future change has to respect:** External adapters project a hydrated
-canonical turn and nothing else. A new Teams, Linear, or other conversational
-delivery branch belongs after saved-turn hydration, never on the live
-stream/checkpoint path.
 
 ### 2026-08-29 — Automation authoring preserves connector tool deadlines
 
@@ -3993,25 +3883,6 @@ projection. Both make invalidation and revision compare-and-swap split-brain.
 **Consequences:** Vectorize remains a derived regional index. Every hybrid hit
 is reloaded from WorkspaceDO before model exposure, and an object outage fails
 closed rather than trusting the projection.
-
-### 2026-08-18 — HyperSight loops use the BlockDashboard runtime role
-
-**What changed:** The model role, feature-flag key, submission plugin namespace,
-run origin, error codes, test modules, and owning Durable Object now use
-BlockDashboard identifiers. Model-visible product prompts and tool display copy
-still say HyperSight.
-
-**Why:** The harness needs a stable technical role that matches the owning
-subsystem across flags, SQL, and telemetry without renaming the product users
-recognize.
-
-**Considered and rejected:** Translating only at the Durable Object class. That
-would leave one logical loop split across two names in runtime ledgers and
-operational queries.
-
-**Consequences:** Internal callers route the `block_dashboard` role and emit
-`block_dashboard_*` outcomes. Prompt and UI reviews must continue to treat
-HyperSight as the visible name.
 
 ### 2026-08-18 — Each HyperSight block gets a durable Bind-loop owner fed a reproducible model-array interval
 

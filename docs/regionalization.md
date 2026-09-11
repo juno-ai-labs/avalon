@@ -447,27 +447,6 @@ not a workspace-content authority. It retains no workspace, user, session, or
 artifact bytes. The region in the hostname selects a regional Worker, which
 performs authorization and reads only that region's Durable Object and R2 state.
 
-### 2026-09-01 — External routing names the region without authorizing it
-
-**What changed:** Current workspace-scoped handoffs carry region and workspace
-coordinates, and the desktop activates the exact regional session before using
-them.
-
-**Why:** Region-only connector callbacks and ID-only resource links were
-ambiguous once one account retained Global and EU workspaces. Using whichever
-session was active either rejected a legitimate callback or opened the route in
-the wrong authority.
-
-**Considered and rejected:** Discovering the region from a resource ID or trying
-stored credentials until one answers. Both violate the rule that object IDs do
-not select regions and turn a link open into cross-region enumeration.
-
-**Consequences:** Public link coordinates remain non-secret. Only ordinary
-regional activation and middleware can convert them into an authorized session;
-a failure leaves the existing region selected.
-
-Shipped in #464.
-
 ### 2026-08-31 — Global discovery retains plural regional workspace routes
 
 **What changed:** Platform identities now retain one opaque binding per regional
@@ -604,27 +583,6 @@ configurations that are intended to be identical.
 fan-out, but regional queue bodies remain opaque and each regional Worker is the
 only caller of its objects. Earlier reasoning in this document predates the
 running changelog and was not reconstructed.
-
-### 2026-08-24 — EU inference analytics are deferred
-
-**What changed:** Only the Global Worker archives inference into R2, Queue,
-Pipeline, and Data Catalog. EU continues to serve model calls but has no
-inference producer, consumer, Pipeline binding, archive staging, or cross-region
-fallback.
-
-**Why:** Cloudflare cannot place Data Catalog in the EU jurisdiction, and its
-direct R2 Pipeline setup requires a separate service credential obtained through
-Wrangler's interactive OAuth flow. Product direction is to accept the EU
-debugging gap instead of adding that manual credential lifecycle.
-
-**Considered and rejected:** Sending EU content to the Global catalog, which
-would cross the workspace boundary; and provisioning a second long-lived R2
-credential, which would make first deployment and rotation a separate manual
-system.
-
-**Consequences:** Global retains maximal lossless inference evidence. The
-absence of an EU row is expected, and responders must not query D1, Workers
-Logs, the empty EU preflight resources, or Global as a substitute.
 
 ### 2026-08-24 — EU inference analytics stays in EU without Data Catalog
 

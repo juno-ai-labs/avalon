@@ -865,23 +865,6 @@ to the map reaches no surface until a router names it.
 
 Search emits a flow only for an issued request, retaining its original keystroke timestamp. This avoids counting canceled debounce inputs as searches while preserving the complete user-visible latency.
 
-### 2026-09-07 — Measure search from typing through painted results
-
-**What changed:** The existing `renderer_perf_flow` contract accepts
-`workspace_search` with debounce, request, paint, scope-resolution, retrieval,
-canonical-hydration, and server timing fields. Search uses the same regional
-main-owned delivery path and records no query or result contents.
-
-**Why:** Search appeared empty while serial source authorization was still running.
-The p50 500ms / p90 1000ms target includes client delay and rendering, which server
-logs alone cannot measure. Reusing the governed flow avoids a separate exporter.
-
-**Consequences:** Percentiles should use completed first-result search flows;
-failed and superseded searches remain separately visible. Backend timing fields
-are optional and do not change legacy search responses. See `text-search.md` for
-the retrieval and pagination contracts.
-
-
 ### 2026-09-06 — Retain historical application icon identifiers
 
 **What changed:** Separated current selectable icons from the append-only
@@ -921,21 +904,6 @@ screen to attribute.
 
 **Consequences:** `automation_builder` and `automation_builder_started` remain
 in the closed unions for rows already recorded and have no current emitter.
-
-### 2026-09-03 — HyperSight telemetry is retired with the feature
-
-**What changed:** Dashboard run origins, outcome fields, spans, metrics,
-observability bindings, and model-source dimensions were removed from live
-contracts and emitters.
-
-**Why:** Emitting or accepting a deleted feature dimension would preserve a
-false operational contract and split dashboards on data that can no longer be
-produced.
-
-**Consequences:** Historical telemetry remains interpretable, while new events
-contain only live Rally sources.
-
-Shipped in #541.
 
 ### 2026-09-03 — Every substream mutation keeps a named server span
 
@@ -1385,30 +1353,6 @@ superseded identifier is removed only when no spool old enough to hold one can
 still drain, which is a decision about shipped builds rather than about this
 repository.
 
-### 2026-08-24 — Lakehouse delivery fails terminally only when retry cannot help
-
-**What changed:** The analytics projection now recomputes accepted-row integrity,
-marks permanent poison rows rejected, recovers queued as well as pending work,
-uses its partial index newest-first, and starts with new events instead of a
-historical backfill. The catalog's unretractable retention boundary is explicit.
-
-**Why:** Review found that schema evolution and stored-row corruption would burn
-Queue retries, a DLQ transition could strand a queued outbox row forever, and
-the backfill could put live failures behind months of history. Review also
-proved that regional D1 deletion cannot retract an Iceberg projection.
-
-**Considered and rejected:** Treating every throw as transient, guessing a stale
-lease interval, and describing snapshot expiration as row retention. Replaying
-both durable states is safe under at-least-once semantics, while snapshot
-expiration only removes files made unreferenced by a separate row mutation.
-
-**Consequences:** `event_id` remains the logical deduplication key, historical
-accepted rows are not projected, and catalog retention fields remain metadata
-until an automated transactional deletion path is selected.
-
-Shipped in the pull request for this change. See
-[`analytics-lakehouse.md`](analytics-lakehouse.md).
-
 ### 2026-08-24 — Accepted events feed a governed Global analytics lakehouse
 
 **What changed:** The regional collector now seeds an independent Global
@@ -1800,25 +1744,6 @@ happens to hold it.
 Producers must emit only real transitions, redirect routes do not own
 observations, optional old-client context has an explicit fallback, and privacy
 canonicalization runs before the envelope is built.
-
-### 2026-08-13 — Public-site bootstrap is bound to its pre-identity route
-
-**What changed:** Global now signs the coarse public-site route probe and
-bootstrap consumes that exact short-lived decision. A different Cloudflare
-country on the second request cannot re-route the selected anonymous epoch, and
-an existing conflicting journey is rejected.
-
-**Why:** Region-before-identity is only true when the decision that controls
-browser storage is also authoritative at persistence. Two independent edge
-classifications left a race during network changes.
-
-**Considered and rejected:** Browser-only response comparison, which detects the
-problem after persistence, and a persistent region cookie, which would create
-another residency-bearing browser identifier.
-
-**Consequences:** The public route response and site bootstrap request share a
-strict signed-token contract. Desktop's one-request bootstrap remains unchanged,
-and route-token failures stay isolated from page behavior.
 
 ### 2026-08-13 — Product journeys are instrumented end to end with authoritative outcomes and no duplicate events
 

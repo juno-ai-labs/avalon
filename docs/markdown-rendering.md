@@ -963,19 +963,6 @@ starts twitching. Its inner block is about a digit wide, deliberately between
 the narrowest figure and the widest, since a skeleton cannot know whether it is
 standing in for `1` or for `12`.
 
-### 2026-09-03 — The dashboard markdown host is removed
-
-**What changed:** HyperSight's dashboard panel and its markdown rendering host
-were deleted.
-
-**Why:** Sharing the renderer did not make the panel an independent primitive;
-retaining the host would leave a hidden feature surface.
-
-**Consequences:** The shared renderer continues to serve the main feed and
-other documented live surfaces.
-
-Shipped in #541.
-
 ### 2026-09-02 — The heading gutter is margin, so an answer is never indented
 
 **What changed:** `.markdown-body:has(> .markdown-collapse) { padding-left: 20px }`

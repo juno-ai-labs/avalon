@@ -582,63 +582,6 @@ its page. A future control socket for automations would be a new brokered
 kind, added to the closed enum and the path check like any other. The entry of
 2026-08-28 below describes the room this replaced.
 
-### 2026-09-03 — The dashboard branch is removed from socket architecture
-
-**What changed:** Block Dashboard admission, fan-out, event types, socket pool,
-and renderer ownership were deleted.
-
-**Why:** The feature no longer exists, so keeping its branch in the topology
-would obscure which objects and connections actually own realtime state.
-
-**Consequences:** The diagram and invariants now cover only workspace,
-work-stream control, and addressed substream connections.
-
-Shipped in #541.
-
-### 2026-09-02 — Child mutations move onto their owning substream socket
-
-**What changed:** An addressed SubstreamAgent connection now carries message
-creation, elicitation answers, pending-input reorder, stop, and retry. Each
-command has a durable operation ID and a private correlated receipt. The public
-REST mutations and WorkspaceDO message relay were removed in the same cutover.
-
-**Why:** These operations mutate one child conversation. Sending them through a
-parent or a second transport split ordering, reconnect, and acknowledgement
-semantics across authorities.
-
-**Consequences:** WorkspaceDO still owns directory and presence traffic, while
-work-stream metadata and membership remain parent/product lifecycle requests.
-The renderer retains unacknowledged child commands and resends the identical
-operation after reconnection.
-
-### 2026-09-02 — Feed tickets pre-pay room admission and snapshot detail
-
-**What changed:** Main-feed ticket transit now invokes a request-scoped
-SubstreamAgent preparation for the signed identity, role, authority generation,
-cursor, and ticket ID. Preparation rechecks the live session/membership decision
-and a non-speculative snapshot replay plan may assemble its first canonical
-frame before upgrade. The room retains one admission and one completed snapshot,
-newer work replaces older work, and the upgrade uses either only on an exact
-match. Speculative tickets and snapshots with pending-input spill retain
-admission alone.
-
-**Why:** Storage-only waking overlapped object construction but left regional
-authorization and viewer-specific snapshot detail serialized after the network
-handshake. Those two blocks were still material against the total two-second
-switch target.
-
-**Considered and rejected:** Persisting the preparation would add a second
-content cache with cleanup and invalidation semantics. Removing the fallback
-would make an optional optimization an availability dependency. Settling unseen
-state during ticket transit would mistake intent for an actual open.
-
-**Consequences:** The common prepared path still pays the current maintenance
-authority read, but removes the session/membership join and eligible
-viewer-detail assembly from upgrade. Revocation fences in-flight preparation; session expiry,
-local product changes, changed sequence, pending-input spill, or a speculative
-open discard snapshot reuse. A cold eviction, mismatch, failed preparation, or
-superseded ticket pays the previous path without changing protocol correctness.
-
 ### 2026-09-01 — Intent warmth covers the feed and handshakes expose their real phases
 
 **What changed:** A deliberate one-second row hover mounts the complete

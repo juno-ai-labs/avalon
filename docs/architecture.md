@@ -887,58 +887,6 @@ object-local tables; historical migrations remain immutable evidence.
 
 Shipped in #541.
 
-### 2026-09-01 — Existing-room sends stop crossing the workspace parent
-
-**What changed:** The retained SubstreamAgent socket now accepts
-`create_message`, commits it in the owning room, and returns the private
-correlated receipt. WorkspaceDO continues to serve released clients during the
-rollout but is no longer in the current desktop path.
-
-**Why:** Socket admission already resolves the exact child and authorizes its
-session/member identity; access loss already walks the hierarchy and closes the
-connection. Repeating the decision at WorkspaceDO created a parent bottleneck
-and paid another D1 read plus a child binding call on every send.
-
-**Considered and rejected:** Per-command session revalidation on the room would
-retain two competing definitions of socket authority. Immediate removal of the
-parent command would make the API/desktop rolling deployment unsafe.
-
-**Consequences:** Access-revocation delivery is now part of message-write
-correctness. A room command may use only attachment-scoped identity and local
-authority, and its private receipt stays outside canonical event ordering.
-
-### 2026-09-01 — Telemetry destinations leave both regional startup graphs
-
-**What changed:** The PostHog SDK and destination adapter moved from the shared
-regional API graph into the statically imported Global-only
-`avalon-api-telemetry-delivery-global` Worker. The Global API passes approved
-rows and its existing destination credentials through explicit typed RPC
-methods; each RPC result is keyed by destination so another sink can retain an
-independent outcome. EU has no binding to the service. Deployment now treats
-eight Worker artifacts as one service-first release set.
-
-**Why:** Cloudflare rejected the workspace-handoff API release with startup CPU
-error 10021 after local builds and tests had passed. The provider graph was a
-coherent stateless boundary and had no valid EU execution path, so keeping it in
-both regional APIs spent startup budget without adding product authority.
-
-**Considered and rejected:** An upload retry or dependency-level trimming would
-preserve a probabilistic startup failure. Dynamic loading would hide part of the
-graph from build evidence and charge first customer traffic. A PostHog-named
-Worker was rejected because another telemetry destination would then encourage
-one service per vendor. Moving telemetry policy or outbox state would create a
-second authority where only destination I/O needed isolation.
-
-**Consequences:** The API remains the sole owner of telemetry admission,
-regional D1 state, retries, and receipts. Global PostHog calls add a private
-Worker invocation; provider code is absent from both API artifacts. New Global
-telemetry destination adapters extend this service rather than creating another
-destination-specific Worker. The analytics lakehouse keeps its existing
-independent Queue/Pipeline lifecycle until a focused change can move it without
-coupling failures. There is no schema or data migration.
-
-Shipped in #471.
-
 ### 2026-09-01 — Desktop identity remains plural across regions
 
 **What changed:** Successful workspace activation retains the narrow Global
@@ -960,23 +908,6 @@ only its active workspace credential crosses the renderer session bridge, and
 Global identity retains no workspace-content authority.
 
 Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
-
-### 2026-08-30 — Add a dedicated operator path to Durable Object authority
-
-**What changed:** A stateless engineering MCP routes through private named
-regional API entrypoints to a shared inspection RPC inherited by scheduled
-Durable Objects.
-
-**Why:** Production SQLite inspection needs authority-aware discovery across
-both regions without moving product state into D1 or exposing regional HTTP
-bridges.
-
-**Considered and rejected:** D1 product mirrors and direct object routes would
-either create a second authority or widen the raw-SQL trust boundary.
-
-**Consequences:** Architecture's no-cross-region-content rule now explicitly
-excludes this Access-authorized operator console. Product paths remain regional
-and typed; operator SQL is destructive and separately documented.
 
 ### 2026-08-30 — Public inference pricing gets one scheduled producer
 
@@ -1062,82 +993,6 @@ the detail.
 Shipped in the pull request for this change. Design:
 [the durable automation lifecycle PRD](PRDs/2026-08-25_durable-automation-lifecycle/prd.md).
 
-### 2026-08-26 — Proactive transport is separate from foreground presence
-
-**What changed:** The desktop's per-work-stream control/feed pairs are now
-described as a Node-owned proactive set rather than selected/running Chromium
-sockets. Current feed subscriptions suppress legacy presence, and the visible
-viewer set comes only from WorkspaceDO's explicit foreground state.
-
-**Why:** Retained pins and recent rows are intentionally warm while not being
-viewed. Treating a feed subscriber as a viewer makes the performance mechanism
-change product presence semantics.
-
-**Considered and rejected:** Closing every background feed would preserve the
-legacy inference but discard the cold-open improvement. Maintaining both
-presence systems would leave consumers with conflicting answers.
-
-**Consequences:** WorkstreamDO and SubstreamAgent remain direct child data
-planes, while WorkspaceDO owns foreground attention. New proactive socket roles
-must not imply presence merely by subscribing.
-
-Shipped in #341.
-
-### 2026-08-26 — Foreground presence crosses the desktop and WorkspaceDO boundary
-
-**What changed:** Electron main now exposes application foreground transitions
-through the preload bridge. The renderer combines application focus with its
-own window and active work-stream route, and reports the result on its existing
-WorkspaceDO connection. WorkspaceDO keeps that state in hibernation attachments
-and broadcasts authorized, viewer-scoped presence for the current face pile.
-Socket-local revisions fence asynchronous authorization, and directory effects
-clear attachments whose work-stream visibility ended.
-
-**Why:** A renderer route can remain mounted while the application or its
-window is hidden, and retained work-stream sockets intentionally outlive route
-selection. Neither fact alone represents current attention.
-
-**Considered and rejected:** Main-process route ownership would duplicate
-renderer navigation state. WorkstreamDO/SubstreamAgent socket liveness would
-misclassify pooled connections. Durable presence storage would add writes and
-expiry machinery to connection-scoped state.
-
-**Consequences:** Application focus is the only new main-to-renderer signal;
-the renderer remains the authority for its visible route. Presence is
-ephemeral, hibernation-safe, excluded from workspace sync waterlines, and
-removed on background, route change, socket loss, or directory access loss.
-
-### 2026-08-25 — Replay loss repairs the admitted socket with canonical state
-
-**What changed:** A SubstreamAgent subscription whose durable cursor is newer
-than its memory-only replay window now receives the ordinary canonical
-`snapshot` on the same socket. `resync_required` remains for a client cursor
-ahead of the object's durable sequence and as a last-resort fallback when a
-snapshot or its one-stage catch-up cannot complete safely. Subscription traces
-distinguish initial and replay-loss snapshots with
-`rally.subscribe.snapshot_reason`.
-
-**Why:** Hibernation intentionally discards the replay cache while preserving
-the socket and durable sequence. Sending `history_unavailable` made Rally close
-a healthy socket and reconnect; subscription and close presence events advanced
-the durable sequence again, so another hibernation could reproduce the same gap
-indefinitely. The object already owns everything needed for a canonical
-snapshot, and the existing subscribe catch-up closes events published while it
-is assembled.
-
-**Considered and rejected:** Persisting every replay event would turn a bounded
-latency optimization into a write-ahead event log. Removing presence events
-would hide the two-sequence symptom without repairing any other event lost with
-the cache. Treating `sequence_ahead` the same way would send a snapshot the
-current client correctly rejects as stale.
-
-**Consequences:** Normal hibernation recovery no longer tears down the socket or
-depends on REST. A failed snapshot or incomplete one-stage catch-up retains the
-old cursor and deliberately falls back through `history_unavailable`; a
-`sequence_ahead` result also requires explicit resync. A future client protocol
-may remove the latter exception only by defining how an authoritative lower
-cursor replaces local state.
-
 ### 2026-08-24 — Ace is a separate internal deployment surface
 
 **What changed:** Ace joins the architecture as an Access-protected Hono Worker
@@ -1157,31 +1012,6 @@ Flagship configuration and make operators choose a region.
 **Consequences:** Future internal administration extends Ace and its component
 library. Ace may coordinate regional work only through explicit bindings and
 opaque messages; it does not become a public API or a cross-region data plane.
-
-### 2026-08-22 — Losing access reaches a socket by queue, not by revalidation
-
-**What changed:** A dedicated per-region Cloudflare Queue now carries every
-access retraction to the objects holding that person's sockets, and all four
-socket roles stopped revalidating a listening socket on a timer. Admission and
-inbound commands still authorize as before.
-
-**Why:** An object cannot observe a revoked session or an ended membership —
-those are D1 facts owned by the Worker that wrote them — so every revalidation
-scheme was a poll, paying a query on a publish path to learn something up to a
-minute late. Publishing from the request that already knows it is both immediate
-and free when nothing changed.
-
-**Considered and rejected:** One RPC chain down the hierarchy. A single
-invocation would hold every object open, and one unreachable object would
-restart the walk; per-message retry is the reason for the queue.
-
-**Consequences:** Anything that ends access must publish — there is no sweep to
-catch what a producer forgot. A new socket-holding object owes a
-`revokeSocketAccess` and a place in its parent's child list. Full detail and the
-two retractions this deliberately does not carry are in
-[`access-revocation.md`](access-revocation.md).
-
-Shipped in #229.
 
 ### 2026-08-21 — A child's state change reaches the workspace socket immediately
 
@@ -1302,25 +1132,6 @@ background repair rather than one of the three flows a person waits on, and
 slow reconciliation shows up only as its `http_request`-free absence, and adding
 a fourth flow is the lever if that turns out to matter.
 
-### 2026-08-20 — The thin D1 plane is enforced by schema
-
-**What changed:** Migration 0090 removes all regional product tables and
-product triggers. Work-stream listing, pinning, and socket authorization now
-read WorkspaceDO's directory, leaving D1 with identity, membership, routing,
-migration/control, and operational audit/telemetry only.
-
-**Why:** Retaining empty import tables allowed a misrouted product read to look
-valid and left a creator read-state write colliding with the post-cutover fence
-after the object transaction had committed. The authority boundary needs to
-fail at the schema, not depend on every caller remembering a historical fence.
-
-**Considered and rejected:** Relaxing one fence and keeping tombstone tables.
-That fixes one symptom while preserving a second, misleading product schema.
-
-**Consequences:** Current D1 inventory is asserted as an exact allowlist. Tests
-of frozen importer/repository SQL stop at 0089; live ownership semantics run
-against real WorkspaceDO and WorkstreamDO SQLite.
-
 ### 2026-08-18 — D1 becomes a thin identity and routing plane
 
 **What changed:** WorkspaceDO now owns all workspace-scoped product domains:
@@ -1349,55 +1160,6 @@ not product serving paths. Connector ingress uses global routing -> regional
 Queue -> WorkspaceDO -> Workflow. R2 stores bytes while WorkspaceDO stores the
 only authoritative pointers and deletion intents. Terminal paths explicitly
 split child provenance from workspace resource/policy reads.
-
-### 2026-08-18 — Work-stream state uses Queue plus dual-socket waterlines
-
-**What changed:** Every WorkstreamDO aggregate state transition is appended with
-a per-key waterline and UUIDv7, published immediately to active work-stream
-clients, and retained in an SQL outbox for Cloudflare Queue. The consumer sends
-directory/user/feedback state to WorkspaceDO by typed RPC; WorkspaceDO publishes
-the current row to workspace clients. Electron merges either path through one
-shared common/viewer ledger. Workspace invalidations and OAuth completion also
-use waterlined socket events instead of renderer polling.
-
-**Why:** Direct delivery is the right latency path for the open header, while a
-Queue-buffered workspace projection is the right scale/failure-isolation path
-for many inactive work streams and sidebar/discovery. Queue does not promise
-ordering or exactly-once delivery, so freshness must live in the data model.
-
-**Considered and rejected:** The earlier direct-RPC-only parent handoff, a
-single combined version, UUID lexical order as a global clock, and periodic
-query refetch. They respectively couple every work stream to WorkspaceDO
-availability, lose independently reordered fields, overstate UUIDv7's causal
-guarantees, or spend idle requests while preserving cache races.
-
-**Consequences:** The runtime handoff always uses Queue; only maintenance route
-activation may synchronously flush its initial snapshot. Any new shared state
-must define an authority-local waterline and both socket handlers must use the
-same receiver ledger.
-
-### 2026-08-18 — WorkspaceDO replaces the D1 work-stream query plane
-
-**What changed:** The WorkstreamDO outbox now delivers directory, viewer,
-resource-link, and suggestion-feedback state directly to authoritative
-WorkspaceDO SQL. Electron pages the directory over the existing workspace
-socket. Queue and D1 are restricted to activity-log and mention-delivery
-effects, and maintenance activation verifies the WorkspaceDO row before routing
-opens.
-
-**Why:** Cross-work-stream product serving belongs with the workspace object.
-The previous D1 projection path duplicated authority and placed Queue/D1 on the
-critical path from a committed child fact to a correct sidebar.
-
-**Considered and rejected:** Per-list fan-out to WorkstreamDOs, D1 fallback
-reads, and Queue delivery to WorkspaceDO. They add an unbounded read graph,
-split-brain recovery semantics, or a Worker consumer hop where the destination
-object is already deterministic.
-
-**Consequences:** WorkspaceDO is now product state rather than invalidation-only
-control state. D1 is smaller but not empty: membership, connector/automation/
-activity modules, migration routing, and external destinations remain regional
-relational authorities until separately re-architected.
 
 ### 2026-08-18 — Every agent owns a direct resumable output socket
 
@@ -1481,30 +1243,6 @@ fleet move.
 New workspace surfaces need a typed invalidation topic; new aggregate fields
 need complete WorkstreamDO snapshots; and user writes remain exclusive to
 WorkspaceDO while both child-scoped sockets stay read-only.
-
-### 2026-08-17 — Durable Object routing becomes a locked placement boundary
-
-**What changed:** All product and crash-processing Durable Object stubs now come
-from one US/EU jurisdiction resolver with a location hint on every possible
-first `get()`. Product objects verify their runtime jurisdiction, ESLint blocks
-namespace-routing bypasses, and the control/data split is explicit: parents own
-metadata and administration while child traffic routes directly.
-
-**Why:** Region-prefixed names do not constrain execution or storage, Global was
-previously unrestricted, and background delivery paths could bypass the EU-only
-helper. A hint used only at nominal creation is insufficient because Cloudflare
-honors only whichever `get()` reaches a new object first.
-
-**Considered and rejected:** Naming conventions as residency, direct binding
-calls reviewed by convention, and parent-proxied feeds. None creates an
-enforceable placement boundary, and the last collapses the data-plane shards
-behind one control-plane bottleneck.
-
-**Consequences:** Global uses `us`/`wnam`; EU uses `eu`/`weur`. Hints are
-best-effort and do not move objects. The authority import populates the locked
-graph, and an unrestricted predecessor cannot be used for recovery. Local
-workerd omits unsupported jurisdictional routing while unit tests validate the
-production call contract.
 
 ### 2026-08-17 — The stateful hierarchy becomes workspace, work stream, substream
 
@@ -1665,28 +1403,6 @@ is active.
 Shipped in the pull request for this change. Design: [regional telemetry
 PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
-### 2026-08-13 — Daytona platform timing uses its own analytics grain
-
-**What changed:** The two API Workers bind `TERMINAL_ANALYTICS` to
-`avalon_terminal_operations`. The Terminal provider emits one versioned,
-content-free point for each create, bootstrap, or start operation, with separate
-phase durations and no tenant or provider-operation identifier.
-
-**Why:** An owned snapshot can remove recurring package installation but cannot
-remove Daytona allocation, policy read-back, or Rally's verification. Mixing
-those provider phases into root-run summaries would hide which latency is
-actually removable and make both datasets ambiguous.
-
-**Considered and rejected:** One end-to-end Worker log only, adding fields to
-`avalon_agent_runs`, and storing raw bootstrap output. Those approaches lose
-sampling-aware distributions, mix event grains, or enlarge the content/secrets
-boundary for no image decision value.
-
-**Consequences:** Analytics failure never changes provider behavior. Operators
-query the dedicated dataset through the checked-in human-readable report and
-retain D1/Workers Logs for exact diagnosis; Cloudflare's account-level retention
-and regional caveat apply.
-
 ### 2026-08-13 — Daytona is an external execution substrate, not a fourth Rally surface
 
 **What changed:** The regional API composes a deferred Terminal plugin whose
@@ -1711,39 +1427,6 @@ state.
 
 Shipped in the pull request for this change. Design:
 [`docs/PRDs/2026-08-12_daytona-terminal-git-github/prd.md`](PRDs/2026-08-12_daytona-terminal-git-github/prd.md).
-
-### 2026-08-12 — HyperSight adopts the root policy with aggregate run telemetry
-
-**What changed:** HyperSight no longer has separate 8-turn, 24-tool,
-four-minute, and 500-cent ceilings. It now shares the root run's 1,000-turn
-policy and one-year Workflow deadline. Every completed root harness execution
-emits one structured Workers Log and one versioned Workers Analytics Engine
-summary datapoint.
-
-**Why:** HyperSight's prior safety thresholds were selected without a measured
-distribution of successful and failed run duration, tool use, or cost. They
-could terminate useful unattended work for the same reason the ordinary
-eight-turn limit did. The policy now gathers the measurements needed to set a
-future threshold from observed behavior rather than a guess.
-
-**Considered and rejected:** Emitting every loop iteration and reconstructing a
-run in Analytics Engine was rejected because the product uses adaptive
-sampling, does not guarantee retrieval of an individual point, and cannot
-reliably reconstruct event sequences. Keeping only Workers Logs was rejected
-because logs are the exact diagnostic stream, not the sampling-aware aggregate
-time-series store. Removing the final iteration guard was rejected because
-1,000 turns still terminates a pathological model loop.
-
-**Consequences:** An unattended HyperSight refresh can consume materially more
-provider and tool capacity before it is cancelled or reaches 1,000 routed model
-attempts. Per-operation watchdogs, read-only enforcement, durable
-cancellation, lease fencing, and ambiguous-write handling remain mandatory.
-Analytics Engine is advisory telemetry with three-month retention; D1 remains
-the source of truth, telemetry failure cannot change a run result, and rows
-whose Bind failure path lacks detailed timing are explicitly marked rather than
-treated as zero-latency work.
-
-Shipped in #130.
 
 ### 2026-08-12 — Root work-stream runs use a caller-specific resource policy
 
@@ -1772,41 +1455,3 @@ entry was not recorded here and was not reconstructed.
 
 Shipped in #130.
 
-### 2026-08-12 — Active streams cross initial joins, route changes, and replay gaps
-
-**What changed:** `SubstreamAgent` gained one accumulated active-stream
-checkpoint in Durable Object storage. Its metadata and storage-safe text chunks
-advance with the room sequence in one transaction; initial snapshots and
-`history_unavailable` resync frames carry it to the desktop. The checkpoint holds
-the active harness run, message, accumulated text, turn/epoch/stream cursor, seen
-turns, and retry-prefix offset. Terminal events remove it. The desktop shares its
-room and Bind cursors above routed screens, keeps bounded background subscribers
-for listed running work streams, and retains the transient assistant row across
-active-run REST merges. Canonical reconciliation re-anchors cold-join rows after
-persisted history, drops synthetic streams once a run is terminal, and validates
-a history-gap checkpoint against freshly fetched run identity rather than stale
-cache state.
-
-**Why:** Partial assistant text exists only in realtime until completion. A
-screen-owned socket closed on route change and returned with sequence zero, where
-the room supplied detail but no transcript; an entirely new viewer had even less
-state. Later deltas therefore appended to a missing prefix, and a REST refresh
-could visibly remove and recreate the bubble. A bounded in-memory replay buffer
-cannot repair a cold join or survive room hibernation, so recovery needed one
-current-state value rather than a longer event log.
-
-**Considered and rejected:** Writing partial messages to D1 would make the
-canonical transcript represent incomplete work and add high-frequency database
-writes. Replaying from zero grows with the response and still fails after
-hibernation. Keeping a socket for every sidebar work stream scales connections
-with history rather than active work; only running work streams receive a
-background subscriber.
-
-**Consequences:** Each coalesced delta adds bounded Durable Object checkpoint
-writes to the sequence transaction, while D1 remains final-only and the replay
-buffer remains bounded and in memory. Snapshot consumers must install checkpoint text
-and its Bind cursor together: either half alone creates a duplicate or a
-truncation at the catch-up boundary. The optional/defaulted contract fields keep
-regional and desktop rollout skew compatible. The checkpoint is not a general
-replay store; all completed transcript rows and every non-stream mutation still
-reconcile through D1.
