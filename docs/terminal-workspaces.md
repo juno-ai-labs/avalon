@@ -718,6 +718,15 @@ miss the one a person had open. *Redirecting `context.workstreamId` wholesale*,
 which would also move the sandbox and the readable-resource set into the room
 and is a much larger change than the defect needs.
 
+**Both links, not one:** a redirected document is linked to the owning room
+*and* to the conversation that produced it. Visibility is resolved from the
+links the run's own object holds (`loadVisibleRows` starts at `attachedLinks`),
+so a document linked only to the room is one its own run cannot read back —
+`publish_resource` followed by `import_resource` on the id just returned would
+answer `resource_not_found`, and "publish a refresh, then diff it against the
+last one" is the natural shape of the work these Sidekicks do. The room is where
+the document belongs; the producing link is what keeps the round trip working.
+
 **The carve-out:** an internal capture is not redirected. A command log
 (`terminal-command-log:<effect-intent>`) and a checkout backup name their own
 namespace through `providerResourceId` rather than deriving one from a path, and

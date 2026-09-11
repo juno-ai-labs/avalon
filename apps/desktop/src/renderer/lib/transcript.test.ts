@@ -150,6 +150,90 @@ describe('transcript messages', () => {
     ]);
   });
 
+  it('carries the delivering Sidekick through the mapping, and falls back when the row will not parse', () => {
+    // Through orderedTranscriptMessages, not by building the Message by hand.
+    // AutomationActivationV1Schema is a strictObject read with safeParse and a
+    // silent {} on failure, so a field the API adds later would make every
+    // Sidekick revert to the generic label while every block test stayed green
+    // — the same trap the comment above records firing once already.
+    const activationSnapshot = (structuredContent: Record<string, unknown> | null) => ({
+      snapshotId: 'snapshot-named-activation',
+      snapshotThrough: 1,
+      eventSequence: 1,
+      snapshotAtUtc: '2026-09-01T12:00:00.000Z',
+      unreadAnchorSequence: null,
+      unreadReason: 'no_unread' as const,
+      ranges: [{
+        purpose: 'latest' as const,
+        requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [{
+          transcriptSequence: 1,
+          turnId: 'turn-named-activation',
+          entryKind: 'conversation' as const,
+          actor: 'system' as const,
+          authorUserId: null,
+          authorSnapshot: null,
+          attentionOrdinal: 1,
+          clientMessageId: 'automation-activation:delivery-2',
+          externalActor: null,
+          createdAtUtc: '2026-09-01T12:00:00.000Z',
+          revision: 1,
+          blocks: [{
+            type: 'text' as const,
+            blockId: 'block-named-activation',
+            blockIndex: 0,
+            text: 'Updated the dashboard.',
+            streaming: false,
+            messageType: 'automation_activation' as const,
+            structuredContent,
+            mentions: [],
+            attachments: [],
+          }],
+          blockCount: 1,
+          activityId: null,
+        }],
+        activities: [],
+        pluginRuns: [],
+      }],
+      activities: [],
+      activeActivities: [],
+      pluginRuns: [],
+      activeTurns: [],
+      pendingInputs: [],
+    });
+
+    const parsed = {
+      type: 'automation_activation',
+      schemaVersion: 1,
+      automationId: '00000000-0000-7000-8000-0000000000aa',
+      automationName: 'Refresh Avalon Open Pull Requests Dashboard',
+      runId: '00000000-0000-7000-8000-0000000000bb',
+      deliveryId: 'delivery-2',
+      trigger: { kind: 'schedule' },
+      occurredAt: 1789088651967,
+    };
+
+    expect(orderedTranscriptMessages(activationSnapshot(parsed), 'workstream-one')).toEqual([
+      expect.objectContaining({
+        messageType: 'automation_activation',
+        automationActivation: {
+          automationId: '00000000-0000-7000-8000-0000000000aa',
+          automationName: 'Refresh Avalon Open Pull Requests Dashboard',
+        },
+      }),
+    ]);
+
+    // A row the schema refuses keeps the row rather than the identity: the
+    // author slot falls back to the generic label instead of rendering blank.
+    const [unparsed] = orderedTranscriptMessages(
+      activationSnapshot({ ...parsed, unexpectedFutureField: true }),
+      'workstream-one',
+    );
+    expect(unparsed?.messageType).toBe('automation_activation');
+    expect(unparsed?.automationActivation).toBeUndefined();
+  });
+
   it('creates text, tool, and elicitation messages from the same base shape', () => {
     expect(createTextMessage({ ...base, text: 'Hello' })).toMatchObject({ messageType: 'text', text: 'Hello' });
     expect(createToolEventMessage({

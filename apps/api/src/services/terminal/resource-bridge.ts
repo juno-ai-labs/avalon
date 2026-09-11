@@ -323,23 +323,40 @@ export function createTerminalResourceBridge(
     ? publicationWorkstreamId ?? context.workstreamId
     : context.workstreamId);
   /**
-   * Link a published document to the work stream that owns it.
+   * Link a published document to the work stream that owns it, and to the one
+   * that produced it when those differ.
+   *
+   * Both, not either. The owning room is where the document belongs and where a
+   * reader looks for it. But visibility is resolved from the links held by the
+   * object a run executes in (`loadVisibleRows` starts at `attachedLinks`), so
+   * a redirected document linked only to the room is one its own run cannot
+   * read back: `publish_resource` then `import_resource` on the id just
+   * returned would answer `resource_not_found`, which is the natural shape of
+   * "refresh the document" and worked before the redirect existed.
    *
    * The in-object attacher writes through the object this run executes in,
-   * which is the right door only when the document lands in that same
-   * conversation. A redirected publication lands in a different object, so it
-   * takes the ordinary cross-object path instead.
+   * which is the right door for the producing half only. The owning room is a
+   * different object and takes the ordinary cross-object path.
    */
-  const attachPublication = (
+  const attachPublication = async (
     context: { workspaceId: string; workstreamId: string },
     input: { resourceId: string; attachedByUserId: string | null },
     internalProviderResourceId?: string | undefined,
   ) => {
     const workstreamId = publicationWorkstream(context, internalProviderResourceId);
-    const args = { workspaceId: context.workspaceId, workstreamId, ...input };
-    return workstreamId === context.workstreamId
-      ? attachResource(args)
-      : attachWorkstreamRuntimeResource(env, args);
+    await (workstreamId === context.workstreamId
+      ? attachResource({ workspaceId: context.workspaceId, workstreamId, ...input })
+      : attachWorkstreamRuntimeResource(env, {
+        workspaceId: context.workspaceId,
+        workstreamId,
+        ...input,
+      }));
+    if (workstreamId === context.workstreamId) return;
+    await attachResource({
+      workspaceId: context.workspaceId,
+      workstreamId: context.workstreamId,
+      ...input,
+    });
   };
   return {
     async importResource(context, input, destinationPath, sandboxGeneration, providerSandboxId, provider) {
