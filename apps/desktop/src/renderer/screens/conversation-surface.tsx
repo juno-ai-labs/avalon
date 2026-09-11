@@ -2213,7 +2213,7 @@ export function ConversationSurface({
             />
           )}
           {detail.latestHarnessRun?.status === 'stopped' && (
-            <RunStoppedNotice onRetry={() => retry.mutate()} retrying={retry.isPending} />
+            <RunStoppedNotice />
           )}
         </div>
       </div>
