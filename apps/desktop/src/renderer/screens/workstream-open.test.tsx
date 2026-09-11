@@ -528,6 +528,38 @@ describe('socket-first work-stream open', () => {
     expect(client.getQueryData(['substream-ordered-transcript', workstreamId, childId])).toBeDefined();
   });
 
+  it('holds a row in the rail for the substream being created, from the keystroke that creates it', async () => {
+    // The wait is the two round trips of creation, and until this the rail said
+    // nothing about it: the conversation on screen had no row, and the plus row
+    // it was opened from was the only thing still claiming to be where the
+    // reader was.
+    const childId = '00000000-0000-7000-8000-000000000676';
+    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New substream', context: { parts: [] } });
+    let confirm: () => void = () => undefined;
+    api.confirmSubstream.mockReturnValue(new Promise((resolve) => {
+      confirm = () => resolve({
+        substreamId: childId,
+        title: 'Check the pricing page',
+        opening: { turnId: 'turn-child-8', clientMessageId: 'client-8', createdAt: '2026-08-26T14:05:00.000Z' },
+      });
+    }));
+    openConversation(2);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
+    const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
+    expect(sidebar.querySelector('.workstream-pending-substream')).toBeNull();
+    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.change(composer, { target: { value: 'Check the pricing page' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(sidebar.querySelector('.workstream-pending-substream')).not.toBeNull());
+    expect(screen.getByRole('button', { name: 'New substream' })).not.toHaveAttribute('aria-current');
+    confirm();
+    // Gone once the substream exists: from here the rail draws the child's own
+    // row from the parent's directory.
+    await waitFor(() => expect(sidebar.querySelector('.workstream-pending-substream')).toBeNull());
+  });
+
   it('shows no branch context when the substream is started from the sidebar', async () => {
     openConversation(3);
     fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));

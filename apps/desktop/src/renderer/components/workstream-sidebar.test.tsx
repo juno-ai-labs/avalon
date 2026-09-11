@@ -190,6 +190,46 @@ describe('WorkstreamSidebar', () => {
     expect(onSelectSubstream).toHaveBeenLastCalledWith('0');
   });
 
+  it('holds the place of a substream being created, last and without a destination', () => {
+    const onNewSubstream = vi.fn();
+    render(<Tooltip.Provider><WorkstreamSidebar
+      workstream={{ ...workstream, privateChildren: [{
+        substreamId: asSubstreamId('00000000-0000-7000-8000-000000000097'), title: 'Launch risks', createdByUserId: asUserId(person.id),
+        createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
+      }] }}
+      creatingSubstream
+      presentUserIds={[]}
+      selectedSubstreamId="new"
+      onSelectSubstream={vi.fn()}
+      onNewSubstream={onNewSubstream}
+      onOpenArtifact={vi.fn()}
+      onParticipants={vi.fn()}
+      onFocusTranscript={vi.fn()}
+    /></Tooltip.Provider>);
+    const sidebar = screen.getByRole('complementary');
+    const rows = [...sidebar.querySelectorAll('.workstream-substream-list > *')];
+    // Last, where a child created now will be listed: the directory orders
+    // children oldest first, so the row does not move when it becomes real.
+    expect(rows.map((row) => row.className)).toEqual([
+      expect.stringContaining('workstream-conversation-row'),
+      expect.stringContaining('workstream-pending-substream'),
+      expect.stringContaining('workstream-new-substream'),
+    ]);
+    const pending = sidebar.querySelector('.workstream-pending-substream');
+    expect(pending).toHaveAttribute('aria-current', 'page');
+    expect(pending?.querySelector('.workstream-context-mark > .tabler-icon-corner-down-right')).not.toBeNull();
+    expect(pending?.querySelector('.title-skeleton')).not.toBeNull();
+    expect(within(sidebar).getByText('Rally is creating this substream')).toBeInTheDocument();
+    // Nothing to click: the reader is already on the surface this row stands
+    // for, and the row that starts the next substream is no longer the one
+    // saying where they are.
+    expect(within(sidebar).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
+      .not.toContain('Go to substream: New substream');
+    const create = screen.getByRole('button', { name: 'New substream' });
+    expect(create).not.toHaveAttribute('aria-current');
+    expect(create.className).not.toContain('is-current');
+  });
+
   it('keeps the arrow for a substream whose title has no first character', () => {
     render(<Tooltip.Provider><WorkstreamSidebar
       workstream={{ ...workstream, privateChildren: [{
