@@ -35,10 +35,14 @@ const SEARCH_VISIBLE_PAGE_SIZE = Math.ceil((360 - 16) / (52 + 2));
  * row is still admitted at that moment — opening a message hydrates its
  * canonical transcript and a file goes through `/search/resources/:id/preview`,
  * both of which re-check — so the window exposes the excerpt already on screen,
- * not the content behind it, and a link row is the exception that proves it:
- * opening one hands the URL the admitted page already carried to the browser
- * and asks nobody, which is as true of a row still on screen as of a cached
- * one. A new term, a signed-out session (`queryClient.clear()`) and a different
+ * not the content behind it. A link row is the exception: opening one hands
+ * `location.url` to the browser and asks nobody, and that URL is never rendered
+ * — the row shows the excerpt and the source label — so it is content behind
+ * the row, and this window lengthens the reach of a revoked one by up to 30
+ * seconds. Clicking a rendered row has never been re-checked, so closing that
+ * needs an endpoint that does not exist and would change every path rather than
+ * the cached one; it is recorded in `docs/text-search.md` instead of half-done
+ * here. A new term, a departing session (`queryClient.clear()`) and a different
  * workspace or member (this component is keyed by both) all leave the window
  * rather than extend it.
  */
