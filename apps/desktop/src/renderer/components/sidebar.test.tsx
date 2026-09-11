@@ -1441,6 +1441,37 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.getAllByRole('tooltip')).toHaveLength(1);
   });
 
+  it('holds the tile\'s pending tooltip back when the pointer reaches the play first', () => {
+    // The path a pointer actually takes: across the tile, onto the play, inside
+    // the tile tooltip's own opening delay. Nothing has opened yet when the
+    // marker is reached, so stopping the move at the marker is not enough —
+    // the tile's timer is already running, and Radix closes an open tooltip
+    // when another opens but never cancels a pending one. Left alone, the name
+    // opens *after* the marker's sentence and replaces it, which is the tile
+    // answering for a mark the pointer is resting on.
+    vi.useFakeTimers();
+    try {
+      const shared = { ...automation, loadable: false, id: 'shared', name: 'Team brief', scope: 'workspace' as const };
+      render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly automations={[shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+      const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
+      const tile = within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' });
+
+      fireEvent.pointerMove(tile, { pointerType: 'mouse' });
+      // Short of the tile tooltip's 450ms, so its open is still pending.
+      act(() => { vi.advanceTimersByTime(120); });
+      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+
+      fireEvent.pointerMove(tile.querySelector('.automation-glyph-marker')!.parentElement!, { pointerType: 'mouse' });
+      // Past both delays, so a pending tile open has had every chance to land.
+      act(() => { vi.advanceTimersByTime(2_000); });
+
+      expect(screen.getAllByRole('tooltip').map((tip) => tip.textContent))
+        .toEqual(['Active — in service and waiting on its triggers.']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([false, true])('offers making the first Sidekick where the shortcuts would be (compact=%s)', (compact) => {
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     // Named for what it holds: an offer to make one, not shortcuts to any.

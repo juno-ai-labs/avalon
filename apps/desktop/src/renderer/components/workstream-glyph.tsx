@@ -255,7 +255,7 @@ const MARKER_KNOCKOUT = 7;
  * one, and an opaque patch of the default surface sat over a row that is
  * painted in a hover fill half the time. A hole shows whatever is behind it.
  */
-export function HexagonGlyph({ className, fill, ink, marker, symbol: Icon }: {
+export function HexagonGlyph({ className, fill, ink, marker, onMarkerHover, symbol: Icon }: {
   className?: string | undefined;
   /** The shape's interior. `none` leaves what is underneath it showing. */
   fill: string;
@@ -263,6 +263,15 @@ export function HexagonGlyph({ className, fill, ink, marker, symbol: Icon }: {
   ink: string;
   /** The state to mark, or nothing where there is no state to mark. */
   marker?: HexagonMarker | undefined;
+  /**
+   * That the pointer is on the marker, for a surface that has a tooltip of its
+   * own to stand down. Only the hexagon knows where the marker is, so only the
+   * hexagon can say when it is being pointed at; what the surface does with
+   * that is its own business, and a surface with nothing to suppress passes
+   * nothing. See the veto in `sidebar.tsx`'s `SidekickStripTile` for why a
+   * surface needs telling rather than inferring it from its own pointer events.
+   */
+  onMarkerHover?: ((over: boolean) => void) | undefined;
   symbol: LucideIcon;
 }): React.JSX.Element {
   // SVG ids are document-global and the strip draws one of these per Sidekick,
@@ -307,19 +316,34 @@ export function HexagonGlyph({ className, fill, ink, marker, symbol: Icon }: {
         <Tip className="hexagon-marker-tooltip" collisionPadding={8} delayDuration={300} disableHoverableContent
           label={marker.description} side="bottom" sideOffset={8}>
           {/*
-            The marker keeps the pointer to itself while it is over it. Radix
-            closes whatever tooltip is open when another opens, so two triggers
-            nested like this resolve by *order*: a surface whose own tooltip is
-            still on its opening delay when the pointer arrives at the marker
-            opens second and takes the answer away again, which is a marker tip
-            that flashes and is replaced by the name of the thing it is on.
-            Stopping the move here is what makes that ordering impossible rather
-            than merely unlikely — the tile's trigger never sees a move while
-            the pointer is on the marker, so it has nothing to open. Radix's own
-            handler is composed onto this same element and still runs; only the
-            surface above stops hearing about it.
+            The marker keeps the pointer to itself, and that takes both halves
+            below. Radix closes whatever tooltip is open when another opens, but
+            it never cancels one that is merely *pending*, and two triggers
+            nested like this therefore resolve by order: a surface still inside
+            its own opening delay when the pointer reaches the marker opens
+            second and takes the answer away again — the marker's sentence
+            flashing and being replaced by the name of the thing it is on.
+
+            Stopping the move keeps a surface that has not started from
+            starting: its trigger sees no move while the pointer is here, so a
+            pointer arriving straight onto the marker leaves it with nothing to
+            open, and a surface the pointer later moves back onto has not spent
+            its one chance to open. Radix's own handler is composed onto this
+            same element and still runs; only the surface above stops hearing.
+
+            `onMarkerHover` is the other half, and it is the one that covers the
+            path a pointer actually takes — across the surface and onto the
+            marker, inside that surface's delay. A stopped move cannot reach
+            back and cancel a timer already running, so the surface is told
+            instead, and vetoes its own open for as long as the pointer is here.
           */}
-          <g onPointerMove={(event) => event.stopPropagation()}>
+          <g
+            onPointerLeave={() => onMarkerHover?.(false)}
+            onPointerMove={(event) => {
+              event.stopPropagation();
+              onMarkerHover?.(true);
+            }}
+          >
             {/*
               The hover target is the marker's whole box rather than the play
               inside it. SVG hit-tests what is painted, and the play is about
@@ -352,12 +376,14 @@ export function HexagonGlyph({ className, fill, ink, marker, symbol: Icon }: {
  * the identity decides (the fill, its ink, and the symbol) and passes through
  * whatever state marker the caller wants cut out of that fill.
  */
-export function AutomationGlyph({ id, appearance: saved, marker }: {
+export function AutomationGlyph({ id, appearance: saved, marker, onMarkerHover }: {
   id: string;
   appearance?: SavedAppearance;
   /** The Sidekick's lifecycle, where the surface shows one; see `HexagonMarker`. */
   marker?: HexagonMarker | undefined;
+  /** Passed through; see `HexagonGlyph`. */
+  onMarkerHover?: ((over: boolean) => void) | undefined;
 }): React.JSX.Element {
   const { Icon, color, colorKey } = resolveWorkstreamAppearance(id, saved);
-  return <HexagonGlyph fill={color} ink={glyphInk(colorKey)} marker={marker} symbol={Icon} />;
+  return <HexagonGlyph fill={color} ink={glyphInk(colorKey)} marker={marker} onMarkerHover={onMarkerHover} symbol={Icon} />;
 }

@@ -434,7 +434,7 @@ function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
  * "Active" — dead markup, because `aria-label` on the button replaces its
  * contents in the accessible name, and the label already said it.
  */
-function SidekickStripTile({ glyph, label, name, onClick, tip }: {
+function SidekickStripTile({ glyph, label, name, onClick, tip, tipSuppressed = false }: {
   glyph: React.ReactNode;
   /**
    * What the tile is called to a screen reader, which the caption cannot be: it
@@ -450,7 +450,27 @@ function SidekickStripTile({ glyph, label, name, onClick, tip }: {
    * a name at 80px and the rail drops it outright.
    */
   tip: React.ReactNode;
+  /**
+   * True while something inside the tile is answering for itself — today the
+   * glyph's lifecycle marker. The tile then has nothing to add over the top of
+   * it; see the veto below.
+   */
+  tipSuppressed?: boolean;
 }): React.JSX.Element {
+  // Radix still decides *when* this opens — the delay, the hover and the focus
+  // are all its own — and this only takes a veto over the answer, the way
+  // `DragHint` takes one from a drag. It is the half of "the marker keeps the
+  // pointer" that a stopped `pointermove` cannot do: a pointer that crosses the
+  // tile on its way to the marker starts this tooltip's delay before the marker
+  // is reached, and Radix cancels a pending open only on a `pointerleave` the
+  // tile never gets, because the marker is inside it. Left alone the name opens
+  // after the marker's sentence and replaces it.
+  //
+  // Corrected during the render rather than in an effect, again as `DragHint`
+  // does: the two land in the same batch, and a tooltip that commits to the
+  // screen for one frame is the whole defect.
+  const [open, setOpen] = useState(false);
+  if (open && tipSuppressed) setOpen(false);
   return (
     <div className="sidebar-context-target">
       {/*
@@ -460,7 +480,7 @@ function SidekickStripTile({ glyph, label, name, onClick, tip }: {
         Sidekick is the opposite one; above the strip is the work-stream list,
         which is not what a reader comparing tiles wants to see.
       */}
-      <Tip label={tip} side="top">
+      <Tip label={tip} onOpenChange={setOpen} open={open} side="top">
         <button
           className="sidebar-row automation-row automation-tile"
           aria-label={label}
@@ -477,9 +497,13 @@ function SidekickStripTile({ glyph, label, name, onClick, tip }: {
 
 function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.Element {
   const scopeDescription = sidekick.scope === 'workspace' ? ' · Workspace' : '';
+  // Where the pointer is inside the tile, which only the hexagon can say: the
+  // play is drawn in its viewBox rather than positioned by this rail, so there
+  // is no element here whose own pointer events would describe it.
+  const [markerHovered, setMarkerHovered] = useState(false);
   return (
     <SidekickStripTile
-      glyph={<AutomationGlyph {...(sidekick.appearance ? { appearance: sidekick.appearance } : {})} id={sidekick.id} marker={SIDEKICK_RUNNING_MARKER} />}
+      glyph={<AutomationGlyph {...(sidekick.appearance ? { appearance: sidekick.appearance } : {})} id={sidekick.id} marker={SIDEKICK_RUNNING_MARKER} onMarkerHover={setMarkerHovered} />}
       label={`${sidekick.name}, Active${scopeDescription}`}
       name={sidekick.name}
       onClick={() => void desktopBridge().openSidekicks(sidekick.id)}
@@ -491,6 +515,7 @@ function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.
       // marker, which is what the public badge beside these rows settled.
       // The state still reaches assistive technology, through `label`.
       tip={`${sidekick.name}${scopeDescription}`}
+      tipSuppressed={markerHovered}
     />
   );
 }
