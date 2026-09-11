@@ -78,9 +78,9 @@ queue serve it.
 
 1. **Notification presentation while Rally is frontmost with that conversation
    open.** macOS presents a remote alert itself; suppressing it needs a
-   `UNUserNotificationCenter` delegate Electron does not expose. Deferred; the
-   server-side presence check in [Open questions](#open-questions) is the likely
-   answer and works for iOS too.
+   `UNUserNotificationCenter` delegate Electron does not expose, and the
+   server-side presence check that would also serve iOS was deferred by the
+   product owner to keep v1 simple (key design decision 13). Deferred.
 2. **Dock badge or menu-bar unread count.** A local surface fed by the socket,
    not by push; deferred to its own PRD. The payload reserves `badge` for iOS.
 3. **Push for anything other than mentions and seatings.** Digest summaries,
@@ -126,7 +126,7 @@ carrying the profile works like a release.
 
 **Receiving.** A mention produces a notification titled with the author and the
 work stream (*Priya mentioned you in Launch checklist*), whose body is the
-message text cut to a preview; a seating reads *Priya added you to Launch
+first 1,000 characters of the message text; a seating reads *Priya added you to Launch
 checklist* with the objective as the body. A private child carries the child's
 title. Notifications from one conversation share a thread so they group. A
 redelivery of the same intent shows as one entry in Notification Center, though
@@ -246,6 +246,23 @@ None yet.
     abandoned or shared Mac eligible for as long as the person's phone is signed
     in, and would make the client's sign-out delete the only thing ending
     delivery, at the moment it is least reliable.
+12. **Push and Slack are both sent when available; email only when neither
+    reached anyone.** Product owner's decision, 2026-09-11. Push is device-local
+    and Slack is a channel the person chose by linking, so the two do not
+    compete; email is the channel of last resort it already is. "Reached" for
+    push means the intent was enqueued with at least one live device, since
+    APNs delivery is best effort. Rejected: email regardless, which would tell a
+    person three times.
+13. **No presence suppression in v1.** Product owner's decision, 2026-09-11:
+    keep it simple. A person with the conversation open on their Mac sees the
+    system alert for it. The server-side check against WorkspaceDO viewer
+    presence stays the likely later answer because it would serve iOS too, and
+    it is one condition in the consumer when wanted.
+14. **The preview is 1,000 characters.** Product owner's decision, 2026-09-11.
+    `PUSH_BODY_PREVIEW_CHARACTERS = 1000` in `@rally/contracts`, a product
+    limit cited to this PRD; the renderer's fit to Apple's 4,096-byte payload
+    ceiling remains beneath it as the protocol floor for titles, links, and
+    multi-byte text that would otherwise overflow.
 
 ## Data model
 
@@ -403,21 +420,6 @@ intent processor; the migration and queues stay, empty and harmless.
 
 ## Open questions
 
-1. **Does push replace email as the fallback, or join it?** Recommendation: push
-   and Slack are both sent when available, and email is sent only when neither
-   reached anyone. The product owner decides; the alternative (email always) is
-   one condition.
-2. **Suppress the push when the recipient has that conversation open right
-   now?** WorkspaceDO holds current-client viewer presence. Recommendation: yes,
-   as a server-side check in the consumer once the cost of the read is known,
-   because it is the only answer that also serves iOS. Blocks nothing.
-3. **The preview length is a product number, and it is not set.** It is the text
-   on the person's screen, so per
-   [`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md)
-   the PRD sets it rather than leaving it open; the product owner has not
-   named it. Until they do, the renderer fits the body to Apple's 4,096-byte
-   payload ceiling so a long mention is shortened rather than dropped
-   (`design.md` § The preview cut). Needed before the producer lands.
-4. **How far ahead of profile expiry the verifier refuses to release.** A
+1. **How far ahead of profile expiry the verifier refuses to release.** A
    defensive number; the verifier is written with the value open and hands it
    back.
