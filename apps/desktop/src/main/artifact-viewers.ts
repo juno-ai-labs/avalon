@@ -259,6 +259,22 @@ export class ArtifactUserActivation {
     if (ACTIVATING_INPUT_TYPES.has(inputType)) this.activatedAt = this.now();
   }
 
+  /**
+   * Spend the activation on one departure, reporting whether there was one.
+   *
+   * Consuming is the half that makes this a gate rather than a five-second
+   * window of permission. `window.open` in a real browser consumes transient
+   * activation for the same reason: without it one press admits a loop, and a
+   * page that answers a click with a hundred `window.open` calls would send a
+   * hundred URLs to the system opener — an unbounded exfiltration channel and a
+   * tab flood, out of one press the person thought followed one link.
+   */
+  take(): boolean {
+    const active = this.active();
+    this.activatedAt = null;
+    return active;
+  }
+
   /** Whether a navigation starting now is one a person just asked for. */
   active(): boolean {
     if (this.activatedAt === null) return false;
@@ -283,20 +299,29 @@ export type ArtifactNavigationDecision = 'continue' | 'hand-off' | 'refuse';
 export function decideArtifactNavigation(input: {
   url: string;
   origin: string;
-  /** Whether the surface is under transient user activation right now. */
-  activated: boolean;
+  /**
+   * Spend the surface's transient activation, reporting whether there was one.
+   *
+   * A callback rather than a boolean so that the deciding and the spending are
+   * one step and cannot come apart: a caller handed a boolean can forget to
+   * consume it, and the failure that follows is a page departing many times on
+   * one press. It is called **last**, so a press is never spent on a
+   * navigation that was going to be refused for some other reason, and **at
+   * most once** per navigation.
+   */
+  takeActivation: () => boolean;
   /** The main process's own scheme policy for a URL it would hand to the OS. */
   externalAllowed: (url: string) => boolean;
 }): ArtifactNavigationDecision {
   if (sameOrigin(input.url, input.origin)) return 'continue';
-  if (input.activated && input.externalAllowed(input.url)) return 'hand-off';
+  if (input.externalAllowed(input.url) && input.takeActivation()) return 'hand-off';
   return 'refuse';
 }
 
 /** The capability an artifact surface is confined with: how it may leave. */
 export interface ArtifactLinkHandoff {
-  /** Whether the surface is under transient user activation right now. */
-  activated(): boolean;
+  /** Spend the surface's transient activation, reporting whether there was one. */
+  takeActivation(): boolean;
   /** The main process's own scheme policy for a URL it would hand to the OS. */
   externalAllowed(url: string): boolean;
   openExternal(url: string): void;
@@ -321,12 +346,19 @@ export interface ArtifactLinkHandoff {
  * unattended form of that: a site cannot send itself off-origin while nobody is
  * there, and cannot do it on a timer, on load, or on a cursor passing over it.
  *
+ * **The activation is spent by the departure it admits**, so one press buys one
+ * departure and not a five-second licence: a page that answers a click with a
+ * loop of `window.open` calls gets its first URL opened and no more. This is
+ * what `window.open` does to transient activation in a browser, and for the
+ * same reason.
+ *
  * It does **not** remove the attended form, and that is stated rather than
  * implied: a person clicking "Read the docs" cannot see where the link points,
- * so a page that wants to leak through a click still can. What was bought is
- * that every such handoff is somebody's own press, inside the five seconds a
- * browser would also call theirs. `docs/live-web-artifacts.md` carries the
- * whole of what is and is not closed here.
+ * so a page that wants to leak through a click still can — one URL per press.
+ * What was bought is that every such handoff is somebody's own press, inside
+ * the five seconds a browser would also call theirs.
+ * `docs/live-web-artifacts.md` carries the whole of what is and is not closed
+ * here.
  *
  * A **redirect is not a click** and is refused whatever the activation says.
  * The destination of a `302` is not the URL the person chose to follow, and a
@@ -349,7 +381,10 @@ export function confineToArtifactOrigin(
     decideArtifactNavigation({
       url,
       origin,
-      activated: handOffAllowed && handoff.activated(),
+      // A redirect never spends the press either, so a click followed by a
+      // same-origin handler's `302` leaves the activation for the link the
+      // person actually goes on to follow.
+      takeActivation: () => handOffAllowed && handoff.takeActivation(),
       externalAllowed: handoff.externalAllowed,
     })
   );
