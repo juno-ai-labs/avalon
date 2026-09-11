@@ -86,6 +86,11 @@ in-app link. Typing the URL into Safari, or navigating to it from another
 `rallywith.ai` page, opens the web page, which is macOS's own rule for
 universal links and is why the handoff page must keep working.
 
+**Cold launch.** A universal link that starts Rally arrives as a
+`continue-activity` before the window exists; the main process queues it
+through `pendingDeepLinks`, exactly as an early `open-url` is, and delivers it
+once the renderer is ready. A signed-out client keeps it for after sign-in.
+
 **On a Mac without Rally, or elsewhere.** The handoff page, exactly as today.
 
 **When the app declines the link.** A link Rally cannot route — an unknown
@@ -119,17 +124,32 @@ None yet.
    marketing, download, and support link on a Mac with Rally open the app.
 2. **Serve the file from the site's static assets.** `apps/site/public/.well-known/apple-app-site-association`,
    with a `Content-Type: application/json` and a short cache header added in
-   `_headers`. The existing Workers Assets deployment serves it on every route
-   the site owns; the legacy origins are excluded by the entitlement listing
-   only the two Rally hosts, not by hiding the file. Rejected: a Worker route
-   that generates the file, which is more machinery for a static document.
-3. **The desktop parses the https form with the parser it already has.**
-   `parseWorkstreamLinkTarget` in `@rally/contracts` already reads the canonical
-   https link and the handoff hash form; the main process's accepted-link gate
-   admits only the schemes today. The change is to admit the https form and
-   hand the parsed target to the same intent path. Rejected: converting the
-   https link to `rallywithai://` and re-emitting it, which would round-trip
-   through a string for nothing.
+   `_headers` under a new `/.well-known/*` block. The file is extensionless, so
+   the served type depends entirely on that override; whether Workers Assets
+   honours a `Content-Type` set in `_headers` is confirmed in the first build
+   step, and if it does not, the fallback is a small Worker route in front of
+   the assets rather than a renamed file, because Apple fetches the exact path.
+   The existing Workers Assets deployment serves it on every route the site
+   owns; the legacy origins are excluded by the entitlement listing only the
+   two Rally hosts, not by hiding the file. Rejected as the first choice: a
+   Worker route that generates the file, which is more machinery for a static
+   document unless the header override turns out not to work.
+3. **An adapter feeds the https form into the intent path; the scheme
+   grammar is untouched.** The main process's accepted-link gate
+   (`acceptedDeepLink` in `deep-links.ts`) delegates to
+   `parseDesktopDeepLinkIntent`, a scheme-plus-hostname grammar shared by main,
+   the public site, and the renderer, whose branches key on hostnames such as
+   `workstreams` and `settings`; it cannot read a `rallywith.ai` path, it
+   rejects any URL with a hash, and its protocol list is mid-migration. So the
+   universal-link handler runs `parseWorkstreamLinkTarget` (which already reads
+   the canonical https link and the handoff hash form) on `webpageURL`, builds
+   a `DesktopDeepLinkIntent` of `kind: "workstream"` from the result, and hands
+   that to the same dispatch a scheme link reaches. The https URL never enters
+   the scheme grammar, nothing else that calls it changes, and by construction
+   the https reader can only ever produce a work-stream intent, never a
+   `slack-link` or `auth/complete` one. Rejected: adding `https:` to the
+   protocol list, which would parse nonsense like `https://workstreams/<id>`,
+   widen the site's and renderer's allowlist, and still not read the real link.
 4. **The entitlement lands after the file, in its own release.** Two releases:
    the site's, then the desktop's. Rejected: one merge that does both, because
    the site and the desktop deploy independently on the same push and the
@@ -181,8 +201,9 @@ back to the handoff page at its next refresh.
    [`workstream-links.md`](../../workstream-links.md) with the universal-link
    reader.
 2. **Desktop.** `continue-activity` handler for `NSUserActivityTypeBrowsingWeb`
-   reading `details.webpageURL`, the accepted-link gate admitting the canonical
-   https form, the entitlement, the verifier's exact main-app entitlement set,
+   reading `details.webpageURL`, the adapter from `parseWorkstreamLinkTarget`
+   to a work-stream intent (key design decision 3), queuing through
+   `pendingDeepLinks` before the window exists, the entitlement, the verifier's exact main-app entitlement set,
    and `test:release` fixtures. The handoff telemetry in
    [`public-site-telemetry.md`](../../public-site-telemetry.md) gains nothing:
    a universal link never reaches the page, so fewer handoffs are the signal.
