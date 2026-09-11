@@ -130,7 +130,8 @@ as Stop slides through the capsule's clipped right corner, and return as it
 slides out. Both control groups center in the single-line row; multiline and
 attachment layouts keep them bottom-aligned. CSS transitions reverse in place on rapid state changes and are
 removed for reduced motion. A pending stop remains hoverable for its tooltip
-but cannot submit another stop request.
+but cannot submit another stop request. `IconButton` tooltips do not duplicate
+the button's accessible name as a second screen-reader description.
 
 The composer's width is the conversation's, not the pane's, and it is one width
 across every surface that has a composer. A turn is capped at `--turn-width-cap`
