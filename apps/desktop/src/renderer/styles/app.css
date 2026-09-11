@@ -6864,9 +6864,10 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   white-space: nowrap;
 }
 
-/* New chat follows GrokBot's recipient-first composition surface. The chips
-   stay deliberately dense: each participant reads as one charcoal pill, with
-   the caret beginning immediately after the final selected person. */
+/* The new work stream screen follows GrokBot's recipient-first composition
+   surface. The chips stay deliberately dense: each participant reads as one
+   charcoal pill, with the caret beginning immediately after the final selected
+   person. */
 .new-chat-screen:not(.is-launching) > .launch-header {
   border-bottom: .5px solid var(--av-cmp-sidebar-border);
   height: 48.5px;
