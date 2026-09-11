@@ -237,10 +237,9 @@ describe('HexagonGlyph markers', () => {
     const marker = container.querySelector('.automation-glyph-marker');
     const target = marker!.parentElement!.querySelector('rect');
 
-    // SVG hit-tests what is painted, and the play is about 7px across at the
-    // rail's 36px — a target a pointer crosses rather than rests on. The rect
-    // is measured against the marker itself rather than against numbers copied
-    // from the component, so moving the marker moves its hover target with it.
+    // Measured against the marker itself rather than against numbers copied
+    // from the component, so moving the marker moves its target with it. Why it
+    // is the box rather than the paint is in `HexagonGlyph`.
     expect(target).toHaveAttribute('x', marker!.getAttribute('x'));
     expect(target).toHaveAttribute('y', marker!.getAttribute('y'));
     expect(target).toHaveAttribute('width', marker!.getAttribute('width'));

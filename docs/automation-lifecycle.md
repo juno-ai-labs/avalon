@@ -107,6 +107,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/desktop/src/renderer/components/sidekick-section.tsx` | `SidekickSection`, the **Sidekicks** section both of a work stream's rails render, and `workstreamSidekickRows`, the merge of what the room owns with what its conversation loaded — owned first, one row per Sidekick, `undefined` until both answers are in. |
 | `apps/desktop/src/renderer/components/workstream-sidebar.tsx`, `screens/conversation-surface.tsx` | The section's place below **Participants**; the two queries behind it (`workstream-sidekicks` and `attached-sidekicks`), the participant check that decides whether a row may be detached, and the 403 a non-participant viewer's listing is read as none. |
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` — a symbol, a colour, and the sentence it means — which it cuts out of the fill along that marker's own outline, gives a hover target the size of the marker's whole box, and reports as `onMarkerHover` so the surface can say what the marker means in its own tooltip (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen, and the empty strip's tile is the same silhouette outlined around a plus. |
+| `apps/desktop/src/renderer/styles/app.css` | `.sidekick-tile-tooltip`, the one width every answer a strip tile's tooltip gives is held to. |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksWindow`: the window's routes, and the one place its Escape-to-close gesture is installed. |
 | `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
 
@@ -191,8 +192,10 @@ slot and what it says follows what the pointer is on: the Sidekick's name, and
 its scope where that is **Workspace**, opening **upward** because the caption is
 ellipsized at 80px and the rail drops it outright; and while the pointer is on
 the play, that marker's own sentence — `Active — in service and waiting on its
-triggers.` — opening **downward** onto the account row, in the width
-`.hexagon-marker-tooltip` holds it to. The hexagon reports the pointer
+triggers.` — opening **downward** onto the account row. One `.sidekick-tile-tooltip`
+caps both answers at 220px: a tile is 80px, a name may be 120 characters, and
+that sentence set on one line is half the window wide. The hexagon reports the
+pointer
 (`onMarkerHover`, over a transparent target the size of the marker's whole box)
 and owns the words (`HexagonMarker.description`); the rail owns the slot. The
 answer swaps both ways with no second delay and no gap. The tile's line never
@@ -738,13 +741,15 @@ Sidekick's name and scope above the tile, or the running marker's own sentence
 below it. `HexagonMarker` gains a `description`, `SIDEKICK_RUNNING_MARKER` fills
 it with `Active — in service and waiting on its triggers.`, and `HexagonGlyph`
 gives the painted marker a transparent hit rect over its whole box and reports
-`onMarkerHover`. `.hexagon-marker-tooltip` caps that answer at 220px.
+`onMarkerHover`. `.sidekick-tile-tooltip` caps whatever the tile says at 220px,
+and the tile carries the marker's sentence as its `aria-description` for a
+reader with no pointer to rest on the play.
 
 **Why:** Neither half of a tile could be read. The caption is ellipsized at 80px
 and the rail drops it, so a `title` was the only way to the name — the platform's
 tooltip, in the platform's type, after its own delay, and never on keyboard
 focus, which the artifact rows had already rejected for the same slot-level
-reason on 2026-09-10. And the play had nothing to say at all: it was introduced
+reason on 2026-09-10 ([`conversation-surfaces.md`](conversation-surfaces.md)). And the play had nothing to say at all: it was introduced
 to replace a mark that had to be learned, and an unnamed symbol is one too. What
 it names is the part a play gets wrong on its own — it reads as *running right
 now*, while the marker is on every active Sidekick, including every one sitting
@@ -777,6 +782,10 @@ so the tile's refused open still closed the marker's — a pointer on the play g
 
 Also rejected, again: naming the lifecycle in the tile's line. Every tile in the
 strip is active, so it spent the tile's one line on the one fact they all share.
+A reader without a pointer loses nothing by it — the state is in the tile's
+accessible name, and what the marker means is now its `aria-description`, the
+register the public-scope badge uses on a work-stream row
+([`workstream-durable-object.md`](workstream-durable-object.md), 2026-09-10).
 
 **What a future change has to respect:** the marker reports rather than draws.
 Re-nesting a second tooltip inside this one brings back the ordering above,
