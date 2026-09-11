@@ -3,6 +3,7 @@ import type { MentionIdentity } from './api';
 import type { ElicitationData, Message, MessageMention, PluginActivityData, ThoughtEventData, ToolEventData, WorkSpan, WorkTotal, WorkspaceMember } from './types';
 import { pluginGroup } from './plugin-groups';
 import {
+  AutomationActivationV1Schema,
   AutomationDraftProposedV1Schema,
   ElicitationSchema,
   type TranscriptActivity,
@@ -418,6 +419,7 @@ export function orderedTranscriptMessages(
               ? { contextLabel: structured['label'] }
               : {}),
             ...draftProposedFields(structured),
+            ...automationActivationFields(structured),
             ...(elicitation.success ? { elicitation: normalizeElicitation(elicitation.data) } : {}),
           };
         }
@@ -2293,6 +2295,28 @@ function draftProposedFields(
       triggerSummaries: [...parsed.data.triggerSummaries],
       suggestedScope: parsed.data.suggestedScope,
       ready: parsed.data.ready,
+    },
+  };
+}
+
+/**
+ * Who delivered an activation row, for the author slot.
+ *
+ * The name is the one frozen into the row at delivery, not the Sidekick's
+ * current name: a rename should not restate who said something last week. A row
+ * whose structured content will not parse falls back to the generic label
+ * rather than rendering a half-read identity.
+ */
+function automationActivationFields(
+  structured: Record<string, unknown>,
+): Pick<Message, 'automationActivation'> | Record<string, never> {
+  if (structured['type'] !== 'automation_activation') return {};
+  const parsed = AutomationActivationV1Schema.safeParse(structured);
+  if (!parsed.success) return {};
+  return {
+    automationActivation: {
+      automationId: parsed.data.automationId,
+      automationName: parsed.data.automationName,
     },
   };
 }

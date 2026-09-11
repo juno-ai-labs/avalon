@@ -205,6 +205,13 @@ function fixture(
       testTerminalPortFactory(objectStore),
       inObjectResourceAttacher,
     ),
+    /** A bridge whose publications land in `publicationWorkstreamId`. */
+    bridgeFor: (publicationWorkstreamId: string | null) => createTerminalResourceBridge(
+      env,
+      testTerminalPortFactory(objectStore),
+      inObjectResourceAttacher,
+      publicationWorkstreamId,
+    ),
   };
 }
 
@@ -574,6 +581,39 @@ describe("Terminal resource bridge", () => {
       { version: 2, author_kind: "agent", author_run_id: R, author_user_id: null,
         cause: "published", storage_kind: "object" },
     ]);
+  });
+
+  it("refreshes the owning room's document instead of forking a private copy", async () => {
+    // A work-stream-scoped Sidekick runs in its own conversation under the
+    // automation, so its tool context names that conversation and not the room.
+    const SIDEKICK = "10000000-0000-4000-8000-00000000000a";
+    const state = fixture();
+    const roomCopy = await state.bridge.publishResource(
+      context,
+      { filePath: "open-pr-dashboard.html", displayName: "Open PR dashboard" },
+      new TextEncoder().encode("<h1>First</h1>"),
+    );
+    // The Sidekick that room owns refreshes the same path on its schedule.
+    // Without the redirect its identity is `terminal:<sidekick>:<path>`, which
+    // can never collide with the room's, so the refresh silently becomes a
+    // second document at version 1 and the room's copy is never touched again.
+    const refreshed = await state.bridgeFor(S).publishResource(
+      { ...context, workstreamId: SIDEKICK, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: "open-pr-dashboard.html" },
+      new TextEncoder().encode("<h1>Second</h1>"),
+    );
+
+    expect(refreshed.resourceId).toBe(roomCopy.resourceId);
+    expect(state.database.prepare("SELECT COUNT(*) AS count FROM resources").get())
+      .toEqual({ count: 1 });
+    const row = state.database.prepare(
+      "SELECT provider_resource_id, current_version FROM resources WHERE id = ?",
+    ).get(String(roomCopy.resourceId)) as {
+      provider_resource_id: string;
+      current_version: number;
+    };
+    expect(row.provider_resource_id).toBe(`terminal:${S}:open-pr-dashboard.html`);
+    expect(row.current_version).toBe(2);
   });
 
   it("republishes the same sandbox path onto the same resource instead of a sibling", async () => {

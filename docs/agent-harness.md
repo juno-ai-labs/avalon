@@ -1269,6 +1269,24 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-09-11 — Trigger content carries a source label again
+
+**What changed:** The three paths that lost all framing when the trust labels
+came out get a plain source line: `INBOUND EMAIL:`, `SLACK CONTEXT:` and
+`SIDEKICK TRIGGER:`. The external-event path already kept
+`EVENT THAT STARTED THIS RUN:`, and a Sidekick result already carried its name
+and delivery time.
+
+**Why:** Removing the labels took provenance with it. A trigger email was
+reaching the model as a bare user-role message with nothing saying it was an
+email, which made it indistinguishable from something a person in the room had
+typed. The label says where the text came from and claims nothing about trust.
+
+**What a future change has to respect:** these are source labels, not trust
+labels. A renderer that carries outside content needs one so a reader of the
+transcript can tell what it is; it does not need, and should not grow back, an
+instruction about how far to believe it.
+
 ### 2026-09-11 — Trigger content is no longer labelled untrusted
 
 **What changed:** The five `renderUntrusted*` / `renderTriggerActivityMessage`

@@ -540,6 +540,15 @@ export interface Message {
     ready: boolean;
   };
   /**
+   * Set on an activation row: which Sidekick delivered this result, under the
+   * name frozen at delivery. The author slot reads it instead of the generic
+   * 'Automation' label.
+   */
+  automationActivation?: {
+    automationId: string;
+    automationName: string;
+  };
+  /**
    * Durable Object events and D1 transcript rows have independent sequence
    * counters. Realtime-only blocks use this anchor so their observed order can
    * be retained without treating an event sequence as a persisted message
