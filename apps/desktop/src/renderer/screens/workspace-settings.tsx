@@ -492,7 +492,7 @@ export function WorkspaceSettingsScreen({
     queries: (connections.data ?? []).map((connection) => ({
       queryKey: ['connection-tool-count', connection.id, connection.capabilities, connection.status],
       queryFn: ({ signal }: { signal: AbortSignal }) => api!.getConnectionToolCount(connection.id, signal),
-      enabled: Boolean(api && activeSection === 'connections'),
+      enabled: Boolean(api && activeSection === 'connections' && connection.status !== 'disabled'),
       refetchOnWindowFocus: true,
       staleTime: 5_000,
     })),
@@ -1540,7 +1540,9 @@ export function WorkspaceSettingsScreen({
                                   </span>
                                 </td>
                                 <td><Badge>{connection.status === 'reconnect_required' ? 'Reconnect required' : connection.status}</Badge></td>
-                                <td className="settings-connection-tools">{toolCountByConnection.get(connection.id)?.isError
+                                <td className="settings-connection-tools">{connection.status === 'disabled'
+                                  ? '—'
+                                  : toolCountByConnection.get(connection.id)?.isError
                                   ? 'Unavailable'
                                   : toolCountByConnection.get(connection.id)?.data ?? 'Loading…'}</td>
                                 <td>
