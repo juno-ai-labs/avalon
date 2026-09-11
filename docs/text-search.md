@@ -188,6 +188,17 @@ replaces only the update trigger; insert/delete watermarks and pending retries
 survive unchanged. Bookkeeping, hydration status, slug, and unrelated metadata
 edits do not publish indexing work. Keep the trigger aligned with
 `resourceSearchCategory` and `resourceSearchText` when extending extraction.
+
+**An unlisted resource has no category, and so is not indexed.**
+`metadata_json.listing` decides whether a resource is *advertised* — see
+[agent attachments](agent-attachments.md) — and `prepareResourceSearch` reads it
+before asking for a category. A null category drives every source to
+`live = false`, which withdraws a row indexed before it was marked. The trap is
+that `listing` is one of the "unrelated metadata edits" above: **the update
+trigger does not watch it**, so a write that flips it on an already-indexed row
+must enqueue `resource_search_versions` itself or the row stays searchable
+forever while absent from every other surface. WorkspaceDO migration 52 is the
+worked example.
 Duplicate description keys use the final occurrence, matching `JSON.parse`.
 Content hashes conservatively invalidate same-reference body replacements,
 including the one-time hash backfill during extraction.
@@ -653,6 +664,28 @@ budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
 
+### 2026-09-11 — An unlisted resource leaves the index
+
+**What changed:** `prepareResourceSearch` gives an unlisted resource no
+category, so its three source documents go out as `live = false` and a row
+indexed before it was marked is withdrawn.
+
+**Why:** Listing is the resource graph's new split between *reachable* and
+*advertised* ([agent attachments](agent-attachments.md)), and search is an
+advertising surface. Terminal's repository-replacement backup was the case that
+forced it: a 21 MiB archive nobody asked for, answering a search for its own
+title.
+
+**Considered and rejected:** Widening the migration 43 trigger to watch
+`$.listing`. That is the tidier-looking fix and it is a trap — the trigger's text
+is frozen inside a receipted migration, so widening it costs a new version *and*
+still leaves every already-indexed row unenqueued, because a trigger only fires
+on writes that come after it.
+
+**What a future change has to respect:** A write that changes `listing` on an
+indexed resource carries its own `resource_search_versions` enqueue. The trigger
+will not do it, and the failure is silent — the row simply stays in results.
+
 ### 2026-09-11 — Hold a settled search for 30 seconds on the desktop
 
 Every settled query was a Turbopuffer page and a projection read, including the
@@ -776,6 +809,7 @@ regions. `pending` still clears on publish; a dead letter still needs a
 redrive or a re-projection until the open question is taken up.
 
 Shipped in #691.
+
 
 ### 2026-09-10 — Hold the search modal at one size, and unlabel row shortcuts
 
