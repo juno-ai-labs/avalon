@@ -220,13 +220,16 @@ export function WorkstreamSidebar({ workstream, creatingSubstream = null, presen
                the surface this row stands for — and it carries the skeleton
                rather than the first line of the message, because the title is
                the server's to derive and a second answer to what a first line
-               is would disagree the moment either changed. */
+               is would disagree the moment either changed. It carries the
+               same `title` its siblings do, because compact leaves nothing but
+               a mark and hovering it is how a reader asks what a row is. */
             <div
               aria-current={currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID ? 'page' : undefined}
               className={clsx(
                 'workstream-context-row workstream-conversation-row workstream-pending-substream',
                 currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && 'is-current',
               )}
+              title="Rally is creating this substream"
             >
               <span aria-hidden="true" className="workstream-context-mark">
                 <IconCornerDownRight className="workstream-substream-arrow" size={22} stroke={1.5} />
