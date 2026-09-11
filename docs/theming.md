@@ -205,55 +205,62 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ### 2026-09-11 — Citation markers take the account accent, and its tints get a floor
 
-**What changed:** `.citation-pill`, `.citation-pill-pending`, the pill's hover
-and `.citation-identity-card` tint from `--personal-color` — the account accent
-that `onboarding.css` already resolves — instead of `brand.base`, with
-`var(--personal-color, var(--av-sys-color-brand-base))` keeping today's
-rendering where nobody has an accent. They take `text.default` as their ink
-instead of `brand.ink`. The two borders mix over `line-4` and the hover fill
-over `surface-raised`, rather than all three over `transparent`. The rule-local
-guard in `themes.css.node.test.ts` now reads `onboarding.css` alongside
-`app.css`, since that is where the property is defined.
+**What changed:** The citation markers — the footnote pill, the pill a streaming
+turn wears before its definition lands, that pill's hover, and the identity card
+— tint from `--personal-color`, the account accent, instead of `brand.base`,
+with `var(--personal-color, var(--av-sys-color-brand-base))` keeping today's
+rendering where nobody has one. They take `text.default` as their ink instead of
+`brand.ink`. The two borders now mix over `line-4` and the hover fill over
+`surface-raised`, rather than all three over `transparent`; the resting fill
+keeps `transparent`.
 
-**Why:** The markers were the product's lime beside the reader's own turn in
-the same feed — two unrelated colours a few lines apart, in the one place the
-eye is being asked to follow a thread. The accent they picked is the colour
-they already read as *theirs*.
+**Why:** The markers were the product's lime beside the reader's own turn in the
+same feed — two unrelated colours a few lines apart, in the one place the eye is
+being asked to follow a thread. The accent a person picked is the colour they
+already read as *theirs*.
 
-The first attempt at this shipped a second property, `--personal-accent`,
-written by a hook in `AppShell`. Review caught both halves of why that was
-wrong. `--personal-color` already carried the same value from the same source,
-so the renderer would have had two `<html>`-level properties and two writers
-for one fact. And `AppShell` is the wrong altitude: `App.tsx` returns before it
-for `?surface=settings`, `?surface=sidekicks` and `?surface=meeting`, each a
-real window, so those three would have kept the brand on the marker while the
-person's own bubble — written per message, not through the shell — followed
-their accent. `AccountOnboardingGate` sits above `SessionGate` and therefore
-above every surface, which is why the attribute it writes is the one to spend.
+The ink moved off `brand.ink` because the tint under it is one of fourteen fills
+now, and an ink chosen for a fill would have to clear all of them: `brand.on`
+over `brand.base` was already 3.01:1 in a retired theme. Over a 16% tint the
+paragraph's own ink is the contrast the paragraph already has, at every accent.
 
-The ink moved off `brand.ink` because the tint under it is one of fourteen
-fills now, and an ink chosen for a fill would have to clear all of them —
-`brand.on` over `brand.base` was already 3.01:1 in a retired theme. Over a 16%
-tint the paragraph's own ink is the contrast the paragraph already has, at every
-accent.
+The floors are what the accent swap could not do without. `black` is an accent a
+person can pick, and in the dark appearance it is `#45454d` against a `#070707`
+canvas: at 30% over `transparent` the pill's edge vanished into the canvas and
+its digits read as a bare superscript, and hover moved from `#121213` to
+`#1c1c1f` — about eleven points of luminance, which is not an affordance.
 
-The floors are the part the accent swap could not do without. `black` in the
-dark appearance is `#45454d` against a `#070707` canvas: at 30% over
-`transparent` its edge vanished and the digits read as a bare superscript, and
-the hover moved about eleven points of luminance, which is not an affordance.
-Mixing the edge over `line-4` and the hover over `surface-raised` keeps both
-legible at every accent while a real hue still dominates its own mix. Raising
-the percentages instead would have been a number nobody here can justify, and
-would have shouted at the other seven accents.
+**Considered and rejected:** A second property, `--personal-accent`, written to
+the document element by a hook in `AppShell`. It was the first version of this
+change, and it was wrong twice over. `--personal-color` already carried the same
+value from the same source, so the renderer would have held two `<html>`-level
+properties and two writers for one fact. And `AppShell` is the wrong altitude:
+`App.tsx` returns before it for `?surface=settings`, `?surface=sidekicks` and
+`?surface=meeting`, each a real window that draws these markers, so all three
+would have kept the brand on a marker while the person's own bubble — written
+per message, not through the shell — followed their accent.
 
-**What a future change has to respect:** one writer, and it is above every
-surface — a second property or a lower writer is how three windows disagree
-about who is signed in. Any accent tint that has to be *seen* needs a floor;
-the resting fill is the deliberate exception, because its border holds its
-shape and transparency is what lets a marker sit on a card without cutting a
-hole in it. The exported message card (`main/message-export.ts`) keeps its
-literal olive pill: that document is fixed light paper that does not follow the
-appearance either, and it loads none of this stylesheet.
+Taking `accent-tint` and `accent-edge`, which `onboarding.css` already derives
+from the same fill. That group is shared with rows and controls, so the markers
+would lose their own weights to a change made for something else; the pill's
+16%/30% are argued at its rule against a solid accent and against the chip
+beside it.
+
+Raising the percentages rather than flooring the mixes. The number that makes
+`black` legible is one nobody here can justify, and it would shout at the other
+seven accents.
+
+**Consequences:** The accent has one writer and it is above every surface; a
+second property, or a writer below `AccountOnboardingGate`, is how windows the
+same person has open at once disagree about who is signed in. Any accent tint
+that has to be *seen* needs a floor — the resting fill is the deliberate
+exception, because its border holds its shape and transparency is what lets a
+marker sit on a card or a quote without cutting a hole in it. The exported
+message card (`main/message-export.ts`) keeps its literal olive pill: it is
+fixed light paper that follows neither the appearance nor the accent, and loads
+none of this stylesheet.
+
+Shipped in #658.
 
 ### 2026-09-11 — A mask is not a colour
 

@@ -749,25 +749,25 @@ The traps, both of which have bitten:
 
 ### 2026-09-11 — Citation markers take the reader's accent
 
-**What changed:** `.citation-pill`, `.citation-pill-pending`, the pill's hover
-and `.citation-identity-card` tint from `--personal-color` — the account accent
-already published on `<html>` — instead of `brand.base`, and take
-`text.default` as their ink instead of `brand.ink`. The two borders and the
-hover fill gained a floor. Nothing about the grammar, the matrix, the positions
-or the streaming skeleton changed; this is only which colour a marker is. The
-property, its writer and the floors are in [`theming.md`](theming.md).
+**What changed:** Citation markers are drawn from the account accent rather than
+Rally's mark. The mechanism, and the reasoning, belong to
+[`theming.md`](theming.md) — see its entry of the same date.
 
-**Why:** The markers were the product's lime a few lines above the reader's own
-turn, which is the one place a reader is being asked to follow a thread between
-two things. Taking their accent makes a marker read as part of what they are
-reading rather than as the product's own furniture. The identity card follows
-the *reader* and not the person it names, so that one answer never holds two
-unrelated fills — which is the problem this change exists to remove.
+**Why:** Recorded here because it is a coupling this module did not have: what a
+marker looks like now depends on an account-level property, so a surface that
+renders markdown outside the signed-in tree renders them in the brand.
 
-**What a future change has to respect:** the saved card in
-`main/message-export.ts` keeps its own literal pill. That document is fixed
-light paper, loads none of the application stylesheet, and does not follow the
-appearance either, so it has no accent to follow.
+**Considered and rejected:** Colouring the identity card from the accent of the
+person it names. It is a citation before it is an identity, and a card coloured
+by its subject puts two unrelated fills in one answer — the thing this change
+removes.
+
+**Consequences:** The saved card in `main/message-export.ts` keeps its own
+literal pill, and will keep diverging from the feed: it is fixed light paper
+that loads none of the application stylesheet and follows neither the appearance
+nor the accent.
+
+Shipped in #658.
 
 ### 2026-09-10 — A published site gets its own mark
 
