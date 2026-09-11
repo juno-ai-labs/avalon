@@ -643,7 +643,11 @@ describe('sidebar group breaks follow the group-gap token', () => {
  * may name a token the account accent rewrites.
  */
 describe('dictation button recording state', () => {
-  const ACCENT_REWRITTEN = [
+  // The seven the account accent re-points, plus the selection fill. That fill
+  // is no longer re-pointed — the microphone wearing a member's colour is what
+  // got the re-point removed — but a microphone is not a selection either, so
+  // it stays banned here on the reason that outlives the accent.
+  const NOT_THE_MICROPHONE_S = [
     '--av-cmp-row-background-selected',
     '--av-sys-color-accent-base',
     '--av-sys-color-accent-strong',
@@ -651,6 +655,7 @@ describe('dictation button recording state', () => {
     '--av-sys-color-accent-wash',
     '--av-sys-color-accent-edge',
     '--av-sys-color-accent-tint',
+    '--av-sys-color-accent-on',
   ];
 
   it('fills with danger and takes the ink that pairs with it', () => {
@@ -682,14 +687,14 @@ describe('dictation button recording state', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('gives the microphone no fill the account accent rewrites', () => {
+  it('gives the microphone no fill that carries identity or selection', () => {
     const offenders: string[] = [];
 
     for (const [, selector = '', body = ''] of stylesheet.matchAll(/([^{}]+)\{([^{}]*)\}/gu)) {
       const prelude = selector.replace(/\/\*[\s\S]*?\*\//gu, ' ').trim();
       if (!/\.(?:dictation-button|microphone-control|microphone-menu-trigger)\b/u.test(prelude)) continue;
 
-      for (const token of ACCENT_REWRITTEN) {
+      for (const token of NOT_THE_MICROPHONE_S) {
         if (body.includes(token)) offenders.push(`${prelude} { ${token} }`);
       }
     }
