@@ -33,6 +33,16 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
 
 - `apps/desktop/src/renderer/components/conversation-follow.tsx` owns the
   **Jump to latest** and transient `ActivityPresence`, sharing retained motion.
+- `apps/desktop/src/renderer/components/agent-work-timing.tsx` owns every row in
+  that 20px-mark column: `AgentWorkTiming`, which counts, and the two that name
+  a state instead — `AgentCompactionIndicator` and `RunStoppingIndicator`, both
+  one call to the `ActivityStatusRow` primitive. A third state goes there, not
+  into a third copy of the row's `role`, live-region attributes and orb props.
+  `conversationActivityRow` in `screens/conversation-surface.tsx` is the single
+  decision about which of them the feed's activity slot shows;
+  `conversationShowsStoppingRow` beside it is the separate question of whether
+  the composer dock acknowledges a pending stop, and the two are separate
+  because only one of them lives inside the scroller.
 - `apps/desktop/src/renderer/components/message-feed.tsx` renders the ordered
   list itself — every row, the unread divider, the oversized-message
   placeholder, and row disclosure — and `workstream-blocks.tsx` renders
@@ -133,6 +143,51 @@ removed for reduced motion. A pending stop shows a spinner and remains hoverable
 but cannot submit another stop request. The capsule's rounded overflow clips
 the moving button; tooltips portal outside it. `IconButton` tooltips do not duplicate
 the button's accessible name as a second screen-reader description.
+
+A pending stop is also said in words, because the button cannot say it. Stop is
+observed at the loop's next safe step boundary — the response in flight and
+every tool it already asked for settle first, and
+[`workstream-durable-object.md`](workstream-durable-object.md) owns that
+contract — so the gap between the click and the run ending is a real wait, over
+ten seconds in the production report this came from. While a live run carries
+`stopRequested`, the dock draws a stopping row as the first cell of the composer
+stack, taking the field's width and the stack's own gap.
+`conversationShowsStoppingRow` is that condition, gated on a running status
+rather than on the flag alone: the loop clears `stop_requested_at` as it goes
+idle, and a settled run read back before the next snapshot would otherwise
+promise a wait that is over. One exported sentence, `STOPPING_LABEL`, is shared
+with the Stop button's tooltip. The row carries no elapsed number, since the
+only number worth printing is how much longer and nothing on this side knows it.
+
+**The dock, not the transcript's activity slot, and that is the point.** The
+slot sits inside `.transcript-scroll`, which hands the viewport to the reader
+the moment they scroll up and never takes it back — pressing Stop does not
+restore following, correctly, since only the reader's own scrolling may move the
+viewport. A row appended to the feed therefore lands below the fold for exactly
+the person most likely to be reading history while a run is going, leaving them
+the button spinner and nothing else. Measured at the top of a padded transcript,
+the feed row sat 1,720px past a 900px viewport. The dock is outside the
+scroller, so the acknowledgement holds at any scroll position, and it sits
+beside the control it answers rather than among the rows that describe the run.
+
+Whatever the feed is already showing keeps showing, and both are now on screen
+together rather than one replacing the other. Usually that is a row still
+counting — the ordered transcript's own, or the slot's elapsed total — though a
+run whose rows the transcript has not anchored yet and whose timing is null
+leaves the feed silent, so the dock's line can be the only thing on screen. The
+response really is still settling either way, so silencing a count would move
+the overstatement one row down rather than remove it; the dock's line is what
+makes the continued counting legible instead of alarming.
+`conversationActivityRow` therefore decides only between the two feed rows,
+compaction over the elapsed total, and knows nothing about stopping.
+
+**The sentence names the work, not the response.** A step is one accepted model
+response plus settlement of every tool call it already emitted, so a tool the
+response asked for runs after the response is done — 3.0 seconds of it in the
+production run above, with its own activity row appearing in the feed while the
+dock's line was up. Copy that named the response promised a boundary that
+arrives while the agent is visibly still working, which is the original defect
+one level down.
 
 Once a member-requested stop settles, the feed renders it as an intentional
 terminal state with a filled stop-square and no recovery action. The stopped
@@ -519,11 +574,83 @@ ends the attempt without sending, and the draft and the error stay on screen.
 
 Shared components have fixture-level component tests for settled, streaming,
 failed, elicitation, attachment, tool, follow, and paging states. Each screen
-adapter separately proves its controls and identity transition. Any visible
+adapter separately proves its controls and identity transition.
+`workstream.test.tsx` holds both the dock's stopping condition — a live run
+only, so neither a settled run's stale `stopRequested` nor an absent one
+acknowledges a wait that is over — and the feed slot's own order, compaction
+over the elapsed total, and neither once the ordered transcript draws the run's
+rows. Those are decisions in isolation, and a decision agreeing with itself is
+not the behaviour: `workstream-open.test.tsx` renders the whole screen over a
+running, stop-requested detail and asserts the row is in `.composer-dock` and
+not in `.transcript-scroll`. Assert the box, not only the sentence — the text
+alone passes just as well in the scroller that hides it from a reader who has
+scrolled up, which is the defect that shipped to review. Any visible
 change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-11 — A pending stop says so in words, where the reader is watching
+
+**What changed:** While a running conversation carries `stopRequested`, the one
+activity slot above the composer shows a stopping row — an orb and "Stopping
+after the current response…" — ahead of the compaction indicator and the elapsed
+total. `conversationActivityRow` owns that precedence as a single exported
+decision, and one exported sentence now serves both the row and the Stop
+button's tooltip.
+
+**Why:** Stop was reported as not working. It was working. In the production run
+behind the report, the request was written 1.8s into an assistant turn; that turn
+finished 7.0s later, the tool it had already asked for ran for a further 3.0s,
+and the loop committed the stop 11.2s after the click — exactly the post-step
+safe boundary the durable loop documents. For all 11.2 seconds the only
+acknowledgement was a 12px spinner inside a 28px circle and a tooltip that has to
+be hovered, while the row above it went on counting "Rally is working". A
+correct mechanism with no legible acknowledgement is indistinguishable from a
+dead button, and the cost of that is a second and third click on a control that
+deliberately refuses them.
+
+**Considered and rejected:** Giving the composer's Stop control a visible
+"Stopping…" label. That is the text Stop removed the same day by *Stop slides
+through the composer corner*, below, for widening and raising the trailing
+control row, and re-adding it would relitigate a decision one day old. Also
+rejected: making Stop feel instant by
+skipping the tool batch the model already asked for, or aborting the provider
+stream outright. Both are real options and neither is a desktop change — the
+first would leave the durable Bind head ending in an assistant message with
+unanswered `tool_calls`, and the second reverses a stated invariant in two module
+documents. Legibility was the part that was unambiguously wrong.
+
+The row was first built into the transcript's activity slot, ranked above the
+compaction indicator and the elapsed total, and that was wrong for a reason
+worth recording: the slot is inside the scroller. Review caught it. A reader who
+has scrolled up to check earlier messages and then presses the always-visible
+Stop is precisely the person this change exists for, and they would have been
+handed the row 1,720px below a 900px fold — the button spinner and nothing else,
+the exact ambiguity being fixed. Having Stop scroll them back down was the other
+repair available and is worse: `useTranscriptFollow` exists to enforce that only
+the reader's own scrolling moves the viewport, and yanking someone out of the
+history they deliberately opened would trade one defect for a ruder one. Moving
+the row to the dock keeps both rules.
+
+Wording: the label names the *work*, not the response. Two independent review
+passes caught that "after the current response…" promised a boundary the step
+does not have, and this PR's own trace is the proof — a tool the response had
+already asked for ran for 3.0s after it finished.
+
+**Consequences:** Feedback that answers a composer control belongs in the dock,
+not in the feed: anything rendered inside `.transcript-scroll` inherits the
+reader's scroll position and can be invisible at the moment it matters most, and
+the feed's rows are for describing the run rather than for confirming a click.
+The stopping row deliberately shows no duration: any future countdown there
+would be a promise about the model's remaining output that nothing in the client
+can keep. A real-window check of a scrolling surface has to include a scrolled
+position — this defect is invisible from the bottom of the transcript, which is
+where the first check was made. If Stop ever does become immediate, this row
+becomes dead weight rather than wrong — delete it with the change that makes the
+wait disappear.
+
+Shipped in #721.
 
 ### 2026-09-11 — An intentional stop does not offer to replay the turn
 

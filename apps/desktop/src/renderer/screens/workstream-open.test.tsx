@@ -75,6 +75,7 @@ import { patchCachedWorkstreamAppearance, setCachedWorkstreams } from '../lib/wo
 import { workstreamFeedSourceQueryKey } from '../lib/telemetry';
 import { substreamInitialContextQueryKey } from '../lib/use-workstream-socket';
 import { desktopBridge } from '../lib/platform';
+import { STOPPING_LABEL } from '../components/agent-work-timing';
 import { WorkstreamScreen } from './workstream';
 import type { WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 
@@ -893,6 +894,43 @@ describe('socket-first work-stream open', () => {
     });
 
     await waitFor(() => expect(scrollTranscriptToEnd).toHaveBeenCalledTimes(1));
+  });
+
+  // The unit tests below this file cover `conversationShowsStoppingRow` and the
+  // activity slot's order separately, and both stayed green through a version
+  // of this change that rendered the acknowledgement where a scrolled-up reader
+  // could never see it. Nothing joined the decision to a rendered surface, so
+  // the one user-visible thing the change exists for was the part not covered.
+  describe('a pending stop is acknowledged above the composer', () => {
+    function stoppingScreen(overrides: Partial<WorkstreamBoot> = {}): void {
+      const boot = recoveryBoot({ harnessStatus: 'running', stopRequested: true, ...overrides });
+      const { transcript, ...detail } = boot;
+      renderScreen((queryClient) => {
+        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
+        queryClient.setQueryData(['ordered-transcript', workstreamId], transcript);
+      });
+    }
+
+    it('names the wait, in the dock rather than in the scrolling transcript', async () => {
+      stoppingScreen();
+      await act(async () => Promise.resolve());
+
+      const row = screen.getByRole('status', { name: STOPPING_LABEL });
+      expect(row).toBeVisible();
+      // The placement is the fix, not a detail of it: `.transcript-scroll` stops
+      // following once the reader scrolls up, so an acknowledgement inside it is
+      // below the fold for exactly the person who pressed Stop while reading
+      // history. Asserting the text alone passes in the box that hides it.
+      expect(row.closest('.composer-dock')).not.toBeNull();
+      expect(row.closest('.transcript-scroll')).toBeNull();
+    });
+
+    it('says nothing once the run it was waiting on has settled', async () => {
+      stoppingScreen({ harnessStatus: 'stopped' });
+      await act(async () => Promise.resolve());
+
+      expect(screen.queryByRole('status', { name: STOPPING_LABEL })).not.toBeInTheDocument();
+    });
   });
 
   it('does not flash the empty invitation while a new run is scheduled', async () => {

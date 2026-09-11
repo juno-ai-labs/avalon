@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEVICE_PREFERENCES_STORAGE_KEY } from '../lib/device-preferences';
-import { AgentCompactionIndicator, AgentWorkTiming } from './agent-work-timing';
+import { AgentCompactionIndicator, AgentWorkTiming, RunStoppingIndicator, STOPPING_LABEL } from './agent-work-timing';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, size, speed, state, theme }: { paused?: boolean; size: number; speed?: number; state: string; theme?: string }) => (
@@ -39,6 +39,24 @@ describe('AgentWorkTiming', () => {
     );
     expect(container.querySelector('.agent-work-timing')).toHaveClass('agent-work-timing-active');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-speed', '1');
+  });
+
+  it('says a stop is pending in words, marked up as a status, with no number to promise', () => {
+    const { container } = render(<RunStoppingIndicator />);
+
+    expect(screen.getByText(STOPPING_LABEL)).toBeInTheDocument();
+    // The markup only — whether a screen reader announces a freshly inserted
+    // live region is a real question and jsdom cannot answer it, so the name
+    // above claims the attributes rather than the announcement.
+    expect(screen.getByRole('status')).toHaveAccessibleName(STOPPING_LABEL);
+    // Still active: the response and its tools are genuinely still settling,
+    // and a parked row would read as a run that had already ended.
+    expect(container.querySelector('.agent-work-timing')).toHaveClass('agent-work-timing-active');
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-speed', '1');
+    // No elapsed total. The only number worth printing here is how much longer,
+    // which nothing on this side can know, and a count-up beside "stopping"
+    // reads as the wait's own length rather than the run's.
+    expect(container.textContent).not.toMatch(/\d/u);
   });
 
   it('owns the live wording, shimmer, elapsed time, orb, and settled state', async () => {

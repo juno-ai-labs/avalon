@@ -94,7 +94,7 @@ import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store'
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { workstreamSidekickRows, type SidekickRow } from '../components/sidekick-section';
-import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
+import { AgentCompactionIndicator, AgentWorkTiming, RunStoppingIndicator, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -201,6 +201,68 @@ export function orderedTranscriptOwnsRunTiming(
       : []));
   return [...snapshot.ranges.flatMap((range) => range.turns), ...snapshot.activeTurns]
     .some((turn) => turn.activityId !== null && assistantActivityIds.has(turn.activityId));
+}
+
+/**
+ * Which row the transcript's activity slot shows, if any.
+ *
+ * Both answers describe the run, so both belong in the feed, in reading order,
+ * with the turns they are about. The pending-stop acknowledgement deliberately
+ * is not one of them — see `conversationShowsStoppingRow`.
+ *
+ * `timing` is left to the feed whenever the ordered transcript already draws
+ * the run's own rows, which is why it is the one answer that can be `null`
+ * while a run is plainly going.
+ *
+ * The `timing` answer carries the props it was decided from rather than naming
+ * a kind and leaving the caller to fetch them. A bare kind made the call site
+ * assert `runTiming!` back, which moved the non-null guarantee out of the
+ * compiler and into this function and that spread agreeing — so a fourth answer,
+ * or a `timing` branch that stopped requiring `runTiming`, would have spread
+ * `null` at render instead of failing typecheck.
+ */
+export function conversationActivityRow(input: {
+  status: HarnessStatus;
+  compactingThisRun: boolean;
+  orderedOwnsRunTiming: boolean;
+  runTiming: AgentWorkTimingProps | null;
+}): { kind: 'compacting' } | { kind: 'timing'; timing: AgentWorkTimingProps } | null {
+  if (input.compactingThisRun && input.status === 'running') return { kind: 'compacting' };
+  if (!input.orderedOwnsRunTiming && input.runTiming) {
+    return { kind: 'timing', timing: input.runTiming };
+  }
+  return null;
+}
+
+/**
+ * Whether to acknowledge a pending stop above the composer.
+ *
+ * Stop is observed at the loop's next safe step boundary: the response in
+ * flight and every tool it already asked for settle first, and no further
+ * provider request begins. A production run took 11.2 seconds to get there, and
+ * for all of it the only sign the click had landed was a spinner in a 28px
+ * button and a tooltip nobody hovers.
+ *
+ * Drawn in the composer dock rather than in the transcript's activity slot,
+ * which is inside the scroller. `useTranscriptFollow` hands the viewport to the
+ * reader the moment they scroll up and nothing about pressing Stop takes it
+ * back — correctly, since only the reader's own scrolling may move it — so a
+ * row appended to the feed lands below the fold for exactly the person most
+ * likely to be reading history while a run is going. The dock sits outside the
+ * scroller, so this is visible at any scroll position. It also puts the
+ * acknowledgement beside the control it answers: the two rows in the feed
+ * describe the run, and this one answers a button press.
+ *
+ * Gated on a live run, not on the flag alone. The loop clears
+ * `stop_requested_at` as it goes idle, but a settled run can still be read back
+ * before the next snapshot lands, and a stopping row over an already-stopped
+ * run promises a wait that is over.
+ */
+export function conversationShowsStoppingRow(
+  status: HarnessStatus,
+  stopRequested: boolean | undefined,
+): boolean {
+  return status === 'running' && stopRequested === true;
 }
 
 /**
@@ -1975,6 +2037,26 @@ export function ConversationSurface({
     orderedTranscript.data,
     detail.latestHarnessRunId ?? detail.latestHarnessRun?.id,
   );
+  const showsStoppingRow = conversationShowsStoppingRow(
+    detail.harnessStatus,
+    detail.stopRequested,
+  );
+  const activityRow = conversationActivityRow({
+    status: detail.harnessStatus,
+    // A compaction has to be running AND belong to the run on screen. Reading
+    // the id straight off `activeCompaction` would compare `undefined` with the
+    // id of a run that has none either, and a room with no run at all would
+    // report itself compacting. `!= null` rather than `!== null`, because the
+    // absent value here is sometimes `undefined`: the type says
+    // `AgentCompactionState | null`, but a connection double that names only
+    // the fields its test drives leaves the key off entirely. It narrows too,
+    // which `Boolean(…)` did not, so the read below needs no `?.`.
+    compactingThisRun: socketConnection.activeCompaction != null
+      && socketConnection.activeCompaction.harnessRunId
+        === (detail.latestHarnessRunId ?? detail.latestHarnessRun?.id),
+    orderedOwnsRunTiming,
+    runTiming,
+  });
   const visibleTranscript = transcript;
   const firstUnreadSequenceNumber = detail.firstUnreadSequenceNumber;
   const firstUnreadIndex = firstUnreadSequenceNumber === null
@@ -2195,13 +2277,10 @@ export function ConversationSurface({
               virtualizer={transcriptVirtualizer}
             />
           )}
-          <ActivityPresence>{socketConnection.activeCompaction
-            && detail.harnessStatus === 'running'
-            && socketConnection.activeCompaction.harnessRunId === (detail.latestHarnessRunId ?? detail.latestHarnessRun?.id)
+          <ActivityPresence>{activityRow?.kind === 'compacting'
             ? <AgentCompactionIndicator />
-            : !orderedOwnsRunTiming
-              && runTiming
-              && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}</ActivityPresence>
+            : activityRow?.kind === 'timing'
+              && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...activityRow.timing} />}</ActivityPresence>
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
@@ -2221,6 +2300,10 @@ export function ConversationSurface({
       <div className="composer-dock">
         <JumpToLatestButton onJump={() => void jumpToLatest()} visible={!transcriptAtEnd} />
         <div className="composer-stack">
+          {/* First in the stack, so it reads as a line above the field rather
+              than as something the field is sitting on. The stack is a grid
+              with its own gap, so it needs no spacing of its own. */}
+          {showsStoppingRow && <RunStoppingIndicator />}
           <WorkstreamComposer
             api={api ?? undefined}
             placeholder={parentKind === 'automation' ? 'Ask your Sidekick…' : 'Message the work stream…'}
