@@ -1,6 +1,7 @@
 import type { Env } from '../env';
 import { sha256Hex } from '../lib/crypto';
-import { SearchDocumentBatchSchema, type SearchDocument, type SearchDocumentBatch } from './search-document';
+import { logWarn } from '../observability/logger';
+import { ignoredSearchDocumentKeys, SearchDocumentBatchSchema, type SearchDocument, type SearchDocumentBatch } from './search-document';
 import { searchChunkPolicy, SEARCH_EMBEDDING_BATCH_SIZE } from './search-embedding';
 import { semanticChunks, type SemanticChunkPolicy } from './semantic-chunks';
 import { isMemoryEmbeddingModel } from './structured-inference';
@@ -69,7 +70,17 @@ export async function indexSemanticBatch(index: TextSearchIndex, job: SearchEmbe
 /** Source state stays batch-local; the immutable tokenizer is shared by the isolate. */
 export function createSearchIndexingPipeline(env: Env) {
   return async (reference: SearchSourceReference, load: (captureLinks?: boolean) => Promise<SearchDocumentBatch>): Promise<void> => {
-    const input = SearchDocumentBatchSchema.parse(await load());
+    // A producer on a newer build may name fields this build does not. They
+    // are indexed without them (the schema strips, never rejects) and named
+    // here, so a deploy can see from the logs which rows the skew window wrote
+    // behind the contract and whether a re-projection has to follow it.
+    const parseBatch = (batch: unknown) => {
+      const ignored = ignoredSearchDocumentKeys(batch);
+      if (ignored.length) logWarn(env, 'search_document_keys_ignored', { region: env.AVALON_REGION,
+        workspace_id: reference.workspaceId, ignored_keys: ignored.join(',') });
+      return SearchDocumentBatchSchema.parse(batch);
+    };
+    const input = parseBatch(await load());
     if (!input.documents.length) {
       if (input.retry) throw new Error('search_source_retry_required');
       return;
@@ -96,7 +107,7 @@ export function createSearchIndexingPipeline(env: Env) {
     }
     // An edit or deletion can commit during fan-out. Remove this stale
     // generation before retrying; newer revisions are never removed by this job.
-    const current = SearchDocumentBatchSchema.parse(await load(false));
+    const current = parseBatch(await load(false));
     let changed = false;
     for (const document of input.documents) {
       const next = current.documents.find((value) => value.id === document.id);
