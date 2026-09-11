@@ -114,8 +114,9 @@ export const TRANSCRIPT_SEARCH_MIGRATION_STATEMENTS = [
  * Re-queues every committed turn at its current revision. A delivered
  * reference is recreated as pending; one still waiting keeps the newer of the
  * two revisions and becomes due now. The consumer rewrites each lexical row
- * in place and skips embedding work whose chunk rows already exist, so a
- * re-projection costs Queue and index writes, never provider calls.
+ * in place and skips the embedding provider for every batch whose chunk rows
+ * already exist; a turn whose document job never wrote them (one that
+ * dead-lettered before its chunks were planned) is embedded as if new.
  */
 const REQUEUE_COMMITTED_TURNS_STATEMENT = `INSERT INTO durable_outbox
     (message_id, channel, destination_kind, destination_id, partition_key,

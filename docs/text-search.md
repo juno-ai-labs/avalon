@@ -634,8 +634,10 @@ known to be enough. Re-marking pending only for workspaces active in the
 window; no source we have lists them (the log carries no id, the dead-letter
 queue has no consumer and expires in 24 hours), and a list that misses one
 leaves a stale row nobody will notice, where a full pass at the cost migration
-47 already measured (about 55 minutes to drain some 160k messages, with no
-provider calls because completed chunk rows are skipped) cannot. Clearing
+47 already measured (about 55 minutes to drain some 160k messages; the
+embedding provider is skipped for every batch whose chunk rows already exist,
+and called only for a document that dead-lettered before its chunks were
+written) cannot. Clearing
 `pending` on successful indexing instead of on publish; it is the right design
 and is recorded under Open questions, but it needs a completion RPC, a lease
 and a number the team has to set, which is more than an incident fix.
