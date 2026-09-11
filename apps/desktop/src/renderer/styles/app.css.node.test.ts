@@ -1134,7 +1134,7 @@ describe('feed spacing is a step of the scale', () => {
   const FEED = /message-block|transcript-event|human-message|agent-message|tool-|work-accordion|agent-work-timing|elicitation|system-message|markdown|attachment|citation|transcript-column|unread-divider|virtual-message|activity-presence|run-failure|run-stopped|assistant-turn|message-delivery-pill|message-attachments|plugin-/u;
   // Not the feed: the lightbox over it, the composer under it, the automation
   // overview and the document surfaces that host `.markdown-body` too.
-  const NOT_FEED = /lightbox|gallery|composer|pending-attachment|automation-|note-|meeting-|sidekick|settings|inspector|onboarding|new-chat-screen|message-delivery-controls/u;
+  const NOT_FEED = /lightbox|gallery|composer|pending-attachment|automation-|note-|meeting-|sidekick|settings|inspector|onboarding|new-chat-screen/u;
   // Values that are not gaps, each with the reason it stays literal.
   const EXEMPT: Record<string, string> = {
     '.transcript-column': 'the 150px is clearance under an overlaid composer, a height rather than a gap',
