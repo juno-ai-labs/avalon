@@ -68,7 +68,7 @@ import {
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { layoutRowAt } from '../lib/list-motion';
 import { useListMotion } from '../lib/use-list-motion';
-import { Avatar, Button, DragHint, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
+import { Avatar, Button, DragHint, IconButton, InlineError, Modal, StatusDot, Tip, TitleSkeleton } from './primitives';
 import { ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup } from './sidebar-skeleton';
 import { AutomationGlyph, HexagonGlyph, SIDEKICK_RUNNING_MARKER, WorkstreamGlyph } from './workstream-glyph';
@@ -516,6 +516,34 @@ interface PinnedRowDrag {
 
 
 /**
+ * What the globe badge means, at the two granularities the two surfaces want.
+ *
+ * The badge's own tip is a pointer affordance and cannot be anything else: its
+ * trigger is a `span` inside the row's link, and making it focusable would put
+ * a tab stop on every public row between the link and the next one. So the
+ * row's preview — which opens on focus as well as hover — names the scope too,
+ * and a reader who never touches a pointer gets the answer by tabbing to the
+ * row.
+ *
+ * They are not the same string, because the pointer path shows both at once:
+ * resting on the badge means already resting on the row, so the card is always
+ * up behind the tip, and one sentence printed twice a centimetre apart reads as
+ * a bug. The card names the state in the words the rest of the app uses for it
+ * — the visibility menu offers **Make public to workspace**, and a note's own
+ * screen labels itself **Public to workspace** — and the tip, which is what a
+ * reader points at the badge to get, spells out what that means.
+ *
+ * The third register is the badge's own name, which a screen reader reaches
+ * through the badge's `aria-label` and the row's `aria-description`. It is
+ * named here with the other two because the argument for keeping them distinct
+ * is only checkable if they are read together — two of three getting a copy
+ * edit is exactly the drift this is meant to prevent.
+ */
+const PUBLIC_SCOPE_NAME = 'Public work stream';
+const PUBLIC_SCOPE_LABEL = 'Public to workspace';
+const PUBLIC_SCOPE_EXPLANATION = 'Public — everyone in the workspace can see this work stream.';
+
+/**
  * The row itself gets deliberately terse when the sidebar becomes an icon
  * rail. GrokBot keeps the missing context one hover away with the same card in
  * both sidebar forms, so resizing never changes what hovering a person means.
@@ -536,6 +564,9 @@ function WorkstreamHoverPreview({
           {formatSidebarActivityTime(workstream.lastActivityAt)}
         </time>}
       </div>
+      {workstream.scope === 'workspace' && (
+        <p className="sidebar-workstream-preview-scope">{PUBLIC_SCOPE_LABEL}</p>
+      )}
     </div>
   );
 }
@@ -720,7 +751,7 @@ function WorkstreamRow({
                   navigation element's class resolver untouched. */}
               <div className="sidebar-workstream-preview-anchor">
                 <NavLink
-            aria-description={workstream.scope === 'workspace' ? 'Public work stream' : undefined}
+            aria-description={workstream.scope === 'workspace' ? PUBLIC_SCOPE_NAME : undefined}
             aria-describedby={previewOpen ? `workstream-preview-${workstream.id}` : undefined}
             aria-label={[naming ? 'Rally is naming this work stream' : workstream.title, drag?.position].filter(Boolean).join(', ')}
             className={({ isActive }) => clsx(
@@ -784,29 +815,26 @@ function WorkstreamRow({
                 change it is said once, on the section. */}
             {drag && <span className="sr-only">{drag.position}</span>}
             {workstream.nextPendingWakeup && (
-              <Tooltip.Root delayDuration={300}>
-                <Tooltip.Trigger asChild>
-                  <span
-                    aria-label={`Active timer. Next: ${nextWakeupTime}. ${workstream.nextPendingWakeup.promptPreview}`}
-                    className="sidebar-workstream-timer"
-                    role="img"
-                  >
-                    <Clock aria-hidden="true" size={15} strokeWidth={1.7} />
-                  </span>
-                </Tooltip.Trigger>
-                <Tooltip.Portal>
-                  <Tooltip.Content
-                    align="center"
-                    className="tooltip workstream-timer-tooltip"
-                    side="right"
-                    sideOffset={8}
-                  >
-                    <strong>Next: {nextWakeupTime}</strong>
-                    <span>{workstream.nextPendingWakeup.promptPreview}</span>
-                    <Tooltip.Arrow className="tooltip-arrow" />
-                  </Tooltip.Content>
-                </Tooltip.Portal>
-              </Tooltip.Root>
+              <Tip
+                align="center"
+                className="workstream-timer-tooltip"
+                delayDuration={300}
+                disableHoverableContent
+                label={<>
+                  <strong>Next: {nextWakeupTime}</strong>
+                  <span>{workstream.nextPendingWakeup.promptPreview}</span>
+                </>}
+                side="right"
+                sideOffset={8}
+              >
+                <span
+                  aria-label={`Active timer. Next: ${nextWakeupTime}. ${workstream.nextPendingWakeup.promptPreview}`}
+                  className="sidebar-workstream-timer"
+                  role="img"
+                >
+                  <Clock aria-hidden="true" size={15} strokeWidth={1.7} />
+                </span>
+              </Tip>
             )}
                 </NavLink>
               </div>
@@ -888,13 +916,37 @@ function PrivacyMarker({ label }: { label: string }): React.JSX.Element {
   );
 }
 
+/**
+ * The globe a work stream wears when its audience is the whole workspace.
+ *
+ * A 17px badge with no words is the one thing on the row a reader cannot work
+ * out by looking, so the explanation is a tip rather than a label only a screen
+ * reader reaches. It reads like the status dot beside it — the name, then the
+ * sentence — because the two badges sit on the same glyph and answering the
+ * same question two different ways is what makes a row need decoding.
+ *
+ * This tip is the pointer half of the answer; `PUBLIC_SCOPE_EXPLANATION` says
+ * where the keyboard half lives and why it is not simply a `tabIndex` here.
+ *
+ * The row's own preview stays open behind it: the tip is a line above a badge
+ * at the sidebar's left edge and the preview is a card off the row's right, so
+ * the two never share the space. Radix would close one for the other, but the
+ * preview drives its `open` itself and ignores the request.
+ */
 function PublicMarker(): React.JSX.Element {
-  // The parent row owns its hover preview. A nested tooltip competes with it
-  // and can obscure the tiny badge while both poppers are positioning.
   return (
-    <span aria-label="Public work stream" className="sidebar-workstream-public" role="img">
-      <Globe2 aria-hidden="true" size={11} />
-    </span>
+    <Tip
+      collisionPadding={8}
+      delayDuration={300}
+      disableHoverableContent
+      label={PUBLIC_SCOPE_EXPLANATION}
+      side="top"
+      sideOffset={8}
+    >
+      <span aria-label={PUBLIC_SCOPE_NAME} className="sidebar-workstream-public" role="img">
+        <Globe2 aria-hidden="true" size={11} />
+      </span>
+    </Tip>
   );
 }
 

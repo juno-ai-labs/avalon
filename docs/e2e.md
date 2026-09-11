@@ -746,8 +746,19 @@ top, that the Sidekick strip stays put below the list, and that the account
 and collapse controls stay fixed at the bottom.
 
 Hover a public stream icon and then move onto its globe in both appearances.
-The globe stays visible and only the stream preview opens; the public badge
-has an accessible label rather than a competing nested tooltip.
+The globe stays visible and answers for itself — **Public — everyone in the
+workspace can see this work stream.** — while the row's own preview card stays
+open off the row's right rather than the two taking turns. The card names the
+scope in its own shorter register, **Public to workspace**, rather than
+reprinting the tip's sentence a centimetre away. Move on to the status dot below
+it and confirm the globe's tip gives way to the dot's, which reads the same
+shape.
+
+Then put the pointer away and Tab to that row. Confirm the preview opens on
+focus alone and carries **Public to workspace**, because the globe's own tip is
+pointer-only by design — it is a badge inside the row's link, and giving it a
+tab stop would add one to every public row. Tab to a private row and confirm its
+card carries no scope line at all.
 
 When a narrow window forces navigation into compact mode, its Expand control
 is disabled and double-clicking the edge must preserve the saved expanded

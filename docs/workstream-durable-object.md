@@ -1678,6 +1678,74 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-10 — The public globe answers for itself
+
+**What changed:** The sidebar's public badge carries a tip again — `Public —
+everyone in the workspace can see this work stream.`, shaped like the status
+dot's on the same glyph. The globe and the row's timer badge now compose the
+`Tip` primitive rather than hand-rolling Radix's subtree; both opt out of
+hoverable content, and `Tip` gained the `collisionPadding` the globe needed.
+
+**Why:** the badge is 17px and wordless, and it is the one thing on a row whose
+meaning cannot be worked out by looking; an `aria-label` answers a screen reader
+and nobody else. The reasoning that left it silent — a nested tooltip competes
+with the row's hover preview — holds only for a tip that takes the preview's
+place, and this one does not. Radix asks every other open tooltip to close when
+one opens, but the preview drives its own `open` and ignores the request, and
+the two never share space: the tip is a line above a badge at the sidebar's left
+edge, the preview a card off the row's right.
+
+This branch grew its own `Tip` for the same reason two other branches were
+landing one on `main` — the timer badge beside the globe was the fourth
+hand-written copy of the same five tags. `main`'s reached the trunk first
+(#675) and then gained `className` and `disableHoverableContent` (#674), so
+the rebase kept all of that and deleted this branch's half of it. What
+survived is `collisionPadding` and the two call sites that ask for it and for
+hoverable content off — both found by looking at the thing in a window rather
+than by reading it.
+
+**Considered and rejected:** closing the preview while the pointer is on the
+badge. One popper at a time, but a pointer crossing the badge on its way into
+the row would blink the card away and pay 300ms to bring it back — a cost on
+the common gesture to tidy the rare one. Also rejected: a native `title` on the
+globe, for the reason the 2026-08-30 entry below gives — a second tooltip
+language the rest of the row does not speak.
+
+The tip is the pointer half only. Its trigger is a `span` inside the row's link,
+so it never takes focus, and giving it a tab stop would add one to every public
+row between the link and the next. The keyboard half is the row's preview, which
+already opens on focus: it now names the scope as **Public to workspace**, the
+words the visibility menu and a note's own screen already use. The two registers
+differ on purpose — resting on the badge means already resting on the row, so
+the card is always up behind the tip, and one sentence printed twice a
+centimetre apart reads as a bug.
+
+**What a future change has to respect:** a badge tip and the row preview coexist
+only because that preview is controlled, and that buys both directions rather
+than one. `useControllableState` calls its `onChange` only from an internal
+`setOpen`, so a controlled Root ignores the close request *and* never reaches
+the `document.dispatchEvent(new CustomEvent('tooltip.open'))` branch when its
+own `open` prop flips — which is why the preview does not close the globe's tip
+either. That second half matters because the reverse order is reachable: the
+provider's `skipDelayDuration` opens a tip instantly on a re-entry while the
+preview always pays its own 300ms, so a pointer that leaves the badge and comes
+straight back has the tip up first. Both halves rest on a transitive
+dependency's implementation rather than a documented Radix contract, so a
+version bump is the thing to re-check. Moving the preview to an uncontrolled
+`open` puts the two back to taking turns; `sidebar.test.tsx` pins the direction
+that is testable. The preview is also the only keyboard route to the badge's
+meaning, so a change that drops its scope line takes the explanation away from
+anyone not using a pointer — pinned by its own test.
+
+Both badges pass `disableHoverableContent`, which is what a tooltip hanging off
+something the pointer aims at rather than reads wants: Radix otherwise keeps the
+popper open while the pointer is inside it, and a tip holds no link and no
+selectable text, so that only leaves a rectangle outliving the hover. Measured
+here at 27px tall, sitting 6px above a 54px sidebar row — which in a stacked
+list is the bottom half of the row above, unhoverable until the pointer leaves
+and returns. `collisionPadding` is the same kind of finding: at Radix's zero the
+globe's tip sat flush against the window's left edge and read as clipped.
+
 ### 2026-09-09 — Derived inputs at the settled step, and a ledger that rides the compaction commit
 
 **What changed:** Substream migration 51 adds the context-residency ledger.
