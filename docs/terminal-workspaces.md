@@ -141,7 +141,15 @@ A published file's identity is the document's own coordinates — the work strea
 and the normalized published path, as `terminal:<workstream-id>:<path>` — so
 publishing the same path again updates the resource the first publish created
 instead of minting a sibling, and the same file name published from another work
-stream stays a different document. An equal content hash returns the existing
+stream stays a different document. For a work-stream-scoped Sidekick the work
+stream in that identity is the **room that owns it**, not the automation's own
+conversation: its run executes under the automation, with its own sandbox and
+transcript, but the documents it publishes are the room's, so "refresh the
+dashboard" lands on the dashboard the room already has. Only publication is
+redirected — the sandbox, the resources the run may read, and the import path
+stay addressed to the run's own conversation — and the link and artifact
+registry follow the identity, so the document appears in the owning room's
+resource list rather than the automation's. An equal content hash returns the existing
 resource untouched, which covers both a crash-replay of a settled call and a
 republish that changed nothing; a different hash swaps the content in place
 under a compare-and-swap against the pointer that was read, applying a title
@@ -254,8 +262,10 @@ personless; it is not duplicated into these product events.
   authority fingerprint.** Reusing it after a principal, resource visibility,
   GitHub connection, or repository change would make old filesystem bytes a new
   caller's unauthorized input, so a mismatch destroys and reprovisions it.
-- **A published document's identity is the work stream plus its normalized
-  publish path, and that derivation is frozen once documents exist.** Changing
+- **A published document's identity is the owning work stream plus its
+  normalized publish path, and that derivation is frozen once documents
+  exist.** "Owning" is the room for a work-stream-scoped Sidekick and the run's
+  own conversation for everything else. Changing
   the normalization, or how `publish_resource` resolves a path against
   `AVALON_RESOURCE_DIR`, re-keys every published document: each one's next
   republish mints a sibling instead of updating it, silently and with no failing
@@ -679,6 +689,61 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-11 — A work-stream Sidekick publishes into the room that owns it
+
+**What changed:** `createTerminalResourceBridge` takes a
+`publicationWorkstreamId`, threaded from the automation definition's
+`owningWorkstreamId` through `createAvalonTerminalPlugin`. When set, it is the
+work stream in `terminal:<workstream-id>:<path>`, the target of the resource
+link, and the `workstream_id` on the artifact registry row. It is null for
+personal and workspace-scoped automations and for every ordinary run, which
+publish into their own conversation exactly as before.
+
+**Why:** A work-stream-scoped Sidekick's run executes in its own conversation
+under the automation, so `context.workstreamId` was the automation id and the
+publish identity was `terminal:<automation-id>:<path>`. That can never collide
+with the room's `terminal:<room-id>:<path>`, so a Sidekick told to refresh a
+document the room already had created a private copy at version 1 on its first
+run and re-created nothing after that. Found in production: an hourly PR
+dashboard reported a successful refresh every run while the copy in the room's
+sidebar stayed frozen at the version an interactive run had left there, and the
+`resource://` embed in each delivered result rendered as bare label text because
+the room could not resolve a resource that was never linked to it.
+
+**Considered and rejected:** *linking the Sidekick's copy into the room at
+delivery*, which makes the embed resolve and leaves the fork — the room would
+then carry two documents with the same title, and the next refresh would still
+miss the one a person had open. *Redirecting `context.workstreamId` wholesale*,
+which would also move the sandbox and the readable-resource set into the room
+and is a much larger change than the defect needs.
+
+**Both links, not one:** a redirected document is linked to the owning room
+*and* to the conversation that produced it. Visibility is resolved from the
+links the run's own object holds (`loadVisibleRows` starts at `attachedLinks`),
+so a document linked only to the room is one its own run cannot read back —
+`publish_resource` followed by `import_resource` on the id just returned would
+answer `resource_not_found`, and "publish a refresh, then diff it against the
+last one" is the natural shape of the work these Sidekicks do. The room is where
+the document belongs; the producing link is what keeps the round trip working.
+
+**The carve-out:** an internal capture is not redirected. A command log
+(`terminal-command-log:<effect-intent>`) and a checkout backup name their own
+namespace through `providerResourceId` rather than deriving one from a path, and
+they are recovery artifacts a run never chose to deliver. Redirecting them would
+put raw command output — the output the Sidekick's delivered result deliberately
+left out — in the owning room's resource list. The redirect therefore keys on the
+same condition the identity does: a publication that supplies its own
+`providerResourceId` stays in the conversation that produced it.
+
+**What a future change has to respect:** the redirect is publication only. A
+Sidekick and its owning room now share one publish namespace, so two Sidekicks
+owned by the same room that publish the same path share a document — that is
+the intended reading of "same path, same document" and is why the path is
+normalized, but it means a Sidekick cannot assume a private path. Existing
+forked resources are left where they are; this fixes forward rather than
+migrating rows, so a room that already has a fork keeps it until someone
+deletes it.
 
 ### 2026-09-11 — The recovery backup is reachable without being advertised
 

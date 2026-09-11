@@ -42,7 +42,7 @@ import {
   type WorkspaceId,
   type WorkstreamId,
 } from "@rally/contracts";
-import { renderUntrustedAutomationResultMessage, type AddressingContextMessage } from "@rally/agent-harness";
+import type { AddressingContextMessage, PromptMessage } from "@rally/agent-harness";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
 
@@ -3572,14 +3572,15 @@ export class WorkstreamObjectProductService {
       attentionOrdinal: null,
     });
     // Not projectParticipantModelMessage: that renders a person's message, and
-    // this text is a result an automation produced from connector content. The
-    // untrusted wrapper is the whole difference, and it is the same one the
-    // classifier reads the result behind.
-    const bindMessage = renderUntrustedAutomationResultMessage({
-      automationName: input.activation.automationName,
-      deliveredAt: new Date(input.activation.occurredAt).toISOString(),
-      text: input.text,
-    });
+    // this text is a result an automation produced. The attribution line is the
+    // difference, and it is what the classifier reads the result behind.
+    const bindMessage: PromptMessage = {
+      role: "user",
+      content: [
+        `"${input.activation.automationName}", delivered ${new Date(input.activation.occurredAt).toISOString()}.`,
+        input.text,
+      ].join("\n"),
+    };
     return { participant, bindPayloadJson: canonicalModelMessageJson(bindMessage) };
   }
 

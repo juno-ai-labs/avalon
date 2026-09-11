@@ -731,6 +731,52 @@ production inspection paths.
 
 ## Changelog
 
+### 2026-09-11 — A Sidekick's result names the Sidekick, and its documents land in the room
+
+**What changed:** Two things a room sees from a Sidekick. The activation row's
+author slot renders the Sidekick's name from the row's `automationName` instead
+of the constant "Automation" (`transcript.ts` parses it into
+`Message.automationActivation`; `workstream-blocks.tsx` reads it, falling back
+to "Automation" for a row whose structured content will not parse). And a
+work-stream-scoped Sidekick now publishes into the owning room's namespace —
+see [`terminal-workspaces.md`](terminal-workspaces.md) for that half.
+
+**Why:** The name was already frozen into every activation row at delivery,
+precisely so a later rename would not restate who spoke last week, and the
+client was throwing it away. A room with several Sidekicks showed the same word
+for all of them.
+
+**The header truncates rather than wraps.** `.message-block > header` gives the
+author slot the leftover width with `min-width: 0` and an ellipsis, and pins the
+time, work summary and context label to their intrinsic widths. A Sidekick's
+name is whatever a person typed and the schema allows 300 characters, so without
+it the line wrapped to three rows and squeezed the time into a column. The
+truncation point is derived from the container, so this is layout behaviour
+rather than a defensive cap with a number to argue about — measured in a real
+window at 16px for a short name, a realistic one, and one at the schema bound.
+
+**What a future change has to respect:** the name is the delivered one, never
+the Sidekick's current title. Reading it live would rewrite history on a rename,
+which is the thing freezing it at delivery exists to prevent.
+
+### 2026-09-11 — A delivered Sidekick result carries no trust label
+
+**What changed:** `renderUntrustedAutomationResultMessage` is deleted. The Bind
+payload written by `admitAutomationActivation`, and the projection of the same
+row on every later run, are now a user-role message carrying the Sidekick's name,
+the delivery timestamp and the result body — no `UNTRUSTED SIDEKICK RESULT`
+header. `renderTriggerActivityMessage` and
+`renderUntrustedExternalEventMessage` are deleted with it.
+
+**Why:** Requested by the team and reaffirmed. The row is still `actor='system'`
+with a null author and still queues rather than interrupts; only the label is
+gone.
+
+**What a future change has to respect:** the disposition classifier reads the
+result behind the same payload the woken run does, so a change to that payload's
+shape changes what the classifier sees. The attribution line is what distinguishes
+it from a person's message now that the header does not.
+
 ### 2026-09-11 — One tooltip per strip tile, saying whichever part of it the pointer is on
 
 **What changed:** `SidekickStripTile` trades its native `title` for the shared
