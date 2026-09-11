@@ -13,6 +13,7 @@ import {
 
 const ARTIFACT = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
 const RESOURCE = '3f2504e0-4f89-41d3-9a0c-0305e82c3302';
+const OTHER_RESOURCE = '3f2504e0-4f89-41d3-9a0c-0305e82c3303';
 const OPEN_URL = `https://${ARTIFACT}-g.rallyusercontent.test/__rally/open#code`;
 const CANONICAL = `https://${ARTIFACT}-g.rallyusercontent.test`;
 
@@ -353,6 +354,26 @@ describe('the data a stateful site collected', () => {
     fireEvent.click(screen.getByRole('button', { name: /Hide stored data/u }));
     expect(await screen.findByTestId('site-preview-pane')).toBeInTheDocument();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalledTimes(2));
+  });
+
+  it('leaves the data view behind when the detail moves to another artifact', async () => {
+    // This element is not keyed on the resource, so a switch reconciles the
+    // same instance. Carried into an artifact that keeps no data, the data
+    // view would render with its toggle gone: the page would be unreachable
+    // until the detail unmounted entirely.
+    const stateless = vi.fn(async () => ({
+      openUrl: OPEN_URL, canonicalUrl: CANONICAL, artifactId: ARTIFACT,
+      mode: 'static' as const, stateful: false,
+    }));
+    const { props, rerender } = setup();
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: /Show stored data/u }));
+    await screen.findByText('Ada');
+
+    rerender(<Harness props={{ ...props, resourceId: OTHER_RESOURCE, openArtifact: stateless }} />);
+
+    expect(await screen.findByTestId('site-preview-pane')).toBeInTheDocument();
+    expect(screen.queryByText('Ada')).not.toBeInTheDocument();
   });
 
   it('offers no data toggle for a site that keeps none', async () => {

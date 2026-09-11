@@ -115,6 +115,13 @@ export function SiteResourceDetail({
     setAccess(null);
     setAccessError(null);
     setPreviewShown(null);
+    // The data view goes with it. This element is not keyed on the resource, so
+    // the same instance is reconciled across a switch, and the control that
+    // turns this back off only exists for an artifact that keeps data: carried
+    // into one that does not, it would show that artifact's empty data view
+    // with no way back to the page.
+    setShowingData(false);
+
     void openArtifact(resourceId)
       .then((result) => { if (!cancelled) setAccess(result); })
       .catch((error: unknown) => {
@@ -218,6 +225,7 @@ export function SiteResourceDetail({
         {access?.stateful && (
           <IconButton
             aria-pressed={showingData}
+            className="icon-button-toggle"
             tooltipSide="top"
             label={showingData ? 'Hide stored data' : 'Show stored data'}
             onClick={() => setShowingData((showing) => !showing)}

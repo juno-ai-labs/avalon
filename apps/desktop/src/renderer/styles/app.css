@@ -248,9 +248,15 @@ pre {
 
 /* A toggle has to show which state it is in, and the raised fill above is the
    same colour as some of the surfaces these headers sit on, so a pressed icon
-   takes the row-selection wash instead: it reads on any of them. */
-.icon-button[aria-pressed='true'],
-.icon-button[aria-pressed='true']:hover:not(:disabled) {
+   takes the row-selection wash instead: it reads on any of them.
+
+   Opt-in rather than keyed on `aria-pressed` alone: that attribute is also on
+   icon buttons that are not visual toggles. The composer's dictation button
+   carries it through `transcribing` and `finalizing` and paints itself from
+   `.microphone-control.is-listening`, so an unscoped rule washes it during the
+   states that class does not cover. */
+.icon-button-toggle[aria-pressed='true'],
+.icon-button-toggle[aria-pressed='true']:hover:not(:disabled) {
   background: var(--av-cmp-row-background-selected);
   color: var(--av-sys-color-text-default);
 }
