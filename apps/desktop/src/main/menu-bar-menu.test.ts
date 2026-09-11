@@ -15,26 +15,41 @@ function actions(): MenuBarActions {
   return {
     selected: vi.fn(),
     newMeetingNote: vi.fn(),
-    newWorkstream: vi.fn(),
-    newAutomation: vi.fn(),
-    startSuggestion: vi.fn(),
     openWorkstream: vi.fn(),
     openRally: vi.fn(),
     quit: vi.fn(),
   };
 }
 
+/** Pinned to a Thursday so every recency heading has a reachable timestamp:
+ * Sunday-start means "This week" needs a day between Monday and Tuesday here. */
+const NOW = new Date('2026-09-10T22:21:00');
+
+function at(offsetMs: number): string {
+  return new Date(NOW.getTime() - offsetMs).toISOString();
+}
+
+const MINUTE = 60_000;
+const HOUR = 3_600_000;
+const DAY = 86_400_000;
+
 function template(
   content: Partial<MenuBarContent>,
-  overrides: { signedIn?: boolean; sectionHeaders?: boolean; actions?: MenuBarActions; meetingRecordingAvailable?: boolean; suggestedWorkAvailable?: boolean } = {},
+  overrides: {
+    signedIn?: boolean;
+    sectionHeaders?: boolean;
+    actions?: MenuBarActions;
+    meetingRecordingAvailable?: boolean;
+    now?: Date;
+  } = {},
 ): MenuItemConstructorOptions[] {
   return menuBarMenuTemplate({
     appName: 'Rally',
     content: { ...emptyMenuBarContent, ...content },
     signedIn: overrides.signedIn ?? true,
     meetingRecordingAvailable: overrides.meetingRecordingAvailable ?? true,
-    suggestedWorkAvailable: overrides.suggestedWorkAvailable ?? true,
     sectionHeaders: overrides.sectionHeaders ?? true,
+    now: overrides.now ?? NOW,
     actions: overrides.actions ?? actions(),
   });
 }
@@ -49,74 +64,146 @@ function labels(items: MenuItemConstructorOptions[]): (string | undefined)[] {
   return items.map((item) => (item.type === 'separator' ? '—' : item.label));
 }
 
-const workstreams = Array.from({ length: 7 }, (_value, index) => ({
+/** Twelve work streams, each half an hour older than the last, so the whole set
+ * lands inside "Last hour" and "Today" and the recent limit is what cuts it. */
+const workstreams = Array.from({ length: 12 }, (_value, index) => ({
   id: `workstream-${index}`,
   title: `Work stream ${index}`,
+  lastActivityAt: at(index * 30 * MINUTE),
 }));
+
+function pinnedStream(id: string, title: string): { id: string; title: string; lastActivityAt: string } {
+  return { id, title, lastActivityAt: at(2 * DAY) };
+}
 
 describe('menu bar menu', () => {
   it('removes the meeting action when Meeting Recording Enabled is false', () => {
     const items = template(emptyMenuBarContent, { meetingRecordingAvailable: false });
 
     expect(labels(items)).not.toContain('New Meeting/Note');
-    expect(labels(items)).toContain('New Work Stream');
+    // Without it the menu now opens straight on a section header, so the
+    // leading rule has to be suppressed rather than drawn against nothing.
+    expect(labels(items).at(0)).toBe('Pinned');
   });
 
-  it('removes the Suggestions section when Suggested Work Enabled is false', () => {
-    const items = template({
-      suggestions: [{ id: 'opportunity-1', version: 1, label: 'Prepare the brief' }],
-    }, { suggestedWorkAvailable: false });
+  it('offers no way to start a work stream or an automation', () => {
+    // Both rows were removed: the menu is for getting back to work already in
+    // flight, and starting either belongs in the app, which the last two rows
+    // open.
+    const drawn = labels(template({ recents: workstreams }));
 
-    expect(labels(items)).not.toContain('Suggestions');
-    expect(labels(items)).not.toContain('Prepare the brief');
-    expect(labels(items)).toContain('Recent');
+    expect(drawn).not.toContain('New Work Stream');
+    expect(drawn).not.toContain('New Automation');
+  });
+
+  it('offers nothing to do with suggested work', () => {
+    // The Suggestions section is gone whole, header and empty state with it.
+    const drawn = labels(template({ recents: workstreams }));
+
+    expect(drawn).not.toContain('Suggestions');
+    expect(drawn.some((label) => label?.includes('suggestions'))).toBe(false);
   });
 
   it('orders the drop-down as the product contract describes it', () => {
     const items = template({
-      suggestions: [
-        { id: 'opportunity-1', version: 3, label: 'Reply to the Acme renewal thread' },
-        { id: 'opportunity-2', version: 1, label: 'Summarize yesterday’s standup' },
+      recents: [
+        { id: 'recent-a', title: 'Renewal thread', lastActivityAt: at(5 * MINUTE) },
+        { id: 'recent-b', title: 'Standup notes', lastActivityAt: at(4 * HOUR) },
+        { id: 'recent-c', title: 'Hiring loop', lastActivityAt: at(DAY) },
+        { id: 'recent-d', title: 'Pricing model', lastActivityAt: at(3 * DAY) },
+        { id: 'recent-e', title: 'Offsite plan', lastActivityAt: at(7 * DAY) },
+        { id: 'recent-f', title: 'Series A memo', lastActivityAt: at(200 * DAY) },
       ],
-      recents: workstreams,
-      pinned: [{ id: 'pinned-a', title: 'Acme renewal' }, { id: 'pinned-b', title: 'Board deck' }],
+      pinned: [pinnedStream('pinned-a', 'Acme renewal'), pinnedStream('pinned-b', 'Board deck')],
     });
 
+    // Pinned above Recent, and the recent list under the sidebar's own headings
+    // rather than one flat "Recent" block.
     expect(labels(items)).toEqual([
       'New Meeting/Note',
-      'New Work Stream',
-      'New Automation',
-      '—',
-      'Suggestions',
-      'Reply to the Acme renewal thread',
-      'Summarize yesterday’s standup',
-      '—',
-      'Recent',
-      'Work stream 0',
-      'Work stream 1',
-      'Work stream 2',
-      'Work stream 3',
-      'Work stream 4',
       '—',
       'Pinned',
       'Acme renewal',
       'Board deck',
+      '—',
+      'Last hour',
+      'Renewal thread',
+      '—',
+      'Today',
+      'Standup notes',
+      '—',
+      'Yesterday',
+      'Hiring loop',
+      '—',
+      'This week',
+      'Pricing model',
+      '—',
+      'This month',
+      'Offsite plan',
+      '—',
+      'Before this month',
+      'Series A memo',
       '—',
       'Open Rally',
       'Quit Rally',
     ]);
   });
 
+  it('puts Pinned above the recent list', () => {
+    const drawn = labels(template({ recents: workstreams, pinned: [pinnedStream('p', 'Acme renewal')] }));
+
+    // A pin is a standing choice, and the recent list is ten rows: a section
+    // underneath one that long is a section nobody scans to.
+    expect(drawn.indexOf('Pinned')).toBeLessThan(drawn.indexOf('Work stream 0'));
+  });
+
+  it('groups the recent work streams the way the sidebar groups them', () => {
+    const items = template({
+      recents: [
+        { id: 'a', title: 'Just now', lastActivityAt: at(MINUTE) },
+        { id: 'b', title: 'Earlier today', lastActivityAt: at(6 * HOUR) },
+        { id: 'c', title: 'Also earlier today', lastActivityAt: at(8 * HOUR) },
+      ],
+    });
+
+    expect(labels(items)).toEqual([
+      'New Meeting/Note',
+      '—',
+      'Pinned',
+      'Pin a work stream to see it here',
+      '—',
+      'Last hour',
+      'Just now',
+      '—',
+      'Today',
+      'Earlier today',
+      'Also earlier today',
+      '—',
+      'Open Rally',
+      'Quit Rally',
+    ]);
+  });
+
+  it('orders the recent rows newest first, whatever order they arrive in', () => {
+    const items = template({
+      recents: [
+        { id: 'c', title: 'Oldest', lastActivityAt: at(9 * HOUR) },
+        { id: 'a', title: 'Newest', lastActivityAt: at(2 * HOUR) },
+        { id: 'b', title: 'Middle', lastActivityAt: at(5 * HOUR) },
+      ],
+    });
+
+    expect(labels(items).filter((label) => ['Newest', 'Middle', 'Oldest'].includes(label ?? '')))
+      .toEqual(['Newest', 'Middle', 'Oldest']);
+  });
+
   it('shows the top five of the reader’s own pinned arrangement, in that order', () => {
-    const pinned = Array.from({ length: 8 }, (_value, index) => ({
-      id: `pinned-${index}`,
-      title: `Pinned ${index}`,
-    }));
+    const pinned = Array.from({ length: 8 }, (_value, index) => pinnedStream(`pinned-${index}`, `Pinned ${index}`));
     const items = template({ pinned });
     const pinnedLabels = labels(items).filter((label) => label?.startsWith('Pinned '));
 
-    // Sliced, never re-sorted: the arrangement is the person's, and the store
-    // hands it over already ordered.
+    // Sliced, never re-sorted or regrouped: the arrangement is the person's,
+    // and the store hands it over already ordered.
     expect(pinnedLabels).toEqual(['Pinned 0', 'Pinned 1', 'Pinned 2', 'Pinned 3', 'Pinned 4']);
     expect(pinnedLabels).toHaveLength(MENU_BAR_PINNED_LIMIT);
   });
@@ -132,15 +219,13 @@ describe('menu bar menu', () => {
     expect(empty?.click).toBeUndefined();
   });
 
-  it('drops Suggestions and Pinned entirely when nobody is signed in', () => {
+  it('drops Pinned entirely when nobody is signed in', () => {
     const items = template(emptyMenuBarContent, { signedIn: false });
 
-    // Neither has anything to say to a stranger, and the one message that state
-    // needs is already on the Recent row.
+    // It has nothing to say to a stranger, and the one message that state needs
+    // is already on the Recent row.
     expect(labels(items)).toEqual([
       'New Meeting/Note',
-      'New Work Stream',
-      'New Automation',
       '—',
       'Recent',
       'Sign in to Rally',
@@ -152,69 +237,55 @@ describe('menu bar menu', () => {
 
   it('opens a pinned row the same way a recent one opens', () => {
     const menuActions = actions();
-    const items = template({ pinned: [{ id: 'pinned-a', title: 'Acme renewal' }] }, { actions: menuActions });
+    const items = template({ pinned: [pinnedStream('pinned-a', 'Acme renewal')] }, { actions: menuActions });
     activate(items.find((item) => item.label === 'Acme renewal'));
 
     expect(menuActions.openWorkstream).toHaveBeenCalledWith('pinned-a');
   });
 
-  it('shows no more than five recent work streams', () => {
-    const items = template({ suggestions: [], recents: workstreams });
+  it('shows no more than ten recent work streams', () => {
+    const items = template({ recents: workstreams });
     const recentLabels = labels(items).filter((label) => label?.startsWith('Work stream'));
+
     expect(recentLabels).toHaveLength(MENU_BAR_RECENT_LIMIT);
+    expect(MENU_BAR_RECENT_LIMIT).toBe(10);
+    // Cut from the end of the recency order, so it is the oldest two that go.
+    expect(recentLabels).not.toContain('Work stream 10');
+    expect(recentLabels).not.toContain('Work stream 11');
   });
 
-  it('renders every group whether or not it has anything in it', () => {
-    const items = template({ suggestions: [], recents: workstreams.slice(0, 1) });
-    expect(labels(items)).toEqual([
-      'New Meeting/Note',
-      'New Work Stream',
-      'New Automation',
-      '—',
-      'Suggestions',
-      'Connect platforms to get daily suggestions on work streams to create',
-      '—',
-      'Recent',
-      'Work stream 0',
-      '—',
-      'Pinned',
-      'Pin a work stream to see it here',
-      '—',
-      'Open Rally',
-      'Quit Rally',
-    ]);
-  });
-
-  it('names what has to happen before Rally can suggest anything', () => {
-    const empty = template(emptyMenuBarContent)
-      .find((item) => item.label === 'Connect platforms to get daily suggestions on work streams to create');
-
-    // With no connector there is nothing to suggest from, so the row says that
-    // rather than leaving the section looking broken.
-    expect(empty?.enabled).toBe(false);
-    expect(empty?.click).toBeUndefined();
+  it('names the recent section only when it has nothing to head', () => {
+    // With rows, the recency headings name themselves and a second "Recent"
+    // above them would label the same list twice. With none there is no
+    // recency to name, and a bare disabled sentence reads as a broken item.
+    expect(labels(template({ recents: workstreams }))).not.toContain('Recent');
+    expect(labels(template(emptyMenuBarContent))).toContain('Recent');
   });
 
   it('heads every group, and puts each empty state directly under its header', () => {
     const items = template(emptyMenuBarContent);
 
     for (const [title, empty] of [
-      ['Suggestions', 'Connect platforms to get daily suggestions on work streams to create'],
-      ['Recent', 'No recent work streams'],
       ['Pinned', 'Pin a work stream to see it here'],
+      ['Recent', 'No recent work streams'],
     ]) {
       expect(items.find((item) => item.label === title)?.type).toBe('header');
       expect(labels(items).indexOf(title!)).toBe(labels(items).indexOf(empty!) - 1);
     }
   });
 
-  it('falls back to a disabled row where macOS has no section headers', () => {
-    const items = template(
-      { suggestions: [{ id: 'o1', version: 1, label: 'Reply to Dana' }], recents: workstreams },
-      { sectionHeaders: false },
-    );
+  it('heads every recency group it draws', () => {
+    const items = template({ recents: workstreams });
 
-    for (const label of ['Suggestions', 'Recent']) {
+    for (const label of ['Last hour', 'Today']) {
+      expect(items.find((item) => item.label === label)?.type).toBe('header');
+    }
+  });
+
+  it('falls back to a disabled row where macOS has no section headers', () => {
+    const items = template({ recents: workstreams }, { sectionHeaders: false });
+
+    for (const label of ['Pinned', 'Last hour']) {
       const header = items.find((item) => item.label === label);
       expect(header?.type).toBeUndefined();
       // Still unclickable: a header that could be activated is a menu row that
@@ -227,16 +298,17 @@ describe('menu bar menu', () => {
   it('never draws two rules in a row, whatever the content is', () => {
     for (const content of [
       emptyMenuBarContent,
-      { suggestions: [], recents: workstreams },
-      { suggestions: [{ id: 'o1', version: 1, label: 'Reply to Dana' }], recents: [] },
-      { suggestions: [{ id: 'o1', version: 1, label: 'Reply to Dana' }], recents: workstreams },
-      { pinned: [{ id: 'p', title: 'Acme renewal' }] },
-      { recents: workstreams, pinned: [{ id: 'p', title: 'Acme renewal' }] },
+      { recents: workstreams },
+      { pinned: [pinnedStream('p', 'Acme renewal')] },
+      { recents: workstreams, pinned: [pinnedStream('p', 'Acme renewal')] },
+      { recents: [{ id: 'a', title: 'Old', lastActivityAt: at(400 * DAY) }] },
     ]) {
-      const drawn = labels(template(content));
-      expect(drawn.some((label, index) => label === '—' && drawn[index + 1] === '—')).toBe(false);
-      expect(drawn.at(0)).not.toBe('—');
-      expect(drawn.at(-1)).not.toBe('—');
+      for (const overrides of [{}, { signedIn: false }, { meetingRecordingAvailable: false }]) {
+        const drawn = labels(template(content, overrides));
+        expect(drawn.some((label, index) => label === '—' && drawn[index + 1] === '—')).toBe(false);
+        expect(drawn.at(0)).not.toBe('—');
+        expect(drawn.at(-1)).not.toBe('—');
+      }
     }
   });
 
@@ -257,32 +329,28 @@ describe('menu bar menu', () => {
     expect(labels(items).some((label) => label?.toLowerCase().includes('login'))).toBe(false);
   });
 
-  it('routes each row to its action, carrying the suggestion version with it', () => {
+  it('routes each row to its action', () => {
     const menuActions = actions();
-    const suggestion = { id: 'opportunity-1', version: 4, label: 'Draft the release note' };
     const items = template(
-      { suggestions: [suggestion], recents: [workstreams[0]!] },
+      {
+        recents: [{ id: 'workstream-0', title: 'Renewal thread', lastActivityAt: at(MINUTE) }],
+        pinned: [pinnedStream('pinned-a', 'Acme renewal')],
+      },
       { actions: menuActions },
     );
     for (const item of items) activate(item);
 
     // Headers carry no handler, so activating everything must not produce a
     // stray call.
-    expect(items.filter((item) => item.click).length).toBe(7);
+    expect(items.filter((item) => item.click).length).toBe(5);
     expect(menuActions.newMeetingNote).toHaveBeenCalledTimes(1);
-    expect(menuActions.newWorkstream).toHaveBeenCalledTimes(1);
-    expect(menuActions.newAutomation).toHaveBeenCalledTimes(1);
-    // The version is what the service checks the start against, so it has to
-    // travel with the click rather than be re-read from a later refresh.
-    expect(menuActions.startSuggestion).toHaveBeenCalledWith(suggestion);
-    expect(menuActions.openWorkstream).toHaveBeenCalledWith('workstream-0');
+    expect(menuActions.openWorkstream).toHaveBeenNthCalledWith(1, 'pinned-a');
+    expect(menuActions.openWorkstream).toHaveBeenNthCalledWith(2, 'workstream-0');
     expect(menuActions.openRally).toHaveBeenCalledTimes(1);
     expect(menuActions.quit).toHaveBeenCalledTimes(1);
     expect(vi.mocked(menuActions.selected).mock.calls.map(([action]) => action)).toEqual([
       'new_meeting_note',
-      'new_workstream',
-      'new_automation',
-      'suggested_work',
+      'pinned_workstream',
       'recent_workstream',
       'open_rally',
       'quit_rally',
@@ -294,9 +362,9 @@ describe('menu bar menu', () => {
     vi.mocked(menuActions.selected).mockImplementation(() => { throw new Error('telemetry unavailable'); });
     const items = template(emptyMenuBarContent, { actions: menuActions });
 
-    activate(items.find((item) => item.label === 'New Work Stream'));
+    activate(items.find((item) => item.label === 'New Meeting/Note'));
 
-    expect(menuActions.newWorkstream).toHaveBeenCalledOnce();
+    expect(menuActions.newMeetingNote).toHaveBeenCalledOnce();
   });
 
   it('reads the macOS version that decides whether section headers exist', () => {
@@ -314,14 +382,14 @@ describe('menu bar menu', () => {
   });
 
   it('truncates a long label at a word boundary, never mid-word', () => {
-    // 180 characters is what both contracts allow, and a suggested prompt
-    // routinely uses them.
-    const prompt = 'Prepare the Acme client follow-up and capture every promised action with an owner';
-    const truncated = menuBarLabel(prompt);
+    // 180 characters is what the work-stream contract allows, and a title Rally
+    // wrote itself can run most of them.
+    const title = 'Prepare the Acme client follow-up and capture every promised action with an owner';
+    const truncated = menuBarLabel(title);
 
     expect(truncated).toBe('Prepare the Acme client follow-up and capture every…');
     expect(truncated.length).toBeLessThanOrEqual(60);
-    expect(prompt.startsWith(truncated.slice(0, -1))).toBe(true);
+    expect(title.startsWith(truncated.slice(0, -1))).toBe(true);
   });
 
   it('drops punctuation left dangling by the cut', () => {
@@ -336,7 +404,7 @@ describe('menu bar menu', () => {
 
     // A slice by code unit lands inside a surrogate pair and renders as `�`
     // immediately before the ellipsis.
-    expect(label).not.toContain('\uFFFD');
+    expect(label).not.toContain('�');
     expect([...label].every((character) => character !== '\uD83C' && character !== '\uDFAF')).toBe(true);
     expect(label.endsWith('…')).toBe(true);
     expect([...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(label)].length)

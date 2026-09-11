@@ -188,7 +188,11 @@ import { TelemetrySpool } from './telemetry-spool';
 import { TelemetryQuitBarrier } from './telemetry-quit-barrier';
 import { beginTelemetryLaunch, clearTelemetryLaunch, markTelemetryLaunchReady } from './telemetry-launch-marker';
 import { TelemetryBreadcrumbRing, type NewTelemetryBreadcrumb } from './telemetry-breadcrumbs';
-import { supportsSectionHeaders, type MenuBarSuggestion } from './menu-bar-menu';
+import {
+  MENU_BAR_PINNED_LIMIT,
+  MENU_BAR_RECENT_LIMIT,
+  supportsSectionHeaders,
+} from './menu-bar-menu';
 import {
   allowsTrustedAudioCapture,
 } from './media-permission';
@@ -1236,7 +1240,6 @@ const menuBarContentStore = new MenuBarContentStore({
   requestJson: rallyApiRequest,
   onChange: () => menuBarController.refresh(),
   logWarning: (message, error) => logWarn('rally', message, error),
-  suggestedWorkAvailable: () => suggestedWorkAvailable,
 });
 
 const launchAtLoginController = new LaunchAtLoginController({
@@ -1285,28 +1288,11 @@ function openMainWindowFromMenuBar(): void {
   });
 }
 
-function startSuggestedWorkstreamFromMenuBar(suggestion: MenuBarSuggestion): void {
-  activateFromMenuBar();
-  void menuBarContentStore.startSuggestion(suggestion)
-    .then((workstreamId) => {
-      emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'menu_bar');
-    })
-    .catch((error: unknown) => {
-      // Keep the failed action visible by bringing Rally forward. Suggestions
-      // remain in the native menu bar; the new-chat screen has no suggestion cards.
-      logWarn('rally', 'could not start a suggested work stream from the menu bar', error);
-      openMainWindowFromMenuBar();
-    });
-}
-
 let meetingRecordingAvailable = false;
-let suggestedWorkAvailable = false;
 
 function observeClientFeatureFlags(flags: ClientFeatureFlags): void {
-  const changed = meetingRecordingAvailable !== flags.meetingRecordingEnabled
-    || suggestedWorkAvailable !== flags.suggestedWorkEnabled;
+  const changed = meetingRecordingAvailable !== flags.meetingRecordingEnabled;
   meetingRecordingAvailable = flags.meetingRecordingEnabled;
-  suggestedWorkAvailable = flags.suggestedWorkEnabled;
   if (changed) {
     // Only the main-process surfaces are projected here. Renderer surfaces
     // consume the live workspace-socket cache directly.
@@ -1323,7 +1309,6 @@ const menuBarController = new MenuBarController({
   // menu is being built, and it only decides which empty state to show.
   signedIn: () => Boolean(inMemoryAuthSet),
   meetingRecordingAvailable: () => meetingRecordingAvailable,
-  suggestedWorkAvailable: () => suggestedWorkAvailable,
   sectionHeaders: supportsSectionHeaders(process.getSystemVersion()),
   actions: {
     selected: (action) => { void telemetryReporter?.menuBarActionSelected(action); },
@@ -1333,15 +1318,6 @@ const menuBarController = new MenuBarController({
         logError('rally', 'failed to open meeting notes from the menu bar', error);
       });
     },
-    newWorkstream: () => {
-      activateFromMenuBar();
-      emitDeepLink(`${customProtocol}://workstreams/new`, 'menu_bar');
-    },
-    newAutomation: () => {
-      activateFromMenuBar();
-      emitDeepLink(`${customProtocol}://automations/new`, 'menu_bar');
-    },
-    startSuggestion: startSuggestedWorkstreamFromMenuBar,
     openWorkstream: (workstreamId) => {
       activateFromMenuBar();
       emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'menu_bar');
@@ -3764,21 +3740,12 @@ function createMenuBarTray(): MenuBarTray {
     if (!inMemoryAuthSet) return;
     void menuBarContentStore.refreshIfStale(MENU_BAR_CONTENT_MAX_AGE_MS);
   };
-  // Opening the drop-down is the moment its suggestions are seen, and seeing
-  // one and passing over it is what moves the ranking. `mouse-enter` is
-  // deliberately not a trigger: the pointer crossing the menu bar puts nothing
-  // in front of anyone.
-  const recordImpressions = (): void => {
-    void menuBarContentStore.recordImpressions();
-  };
   const openObserver = new MenuBarOpenObserver(() => {
-    recordImpressions();
     const content = menuBarContentStore.content();
     void telemetryReporter?.menuBarOpened({
       signedIn: Boolean(inMemoryAuthSet),
-      suggestionCount: Math.min(content.suggestions.length, 4),
-      recentCount: Math.min(content.recents.length, 5),
-      pinnedCount: Math.min(content.pinned.length, 5),
+      recentCount: Math.min(content.recents.length, MENU_BAR_RECENT_LIMIT),
+      pinnedCount: Math.min(content.pinned.length, MENU_BAR_PINNED_LIMIT),
     });
   });
   tray.on('mouse-enter', refreshContent);
@@ -3787,8 +3754,7 @@ function createMenuBarTray(): MenuBarTray {
     // Both this and `menu-will-show` observe the open. Which of the two macOS
     // raises for a status item's own menu is not something this repository can
     // check — there is no menu bar in the sandbox — and reporting nothing is
-    // the failure being avoided. The observer coalesces the pair for menu
-    // analytics, while `recordImpressions` separately keys on the suggestion set.
+    // the failure being avoided. The observer coalesces the pair into one event.
     openObserver.opened();
   });
   return {

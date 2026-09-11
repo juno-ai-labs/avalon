@@ -8,9 +8,6 @@ function noopActions(): MenuBarActions {
   return {
     selected: vi.fn(),
     newMeetingNote: vi.fn(),
-    newWorkstream: vi.fn(),
-    newAutomation: vi.fn(),
-    startSuggestion: vi.fn(),
     openWorkstream: vi.fn(),
     openRally: vi.fn(),
     quit: vi.fn(),
@@ -44,7 +41,6 @@ function harness(options: {
     content: () => options.content ?? emptyMenuBarContent,
     signedIn: () => true,
     meetingRecordingAvailable: () => true,
-    suggestedWorkAvailable: () => true,
     sectionHeaders: true,
     actions: noopActions(),
     readSettings: () => Promise.resolve(settings),
@@ -176,7 +172,6 @@ describe('menu bar controller', () => {
       content: () => emptyMenuBarContent,
       signedIn: () => true,
       meetingRecordingAvailable: () => true,
-      suggestedWorkAvailable: () => true,
       sectionHeaders: true,
       actions: noopActions(),
       readSettings: () => Promise.reject(new Error('EACCES: permission denied')),
@@ -198,8 +193,7 @@ describe('menu bar controller', () => {
   it('rebuilds the drop-down from whatever is currently cached', async () => {
     const subject = harness({
       content: {
-        suggestions: [],
-        recents: [{ id: 'a', title: 'Acme renewal' }],
+        recents: [{ id: 'a', title: 'Acme renewal', lastActivityAt: new Date().toISOString() }],
         pinned: [],
       },
     });
