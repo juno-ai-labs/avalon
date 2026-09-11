@@ -974,14 +974,17 @@ describe('conversationActivityRow', () => {
   };
 
   it('prefers compaction over the elapsed total, and only for a live run', () => {
-    expect(conversationActivityRow({ ...running, compactingThisRun: true })).toBe('compacting');
-    expect(conversationActivityRow(running)).toBe('timing');
+    expect(conversationActivityRow({ ...running, compactingThisRun: true }))
+      .toEqual({ kind: 'compacting' });
+    // The answer carries the props it was decided from, so the call site has
+    // nothing left to assert back.
+    expect(conversationActivityRow(running)).toEqual({ kind: 'timing', timing: running.runTiming });
     expect(conversationActivityRow({
       ...running,
       status: 'completed',
       compactingThisRun: true,
       runTiming: { active: false, durationMs: 83_000 },
-    })).toBe('timing');
+    })).toEqual({ kind: 'timing', timing: { active: false, durationMs: 83_000 } });
   });
 
   it('leaves the elapsed total to the feed once the ordered transcript draws it', () => {
