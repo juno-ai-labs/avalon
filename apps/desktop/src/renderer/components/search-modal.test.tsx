@@ -39,9 +39,11 @@ function setup(search: React.ComponentProps<typeof SearchModal>['search']) {
   const onSelect = vi.fn();
   const onOpenChange = vi.fn();
   const client = new QueryClient();
-  render(<QueryClientProvider client={client}><SearchModal workspaceId="workspace:user"
-    open onOpenChange={onOpenChange} onSelect={onSelect} search={search} /></QueryClientProvider>);
-  return { onSelect, onOpenChange, client };
+  const tree = (open: boolean) => <QueryClientProvider client={client}><SearchModal workspaceId="workspace:user"
+    open={open} onOpenChange={onOpenChange} onSelect={onSelect} search={search} /></QueryClientProvider>;
+  const view = render(tree(true));
+  // RTL wraps `rerender` in `act`, so opening and closing settles like a click.
+  return { onSelect, onOpenChange, client, setOpen: (open: boolean) => { view.rerender(tree(open)); } };
 }
 describe('workspace search modal', () => {
   afterEach(() => { focusManager.setFocused(undefined); });
@@ -204,6 +206,36 @@ describe('workspace search modal', () => {
     await screen.findByText('Search could not be completed. Please try again.');
     expect(screen.queryByText('No results')).not.toBeInTheDocument();
   });
+  it('repaints a reopened search from the last pages instead of asking again', async () => {
+    const search = vi.fn(async () => ({ results: [result] }));
+    const { setOpen } = setup(search);
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
+    await screen.findByRole('option');
+    expect(search).toHaveBeenCalledTimes(1);
+    setOpen(false);
+    setOpen(true);
+    // The rows are there without a request, so nothing readmitted them.
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(search).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks again for a search reopened after the cache window', async () => {
+    const search = vi.fn(async () => ({ results: [result] }));
+    const { setOpen } = setup(search);
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
+    await screen.findByRole('option');
+    setOpen(false);
+    // Only the clock the window is measured against moves; the debounce, the
+    // query's own timers and this file's waits stay real.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.now() + 30_001);
+      setOpen(true);
+      await waitFor(() => expect(search).toHaveBeenCalledTimes(2));
+    } finally { vi.useRealTimers(); }
+    expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'all', pageSize: 7 }, expect.any(AbortSignal));
+  });
+
   it('hides previously authorized results when revalidation fails', async () => {
     const search = vi.fn().mockResolvedValueOnce({ results: [result] }).mockRejectedValue(new Error('access changed'));
     const { client } = setup(search);
