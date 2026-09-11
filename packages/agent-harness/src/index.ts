@@ -2963,7 +2963,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
         query: {
           type: "string",
           minLength: 1,
-          description: "What the resource is, in plain words, for example `the design channel` or `acme/site`. It searches the resources this workspace's connections expose; the result carries each one's canonical id, source plugin, and how it binds.",
+          description: "What the resource is, in plain words, for example `the design channel` or `acme/site`. Only resource types some activity trigger can actually bind to are offered, so a thing a connection exposes but no trigger can watch is absent from the result rather than refused later; the result carries each one's canonical id, source plugin, and how it binds.",
         },
       },
       required: ["query"],
