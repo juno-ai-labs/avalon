@@ -17,6 +17,29 @@ const TABS: Array<{ id: SearchCategory; label: string }> = [
 // The 360px body minus 16px padding, divided by a 52px two-line row plus 2px
 // gap. The list is the whole body until a pagination footer takes part of it.
 const SEARCH_VISIBLE_PAGE_SIZE = Math.ceil((360 - 16) / (52 + 2));
+/**
+ * How long a settled query's pages are reused before the Worker is asked
+ * again: 30 seconds, set by the team on 2026-09-11.
+ *
+ * The repeats this catches are the ones a reader makes without meaning to —
+ * backspacing over a term and typing it back, moving across the tabs and
+ * returning to All, closing the modal and reopening it on the same words. Each
+ * of those was a fresh Turbopuffer page and a fresh projection read for a list
+ * the reader had just been looking at.
+ *
+ * What it costs is the freshness of an already-shown result. A search is
+ * authorized per candidate through the projected decision, so a page served
+ * from here is one nobody re-admitted: for up to 30 seconds a reader can be
+ * shown an excerpt from a conversation whose access was revoked in between, and
+ * the route's post-search membership check does not run either. Acting on the
+ * row is still admitted at that moment — opening a message hydrates its
+ * canonical transcript and a file goes through `/search/resources/:id/preview`,
+ * both of which re-check — so the window exposes the excerpt already on screen,
+ * not the content behind it. A new term, a signed-out session
+ * (`queryClient.clear()`) and a different workspace or member (this component
+ * is keyed by both) all leave the window rather than extend it.
+ */
+const SEARCH_RESULT_CACHE_MS = 30_000;
 const ICONS = { messages: MessageSquare, links: Link, artifacts: Shapes, files: File };
 
 interface SearchModalProps {
@@ -102,9 +125,12 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
       return page;
     },
     enabled: open && settledQuery.length > 0 && settledQuery === normalized,
-    // A search result must be reauthorized when this modal opens again.
-    staleTime: 0,
-    gcTime: 0,
+    // Reopening on the same words repaints the last pages rather than
+    // reauthorizing them; after the window one keystroke's worth of results is
+    // read again. `gcTime` matches so the pages a changed term left behind are
+    // still there when the reader backspaces onto them.
+    staleTime: SEARCH_RESULT_CACHE_MS,
+    gcTime: SEARCH_RESULT_CACHE_MS,
     retry: false,
     // Focus changes must not restart candidate pages while the reader is choosing.
     refetchOnWindowFocus: false,
