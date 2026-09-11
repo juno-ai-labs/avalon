@@ -1931,7 +1931,7 @@ export function Sidebar({
               accessibility tree and the tab order by attribute at once
               rather than when the fade ends, or the rail would offer two New
               work stream links for a quarter of a second. */}
-          <Tip label={NEW_STREAM_LABEL} side="bottom">
+          <Tip describesTrigger={false} label={NEW_STREAM_LABEL} side="bottom">
             <NavLink
               aria-hidden={compact}
               aria-label={NEW_STREAM_LABEL}
@@ -1960,7 +1960,7 @@ export function Sidebar({
             // `Tip` renders no element of its own, so the row the motion planner
             // keys on is still this link itself; the tip hangs off the rail's
             // right rather than below, where the row under it would be covered.
-            <Tip label={NEW_STREAM_LABEL} side="right">
+            <Tip describesTrigger={false} label={NEW_STREAM_LABEL} side="right">
               <NavLink
                 aria-label={NEW_STREAM_LABEL}
                 className={clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', onNewStreamRoute && 'is-active')}

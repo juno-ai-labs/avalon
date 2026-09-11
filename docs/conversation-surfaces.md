@@ -473,9 +473,10 @@ the tooltip covers the pane instead of the row under it. Both read
 `NEW_STREAM_LABEL`, one module constant that is also their `aria-label`, and it
 is **New work stream** in every shell. The GrokBot shell's draft row on that
 route, which stood in for the same control while it is open, reads the same
-constant instead of its own **New chat**. Both links now state `className` as a
-string, from a `location.pathname` comparison the `returnTo` state was already
-making, instead of `NavLink`'s callback form.
+constant instead of its own **New chat**. Both tips are
+`describesTrigger={false}`, since that name and the tip are the same words. Both
+links now state `className` as a string, from a `location.pathname` comparison
+the `returnTo` state was already making, instead of `NavLink`'s callback form.
 
 **Why:** The plus is the whole control — an icon with no words beside it, in the
 one place a pointer looks first — and the only thing naming it was an
@@ -498,13 +499,12 @@ container it means.
 `className` into the trigger's, so a `NavLink` whose `className` is a callback
 reaches the DOM as that callback's *source text* and the link renders unstyled —
 the failure is silent, it survives typecheck and a DOM assertion, and only a real
-window shows it. The 2026-09-10 `Tip` entry below answered that with "needs a
-plain wrapper". A wrapper is not the only answer and was not the right one here:
-the rail's plus is a `data-motion-key` row, and an element between it and the
-command bar would hide it from the list-motion planner. Resolving the active
-state in the component and handing `Tip` a plain string keeps the trigger the
-link itself. Prefer that; reach for a wrapper only where nothing reads the DOM
-shape.
+window shows it. `Tip`'s own comment said a child like that "needs a plain
+wrapper"; it now says what this change found instead, because a wrapper was not
+the right answer here: the rail's plus is a `data-motion-key` row, and an element
+between it and the command bar would hide it from the list-motion planner.
+Resolving the class to a string at the call site keeps the trigger the link
+itself. Prefer that; reach for a wrapper only where nothing reads the DOM shape.
 
 ### 2026-09-10 — One identity line, painted once rather than once per speaker
 
