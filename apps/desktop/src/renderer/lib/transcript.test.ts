@@ -44,6 +44,41 @@ const base = {
 };
 
 describe('transcript messages', () => {
+  it.each([false, true])('keeps custom MCP identity through transcript projection (activity fallback=%s)', (fallback) => {
+    const turn = {
+      transcriptSequence: 1, turnId: 'turn-custom', entryKind: 'conversation' as const,
+      actor: 'assistant' as const, authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
+      createdAtUtc: base.createdAt, revision: 1, blocks: [], activityId: 'turn-activity',
+    };
+    const runs = ['connection:custom', 'connection:other', 'connection:slack'].map((pluginId, index) => ({
+      pluginRunId: `activity-${index}`, turnId: turn.turnId, pluginId, displayName: 'Slack',
+      connectorType: index < 2 ? 'custom_mcp' : 'slack', state: 'completed' as const,
+      durationMs: 1000, elapsedMsAtSnapshot: null, timingAccuracy: 'observed' as const, toolCallIds: [],
+    }));
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'custom', snapshotThrough: 1, eventSequence: 1, snapshotAtUtc: base.createdAt,
+      unreadAnchorSequence: null, unreadReason: 'no_unread',
+      ranges: [{ purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 }, turns: [turn], activities: [], pluginRuns: [] }],
+      pluginRuns: fallback ? [] : runs,
+      activities: fallback ? [{ activityId: 'turn-activity', parentActivityId: null, scope: 'assistant_turn',
+        subjectId: turn.turnId, callIndex: null, label: 'Working', state: 'completed', intervals: [], revision: 1 },
+        ...runs.map((run) => ({ activityId: run.pluginRunId, parentActivityId: 'turn-activity', scope: 'plugin' as const,
+          subjectId: run.pluginId, callIndex: 0, label: run.displayName, connectorType: run.connectorType,
+          state: run.state, intervals: [], revision: 1 }))] : [],
+      activeActivities: [], activeTurns: [], pendingInputs: [],
+    };
+    const messages = orderedTranscriptMessages(snapshot, 'workstream-one');
+    const grouped = groupPluginToolMessages(messages).filter((message) => message.pluginActivity);
+    expect(grouped).toHaveLength(3);
+    expect(grouped.map((message) => message.pluginActivity?.icon)).toEqual(['plug', 'plug', 'slack']);
+    const live = createToolEventMessage({ ...base, id: 'live', toolEvent: {
+      id: 'live', name: 'search', status: 'started', pluginId: 'plugin_custom_mcp',
+      plugin: { pluginId: 'plugin_custom_mcp', canonicalId: 'connection:custom', connectorType: 'custom_mcp', displayName: 'Slack', icon: 'plug' },
+    } });
+    expect(groupPluginToolMessages([...messages, live]).filter((message) => message.pluginActivity)).toHaveLength(3);
+  });
+
   it('keeps an oversized turn in sequence as a visible placeholder', () => {
     const envelope = {
       transcriptSequence: 1,

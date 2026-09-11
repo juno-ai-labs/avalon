@@ -135,12 +135,13 @@ can see what is being held back rather than watching it disappear.
   request with `redirect: "manual"` and treats a 3xx as an answer, so a server
   cannot have Rally re-send a bearer token or a configured header to another
   host by answering with a `Location`.
-- **The configured name identifies the plugin.** Live runs and automation
-  catalogs use the connection's saved display name, with control and direction
-  characters removed, falling back to `Custom MCP server` when empty. Activity
-  rows therefore say “Using Engineering” for a server named Engineering.
-  Descriptions, search aliases, and system messages remain code-authored;
-  the configured label supplies no instructions.
+- **The configured name identifies participant activity only.** Live runs use
+  the saved name after removing control and formatting characters, falling back
+  to `Custom MCP server` when empty. `HarnessPlugin.activityDisplayName` is
+  separate from the static model-facing `displayName`, descriptions, aliases,
+  and system messages. Automation catalogs also retain the static model name.
+  Transcript activities carry `connectorType` independently so a custom server
+  named Slack keeps a plug icon and a connection-specific row.
 
 ## Boundary
 
@@ -235,6 +236,9 @@ the endpoint and the header are one decision and are captured together.
 
 ## Open questions
 
+- **Model discovery still uses generic custom MCP names.** Configured names
+  are participant metadata, not trusted catalog text. Making them searchable
+  needs a separately framed untrusted-data surface.
 - **Editing a connection is add-and-remove.** There is no route to change an
   endpoint, replace headers, or rename a server; a change means a new connection
   and deleting the old one.

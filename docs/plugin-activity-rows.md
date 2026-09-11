@@ -45,7 +45,7 @@ The canonical ordered transcript
 row's material in one field:
 
 - **`snapshot.pluginRuns`** states, per plugin per assistant turn, its
-  `pluginRunId`, `turnId`, `pluginId`, `displayName`, `state`, `durationMs`,
+  `pluginRunId`, `turnId`, `pluginId`, `displayName`, optional `connectorType`, `state`, `durationMs`,
   `timingAccuracy`, and the `toolCallIds` it placed. A client joins a tool block
   to its run on `toolCallIds` and renders what it is told. `durationMs` is
   **nullable**, and null means the timing is unknown rather than zero.
@@ -151,7 +151,13 @@ undecided one appears, since the transcript falls back to the raw id as its
 label — joins Rally, so an internal identifier never reaches the feed. Every
 other plugin keeps its own row.
 
-A connector's row is keyed on its **display name**, not its id. Two connections
+Custom MCP activity carries its host-authored `connectorType` independently
+of the configured label. It groups by canonical connection id and always draws
+a plug, even when the configured name matches a shipped provider. Live tool
+metadata carries the same canonical id and type; older transcripts omit the
+new fields and retain their previous presentation.
+
+A shipped connector's row is keyed on its **display name**, not its id. Two connections
 to the same service are one place as far as a reader is concerned, and the name
 is also the only key the live pre-canonical row and the canonical block that
 replaces it can both produce: they identify the same plugin by different ids
@@ -160,7 +166,8 @@ replaces it can both produce: they identify the same plugin by different ids
 The glyph comes from the display name too. The canonical transcript identifies a
 connector only by connection id, and the icon the backend does resolve travels on
 the live tool-invocation row alone, so the name is the one signal available on
-both paths. It is a manifest string, not user input. Every connector Rally has an
+both paths. For shipped connectors it is a manifest string; custom MCP labels use the
+explicit type path above. Every connector Rally has an
 adapter for is named in that mapping; the generic plug is for one that arrives
 before the mapping learns about it.
 
@@ -637,6 +644,18 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-09-11 — Separate configured activity names from trusted plugin identity
+
+Custom MCP rows now use the saved server name with a connection-specific group
+and plug icon. The host keeps participant labels separate from model catalog
+names, and SubstreamAgent migration 54 preserves connector type on activity
+rows through snapshots, ranges, and realtime updates. Inferring identity from a
+configured name was rejected because a server named Slack would inherit Slack's
+branding and merge into its activity. Putting that label in the trusted model
+name was rejected because the name also reaches system-prompt headings. Future
+presentation changes must preserve both boundaries.
+
 
 ### 2026-09-10 — The Sidekicks plugin's canonical id is `rally:sidekicks`
 
