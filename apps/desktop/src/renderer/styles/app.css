@@ -317,6 +317,13 @@ pre {
    discovered, and would make this the only tooltip with a type scale. */
 .tooltip-hint { display: grid; gap: 1px; justify-items: start; }
 .tooltip-hint > small { font-size: inherit; opacity: .72; }
+/* A hexagon's state marker explains itself in a sentence, and a sentence set on
+   one line is half the window wide: unwrapped it reaches out of the sidebar and
+   across the conversation. Capped a little under the timer tooltip's 260px,
+   because this one hangs off a mark inside a 80px tile rather than a row the
+   width of the sidebar, and a tip much wider than what it points at reads as
+   belonging to something else. */
+.hexagon-marker-tooltip { max-width: 220px; }
 
 @keyframes tooltip-in {
   from { opacity: 0; transform: translateY(-2px); }

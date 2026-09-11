@@ -1,5 +1,6 @@
-import { render } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import * as Tooltip from '@radix-ui/react-tooltip';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PROJECT_COLOR_RING, type WorkstreamAppearance } from '@rally/contracts';
 import { glyphInk } from '../lib/project-palette';
 import { Plus } from 'lucide-react';
@@ -136,7 +137,28 @@ describe('HexagonGlyph', () => {
   });
 });
 
+/**
+ * A marker explains itself in a tooltip, and Radix refuses one outside a
+ * provider. The app mounts one at its root; a test rendering a hexagon on its
+ * own supplies the same thing rather than the marker carrying a provider of its
+ * own, which would be a second one inside every window.
+ */
+function renderGlyph(ui: React.ReactNode): ReturnType<typeof render> {
+  return render(<Tooltip.Provider>{ui}</Tooltip.Provider>);
+}
+
+/** Radix positions a tooltip with a `ResizeObserver`, which jsdom does not have. */
+function stubResizeObserver(): void {
+  vi.stubGlobal('ResizeObserver', class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  });
+}
+
 describe('HexagonGlyph markers', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it('cuts the marker out of the fill it sits on rather than painting over it', () => {
     // `launch-room` draws `lime`, and the running marker is `success-base`. Two
     // greens: painted straight onto the fill the play would be a shape only its
@@ -144,7 +166,7 @@ describe('HexagonGlyph markers', () => {
     // no edge at all. The knockout is what makes the separation independent of
     // which of the fifteen fills this Sidekick happens to have, so the hexagon
     // being masked *by the marker* is the behaviour, not decoration.
-    const { container } = render(<AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />);
+    const { container } = renderGlyph(<AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />);
     const shape = container.querySelector('.automation-glyph-shape');
     const mask = container.querySelector('mask');
 
@@ -167,7 +189,7 @@ describe('HexagonGlyph markers', () => {
   });
 
   it('paints the marker in its own colour, over the hole and not stroked', () => {
-    const { container } = render(<AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />);
+    const { container } = renderGlyph(<AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />);
     const marker = container.querySelector('.automation-glyph-marker');
 
     expect(marker).toHaveClass('lucide-play');
@@ -183,7 +205,7 @@ describe('HexagonGlyph markers', () => {
   it('gives every hexagon on the page its own mask, because SVG ids are document-global', () => {
     // One id shared by the strip's tiles would point all of them at the first
     // Sidekick's mask. It would look right until a second marker differed.
-    const { container } = render(<div>
+    const { container } = renderGlyph(<div>
       <AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />
       <AutomationGlyph id="another-room" marker={SIDEKICK_RUNNING_MARKER} />
     </div>);
@@ -196,14 +218,49 @@ describe('HexagonGlyph markers', () => {
       .toEqual(ids.map((id) => `url(#${id})`));
   });
 
+  it('says what the symbol stands for when a pointer rests on it', async () => {
+    stubResizeObserver();
+    const { container } = renderGlyph(<AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />);
+    const marker = container.querySelector('.automation-glyph-marker');
+
+    fireEvent.pointerMove(marker!.parentElement!, { pointerType: 'mouse' });
+
+    // A play is the one mark in this window that says something other than what
+    // it looks like: it is drawn on every active Sidekick, including the ones
+    // sitting idle between triggers, so "running" is exactly the reading the
+    // sentence has to correct.
+    expect(await screen.findByRole('tooltip'))
+      .toHaveTextContent('Active — in service and waiting on its triggers.');
+  });
+
+  it('takes the pointer on the whole marker box rather than on the play inside it', () => {
+    const { container } = renderGlyph(<AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />);
+    const marker = container.querySelector('.automation-glyph-marker');
+    const target = marker!.parentElement!.querySelector('rect');
+
+    // SVG hit-tests what is painted, and the play is about 7px across at the
+    // rail's 36px — a target a pointer crosses rather than rests on. The rect
+    // is measured against the marker itself rather than against numbers copied
+    // from the component, so moving the marker moves its hover target with it.
+    expect(target).toHaveAttribute('x', marker!.getAttribute('x'));
+    expect(target).toHaveAttribute('y', marker!.getAttribute('y'));
+    expect(target).toHaveAttribute('width', marker!.getAttribute('width'));
+    expect(target).toHaveAttribute('height', marker!.getAttribute('height'));
+    // Transparent rather than `none`: `visiblePainted` ignores a shape with no
+    // fill, so `fill="none"` would leave the box invisible to the pointer too.
+    expect(target).toHaveAttribute('fill', 'transparent');
+  });
+
   it('leaves the fill whole where there is no state to mark', () => {
     // The new-Sidekick slot and the library's rows draw the same hexagon with no
     // lifecycle behind it; a mask with nothing cut out of it is a hole waiting
     // to be one.
-    const { container } = render(<HexagonGlyph fill="none" ink="var(--av-sys-color-text-muted)" symbol={Plus} />);
+    const { container } = renderGlyph(<HexagonGlyph fill="none" ink="var(--av-sys-color-text-muted)" symbol={Plus} />);
 
     expect(container.querySelector('mask')).toBeNull();
     expect(container.querySelector('.automation-glyph-shape')).not.toHaveAttribute('mask');
     expect(container.querySelector('.automation-glyph-marker')).toBeNull();
+    // And no hover target either: there is no state here to explain.
+    expect(container.querySelector('rect')).toBeNull();
   });
 });
