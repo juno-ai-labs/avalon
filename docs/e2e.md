@@ -769,14 +769,25 @@ pointer-only by design — it is a badge inside the row's link, and giving it a
 tab stop would add one to every public row. Tab to a private row and confirm its
 card carries no scope line at all.
 
-Switch applications and come back, which no sandbox can stand in for: leave the
-pointer resting over a work-stream row, click a different row first so the
-window has a focused row to hand back, then Command-Tab away and Command-Tab in.
+Switch applications and come back, which no sandbox can stand in for.
+
+**Establish first that the switch reaches the window at all**, because a guard
+that never arms and a guard that works look identical from the outside — both
+draw no card. In the renderer's console, `addEventListener` for `blur` and
+`focus` on `window`, Command-Tab away and back, and confirm both arrive. If they
+do not, nothing below is evidence of anything, and the fix needs the main
+process's own `browser-window-blur`/`browser-window-focus` instead; say so
+rather than reporting the checks below as passing.
+
+Then: leave the pointer resting over a work-stream row, click a different row
+first so the window has a focused row to hand back, and Command-Tab away and in.
 No preview card and no tooltip may appear — not for the row under the cursor,
 and not for the row that holds focus — until the pointer actually moves or a key
 goes down. Move the pointer a little without leaving the row and confirm the
 card the switch withheld opens then. Repeat with a card already open when you
 switch away, and confirm it is gone rather than waiting there on your return.
+Repeat once more with a resize handle's drag hint, which is the one tooltip
+whose open state its caller holds rather than `Tip`.
 
 When a narrow window forces navigation into compact mode, its Expand control
 is disabled and double-clicking the edge must preserve the saved expanded

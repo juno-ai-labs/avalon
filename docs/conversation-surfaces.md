@@ -472,11 +472,13 @@ prove layout, focus, scroll position, or overlap.
 
 ### 2026-09-11 — Coming back to Rally is neither a hover nor a focus
 
-**What changed:** The surfaces that open something on hover or focus now ask
-whether the person has touched this window since it was last brought to the
-front, and stay shut when the answer is no. The work-stream row's preview card
-and every `Tip` ask it. Both also take themselves down when the window goes to
-the back, instead of waiting there for the return.
+**What changed:** Two surfaces now ask whether the person has touched this
+window since it was last brought to the front, and stay shut when the answer is
+no: the shared `Tip`, and the work-stream row's preview card. Both also take
+themselves down when the window goes to the back, instead of waiting there for
+the return. The eight files that still assemble Radix's five tooltip parts by
+hand ask nothing and still open on an app switch — the migration onto `Tip`
+noted above is what finishes this, and is the reason to finish it.
 
 **Why:** Command-Tab back into Rally raised two preview cards over the
 conversation the person had switched back to read — one for the work stream they
@@ -608,7 +610,6 @@ is a two-track grid whose second track *is* the rail's plus, and the titlebar's
 fade is written `.sidebar-titlebar > .sidebar-new-button`. Resolving the class
 to a string at the call site keeps the trigger the link itself. Prefer that;
 reach for a wrapper only where nothing lays the child out directly.
-
 
 ### 2026-09-10 — One identity line, painted once rather than once per speaker
 

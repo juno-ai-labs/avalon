@@ -36,6 +36,17 @@ describe('window activation', () => {
     expect(hasUserInputSinceWindowActivation()).toBe(false);
   });
 
+  it('closes on the way out, so the order of the return cannot matter', () => {
+    track();
+
+    // The window leaving is what arms the guard, which is why nothing in the
+    // module depends on whether the restored element focus arrives before or
+    // after the window's own `focus`: the flag has been up since it left.
+    fireEvent.blur(window);
+
+    expect(hasUserInputSinceWindowActivation()).toBe(false);
+  });
+
   it('holds a pointer that the window arrived under to be a pointer that has not moved', () => {
     track();
     switchAwayAndBack();
