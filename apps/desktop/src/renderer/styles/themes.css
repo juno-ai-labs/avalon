@@ -465,7 +465,10 @@
    * also why the inverted controls in `app.css` take their resting fill from
    * `sys.color.text.default`. Adding that sibling would give this and those
    * four rules one pair to share; until it exists, prefer the ramp step over
-   * borrowing a state token for its value. */
+   * borrowing a state token for its value. `HUELESS_SURFACES` in
+   * `scripts/build-theme-assets.test.mjs` holds these two to no hue in either
+   * appearance; the partition guard beside it never could, because it compares
+   * raw JSON text. */
   --av-cmp-tooltip-background: var(--av-ref-color-neutral-13);
   --av-cmp-tooltip-foreground: var(--av-sys-color-text-on-inverse);
 
