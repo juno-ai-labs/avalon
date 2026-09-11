@@ -68,6 +68,7 @@ vi.mock('../lib/use-transcript-follow', () => ({
 
 import { patchCachedWorkstreamAppearance, setCachedWorkstreams } from '../lib/workstreams-cache';
 import { workstreamFeedSourceQueryKey } from '../lib/telemetry';
+import { substreamInitialContextQueryKey } from '../lib/use-workstream-socket';
 import { WorkstreamScreen } from './workstream';
 import type { WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 
@@ -503,6 +504,64 @@ describe('socket-first work-stream open', () => {
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'What should this substream work on?' }))
       .toHaveValue('Look at the invoice'));
     expect(api.confirmSubstream).not.toHaveBeenCalled();
+  });
+
+  it('holds the substream initial-context entry in the cache, which nothing renders', async () => {
+    // The entry is written by the socket and read by `sendReady` and the
+    // local-cache mirror, by key and never through a component. This observer
+    // is the only thing keeping it: React Query collects an entry five minutes
+    // after its last observer goes, and the two readers would then start
+    // finding nothing — a substream that had been open a while would quietly
+    // stop being able to send. Nothing on screen would show that, and the
+    // surface's own comment is not enforcement, so this is.
+    const childId = '00000000-0000-7000-8000-00000000066c';
+    const child = recoveryBoot({ title: 'Private child' });
+    const client = renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], recoveryBoot());
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+    }, childId);
+
+    await screen.findByRole('heading', { name: 'Private child' });
+    expect(client.getQueryCache()
+      .find({ queryKey: substreamInitialContextQueryKey(workstreamId, childId) })
+      ?.getObserversCount()).toBeGreaterThan(0);
+  });
+
+  it('draws the open substream under its own name, not the one its parent still has for it', async () => {
+    const childId = '00000000-0000-7000-8000-00000000066a';
+    const sibling = '00000000-0000-7000-8000-00000000066b';
+    const provisional = 'Generate new github pr header artifacts for the dashboard';
+    const parent = recoveryBoot({ title: 'Investigate ENG-142' });
+    // What the naming pass settled on, which the child's own room and its
+    // snapshot both state, and which the header renders.
+    const child = recoveryBoot({ title: 'New github pr header' });
+    const client = renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+      // The parent's directory, mid-projection: its copy of both children is
+      // still the line each was created from. The rail is drawn from this.
+      cache.setQueryData(['workstream-children', workstreamId], {
+        privateChildren: [
+          { substreamId: childId, title: provisional, createdByUserId: null, createdAt: '2026-08-26T14:00:00.000Z', updatedAt: '2026-08-26T14:00:00.000Z' },
+          { substreamId: sibling, title: 'Draft the launch note', createdByUserId: null, createdAt: '2026-08-26T14:00:00.000Z', updatedAt: '2026-08-26T14:00:00.000Z' },
+        ],
+      });
+    }, childId);
+
+    expect(await screen.findByRole('heading', { name: 'New github pr header' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Go to substream: New github pr header' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: `Go to substream: ${provisional}` })).not.toBeInTheDocument();
+    // The row beside it is the parent's to state: nothing in this window is
+    // subscribed to a substream it is not showing, so the directory is still
+    // the best answer there is for it.
+    expect(screen.getByRole('button', { name: 'Go to substream: Draft the launch note' })).toBeInTheDocument();
+    // And it follows the child, so a rename arriving while it is open moves the
+    // row and the header in the same frame.
+    act(() => client.setQueryData(['substream-workstream', workstreamId, childId], { ...child, title: 'Renamed while open' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Go to substream: Renamed while open' })).toBeInTheDocument());
+    expect(screen.getByRole('heading', { name: 'Renamed while open' })).toBeInTheDocument();
   });
 
   it('keeps parent participants in the sidebar while the title bar manages the selected conversation', async () => {
