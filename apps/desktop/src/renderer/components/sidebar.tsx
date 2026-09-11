@@ -434,7 +434,20 @@ function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
  * "Active" — dead markup, because `aria-label` on the button replaces its
  * contents in the accessible name, and the label already said it.
  */
-function SidekickStripTile({ glyph, label, name, onClick, tip, tipSuppressed = false }: {
+/**
+ * What the tile's one tooltip says, and where. A tile has one tooltip slot and
+ * more than one thing under the pointer, so the slot's whole answer travels as
+ * a unit rather than as three props that could disagree.
+ */
+interface SidekickTileTip {
+  label: React.ReactNode;
+  /** Away from whatever the pointer is on, which differs per answer. */
+  side: 'top' | 'bottom';
+  /** A modifier beside `.tooltip`, for an answer the base width does not fit. */
+  className?: string | undefined;
+}
+
+function SidekickStripTile({ glyph, label, name, onClick, tip }: {
   glyph: React.ReactNode;
   /**
    * What the tile is called to a screen reader, which the caption cannot be: it
@@ -448,39 +461,25 @@ function SidekickStripTile({ glyph, label, name, onClick, tip, tipSuppressed = f
    * What a pointer resting on the tile is told, which is the caption's job
    * everywhere the caption can do it — and it cannot here: the strip ellipsizes
    * a name at 80px and the rail drops it outright.
+   *
+   * One `Tip` for the whole tile, whichever part of it the pointer is on. A
+   * second Radix root nested inside this one's trigger — the obvious way to
+   * hang an explanation off the glyph's lifecycle marker — cannot share the
+   * slot: a root dispatches a global "close everything else" when it decides to
+   * open, so nested roots resolve to whichever decided last rather than to the
+   * one being pointed at, and a caller that vetoes the outer root gets nothing
+   * at all. One root cannot race itself.
    */
-  tip: React.ReactNode;
-  /**
-   * True while something inside the tile is answering for itself — today the
-   * glyph's lifecycle marker. The tile then has nothing to add over the top of
-   * it; see the veto below.
-   */
-  tipSuppressed?: boolean;
+  tip: SidekickTileTip;
 }): React.JSX.Element {
-  // Radix still decides *when* this opens — the delay, the hover and the focus
-  // are all its own — and this only takes a veto over the answer, the way
-  // `DragHint` takes one from a drag. It is the half of "the marker keeps the
-  // pointer" that a stopped `pointermove` cannot do: a pointer that crosses the
-  // tile on its way to the marker starts this tooltip's delay before the marker
-  // is reached, and Radix cancels a pending open only on a `pointerleave` the
-  // tile never gets, because the marker is inside it. Left alone the name opens
-  // after the marker's sentence and replaces it.
-  //
-  // Corrected during the render rather than in an effect, again as `DragHint`
-  // does: the two land in the same batch, and a tooltip that commits to the
-  // screen for one frame is the whole defect.
-  const [open, setOpen] = useState(false);
-  if (open && tipSuppressed) setOpen(false);
   return (
     <div className="sidebar-context-target">
-      {/*
-        Upward, where the artifact rail opens its rows to the right. The
-        neighbour a rail row has is below it and the neighbour a strip tile has
-        is beside it, so the side that covers something other than the next
-        Sidekick is the opposite one; above the strip is the work-stream list,
-        which is not what a reader comparing tiles wants to see.
-      */}
-      <Tip label={tip} onOpenChange={setOpen} open={open} side="top">
+      <Tip
+        {...(tip.className ? { className: tip.className } : {})}
+        collisionPadding={8}
+        label={tip.label}
+        side={tip.side}
+      >
         <button
           className="sidebar-row automation-row automation-tile"
           aria-label={label}
@@ -497,9 +496,10 @@ function SidekickStripTile({ glyph, label, name, onClick, tip, tipSuppressed = f
 
 function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.Element {
   const scopeDescription = sidekick.scope === 'workspace' ? ' · Workspace' : '';
-  // Where the pointer is inside the tile, which only the hexagon can say: the
-  // play is drawn in its viewBox rather than positioned by this rail, so there
-  // is no element here whose own pointer events would describe it.
+  // Which part of the tile the pointer is on, which only the hexagon can say:
+  // the play is drawn in its viewBox so it scales with the tile, rather than
+  // positioned by this rail, so there is no element here whose own pointer
+  // events would describe it.
   const [markerHovered, setMarkerHovered] = useState(false);
   return (
     <SidekickStripTile
@@ -507,15 +507,20 @@ function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.
       label={`${sidekick.name}, Active${scopeDescription}`}
       name={sidekick.name}
       onClick={() => void desktopBridge().openSidekicks(sidekick.id)}
-      // Which Sidekick, not what state it is in. Every tile in this strip is
-      // active, so a tooltip that said so on each of them would spend its one
-      // line on the one fact they share; the play in the corner reports it, and
-      // resting on the play spells it out. Naming it here as well would print
-      // the same word twice a centimetre apart whenever somebody points at the
-      // marker, which is what the public badge beside these rows settled.
-      // The state still reaches assistive technology, through `label`.
-      tip={`${sidekick.name}${scopeDescription}`}
-      tipSuppressed={markerHovered}
+      // The tile's line is which Sidekick, not what state it is in: every tile
+      // in this strip is active, so naming the state on each of them would spend
+      // the one line on the one fact they share. The play in the corner reports
+      // it, and pointing at the play is what spells it out — in this same slot,
+      // below the tile rather than above it, because that is the corner it is
+      // answering for. A screen reader gets the state from `label` either way.
+      //
+      // Swapped rather than delayed a second time: moving onto the play while
+      // the name is up changes the answer at once, and moving back changes it
+      // back. That is what one root buys over two — no second delay, no gap,
+      // and no ordering to get right.
+      tip={markerHovered
+        ? { label: SIDEKICK_RUNNING_MARKER.description, side: 'bottom', className: 'hexagon-marker-tooltip' }
+        : { label: `${sidekick.name}${scopeDescription}`, side: 'top' }}
     />
   );
 }
@@ -537,7 +542,7 @@ function NewSidekickTile(): React.JSX.Element {
       label="New Sidekick"
       name="New Sidekick"
       onClick={() => void desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET)}
-      tip="New Sidekick"
+      tip={{ label: 'New Sidekick', side: 'top' }}
     />
   );
 }

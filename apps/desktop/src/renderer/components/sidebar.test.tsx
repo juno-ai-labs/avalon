@@ -1435,38 +1435,79 @@ describe('Sidebar work-stream markers', () => {
       () => expect(screen.getByRole('tooltip')).toHaveTextContent('in service and waiting on its triggers'),
       { timeout: 5_000 },
     );
-    // And only that one. Radix closes an open tooltip when another opens, so
-    // the tile's name does not sit a centimetre from the marker's explanation
-    // while a pointer rests on the play.
+    // And only that one, because there is only one: the tile has a single
+    // tooltip slot and the pointer decides what it says.
     expect(screen.getAllByRole('tooltip')).toHaveLength(1);
   });
 
-  it('holds the tile\'s pending tooltip back when the pointer reaches the play first', () => {
-    // The path a pointer actually takes: across the tile, onto the play, inside
-    // the tile tooltip's own opening delay. Nothing has opened yet when the
-    // marker is reached, so stopping the move at the marker is not enough —
-    // the tile's timer is already running, and Radix closes an open tooltip
-    // when another opens but never cancels a pending one. Left alone, the name
-    // opens *after* the marker's sentence and replaces it, which is the tile
-    // answering for a mark the pointer is resting on.
+  /** The strip with one workspace Sidekick, and the tile that carries its play. */
+  function renderStripTile(): HTMLElement {
+    const shared = { ...automation, loadable: false, id: 'shared', name: 'Team brief', scope: 'workspace' as const };
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly automations={[shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
+    return within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' });
+  }
+
+  /** The marker's hover target: the `<g>` the hexagon wraps its play in. */
+  function playTarget(tile: HTMLElement): HTMLElement {
+    return tile.querySelector('.automation-glyph-marker')!.parentElement as HTMLElement;
+  }
+
+  it('answers for the play when the pointer reaches it inside the tile tooltip\'s own delay', () => {
+    // The path a pointer actually takes: across the tile, onto the play, before
+    // the tile's 450ms is up. Two tooltips cannot resolve this between them —
+    // a Radix root tells every other root to close the moment it *decides* to
+    // open, so the tile's pending open closed the play's explanation on its way
+    // to being refused, and the tile showed nothing at all. One root has one
+    // answer, and it is the one the pointer is on.
     vi.useFakeTimers();
     try {
-      const shared = { ...automation, loadable: false, id: 'shared', name: 'Team brief', scope: 'workspace' as const };
-      render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly automations={[shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-      const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
-      const tile = within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' });
+      const tile = renderStripTile();
 
       fireEvent.pointerMove(tile, { pointerType: 'mouse' });
-      // Short of the tile tooltip's 450ms, so its open is still pending.
+      // Short of 450ms: the tile's open is pending, and nothing is up yet.
       act(() => { vi.advanceTimersByTime(120); });
       expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
 
-      fireEvent.pointerMove(tile.querySelector('.automation-glyph-marker')!.parentElement!, { pointerType: 'mouse' });
-      // Past both delays, so a pending tile open has had every chance to land.
+      fireEvent.pointerMove(playTarget(tile), { pointerType: 'mouse' });
+      // Each advance flushes on its own, the way separate timers land in a
+      // browser. Advancing straight past both at once lets a tooltip mount
+      // after an event it should have heard, which reads as a pass for a race
+      // that is still there.
+      act(() => { vi.advanceTimersByTime(400); });
       act(() => { vi.advanceTimersByTime(2_000); });
 
       expect(screen.getAllByRole('tooltip').map((tip) => tip.textContent))
         .toEqual(['Active — in service and waiting on its triggers.']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('swaps its answer both ways as the pointer moves between the tile and its play', () => {
+    // No second delay on the way in and no gap on the way out: the slot is
+    // already open, so it re-labels rather than closing and waiting again.
+    vi.useFakeTimers();
+    try {
+      const tile = renderStripTile();
+
+      fireEvent.pointerMove(tile, { pointerType: 'mouse' });
+      act(() => { vi.advanceTimersByTime(600); });
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Team brief · Workspace');
+
+      fireEvent.pointerMove(playTarget(tile), { pointerType: 'mouse' });
+      act(() => { vi.advanceTimersByTime(50); });
+      expect(screen.getAllByRole('tooltip').map((tip) => tip.textContent))
+        .toEqual(['Active — in service and waiting on its triggers.']);
+
+      // And back, which two roots could not do: the tile's trigger opens once
+      // per pointer entry, so a tooltip it had given up would not return until
+      // the pointer left the tile and came back.
+      fireEvent.pointerLeave(playTarget(tile));
+      fireEvent.pointerMove(tile, { pointerType: 'mouse' });
+      act(() => { vi.advanceTimersByTime(50); });
+      expect(screen.getAllByRole('tooltip').map((tip) => tip.textContent))
+        .toEqual(['Team brief · Workspace']);
     } finally {
       vi.useRealTimers();
     }
