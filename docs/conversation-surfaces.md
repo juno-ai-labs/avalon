@@ -261,8 +261,8 @@ transitions on `--sidebar-layout-motion`, stated once on `.sidebar` as the
 collapse motion; a drag sets it to `0s` for the transitions it would start and
 takes the property off everything already travelling, since a running
 transition keeps the duration it began with. The rows narrow to their 36px marks
-while their titles fade under a clip, the headings close to no height, the
-group gaps and the scroll box's padding close, the titlebar's New chat fades,
+while their titles fade under a clip, the headings close to no height, the group
+gaps and the scroll box's padding close, the titlebar's New work stream fades,
 the account row keeps its avatar and closes its name, and the Sidekick tiles
 shed their captions. Nothing on screen during the toggle is `display: none` in
 the rail — hidden copy is kept in layout at zero size and faded, with
@@ -271,7 +271,7 @@ when the fade ends — and every travelling value is a number in both layouts,
 because a keyword cannot be interpolated. Search sits in a command bar between
 the titlebar and the scroll box in both layouts, a grid of two numeric tracks:
 the pill closes to a 54px square in place, and the second track opens for the
-rail's New chat row, which arrives and leaves through
+rail's New work stream row, which arrives and leaves through
 [`list-motion.md`](list-motion.md)'s insert motion. The aside carries a
 registered `--sidebar-compact` number on the same interval, drawn from by
 nothing; the component listens to the platform's transition events for it on
@@ -473,10 +473,14 @@ the tooltip covers the pane instead of the row under it. Both read
 `NEW_STREAM_LABEL`, one module constant that is also their `aria-label`, and it
 is **New work stream** in every shell. The GrokBot shell's draft row on that
 route, which stood in for the same control while it is open, reads the same
-constant instead of its own **New chat**. Both tips are
-`describesTrigger={false}`, since that name and the tip are the same words. Both
-links now state `className` as a string, from a `location.pathname` comparison
-the `returnTo` state was already making, instead of `NavLink`'s callback form.
+constant instead of its own **New chat**, as does the action row under the
+search. Both tips are `describesTrigger={false}`, since that name and the tip
+are the same words. Both links now state `className` as a string, from a
+`location.pathname` comparison the `returnTo` state was already making, instead
+of `NavLink`'s callback form. The current-state prose in this document,
+[`list-motion.md`](list-motion.md), [`e2e.md`](e2e.md) and
+[`automation-lifecycle.md`](automation-lifecycle.md) calls the row by the new
+name; every changelog occurrence is history and is left alone.
 
 **Why:** The plus is the whole control — an icon with no words beside it, in the
 one place a pointer looks first — and the only thing naming it was an
@@ -498,13 +502,17 @@ container it means.
 **What a future change has to respect:** Radix's `Slot` merges the child's
 `className` into the trigger's, so a `NavLink` whose `className` is a callback
 reaches the DOM as that callback's *source text* and the link renders unstyled —
-the failure is silent, it survives typecheck and a DOM assertion, and only a real
-window shows it. `Tip`'s own comment said a child like that "needs a plain
-wrapper"; it now says what this change found instead, because a wrapper was not
-the right answer here: the rail's plus is a `data-motion-key` row, and an element
-between it and the command bar would hide it from the list-motion planner.
-Resolving the class to a string at the call site keeps the trigger the link
-itself. Prefer that; reach for a wrapper only where nothing reads the DOM shape.
+the failure is silent, it survives typecheck and every DOM assertion, and only a
+real window shows it — so `sidebar.test.tsx` asserts the class on both links
+beside the tooltip, because a window is not a gate the next change runs.
+`Tip`'s own comment said a child like that "needs a plain wrapper"; it now says
+what this change found instead, because a wrapper was not the right answer here.
+The cost is layout, not discovery: `useListMotion` finds a keyed row at any
+depth, but a wrapper becomes the element its parent lays out — the command bar
+is a two-track grid whose second track *is* the rail's plus, and the titlebar's
+fade is written `.sidebar-titlebar > .sidebar-new-button`. Resolving the class
+to a string at the call site keeps the trigger the link itself. Prefer that;
+reach for a wrapper only where nothing lays the child out directly.
 
 ### 2026-09-10 — One identity line, painted once rather than once per speaker
 
