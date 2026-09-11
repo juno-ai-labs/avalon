@@ -454,9 +454,23 @@
   --av-cmp-markdown-article-heading-margin: 48px 0 18px;
 
   /* A surface that deliberately opposes the theme: light on a dark theme and
-   * dark on a light one, so it cannot be a ramp step in either. */
-  --av-cmp-tooltip-background: #2a241d;
-  --av-cmp-tooltip-foreground: #f7f3ec;
+   * dark on a light one. Name a token, never a literal — the ramp inverts with
+   * the appearance, so one alias in both appearance files gives the opposition
+   * for free, and the hue then follows the palette instead of being chosen
+   * twice by hand. The ink is `sys.color.text.on-inverse`, which every other
+   * inverted surface already reads. The fill is a ramp step rather than
+   * `sys.color.surface.inverse-hover`, whose two values it happens to match:
+   * that token is a *hover* state and a tooltip has no rest to hover from, and
+   * the system has no resting `surface.inverse` sibling to point at — which is
+   * also why the inverted controls in `app.css` take their resting fill from
+   * `sys.color.text.default`. Adding that sibling would give this and those
+   * four rules one pair to share; until it exists, prefer the ramp step over
+   * borrowing a state token for its value. `HUELESS_SURFACES` in
+   * `scripts/build-theme-assets.test.mjs` holds these two to no hue in either
+   * appearance; the partition guard beside it never could, because it compares
+   * raw JSON text. */
+  --av-cmp-tooltip-background: var(--av-ref-color-neutral-13);
+  --av-cmp-tooltip-foreground: var(--av-sys-color-text-on-inverse);
 
   /* The track behind an exclusive-choice strip. Its one value is the recess
    * the chosen pill sits in, and the pill is `sys.color.surface.raised`, so
@@ -771,8 +785,8 @@
   --av-cmp-markdown-article-heading-3: 19px;
   --av-cmp-markdown-article-heading-margin: 48px 0 18px;
 
-  --av-cmp-tooltip-background: #efe8dc;
-  --av-cmp-tooltip-foreground: #17130d;
+  --av-cmp-tooltip-background: var(--av-ref-color-neutral-13);
+  --av-cmp-tooltip-foreground: var(--av-sys-color-text-on-inverse);
 
   --av-cmp-segmented-track: #111111;
 
