@@ -683,10 +683,11 @@ update lag before changing the default.
 ### 2026-09-11 — The recovery backup is reachable without being advertised
 
 **What changed:** `createTerminalWorkspaceBackup` marks its archive unlisted, so
-it leaves the artifacts rail, `list_resources`, the compaction inventory and
-search while keeping its work-stream link, and therefore the by-id paths the
-checkout receipt and `terminal_import_resource` use. WorkspaceDO migration 52
-marks the backups already written. Final-diff preservation is unchanged.
+it leaves the artifacts rail, `list_resources`, the compaction inventory, the
+`resource_attached` socket event and search, while keeping its work-stream link
+and therefore the by-id paths the checkout receipt and `terminal_import_resource`
+use. WorkspaceDO migration 52 marks the backups already written. Final-diff
+preservation is unchanged.
 
 **Why:** Checkout cannot replace a repository in place, so it archives the
 workspace it is about to delete. That archive was attached as an ordinary

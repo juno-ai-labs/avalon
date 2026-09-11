@@ -112,9 +112,21 @@ WorkspaceDO migration 52 sets `metadata_json.listing` to `unlisted` on the
 Terminal recovery backups already stored, scoped by their
 `terminal-workspace-backup:` provider identity. The key is read by every
 statement that enumerates resources and by none that resolves one by id, so it
-changes presentation without touching the authority or the access decision; the
-migration 33 update trigger republishes each row's search document, where a null
-category withdraws the ones already indexed. See
+changes presentation without touching the authority or the access decision. The
+same migration enqueues those rows in `resource_search_versions` rather than
+relying on the update trigger: migration 43 narrowed that trigger to the columns
+search reads plus `metadata_json`'s `description`, so a `listing` write fires
+nothing, and a row indexed before the upgrade would never be re-projected. **Any
+write that changes `listing` on an indexed resource carries its own enqueue.**
+
+`resources_create_semantic_version` is the opposite case and fires, because it
+watches `metadata_json` wholesale. Each marked backup therefore gains a
+`resource_versions` row identical to its predecessor but for the flag. The
+migration accepts that and stages `revision_author_kind = 'system'` in the same
+statement so the row is attributed: suppressing it means bumping
+`current_version` to make the trigger's `WHEN` false, which leaves the counter
+ahead of the history it indexes. `revision_cause` stays null — this is none of
+`created`, `published`, `refetched` or `replaced`. See
 [agent attachments](agent-attachments.md).
 
 ### Identity and tenancy
@@ -1038,8 +1050,15 @@ because `provider` feeds `requiresAttachment` in `authorizationResourceFacts`.
 
 **What a future change has to respect:** Listing is presentation. No read
 decision may be derived from it, and no enumerating statement may omit the
-predicate. Promote it to a column when a producer needs something a single flag
-cannot express, and migrate the stored key in the same change.
+predicate. Because it lives inside `metadata_json` it sits on the wrong side of
+two triggers at once: invisible to the migration 43 search trigger, which
+watches named columns and `description`, so a write that flips it on an indexed
+row enqueues `resource_search_versions` itself or the row stays in search
+forever; and visible to `resources_create_semantic_version`, which watches
+`metadata_json` wholesale, so the same write mints a version and should stage an
+author for it. Promote it to a column when a producer needs something a single
+flag cannot express — that also settles both triggers — and migrate the stored
+key in the same change.
 
 ### 2026-09-10 — WorkspaceDO migration 50 stores a Sidekick's memory scope as `sidekick`
 
