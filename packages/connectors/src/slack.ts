@@ -349,9 +349,9 @@ export const slackTools: ToolDefinition[] = [
     thread_ts: { ...optionalId, description: "Post as a reply inside an existing thread, as that thread's parent `ts` copied exactly, for example `1735689600.123456`. Omit it, or send `null`, to post a new top-level message in the conversation." },
   }, ["channel_id", "text"]),
   tool("create_conversation", "Create a Slack channel or open a direct or group message as the connected user or installed workspace bot. Provide exactly one: `name` for a channel, or `user_ids` for a direct or group message.", SlackCapabilities.conversationsWrite, "write", {
-    name: { type: ["string", "null"], minLength: 1, maxLength: 80, pattern: "^[a-z0-9_-]+$", description: "Channel name without `#`, using lowercase letters, digits, hyphens, or underscores, for example `launch-oct`. Omit it, or send `null`, when using `user_ids`." },
+    name: { type: ["string", "null"], minLength: 1, maxLength: 80, pattern: "^[a-z0-9_-]+$", description: "Channel name without `#`, using lowercase letters, digits, hyphens, or underscores, for example `launch-oct`. Omit it when using `user_ids`." },
     user_ids: { type: "array", minItems: 1, maxItems: 8, items: id, description: "One to eight Slack user IDs from `find_users`, for example `[\"U0123ABCDEF\"]`. One ID opens a direct message; multiple IDs open a group message. Omit it when using `name`." },
-    is_private: { type: "boolean", description: "Whether a channel created with `name` is private. Defaults to false; ignored for direct and group messages." },
+    is_private: { type: "boolean", description: "Whether a channel created with `name` is private. Defaults to false and is ignored for direct and group messages. Channel privacy cannot be changed later through these tools." },
   }),
   tool("add_reaction", "Add an emoji reaction to a Slack message as the connected user or installed workspace bot.", SlackCapabilities.reactionsWrite, "write", {
     channel_id: conversationId("The conversation holding the message to react to."),
@@ -1205,7 +1205,7 @@ const SlackDirectInputSchemas = {
     thread_ts: SlackTimestampSchema.nullable().optional(),
   }),
   create_conversation: z.strictObject({
-    name: z.string().min(1).max(80).nullable().optional(),
+    name: z.string().min(1).max(80).regex(/^[a-z0-9_-]+$/u).nullable().optional(),
     user_ids: z.array(SlackIdSchema).min(1).max(8).optional(),
     is_private: z.boolean().optional(),
   }).superRefine((value, context) => {
@@ -1214,7 +1214,7 @@ const SlackDirectInputSchemas = {
     if (hasName === hasUsers) {
       context.addIssue({
         code: "custom",
-        message: "Provide either name for a channel or user_ids for a DM, but not both",
+        message: "Provide exactly one: name for a channel, or user_ids for a direct or group message",
       });
     }
   }),
