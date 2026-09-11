@@ -1077,7 +1077,6 @@ workerd.
 records the rename; this entry records that it reached a stored vocabulary and
 how.
 
-
 ### 2026-09-09 — Bound and recover early-access operations
 
 **What changed:** Added the singleton `access_email_budget`, acknowledgement generations and suppression, per-grant minute counters, and stable paging indexes in the still-undeployed migration 0101. These coordinate budget and recovery without another storage service; generation checks prevent stale send completions from reversing an operator decision.
