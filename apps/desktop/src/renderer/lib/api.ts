@@ -19,6 +19,7 @@ import {
   WorkstreamBatchPreviewSchema as WireWorkstreamBatchPreviewSchema,
   ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
   ConnectionSchema as WireConnectionSchema,
+  ConnectionToolCountSchema,
   CustomMcpConnectionSettingsSchema as WireCustomMcpConnectionSettingsSchema,
   GitHubRepositoryAccessSettingsSchema as WireGitHubRepositoryAccessSettingsSchema,
   ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
@@ -1909,6 +1910,14 @@ export class RallyApi {
   async getConnections(signal?: AbortSignal): Promise<WorkstreamConnection[]> {
     const page = await this.request('/connections', { schema: wireConnectionPageSchema, signal });
     return page.items.map(mapConnection);
+  }
+
+  async getConnectionToolCount(connectionId: string, signal?: AbortSignal): Promise<number> {
+    const result = await this.request(`/connections/${encodeURIComponent(connectionId)}/tool-count`, {
+      schema: ConnectionToolCountSchema,
+      signal,
+    });
+    return result.count;
   }
 
   async getAvailableConnectorTypes(signal?: AbortSignal): Promise<string[]> {

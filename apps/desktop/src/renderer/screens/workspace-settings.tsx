@@ -8,7 +8,7 @@ import { SettingCopy, SettingLabel } from '../settings/setting-label';
 import { SettingsSearchResults, useRevealSetting } from '../settings/search-results';
 import { SidebarSearch } from '../components/sidebar-search';
 import { digestDeliverySetting } from '../settings/digest-provider';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import {
   Check,
@@ -488,6 +488,17 @@ export function WorkspaceSettingsScreen({
     refetchOnWindowFocus: true,
     staleTime: 5_000,
   });
+  const connectionToolCounts = useQueries({
+    queries: (connections.data ?? []).map((connection) => ({
+      queryKey: ['connection-tool-count', connection.id, connection.capabilities, connection.status],
+      queryFn: ({ signal }: { signal: AbortSignal }) => api!.getConnectionToolCount(connection.id, signal),
+      enabled: Boolean(api && activeSection === 'connections'),
+      refetchOnWindowFocus: true,
+    })),
+  });
+  const toolCountByConnection = new Map((connections.data ?? []).map((connection, index) => [
+    connection.id, connectionToolCounts[index],
+  ]));
   const githubSettingsConnections = useMemo(
     () => (connections.data ?? []).filter((connection) => (
       connection.settingsKind === 'github_repository_access'
@@ -1512,7 +1523,7 @@ export function WorkspaceSettingsScreen({
                             <tr>
                               <th scope="col">Connection</th>
                               <th scope="col">Status</th>
-                              <th className="settings-connection-capabilities" scope="col">Capabilities</th>
+                              <th className="settings-connection-capabilities" scope="col">Tools</th>
                               <th scope="col"><span className="sr-only">Actions</span></th>
                             </tr>
                           </thead>
@@ -1527,7 +1538,9 @@ export function WorkspaceSettingsScreen({
                                   </span>
                                 </td>
                                 <td><Badge>{connection.status === 'reconnect_required' ? 'Reconnect required' : connection.status}</Badge></td>
-                                <td className="settings-connection-capabilities">{connection.capabilities?.length ?? 0} capabilities</td>
+                                <td className="settings-connection-capabilities">{toolCountByConnection.get(connection.id)?.isError
+                                  ? 'Unavailable'
+                                  : toolCountByConnection.get(connection.id)?.data ?? 'Loading…'}</td>
                                 <td>
                                   <span className="settings-connection-actions">
                                     {isAdmin && reconnectableConnectorTypes.has(connection.connectorType)

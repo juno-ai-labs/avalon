@@ -863,6 +863,10 @@ export const GenerateNoteNotesRequestSchema = z.strictObject({
 // additional destinations a personal automation freezes when it is saved.
 export const AutomationDeliveryTargetTypeSchema = z.enum(["slack_agent_dm", "email"]);
 
+export const ConnectionToolCountSchema = z.object({
+  count: z.number().int().nonnegative(),
+});
+
 export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),

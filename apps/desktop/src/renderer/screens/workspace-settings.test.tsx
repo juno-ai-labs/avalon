@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   getWorkspaceInvitations: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getConnections: vi.fn(),
+  getConnectionToolCount: vi.fn(),
   getGitHubRepositoryAccessSettings: vi.fn(),
   updateGitHubRepositoryAccessSettings: vi.fn(),
   getAvailableConnectorTypes: vi.fn(),
@@ -258,6 +259,7 @@ describe('Workspace settings', () => {
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
+    api.getConnectionToolCount.mockResolvedValue(7);
     // Every existing test in this file was written before digestsEnabled
     // existed and expects the section to be there; a test that cares about it
     // being hidden overrides this with its own resolved value.
@@ -1581,6 +1583,34 @@ describe('Workspace settings', () => {
     expect(within(linearCard!).queryByRole('button', { name: 'Connect workspace' })).not.toBeInTheDocument();
   });
 
+  it('refreshes tool counts on reveal and replaces stale counts when discovery fails', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+    });
+    api.getConnections.mockResolvedValue([{
+      id: 'tool-count-connection',
+      modelPluginId: 'plugin_google',
+      connectorType: 'google',
+      scope: 'you',
+      displayName: 'Google tools',
+      capabilities: ['gmail.read'],
+      status: 'healthy',
+    }]);
+    renderSettings(workspace, client);
+    openSettingsSection('Connections');
+    const table = await screen.findByRole('table', { name: 'Personal connections' });
+    expect(await within(table).findByRole('cell', { name: '7' })).toBeVisible();
+
+    api.getConnectionToolCount.mockResolvedValue(9);
+    act(() => revealWindow());
+    expect(await within(table).findByRole('cell', { name: '9' })).toBeVisible();
+
+    api.getConnectionToolCount.mockRejectedValue(new Error('Provider unavailable'));
+    act(() => revealWindow());
+    expect(await within(table).findByRole('cell', { name: 'Unavailable' })).toBeVisible();
+    expect(within(table).queryByRole('cell', { name: '9' })).not.toBeInTheDocument();
+  });
+
   it('separates personal and workspace connections into tables with scoped empty states', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000010',
@@ -1601,7 +1631,7 @@ describe('Workspace settings', () => {
 
     const connectionName = await screen.findByText('Google · adam@example.com');
     expect(connectionName).toBeVisible();
-    expect(screen.getByText('2 capabilities')).toBeVisible();
+    expect(await screen.findByText('7')).toBeVisible();
     const personalTable = screen.getByRole('table', { name: 'Personal connections' });
     const workspaceTable = screen.getByRole('table', { name: 'Workspace connections' });
     expect(personalTable.compareDocumentPosition(workspaceTable) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
@@ -2449,6 +2479,7 @@ describe('Closing the settings window with Escape', () => {
     api.getWorkspaceMembers.mockResolvedValue([owner]);
     api.getWorkspaceInvitations.mockResolvedValue([]);
     api.getConnections.mockResolvedValue([]);
+    api.getConnectionToolCount.mockResolvedValue(7);
     api.getAvailableConnectorTypes.mockResolvedValue([]);
     api.getTerminalWorkspaceSettings.mockResolvedValue({
       availability: 'supported', mode: 'trusted_only', revision: 1, verificationState: 'verified',
