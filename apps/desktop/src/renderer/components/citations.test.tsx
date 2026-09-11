@@ -442,6 +442,9 @@ describe('footnote citations', () => {
 
     const pills = document.querySelectorAll('.citation-pill');
     expect([...pills].map((pill) => pill.textContent)).toEqual(['*', '*']);
+    expect([...pills].map((pill) => pill.getAttribute('aria-label'))).toEqual([
+      'Source 1: Q3 board deck', 'Source 2: Margin memo',
+    ]);
     // The vertical cost of a source footer is the frustration this replaces.
     expect(document.querySelector('.footnotes')).toBeNull();
     expect(document.body).not.toHaveTextContent('Footnotes');
@@ -675,7 +678,7 @@ describe('citations while a turn streams', () => {
     expect(document.body).toHaveTextContent('Write it as [^avalon] in the body.');
   });
 
-  it('hands the skeleton over to the numbered pill when the turn settles', () => {
+  it('hands the skeleton over to the asterisk pill when the turn settles', () => {
     const view = render(<MarkdownBody citations={context()} streaming>{claim}</MarkdownBody>);
     expect(document.querySelectorAll('.citation-pill-pending')).toHaveLength(1);
 

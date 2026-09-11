@@ -508,7 +508,9 @@ export function rehypeCitationEmbedRows(rendersCard: (resourceId: string) => boo
 }
 
 /**
- * A grounding source: a numbered marker after the punctuation, and nothing else.
+ * A grounding source: an asterisk after the punctuation with a source popover.
+ * Accessible labels retain source numbers to distinguish adjacent citations.
+ * A saved still keeps numbers so markers identify its printed source list.
  *
  * The popover rides the app's own tooltip rather than a hand-positioned box.
  * That is not a preference: the transcript is a scroll container, and an
@@ -524,12 +526,12 @@ export function rehypeCitationEmbedRows(rendersCard: (resourceId: string) => boo
  * it just does not navigate. The reader loses the click, not the source's name,
  * which is the whole point of showing a marker at all.
  */
-function CitationPill({ citation, number, onOpen, still }: {
+function CitationPill({ citation, number, onOpen }: {
   citation: FootnoteCitation;
   number: React.ReactNode;
-  still?: boolean;
   onOpen?: () => void;
 }): React.JSX.Element {
+  const { still } = useCitationRender();
   const opens = citation.target.scheme === 'external' ? 'Opens in your browser' : 'Opens in preview';
   const label = typeof number === 'string' || typeof number === 'number'
     ? `Source ${String(number)}: ${citation.label}`
@@ -662,7 +664,6 @@ const FOOTNOTE_CELLS: Matrix<FootnoteArgs> = {
     <CitationPill
       citation={args.citation}
       number={args.number}
-      still={args.render.still}
       onOpen={resolved(args) ? opener(args.render, args.target) : undefined}
     />
   ),
@@ -670,11 +671,10 @@ const FOOTNOTE_CELLS: Matrix<FootnoteArgs> = {
     <CitationPill
       citation={args.citation}
       number={args.number}
-      still={args.render.still}
       onOpen={opener(args.render, args.target)}
     />
   ),
-  person: (args) => <CitationPill citation={args.citation} number={args.number} still={args.render.still} />,
+  person: (args) => <CitationPill citation={args.citation} number={args.number} />,
   // Unreachable through the pinned grammar, which refuses a definition whose one
   // link names no known scheme. Defined anyway, because "cannot happen" is not a
   // thing the type system can check and a superscript is the honest fallback.

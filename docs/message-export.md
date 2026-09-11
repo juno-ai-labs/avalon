@@ -67,9 +67,9 @@ than as a task that is not done, and a hover popover printed into a PNG is a gre
 box over the text with no way to dismiss it.
 
 The chip and the embed keep their shape rather than flattening to text, so a
-reader recognises the thing they clicked in the app. The pill stays a plain
-numbered superscript with a neutral ink and grey fill, which is what a citation degrades to everywhere outside
-Rally's renderer anyway.
+reader recognises the thing they clicked in the app. Interactive pills show an
+asterisk. Saved pills keep a number, with neutral ink and grey fill, so each
+marker identifies its entry in the printed source list without a hover.
 
 What the card does *not* share with the turn is the footnote lift. The card
 renders with `MarkdownBody`'s `still` flag, which keeps the trailing source list
