@@ -145,7 +145,7 @@
     "cmp.composer.send-foreground": "#141414",
     "cmp.markdown.diagram-line": "{ref.color.line.6}",
     "cmp.tooltip.background": "{ref.color.neutral.13}",
-    "cmp.tooltip.foreground": "{ref.color.neutral.1}",
+    "cmp.tooltip.foreground": "{sys.color.text.on-inverse}",
     "cmp.segmented.track": "#111111",
     "cmp.toggle.track": "#2a2318",
     "cmp.toggle.knob-off": "#8a8070",
