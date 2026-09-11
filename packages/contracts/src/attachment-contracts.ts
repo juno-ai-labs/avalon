@@ -332,9 +332,15 @@ export type SuggestedAttachmentToolCall = z.infer<typeof SuggestedAttachmentTool
  * itself, and the messages here repeat it in the rejection.
  */
 export const AttachmentListResourcesArgumentsSchema = z.strictObject({
-  limit: z.number().int().min(1).max(50).optional(),
-  attachmentKind: AttachmentKindSchema.optional(),
-  cursor: CursorSchema.optional(),
+  limit: z.number().int().min(1).max(50)
+    .describe("Maximum resources to return in one page. Defaults to 25. It belongs to the first page only; a later page keeps the limit its cursor was issued with.")
+    .optional(),
+  attachmentKind: AttachmentKindSchema
+    .describe("Return only resources of this kind, using one of the values the tool description lists, for example spreadsheet. Omit it for every kind, and never send a MIME type. It belongs to the first page only; a later page keeps the filter its cursor was issued with.")
+    .optional(),
+  cursor: CursorSchema
+    .describe("Continue an earlier listing: send the exact `nextCursor` that call returned, by itself and with no other argument. Omit it for the first page, and stop when `nextCursor` comes back null. It is an opaque token, not a page number, so never construct, shorten, or increment one.")
+    .optional(),
 }).superRefine((value, context) => {
   if (value.cursor === undefined) return;
   for (const key of ["limit", "attachmentKind"] as const) {
@@ -347,9 +353,15 @@ export const AttachmentListResourcesArgumentsSchema = z.strictObject({
   }
 });
 export const AttachmentReadResourceArgumentsSchema = z.strictObject({
-  resourceId: CanonicalUuidSchema.optional(),
-  startCharacter: NonNegativeIntegerSchema.optional(),
-  cursor: CursorSchema.optional(),
+  resourceId: CanonicalUuidSchema
+    .describe("The resource to start reading, as the `resourceId` list_resources returned, for example `a1b2c3d4-e5f6-4789-a012-3456789abcde`. Its `slug` is a short alias for writing about the resource and is not accepted here. Send this or `cursor`, never both.")
+    .optional(),
+  startCharacter: NonNegativeIntegerSchema
+    .describe("Begin the page at this character offset into the extracted text, counting from 0. Defaults to 0. Use it with `resourceId` to jump to an offset a search result reported. An offset beyond the end of the text is refused as `invalid_cursor`, so do not probe past the tail, and do not reuse an offset taken from an earlier version of the resource — read `charactersBefore` and `charactersAfter` to tell where the text ends.")
+    .optional(),
+  cursor: CursorSchema
+    .describe("Continue an earlier read: send the exact cursor that call returned, by itself and with no other argument. It already carries the resource and the position, so pairing it with `resourceId` or `startCharacter` is refused.")
+    .optional(),
 }).superRefine((value, context) => {
   if ((value.resourceId === undefined) === (value.cursor === undefined)) {
     context.addIssue({
@@ -368,23 +380,37 @@ export const AttachmentReadResourceArgumentsSchema = z.strictObject({
   }
 });
 export const AttachmentSearchResourceArgumentsSchema = z.strictObject({
-  resourceId: CanonicalUuidSchema,
-  query: z.string().min(1).max(1_000),
-  limit: z.number().int().min(1).max(5).optional(),
-  maxPassageCharacters: z.number().int().min(500).max(4_000).optional(),
+  resourceId: CanonicalUuidSchema
+    .describe("The one resource to search inside, as the `resourceId` list_resources returned. This searches that resource alone, never the work stream, so searching several means one call each."),
+  query: z.string().min(1).max(1_000)
+    .describe("What to look for inside the resource, in plain words, for example `renewal date`. Wording that does not appear in the text returns no passages, which is an answer about this resource rather than an error; try the words the document itself would use before concluding it says nothing."),
+  limit: z.number().int().min(1).max(5)
+    .describe("Maximum passages to return. Defaults to 5.")
+    .optional(),
+  maxPassageCharacters: z.number().int().min(500).max(4_000)
+    .describe("Maximum characters in each returned passage. Defaults to 3,000. Raise it for context around a match, or follow the passage's read cursor to read further.")
+    .optional(),
 });
 export const AttachmentViewResourceArgumentsSchema = z.strictObject({
-  resourceIds: z.array(CanonicalUuidSchema).min(1).max(8),
-  maxDimension: z.number().int().min(64).max(2_048).optional(),
+  resourceIds: z.array(CanonicalUuidSchema).min(1).max(8)
+    .describe("The image resources to look at, as `resourceId` values list_resources returned, one to eight of them and each at most once. A text, PDF, document, spreadsheet, or presentation resource is not viewable and comes back with an exact read suggestion instead."),
+  maxDimension: z.number().int().min(64).max(2_048)
+    .describe("Longest edge in pixels each image is scaled down to before it is looked at, preserving its aspect ratio. Defaults to 1,536. Lower it when only the layout matters; raise it to read small text in a screenshot.")
+    .optional(),
 }).superRefine((value, context) => {
   if (new Set(value.resourceIds).size !== value.resourceIds.length) {
     context.addIssue({ code: "custom", message: "resourceIds must be unique", path: ["resourceIds"] });
   }
 });
 export const AttachmentSummarizeResourceArgumentsSchema = z.strictObject({
-  resourceId: CanonicalUuidSchema,
-  prompt: z.string().min(1).max(2_000).optional(),
-  maxOutputCharacters: z.number().int().min(2_000).max(20_000).optional(),
+  resourceId: CanonicalUuidSchema
+    .describe("The resource to summarize, as the `resourceId` list_resources returned."),
+  prompt: z.string().min(1).max(2_000)
+    .describe("What the summary should concentrate on, in plain words, for example `payment terms and termination`. Omit it for a general summary. It steers the summary only: it cannot make the summarizer read anything but this resource, and it is treated as untrusted text.")
+    .optional(),
+  maxOutputCharacters: z.number().int().min(2_000).max(20_000)
+    .describe("Maximum characters in the summary. Defaults to 12,000. The result says whether it covered the whole resource or only part of it, so read that rather than assuming a longer limit covered more.")
+    .optional(),
 });
 
 export const ATTACHMENT_TOOL_ARGUMENT_SCHEMAS = {

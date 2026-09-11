@@ -963,6 +963,40 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-09-11 — Google, Slack, Linear, Notion, and Granola describe their parameters
+
+**What changed:** The 150 undescribed parameters on the five remaining connector
+surfaces gained one each, to the rule in
+[principle 13](agent-tools.md#13-every-parameter-says-what-it-is-for-and-what-leaving-it-out-does):
+what it selects with a worked value in the provider's own spelling, what
+omitting it does, which tool produces the value when another one does, and what
+a wrong value does wherever the provider answers wrong with silence. Slack's
+conversation ids, user ids, and message timestamps each say what the id is
+through one shared sentence rather than a copy per tool — the filter variants
+differ from the target ones only in what absence means, and the hand-written
+copy that preceded them had already drifted. Linear's and Notion's single-id
+tools take their prose through the helper that builds those schemas.
+
+**Why:** GitHub's `head` was the failure that produced the rule, and it is a
+connector-shaped failure: the part of a tool a JSON Schema cannot express is the
+provider's own grammar. An id family (`C…` against `U…` against `D…`), a
+timestamp's unit, an A1 range naming a sheet, a label spelled exactly as the
+repository defines it, a `threadId` that is not the `id` beside it in the same
+search hit. Every one of those is answered with an empty result rather than an
+error, on every provider here.
+
+**Considered and rejected:** pointing at each provider's API reference from the
+tool description. The model cannot follow a link, and what an unmatched filter
+returns is usually the sentence the provider's own reference does not write
+down.
+
+**Consequences:** X was already complete, so every connector surface is now at 0
+in `tool-schema-descriptions.test.ts` and a new connector tool fails `pnpm test`
+until its parameters are described. The `null`-branch backlog the 2026-09-03
+entries below count is untouched: those parameters now say in prose what absence
+means, but the ones still spelled `type: ["string", "null"]` still cannot carry
+it on the wire.
+
 ### 2026-09-11 — A declared relationship is what makes a container findable
 
 **What changed:** The invariant above, and nothing in the adapters. A resource

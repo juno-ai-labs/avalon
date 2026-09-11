@@ -72,7 +72,13 @@ export const AVALON_SKILL_TOOL_DEFINITIONS = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { name: { type: "string", minLength: 1 } },
+      properties: {
+        name: {
+          type: "string",
+          minLength: 1,
+          description: "The skill's name, spelled exactly as the skill catalog gives it, for example `weekly-report`. A name the catalog does not carry is refused, so read the name from the catalog rather than guessing one from the task.",
+        },
+      },
       required: ["name"],
     },
   },
@@ -86,7 +92,18 @@ export const AVALON_SKILL_TOOL_DEFINITIONS = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { name: { type: "string", minLength: 1 }, path: { type: "string", minLength: 1 } },
+      properties: {
+        name: {
+          type: "string",
+          minLength: 1,
+          description: "The skill the file belongs to, spelled exactly as the catalog gives it. The skill has to have been loaded first with load_skill.",
+        },
+        path: {
+          type: "string",
+          minLength: 1,
+          description: "The file's path within that skill, exactly as the skill's own instructions name it, for example `references/palette.md`. It is relative to the skill, not to any workspace, and only files the skill bundles can be read.",
+        },
+      },
       required: ["name", "path"],
     },
   },
