@@ -7,6 +7,7 @@ import {
   ConnectorConnectionCardInputSchema,
   ConnectorConnectionCardScopes,
   ConnectorConnectionStateResultSchema,
+  connectorConnectionCardSummary,
   connectorConnectionCardInputFromToolEvent,
 } from "./connector-connection-card";
 
@@ -31,6 +32,11 @@ describe("connector connection card contract", () => {
       scope: "personal",
       state: "probably_connected",
     }).success).toBe(false);
+    expect(ConnectorConnectionStateResultSchema.parse({
+      connectorId: "slack",
+      scope: "personal",
+      state: "unavailable",
+    }).state).toBe("unavailable");
   });
 
   it("recovers durable card identity without accepting arbitrary summary prose", () => {
@@ -42,7 +48,7 @@ describe("connector connection card contract", () => {
     expect(connectorConnectionCardInputFromToolEvent({
       name: CONNECTOR_CONNECTION_CARD_WIRE_NAME,
       status: "completed",
-      summary: "Presented the slack personal connection card",
+      summary: connectorConnectionCardSummary({ connectorId: "slack", scope: "personal" }),
     })).toEqual({ connectorId: "slack", scope: "personal" });
     expect(connectorConnectionCardInputFromToolEvent({
       name: CONNECTOR_CONNECTION_CARD_WIRE_NAME,

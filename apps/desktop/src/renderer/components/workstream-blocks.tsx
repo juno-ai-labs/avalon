@@ -45,6 +45,8 @@ import {
   ConnectorEmbedCard,
   ConnectorMentionChip,
   connectorConnectionCardInput,
+  connectorConnectionCardProvider,
+  connectorConnectionCardSelectionKey,
 } from './connector-mentions';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
@@ -2397,6 +2399,8 @@ interface MessageBlockProps {
   acceptDraftError?: string | undefined;
   /** Main-feed opt-in; other transcript hosts keep core tools as neutral rows. */
   connectorConnectionCards?: boolean;
+  connectedConnectorSelections?: ReadonlySet<string>;
+  onConnectorConnected?: (selectionKey: string) => void;
 }
 
 export function MessageBlock({
@@ -2414,6 +2418,8 @@ export function MessageBlock({
   acceptingDraftFor,
   acceptDraftError,
   connectorConnectionCards = false,
+  connectedConnectorSelections,
+  onConnectorConnected,
 }: MessageBlockProps): React.JSX.Element {
   const presentations = useContext(MemberPresentationContext);
   const profileUserId = message.authorType === 'human' ? message.author?.id
@@ -2439,9 +2445,18 @@ export function MessageBlock({
   if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;
   if (message.messageType === 'tool_event') {
     const connectionCard = connectorConnectionCards ? connectorConnectionCardInput(message) : null;
+    const connectionCardProvider = connectionCard ? connectorConnectionCardProvider(connectionCard) : null;
     return (
       <div className="transcript-event" id={`message-${message.id}`}>
-        {connectionCard ? <ConnectorConnectionCard request={connectionCard} /> : <ToolBlock message={message} />}
+        {connectionCard && connectionCardProvider ? (
+          <ConnectorConnectionCard
+            latchedConnected={Boolean(connectedConnectorSelections?.has(
+              connectorConnectionCardSelectionKey(connectionCard),
+            ))}
+            {...(onConnectorConnected ? { onConnected: onConnectorConnected } : {})}
+            request={connectionCard}
+          />
+        ) : <ToolBlock message={message} />}
       </div>
     );
   }
