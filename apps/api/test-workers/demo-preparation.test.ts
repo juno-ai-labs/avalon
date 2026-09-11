@@ -43,8 +43,12 @@ import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 
 const PRESENTER_ID = "00000000-0000-7000-8000-00000000d6a1";
-/** The names the operator types; the region mints the people who carry them. */
-const CAST = { priya: "Priya Raman", marcus: "Michael Holliway", dana: "Max Bender" };
+const PRIYA_ID = "00000000-0000-7000-8000-00000000d6a2";
+const MARCUS_ID = "00000000-0000-7000-8000-00000000d6a3";
+const DANA_ID = "00000000-0000-7000-8000-00000000d6a4";
+/** The colleagues the operator casts, by account. */
+const CAST = { priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID };
+const CAST_NAMES = { priya: "Priya Raman", marcus: "Michael Holliway", dana: "Max Bender" };
 const OPERATION_ID = "00000000-0000-7000-8000-00000000d6b1";
 const TEMPLATE_CONNECTION_ID = "00000000-0000-7000-8000-00000000d6c1";
 const CREDENTIALS_KEY = "active-connector-credentials-key-for-tests";
@@ -94,17 +98,24 @@ async function seedControlPlane(): Promise<void> {
     env.DB.prepare(`INSERT INTO workstream_authority_control
       (id, phase, generation, required_serving_contract_version, serving_contract_version)
       VALUES (1, 'durable_object_open', 1, 1, 1)`),
-    // `google_subject` is unique as the migration has it: minting a persona
-    // conflicts on it, which is what makes a repeated start idempotent.
     env.DB.prepare(`CREATE TABLE users (
       id TEXT PRIMARY KEY, google_subject TEXT UNIQUE, platform_user_id TEXT, email TEXT UNIQUE, name TEXT,
       avatar_url TEXT, timezone TEXT, created_at TEXT, updated_at TEXT
     )`),
-    // Only the presenter exists up front: the cast are personas this
-    // preparation mints from the names the operator typed.
+    // The company's directory: the presenter, and the colleagues a demo is
+    // cast from. Everyone is on its own domain and has signed in, which is
+    // what makes them castable at all.
     env.DB.prepare(`INSERT INTO users (id, google_subject, platform_user_id, email, name, avatar_url, timezone, created_at, updated_at)
-      VALUES (?, 'sub-presenter', ?, 'adam@example.com', 'Adam', NULL, 'UTC', ?, ?)`)
-      .bind(PRESENTER_ID, PRESENTER_ID, NOW, NOW),
+      VALUES (?, 'sub-presenter', ?, 'adam@rallywith.ai', 'Adam', NULL, 'UTC', ?, ?),
+             (?, 'sub-priya', ?, 'priya@rallywith.ai', ?, NULL, 'UTC', ?, ?),
+             (?, 'sub-marcus', ?, 'kb@rallywith.ai', ?, NULL, 'UTC', ?, ?),
+             (?, 'sub-dana', ?, 'max@rallywith.ai', ?, NULL, 'UTC', ?, ?)`)
+      .bind(
+        PRESENTER_ID, PRESENTER_ID, NOW, NOW,
+        PRIYA_ID, PRIYA_ID, CAST_NAMES.priya, NOW, NOW,
+        MARCUS_ID, MARCUS_ID, CAST_NAMES.marcus, NOW, NOW,
+        DANA_ID, DANA_ID, CAST_NAMES.dana, NOW, NOW,
+      ),
     env.DB.prepare(`CREATE TABLE workspaces (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL, region TEXT NOT NULL,
       timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles', placement_affinity TEXT NOT NULL DEFAULT 'wnam',
@@ -255,8 +266,9 @@ describe("preparing a demo", () => {
       cast: CAST,
     });
     expect(started.status).toBe("running");
-    // The cast the operator named, minted as this preparation's own people.
-    expect(started.castNames).toEqual({ presenter: "Adam", ...CAST });
+    // The colleagues the operator cast, under the names the directory has.
+    expect(started.cast).toEqual({ presenter: PRESENTER_ID, ...CAST });
+    expect(started.castNames).toEqual({ presenter: "Adam", ...CAST_NAMES });
     const [priya, marcus, dana] = [started.cast.priya!, started.cast.marcus!, started.cast.dana!];
     expect(launched).toHaveLength(1);
     const options = { attempt: 1, deadlineAt: Date.now() + 120_000 };

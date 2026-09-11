@@ -6,10 +6,12 @@ import type { Env, HonoAppEnv } from "../src/env";
 import { errorHandler } from "../src/middleware/errors";
 import { demoOperatorRoutes } from "../src/routes/demo-operations";
 import { DEMO_TEMPLATE_WORKSPACE_ID } from "../src/services/demo-workspace-visibility";
+import { listDemoCastCandidates } from "../src/services/demo-cast";
 import {
   abandonDemoOperation,
   activeDemoPack,
   demoOperationStatus,
+  demoTemplate,
   failDemoPreparationDriver,
   listDemoOperations,
   retryDemoOperation,
@@ -45,6 +47,14 @@ vi.mock("../src/services/workspace-runtime-database", () => ({
  */
 
 const PRESENTER_ID = "00000000-0000-7000-8000-0000000000a1";
+const PRIYA_ID = "00000000-0000-7000-8000-0000000000a2";
+const MARCUS_ID = "00000000-0000-7000-8000-0000000000a3";
+const DANA_ID = "00000000-0000-7000-8000-0000000000a4";
+/** A namesake of the person cast as `marcus`: two of them is one ambiguous mention. */
+const NAMESAKE_ID = "00000000-0000-7000-8000-0000000000a5";
+/** On the company's domain, but has never signed in, so there is nobody to seat. */
+const UNSEEN_ID = "00000000-0000-7000-8000-0000000000a6";
+/** Not on the company's domain: neither a presenter nor a cast member. */
 const OUTSIDER_ID = "00000000-0000-7000-8000-0000000000a9";
 const OPERATION_ID = "00000000-0000-7000-8000-0000000000e2";
 const DEMOS_TOKEN = "demos-operator-token-0123456789abcdef0123456789";
@@ -58,9 +68,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** The cast as the operator gives it: a name per role, never an account. */
+/** The cast as the operator gives it: an account per role, chosen from colleagues. */
 function cast(): Record<string, string> {
-  return { priya: "Emma Shipman", marcus: "Sam Burton", dana: "Ben Diaz" };
+  return { priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID };
 }
 
 function request(): { operationId: string; companyName: string; presenterUserId: string; cast: Record<string, string> } {
@@ -77,17 +87,30 @@ interface Fixture {
 function fixture(overrides: Partial<Env> = {}, options: { withoutDriver?: boolean } = {}): Fixture {
   const database = migratedSqliteDatabase();
   databases.push(database);
-  for (const [id, name] of [[PRESENTER_ID, "Adam"], [OUTSIDER_ID, "Sam Outsider"]]) {
+  // The company's directory: colleagues on its own domain, and one person who
+  // is not on it. `email` is what decides who may be cast, so it is the only
+  // thing that differs between them.
+  const directory: [string, string, string, boolean][] = [
+    [PRESENTER_ID, "Adam", "adam@rallywith.ai", true],
+    [PRIYA_ID, "Priya Raman", "priya@rallywith.ai", true],
+    [MARCUS_ID, "Sam Burton", "kb@rallywith.ai", true],
+    [DANA_ID, "Ben Diaz", "ben@rallywith.ai", true],
+    [NAMESAKE_ID, "Sam Burton", "sam.burton@rallywith.ai", true],
+    [UNSEEN_ID, "Nadia Okafor", "nadia@rallywith.ai", false],
+    [OUTSIDER_ID, "Sam Outsider", "sam@contractor.example.com", true],
+  ];
+  for (const [id, name, email, signedIn] of directory) {
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at, platform_user_id)
-      VALUES ('${id}', 'sub-${id}', '${name!.toLowerCase().replace(/ /gu, ".")}@example.com', '${name}', '${NOW}', '${NOW}', '${id}');
+      VALUES ('${id}', 'sub-${id}', '${email}', '${name}', '${NOW}', '${NOW}', ${signedIn ? `'${id}'` : "NULL"});
     `);
   }
   // The connections table lives in the workspace's runtime database, which the
   // double above answers from this one; the template holds none here.
   database.exec("CREATE TABLE connector_connections (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL)");
-  // The template, with the presenter seated and the outsider not. Nobody else
-  // has to be: every role but the presenter's is played by a persona.
+  // The template, with the presenter seated and nobody else. The cast are not
+  // seated here: they are cast from the company's directory, not the
+  // template's membership.
   database.exec(`
     INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
     VALUES ('${DEMO_TEMPLATE_WORKSPACE_ID}', 'demo-template', 'demo-template', 'global', '${PRESENTER_ID}', '${NOW}', '${NOW}');
@@ -151,19 +174,56 @@ describe("a demo preparation operation", () => {
     expect(launched).toHaveLength(1);
   });
 
-  it("refuses a cast that leaves a pack role unnamed, names a role the pack has not got, or names two people alike", async () => {
+  it("refuses a cast that leaves a pack role uncast, names a role the pack has not got, or seats one person twice", async () => {
     const { env } = fixture();
     const short = Object.fromEntries(Object.entries(cast()).filter(([role]) => role !== "dana"));
     await expect(startDemoOperation(env, { ...request(), cast: short })).rejects.toMatchObject({ code: "demo_pack_role_unbound" });
-    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), sam: "Sam Sample" } })).rejects.toMatchObject({ code: "demo_pack_role_unknown" });
-    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), dana: "emma shipman" } })).rejects.toMatchObject({ code: "demo_cast_duplicate" });
-    // The presenter is in the demo under their own name, so the cast may not
-    // reuse it; and the presenter is chosen, never named.
-    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), dana: "Adam" } })).rejects.toMatchObject({ code: "demo_cast_duplicate" });
-    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), presenter: "Adam" } })).rejects.toMatchObject({ code: "demo_presenter_named" });
+    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), sam: DANA_ID } })).rejects.toMatchObject({ code: "demo_pack_role_unknown" });
+    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), dana: PRIYA_ID } })).rejects.toMatchObject({ code: "demo_cast_duplicate" });
+    // The presenter is in the demo already, so the cast may not seat them
+    // again; and the presenter is chosen by their own field, never cast.
+    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), dana: PRESENTER_ID } })).rejects.toMatchObject({ code: "demo_cast_duplicate" });
+    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), presenter: PRESENTER_ID } })).rejects.toMatchObject({ code: "demo_presenter_cast" });
+    // Two different colleagues under one name is the other collision: a
+    // mention resolves to an id, and nobody watching can attribute it.
+    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), dana: NAMESAKE_ID } }))
+      .rejects.toMatchObject({ code: "demo_cast_name_duplicate" });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM demo_operations").first()).toEqual({ count: 0 });
   });
 
-  it("refuses a presenter the template does not seat, before writing a row or minting anybody", async () => {
+  it("refuses the template outside the region demos are prepared in", async () => {
+    // The answer is the company's directory now, so an EU call would read out
+    // every European colleague's name and address from a route that cannot
+    // prepare a demo there anyway.
+    const { env } = fixture({ AVALON_REGION: "eu" });
+    await expect(demoTemplate(env)).rejects.toMatchObject({ code: "demo_region_unsupported" });
+  });
+
+  it("refuses to cast anybody who is not a colleague, before writing a row", async () => {
+    const { env, launched } = fixture();
+    // Being cast seats the account in the demo workspace, which receives
+    // copies of the template's connections; the domain is what bounds who
+    // that can be, and the page's list is not what enforces it.
+    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), dana: OUTSIDER_ID } }))
+      .rejects.toMatchObject({ code: "demo_cast_not_a_colleague" });
+    // Somebody who has never signed in is not one either, whatever their
+    // address: there is no account to seat.
+    await expect(startDemoOperation(env, { ...request(), cast: { ...cast(), dana: UNSEEN_ID } }))
+      .rejects.toMatchObject({ code: "demo_cast_not_a_colleague" });
+    // Nor is a near miss. `_` is one character to LIKE and an ordinary one in
+    // a hostname, and a subdomain or a lookalike registered by somebody else
+    // is a different company: only the domain itself is castable.
+    for (const address of ["ben@x.rallywith.ai", "ben@notrallywith.ai", "ben@rallywith0ai", "ben@rallywith.ai.evil.example"]) {
+      await env.DB.prepare("UPDATE users SET email = ? WHERE id = ?").bind(address, DANA_ID).run();
+      await expect(startDemoOperation(env, request()))
+        .rejects.toMatchObject({ code: "demo_cast_not_a_colleague" });
+      expect((await listDemoCastCandidates(env)).some((candidate) => candidate.userId === DANA_ID)).toBe(false);
+    }
+    expect(launched).toEqual([]);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM demo_operations").first()).toEqual({ count: 0 });
+  });
+
+  it("refuses a presenter the template does not seat, before writing a row", async () => {
     const { env, launched } = fixture();
     // The new workspace is owned by the presenter and receives the template's
     // credentials; a presenter outside the template would be handed them.
@@ -171,52 +231,72 @@ describe("a demo preparation operation", () => {
       .rejects.toMatchObject({ code: "demo_presenter_not_in_template" });
     expect(launched).toEqual([]);
     expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM demo_operations").first()).toEqual({ count: 0 });
-    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM users WHERE google_subject LIKE 'demo-persona:%'").first())
-      .toEqual({ count: 0 });
   });
 
-  it("mints the cast as this operation's personas, once, and seats nobody who can sign in", async () => {
+  it("stores the cast as the accounts it was given, and answers their directory names", async () => {
     const { env } = fixture();
     const started = await startDemoOperation(env, request());
     // The row stores user ids, the way every phase after this reads it, and
-    // the status answers the names the operator typed.
+    // the status answers the name each of them carries in the directory —
+    // never a name the request supplied.
+    expect(started.cast).toEqual({ presenter: PRESENTER_ID, priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID });
     expect(started.castNames).toEqual({
-      presenter: "Adam", priya: "Emma Shipman", marcus: "Sam Burton", dana: "Ben Diaz",
+      presenter: "Adam", priya: "Priya Raman", marcus: "Sam Burton", dana: "Ben Diaz",
     });
-    expect(started.cast.presenter).toBe(PRESENTER_ID);
-    const personas = await env.DB.prepare(
-      "SELECT id, google_subject, email, name, platform_user_id FROM users WHERE google_subject LIKE 'demo-persona:%' ORDER BY name",
-    ).all<{ id: string; google_subject: string; email: string; name: string; platform_user_id: string | null }>();
-    expect(personas.results.map((persona) => persona.name)).toEqual(["Ben Diaz", "Emma Shipman", "Sam Burton"]);
-    // Nobody can sign in as one, and nothing can be delivered to one.
-    expect(personas.results.every((persona) => persona.platform_user_id === null)).toBe(true);
-    expect(personas.results.every((persona) => persona.email.endsWith(".demo.invalid"))).toBe(true);
-    expect(personas.results.map((persona) => persona.google_subject).sort()).toEqual([
-      `demo-persona:${OPERATION_ID}:dana`,
-      `demo-persona:${OPERATION_ID}:marcus`,
-      `demo-persona:${OPERATION_ID}:priya`,
-    ]);
-    expect(Object.values(started.cast).sort()).toEqual([PRESENTER_ID, ...personas.results.map((persona) => persona.id)].sort());
+    // Nobody was invented for it: the demo's people are the accounts that
+    // were already there.
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM users").first()).toEqual({ count: 7 });
 
-    // A repeat of the same operation id meets the people it made the first
-    // time, whatever names it carries, rather than a second set.
-    const again = await startDemoOperation(env, { ...request(), cast: { priya: "Someone Else", marcus: "Another", dana: "A Third" } });
+    // A repeat of the same operation id meets the cast it was started with,
+    // whoever the second request names.
+    const again = await startDemoOperation(env, {
+      ...request(),
+      cast: { priya: DANA_ID, marcus: PRIYA_ID, dana: MARCUS_ID },
+    });
     expect(again.cast).toEqual(started.cast);
-    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM users WHERE google_subject LIKE 'demo-persona:%'").first())
-      .toEqual({ count: 3 });
+
+    // And it is answered without validating the request against a directory
+    // that has moved since: a client retrying a lost response would otherwise
+    // be refused about a preparation of its own that is running fine.
+    await env.DB.prepare("UPDATE users SET email = ? WHERE id = ?").bind("ben@elsewhere.example.com", DANA_ID).run();
+    await env.DB.prepare("UPDATE users SET name = ? WHERE id = ?").bind("Priya Raman", MARCUS_ID).run();
+    expect((await startDemoOperation(env, request())).cast).toEqual(started.cast);
   });
 
-  it("refuses to prepare a demo whose cast is somebody's account rather than its own persona", async () => {
-    // The ids are the region's, never the operator's, and this is the check
-    // that keeps it so on a row written minutes ago: a real account in the
-    // cast would be seated in the demo and handed the template's connections.
+  it("refuses to prepare a demo whose cast stopped being a colleague after the row was written", async () => {
+    // The same question the start request answered, asked again on a row
+    // written minutes ago: an account that left the company between the two
+    // would be seated in the demo and handed the template's connections.
     const { env } = fixture();
-    const started = await startDemoOperation(env, request());
-    await env.DB.prepare("UPDATE demo_operations SET cast_json = ? WHERE operation_id = ?")
-      .bind(JSON.stringify({ ...started.cast, dana: OUTSIDER_ID }), OPERATION_ID).run();
+    await startDemoOperation(env, request());
+    await env.DB.prepare("UPDATE users SET email = ? WHERE id = ?").bind("ben@elsewhere.example.com", DANA_ID).run();
     await expect(runDemoPreparationPhase(env, OPERATION_ID, "checking_template", { attempt: 1 }))
-      .rejects.toMatchObject({ code: "demo_cast_not_persona" });
-    expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", error_code: "demo_cast_not_persona" });
+      .rejects.toMatchObject({ code: "demo_cast_not_a_colleague" });
+    expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", error_code: "demo_cast_not_a_colleague" });
+  });
+
+  it("refuses to prepare a demo whose cast came to share a name after the row was written", async () => {
+    // A name is not fixed: it is rewritten from the platform identity every
+    // time somebody signs in, so two people in one demo can collide between
+    // the start request and the phase that acts on it — and a retry can be
+    // days later. A mention resolves to a user id, and nobody watching could
+    // attribute it to either of them.
+    const { env } = fixture();
+    await startDemoOperation(env, request());
+    await env.DB.prepare("UPDATE users SET name = ? WHERE id = ?").bind("Priya Raman", DANA_ID).run();
+    await expect(runDemoPreparationPhase(env, OPERATION_ID, "checking_template", { attempt: 1 }))
+      .rejects.toMatchObject({ code: "demo_cast_name_duplicate" });
+    expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", error_code: "demo_cast_name_duplicate" });
+
+    // The presenter is in the demo under their own name too, so they are one
+    // of the people the check covers. A second operation, because the first is
+    // failed and every phase refuses one that is not running.
+    const second = "00000000-0000-7000-8000-0000000000e3";
+    await env.DB.prepare("UPDATE users SET name = ? WHERE id = ?").bind("Ben Diaz", DANA_ID).run();
+    await startDemoOperation(env, { ...request(), operationId: second });
+    await env.DB.prepare("UPDATE users SET name = ? WHERE id = ?").bind("Adam", MARCUS_ID).run();
+    await expect(runDemoPreparationPhase(env, second, "checking_template", { attempt: 1 }))
+      .rejects.toMatchObject({ code: "demo_cast_name_duplicate" });
   });
 
   it("allocates a workspace id onto the row before the workspace exists", async () => {
@@ -336,10 +416,10 @@ describe("a demo preparation operation", () => {
     await env.DB.prepare(
       `INSERT INTO demo_operations (operation_id, company_name, presenter_user_id, pack_version, cast_json, workspace_id,
          status, attempt, failed_phase, error_code, error_message, created_at, updated_at)
-       VALUES (?, 'Alto Capital', ?, 'v1', '{}', NULL, 'failed', 1, 'checking_template', 'demo_cast_not_member', 'Sam is not a member', ?, ?)`,
+       VALUES (?, 'Alto Capital', ?, 'v1', '{}', NULL, 'failed', 1, 'checking_template', 'demo_cast_not_a_colleague', 'Sam is not a colleague', ?, ?)`,
     ).bind(OPERATION_ID, PRESENTER_ID, NOW, NOW).run();
     await expect(retryDemoOperation(env, OPERATION_ID)).rejects.toMatchObject({ code: "demo_preparation_unavailable" });
-    expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", attempt: 1, failed_phase: "checking_template", error_code: "demo_cast_not_member" });
+    expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", attempt: 1, failed_phase: "checking_template", error_code: "demo_cast_not_a_colleague" });
   });
 
   it("orders phases by the pipeline, and lists more operations than one statement can name", async () => {
@@ -404,6 +484,30 @@ describe("the operator routes", () => {
     const demos = await app.request("/internal/demos", { headers: { authorization: `Bearer ${DEMOS_TOKEN}` } }, env);
     expect(demos.status).toBe(200);
     await expect(demos.json()).resolves.toEqual({ operations: [] });
+
+    // The template route answers the company's directory now, so its own door
+    // is asserted rather than assumed from the router it shares.
+    const anonymousTemplate = await app.request("/internal/demos/template", {}, env);
+    expect(anonymousTemplate.status).toBe(401);
+    const misfiledTemplate = await app.request("/internal/demos/template", { headers: { authorization: `Bearer ${MISFILED_SUPPORT_TOKEN}` } }, env);
+    expect(misfiledTemplate.status).toBe(403);
+    expect(await anonymousTemplate.text()).not.toContain("@rallywith.ai");
+    expect(await misfiledTemplate.text()).not.toContain("@rallywith.ai");
+  });
+
+  it("refuses the cast as the operator used to give it: a name per role, not an account", async () => {
+    // The wire shape changed, and an old client is refused by the contract at
+    // the boundary rather than reaching the directory read with a name in hand.
+    const { env, app, launched } = fixture();
+    const headers = { authorization: `Bearer ${DEMOS_TOKEN}`, "content-type": "application/json" };
+    const named = await app.request("/internal/demos", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ...request(), cast: { priya: "Priya Raman", marcus: "Sam Burton", dana: "Ben Diaz" } }),
+    }, env);
+    expect(named.status).toBe(400);
+    expect(launched).toEqual([]);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM demo_operations").first()).toEqual({ count: 0 });
   });
 
   it("start, read and list an operation through the real rows, starting its Workflow once", async () => {
@@ -435,17 +539,34 @@ describe("the operator routes", () => {
     expect(template.status).toBe(200);
     const body = await template.json() as {
       workspaceId: string;
-      pack: { roles: string[]; presenterRole: string | null; castDefaults: Record<string, string> };
+      pack: { roles: string[]; presenterRole: string | null; roleLabels: Record<string, string> };
       members: { userId: string; role: string }[];
+      castCandidates: { userId: string; name: string; email: string }[];
+      castEmailDomain: string;
     };
     expect(body.workspaceId).toBe(DEMO_TEMPLATE_WORKSPACE_ID);
     expect(body.pack.roles).toEqual(["presenter", "priya", "marcus", "dana"]);
-    // The form is built from these: one name per role the operator types over,
-    // and no default for the role a real person plays.
     expect(body.pack.presenterRole).toBe("presenter");
-    expect(body.pack.castDefaults).toEqual({ priya: "Emma Shipman", marcus: "Sam Burton", dana: "Ben Diaz" });
-    // The outsider is not a candidate: only the template's active members are.
+    // Each part is labelled, so the form's dropdowns say which one they are.
+    expect(body.pack.roleLabels).toEqual({ priya: "Product", marcus: "Sales", dana: "Legal" });
+    // The presenter is chosen from the template's active members alone.
     expect(body.members.map((member) => member.userId)).toEqual([PRESENTER_ID]);
+    // The rest are cast from the company's directory: everyone on its domain
+    // who has signed in, by address, and nobody else — the outsider is on
+    // another domain, so the form never offers them.
+    expect(body.castEmailDomain).toBe("rallywith.ai");
+    // By name, which is what the dropdown shows, with the address breaking the
+    // tie between the two Sam Burtons.
+    expect(body.castCandidates.map((candidate) => `${candidate.name} · ${candidate.email}`)).toEqual([
+      "Adam · adam@rallywith.ai",
+      "Ben Diaz · ben@rallywith.ai",
+      "Priya Raman · priya@rallywith.ai",
+      "Sam Burton · kb@rallywith.ai",
+      "Sam Burton · sam.burton@rallywith.ai",
+    ]);
+    // Nadia is on the domain but has never signed in, so there is no account
+    // to seat and she is not offered.
+    expect(body.castCandidates.some((candidate) => candidate.userId === UNSEEN_ID)).toBe(false);
 
     await app.request("/internal/demos", { method: "POST", headers, body: JSON.stringify(request()) }, env);
     await env.DB.prepare("UPDATE demo_operations SET status = 'failed', failed_phase = 'seeding_conversations' WHERE operation_id = ?").bind(OPERATION_ID).run();

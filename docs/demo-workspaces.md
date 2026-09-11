@@ -31,16 +31,16 @@ page calls. **Open questions** below says what remains.
 | `apps/api/src/services/demo-workspace-register.ts` | The walk's one write into the register: `markDemoWorkspaceRetired` stamps `retired_at` on the operation row. Not an authorization input, and nothing reads through it. |
 | `apps/api/src/services/demo-connection-copy.ts` | Copying template connections into a demo, with credential re-encryption; `SHAREABLE_CONNECTOR_TYPES` is the list of providers whose grant may be shared. |
 | `apps/api/src/services/demo-workspace-visibility.ts` | The template and unpublished-candidate filter, applied in regional discovery and activation. `DEMO_TEMPLATE_WORKSPACE_ID`, the template's UUID, is declared here and nowhere else. |
-| `apps/api/src/services/demo-pack.ts` | The pack schema and its playability rules, the planner that binds a pack to a cast, the default name each role is offered under, and the placeholder pack — its three rooms and its standing Sidekick. |
+| `apps/api/src/services/demo-pack.ts` | The pack schema and its playability rules, the planner that binds a pack to a cast, the label each part is cast under, and the placeholder pack — its three rooms and its standing Sidekick. |
 | `.agents/skills/demo-scenario/SKILL.md` | Adding a scenario to the shipped pack from a plain-language description, for an author who does not read the code: what to ask, how Rally has to sound, the files a scenario touches, and the loop that produces the `expect` block. Invoke it as `/demo-scenario`. |
-| `apps/api/src/services/demo-personas.ts` | The cast who do not exist: minting one regional user per role per operation from the name the operator typed, and proving a cast id is this operation's own persona. |
+| `apps/api/src/services/demo-cast.ts` | Who a demo can be cast from: the company's email domain, the directory query the New demo form's dropdowns are built from, and the check that every cast id is one of those accounts. |
 | `apps/api/src/services/demo-seeder.ts` | Plays one action at a time through the production write paths, waits for its run to settle as specified, and records the receipt. `sidekickDraft` is the definition a Sidekick step publishes. |
 | `apps/api/src/services/demo-seed-provider.ts` | The `fetch` a seeded run's harness config carries: answers the run's one inference request from the seed and refuses the next. |
 | `apps/api/src/services/demo-readiness.ts` | The manifest of what every verified viewer should find, derived from the pack and the receipts, and the one comparison against their real directory, attention and canonical reads. |
 | `apps/api/src/services/demo-preparation.ts` | The operation: its rows, start/retry/abandon, and the five idempotent phase functions the Workflow's steps call. |
 | `apps/api/src/workflows/demo-preparation.ts` | `DemoPreparationWorkflow`: one step per phase, then a check-and-sleep loop until the workspace matches the pack. |
 | `apps/api/src/routes/demo-operations.ts` | `/internal/demos`, behind the operator credential in the `demos` role; `/internal/workspaces/:id/retire` is retirement's own router. |
-| `packages/contracts/src/demo-operations.ts` | The operation on the wire: the start request, the status Ace renders, the template's cast candidates, and the Workflow's pointer payload. |
+| `packages/contracts/src/demo-operations.ts` | The operation on the wire: the start request, the status Ace renders, the template's presenter and cast candidates, and the Workflow's pointer payload. |
 | `packages/contracts/src/demo-seed.ts` | `DemoSeedSchema`: what a seed action carries, and the one field a run's execution context gains. |
 | `packages/db/migrations/0100_demo_workspaces.sql` | The operation's row — which is also the register of published workspaces — its per-phase receipts, and the seeder's receipts. |
 | `packages/db/migrations/0102_demo_seed_sidekicks.sql` | Widens those receipts for an action that is in no room. |
@@ -106,39 +106,47 @@ the template losing Linear during one.
 
 ### Casting a demo
 
-**Only the presenter is a real person.** They sign in, they own the demo, and
-it is their view of it that the readiness barrier verifies, so they are chosen
-from the template's own members. Every other role is played by a **persona**:
-a regional `users` row this operation mints, carrying the name the operator
-typed in the New demo form and nothing else — no platform identity, so it
-cannot sign in, cannot be discovered, and is never offered a workspace; an
-address under the reserved `.invalid` top-level domain, which nobody can
-register and no mail can reach, because the composer's people picker puts a
-member's address on screen; and the presenter's timezone, so the cast reads as
-one company in one place.
+**Everybody in a demo is a colleague with a real account.** The presenter signs
+in, owns the demo, and it is their view of it that the readiness barrier
+verifies, so they are chosen from the template's own members. Every other role
+is cast from the **company's directory**: everyone with an account on the
+company's own email domain who has signed in to this region, listed by address
+in the New demo form's dropdowns. `demo-cast.ts` holds that domain — the one
+place it is written down — and the query that reads it. The pack names each
+part it is casting for (`roleLabels`: Product, Sales and Legal for the pack in
+service), because a role token reads as this pack's own character and a
+colleague put in the wrong part has its scripted words attributed to them under
+their real name.
 
-That is what frees a demo from the company's own directory. Casting colleagues
-put their real names and work addresses in front of a customer, limited the
-cast to whoever happened to be in the template, and made the demo read as
-Rally's staff rather than the customer's own team. The pack still names people
-by role token, so it reads the same whoever plays them; what it now also
-carries is a **default name per role** — the form opens on those and the
-operator types over them.
+The two lists are different questions, which is why the template answers both
+rather than filtering one. A presenter is handed the template's connections,
+so they have to be somebody the template already trusts with them. A cast
+member is only seated in the new workspace, so the domain is the whole of what
+bounds them.
 
-**The ids are the region's, never the operator's.** The start request carries
-names, and preparation mints the people who hold them, so no request can seat
-an account in a demo workspace. Identity is derived rather than stored: a
-persona's `google_subject` is `demo-persona:<operation>:<role>`, which makes
-minting idempotent — a repeated submission or a retry meets the people the
-first submission made, under the names it was given — and lets the template
-check prove, before any write, that every cast id is this operation's own
-persona. A name must be unique among the cast and different from the
-presenter's: two people under one name in one workspace is a mention nobody
-watching can attribute.
+**The domain filter is a boundary, not a convenience for the form.** Being cast
+seats the account in a demo workspace that receives copies of the template's
+connections, so it is checked when the start request arrives — before a row is
+written — and again by `checking_template` before the first write, against
+whatever the page sent. `demo_cast_not_a_colleague` is the refusal: 422 from
+the start request, 409 from the phase, where it means somebody the row already
+names has stopped being one.
 
-A persona outlives the demo it was made for, because a `users` row is
-referenced by everything it wrote. Abandoning a preparation retires the
-workspace and leaves its personas behind, seated nowhere.
+Two collisions are refused. **One person cannot play two parts**
+(`demo_cast_duplicate`), presenter included: the seeded conversation would have
+them answering themselves, and the readiness barrier would read one directory
+row for two roles. **Two people in the demo cannot share a display name**
+(`demo_cast_name_duplicate`): a mention resolves to a user id, and nobody
+watching can tell which of them was named. Both are checked in Ace so the form
+says which, and again by the regional API, which does not trust the page — and
+the name check runs again before the first write, because a name is rewritten
+from the platform identity every time somebody signs in, so two people can
+collide after the row was written.
+
+A demo's people are the accounts that were already there: preparation creates
+nobody. Abandoning a preparation retires the workspace and leaves everyone who
+was seated in it with one less workspace, exactly as retiring a published demo
+does.
 
 ### Seeding a demo from a pack
 
@@ -185,9 +193,9 @@ published Sidekick without depending on a live model to have drafted one. The
 step carries the definition's prose, the recurrence, and optionally one `say`
 turn: the briefing the Sidekick has already written. The recurrence always names
 its zone. A calendar trigger may leave that null in general, and it then resolves
-against the account the Sidekick runs for — which here is a persona minted for
-this demo, with no zone of its own. A demo is presented in a zone somebody chose,
-so the pack states it.
+against the account the Sidekick runs for — which here is whichever colleague
+was cast as its author, whose own zone is not the one the demo is shown in. A
+demo is presented in a zone somebody chose, so the pack states it.
 
 That briefing is produced by an ordinary Sidekick run through `runSeeded`, whose
 model bytes come from the seed exactly as a seeded message's do
@@ -318,18 +326,18 @@ published and closed — the row is also the register discovery and the Demos
 page read. Repeated submission of the same id returns that row's progress and
 starts nothing; two different ids are two demos. This is operation identity,
 not a concurrency limit. Before a row is written the request is checked: every
-pack role but the presenter's named, each under a different name and none
-under the presenter's own, and the presenter an active member of the template
-— the new workspace is owned by the presenter and receives the template's
-credentials, so a presenter outside the template would be handed them. The
-named roles are then minted as this operation's personas, so what the row
-stores is the user ids every phase after it works in.
+pack role but the presenter's cast, each to a different colleague and none to
+the presenter, no two of them under one display name, and the presenter an
+active member of the template — the new workspace is owned by the presenter and
+receives the template's credentials, so a presenter outside the template would
+be handed them. What the row stores is the user ids every phase after it works
+in.
 
 **The phases are the PRD's, and each is safe to run again.** `checking_template`
 verifies the pack in service is the one the operation recorded, the template
 workspace exists in this region, the presenter is a signed-in regional user and
-still an active member of the template, and every other role is played by this
-operation's own persona rather than by an account.
+still an active member of the template, and every other role is played by an
+account that is still a colleague on the company's domain.
 `creating_workspace` allocates the workspace id onto the operation's row
 *before* creating the workspace, so a crash between the two retries the same
 id — which is why that column carries no foreign key to `workspaces`; creates
@@ -473,12 +481,15 @@ demo's.
   the row before the workspace exists.
 - **One driver at a time.** A phase refuses a driver whose attempt the row has
   moved past, and every status write names the attempt it belongs to.
-- **The cast is named, not chosen.** A start request carries a name per role;
-  the region mints the person who holds it. No request names a user id, so no
-  demo can seat an account, and the template check proves every cast id is this
-  operation's own persona before the first write.
-- **A persona cannot sign in.** No platform identity, an address in a domain
-  that cannot exist, and nothing that offers them a workspace.
+- **The cast is chosen, and only from colleagues.** A start request carries an
+  account per role, and every one of them must be a signed-in account on the
+  company's email domain — checked before the row is written and again by the
+  template check before the first write, so the page's list is never what
+  bounds who a demo can seat.
+- **Nobody is in a demo twice, and no two of them share a name.** One person
+  per part, the presenter included, and a display name that is unique among
+  them; a mention resolves to a user id, and both collisions make one
+  unattributable.
 - **A viewer the workspace does not seat is refused, never invented.** The
   barrier reads as the member membership says the viewer is; there is no
   fabricated role.
@@ -578,7 +589,7 @@ are closed when access ends ([`access-revocation.md`](access-revocation.md)).
 | `apps/api/test-workers/demo-readiness.test.ts` | With the effect Queue held, a seeded two-room pack is listed but not Ready — the mention, the new marker and the attention count are named as gaps — and delivering the directory effects through the real consumer makes it Ready with no gaps, including the room the presenter can see without being in, and the order. Proved to fail with the mention comparison removed. |
 | `apps/api/test/demo-readiness.test.ts` | The manifest derived from the placeholder pack — rooms newest first, seats, states, ids from receipts — and its refusal of a pack whose rooms or question were never confirmed; and the schema's check that a viewer's expected rooms are exactly the visible ones. |
 | `apps/api/test-workers/demo-preparation.test.ts` | The launch id handed to the real Workflow binding, so the platform's own instance-id validator judges it (a colon-joined id is refused, the hyphenated one creates an instance). Every phase in order on real objects: the presenter's workspace through onboarding with the cast seated, the template's Google connection copied and left in place, every action confirmed and a completed phase re-run confirming nothing twice, the wait naming its gaps, and Ready published to the register only after the directory effects land; and a failed template check recorded on the operation with its reason. Proved to fail with the register's publication removed from the waiting phase. |
-| `apps/api/test/demo-operations.test.ts` | Against the real migrations: one operation id starts one Workflow and answers a repeat with the same progress; a cast that misses or invents a role, names two people alike or reuses the presenter's name, or names the presenter's role at all, is refused before a row is written, as is a presenter outside the template — with nobody minted; the cast is minted as this operation's personas, once, with no platform identity and an address that cannot be delivered to, and a repeat meets the same people; a cast id swapped for an account fails the template check; the allocation statement is accepted before the workspace exists; a retry is the next attempt of a failed or a stalled `running` operation; a superseded attempt's phase call writes nothing; the template check runs against the real rows and records a presenter the template lost; a driver that stopped outside a phase is recorded for its own attempt only, with internal text kept off the page; a failed launch marks the operation failed; a retry without a driver leaves the row untouched; the status lists phases in phase order at their latest attempt, and a list past one statement's parameters is answered whole; abandon needs its confirmation, refuses a published demo and closes an operation with no workspace; and the routes — start, list, template, retry, abandon — admit only the `demos` role and reject a malformed start and an unconfirmed abandon. |
+| `apps/api/test/demo-operations.test.ts` | Against the real migrations: one operation id starts one Workflow and answers a repeat with the same progress; a cast that misses or invents a role, seats one person twice, seats two people under one name, or names the presenter's role at all, is refused before a row is written, as is a presenter outside the template and anybody who is not a signed-in account on the company's domain; the row stores the accounts it was given and answers their directory names, a repeat meets the cast it was started with, and a cast member who stops being a colleague fails the template check; the template route answers the presenter's members, the cast's candidates and each part's label, offers nobody off the domain, a near-miss domain or unseen, and is refused outside Global; the allocation statement is accepted before the workspace exists; a retry is the next attempt of a failed or a stalled `running` operation; a superseded attempt's phase call writes nothing; the template check runs against the real rows and records a presenter the template lost; a driver that stopped outside a phase is recorded for its own attempt only, with internal text kept off the page; a failed launch marks the operation failed; a retry without a driver leaves the row untouched; the status lists phases in phase order at their latest attempt, and a list past one statement's parameters is answered whole; abandon needs its confirmation, refuses a published demo and closes an operation with no workspace; and the routes — start, list, template, retry, abandon — admit only the `demos` role and reject a malformed start and an unconfirmed abandon. |
 | `apps/ace/test/demos.test.ts`, `apps/ace/test/demos-client.test.tsx` | Ace's side, owned by [`ace.md`](ace.md#testing): the relay forwards the typed confirmation and answers a regional refusal by its own code, and the page reads a retried operation by its current attempt, keeps polling while offline, and names the presenter beside each gap. |
 | `apps/api/test/socket-ticket-transport.test.ts` | Every socket-ticket issuer refuses a `connector` and a `demo_seed` principal alike. |
 
@@ -648,11 +659,13 @@ The routes sit behind the operator credential's `demos` role, the one Ace
 already holds one token per region for; the demo routers refuse the telemetry
 roles as the telemetry router refuses `demos`.
 
-The presenter and every cast member must be active members of the template,
-checked before the row is written and again by the first phase. The new
-workspace is owned by the presenter and receives copies of the template's
-connections, so a presenter outside the template would be handed its
-credentials. Plaintext credentials exist only inside the copying operation and
+The presenter must be an active member of the template, and every cast member
+an account on the company's email domain — both checked before the row is
+written and again by the first phase. The new workspace is owned by the
+presenter and receives copies of the template's connections, so a presenter
+outside the template would be handed its credentials; a cast member is seated
+in that workspace and so reaches the same copies, which is what the domain
+bounds. Plaintext credentials exist only inside the copying operation and
 never enter a response, a log, or a receipt. The template's row is not written
 during a copy, which is asserted rather than assumed. A copy shares the
 template's upstream grant, and the presenter owns the demo's Disconnect: only a
@@ -699,6 +712,47 @@ multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
 
+### 2026-09-10 — A demo is cast from the company's directory, not invented
+
+**What changed:** A start request carries an account per pack role instead of a
+name, and the New demo form casts each part from a dropdown of the company's
+own people — everyone with a `@rallywith.ai` account who has signed in to the
+region (`demo-cast.ts`). Personas are gone: `demo-personas.ts` is deleted,
+nothing is minted, and the pack no longer carries a default name per role. The
+form opens with every part uncast rather than pre-filled, and refuses one
+person in two parts or two people under one name; `checking_template` proves
+every cast id is still such an account.
+
+**Why:** The team asked for it, in those words: the invented cast was not being
+used, and demos are shown with the people who actually work here.
+**2026-09-09 — The cast is named, not cast from the company directory** below
+argued the opposite — that casting colleagues put real names and
+work addresses in front of a customer — and that argument is not wrong so much
+as outweighed: the demos being given are internal and to design partners, where
+a cast of people who do not exist is the thing that reads as fake, and an
+operator who wants an invented name has one fewer thing to type than they had
+to before. The alternative considered was keeping personas and giving them
+plausible company addresses, which makes a fake account look like a real
+colleague's — worse than either honest option.
+
+**Considered and rejected:** Keeping personas beside the directory, so an
+operator could choose either per part. That is a question with no good default
+asked on every demo, for a cast that never signs in either way.
+
+**Consequences:** The domain is the security boundary now. Being cast seats the
+account in a workspace holding copies of the template's connections, so
+`demo-cast.ts` is where who-may-be-in-a-demo is decided, it is enforced on the
+request and again before the first write, and changing that constant changes
+who can be seated. The list is the whole directory rather than the template's
+membership, which is what the team asked for and is wider than the presenter's
+list on purpose. A demo now seats people who can sign in, so a cast member sees
+the demo workspace in their own account menu once it is published — that is the
+point, not a leak, but it is a real change from a cast who could not sign in at
+all. A preparation started before this change stores persona ids in
+`cast_json`; retrying one now fails `checking_template` with
+`demo_cast_not_a_colleague`, because a persona is not an account on the domain.
+Start a new preparation instead — the old rows still read, and the demos they
+made are unaffected.
 ### 2026-09-10 — A scenario is authored against a derived readiness block, and by a skill
 
 **What changed:** `demoIdleViewerExpectation` derives a viewer's whole `expect`
@@ -731,6 +785,9 @@ refused by the derivation rather than silently unverifiable, so keep the
 presenter to mentions; that is now the skill's rule as well. The flags for an
 idle viewer are no longer an author's to reason out — change the derivation and
 the shipped pack's block, or neither.
+
+Shipped in #664. Design:
+[the demo workspace PRD](PRDs/2026-09-04_demo-workspace/prd.md).
 
 ### 2026-09-09 — A pack can open a substream, and the demo has three rooms
 
