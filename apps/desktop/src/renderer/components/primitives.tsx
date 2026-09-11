@@ -1,4 +1,4 @@
-import { useCallback, useContext, useState } from 'react';
+import { useContext, useState } from 'react';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { PersonalAvatar } from './personal-avatar';
 import * as AvatarPrimitive from '@radix-ui/react-avatar';
@@ -120,9 +120,11 @@ export function Tip({
   /**
    * Pass both to take the answer over: Radix still decides *when* to open, and
    * reports it here, but the caller renders `open`. Leave both out and the tip
-   * decides for itself, which is what almost every caller wants — and takes the
-   * window-deactivation close below with it, which a caller holding `open` owns
-   * for itself.
+   * decides for itself, which is what almost every caller wants.
+   *
+   * Either way, `onOpenChange` hears every close — including the one the window
+   * deactivation below performs, which is what lets a caller holding `open` put
+   * its own tip down rather than render it back over the returning window.
    */
   onOpenChange?: (open: boolean) => void;
   open?: boolean;
@@ -140,10 +142,19 @@ export function Tip({
   // here is the ability to put it down: a tip that was up when the window went
   // to the back has nothing to close it — the pointer never left the trigger —
   // so it is still up when the person switches back, over the screen they came
-  // back to. A caller that passes `open` owns the answer and is left alone.
+  // back to.
   const [hovered, setHovered] = useState(false);
-  const closeOnDeactivation = useCallback(() => setHovered(false), []);
-  useWindowDeactivated(closeOnDeactivation);
+  const isOpen = open ?? hovered;
+  // Reported as a close rather than only dropped, because a caller holding
+  // `open` renders the answer and telling it is the only way to put its tip
+  // down. `DragHint` is one, and a resize handle's hint is the likeliest of all
+  // of these to still be up when the window goes away: the pointer that opened
+  // it is resting on a 12px divider it has no reason to leave.
+  useWindowDeactivated(() => {
+    if (!isOpen) return;
+    setHovered(false);
+    onOpenChange?.(false);
+  });
   return (
     <Tooltip.Root
       delayDuration={delayDuration}
@@ -152,7 +163,7 @@ export function Tip({
         setHovered(next);
         onOpenChange?.(next);
       }}
-      open={open ?? hovered}
+      open={isOpen}
     >
       <Tooltip.Trigger
         asChild
