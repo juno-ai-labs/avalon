@@ -18,7 +18,7 @@ import {
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
+import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import type { WorkspaceTarget } from '@rally/contracts/workspace-target';
 import { useAppSession } from '../lib/app-session';
 import { harnessMarkerStatus } from '../lib/format';
@@ -41,7 +41,7 @@ import { useCachedWorkstreamAppearance } from '../lib/use-workstreams-query';
 import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/launched-conversation';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { evictCachedWorkstream, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
-import { WorkstreamSidebar, type SubstreamRowTarget } from '../components/workstream-sidebar';
+import { WorkstreamSidebar, type ConversationRowTarget } from '../components/workstream-sidebar';
 import {
   PENDING_SUBSTREAM_DRAFT_ID,
   type LaunchingSubstream,
@@ -197,20 +197,8 @@ export function WorkstreamHeader({
   // scheme does not unfurl, often does not linkify, and is dead for anyone who
   // has not installed Rally. The canonical link ends at the same work stream.
   const copyLink = (): void => {
-    void (async () => {
-      if (!workspaceTarget) return;
-      const bridge = desktopBridge();
-      const { webBaseUrl } = await bridge.getRuntimeConfig();
-      await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, {
-        region: workspaceTarget.region,
-        workspaceId: workspaceTarget.workspaceId,
-        workstreamId: workstream.id,
-        ...(substreamId === '0' ? {} : { substreamId }),
-      }));
-      reportTelemetryProductIntent({
-        kind: 'content_copied', contentType: 'workstream_link', resourceType: 'workstream', resourceId: workstream.id,
-      });
-    })().catch(() => undefined);
+    if (!workspaceTarget) return;
+    void copyWorkstreamLink(workspaceTarget, workstream.id, substreamId).catch(() => undefined);
   };
   const copyEmailAddress = (): void => {
     if (!workstream.emailAddress) return;
@@ -489,9 +477,9 @@ export function WorkstreamScreen(): React.JSX.Element {
   // One target per dialog rather than one shared "menu target": both can be
   // open in sequence on different rows, and a single slot would make cancelling
   // one clear the other's subject out from under it.
-  const [renameTarget, setRenameTarget] = useState<(SubstreamRowTarget & { parentId: string }) | null>(null);
+  const [renameTarget, setRenameTarget] = useState<(ConversationRowTarget & { parentId: string }) | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
-  const [archiveTarget, setArchiveTarget] = useState<(SubstreamRowTarget & { parentId: string }) | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<(ConversationRowTarget & { parentId: string }) | null>(null);
   const [substreamPending, setSubstreamPending] = useState(false);
   const [substreamMenuError, setSubstreamMenuError] = useState<string | null>(null);
   /**
@@ -556,20 +544,12 @@ export function WorkstreamScreen(): React.JSX.Element {
     });
   };
   const menuOperation = useRef(0);
-  const copyRowLink = (target: SubstreamRowTarget): void => {
+  const copyRowLink = (target: ConversationRowTarget): void => {
     if (!session?.workspace) return;
     const workspace = session.workspace;
     const visit = routeRef.current.visit;
     const operation = ++menuOperation.current;
-    void (async () => {
-      const bridge = desktopBridge();
-      const { webBaseUrl } = await bridge.getRuntimeConfig();
-      await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, {
-        region: workspace.region, workspaceId: workspace.id, workstreamId: id,
-        ...(target.substreamId === '0' ? {} : { substreamId: target.substreamId }),
-      }));
-      reportTelemetryProductIntent({ kind: 'content_copied', contentType: 'workstream_link', resourceType: 'workstream', resourceId: id });
-    })().catch((error: unknown) => {
+    void copyWorkstreamLink({ region: workspace.region, workspaceId: workspace.id }, id, target.substreamId).catch((error: unknown) => {
       if (routeRef.current.visit === visit && menuOperation.current === operation) {
         setSubstreamMenuError(error instanceof Error ? error.message : 'The link could not be copied.');
       }
@@ -809,12 +789,12 @@ export function WorkstreamScreen(): React.JSX.Element {
           mainActions={parent.data ? {
             onMakePublic: parent.data?.systemKind ? undefined : makePublic,
             publicDisabled: parent.data.scope === 'workspace' || substreamPending,
-            onCopyLink: copyRowLink,
+            onCopyLink: session?.workspace ? copyRowLink : undefined,
             onRename: (target) => { ++menuOperation.current; setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuError(null); },
             onArchive: (target) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuError(null); },
           } : undefined}
           substreamActions={{
-            onCopyLink: copyRowLink,
+            onCopyLink: session?.workspace ? copyRowLink : undefined,
             onRename: (child) => { ++menuOperation.current; setRenameTarget({ ...child, parentId: id }); setRenameTitle(child.title); setSubstreamMenuError(null); },
             onArchive: (child) => { ++menuOperation.current; setArchiveTarget({ ...child, parentId: id }); setSubstreamMenuError(null); },
           }}
