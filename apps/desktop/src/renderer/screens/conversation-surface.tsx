@@ -94,7 +94,7 @@ import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store'
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { workstreamSidekickRows, type SidekickRow } from '../components/sidekick-section';
-import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
+import { AgentCompactionIndicator, AgentWorkTiming, RunStoppingIndicator, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -201,6 +201,36 @@ export function orderedTranscriptOwnsRunTiming(
       : []));
   return [...snapshot.ranges.flatMap((range) => range.turns), ...snapshot.activeTurns]
     .some((turn) => turn.activityId !== null && assistantActivityIds.has(turn.activityId));
+}
+
+/**
+ * Which row the one activity slot above the composer shows, if any.
+ *
+ * A pending stop outranks the other two. Compaction and the elapsed total both
+ * answer "what is Rally doing"; once somebody has pressed Stop, the question
+ * they are waiting on is whether it landed, and this slot is the only place
+ * that can answer it. Stop is observed at the loop's next safe step boundary,
+ * so the response in flight and every tool it already asked for settle first —
+ * a production run took eleven seconds — and for all of it the sole
+ * acknowledgement was a spinner in a 28px button and a tooltip nobody hovers.
+ *
+ * `timing` is left to the feed whenever the ordered transcript already draws
+ * the run's own rows, which is why it is the one answer that can be `null`
+ * while a run is plainly going. That stays true under a pending stop: the feed
+ * keeps counting because the response really is still settling, and the row
+ * this slot adds says why it is allowed to.
+ */
+export function conversationActivityRow(input: {
+  status: HarnessStatus;
+  stopRequested: boolean | undefined;
+  compactingThisRun: boolean;
+  orderedOwnsRunTiming: boolean;
+  runTiming: AgentWorkTimingProps | null;
+}): 'stopping' | 'compacting' | 'timing' | null {
+  if (input.status === 'running' && input.stopRequested === true) return 'stopping';
+  if (input.compactingThisRun && input.status === 'running') return 'compacting';
+  if (!input.orderedOwnsRunTiming && input.runTiming) return 'timing';
+  return null;
 }
 
 /**
@@ -1975,6 +2005,22 @@ export function ConversationSurface({
     orderedTranscript.data,
     detail.latestHarnessRunId ?? detail.latestHarnessRun?.id,
   );
+  const activityRow = conversationActivityRow({
+    status: detail.harnessStatus,
+    stopRequested: detail.stopRequested,
+    // A compaction has to be running AND belong to the run on screen. Reading
+    // the id straight off `activeCompaction` would compare `undefined` with the
+    // id of a run that has none either, and a room with no run at all would
+    // report itself compacting. Truthiness rather than `!== null`, because the
+    // absent value here is sometimes `undefined`: the type says
+    // `AgentCompactionState | null`, but a connection double that names only
+    // the fields its test drives leaves the key off entirely.
+    compactingThisRun: Boolean(socketConnection.activeCompaction)
+      && socketConnection.activeCompaction?.harnessRunId
+        === (detail.latestHarnessRunId ?? detail.latestHarnessRun?.id),
+    orderedOwnsRunTiming,
+    runTiming,
+  });
   const visibleTranscript = transcript;
   const firstUnreadSequenceNumber = detail.firstUnreadSequenceNumber;
   const firstUnreadIndex = firstUnreadSequenceNumber === null
@@ -2195,13 +2241,12 @@ export function ConversationSurface({
               virtualizer={transcriptVirtualizer}
             />
           )}
-          <ActivityPresence>{socketConnection.activeCompaction
-            && detail.harnessStatus === 'running'
-            && socketConnection.activeCompaction.harnessRunId === (detail.latestHarnessRunId ?? detail.latestHarnessRun?.id)
-            ? <AgentCompactionIndicator />
-            : !orderedOwnsRunTiming
-              && runTiming
-              && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}</ActivityPresence>
+          <ActivityPresence>{activityRow === 'stopping'
+            ? <RunStoppingIndicator />
+            : activityRow === 'compacting'
+              ? <AgentCompactionIndicator />
+              : activityRow === 'timing'
+                && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming!} />}</ActivityPresence>
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}

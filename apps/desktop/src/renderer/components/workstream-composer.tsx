@@ -15,6 +15,7 @@ import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMenti
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket';
+import { STOPPING_LABEL } from './agent-work-timing';
 import type { AttachmentPreview } from './attachments';
 import { ComposerQueue, type ComposerQueueItem } from './composer-queue';
 import { ComposerInput, type ComposerModelControl } from './composer-input';
@@ -491,7 +492,7 @@ export function WorkstreamComposer({
             <IconButton
               className="stop-button"
               aria-disabled={workstream.stopRequested}
-              label={workstream.stopRequested ? 'Stopping after this response…' : 'Stop the current run'}
+              label={workstream.stopRequested ? STOPPING_LABEL : 'Stop the current run'}
               onClick={() => { if (!workstream.stopRequested) void onStop(); }}
               tooltipSide="top"
             >

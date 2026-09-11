@@ -7,6 +7,7 @@ import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import { clearAllDrafts } from '../lib/draft-cache';
 import { mentionOptionCopy } from '../test/mention-option-copy';
+import { STOPPING_LABEL } from './agent-work-timing';
 import type { ComposerModelControl } from './composer-input';
 import { WorkstreamComposer } from './workstream-composer';
 
@@ -142,8 +143,8 @@ describe('WorkstreamComposer Stop action', () => {
     expect(button).not.toBeDisabled();
     act(() => { button.blur(); button.focus(); });
     expect(button).toHaveFocus();
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Stopping after this response…');
-    expect(button).toHaveAccessibleName('Stopping after this response…');
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(STOPPING_LABEL);
+    expect(button).toHaveAccessibleName(STOPPING_LABEL);
     expect(button).not.toHaveAccessibleDescription();
     fireEvent.click(button);
     expect(onStop).toHaveBeenCalledTimes(1);

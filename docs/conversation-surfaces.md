@@ -134,6 +134,23 @@ but cannot submit another stop request. The capsule's rounded overflow clips
 the moving button; tooltips portal outside it. `IconButton` tooltips do not duplicate
 the button's accessible name as a second screen-reader description.
 
+A pending stop is also said in words, because the button cannot say it. Stop is
+observed at the loop's next safe step boundary — the response in flight and
+every tool it already asked for settle first, and
+[`workstream-durable-object.md`](workstream-durable-object.md) owns that
+contract — so the gap between the click and the run ending is a real wait, over
+ten seconds in the production report this came from. The single activity slot
+above the composer answers it: while a live run carries `stopRequested`, that
+slot shows the stopping row and outranks both the compaction indicator and the
+elapsed total, which answer "what is Rally doing" rather than "did my click
+land". `conversationActivityRow` is the whole decision, so the slot has one
+answer rather than a chain of conditions at the call site. One exported sentence
+is shared with the Stop button's tooltip; the row carries no elapsed number,
+since the only number worth printing is how much longer and nothing on this side
+knows it. The feed's own timing row keeps counting underneath — the response
+really is still settling, and silencing it there would only move the overstatement
+one row down.
+
 Once a member-requested stop settles, the feed renders it as an intentional
 terminal state with a filled stop-square and no recovery action. The stopped
 prompt remains transcript history; continuing means composing a fresh turn,
@@ -519,11 +536,52 @@ ends the attempt without sending, and the draft and the error stay on screen.
 
 Shared components have fixture-level component tests for settled, streaming,
 failed, elicitation, attachment, tool, follow, and paging states. Each screen
-adapter separately proves its controls and identity transition. Any visible
+adapter separately proves its controls and identity transition.
+`workstream.test.tsx` holds the activity slot's precedence — a pending stop over
+compaction and over the elapsed total, and neither a settled run's stale
+`stopRequested` nor an absent one reaching the slot. Any visible
 change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-11 — A pending stop says so in words, where the reader is watching
+
+**What changed:** While a running conversation carries `stopRequested`, the one
+activity slot above the composer shows a stopping row — an orb and "Stopping
+after the current response…" — ahead of the compaction indicator and the elapsed
+total. `conversationActivityRow` owns that precedence as a single exported
+decision, and one exported sentence now serves both the row and the Stop
+button's tooltip.
+
+**Why:** Stop was reported as not working. It was working. In the production run
+behind the report, the request was written 1.8s into an assistant turn; that turn
+finished 7.0s later, the tool it had already asked for ran for a further 3.0s,
+and the loop committed the stop 11.2s after the click — exactly the post-step
+safe boundary the durable loop documents. For all 11.2 seconds the only
+acknowledgement was a 12px spinner inside a 28px circle and a tooltip that has to
+be hovered, while the row above it went on counting "Rally is working". A
+correct mechanism with no legible acknowledgement is indistinguishable from a
+dead button, and the cost of that is a second and third click on a control that
+deliberately refuses them.
+
+**Considered and rejected:** Giving the composer's Stop control a visible
+"Stopping…" label. That is the text Stop removed the same day by *Stop slides
+through the composer corner*, below, for widening and raising the trailing
+control row, and re-adding it would relitigate a decision one day old. Also rejected: making Stop feel instant by
+skipping the tool batch the model already asked for, or aborting the provider
+stream outright. Both are real options and neither is a desktop change — the
+first would leave the durable Bind head ending in an assistant message with
+unanswered `tool_calls`, and the second reverses a stated invariant in two module
+documents. Legibility was the part that was unambiguously wrong.
+
+**Consequences:** The activity slot now has a precedence order rather than a
+single condition, and a row added to it has to say where it sits relative to a
+pending stop. The stopping row deliberately shows no duration: any future
+countdown there would be a promise about the model's remaining output that
+nothing in the client can keep. If Stop ever does become immediate, this row
+becomes dead weight rather than wrong — delete it with the change that makes the
+wait disappear.
 
 ### 2026-09-11 — An intentional stop does not offer to replay the turn
 
