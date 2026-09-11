@@ -746,6 +746,15 @@ precisely so a later rename would not restate who spoke last week, and the
 client was throwing it away. A room with several Sidekicks showed the same word
 for all of them.
 
+**The header truncates rather than wraps.** `.message-block > header` gives the
+author slot the leftover width with `min-width: 0` and an ellipsis, and pins the
+time, work summary and context label to their intrinsic widths. A Sidekick's
+name is whatever a person typed and the schema allows 300 characters, so without
+it the line wrapped to three rows and squeezed the time into a column. The
+truncation point is derived from the container, so this is layout behaviour
+rather than a defensive cap with a number to argue about — measured in a real
+window at 16px for a short name, a realistic one, and one at the schema bound.
+
 **What a future change has to respect:** the name is the delivered one, never
 the Sidekick's current title. Reading it live would rewrite history on a rename,
 which is the thing freezing it at delivery exists to prevent.
