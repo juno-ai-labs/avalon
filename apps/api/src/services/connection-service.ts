@@ -1,3 +1,5 @@
+import { withDeadline } from "../lib/deadline";
+import { dynamicConnectorCapability, stableConnectionWireName, validateDynamicConnectorTools } from "./connector-tool-inventory";
 import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 import {
   CUSTOM_MCP_CONNECTOR_TYPE,
@@ -417,6 +419,32 @@ export class ConnectionService {
         ? ownerNames.get(row.owner_user_id) ?? null
         : null,
     }, userDelivery.get(String(row.id)) ?? null));
+  }
+
+  async getToolCount(id: string, signal: AbortSignal): Promise<{ count: number }> {
+    const connection = await this.loadVisible(id);
+    this.assertConnectionEnabled(connection);
+    const adapter = this.registry().get(connection.connector_type);
+    const granted = new Set(parseJson<string[]>(connection.granted_scopes_json, []));
+    const dynamic = adapter.dynamicAgentTools;
+    const definitions = dynamicConnectorCapability(adapter, connection.scope, [...granted])
+      ? await withSettingsInventoryDeadline(async (inventorySignal) => withAuthorizedConnection(
+          this.env,
+          { connection: await this.context(connection), adapter, signal: inventorySignal },
+          async (authorized) => validateDynamicConnectorTools(
+            this.env,
+            adapter,
+            connection.scope,
+            [...granted],
+            stableConnectionWireName(connection.model_plugin_id),
+            await dynamic!.discover(authorized, inventorySignal),
+          ),
+        ), signal)
+      : adapter.agentPlugin.tools;
+    return {
+      count: definitions.filter((tool) => granted.has(tool.capability)
+        && connectorCapabilitySupportsScope(adapter, tool.capability, connection.scope)).length,
+    };
   }
 
   async getGitHubRepositoryAccess(id: string): Promise<GitHubRepositoryAccessSettings> {
@@ -2447,11 +2475,11 @@ export class ConnectionService {
   private async readCustomMcpInventory(connection: StoredConnection) {
     const adapter = this.customMcpAdapter();
     const context = await this.context(connection);
-    return withAuthorizedConnection(
+    return withSettingsInventoryDeadline((signal) => withAuthorizedConnection(
       this.env,
-      { connection: context, adapter, signal: AbortSignal.timeout(20_000) },
-      (authorized) => listCustomMcpToolInventory(authorized, AbortSignal.timeout(20_000)),
-    );
+      { connection: context, adapter, signal },
+      (authorized) => listCustomMcpToolInventory(authorized, signal),
+    ));
   }
 
   /**
@@ -3318,7 +3346,7 @@ export class ConnectionService {
       throw new ApiError(
         409,
         "connection_disabled",
-        "This GitHub connection is disabled. Reconnect it before loading or changing repository access settings.",
+        "This connection is disabled. Reconnect it before loading or changing its settings.",
       );
     }
   }
@@ -3775,3 +3803,11 @@ export const __connectionServiceTesting = {
   oauthAttemptIdValue,
   assertLinearNativeAgentCapabilityEnabled,
 };
+
+/** Reuse the existing Settings MCP inventory budget for every tool inventory read. */
+function withSettingsInventoryDeadline<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  parent?: AbortSignal,
+): Promise<T> {
+  return withDeadline(20_000, (signal) => work(parent ? AbortSignal.any([parent, signal]) : signal));
+}
