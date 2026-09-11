@@ -121,11 +121,13 @@ values until none does.
 Older clients omit `pageSize` and retain the array response shape with up to 50
 results from one candidate batch. They receive no pagination or timing fields and
 do not trigger hidden refill scans. The 250ms typing debounce, REST, and final
-workspace membership check remain unchanged. Search decisions are cached in regional KV/SQLite and updated by DO mutation pushes through the activity queue. A read never waits for a refresh: a miss is filled after the response. Decisions do not expire by age. The server caches no search result; the desktop
-holds a settled query's pages for 30 seconds (`SEARCH_RESULT_CACHE_MS` in
-`search-modal.tsx`), so a repeat of the same workspace, member, category and
-words inside that window repaints without a request; the window runs from the
-first page's admission, so paging does not extend it. A cache hit runs no
+workspace membership check remain unchanged. Search decisions are cached in regional KV/SQLite and updated by DO mutation pushes through the activity queue. A read never waits for a refresh: a miss is filled after the response. Decisions do not expire by age.
+
+The server caches no search result. The desktop holds a settled query's pages
+for 30 seconds (`SEARCH_RESULT_CACHE_MS` in `search-modal.tsx`), so a repeat of
+the same workspace, member, category and words inside that window repaints
+without a request. The window runs from the first page's admission, not from the
+latest continuation, so paging does not extend it. A cache hit runs no
 `queryFn`, so it opens no `renderer_perf_flow` flow: the measured population is
 the requests, and the targets below describe those rather than every search a
 reader performs.
@@ -365,7 +367,7 @@ reloaded from a canonical source.
   frozen. Input fragments must be cleared before every count returns or throws.
 - Chunk offsets use the sorted code-point boundary array directly; do not add
   a per-character Map and its transient construction pairs.
-- Source loaders admit each candidate batch before rendering it. A new request admits again; an admitted result may finish after a concurrent revocation, which reaches the projection within its push delay rather than before the next page. A repeat served from the desktop's 30-second window is not a new request and readmits nothing, so that window is added to the push delay for an excerpt already on screen. The window runs from the first page's admission, not from the last continuation, because the pages of one query share a single freshness stamp and paging would otherwise renew a page nobody had readmitted. What it exposes is the excerpt: a message row hydrates its canonical transcript on open and a file row goes through `/search/resources/:id/preview`, both authorized reads. A **link** row is the exception and always has been — opening one hands the URL the admitted page already carried to the browser and asks nobody, so a revoked link is openable from a row on screen whether or not it came from the window. Signing out (`queryClient.clear()`) or changing workspace or member drops the window rather than extending it.
+- Source loaders admit each candidate batch before rendering it. A new request admits again; an admitted result may finish after a concurrent revocation, which reaches the projection within its push delay rather than before the next page. A repeat served from the desktop's 30-second window is not a new request and readmits nothing, so that window is added to the push delay for an excerpt already on screen. The window runs from the first page's admission, not from the last continuation, because the pages of one query share a single freshness stamp and paging would otherwise renew a page nobody had readmitted. For two of the three row kinds what it exposes is the excerpt, because opening the row is its own authorized read: a message row hydrates its canonical transcript, a file row goes through `/search/resources/:id/preview`. A **link** row is the exception, and the exception is not only about the excerpt. Opening one hands `location.url` straight to the browser and asks nobody, and that URL is never rendered — the row shows the excerpt and the source label — so it is content behind the row rather than something the reader had already seen. The window therefore extends by up to 30 seconds the period in which a revoked link can be opened without a check. Re-deriving a link on click, the way the other two kinds are, is the fix if that is not acceptable; it needs an endpoint that does not exist, and would change link-opening on every path rather than only the cached one. Signing out, surrendering the active workspace, or losing the stored credential all clear the client (`queryClient.clear()`), and changing workspace or member is a different key, so none of those carry the window across.
 - Namespace identity includes the embedding model and dimensions. Mixing spaces
   makes vector distances meaningless.
 - Deleted revisions win against replayed upserts at the same revision. Removing
@@ -685,12 +687,17 @@ shared stamp, since `timeUntilStale` adds it to that rather than to now. Trackin
 freshness per page was the alternative; the library has one stamp per query, and
 an absolute deadline gets the guarantee the team agreed to without shadowing it.
 **And "every row action re-checks" was false for links.** A message and a file
-row do; a link row hands the URL the admitted page already carried to the browser
-and asks nobody. That is not something the window introduced — it is equally true
-of a row still on screen — so it is called out rather than fixed here: adding an
-authorization round trip to opening a link is a change to the product's behaviour
-on every path, not a cache concern, and it would have widened this change to make
-its own safety argument look tidier.
+row do; a link row hands `location.url` to the browser and asks nobody. Two
+reviews in, the honest statement is stronger than the first correction to this
+entry: the URL is never rendered, so it is not an excerpt the reader was already
+looking at but content behind the row, and the window extends by up to thirty
+seconds the period in which a revoked one can be opened unchecked. It is called
+out rather than closed because the fix — re-deriving a link on click the way the
+other two kinds are — needs an endpoint that does not exist and changes
+link-opening on every path, cached or not. That is a change worth making on its
+own argument, not one to fold in here so that this entry's safety claim reads
+tidily; whoever takes it up should start from the fact that clicking a rendered
+row has never been re-checked, and that this window only lengthens the reach.
 
 A server-side cache was rejected rather than deferred. Results are admitted per
 subject, so one member's page is not another's; a per-subject cache would have to
