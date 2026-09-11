@@ -66,6 +66,7 @@ import {
   useUiStore,
 } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
+import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
 import { layoutRowAt } from '../lib/list-motion';
 import { useListMotion } from '../lib/use-list-motion';
 import { Avatar, Button, DragHint, IconButton, InlineError, Modal, StatusDot, Tip, TitleSkeleton } from './primitives';
@@ -719,6 +720,23 @@ function WorkstreamRow({
   useEffect(() => () => {
     cancelPreviewTimer();
   }, [cancelPreviewTimer]);
+  // A card left up when the person switched away is, on their return, the same
+  // unasked-for card as one this switch raised. See `lib/window-activation.ts`.
+  useWindowDeactivated(closePreview);
+  // Set when the pointer entered this row on the window coming forward rather
+  // than by travelling here, which is the one case the guard below turns down
+  // and the pointer can still argue its way out of: an entry cannot be replayed
+  // once it has happened, so the first real movement over the row is what opens
+  // the card that the entry did not.
+  const pointerEntryAwaitingIntent = useRef(false);
+  const openPreviewFromPointer = useCallback(() => {
+    if (!hasUserInputSinceWindowActivation()) {
+      pointerEntryAwaitingIntent.current = true;
+      return;
+    }
+    pointerEntryAwaitingIntent.current = false;
+    schedulePreviewOpen();
+  }, [schedulePreviewOpen]);
   // The row is a cache entry, not a read: nothing here refetches, so the grace
   // is what ends a skeleton whose rename never arrived. Read
   // `lib/naming-skeleton.ts` before changing when it comes down.
@@ -794,7 +812,12 @@ function WorkstreamRow({
           onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget as Node | null)) schedulePreviewClose();
           }}
-          onFocus={schedulePreviewOpen}
+          // An app switch hands focus back to whatever was holding it, which is
+          // the row the reader clicked to get here — so without the guard, every
+          // return to Rally raises the current work stream's card.
+          onFocus={() => {
+            if (hasUserInputSinceWindowActivation()) schedulePreviewOpen();
+          }}
           onKeyDown={drag
             ? (event) => {
               // Alt rather than a bare arrow: the arrows move focus through the
@@ -807,13 +830,18 @@ function WorkstreamRow({
             : undefined}
           onPointerEnter={() => {
             socketWarmup.onPointerEnter();
-            schedulePreviewOpen();
+            openPreviewFromPointer();
+          }}
+          onPointerMove={() => {
+            if (pointerEntryAwaitingIntent.current) openPreviewFromPointer();
           }}
           onPointerLeave={() => {
+            pointerEntryAwaitingIntent.current = false;
             socketWarmup.onPointerLeave();
             schedulePreviewClose();
           }}
           onPointerCancel={() => {
+            pointerEntryAwaitingIntent.current = false;
             socketWarmup.onPointerCancel();
             schedulePreviewClose();
           }}

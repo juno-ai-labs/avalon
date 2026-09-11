@@ -23,6 +23,7 @@ import { statusDescription, statusLabel, type WorkstreamMarkerStatus } from '../
 import { PLUGIN_BRAND_MARKS, type PluginBrandMark } from '../lib/plugin-marks';
 import { isComposingKeyEvent } from '../lib/ime';
 import { useAppearance } from '../lib/theme';
+import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
 import type { WorkspaceMember } from '../lib/types';
 import type { SocketState } from '../lib/use-workstream-socket';
 
@@ -118,8 +119,12 @@ export function Tip({
   label: React.ReactNode;
   /**
    * Pass both to take the answer over: Radix still decides *when* to open, and
-   * reports it here, but the caller renders `open`. Leave both out and it stays
-   * uncontrolled, which is what almost every caller wants.
+   * reports it here, but the caller renders `open`. Leave both out and the tip
+   * decides for itself, which is what almost every caller wants.
+   *
+   * Either way, `onOpenChange` hears every close — including the one the window
+   * deactivation below performs, which is what lets a caller holding `open` put
+   * its own tip down rather than render it back over the returning window.
    */
   onOpenChange?: (open: boolean) => void;
   open?: boolean;
@@ -133,14 +138,54 @@ export function Tip({
   const trigger = describesTrigger || !isValidElement(children)
     ? children
     : cloneElement(children, { 'aria-describedby': undefined } as Record<string, unknown>);
+  // Radix would keep this state itself, and the one thing gained by holding it
+  // here is the ability to put it down: a tip that was up when the window went
+  // to the back has nothing to close it — the pointer never left the trigger —
+  // so it is still up when the person switches back, over the screen they came
+  // back to.
+  const [hovered, setHovered] = useState(false);
+  const isOpen = open ?? hovered;
+  // Reported as a close rather than only dropped, because a caller holding
+  // `open` renders the answer and telling it is the only way to put its tip
+  // down. `DragHint` is one, and a resize handle's hint is the likeliest of all
+  // of these to still be up when the window goes away: the pointer that opened
+  // it is resting on a 12px divider it has no reason to leave.
+  useWindowDeactivated(() => {
+    if (!isOpen) return;
+    setHovered(false);
+    onOpenChange?.(false);
+  });
   return (
     <Tooltip.Root
       delayDuration={delayDuration}
       disableHoverableContent={disableHoverableContent}
-      onOpenChange={onOpenChange}
-      open={open}
+      onOpenChange={(next) => {
+        setHovered(next);
+        onOpenChange?.(next);
+      }}
+      open={isOpen}
     >
-      <Tooltip.Trigger asChild>{trigger}</Tooltip.Trigger>
+      <Tooltip.Trigger
+        asChild
+        // Radix opens on the trigger's focus and on the pointer moving over it,
+        // and an app switch produces both: the control that had focus is focused
+        // again, and the window arrives under a cursor that never moved. Neither
+        // is a person asking what a control is, so neither should answer.
+        //
+        // `preventDefault` is how Radix is told to stand down — it composes a
+        // caller's handler ahead of its own and skips its own on a prevented
+        // event — and it is the whole intervention: the trigger keeps every
+        // other behaviour, and the next real focus or movement opens the tip as
+        // it always did. See `lib/window-activation.ts`.
+        onFocus={(event) => {
+          if (!hasUserInputSinceWindowActivation()) event.preventDefault();
+        }}
+        onPointerMove={(event) => {
+          if (!hasUserInputSinceWindowActivation()) event.preventDefault();
+        }}
+      >
+        {trigger}
+      </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content
           align={align}
