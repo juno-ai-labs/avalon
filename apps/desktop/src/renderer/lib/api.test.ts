@@ -770,7 +770,7 @@ describe('Rally API wire adapter', () => {
     vi.stubGlobal('fetch', fetchMock);
     const api = new RallyApi('https://api.rally.test', session);
 
-    await expect(api.acknowledgeWorkstreamRead(workstreamId, 4, 0)).resolves.toMatchObject({
+    await expect(api.acknowledgeConversationRead(workstreamId, '0', 4, 0)).resolves.toMatchObject({
       readThroughSequenceNumber: 4,
       hasUnread: false,
     });
@@ -781,17 +781,47 @@ describe('Rally API wire adapter', () => {
     });
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      `https://api.rally.test/workstreams/${workstreamId}/read-state`,
+      `https://api.rally.test/conversations/${workstreamId}/substreams/0/read-state`,
     );
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'PATCH' });
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       readThroughSequenceNumber: 4,
       observedManualUnreadGeneration: 0,
     });
+    // Marking unread stays on the work stream: the sidebar takes that action
+    // with no conversation open, and the row's dot is Main's.
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
       `https://api.rally.test/workstreams/${workstreamId}/read-state/mark-unread`,
     );
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' });
+  });
+
+  it('acknowledges a read in a private substream against that substream, not its parent', async () => {
+    // The waterline being moved belongs to the child object. Addressed to the
+    // work stream, this read landed on Main and the child's own unread divider
+    // had nothing that could clear it.
+    const substreamId = '00000000-0000-7000-8000-0000000000c1';
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({
+      ...detail,
+      id: workstreamId,
+      readThroughSequenceNumber: 9,
+      hasUnread: false,
+      firstUnreadSequenceNumber: null,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.acknowledgeConversationRead(workstreamId, substreamId, 9, 2))
+      .resolves.toMatchObject({ readThroughSequenceNumber: 9, hasUnread: false });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      `https://api.rally.test/conversations/${workstreamId}/substreams/${substreamId}/read-state`,
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'PATCH' });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      readThroughSequenceNumber: 9,
+      observedManualUnreadGeneration: 2,
+    });
   });
 
   it('uses the watch, attach, and detach service contracts without inventing response fields', async () => {

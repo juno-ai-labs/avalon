@@ -12,6 +12,7 @@ import {
   AddResourceDialog,
   acceptedMessageOverlayDeliveryState,
   branchProvenance,
+  conversationReadAcknowledgement,
   highestVisibleAttentionSequence,
   initialTranscriptAnchorIndex,
   manualElicitationResponse,
@@ -811,6 +812,63 @@ describe('transcript read positioning', () => {
         messageType: 'work_accordion' as const, attentionSequenceNumber: 2,
       },
     ], [3], 2)).toBe(0);
+  });
+});
+
+describe('the read a conversation acknowledges', () => {
+  const viewer = {
+    readThroughSequenceNumber: 1,
+    manualUnreadFromSequenceNumber: null,
+    manualUnreadGeneration: 0,
+  };
+
+  it('acknowledges a private substream against itself, not against its parent', () => {
+    // The waterline is the child object's own, and a child's ordinals are
+    // deliberately not comparable to Main's. While this was a work stream's
+    // fact the child's read went unrecorded, so the divider the child had
+    // drawn from its own unread waterline stayed above the reply being read.
+    expect(conversationReadAcknowledgement({
+      parentId: 'workstream-one',
+      substreamId: 'substream-two',
+      highestVisibleSequence: 4,
+      viewer,
+    })).toEqual({
+      parentId: 'workstream-one',
+      substreamId: 'substream-two',
+      readThroughSequenceNumber: 4,
+      observedManualUnreadGeneration: 0,
+      key: 'workstream-one:substream-two:4:0',
+    });
+  });
+
+  it('keeps two children of one work stream on two keys', () => {
+    // The in-flight key is what suppresses a duplicate request. Naming only
+    // the work stream would call one child's read the other's.
+    const shared = { parentId: 'workstream-one', highestVisibleSequence: 4, viewer };
+    expect(conversationReadAcknowledgement({ ...shared, substreamId: 'substream-two' })?.key)
+      .not.toBe(conversationReadAcknowledgement({ ...shared, substreamId: 'substream-three' })?.key);
+  });
+
+  it('sends nothing when the room already knows everything on screen was read', () => {
+    expect(conversationReadAcknowledgement({
+      parentId: 'workstream-one', substreamId: '0', highestVisibleSequence: 1, viewer,
+    })).toBeNull();
+    // Nothing that asks for attention is on screen at all.
+    expect(conversationReadAcknowledgement({
+      parentId: 'workstream-one', substreamId: '0', highestVisibleSequence: 0, viewer,
+    })).toBeNull();
+  });
+
+  it('still acknowledges an already-read position while a manual mark stands', () => {
+    // Marking unread by hand is retired by the next acknowledgement, so a
+    // waterline that is already past what is visible is not a reason to stay
+    // quiet. The generation travels so the room can refuse a stale retirement.
+    expect(conversationReadAcknowledgement({
+      parentId: 'workstream-one',
+      substreamId: '0',
+      highestVisibleSequence: 1,
+      viewer: { ...viewer, manualUnreadFromSequenceNumber: 1, manualUnreadGeneration: 3 },
+    })).toMatchObject({ readThroughSequenceNumber: 1, observedManualUnreadGeneration: 3 });
   });
 });
 
