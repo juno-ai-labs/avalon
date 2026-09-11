@@ -224,20 +224,31 @@ export const TRANSIENT_ACTIVATION_LIFESPAN_MS = 5_000;
 /**
  * The input events that start a transient activation.
  *
- * Presses, releases, and taps only. Pointer movement, hover, wheel, and scroll
- * gestures are not activation in any browser and must not be here either: a
- * page that navigated itself under a passing cursor would reach the system
- * browser having asked nobody, which is the handoff this gate exists to
- * withhold.
+ * Mapped to the events HTML calls *activation-triggering* rather than to every
+ * representation of a press, because this set is a security boundary and a
+ * boundary wider than the one it claims to reconstruct is the wrong kind of
+ * wrong. So: the beginning of a press (`mouseDown`, `pointerDown`, a key going
+ * down) and the completion of a touch (`touchEnd`, `gestureTap`) — never the
+ * release half of a mouse or key press, and never the *start* of a touch.
+ *
+ * Each exclusion is a case. `mouseUp` and `keyUp` would arm on a press that
+ * began somewhere else and merely finished over this surface. `char` is a text
+ * event, not an interaction. `touchStart` would arm on a touch that goes on to
+ * be cancelled, which is a gesture the person abandoned. Pointer movement,
+ * hover, wheel, and the scroll gestures are not activation in any browser and
+ * would let a page navigate itself under a passing cursor, reaching the system
+ * browser having asked nobody.
+ *
+ * `pointerUp` is deliberately absent even though HTML admits it for non-mouse
+ * pointers: `InputEvent` carries no `pointerType`, so admitting it would admit
+ * the mouse case too — and a real non-mouse interaction has already armed this
+ * on its `pointerDown`.
  */
 const ACTIVATING_INPUT_TYPES = new Set([
   'mouseDown',
-  'mouseUp',
+  'pointerDown',
   'keyDown',
-  'keyUp',
   'rawKeyDown',
-  'char',
-  'touchStart',
   'touchEnd',
   'gestureTap',
 ]);
@@ -257,6 +268,20 @@ export class ArtifactUserActivation {
   /** Called for every input event the surface's contents receive. */
   record(inputType: string): void {
     if (ACTIVATING_INPUT_TYPES.has(inputType)) this.activatedAt = this.now();
+  }
+
+  /**
+   * Drop the activation because the document it belonged to is gone.
+   *
+   * Activation is a property of a document, not of a window, and a same-origin
+   * navigation does not spend it — so without this a press aimed at an ordinary
+   * in-site link would still be live when the *next* page loads, and that
+   * page's `onload` could spend somebody's click on a destination they never
+   * saw. Called when a main-frame navigation commits, which is the moment the
+   * document that was pressed stops existing.
+   */
+  reset(): void {
+    this.activatedAt = null;
   }
 
   /**
@@ -325,6 +350,11 @@ export interface ArtifactLinkHandoff {
   /** The main process's own scheme policy for a URL it would hand to the OS. */
   externalAllowed(url: string): boolean;
   openExternal(url: string): void;
+  /**
+   * Show a same-origin URL in this surface, for a link that asked for a window
+   * it cannot have. Never called with anything off-origin.
+   */
+  navigateInPlace(url: string): void;
 }
 
 /**
@@ -400,11 +430,19 @@ export function confineToArtifactOrigin(
   };
   contents.on('will-navigate', (event, url) => fence(event, url, true));
   contents.on('will-redirect', (event, url) => fence(event, url, false));
-  // Denied either way: a second artifact window is never opened. A
-  // `target="_blank"` link is still the person's click, so it leaves through
-  // the same gate as any other — it just leaves without a window being made.
+  // A second artifact window is never created, so `target="_blank"` is answered
+  // by where the link goes rather than by a new window. Off-origin, it is the
+  // person's click and leaves through the same gate as any other link — it just
+  // leaves without a window being made. Same-origin, it is a page of the site
+  // somebody is already looking at, so it is shown in this surface: the nearest
+  // thing available to a new tab, and the only answer that keeps the viewer
+  // session, since a protected site opened anonymously in a browser answers 401.
+  // Dropping it, as this did first, left an ordinary class of in-site links
+  // doing visibly nothing.
   contents.setWindowOpenHandler(({ url }) => {
-    if (decide(url, true) === 'hand-off') handoff.openExternal(url);
+    const decision = decide(url, true);
+    if (decision === 'hand-off') handoff.openExternal(url);
+    if (decision === 'continue') handoff.navigateInPlace(url);
     return { action: 'deny' };
   });
   contents.session.setPermissionRequestHandler((_contents, _permission, callback) => {
