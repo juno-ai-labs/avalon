@@ -65,6 +65,8 @@ interface Recorded {
   authorizeViewer: ReturnType<typeof vi.fn>;
   /** Which parent claims the id, which is what `resolveParent` asks each in turn. */
   parentKind: ParentKind;
+  /** Whether the parent reports itself archived, which only a write is refused for. */
+  archived: boolean;
 }
 
 function environment(recorded: Recorded): Env {
@@ -88,7 +90,7 @@ function environment(recorded: Recorded): Env {
         authority: async () => ({
           exists: recorded.parentKind === "workstream",
           authorityGeneration: 7,
-          archived: false,
+          archived: recorded.archived,
         }),
         authorizeViewer: recorded.authorizeViewer,
       }),
@@ -99,7 +101,7 @@ function environment(recorded: Recorded): Env {
         authority: async () => ({
           exists: recorded.parentKind === "automation",
           authorityGeneration: 7,
-          archived: false,
+          archived: recorded.archived,
         }),
         authorizeViewer: recorded.authorizeViewer,
       }),
@@ -134,12 +136,17 @@ function environment(recorded: Recorded): Env {
   });
 }
 
-function recorder(authorized = true, parentKind: ParentKind = "workstream"): Recorded {
+function recorder(
+  authorized = true,
+  parentKind: ParentKind = "workstream",
+  archived = false,
+): Recorded {
   return {
     objectNames: new Set<string>(),
     productRequests: [],
-    authorizeViewer: vi.fn(async () => ({ authorized, archived: false, membershipVersion: 0 })),
+    authorizeViewer: vi.fn(async () => ({ authorized, archived, membershipVersion: 0 })),
     parentKind,
+    archived,
   };
 }
 
@@ -268,13 +275,48 @@ describe("acknowledging a read", () => {
     });
   });
 
-  it("is no longer answered by the work stream, which could only ever advance Main", async () => {
+  it("still answers a released desktop on the work-stream route, for Main and only Main", async () => {
+    // The Worker deploys ahead of the desktop and the updater installs on quit,
+    // so a build that is open while this ships keeps sending here. A 404 would
+    // not just leave its dividers up: the client re-requests a socket snapshot
+    // on a failed acknowledgement and the snapshot re-runs the send. The shim
+    // answers Main, which is all that client ever addressed.
     const recorded = recorder();
 
     const answer = await request(recorded, `/workstreams/${workstreamId}/read-state`, read);
 
-    expect(answer.status).toBe(404);
-    expect([...recorded.objectNames]).toEqual([]);
-    expect(recorded.productRequests).toEqual([]);
+    expect(answer.status).toBe(200);
+    expect([...recorded.objectNames]).toEqual([
+      conversationObjectName("global", workspaceId, workstreamId),
+    ]);
+    expect(recorded.productRequests).toEqual([expect.objectContaining({
+      operation: "acknowledge_read",
+      input: read,
+    })]);
+    // It goes through the parent rather than straight to the object, which is
+    // the `authorizeViewer` the route it replaces skipped.
+    expect(recorded.authorizeViewer).toHaveBeenCalledWith({
+      workspaceId, parentId: workstreamId, substreamId: "0", userId,
+    });
+  });
+
+  it("records a read in an archived automation's conversation, which stays readable", async () => {
+    // The route resolves a read-authorized client on purpose. An automation's
+    // conversation is still readable once the automation is archived, and a
+    // reader who can see a divider has to be able to clear it; `writableClient`
+    // would answer 409 here and strand that divider the way this change exists
+    // to stop. Swapping the route to it turns this test red and nothing else.
+    const recorded = recorder(true, "automation", true);
+
+    const answer = await request(
+      recorded,
+      `/conversations/${automationId}/substreams/0/read-state`,
+      read,
+    );
+
+    expect(answer.status).toBe(200);
+    expect(recorded.productRequests).toEqual([expect.objectContaining({
+      operation: "acknowledge_read",
+    })]);
   });
 });

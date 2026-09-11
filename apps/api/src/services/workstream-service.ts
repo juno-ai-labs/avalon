@@ -678,14 +678,7 @@ export class WorkstreamService {
     return client.update(input);
   }
 
-  /**
-   * Main's read state, by hand, from the sidebar.
-   *
-   * There is no `acknowledgeRead` beside this any more. A read is acknowledged
-   * by the conversation the reader has open, which may be a child, and reaches
-   * that child's own object through `ConversationService`; this one is Main's
-   * because the sidebar row's dot is.
-   */
+  /** Main's read state, by hand, from the sidebar, where the row's dot is Main's. */
   async markUnread(id: string) {
     return (await this.authoritativeClient(id)).markUnread();
   }

@@ -3,6 +3,7 @@ import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
 import { requireSendableMessageLength, zValidator } from "../middleware/validation";
 import {
+  AcknowledgeWorkstreamReadRequestSchema,
   AddParticipantRequestSchema,
   ApplyWorkstreamBatchRequestSchema,
   CreateWorkstreamRequestSchema,
@@ -22,6 +23,7 @@ import { requestDeferral } from "../lib/defer";
 import { getAuth } from "../middleware/auth";
 import { ApiError } from "../lib/api-error";
 import { requestFlowSpan, type FlowSpan, type PerfFlow } from "../observability/tracing";
+import { ConversationService } from "../services/conversation-service";
 import { WorkstreamService } from "../services/workstream-service";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import { WorkstreamDirectoryService } from "../services/workstream-directory-service";
@@ -215,6 +217,32 @@ workstreamRoutes.delete("/:id/pin", zValidator("param", idParam), async (c) => {
 workstreamRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", UpdateWorkstreamRequestSchema), async (c) => {
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
   return c.json(WorkstreamSchema.parse(await client.update(c.req.valid("json"))));
+});
+/**
+ * A released desktop's read acknowledgement, draining.
+ *
+ * **Not the current route.** Acknowledging a read belongs to the conversation
+ * that was read, because the waterline does: `PATCH
+ * /conversations/:parentId/substreams/:substreamId/read-state`. This one stays
+ * because the Worker deploys ahead of the desktop, the updater installs on
+ * quit (`autoInstallOnAppQuit`), and nothing in the product refuses a client by
+ * version, so a build that is open while this ships would send here for as long
+ * as its window stays open. Answering 404 would not merely leave its dividers
+ * up: the client re-requests a socket snapshot on a failed acknowledgement, the
+ * snapshot re-runs the effect that sends one, and the pair sustains itself for
+ * the life of the session. `architecture.md` kept WorkspaceDO's `create_message`
+ * for the same reason on 2026-09-01.
+ *
+ * Main only, which is all an old client ever addressed. It goes through
+ * `ConversationService` rather than the work stream's own client so the parent
+ * decides, the way the current route does, rather than preserving the skipped
+ * `authorizeViewer` this replaces.
+ *
+ * **Remove it** once no build that sends here is still running.
+ */
+workstreamRoutes.patch("/:id/read-state", zValidator("param", idParam), zValidator("json", AcknowledgeWorkstreamReadRequestSchema), async (c) => {
+  const client = await new ConversationService(c.env, getAuth(c)).client(c.req.valid("param").id, false, "0");
+  return c.json(WorkstreamSchema.parse(await client.acknowledgeRead(c.req.valid("json"))));
 });
 /**
  * Mark a work stream unread from the sidebar, where no conversation is open.
