@@ -986,6 +986,8 @@ automatically cover iOS. iOS review is Keychain accessibility, URL scheme
 admission, associated domains, and the ticket-as-subprotocol rule. APNs tokens
 are stored locally until the Worker grows an iOS topic; they are not a session.
 
+Shipped in #725.
+
 ### 2026-09-11 — The five prompt trust labels are gone
 
 **What changed:** `renderUntrustedSlackOriginMessage`,

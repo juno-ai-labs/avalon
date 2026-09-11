@@ -201,4 +201,4 @@ member-facing erasure are explicitly out of this change — the client stores a
 device token and explains deletion, and nothing behind the API was invented to
 match.
 
-Shipped with this pull request.
+Shipped in #725.
