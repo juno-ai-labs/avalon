@@ -26,6 +26,36 @@ describe('artifact preview wiring', () => {
     expect(handler).not.toContain('artifactPreviews.delete');
   });
 
+  it('confines both artifact surfaces with a handoff built from their own contents', () => {
+    // Activation is per surface. A handoff shared between the rail preview and
+    // a pop-out would let a press in one send the other's page to the browser,
+    // and those two are showing different documents.
+    const text = source();
+
+    expect(text).toContain(
+      'confineToArtifactOrigin(contents, new URL(request.url).origin, artifactLinkHandoff(contents))',
+    );
+    expect(text).toContain(
+      'confineToArtifactOrigin(window.webContents, new URL(request.url).origin, artifactLinkHandoff(window.webContents))',
+    );
+    // The activation can only be reconstructed from the surface's own input
+    // stream; nothing else in this process is told when a person presses
+    // something inside model-authored content.
+    expect(text).toContain("contents.on('input-event', (_event, input) => activation.record(input.type))");
+    // Spending the press is what keeps one click from becoming a loop of
+    // departures, so the wiring must hand over the consuming call, not the
+    // peeking one.
+    expect(text).toContain('takeActivation: () => activation.take()');
+    expect(text).not.toContain('activated: () => activation.active()');
+    // The OS opener rejects when it cannot launch a URL, and this process only
+    // monitors uncaught exceptions — a discarded rejection would take it down.
+    expect(text).toContain('void shell.openExternal(url).catch(');
+    // Activation belongs to a document, and a same-origin navigation does not
+    // spend it, so the press has to be dropped when the document commits — or
+    // the next page's `onload` inherits the click.
+    expect(text).toContain("contents.on('did-navigate', () => activation.reset())");
+  });
+
   it('removes the entry only when the window that owns it closes', () => {
     const factory = source().match(/function artifactPreviewFor\([\s\S]*?\n\}/u)?.[0];
 
