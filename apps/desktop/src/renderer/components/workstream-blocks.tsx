@@ -48,7 +48,7 @@ import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { logError } from '../../common/logger';
 import { messageExportDate, messageExportFileName, type MessageExportFormat } from '../../common/message-export';
-import { formatDuration, formatRelative } from '../lib/format';
+import { formatDuration } from '../lib/format';
 import { isComposingKeyEvent } from '../lib/ime';
 import {
   markdownDefinitionBlocks,
@@ -64,6 +64,7 @@ import { isThinkingEvent, thoughtVerb } from '../lib/transcript';
 import type { ElicitationData, Message, MessageMention, WorkTotal } from '../lib/types';
 import { useTextClamped } from '../lib/use-text-clamped';
 import { AgentWorkTiming } from './agent-work-timing';
+import { MessageByline } from './message-byline';
 import {
   MarkdownCollapseAllButton,
   MarkdownCollapseController,
@@ -108,11 +109,11 @@ function personAccent(id: string): string {
  *
  * Both human rows — the ordinary authored one and a settled elicitation answer —
  * state this on the article, and both have to state the *same* thing: the dot's
- * background and the author name's colour resolve through `--person-accent`, so
- * a row that omits it paints a transparent dot and takes the ambient text
- * colour, which is a header that renders and cannot be read as one. "These two
- * rows are the same row" is the claim this file makes; a copied expression is
- * how that stops being true.
+ * background resolves through `--person-accent`, so a row that omits it paints
+ * a transparent dot and leaves the byline half-drawn. "These two rows are the
+ * same row" is the claim this file makes; a copied expression is how that stops
+ * being true. The name no longer reads it: the byline's ink is the same for
+ * everybody, and only the dot carries whose turn this is.
  */
 function turnAccent(message: Message): string {
   return personAccent(message.author?.id ?? message.externalActor?.providerUserId ?? message.id);
@@ -2412,7 +2413,10 @@ export function MessageBlock({
       && message.elicitation?.status === 'answered' ? currentUserId : undefined;
   const profile = profileUserId ? presentations.get(profileUserId) : undefined;
   const personStyle = {
-    '--person-accent': profile ? 'var(--av-sys-color-text-default)' : turnAccent(message),
+    // The dot's colour, and only the dot's. A profiled member overrides it with
+    // their own accent below; the hash is what an unprofiled or external sender
+    // falls back to.
+    '--person-accent': turnAccent(message),
     // Straight from the palette. There used to be a `cmp.member-message.*` token
     // per accent name restating the same fill and ink; it duplicated the palette
     // by hand, had already drifted from it, and could not survive the accent set
@@ -2470,7 +2474,7 @@ export function MessageBlock({
         >
           {/* The same identity line every human turn carries, the reader's own
               included — see the header on the ordinary authored row below. */}
-          <header><span aria-hidden="true" className="message-author-dot" /><span className="message-author">{responseAuthor}</span><time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time></header>
+          <MessageByline align="end" author={responseAuthor} createdAt={message.createdAt} dot />
           <div className="human-message-content">
             <ElicitationPanel
               elicitation={message.elicitation}
@@ -2561,21 +2565,16 @@ export function MessageBlock({
           the same question about their own turn as about anybody else's, and a
           turn that answers it only for other people makes the reader's own
           messages the one thing on screen with no time against it. */}
-      <header>
-        {human ? <>
-          <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
-          {message.workSummary && <span className="message-work-summary">{workSummaryLabel(message.workSummary)}</span>}
-          {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
-          <span aria-hidden="true" className="message-author-dot" />
-          <span className="message-author">{humanAuthorName}</span>
-        </> : <>
-          <span className="message-author">{automation ? 'Automation' : 'Rally'}</span>
-          {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
-          <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
-          {message.workSummary && <span className="message-work-summary">{workSummaryLabel(message.workSummary)}</span>}
-        </>}
+      <MessageByline
+        align={human ? 'end' : 'start'}
+        author={human ? humanAuthorName : automation ? 'Automation' : 'Rally'}
+        contextLabel={message.contextLabel}
+        createdAt={message.createdAt}
+        dot={human}
+        workSummary={message.workSummary ? workSummaryLabel(message.workSummary) : undefined}
+      >
         {!human && collapseHeadings && <MarkdownCollapseAllButton />}
-      </header>
+      </MessageByline>
       {human ? (
         <div className="human-message-content">
           {message.text ? (

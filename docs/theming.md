@@ -175,6 +175,43 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-10 — The feed's byline is one size and two weights
+
+**What changed:** `cmp.feed.author.font-size` and `cmp.feed.author.font-weight`
+become `cmp.feed.byline.font-size` and `cmp.feed.byline.author-weight`, the
+author weight moves from 470 to 500, a third token `cmp.feed.byline.time-weight`
+joins them at 420, and `sys.font.size.author` leaves the registry with the one
+rule that read it. The feed's name and time now take one size and one pair of
+greys for every speaker, and the context label between them takes that size
+too.
+
+**Why:** the token names described who was speaking rather than what was being
+drawn, and that framing is what licensed a second pair of rules under
+`.agent-message` — the small capitals and 0.7 opacity from
+[the 2026-08-19 type-scale entry](#2026-08-19--the-type-scale-became-themeable-and-airy-went-larger-and-lighter),
+which reused the navigation's label properties on Rally's name. That reuse was
+right while the author label was the only thing in the line; it stopped being
+right once the line also had to carry a timestamp, because the two then read as
+different kinds of object stapled together. `sys.font.size.author` was left with
+no reader at all, which the token-completeness test would have failed.
+
+**Consequences:** a theme that wants the byline to read differently changes the
+three `cmp.feed.byline.*` values, and gets both speakers. One size and two
+weights is the whole vocabulary, because the line is one object and what
+separates who from when inside it is weight rather than size. No theme can now
+make Rally's name letterspaced capitals and a person's not, which was possible
+before and was never a distinction anybody asked for.
+
+**This supersedes one clause of [the account-accent entry
+below](#2026-09-10--the-account-accent-colours-marks-and-controls-and-fills-no-row),
+which stands as written otherwise.** That entry lists "the author name" among
+the things taking a palette fill directly, and it did. It no longer does:
+`--person-accent` reaches no text at all now, painting the message dot alone,
+while the name takes `sys.color.text.subtle` against the time's
+`sys.color.text.muted`. The reasoning is that entry's own, applied one step
+further — a name is not a fill either, and colouring it by identity is what made
+the two speakers' bylines diverge. The avatar and the person's own bubble are
+unaffected and still take the fill.
 ### 2026-09-10 — Recording fills with danger; the microphone stops wearing the account accent
 
 **What changed:** Two rules in `app.css`, no token movement. The composer's

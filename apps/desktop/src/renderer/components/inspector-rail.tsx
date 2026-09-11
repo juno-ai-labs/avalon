@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { classifyAttachmentKind } from '@rally/contracts';
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { formatDateTime, formatRelative, formatSparseRelativeDate } from '../lib/format';
+import { formatDateTime, formatSparseRelativeDate } from '../lib/format';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../lib/resource-preview';
 import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
@@ -36,6 +36,7 @@ import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError
 import { SiteResourceDetail, type SiteResourceDetailProps } from './site-resource-detail';
 import { MarkdownBody } from './workstream-blocks';
 import { RailSurface } from './rail-surface';
+import { RelativeTime } from './relative-time';
 
 interface InspectorRailProps {
   /** Explicit modal host; never reads or opens the parked shell rail. */
@@ -301,7 +302,7 @@ function ContextContent({
           )}
           <div><dt>Created by</dt><dd>{workstream.createdBy?.name ?? 'Automation'}</dd></div>
           <div><dt>Created</dt><dd>{formatDateTime(workstream.createdAt)}</dd></div>
-          <div><dt>Last activity</dt><dd>{formatRelative(workstream.lastActivityAt)}</dd></div>
+          <div><dt>Last activity</dt><dd><RelativeTime value={workstream.lastActivityAt} /></dd></div>
           {/* Everything past this point describes how the work stream is wired
               rather than what it is, so it belongs to Application → Developer →
               Debug enabled. */}
