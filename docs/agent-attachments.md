@@ -734,13 +734,6 @@ failure that forced it. It is recorded here because this document owns the
 listing path, and the empty-array branch is exactly the kind a later reader
 removes as dead weight.
 
-
-### 2026-09-08 — Align search admission wording
-
-Updated attachment search to describe PR #600's batch-level admission rather than
-implying another authority check after loading excerpts. Opening a result continues
-to use the resource API's own current authorization checks.
-
 ### 2026-09-05 — Member search projection
 
 **What changed:** Search now reads canonical attachment originals or extracted text and rechecks access after loading bytes.
@@ -751,7 +744,7 @@ to use the resource API's own current authorization checks.
 
 **Consequences:** Binary originals stay binary and private child access must be checked at the owning child.
 
-### 2026-09-03: The compiler's attachment path is gone
+### 2026-09-03 — The compiler's attachment path is gone
 
 **What changed:** The `automation_*` attachment tools, the frozen ten-resource
 manifest, and the four-operation variant the preloaded automation architect
@@ -1429,49 +1422,43 @@ publication-trigger, dependency, and replay-validation paths.
 Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
 [context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
-### 2026-08-12 — Encrypted OOXML fails as encryption, not corruption
+### 2026-08-12 — Encrypted OOXML fails as encryption, and message-attachment state is scoped and cursor-visible
 
 **What changed:** A compound-file encrypted DOCX, XLSX, or PPTX container now
 returns `office_encryption_unsupported` before ZIP extraction rather than the
-generic `invalid_office_archive` failure.
+generic `invalid_office_archive` failure. Separately, the shared visibility
+query now counts a resource as a message attachment only when its owning message
+belongs to the work stream being listed. That bit also participates in the
+inventory fingerprint, so adding or removing a message relationship invalidates
+an outstanding list cursor.
 
 **Why:** Encrypted OOXML uses the Compound File Binary envelope instead of an
 ordinary ZIP. Treating that known signature as corruption gives the agent and
 person the wrong recovery path and makes a valid but unreadable document look
 damaged.
 
-**Considered and rejected:** Passing the container to the ZIP reader and keeping
-one error for every archive failure. It is safe but not diagnosable; the eight-
-byte signature is sufficient to distinguish the unsupported-encryption class
-without attempting to decrypt or exposing content.
+A reusable resource can be attached to more than one work stream. The unscoped
+existence check made one work stream report another's message relationship,
+inflating the compaction subset total and changing later list pages without
+invalidating their snapshot.
+
+**Considered and rejected:** Passing the encrypted container to the ZIP reader
+and keeping one error for every archive failure. It is safe but not diagnosable;
+the eight-byte signature is sufficient to distinguish the unsupported-encryption
+class without attempting to decrypt or exposing content.
+
+Treating `message_attachment` as a workspace-wide property. It describes how a
+resource entered this work stream, not the resource itself; sharing that
+property across work streams loses the relationship boundary.
 
 **Consequences:** Rally still does not request or handle document passwords.
 Adding decryption would require a separate consent and secret-handling contract;
 it must not weaken archive expansion limits or log the password.
 
-Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
-[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
-
-### 2026-08-12 — Message-attachment state is scoped and cursor-visible
-
-**What changed:** The shared visibility query now counts a resource as a message
-attachment only when its owning message belongs to the work stream being listed.
-That bit also participates in the inventory fingerprint, so adding or removing a
-message relationship invalidates an outstanding list cursor.
-
-**Why:** A reusable resource can be attached to more than one work stream. The
-unscoped existence check made one work stream report another's message
-relationship, inflating the compaction subset total and changing later list pages
-without invalidating their snapshot.
-
-**Considered and rejected:** Treating `message_attachment` as a workspace-wide
-property. It describes how a resource entered this work stream, not the resource
-itself; sharing that property across work streams loses the relationship boundary.
-
-**Consequences:** Sidebar rows, agent list items, and compaction totals now agree
-on the current work stream's message subset. Future output fields derived from a
-relationship must join through that work stream and participate in the cursor
-fingerprint when they can change between pages.
+Sidebar rows, agent list items, and compaction totals now agree on the current
+work stream's message subset. Future output fields derived from a relationship
+must join through that work stream and participate in the cursor fingerprint
+when they can change between pages.
 
 Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
 [context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).

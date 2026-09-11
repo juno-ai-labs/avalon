@@ -519,49 +519,39 @@ installed ceiling permits Contents writes. General connector tokens retain the
 installation selection and installed permission ceiling, with capability checks
 controlling which operations Rally exposes.
 
-### 2026-08-12 — Public Notion credentials gate only workspace mode
+### 2026-08-12 — Public Notion credentials gate only workspace mode, and personal MCP needs no developer registration
 
 **What changed:** The Notion adapter is registered with its shared redirect URI
-even when no public-integration client ID and secret are configured. Workspace
-OAuth operations require the pair at the point of use.
+even when no public-integration client ID and secret are configured; workspace
+OAuth operations require the pair at the point of use. The registration guide
+separates the hosted personal MCP flow, which discovers and dynamically
+registers an OAuth client, from the one public integration used for workspace
+bot installs and webhooks.
 
 **Why:** Personal hosted MCP dynamically registers its own OAuth client and does
-not use the public integration. Gating the whole adapter on workspace secrets
-made the supposedly independent personal mode unavailable.
+not use the public integration, so gating the whole adapter on workspace secrets
+made the supposedly independent personal mode unavailable. Reusing
+`NOTION_OAUTH_CLIENT_ID` and its public-integration secret for a personal MCP
+connection would couple two provider identities and bypass the official
+server's advertised authorization flow, and asking operators to create a second
+static registration would duplicate something the server creates through DCR.
 
-**Considered and rejected:** Registering two Notion provider types. They share
+**Considered and rejected:** Registering two Notion provider types: they share
 one product card and callback router, and splitting them would duplicate the
-connection lifecycle merely to express optional configuration.
+connection lifecycle merely to express optional configuration. A separate
+callback or a second manually registered Notion connection for personal use:
+neither changes the regional destination of the token, and both add provider
+configuration the standards-based flow does not need.
 
-**Consequences:** Personal-only environments can connect Notion. The workspace
-button may still be shown by the connector-level catalog, but starting it returns
-the specific missing-public-integration error; production environments offering
-workspace mode continue storing the same credentials in both Workers.
+**Consequences:** Personal-only environments can connect Notion. The existing
+Notion secrets remain required in both Workers for workspace mode only; the
+workspace button may still be shown by the connector-level catalog, but starting
+it returns the specific missing-public-integration error, and production
+environments offering workspace mode continue storing the same credentials in
+both Workers. A personal MCP outage or DCR change is diagnosed at the hosted
+server boundary, not by editing the public connection dashboard.
 
-Shipped in the pull request for this change.
-
-### 2026-08-12 — Personal Notion MCP needs no developer registration
-
-**What changed:** The registration guide now separates the hosted personal MCP
-flow, which discovers and dynamically registers an OAuth client, from the one
-public integration used for workspace bot installs and webhooks.
-
-**Why:** Reusing `NOTION_OAUTH_CLIENT_ID` and its public-integration secret for a
-personal MCP connection would couple two provider identities and bypass the
-official server's advertised authorization flow. Asking operators to create a
-second static registration would duplicate something the server creates through
-DCR.
-
-**Considered and rejected:** A separate callback or a second manually registered
-Notion connection for personal use. Neither changes the regional destination of
-the token, and both add provider configuration the standards-based flow does not
-need.
-
-**Consequences:** The existing Notion secrets remain required in both Workers
-for workspace mode only. A personal MCP outage or DCR change is diagnosed at
-the hosted server boundary, not by editing the public connection dashboard.
-
-Shipped in the pull request for this change.
+Shipped in #139.
 
 ### 2026-08-12 — Notion's user approver installs a Rally workspace bot
 

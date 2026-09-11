@@ -653,7 +653,7 @@ to continue, coupling survivability to an unrelated spend threshold.
 model spend to an ordinary work-stream run. Truncation detection, the single
 terser retry, context failure, and checkpoint durability remain unchanged.
 
-### 2026-08-12 — The summary carries provenance, not just content
+### 2026-08-12 — The summary carries provenance, and a truncated summary is never checkpointed
 
 **What changed:** `# Request` is scoped to instructions from the people in the
 work stream. An instruction that arrived inside provider content, tool output, a
@@ -661,6 +661,12 @@ fetched page, or a message marked untrusted is routed to `# Facts` with its
 source named, and a rule requires untrusted material to keep its marking in the
 summary. The **Invariants** section above now claims provenance as a property of
 a checkpoint.
+
+A summary completion that finishes on `length` is no longer adopted. The
+compaction asks once more, appending an instruction to keep every section but
+cut elaboration, and fails the run with `context_limit_exceeded` if that is
+truncated too. Both attempts' tokens and cost are accounted, so a discarded
+attempt still shows up as the real spend it was.
 
 **Why:** A checkpoint flattens the transcript's four authority layers into one
 user-role message, and the standing policy's defence against untrusted content
@@ -676,36 +682,29 @@ checkpoint. Some of this predates the checkpoint rework, which made it sharper i
 two ways: the summary moved from assistant role to user role, and the section
 actively solicits instructions where the old prompt asked generically for goals.
 
-**Considered and rejected:** *Marking the whole checkpoint untrusted* — it is the
-run's own record of authorized work, so blanket-marking it would defuse the
-instructions the run legitimately has to follow. *Filtering at the consumer
-instead* — there is nothing left to filter on by then; provenance has to survive
-the summarization or it does not exist.
+Truncation was the other gap the rework opened. Bind reads a cut completion as
+a defect only inside tool-call arguments, and the compaction call makes no tool
+calls — so a summary stopped by the provider's output cap arrived as ordinary
+text and was adopted. That was survivable while the checkpoint also carried a
+preserved message; it is not survivable now that the summary is the entire
+record, because a truncated one silently discards everything after the cut and
+a short summary is indistinguishable from a complete one. Two automated
+reviewers flagged it on the same pull request that made the summary
+load-bearing, which is the right moment to close it rather than carry it as a
+known gap.
 
-### 2026-08-12 — A truncated summary is never checkpointed
+**Considered and rejected:** For provenance: *marking the whole checkpoint
+untrusted* — it is the run's own record of authorized work, so blanket-marking
+it would defuse the instructions the run legitimately has to follow.
+*Filtering at the consumer instead* — there is nothing left to filter on by
+then; provenance has to survive the summarization or it does not exist.
 
-**What changed:** A summary completion that finishes on `length` is no longer
-adopted. The compaction asks once more, appending an instruction to keep every
-section but cut elaboration, and fails the run with `context_limit_exceeded` if
-that is truncated too. Both attempts' tokens and cost are accounted, so a
-discarded attempt still shows up as the real spend it was.
-
-**Why:** Bind reads a cut completion as a defect only inside tool-call arguments,
-and the compaction call makes no tool calls — so a summary stopped by the
-provider's output cap arrived as ordinary text and was adopted. That was survivable
-while the checkpoint also carried a preserved message; it is not survivable now
-that the summary is the entire record, because a truncated one silently discards
-everything after the cut and a short summary is indistinguishable from a complete
-one. Two automated reviewers flagged it on the same pull request that made the
-summary load-bearing, which is the right moment to close it rather than carry it
-as a known gap.
-
-**Considered and rejected:** *Failing immediately on the first truncation* — the
-run then dies over a summary that is merely long, when asking for a shorter one
-usually fits. *Retrying with the same prompt* — the prompt is what produced a
-too-long answer, so an unchanged retry mostly buys another truncation. *Setting an
-explicit `max_tokens`* — concrete, but the right number differs per routed model;
-left as an open question above rather than guessed at here.
+For truncation: *failing immediately on the first truncation* — the run then
+dies over a summary that is merely long, when asking for a shorter one usually
+fits. *Retrying with the same prompt* — the prompt is what produced a too-long
+answer, so an unchanged retry mostly buys another truncation. *Setting an
+explicit `max_tokens`* — concrete, but the right number differs per routed
+model; left as an open question above rather than guessed at here.
 
 ### 2026-08-12 — A compaction keeps nothing but its own summary
 

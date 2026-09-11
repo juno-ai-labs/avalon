@@ -629,53 +629,30 @@ already-proven source.
 through the isolated bridge. The source is analytics context only and grants no
 navigation authority; URL validation remains separate.
 
-### 2026-08-13 — Menu activations remain distinct from Dock opens
-
-**What changed:** A menu action that raises Rally now contributes the explicit
-`menu_bar` application-open source before main focuses the app.
-
-**Why:** Focusing from a status item can also trigger Electron's generic
-activation callback. Counting that callback independently would turn one menu
-interaction into both a menu and Dock open.
-
-**Considered and rejected:** Inferring the source after focus or relying only on
-the existing row-selection event. The former races Electron; the latter cannot
-join the same canonical open-source analysis as system, Dock, and deep-link
-entrypoints.
-
-**Consequences:** The shared open observer coalesces the two callbacks. Menu row
-selection and application opening remain distinct signals because a selection
-describes the chosen action while an open describes how Rally was raised.
-
-### 2026-08-13 — Login-item analytics use the operating system's applied answer
-
-**What changed:** Launch initialization contributes the real login-item state and
-availability to the bounded settings snapshot. A completed Settings interaction
-records its previous, requested, and macOS read-back applied state.
-
-**Why:** A toggle click is not proof that macOS registered the login item; approval
-can remain pending and the UI already reads the operating system back for this
-reason.
-
-**Considered and rejected:** Reporting the renderer click or requested boolean as
-the new state. Either would count an unapproved registration as enabled.
-
-**Consequences:** The Product analytics preference governs both events. The
-login-item controller remains authoritative and telemetry runs only after its
-mutation completes.
-
-### 2026-08-13 — Menu opens, selections, and successful suggested work are measurable
+### 2026-08-13 — Menu opens, selections, login-item state, and successful suggested work are measurable, and a menu activation is not a Dock open
 
 **What changed:** Each visible status-menu open now emits one bounded product
 event despite Electron's duplicate click/show callbacks. Every enabled row emits
 a closed action enum, while successful suggested-work adoption is emitted by the
 regional API after creation with exposure context and `menu_bar` or
-`workspace_home` as its surface.
+`workspace_home` as its surface. A menu action that raises Rally contributes the
+explicit `menu_bar` application-open source before main focuses the app. Launch
+initialization contributes the real login-item state and availability to the
+bounded settings snapshot, and a completed Settings interaction records its
+previous, requested, and macOS read-back applied state.
 
 **Why:** Suggestion impressions answered ranking needs but could not answer how
 often people opened the menu, which rows they chose, or whether a suggestion
 actually became work. Selection alone also over-counts failures, so successful
 suggested work needs the server commit as its boundary.
+
+Focusing from a status item can also trigger Electron's generic activation
+callback. Counting that callback independently would turn one menu interaction
+into both a menu and Dock open.
+
+A toggle click is not proof that macOS registered the login item; approval can
+remain pending and the UI already reads the operating system back for this
+reason.
 
 **Considered and rejected:** Reporting labels, prompts, activity content, or
 provider account IDs, and treating every click as a successful start. Those
@@ -685,11 +662,23 @@ versioned exposure to its one created resource. Emitting only from the desktop
 was also rejected because it cannot authoritatively distinguish a committed
 start from an interrupted response.
 
+For the open source: inferring it after focus or relying only on the existing
+row-selection event. The former races Electron; the latter cannot join the same
+canonical open-source analysis as system, Dock, and deep-link entrypoints.
+
+For the login item: reporting the renderer click or requested boolean as the
+new state. Either would count an unapproved registration as enabled.
+
 **Consequences:** New menu actions must extend the closed action taxonomy and
 its contract tests. Detailed start context is optional for compatibility with
 released clients; current callers supply it and receive the detailed API event,
 while an older request receives only the legacy successful-start fallback.
-Telemetry remains observational and cannot prevent a menu action.
+Telemetry remains observational and cannot prevent a menu action. The shared
+open observer coalesces the two callbacks; menu row selection and application
+opening remain distinct signals because a selection describes the chosen action
+while an open describes how Rally was raised. The Product analytics preference
+governs both login-item events; the login-item controller remains authoritative
+and telemetry runs only after its mutation completes.
 
 ### 2026-08-11 — Rally gets a menu bar item, opens at login, and starts hidden
 
@@ -956,15 +945,22 @@ once, under **Pinned**, exactly as it does in the sidebar. The five-pin display
 limit here must not grow into a cap on pinning: `workstream-pinning.md` records
 two attempts at a real limit and why both failed.
 
-### 2026-08-11 — Both lists get a section header
+### 2026-08-11 — The suggestions get a group of their own, and both lists get a section header
 
-**What changed:** A **Suggestions** header over the suggestion rows and a
-**Recent** header over the recent work streams, drawn with `type: 'header'`.
-Below macOS 14, which has no such item, they fall back to disabled rows.
+**What changed:** A separator after **New Automation**, so what Rally suggests
+is its own group between what a person can always start and what they have
+already started. With no suggestions the group and both its rules collapse to the
+single rule that was there before. A **Suggestions** header sits over the
+suggestion rows and a **Recent** header over the recent work streams, drawn with
+`type: 'header'`. Below macOS 14, which has no such item, they fall back to
+disabled rows.
 
-**Why:** With a rule but no label, neither group said what it was — a suggested
-prompt and a work-stream title are both one line of sentence case, so the lower
-half of the menu read as one undifferentiated list of things that already exist.
+**Why:** The three fixed actions and the suggestion rows ran together as one
+block, which read as though the suggestions were more fixed actions rather than
+something Rally proposed today. With a rule but no label, neither group said
+what it was — a suggested prompt and a work-stream title are both one line of
+sentence case, so the lower half of the menu read as one undifferentiated list
+of things that already exist.
 
 **Considered and rejected:** disabled rows everywhere, skipping the version
 check. They are visually close and one fewer branch, but on the macOS this ships
@@ -972,28 +968,15 @@ to they are demonstrably wrong: AppKit gives a real section header its own type
 scale and spacing, and the menu is the one surface here people compare directly
 against the system's own extras.
 
-**Consequences:** `sectionHeaders` is resolved once at construction from
-`process.getSystemVersion()` rather than per rebuild, so it will not follow a
-macOS upgrade until Rally restarts — acceptable, since the upgrade restarts the
-machine anyway. The **Recent** header is deliberately kept over the empty state;
-a future change that hides it there also has to say why the row below it is not a
-stray.
-
-### 2026-08-11 — The suggestions get a group of their own
-
-**What changed:** A separator after **New Automation**, so what Rally suggests
-is its own group between what a person can always start and what they have
-already started. With no suggestions the group and both its rules collapse to the
-single rule that was there before.
-
-**Why:** The three fixed actions and the suggestion rows ran together as one
-block, which read as though the suggestions were more fixed actions rather than
-something Rally proposed today.
-
 **Consequences:** The menu now has a variable number of separators. Anything
 adding a group here has to collapse its own rules when it is empty — the rule
 belongs to the group, not to the position — and a test asserts no two rules ever
-land next to each other for any content.
+land next to each other for any content. `sectionHeaders` is resolved once at
+construction from `process.getSystemVersion()` rather than per rebuild, so it
+will not follow a macOS upgrade until Rally restarts — acceptable, since the
+upgrade restarts the machine anyway. The **Recent** header is deliberately kept
+over the empty state; a future change that hides it there also has to say why
+the row below it is not a stray.
 
 ### 2026-08-11 — New Work Stream returns to the menu; the login item moves to Settings
 

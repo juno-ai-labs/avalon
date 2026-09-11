@@ -2166,7 +2166,7 @@ The parent control snapshot includes only ready children visible to its socket
 viewer. A new membership initializer must be registered by the coordinator and
 its resolved member set must be stored in the begin receipt.
 
-### 2026-09-04: The creator can open a new room at once, and every substream attaches its own resources
+### 2026-09-04 — The creator can open a new room at once, and every substream attaches its own resources
 
 **What changed:** `ConversationParentObject.isParticipant` answers from the
 per-user projection when the child has sent one, and otherwise, until the
@@ -2194,7 +2194,7 @@ reports its participants, its word governs, so a creator removed from the
 room loses access exactly as before. A run's resources are the run's; the
 drafting conversation no longer accumulates them.
 
-### 2026-09-04: An object's refusal keeps its status across the RPC boundary
+### 2026-09-04 — An object's refusal keeps its status across the RPC boundary
 
 **What changed:** `asApiError` in `lib/api-error.ts` rebuilds an `ApiError`
 from an error that crossed a Durable Object RPC, and the Worker's error
@@ -2214,7 +2214,7 @@ whose name happens to be `ApiError` without the fields is still a 500.
 its status. Anything that catches object errors on the Worker side should use
 `asApiError` rather than `instanceof`.
 
-### 2026-09-03: Automations become conversation parents, and both effect legs ride the Queue
+### 2026-09-03 — Automations become conversation parents, and both effect legs ride the Queue
 
 **What changed:** A `SubstreamAgent` has a typed parent, `{kind: "workstream" |
 "automation", id}`, recorded in its root as `parent_kind` (schema v39, default
@@ -2703,30 +2703,8 @@ admitted attachment. Speculative snapshots do not settle unseen state;
 navigation promotes the admitted socket explicitly. A thrown bootstrap closes
 the registered server end before reconnect, and a thrown runtime-recovery
 attempt is retried by the next mutation instead of poisoning the isolate.
-### 2026-09-01 — Terminal runs hand inference and external settlement to separate lanes
 
-**What changed:** SubstreamAgent releases its persistent loop after canonical
-terminalization and drains `external_settled_at` receipts independently. The
-external lane starts eagerly, recovers from the shared alarm, and preserves run
-order without contributing work to `nextLoopWorkAt`.
-
-**Why:** The old loop processed an externally unsettled terminal receipt before
-claiming any queued input. Slack, automation delivery, naming, and description
-maintenance were therefore serialized into the next message's time to
-inference even though none contributes to its canonical context or execution
-fence.
-
-**Considered and rejected:** Marking a run externally settled before delivery
-would make eviction lose effects. A new Queue would introduce another claim and
-receipt authority around a row that already carries durable due, retry, error,
-and terminal markers. Letting later deliveries overtake a deferred earlier run
-would expose results out of order.
-
-**Consequences:** In-app inference may advance while a previous result is still
-being projected externally. The external lane must stay idempotent and ordered,
-and its oldest due receipt remains an independent derived alarm candidate.
-
-### 2026-09-01 — Existing-room messages enter the room they already have open
+### 2026-09-01 — Existing-room messages enter the room they already have open, and terminal runs hand external settlement to a separate lane
 
 **What changed:** Electron sends `create_message` on the retained SubstreamAgent
 socket and resolves a private correlated receipt there. The admitted role and
@@ -2734,11 +2712,21 @@ workspace analytics surrogate now live in the hibernation attachment. Pending
 commands survive reconnect and resend the same `clientMessageId`. WorkspaceDO's
 old command handler remains only for released-client rollout compatibility.
 
+SubstreamAgent releases its persistent loop after canonical terminalization and
+drains `external_settled_at` receipts independently. The external lane starts
+eagerly, recovers from the shared alarm, and preserves run order without
+contributing work to `nextLoopWorkAt`.
+
 **Why:** The selected room socket is already authenticated, fixed to exactly one
 substream, and closed by the access-revocation path. Routing the send through
 WorkspaceDO added a Worker-to-parent invocation, another D1 session/membership
 read, and a parent-to-child call before the owning SQLite transaction could
 start.
+
+The old loop processed an externally unsettled terminal receipt before claiming
+any queued input. Slack, automation delivery, naming, and description
+maintenance were therefore serialized into the next message's time to inference
+even though none contributes to its canonical context or execution fence.
 
 **Considered and rejected:** Revalidating D1 on every child command preserves the
 latency that this boundary removes and creates two authorities for when an open
@@ -2746,10 +2734,20 @@ socket may write. Removing the WorkspaceDO handler immediately would strand an
 older desktop during a rolling deploy, so it drains as a compatibility surface
 but is no longer used by current code.
 
+Marking a run externally settled before delivery would make eviction lose
+effects. A new Queue would introduce another claim and receipt authority around
+a row that already carries durable due, retry, error, and terminal markers.
+Letting later deliveries overtake a deferred earlier run would expose results
+out of order.
+
 **Consequences:** Losing authorization must close the room socket; that queue is
 part of the write-authority contract, not merely feed cleanup. New room commands
 must be scoped entirely by the attachment and object-local state, keep private
 receipts outside replay ordering, and remain idempotent across reconnect.
+
+In-app inference may advance while a previous result is still being projected
+externally. The external lane must stay idempotent and ordered, and its oldest
+due receipt remains an independent derived alarm candidate.
 
 ### 2026-09-01 — Exposing an automation run unhides a row; it creates nothing
 
@@ -2783,32 +2781,7 @@ that. A refusal is a decision that stands rather than a failure to retry, so the
 path logs and moves on rather than recording a delivery receipt — exposing
 reaches nobody the automation could not already reach, so it is not a delivery.
 
-### 2026-09-01 — A delivery reads its fence from the directory, not from the room
-
-**What changed:** WorkspaceDO answers `workstreamDeliveryAuthority`, returning a
-work stream's current authority generation and whether it is archived, or null
-for one the workspace does not have. SubstreamAgent's automation settlement uses
-it to fence the activation it posts into the work stream that owns the
-automation.
-
-**Why:** An automation owned by a work stream keeps running when the person who
-created it is removed, so the room is the thing that can change underneath a
-delivery — re-authorized, or archived — between the decision to deliver and the
-write. The directory is what a re-authorization bumps first; a delivery that
-read the generation from the room itself would learn about the change only after
-writing into it.
-
-**Considered and rejected:** Returning the whole directory row. A caller holding
-this is answering "may I still write here", and a wider shape invites it to
-answer "what does this room look like" from a read that is not the serving path
-and will be staler than one.
-
-**Consequences:** Null means do not write; a caller that reads it as generation 1
-delivers behind a fence that was never checked. Archived is distinct from
-absent on purpose — unarchiving restores the room and its automations — so
-neither is inferred from the other.
-
-### 2026-09-01 — An automation activation is loop input, not a transcript row
+### 2026-09-01 — An automation activation is loop input, not a transcript row, and its delivery reads its fence from the directory
 
 **What changed:** `pending_loop_input_mailbox` admits a fifth preparation kind,
 `automation_activation`, and SubstreamAgent's `appendAutomationActivation`
@@ -2816,6 +2789,11 @@ admits through the mailbox — reserve, prepare, complete, then request the loop
 activation — instead of appending a canonical turn. Its pending input carries
 `actor = 'system'` and `mode = 'queue'`, and its Bind payload is the untrusted
 automation-result wrapper rather than a participant projection.
+
+WorkspaceDO answers `workstreamDeliveryAuthority`, returning a work stream's
+current authority generation and whether it is archived, or null for one the
+workspace does not have. SubstreamAgent's automation settlement uses it to fence
+the activation it posts into the work stream that owns the automation.
 
 **Why:** An automation owned by a work stream delivers its result *into* that
 work stream, and a room that receives a row nobody acts on has received
@@ -2825,6 +2803,13 @@ external Slack message starts a run. A canonical append reaches no loop at all,
 so the first implementation landed a row that would sit unread until something
 unrelated happened to start a run — which, for a room nobody is watching, is
 never.
+
+The fence comes from the directory because an automation owned by a work stream
+keeps running when the person who created it is removed, so the room is the
+thing that can change underneath a delivery — re-authorized, or archived —
+between the decision to deliver and the write. The directory is what a
+re-authorization bumps first; a delivery that read the generation from the room
+itself would learn about the change only after writing into it.
 
 **Considered and rejected:** Reusing `admitExternalMessage` by giving the
 automation a synthetic `ExternalActor`. The base schema requires a provider, a
@@ -2836,6 +2821,11 @@ column every downstream reader trusts to name a real account, and
 text to a person who does not exist. Also rejected: `steer` mode. A room mid-run
 has somebody watching it, and a scheduled result is not more urgent than what
 they are already doing.
+
+Returning the whole directory row from `workstreamDeliveryAuthority`. A caller
+holding this is answering "may I still write here", and a wider shape invites it
+to answer "what does this room look like" from a read that is not the serving
+path and will be staler than one.
 
 **Consequences:** A future preparation kind must extend the `expectedActor`
 mapping in `substream-loop-storage.ts` as well as the CHECK — the mapping is
@@ -2856,6 +2846,11 @@ itself. A local Worker holding state from before the edit is what surfaced it.
 The helper now returns the statements at their original indentation, and any
 future extraction has to be proved byte-identical against the shipped text
 rather than merely re-indented to suit its new home.
+
+Null from `workstreamDeliveryAuthority` means do not write; a caller that reads
+it as generation 1 delivers behind a fence that was never checked. Archived is
+distinct from absent on purpose — unarchiving restores the room and its
+automations — so neither is inferred from the other.
 
 ### 2026-09-01 — The note list pages, so nothing in it is out of reach
 
@@ -2995,37 +2990,6 @@ the wrong group. The note list's paging is what lets the selection stay
 unbounded: a cursor-fenced `Archive all` would be naming rows the reader can no
 longer reach, and an unbounded one over an *unpaged* list would be naming rows
 they never could.
-
-### 2026-09-01 — The queue's lifecycle is covered end to end on real workerd
-
-**What changed:** Added `test-workers/substream-message-queue.test.ts`, eight
-real-workerd cases over what happens to a message that waits: multi-message
-promotion order across successive cycles, the queue-versus-steer boundary at the
-running turn's model array, reorder as promotion authority, duplicate-admission
-dedupe, fall-forward past a mid-stream failure and past a stop, survival of an
-eviction before activation, and the head-of-line gate from both sides — hidden
-rather than dropped, and released when the admission ahead of it fails. The
-OpenRouter boundary and the admission-parking fixture moved into
-`test-workers/helpers/scripted-provider.ts` and `helpers/substream-fixture.ts`
-so both suites drive the same one, and the scripted provider gained a terminal
-refusal turn.
-
-**Why:** The wake-up bug fixed above was found by reading, not by a failing
-test, and the suite that should have caught it only ever put *one* message in
-the queue. One message cannot show promotion order, cannot show that a queued
-input stays out of the running turn, and cannot show the head-of-line gate at
-all — which is the property that turns one stranded message into a silent
-substream. Each case here fails under a targeted break of the thing it names:
-reversing `pendingInputs`' order, dropping the `mode = 'steer'` filter so a
-queued input is promoted mid-run, removing the gate's `NOT EXISTS`, letting a
-terminal mailbox row keep blocking, and disabling pending pickup entirely.
-
-**Considered and rejected:** Growing the pipeline suite instead of adding a file
-would have put the queue's lifecycle behind a name about the provider path, and
-that file was already the largest in the suite. Keeping a private copy of the
-provider mock in each file was rejected for the usual reason and one specific
-one: the circuit-breaker interference below is invisible until two suites share
-a model, and one shared helper is where that lesson can live.
 
 ### 2026-09-01 — An unsettled message admission keeps the object's wake-up
 
@@ -3276,76 +3240,6 @@ would make a rename reshuffle faces for no product reason.
 **What a future change has to respect:** a workspace-scoped row must not carry
 ids. Raising `WORKSTREAM_SIDEBAR_FACEPILE_LIMIT` is a product decision because
 it is also the wire cap. Unresolved ids are skipped, not substituted.
-
-### 2026-08-30 — Pre-inference notification tests no longer start model loops
-
-**What changed:** `participant-notification.test.ts` provisions existing rooms
-through the real runtime-bootstrap and identity ports, invokes the real
-`initialize` product mutation without activating its admitted opening run for
-create-only assertions, and gives the elicitation-answer case a settled parent
-run row. The file no longer installs a provider double or waits for an unrelated
-opening run to settle.
-
-**Why:** Deploy API 33295492419 failed after the object-id isolation below had
-landed: one add-to-two-rooms assertion saw no parent receipt and the elicitation
-case remained `executing:1`. The shared cause was not object naming. The fixture
-started inference for every pre-inference storage assertion, leaving alarm work
-to cross `reset()` under shard contention. Different ids made stale roots less
-likely to collide; they did not make unnecessary asynchronous work complete.
-
-**Considered and rejected:** More unique ids, a longer poll, and another forced
-alarm. The first cut already showed that a draining object per case exhausts the
-shard, while the latter two only give unrelated inference more time to finish.
-The product paths under test have explicit non-running boundaries, so the test
-uses those boundaries instead.
-
-**Consequences:** A test of committed creation state may leave an admitted run
-in storage only when it never activates that run. A test of an existing room
-uses `provision`; a test of model execution uses the execution pipeline suite.
-Do not make a pre-inference assertion depend on alarm timing merely because the
-public create endpoint normally proceeds to inference.
-
-### 2026-08-30 — Mention-confirmation and elicitation tests get their own work-stream ids
-
-**What changed:** The three mention-confirmation cases and the elicitation
-answer case in `participant-notification.test.ts` each open a distinct
-work-stream id (`6b5`–`6b8`). The file's D1 seed is now `CREATE TABLE IF NOT
-EXISTS` / `INSERT OR REPLACE`, matching the documented workers-suite seed
-shape. Notify-create isolation and deploy worker sharding already landed in
-#428.
-
-**Why:** Release Rally for macOS 33290369991 (`pnpm test`, unsharded workers)
-failed two poll timeouts after #422 — `waitForCanonicalTurn` (0 vs 1) and
-`waitForQuietLoop` (`executing:1`). Those are silent-replay failures:
-`initialize` on an already-authoritative root returns 200 with no fresh loop,
-and these four still shared `WORKSTREAM_ID` with every add-afterwards
-neighbour. A third reported error, `CREATE TABLE workstream_authority_control
-already exists`, is a different layer: the next `beforeEach` after an
-incomplete `reset()` used plain `CREATE TABLE`. Unique ids do not govern D1,
-so isolation alone would leave that cascade standing. Product mention and
-elicitation code did not change.
-
-**Considered and rejected:** Minting a fresh id for every test in the file
-(`isolatedWorkstream()`). #428's first revision did that and CI shard 1/2 timed
-out the same promotion polls, then failed to wipe D1. Also rejected:
-`waitForQuietLoop` at the end of the three mention cases so isolation would
-not add draining objects. Those tests wait on the canonical turn row only; a
-quiet-loop poll would spend the 10s budget on a precondition they do not
-assert. Four extra live objects (on top of the six the file already named) is
-under the threshold that timed out shard 1/2 (a draining object per all 18
-`it`s).
-
-**Consequences:** A new wait-on-promotion case in this file that reuses
-`WORKSTREAM_ID` can fail the same poll timeouts on an unsharded workers run
-(release `pnpm test`, or a future deploy lane). Isolate that case; do not mint
-a unique id for the whole file. The isolation rule lives in
-[`testing.md`](testing.md#writing-a-workerd-test). The three
-mention-confirmation cases still return with their loops possibly executing —
-they poll the turn row only — so isolation costs three extra draining objects.
-That is under the 18-object threshold that timed out shard 1/2; do not add
-`waitForQuietLoop` there to recoup it. An incomplete `reset()` no longer
-fails the next `it` as `CREATE TABLE … already exists` in this file; other
-workers tests that still use plain `CREATE TABLE` can still cascade that way.
 
 ### 2026-08-29 — Terminal projections read one canonical turn by identity
 
@@ -4060,6 +3954,7 @@ run-final adoption, hibernation recovery, and deletion/FK integrity.
 
 Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
 the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
+
 ### 2026-08-27 — Participant removal preserves one reader
 
 **What changed:** `removeParticipant` now treats the room as collaborative:
@@ -4091,6 +3986,7 @@ failure cannot extend a removed reader's transcript access. The one-participant
 floor deliberately applies at both scopes, even though workspace visibility
 would still make a zero-participant stream readable, so participant lifecycle
 does not gain a second empty state.
+
 ### 2026-08-27 — Canonical transcript ownership becomes the only runtime path
 
 **What changed:** SubstreamAgent schema v32 first proves exact parity for every
@@ -4330,32 +4226,7 @@ first response.
 
 Shipped in #341.
 
-### 2026-08-26 — Opening a work stream no longer clears its sidebar description
-
-**What changed:** Electron now maps the direct WorkstreamDO metadata snapshot's
-standing `description` to the sidebar subtitle, matching the WorkspaceDO
-directory path. The row renderer also falls back to that description when a
-resident cache entry carries an empty legacy `preview`.
-
-**Why:** WorkstreamDO still carries `description` and `preview` as distinct
-metadata fields, but newly created object-owned work streams do not populate the
-legacy preview. The workspace socket correctly seeded the sidebar from
-`description`; selecting the row opened the direct socket, whose newer common
-waterline replaced that subtitle with the empty preview. The result looked like
-the description was deleted only for the active work stream even though the
-authoritative description remained intact.
-
-**Considered and rejected:** Backfilling `preview` from transcript text. The
-sidebar is documented to show the standing description, not a last-message
-excerpt, and coupling this repair to transcript projection would preserve two
-competing values for one surface. Removing the metadata field is a separate
-contract migration; this change makes the two current socket readers agree.
-
-**Consequences, and what a future change has to respect:** A common-state update
-from either socket must produce the same `WorkstreamSummary.preview` value for
-the sidebar. An empty legacy preview must not outrank a non-empty description.
-
-### 2026-08-26 — Ordered transcript reads preserve participant message semantics
+### 2026-08-26 — Ordered transcript reads preserve participant message semantics, and opening a work stream keeps its sidebar description
 
 **What changed:** Participant transcript text blocks now bulk hydrate the
 canonical mentions, attachment descriptors, message type, and render-safe
@@ -4373,6 +4244,11 @@ bounded realtime frame, publication advances the durable cursor, marks that
 sequence unavailable for replay, and sends subscribed readers an immediate
 `resync_required` frame instead of falsely reporting that the mutation failed.
 
+Electron now maps the direct WorkstreamDO metadata snapshot's standing
+`description` to the sidebar subtitle, matching the WorkspaceDO directory path.
+The row renderer also falls back to that description when a resident cache entry
+carries an empty legacy `preview`.
+
 **Why:** The ordered-transcript cutover projected the human author's ID but
 dropped it while flattening a turn for the renderer, and did not project mention
 or attachment rows at all. Every human message consequently rendered as an unrelated
@@ -4385,6 +4261,14 @@ elicitation writers that still append through typed object ports did not enter
 the ordered projection. Mention attention and notification effects were still
 committed correctly; these were read/projection losses of already durable facts.
 
+WorkstreamDO still carries `description` and `preview` as distinct metadata
+fields, but newly created object-owned work streams do not populate the legacy
+preview. The workspace socket correctly seeded the sidebar from `description`;
+selecting the row opened the direct socket, whose newer common waterline
+replaced that subtitle with the empty preview. The result looked like the
+description was deleted only for the active work stream even though the
+authoritative description remained intact.
+
 **Considered and rejected:** Copying display names or avatars into the durable
 transcript projection. Those are mutable workspace identity attributes, while
 the transcript already stores the stable author and mention user IDs and the
@@ -4395,6 +4279,12 @@ tiles from the work-stream resource rail: that relationship does not say which
 message displayed the file or its position. The object returns the durable IDs,
 offsets, frozen per-message descriptors, and validated structured fields; the
 reader resolves only current person presentation data.
+
+Backfilling `preview` from transcript text. The sidebar is documented to show
+the standing description, not a last-message excerpt, and coupling this repair
+to transcript projection would preserve two competing values for one surface.
+Removing the metadata field is a separate contract migration; this change makes
+the two current socket readers agree.
 
 **Consequences, and what a future change has to respect:** Any participant
 transcript replacement for `Message` must preserve its complete participant-
@@ -4414,6 +4304,10 @@ Realtime publication must likewise never turn a committed mutation into a
 reported failure: an event that cannot be replayed as one bounded frame must
 force canonical snapshot repair for current readers and advance the replay
 floor for reconnecting readers.
+
+A common-state update from either socket must produce the same
+`WorkstreamSummary.preview` value for the sidebar. An empty legacy preview must
+not outrank a non-empty description.
 
 ### 2026-08-26 — Foreground presence is explicit on the workspace socket
 
@@ -4613,7 +4507,7 @@ a safe manual path as soon as it enters reconnecting, without an arbitrary
 timeout. WorkstreamDO control metadata may arrive before or after the feed
 without affecting message readiness.
 
-### 2026-08-25 — Opening messages carry real person mentions
+### 2026-08-25 — Opening messages carry real person mentions, and notification claims prove the lease they wrote
 
 **What changed:** The new-work-stream composer now retains the same selected
 mention identities as the in-work-stream composer and sends them through the
@@ -4636,6 +4530,17 @@ nonparticipant mention without confirmation or seating because active workspace
 membership already grants read access; the authority-side confirmation backstop
 applies only to personal work streams.
 
+The WorkspaceDO notification claim now returns and verifies its `intent_id` and
+newly generated `lease_id`. It no longer decides whether the claim won from the
+D1-shaped adapter's `meta.changes`. Exact notification reaper progress likewise
+comes from returned intent identities. The same audit moved WorkspaceDO-routed
+connector cursor and GitHub policy compare-and-swaps, automation compensations,
+draft-resource reaping, and opportunity-window reaping to returned identities.
+Slack account-link redemption now routes to its WorkspaceDO authority and
+verifies the returned challenge and linked identity instead of two exact
+counters. [`durable-object-sqlite.md`](durable-object-sqlite.md) owns the
+cross-cutting rule.
+
 **Why:** Selecting a name in the launch composer previously inserted only plain
 `@Name` text and separately added a participant ID. The opening message carried
 no identity or offsets, so its persisted text could not render a mention chip,
@@ -4643,12 +4548,27 @@ create mention attention, or reach the Slack mention delivery path. The control
 looked like the existing mention autocomplete while producing a different
 domain fact.
 
+A production mention claim updated one logical intent row and the indexes over
+its delivery and terminal fields. `WorkspaceDO.executeRuntimeSql` correctly
+exposed workerd's physical `rowsWritten`, which was greater than one; the
+notification service incorrectly required exactly one. It therefore wrote its
+lease, diagnosed that successful write as an active competitor, returned `busy`,
+and never reached Slack. Queue drain was real but described only the earlier
+handoff, not this later terminal outcome.
+
 **Considered and rejected:** Building canonical Markdown in the renderer. That
 would make correctness depend on a client template and a possibly stale display
 name. The client identifies the intended visible span; the object verifies the
 active member and owns the durable spelling, mention row, attention state, and
 outbox effects. A separate launch-only span finder was also rejected in favor
 of the resolver already used for ordinary workspace messages.
+
+Changing the predicate to `changes > 0`. That would survive index inflation but
+would still couple a domain ownership decision to a storage counter. Also
+rejected: normalizing the adapter globally to `changes()`. Existing callers and
+diagnostics already receive `rowsWritten`, and making the adapter look more like
+D1 would preserve the architectural mistake: the provable answer is the returned
+lease, not a more convenient count.
 
 **Consequences, and what a future change has to respect:** Mention identities
 must survive draft editing and cross the create API as occurrence-bound spans;
@@ -4671,41 +4591,13 @@ identity to new words. Autocomplete and the mention toolbar follow textarea
 selection semantics: a non-collapsed selected range is replaced, not retained
 after the inserted mention.
 
-### 2026-08-25 — Notification claims prove the lease they wrote
+A claim, lease, compare-and-swap, or exact reaper count on Durable Object SQLite
+must use `RETURNING` or a typed object-owned outcome. A Node SQLite double is
+insufficient coverage for this rule because its logical affected-row count hides
+index writes; the notification regression therefore runs on real workerd and
+changes indexed columns. The test was proved by restoring the old exact-count
+branch and observing `busy` where the terminal result was `skipped`.
 
-**What changed:** The WorkspaceDO notification claim now returns and verifies
-its `intent_id` and newly generated `lease_id`. It no longer decides whether the
-claim won from the D1-shaped adapter's `meta.changes`. Exact notification reaper
-progress likewise comes from returned intent identities. The same audit moved
-WorkspaceDO-routed connector cursor and GitHub policy compare-and-swaps,
-automation compensations, draft-resource reaping, and opportunity-window
-reaping to returned identities. Slack account-link redemption now routes to its
-WorkspaceDO authority and verifies the returned challenge and linked identity
-instead of two exact counters. [`durable-object-sqlite.md`](durable-object-sqlite.md)
-owns the cross-cutting rule.
-
-**Why:** A production mention claim updated one logical intent row and the
-indexes over its delivery and terminal fields. `WorkspaceDO.executeRuntimeSql`
-correctly exposed workerd's physical `rowsWritten`, which was greater than one;
-the notification service incorrectly required exactly one. It therefore wrote
-its lease, diagnosed that successful write as an active competitor, returned
-`busy`, and never reached Slack. Queue drain was real but described only the
-earlier handoff, not this later terminal outcome.
-
-**Considered and rejected:** Changing the predicate to `changes > 0`. That
-would survive index inflation but would still couple a domain ownership decision
-to a storage counter. Also rejected: normalizing the adapter globally to
-`changes()`. Existing callers and diagnostics already receive `rowsWritten`, and
-making the adapter look more like D1 would preserve the architectural mistake:
-the provable answer is the returned lease, not a more convenient count.
-
-**Consequences, and what a future change has to respect:** A claim, lease,
-compare-and-swap, or exact reaper count on Durable Object SQLite must use
-`RETURNING` or a typed object-owned outcome. A Node SQLite double is insufficient
-coverage for this rule because its logical affected-row count hides index
-writes; the notification regression therefore runs on real workerd and changes
-indexed columns. The test was proved by restoring the old exact-count branch and
-observing `busy` where the terminal result was `skipped`.
 ### 2026-08-25 — Being named at creation tells the person, when the caller says to
 
 **What changed:** `initialize` emits, per invited participant, the same activity
@@ -5209,32 +5101,6 @@ it is a storage class rather than statements inline in a service so the Node
 suite's agent double runs the real write; a double that modelled it would be
 the second implementation, and the model is what drifts.
 
-### 2026-08-24 — The lifecycle-event migration is 24, and the fifth collision
-
-**What changed:** `runLifecycleAuthorityPromotion` is object schema migration
-24, and `WORKSTREAM_OBJECT_SCHEMA_VERSION` is 24. It was written as 22. Also
-corrected: the harness-run entry below said its migration was 22 after that
-slice renumbered to 23, which is a stale reference that reached `main`.
-
-**Why:** 22 went to the accepted-suggestion audience triggers and 23 to the
-harness-run promotion while this branch sat unopened. That is five collisions in
-one afternoon, and this one is the clearest case for a gate: the branch adds a
-migration, the rebase reported no conflict on the array, and the only symptom
-was two entries numbered 22 in a list nothing checks.
-
-It was caught by `grep -oP 'version: \d+' … | sort | uniq -d`, run before the
-merge. Twice now that check has been the only thing between a duplicate and
-`main` — and the stale doc reference above shows the other half of the cost: a
-renumber touches the array, the constant, and every prose mention, and the
-prose is the part no gate reads.
-
-**What a future change has to respect:** the check belongs in CI. Comparing a
-branch's version list against `main`'s for duplicates is a few lines and would
-have caught all five; every one of them was found by hand, and the one time the
-list was not checked, a wrong number shipped. That is a decision for the team
-rather than something to add inside a conversion slice, but the evidence for it
-is now five incidents deep.
-
 ### 2026-08-24 — Two reviews on the converted harness runs, and the rule this slice had broken
 
 **What changed:** a code review and a rebase audit, run separately over the same
@@ -5282,29 +5148,6 @@ and read both sides of every overlap. A comment on `main` saying "do not narrow
 this back" marks a fix somebody already paid for, and its absence from the
 branch is the tell.
 
-### 2026-08-24 — The harness-run migration renumbers to 23, after two collisions
-
-**What changed:** `harnessRunAuthorityPromotion` is object schema migration 23,
-and `WORKSTREAM_OBJECT_SCHEMA_VERSION` is 23. It was written as 21, which the
-resource slice took on the way in; 22 then went the same way to the
-accepted-suggestion audience triggers while this branch was in review, which is
-the fourth time in this stack and the reason the number is 23 rather than 22.
-
-**Why:** the two entries above record the same thing happening to scheduling and
-to resources. This one is the silent shape again — the rebase was clean, every
-gate passed, and the only symptom was two entries numbered 21 in one array.
-Three times in one afternoon is no longer a run of bad luck; it is what a stack
-of branches does when the number each one claims is decided when it is written
-and nothing rechecks it.
-
-**What a future change has to respect:** the check that catches this is
-`grep -oP 'version: \d+' … | sort | uniq -d` against the branch, run
-immediately before merging. Nothing in the repository does it, so a duplicate
-merges clean and leaves the runner applying whichever entry came first and
-skipping the other as already applied. If this keeps happening, the fix is a
-CI gate rather than more diligence — but that is a new gate on every pull
-request, and the team's call rather than one to add quietly.
-
 ### 2026-08-24 — The main child answers current reader-audience questions
 
 **What changed:** `SubstreamAgent.readerAudience` exposes the main child's
@@ -5335,48 +5178,6 @@ selected work stream's current authority. Private reader identity comes only
 from active participant rows. Direct SQL audience writes remain subject to the
 accepted-content triggers; do not replace them with a service-only check.
 
-
-### 2026-08-24 — The resource migration renumbers to 21, and this time Git said nothing
-
-**What changed:** `resourceAuthorityPromotion` is object schema migration 21,
-and `WORKSTREAM_OBJECT_SCHEMA_VERSION` is 21. It was written as 20.
-
-**Why:** the scheduling slice took 20 on the way in. The entry above records the
-same thing happening to scheduling itself, where the two claims sat at the same
-position in the array and the rebase conflicted — the loud case. This is the
-quiet one it warned about: the two entries were appended at *different*
-positions, so Git merged them without a word into a list holding two entries
-numbered 20, and nothing failed. Not the build, not `pnpm test`, not lint. The
-runner would have applied whichever came first and skipped the other as already
-applied, and which one that was would have depended on merge order.
-
-It was caught by diffing the branch's version list against `main`'s before
-merging, which is now the thing to do rather than the thing to remember.
-
-**What a future change has to respect:** a migration number is not checked by
-anything in the repository. Two branches can claim the same one, merge cleanly,
-and produce an object whose schema version means different things depending on
-which landed first. Until something enforces it, the check is manual and belongs
-immediately before the merge, not when the migration is written.
-
-### 2026-08-24 — The scheduling migration renumbers to 20, because 19 was taken
-
-**What changed:** `schedulingAuthorityPromotion` is object schema migration 20,
-and `WORKSTREAM_OBJECT_SCHEMA_VERSION` is 20.
-
-**Why:** it was written as 19 and 19 landed on `main` first — the participant
-`first_opened_at` migration — while this branch was open. This is the collision
-`docs/pull-requests.md` warns about, and it is worth writing down what it looks
-like: the two claims are at the same position in the same array, so a *rebase*
-conflicts and the renumber is forced. Had they been appended at different
-positions, Git would have merged them cleanly into one list with two entries
-numbered 19, the runner would have applied whichever came first and skipped the
-other as already-applied, and the object would have carried a version number
-whose meaning depended on merge order. Nothing would have failed at build time.
-
-**What a future change has to respect:** confirm the number against `main` at
-merge time, not only when the migration is written. The gap between the two is
-where somebody else's release lands.
 
 ### 2026-08-24 — What a review found in the scheduling slice, and one test that was proving nothing
 
@@ -6393,6 +6194,7 @@ the *result* must prove it is still the attempt entitled to make one. And
 `abandonBlockRun`, like `abandonRunReceipts`, is tied to the exact
 `terminalized_at` the reaper stamped rather than to a live lease, because an
 expired lease is the reaper's whole premise.
+
 ### 2026-08-23 — The router learns `tool_effects`, the name migration 17 left it without
 
 **What changed:** `LOCAL_TABLES` in `workstream-runtime-database.ts` gains
@@ -7377,7 +7179,7 @@ version order and read as a revival. Anything that genuinely needs per-command
 receipts or a claimable compaction job should model it fresh, and say in its
 own entry why `terminal_tasks` or `compaction_checkpoints` is not enough.
 
-### 2026-08-21 — Stopped runs remain stopped through every projection
+### 2026-08-21 — Stopped runs remain stopped through every projection, and transcript order is separated from unread attention
 
 **What changed:** The shared harness-status contract now carries `stopped`, and
 the WorkstreamDO, WorkspaceDO directory, desktop, Slack task list, and Slack
@@ -7385,19 +7187,39 @@ unfurl projections map the authoritative `cancelled` root state to it. Terminal
 checkpoint cleanup also recognizes the status. The desktop labels it “Latest
 run stopped” while retaining the detailed retry card.
 
+Product message projection now carries nullable `attentionSequenceNumber`
+directly from `parts.attention_ordinal`. Desktop visibility, initial unread
+anchoring, and socket advancement ignore tool and transient rows and advance
+only that ordinal. A real-workerd test projects a human/tool/agent sequence as
+`1/null/2`.
+
 **Why:** Post-cutover runtime storage correctly recorded a user stop as
 `cancelled`, but the public projection fell through to `idle`; the desktop then
 normalized `idle` to `completed`. A real Electron run consequently showed “Run
 stopped” and “Latest run completed” at the same time.
+
+After the Durable Object cutover, the desktop used transcript sequence as an
+attention ordinal. Tool rows consume transcript positions but no attention
+positions, so a tool-heavy turn sent an impossible read waterline and received
+HTTP 422.
 
 **Considered and rejected:** Relabeling every completed/idle work stream as
 merely “not running” would avoid the contradiction but discard useful outcome
 state. Treating a stop as failure would incorrectly imply a fault and route it
 to intervention UI.
 
+Clamping the invalid PATCH, assigning attention to tool rows, and deriving
+attention from author type on the client. Each hides or duplicates the
+authoritative object counter instead of transmitting it.
+
 **Consequences:** Consumers must treat `stopped` as terminal and non-running.
 Any new work-stream status surface must preserve it rather than collapsing it
 into `idle`, `completed`, or `failed`.
+
+Mixed-version responses may omit the optional field and must not advance
+attention. New people-visible part types must decide explicitly whether they
+receive an attention ordinal, while transcript pagination remains ordered
+exclusively by `sequence_number`.
 
 ### 2026-08-20 — Same-row tool settlement outranks client-id replay deduplication
 
@@ -7431,28 +7253,6 @@ the only accepted backfill authority; a started part without one remains
 started rather than being guessed complete from the surrounding run. Historical
 repair must not leave status-derived presentation fields claiming that a
 terminal invocation is still active.
-
-### 2026-08-20 — Transcript order is separated from unread attention
-
-**What changed:** Product message projection now carries nullable
-`attentionSequenceNumber` directly from `parts.attention_ordinal`. Desktop
-visibility, initial unread anchoring, and socket advancement ignore tool and
-transient rows and advance only that ordinal. A real-workerd test projects a
-human/tool/agent sequence as `1/null/2`.
-
-**Why:** After the Durable Object cutover, the desktop used transcript sequence
-as an attention ordinal. Tool rows consume transcript positions but no
-attention positions, so a tool-heavy turn sent an impossible read waterline and
-received HTTP 422.
-
-**Considered and rejected:** Clamping the invalid PATCH, assigning attention to
-tool rows, and deriving attention from author type on the client. Each hides or
-duplicates the authoritative object counter instead of transmitting it.
-
-**Consequences:** Mixed-version responses may omit the optional field and must
-not advance attention. New people-visible part types must decide explicitly
-whether they receive an attention ordinal, while transcript pagination remains
-ordered exclusively by `sequence_number`.
 
 ### 2026-08-20 — Regional product shells and viewer code are removed
 
@@ -8424,26 +8224,7 @@ closed in-code table/column definition; row keys must exactly match it.
 Transient child-RPC failures still back off, but invalid durable envelopes
 produce a visible failed run and cannot poison the per-block delivery lane.
 
-### 2026-08-18 — Retry boundaries fail closed without blocking unrelated work
-
-**What changed:** Creation replay repairs a missing parent snapshot, visibility
-enumeration is capped and cursor-paged, completed opportunity windows accept
-duplicate callbacks as no-ops, and WorkspaceScheduler isolates maintenance
-workers with `allSettled` semantics.
-
-**Why:** Ambiguous RPC results and at-least-once Workflow delivery are ordinary
-runtime conditions. An unbounded result or one failed cleanup task could turn a
-local retry into a workspace-wide availability problem.
-
-**Considered and rejected:** Treating every retry as a conflict, retaining an
-unbounded convenience RPC, and failing the full scheduler alarm on the first
-maintenance rejection.
-
-**Consequences:** Nonterminal lease mismatches still fail closed. Callers page
-visibility results, creation may emit a repair snapshot, and maintenance
-failures are logged while their durable source rows remain retryable.
-
-### 2026-08-18 — WorkspaceDO becomes the workspace product database
+### 2026-08-18 — WorkspaceDO becomes the workspace product database, and retry boundaries fail closed without blocking unrelated work
 
 **What changed:** The single initial WorkspaceDO migration now includes
 connector credentials, connection-scoped webhook replay receipts, OAuth attempt
@@ -8458,10 +8239,19 @@ post-cutover writes. Connector-trigger prompts, between-turn automation
 authority checks, and provider/event-type suggestion feedback resolve the
 canonical WorkspaceDO event rather than a legacy D1 activity row.
 
+Creation replay repairs a missing parent snapshot, visibility enumeration is
+capped and cursor-paged, completed opportunity windows accept duplicate
+callbacks as no-ops, and WorkspaceScheduler isolates maintenance workers with
+`allSettled` semantics.
+
 **Why:** These records all have one workspace owner and are consumed beside
 workspace directory/activity state. Retaining them in D1 made the control plane
 a second product authority and made object-local workflows and sockets depend on
 cross-database joins.
+
+Ambiguous RPC results and at-least-once Workflow delivery are ordinary runtime
+conditions. An unbounded result or one failed cleanup task could turn a local
+retry into a workspace-wide availability problem.
 
 **Considered and rejected:** Per-domain Durable Objects, D1 read projections,
 and dual writes. One WorkspaceDO gives
@@ -8471,6 +8261,9 @@ connector ingress carries a bounded normalized event to avoid a D1 body relay.
 Terminal mention shells are reaped by WorkspaceScheduler rather than a fleet-wide
 D1 scan.
 
+Treating every retry as a conflict, retaining an unbounded convenience RPC, and
+failing the full scheduler alarm on the first maintenance rejection.
+
 **Consequences:** D1 is reduced to identity, membership, placement/ingress
 routing, migration, and operational audit/telemetry. R2 retains bytes but no
 authoritative pointer. Operations that touch both a work stream and a workspace
@@ -8479,7 +8272,11 @@ SQL batches fail rather than imply distributed atomicity. Terminal connector
 revocation is checked at every child bootstrap instead of attempting unbounded
 fan-out to all SubstreamAgents.
 
-### 2026-08-18 — Workspace product authority includes activity and suggested work
+Nonterminal lease mismatches still fail closed. Callers page visibility results,
+creation may emit a repair snapshot, and maintenance failures are logged while
+their durable source rows remain retryable.
+
+### 2026-08-18 — Workspace product authority includes activity, suggested work and connector events, and agent-owned identities use UUIDv7
 
 **What changed:** WorkspaceDO's initial SQLite schema now owns the first-party
 activity log and target edges plus opportunity batching, provenance, per-user
@@ -8487,15 +8284,48 @@ ranking/resolution, and immutable start snapshots. A WorkspaceDO alarm starts
 bounded Workflows for model compute, while maintenance routes import the D1
 source families in foreign-key order and permanently fence their legacy writers.
 
+WorkspaceDO's single initial SQLite schema now includes the normalized
+connector-event authority and ingress receipt ledger. Regional Queue messages
+carry the bounded normalized event directly to the consumer, which commits it by
+typed RPC and then creates a deterministic per-event Workflow; Workflow claim
+and terminal settlement are fenced in the object.
+
+Workstream product messages, runs, activities and response parts; SubstreamAgent
+and BlockDashboard attempts and socket connections; WorkspaceScheduler-created
+entities; Bind lifecycle, tool, checkpoint and inference rows; Workflow
+attempts; socket-ticket JTIs; Queue claims; and notification leases now use
+UUIDv7. ESLint rejects `crypto.randomUUID()` in these owning paths.
+
 **Why:** Both datasets belong to one workspace and are queried with workspace
 directory state. Leaving them in D1 kept the nominal routing/control plane on
 the product serving path and split an opportunity from the evidence and user
 decision that make it explainable.
 
+A connector event is workspace-owned product data. D1 should route and support
+relational control state, not remain the durable body store, while a Queue
+callback should not hold routing inference and automation fan-out open.
+
+These identities cross SQL tables, Queue deliveries, Workflow steps, sockets,
+and logs. A common millisecond-sortable representation makes incident traces and
+raw-table inspection substantially easier without asking a random v4 UUID's
+associated timestamp from another index.
+
 **Considered and rejected:** A D1 read projection, dual writes, model execution
 inside the object alarm, and separate provenance storage. The maintenance
 window permits a clean authority switch; Workflow keeps long compute away from
 the object request lane; one local transaction preserves graph consistency.
+
+One event shared across every workspace matching a provider delivery would cross
+authorization boundaries. An ID-only Queue wake-up would require a D1 body
+handoff; direct ingress-to-DO RPC without Queue would lose regional buffering
+and failure isolation. Raw payloads remain in R2 so the accepted normalized
+Queue contract stays bounded.
+
+Replacing waterlines or integer sequences with UUID ordering, and converting
+deterministic DO names, Workflow IDs, idempotency keys, provider tool-call IDs,
+or caller-owned IDs. UUIDv7 does not establish causal order between writers,
+while those deterministic identities derive their correctness from stable replay
+rather than creation time.
 
 **Consequences:** Activity/digest reads and suggestion reads/writes use typed
 WorkspaceDO RPC after cutover. D1 retains the import/route ledger, redacted
@@ -8504,51 +8334,13 @@ membership/connector identity needed for authorization, and external delivery
 intent. It retains no activity rows, opportunity content/provenance/user state,
 or live product path.
 
-### 2026-08-18 — WorkspaceDO owns connector events before Workflow processing
+Raw deliveries can fan out, normalized events cannot. Every downstream processor
+starts from the WorkspaceDO claim. D1 has no live connector event body or
+connection-scoped replay receipt to serve.
 
-**What changed:** WorkspaceDO's single initial SQLite schema now includes the
-normalized connector-event authority and ingress receipt ledger. Regional Queue
-messages carry the bounded normalized event directly to the consumer, which
-commits it by typed RPC and then creates a deterministic per-event Workflow;
-Workflow claim and terminal settlement are fenced in the object.
-
-**Why:** A connector event is workspace-owned product data. D1 should route and
-support relational control state, not remain the durable body store, while a
-Queue callback should not hold routing inference and automation fan-out open.
-
-**Considered and rejected:** One event shared across every workspace matching a
-provider delivery would cross authorization boundaries. An ID-only Queue wake-up
-would require a D1 body handoff; direct ingress-to-DO RPC without Queue would
-lose regional buffering and failure isolation. Raw payloads remain in R2 so the
-accepted normalized Queue contract stays bounded.
-
-**Consequences:** Raw deliveries can fan out, normalized events cannot. Every
-downstream processor starts from the WorkspaceDO claim. D1 has no live connector
-event body or connection-scoped replay receipt to serve.
-
-### 2026-08-18 — Agent-owned durable and transport identities use UUIDv7
-
-**What changed:** Workstream product messages, runs, activities and response
-parts; SubstreamAgent and BlockDashboard attempts and socket connections;
-WorkspaceScheduler-created entities; Bind lifecycle, tool, checkpoint and
-inference rows; Workflow attempts; socket-ticket JTIs; Queue claims; and
-notification leases now use UUIDv7. ESLint rejects `crypto.randomUUID()` in
-these owning paths.
-
-**Why:** These identities cross SQL tables, Queue deliveries, Workflow steps,
-sockets, and logs. A common millisecond-sortable representation makes incident
-traces and raw-table inspection substantially easier without asking a random
-v4 UUID's associated timestamp from another index.
-
-**Considered and rejected:** Replacing waterlines or integer sequences with
-UUID ordering, and converting deterministic DO names, Workflow IDs,
-idempotency keys, provider tool-call IDs, or caller-owned IDs. UUIDv7 does not
-establish causal order between writers, while those deterministic identities
-derive their correctness from stable replay rather than creation time.
-
-**Consequences:** New Rally-owned IDs in the agent-serving boundary expose an
-approximate creation millisecond in lexical order. Authority generation plus
-the relevant sequence or waterline remains the only freshness contract.
+New Rally-owned IDs in the agent-serving boundary expose an approximate creation
+millisecond in lexical order. Authority generation plus the relevant sequence or
+waterline remains the only freshness contract.
 
 ### 2026-08-18 — State converges through waterlined sockets and Queue
 
@@ -8631,7 +8423,7 @@ class registration use the final name directly, but deployed D1 migration
 `0043_hypersight.sql` stays immutable; migration
 `0078_rename_hypersight_to_block_dashboard.sql` performs the D1 rename.
 
-### 2026-08-18 — Unshipped Durable Object schemas start at one final baseline
+### 2026-08-18 — The durable agent cutover is finalized: one schema baseline, durable checkpoint streaming, paged history, a persisted compaction phase, and freshness-safe HyperSight retries
 
 **What changed:** WorkspaceDO, WorkstreamDO, SubstreamAgent, and
 BlockDashboardAgent each expose one schema migration at version 1 containing
@@ -8642,14 +8434,77 @@ regional Wrangler manifests likewise register the final five product classes
 and `CrashSymbolicatorContainer` in one `v1` migration, with no obsolete class
 rename chain.
 
+`BlockDashboardAgent` now exposes its own hibernating, one-time-ticket WebSocket
+and persists the same full `ActiveStreamCheckpoint` contract used by
+`SubstreamAgent`. Electron opens those sockets only while the HyperSight panel
+is visible, replaces output from monotonically newer revisions, and restores an
+in-progress run after object eviction or reconnect. Internal `/internal/*` stub
+fetches became typed native RPC methods; a custom ESLint rule prevents their
+return.
+
+Hibernating feed sockets accept correlated before/after page queries,
+reauthorize the reader, and return bounded local-SQL results without changing
+room replay state. Electron uses them for upward infinite scroll and newer-page
+recovery.
+
+The initial Workstream schema includes the strict, attempt-fenced
+`active_agent_compaction` singleton. Lifecycle frames update it transactionally
+with the room cursor and feed it into cold snapshots and resync responses.
+
+WorkstreamDO delivers its block dispatch outbox head-of-line per block.
+BlockDashboardAgent independently rejects a causally older late arrival,
+prioritizes its one executable refresh over terminal receipt retries, and
+publishes committed socket state through one caught serial queue that coalesces
+adjacent unsent cumulative checkpoints around control barriers.
+
 **Why:** None of these object schemas has shipped or owns production data yet.
 Publishing intermediate development history would make every new object replay
 obsolete transformations, preserve states that no deployed object can have,
 and complicate the maintenance-window cutover without providing rollback value.
 
+Every agent-owned loop can stream for minutes or hours, so terminal results
+alone hide useful progress and delta-only reconnects can duplicate or drop
+visible text. Targeted object handoffs also benefit from native RPC's typed
+surface and per-stub ordering without pretending a Queue send is atomic with
+object-local SQLite.
+
+Transcript authority and transcript download must share the same object.
+Treating a historical read as a broadcast event would make one user's scrolling
+visible in every resume cursor and needlessly wake connected clients.
+
+Compaction can take long enough for navigation, socket loss, or object eviction.
+In-memory activity cannot tell a reconnecting desktop whether the loop is
+summarizing or merely quiet.
+
+An older failed RPC could retry after a newer dispatch, supersede the newest
+queued work by arrival order, and then make obsolete settlement calls before
+useful inference. Concurrent best-effort broadcasts could also expose a queued
+frame after the run had already become running.
+
 **Considered and rejected:** Retaining versions 2–6 as documentation of branch
 development. Git already preserves that history; a runtime migration ledger is
 an operational compatibility contract, not a development changelog.
+
+Relaying block tokens through WorkstreamDO, polling, storing one row per token,
+and replacing SubstreamAgent-to-WorkstreamDO RPC with Queue. They respectively
+load the metadata control plane, lose smooth progress, create unnecessary write
+volume, or retain the child outbox while adding a Queue consumer and another
+delivery hop.
+
+Full-history snapshots, D1/REST-only history, and room-sequenced page events.
+Those choices are unbounded, split authority, or mix private query progress into
+shared ordering.
+
+Reusing immutable `compaction_jobs` as UI state and adding a transcript part.
+The former couples a transient phase to a richer history record whose required
+fences are not available at start; the latter makes runtime progress part of the
+model-visible conversation.
+
+Trusting only parent delivery order, serializing all blocks behind one global
+outbox row, and awaiting socket authorization or publication from the inference
+callback. The first is not defense in depth, the second destroys block
+parallelism, and the third makes optional realtime delivery part of execution
+correctness.
 
 **Consequences:** Every newly constructed object records exactly one schema
 receipt, and a fresh regional deployment applies exactly one Durable Object
@@ -8657,104 +8512,32 @@ class-registration tag. From the first deployment onward, both baselines are
 immutable; all later schema or class changes must append a new version and may
 not rewrite version 1.
 
-### 2026-08-18 — HyperSight retry order cannot regress block freshness
+Both agent sockets commit complete checkpoints before broadcast, reconnect never
+concatenates a snapshot, block frames are batched at no more than 10 fps, and
+direct RPC handoffs remain guarded by sender outboxes plus receiver receipts.
+Block sockets revalidate on a bounded cache and explicit parent sweeps rather
+than on every frame, and stale queued block runs are terminalized before they
+spend inference. Queue is reserved for regional fan-out where buffering
+unrelated work streams is valuable.
 
-**What changed:** WorkstreamDO delivers its block dispatch outbox head-of-line
-per block. BlockDashboardAgent independently rejects a causally older late
-arrival, prioritizes its one executable refresh over terminal receipt retries,
-and publishes committed socket state through one caught serial queue that
-coalesces adjacent unsent cumulative checkpoints around control barriers.
+One page wakes one SubstreamAgent only when requested; idle sockets hibernate.
+Page frames cap rows and bytes, response UUIDs tolerate interleaving, and
+Electron preserves the user's visual anchor while prepending.
 
-**Why:** An older failed RPC could retry after a newer dispatch, supersede the
-newest queued work by arrival order, and then make obsolete settlement calls
-before useful inference. Concurrent best-effort broadcasts could also expose a
-queued frame after the run had already become running.
+One agent DO has at most one active phase, stale completions are fenced by
+run/attempt/index, and terminal status clears abandoned state. The table
+references the local run and uses integer-millisecond timestamps like every
+other object-local operational table.
 
-**Considered and rejected:** Trusting only parent delivery order, serializing
-all blocks behind one global outbox row, and awaiting socket authorization or
-publication from the inference callback. The first is not defense in depth, the
-second destroys block parallelism, and the third makes optional realtime
-delivery part of execution correctness.
-
-**Consequences:** Configuration version and source sequence, not retry timing,
-decide freshness. Different blocks may still deliver concurrently; rows for one
-block retain causal order. Socket frames preserve commit order without making a
-viewer, D1 revalidation, or WorkstreamDO availability a prerequisite for a
-healthy Bind loop. Under slow revalidation, high-rate full-text checkpoints
-collapse to the latest unsent state instead of retaining quadratic text, while
+Configuration version and source sequence, not retry timing, decide freshness.
+Different blocks may still deliver concurrently; rows for one block retain
+causal order. Socket frames preserve commit order without making a viewer, D1
+revalidation, or WorkstreamDO availability a prerequisite for a healthy Bind
+loop. Under slow revalidation, high-rate full-text checkpoints collapse to the
+latest unsent state instead of retaining quadratic text, while
 queued/running/terminal state remains an ordering barrier.
 
-### 2026-08-18 — SubstreamAgent serves cursor-paged transcript history
-
-**What changed:** Hibernating feed sockets accept correlated before/after page
-queries, reauthorize the reader, and return bounded local-SQL results without
-changing room replay state. Electron uses them for upward infinite scroll and
-newer-page recovery.
-
-**Why:** Transcript authority and transcript download must share the same
-object. Treating a historical read as a broadcast event would make one user's
-scrolling visible in every resume cursor and needlessly wake connected clients.
-
-**Considered and rejected:** Full-history snapshots, D1/REST-only history, and
-room-sequenced page events. Those choices are unbounded, split authority, or
-mix private query progress into shared ordering.
-
-**Consequences:** One page wakes one SubstreamAgent only when requested; idle
-sockets hibernate. Page frames cap rows and bytes, response UUIDs tolerate
-interleaving, and Electron preserves the user's visual anchor while prepending.
-
-### 2026-08-18 — SubstreamAgent persists its active compaction phase
-
-**What changed:** The initial Workstream schema includes the strict,
-attempt-fenced `active_agent_compaction` singleton. Lifecycle frames update it
-transactionally with the room cursor and feed it into cold snapshots and resync
-responses.
-
-**Why:** Compaction can take long enough for navigation, socket loss, or object
-eviction. In-memory activity cannot tell a reconnecting desktop whether the
-loop is summarizing or merely quiet.
-
-**Considered and rejected:** Reusing immutable `compaction_jobs` as UI state and
-adding a transcript part. The former couples a transient phase to a richer
-history record whose required fences are not available at start; the latter
-makes runtime progress part of the model-visible conversation.
-
-**Consequences:** One agent DO has at most one active phase, stale completions
-are fenced by run/attempt/index, and terminal status clears abandoned state. The
-table references the local run and uses integer-millisecond timestamps like
-every other object-local operational table.
-
-### 2026-08-18 — Agent sockets share durable full-checkpoint streaming
-
-**What changed:** `BlockDashboardAgent` now exposes its own hibernating,
-one-time-ticket WebSocket and persists the same full `ActiveStreamCheckpoint`
-contract used by `SubstreamAgent`. Electron opens those sockets only while the
-HyperSight panel is visible, replaces output from monotonically newer
-revisions, and restores an in-progress run after object eviction or reconnect.
-Internal `/internal/*` stub fetches became typed native RPC methods; a custom
-ESLint rule prevents their return.
-
-**Why:** Every agent-owned loop can stream for minutes or hours, so terminal
-results alone hide useful progress and delta-only reconnects can duplicate or
-drop visible text. Targeted object handoffs also benefit from native RPC's
-typed surface and per-stub ordering without pretending a Queue send is atomic
-with object-local SQLite.
-
-**Considered and rejected:** Relaying block tokens through WorkstreamDO,
-polling, storing one row per token, and replacing SubstreamAgent-to-WorkstreamDO
-RPC with Queue. They respectively load the metadata control plane, lose smooth
-progress, create unnecessary write volume, or retain the child outbox while
-adding a Queue consumer and another delivery hop.
-
-**Consequences:** Both agent sockets commit complete checkpoints before
-broadcast, reconnect never concatenates a snapshot, block frames are batched
-at no more than 10 fps, and direct RPC handoffs remain guarded by sender
-outboxes plus receiver receipts. Block sockets revalidate on a bounded cache and
-explicit parent sweeps rather than on every frame, and stale queued block runs
-are terminalized before they spend inference. Queue is reserved for regional
-fan-out where buffering unrelated work streams is valuable.
-
-### 2026-08-18 — SQL fences model arrays and cross-object delivery explicitly
+### 2026-08-18 — Work streams cut over to durable substream agents: explicit SQL fences, per-block HyperSight agents, workspace affinity, and live control sockets
 
 **What changed:** Core child rows now enforce provider-neutral part, tool,
 control-part, suggestion-lifecycle, payload-size, and timestamp shapes in
@@ -8763,10 +8546,45 @@ HyperSight freezes an exact checkpoint hash plus a tool-safe upper sequence.
 WorkstreamDO persists configuration refresh intent and no longer coalesces an
 inflight regional projection.
 
+Every stable configured HyperSight block now maps to one `BlockDashboardAgent`.
+WorkstreamDO owns configuration, refresh fan-out, result receipts, and
+publication; main `SubstreamAgent("0")` emits fenced refresh signals and serves
+the canonical runtime SQL used by each block agent. Both agent classes share
+custom keep-alive and single-flight drain primitives.
+
+Workspace creation now derives a west/east affinity from Cloudflare request
+longitude, persists it in the Global binding, regional D1 workspace projection,
+and WorkspaceDO SQL, and supplies it to every WorkstreamDO, SubstreamAgent, and
+workspace scheduler lookup. The US/EU jurisdiction remains the hard boundary.
+The routing ESLint rule rejects both direct namespace calls and the low-level
+region-only resolver.
+
+WorkspaceDO now keeps one persistent Electron socket with a bounded SQL
+topic-version log and workspace-scoped message commands. WorkstreamDO now serves
+complete revisioned common/viewer metadata over its own hibernating socket.
+Selected and background-running work streams retain this control socket
+alongside the direct SubstreamAgent feed.
+
 **Why:** The object hierarchy is safe only if a frozen derived run cannot slide
 to a newer summary, split a tool call from its result, or mistake an optional
 suggestion for conversation. Likewise, an RPC timeout cannot prove that the
 destination did not commit.
+
+A complete unattended HyperSight Bind loop has the same eviction and retry
+pressures as a conversation loop, but it has neither its own user-visible
+message array nor a desktop feed. It needs an independent durable execution
+owner without turning dashboard blocks into substreams or serializing them
+through the transcript agent.
+
+A fixed western hint satisfies residency but needlessly penalizes an eastern
+workspace, while deriving placement on each request can scatter new children
+away from their parent. Cloudflare honors a hint only on an object's first
+lookup, so affinity must be selected once and carried by every possible creator.
+
+Settings/directories can change without a work stream being open, and aggregate
+title/state/unread data can change independently of transcript token traffic.
+The prior lazy, child-targeted workspace command connection provided neither
+live workspace convergence nor an authoritative metadata channel.
 
 **Considered and rejected:** Reading “latest checkpoint” when the block starts,
 persisting tool presentation rows as model messages, adding suggestions to the
@@ -8774,85 +8592,42 @@ message array, and deleting all older outbox rows on coalescing. Each loses a
 different boundary: reproducibility, provider validity, audience semantics, or
 cross-object delivery certainty.
 
+Running blocks in WorkstreamDO, dispatching them directly from main
+SubstreamAgent, one Workflow per refresh, one agent for all blocks, and
+replacing Bind with the Agents SDK. These respectively put models in the control
+plane, duplicate configuration/fan-out state, retain a second orchestration
+state machine, serialize unrelated blocks, or discard the existing harness for
+lifecycle helpers Rally can implement narrowly.
+
+Using the current request location for each child, proxying child creation
+through WorkspaceDO, and retaining fixed western hints. Those options split the
+hierarchy, make the parent a provisioning bottleneck, or preserve avoidable
+coast-to-coast latency.
+
+Copying all D1 workspace rows into WorkspaceDO, proxying child feeds through
+parent objects, and inferring sidebar metadata from agent frames. They introduce
+a second workspace authority, a shared throughput bottleneck, or a dependency on
+an active agent where none should exist.
+
 **Consequences:** A HyperSight dispatch is reproducible or fails closed; exact
 post-compaction tools remain available while pre-compaction tools are summary
 only; terminal suggestion state cannot reopen; and inflight replacements may
 briefly coexist until idempotent acknowledgement.
 
-### 2026-08-18 — HyperSight blocks become independently durable agents
+HyperSight refreshes fan out in parallel by stable block ID; each block recovers
+independently after eviction; source runtime access is a direct child-to-child
+internal RPC; results converge through WorkstreamDO's existing socket; and tests
+must cover dispatch/result idempotency plus SQL isolation across block-agent
+eviction.
 
-**What changed:** Every stable configured HyperSight block now maps to one
-`BlockDashboardAgent`. WorkstreamDO owns configuration, refresh fan-out,
-result receipts, and publication; main `SubstreamAgent("0")` emits fenced
-refresh signals and serves the canonical runtime SQL used by each block agent.
-Both agent classes share custom keep-alive and single-flight drain primitives.
+Affinity is immutable because changing the routing row cannot move an existing
+object. Existing/missing-metadata/background-created rows use `wnam` or `weur`;
+moving a live hierarchy still requires maintenance export and import.
 
-**Why:** A complete unattended HyperSight Bind loop has the same eviction and
-retry pressures as a conversation loop, but it has neither its own user-visible
-message array nor a desktop feed. It needs an independent durable execution
-owner without turning dashboard blocks into substreams or serializing them
-through the transcript agent.
-
-**Considered and rejected:** Running blocks in WorkstreamDO, dispatching them
-directly from main SubstreamAgent, one Workflow per refresh, one agent for all
-blocks, and replacing Bind with the Agents SDK. These respectively put models
-in the control plane, duplicate configuration/fan-out state, retain a second
-orchestration state machine, serialize unrelated blocks, or discard the
-existing harness for lifecycle helpers Rally can implement narrowly.
-
-**Consequences:** HyperSight refreshes fan out in parallel by stable block ID;
-each block recovers independently after eviction; source runtime access is a
-direct child-to-child internal RPC; results converge through WorkstreamDO's
-existing socket; and tests must cover dispatch/result idempotency plus SQL
-isolation across block-agent eviction.
-
-### 2026-08-17 — Workspace affinity colocates the complete object hierarchy
-
-**What changed:** Workspace creation now derives a west/east affinity from
-Cloudflare request longitude, persists it in the Global binding, regional D1
-workspace projection, and WorkspaceDO SQL, and supplies it to every
-WorkstreamDO, SubstreamAgent, and workspace scheduler lookup. The US/EU
-jurisdiction remains the hard boundary. The routing ESLint rule rejects both
-direct namespace calls and the low-level region-only resolver.
-
-**Why:** A fixed western hint satisfies residency but needlessly penalizes an
-eastern workspace, while deriving placement on each request can scatter new
-children away from their parent. Cloudflare honors a hint only on an object's
-first lookup, so affinity must be selected once and carried by every possible
-creator.
-
-**Considered and rejected:** Using the current request location for each child,
-proxying child creation through WorkspaceDO, and retaining fixed western hints.
-Those options split the hierarchy, make the parent a provisioning bottleneck,
-or preserve avoidable coast-to-coast latency.
-
-**Consequences:** Affinity is immutable because changing the routing row cannot
-move an existing object. Existing/missing-metadata/background-created rows use
-`wnam` or `weur`; moving a live hierarchy still requires maintenance export and
-import.
-
-### 2026-08-17 — Workspace and work-stream control sockets become live synchronization planes
-
-**What changed:** WorkspaceDO now keeps one persistent Electron socket with a
-bounded SQL topic-version log and workspace-scoped message commands.
-WorkstreamDO now serves complete revisioned common/viewer metadata over its own
-hibernating socket. Selected and background-running work streams retain this
-control socket alongside the direct SubstreamAgent feed.
-
-**Why:** Settings/directories can change without a work stream being open, and
-aggregate title/state/unread data can change independently of transcript token
-traffic. The prior lazy, child-targeted workspace command connection provided
-neither live workspace convergence nor an authoritative metadata channel.
-
-**Considered and rejected:** Copying all D1 workspace rows into WorkspaceDO,
-proxying child feeds through parent objects, and inferring sidebar metadata from
-agent frames. They introduce a second workspace authority, a shared throughput
-bottleneck, or a dependency on an active agent where none should exist.
-
-**Consequences:** Every workspace mutation producer maps to a typed invalidation
-topic; every WorkstreamDO nullable field participates in a full snapshot;
-socket audiences and SQL receipts stay separate; and real-workerd tests must
-force eviction for both control objects.
+Every workspace mutation producer maps to a typed invalidation topic; every
+WorkstreamDO nullable field participates in a full snapshot; socket audiences
+and SQL receipts stay separate; and real-workerd tests must force eviction for
+both control objects.
 
 ### 2026-08-17 — Control/data planes use jurisdictional IDs and hinted first placement
 
@@ -8881,7 +8656,7 @@ and cannot be a serving fallback. Hints improve initial latency but remain best
 effort; future moves require an explicit migration. Local tests validate
 arguments and invariants while skipping unsupported workerd jurisdictions.
 
-### 2026-08-17 — Per-substream agent objects replace the one-room agent boundary
+### 2026-08-17 — Per-substream agent objects replace the one-room boundary, persistence is SQL-only, and a maintenance cutover makes object SQL authoritative
 
 **What changed:** The hierarchy is now `WorkspaceDO -> WorkstreamDO ->
 SubstreamAgent`. User writes enter the hibernating workspace command socket,
@@ -8892,51 +8667,46 @@ keep-alive.
 Provider deltas are coalesced on a 100 ms/2,048-character boundary so the wire
 rate is at most the chosen 10 fps presentation tier rather than token rate.
 
+Every Durable Object class uses the shared append-only, SQL-hash-checked SQLite
+migration runner under `blockConcurrencyWhile()`. The runner upgrades the
+published `WorkstreamRoom` receipt ledger metadata without rewriting its
+existing hashes. A custom ESLint rule prohibits Durable Object KV persistence
+and modern workerd tests exercise real migration, eviction, alarm, and
+hibernating-socket behavior.
+
+A regional maintenance generation imports frozen D1 product rows into main child
+`0`, verifies them, activates the route, seeds the parent projection, and
+permanently fences legacy product writers.
+
 **Why:** Independent model contexts need independent ordering, loops, sockets,
 compaction, timers, and failure domains, while a workspace still needs cheap
 cross-work-stream queries and a work stream needs one aggregate sidebar state.
+
+SQLite-backed Durable Objects still expose KV-shaped methods. Without a code
+boundary, state can escape the visible schema, constraints, and migration
+history even though the Cloudflare dashboard says “SQL.”
+
+Copying rows is not an authority switch. A no-dual-write maintenance window
+makes the transition auditable and removes reconciliation ambiguity.
 
 **Considered and rejected:** One agent object per work stream serializes every
 substream; one object per turn/tool fragments context; the Agents SDK would
 replace the established Bind harness for little value. Only its narrow
 keep-alive lifecycle idea was ported.
 
+`durable-utils` and a bare `MAX(id)` runner. The small local runner adds
+transaction ownership, drift/ahead detection, foreign-key verification, and no
+external lifecycle dependency.
+
+Live tailing, indefinite dual writes, and D1 fallback reads after activation.
+
 **Consequences:** New context boundaries require explicit child provisioning and
 parent aggregation. `WorkstreamDO` must remain model-free. Main child `0`
 preserves the historical name; the later jurisdiction-lock change above defines
 when maintenance imports that name into a distinct ID.
 
-### 2026-08-17 — Durable Object persistence becomes SQL-only and constructor-gated
+Schema histories are immutable; data rewrites remain bounded maintenance
+campaigns; tests must provide SQL rather than KV fakes.
 
-**What changed:** Every Durable Object class uses the shared append-only,
-SQL-hash-checked SQLite migration runner under `blockConcurrencyWhile()`. The
-runner upgrades the published `WorkstreamRoom` receipt ledger metadata without
-rewriting its existing hashes. A custom
-ESLint rule prohibits Durable Object KV persistence and modern workerd tests
-exercise real migration, eviction, alarm, and hibernating-socket behavior.
-
-**Why:** SQLite-backed Durable Objects still expose KV-shaped methods. Without a
-code boundary, state can escape the visible schema, constraints, and migration
-history even though the Cloudflare dashboard says “SQL.”
-
-**Considered and rejected:** `durable-utils` and a bare `MAX(id)` runner. The
-small local runner adds transaction ownership, drift/ahead detection,
-foreign-key verification, and no external lifecycle dependency.
-
-**Consequences:** Schema histories are immutable; data rewrites remain bounded
-maintenance campaigns; tests must provide SQL rather than KV fakes.
-
-### 2026-08-17 — Maintenance cutover makes object SQL authoritative
-
-**What changed:** A regional maintenance generation imports frozen D1 product
-rows into main child `0`, verifies them, activates the route, seeds the parent
-projection, and permanently fences legacy product writers.
-
-**Why:** Copying rows is not an authority switch. A no-dual-write maintenance
-window makes the transition auditable and removes reconciliation ambiguity.
-
-**Considered and rejected:** Live tailing, indefinite dual writes, and D1
-fallback reads after activation.
-
-**Consequences:** Object unavailability fails closed. D1 retains workspace and
-regional query/control data but never reconstructs a missing transcript.
+Object unavailability fails closed. D1 retains workspace and regional
+query/control data but never reconstructs a missing transcript.

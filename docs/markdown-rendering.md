@@ -875,7 +875,7 @@ without download, and failed downloads report an error. New embeds never open a
 panel automatically. Earlier rail-host history below does not describe current
 navigation; the retained inspector content is shared with the lightbox.
 
-### 2026-09-04 — Compact embeds replace glances, inline players, and automatic inspector opening
+### 2026-09-04 — Compact embeds replace glances, inline players and auto-opening, and inline chips share the explicit preview
 
 **What changed and why:** The requested GrokBot presentation replaces the old
 markdown glance and inline audio transport with compact file rows; images use
@@ -886,15 +886,12 @@ These decisions supersede the earlier glance, recording-player, and auto-open
 entries below; their historical rationale is retained rather than deleted.
 Do not restore those feed surfaces as a fallback for failed preview loading.
 
-### 2026-09-04 — Inline resources use the same explicit preview as block embeds
-
-**What changed and why:** Inline resource chips now pass their activating button
-to `openPreview`, like block embeds. The previous branch still opened the right
-inspector for the same resource, making placement change navigation behavior.
-Unsupported/unavailable content and live generated sites retain the established
-inspector fallback. Preview failure and still-render guards are tested with
-image resources that actually enter the thumbnail-loading path.
-
+Inline resource chips now pass their activating button to `openPreview`, like
+block embeds. The previous branch still opened the right inspector for the same
+resource, making placement change navigation behavior. Unsupported/unavailable
+content and live generated sites retain the established inspector fallback.
+Preview failure and still-render guards are tested with image resources that
+actually enter the thumbnail-loading path.
 
 ### 2026-09-03 — A streaming citation is a skeleton, not raw `[^label]`
 
@@ -1224,34 +1221,7 @@ Do not put the rewrite into `normalizeModelMarkdown`; the table grammar cannot
 survive a pre-parse newline. Email tables stay preformatted, so a break tag
 inside one still shows as characters there — that renderer has no table model.
 
-### 2026-08-30 — Mermaid diagrams use Rally's active tokens
-
-**What changed:** The Mermaid adapter now resolves the active theme's semantic
-tokens into Mermaid's base-theme roles instead of choosing Mermaid's generic
-`neutral` or `dark` palette. The mapping covers common nodes and connections,
-sequence actors and notes, states, tasks, requirements, chart series, font,
-radius, and stroke width. A dedicated `cmp.markdown.diagram-line` component
-token keeps arrows and message lines visible without promoting every diagram
-border to the same emphasis.
-
-**Why:** Brightness-aware was not design-system-aware. The generic Mermaid
-themes produced their own greys, borders, accent fills, typeface, and corner
-shape inside a Rally code block, so the diagram looked embedded rather than
-native in both modes.
-
-**Considered and rejected:** per-theme configuration objects would duplicate
-the theme JSON and require every future appearance to update component code.
-Broad CSS overrides would couple the application to generated selectors that
-vary by diagram kind. Resolving the already-active custom properties at the
-Mermaid boundary keeps theme ownership in the token files.
-
-**What a future change has to respect:** do not add literal colours or theme-id
-branches to the Mermaid adapter. Map a new Mermaid role to a design token, and
-inspect both lighting modes in Electron; token names do not by
-themselves prove readable contrast. Keep structural connections on the
-component line token and container outlines on the quieter border tokens.
-
-### 2026-08-30 — Mermaid fences render as diagrams
+### 2026-08-30 — Mermaid fences render as diagrams, drawn in Rally's active tokens
 
 **What changed:** A completed fenced block labelled `mermaid` renders Mermaid's
 sanitised SVG in every live `MarkdownBody` surface. It retains the code-block
@@ -1264,13 +1234,21 @@ unmounted job leaves the queue before it initializes Mermaid or after its
 resource preflight completes. Before parsing, the adapter applies Mermaid's
 initialized and secured text-size ceiling. `accTitle` and `accDescr` become the
 rendered image's accessible metadata; without them, the source remains available
-as its screen-reader description. A source preflight
-rejects external CSS resource functions in Mermaid style directives, and parsed
-flowchart image nodes and block styles are rejected before rendering, because
-Mermaid can load them while measuring or drawing. Labels remain ordinary text
-even when they contain CSS-looking words. SVG styling may use local
-`url(#fragment)` references for markers and gradients; parsed-style and output
-scans repeat the resource check as defense in depth.
+as its screen-reader description. A source preflight rejects external CSS
+resource functions in Mermaid style directives, and parsed flowchart image nodes
+and block styles are rejected before rendering, because Mermaid can load them
+while measuring or drawing. Labels remain ordinary text even when they contain
+CSS-looking words. SVG styling may use local `url(#fragment)` references for
+markers and gradients; parsed-style and output scans repeat the resource check
+as defense in depth.
+
+The Mermaid adapter resolves the active theme's semantic tokens into Mermaid's
+base-theme roles instead of choosing Mermaid's generic `neutral` or `dark`
+palette. The mapping covers common nodes and connections, sequence actors and
+notes, states, tasks, requirements, chart series, font, radius, and stroke
+width. A dedicated `cmp.markdown.diagram-line` component token keeps arrows and
+message lines visible without promoting every diagram border to the same
+emphasis.
 
 **Why:** Mermaid syntax was already arriving in agent answers, but the generic
 unknown-language fallback printed it as code — the failure shown in the product
@@ -1280,6 +1258,11 @@ notes, briefings, attachments and dashboard blocks together. Rendering only
 after a stream settles avoids launching an uncancellable asynchronous parse on
 every partial line; keeping source in a still preserves the export path's
 synchronous contract rather than saving a transient loading state.
+
+Brightness-aware was not design-system-aware. The generic Mermaid themes
+produced their own greys, borders, accent fills, typeface, and corner shape
+inside a Rally code block, so the diagram looked embedded rather than native in
+both modes.
 
 **Considered and rejected:** a second markdown renderer or a rehype Mermaid
 plug-in would split ownership or inject generated markup before the component
@@ -1291,26 +1274,46 @@ rejected: its own package documentation says it is a CDN artifact that is not
 meant to be installed directly from npm, and using it through the bundler fails
 at runtime.
 
+For theming, per-theme configuration objects would duplicate the theme JSON and
+require every future appearance to update component code. Broad CSS overrides
+would couple the application to generated selectors that vary by diagram kind.
+Resolving the already-active custom properties at the Mermaid boundary keeps
+theme ownership in the token files.
+
 **What a future change has to respect:** `mermaid.initialize` and `render` are a
 single serialized operation because configuration is global. Do not expose
 `bindFunctions`, loosen `securityLevel`, or let frontmatter re-enable HTML
 labels or replace Rally's theme inputs. Keep the post-render link removal and
 pre-render image-node and external-CSS-resource rejection, and keep the lifecycle
 check before token resolution so recycled transcript rows do not spend work on
-discarded diagrams.
-If saved diagrams become a requirement, make export await a completed render;
-do not serialize a live component's loading state.
+discarded diagrams. If saved diagrams become a requirement, make export await a
+completed render; do not serialize a live component's loading state.
 
-### 2026-08-30 — Connector chips and embeds show connection state
+Do not add literal colours or theme-id branches to the Mermaid adapter. Map a
+new Mermaid role to a design token, and inspect both lighting modes in
+Electron; token names do not by themselves prove readable contrast. Keep
+structural connections on the component line token and container outlines on
+the quieter border tokens.
 
-**What changed:** Inline connector chips gain a brand mark and an aggregate
-connection status. Image-syntax `![Name](connector://<type>)` renders a
-horizontal card (citation-card tokens, provider-card content) with personal and
-workspace status. Connector chips and marks use neutral transcript surfaces;
-only connection status carries success or warning colour. The compact card uses
-one consistent inset and keeps its bare provider mark at the top left. The
-inline chip omits the composer's leading `@`; stored text and offsets retain it.
-The work-stream screen supplies live `/connections` data via
+### 2026-08-30 — Connector chips use the `connector://` house form, leave the citation scheme, and show connection state
+
+**What changed:** The desktop renderer mints per-render connector chips as
+`[@Label](connector://<token>:<type>)`. The chip matcher accepts both that
+spelling and the legacy bare `connector:<token>:<type>`. Shared helpers live
+beside the person-mention ones in `packages/contracts/src/citations.ts`.
+
+`CitationTarget` / `citationScheme` no longer recognize `connector:`. Connector
+mention chips still pass `urlTransform`, but `CitationLink` routes them through
+the identity path before the matrix; the matrix has no connector cell.
+
+Inline connector chips gain a brand mark and an aggregate connection status.
+Image-syntax `![Name](connector://<type>)` renders a horizontal card
+(citation-card tokens, provider-card content) with personal and workspace
+status. Connector chips and marks use neutral transcript surfaces; only
+connection status carries success or warning colour. The compact card uses one
+consistent inset and keeps its bare provider mark at the top left. The inline
+chip omits the composer's leading `@`; stored text and offsets retain it. The
+work-stream screen supplies live `/connections` data via
 `ConnectorConnectionsProvider`. A still-loading or failed query supplies no
 status, because an unresolved list is not evidence that a connection is
 missing. Once resolved, every matching credential in a scope contributes to a
@@ -1318,50 +1321,34 @@ stable status and capability union. Google Mail/Calendar and Drive/Docs/Sheets
 remain the real shared `google` connector type; the visible label selects the
 capability family, so one bundle cannot claim that the other is connected.
 
-**Why:** Offset-backed connector mentions were label-only text chips, so a
-reader could not tell whether the named connector was usable. Resource embeds
-already set the transcript card vocabulary; connector announcements reuse that
-surface language rather than inventing a third card system.
-
-**What a future change has to respect:** Connector remains outside
-`CitationTarget`. Chip minting still requires the per-render token; embeds use
-the bare `connector://<type>` form. Status comes from the connections list, never
-from the message text. Treat the list as unresolved until query data exists,
-aggregate all same-scope credentials rather than choosing the first, and keep
-connector href parsing in `@rally/contracts/citations` so chip and embed syntax
-cannot drift.
-
-### 2026-08-30 — Connector is not a citation scheme
-
-**What changed:** `CitationTarget` / `citationScheme` no longer recognize
-`connector:`. Connector mention chips still mint `connector://` at render time
-and still pass `urlTransform`, but `CitationLink` routes them through the
-identity path before the matrix; the matrix has no connector cell.
-
-**Why:** Connector mentions are presentation minted from stored offsets, not
-something a model cites. Keeping them in the citation allowlist forced every
-new scheme position (link / embed / footnote) to invent a connector look, and
-conflated two different protocols.
-
-**What a future change has to respect:** Do not re-add `connector` to
-`CitationTarget`. Chip minting stays on `connectorMentionHref`; identity
-routing stays ahead of the matrix.
-
-### 2026-08-30 — Connector mention chips use the URL-style `connector://` house form
-
-**What changed:** The desktop renderer mints per-render connector chips as
-`[@Label](connector://<token>:<type>)`. The chip matcher accepts both that
-spelling and the legacy bare `connector:<token>:<type>`. Shared helpers live
-beside the person-mention ones in `packages/contracts/src/citations.ts`.
-
 **Why:** Person mentions and `resource://` citations already teach URL-style
 schemes. Connector chips were the last bare-form holdout in the same render
 path, and keeping two styles for adjacent identity schemes invites the same
 generalization miss person mentions already hit.
 
+Connector mentions are presentation minted from stored offsets, not something a
+model cites. Keeping them in the citation allowlist forced every new scheme
+position (link / embed / footnote) to invent a connector look, and conflated
+two different protocols.
+
+Offset-backed connector mentions were label-only text chips, so a reader could
+not tell whether the named connector was usable. Resource embeds already set
+the transcript card vocabulary; connector announcements reuse that surface
+language rather than inventing a third card system.
+
 **What a future change has to respect:** Emit through `connectorMentionHref`;
 read through `connectorTypeFromMentionHref`. Stored messages still carry plain
-`@Label` text plus offsets — only the render-time mint uses the scheme.
+`@Label` text plus offsets — only the render-time mint uses the scheme, and
+chip minting still requires the per-render token; embeds use the bare
+`connector://<type>` form. Keep connector href parsing in
+`@rally/contracts/citations` so chip and embed syntax cannot drift.
+
+Do not re-add `connector` to `CitationTarget`; identity routing stays ahead of
+the matrix.
+
+Status comes from the connections list, never from the message text. Treat the
+list as unresolved until query data exists, and aggregate all same-scope
+credentials rather than choosing the first.
 
 ### 2026-08-30 — Person mentions use the URL-style `person://` house form
 

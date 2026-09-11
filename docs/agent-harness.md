@@ -1524,7 +1524,7 @@ from then on are carried. A compaction checkpoint's `compactedThroughSequence`
 is the projection's mark, which a later bootstrap may replay slightly more from
 than before rather than lose turns the model never saw.
 
-### 2026-09-04: Child seeds enter Bind once as inert context
+### 2026-09-04 — Child seeds enter Bind once as inert context
 
 **What changed:** A fresh child Bind bootstrap reads its immutable initial
 context and prepends a pure model projection of its ordered summary/history
@@ -1543,7 +1543,7 @@ which would promote historical data into platform authority.
 reads the seed. Later runs and recovered/compacted loops use their durable Bind
 projection exactly as before.
 
-### 2026-09-04: A run a tool ended is completed, not an empty answer
+### 2026-09-04 — A run a tool ended is completed, not an empty answer
 
 **Superseded for conversational authoring on 2026-09-08:** the adapter behavior
 below did not remove the terminalizer's final-turn requirement. Sidekick submission
@@ -1572,7 +1572,7 @@ counts failed runs no longer counts tool-ended ones; anything that renders a
 completed run must tolerate the absence of a final message, which the
 needs-input path already required.
 
-### 2026-09-03: Drafting is a conversation, and a run reads its automation by revision
+### 2026-09-03 — Drafting is a conversation, and a run reads its automation by revision
 
 **What changed:** The separate compiler host is gone with the first automation
 object. The drafting tools are the loadable `rally:automations` plugin, in a
@@ -2167,7 +2167,7 @@ first await, remain idempotent under recovery, and leave its durable due time in
 the shared alarm candidates. Transient terminal fields must be consumed before
 the first cancellable continuation.
 
-### 2026-09-01 — External settlement no longer reserves the inference loop
+### 2026-09-01 — External settlement and automatic memory recall leave the path to inference
 
 **What changed:** A terminal run releases the persistent loop after its
 canonical terminal commit. Slack/digest/automation delivery and name/description
@@ -2175,11 +2175,25 @@ maintenance drain independently from `external_settled_at`, with an eager
 `waitUntil` attempt and alarm recovery. The lane preserves terminal-run order;
 its retry deadline is no longer an executable-loop deadline.
 
+Opening and follow-up composer messages, elicitation answers, non-automation
+inbound email, and Slack opening, follow-up, and elicitation messages no longer
+call `freezeRunMemoryContext` before the first model request. Their immutable
+run scope records a null memory-context hash. The `rally_memory` plugin and
+explicit `memory_search` tool are unchanged. Non-message runs and automation
+executions retain automatic frozen admission recall even when an automation's
+trigger reason is also `inbound_email`.
+
 **Why:** The previous drain awaited every external and cosmetic continuation
 before it promoted the next queued message. A slow connector, classification,
 name generation, or description refresh therefore became time-to-inference even
 though the transcript and Bind state required by the next run were already
 durable.
+
+Production traces for three ordinary composer messages showed the fixed Qwen
+query embedding taking 8.46–8.83 seconds before main inference, while the vector
+leg failed, FTS recalled no items, and the run continued without any memory
+context. A message already has its immediate context in the durable transcript,
+so this speculative lookup should not delay every reply.
 
 **Considered and rejected:** Dropping settlement or making it fire-and-forget
 would lose delivery after eviction. Running later settlements around a failed
@@ -2187,39 +2201,23 @@ older one would make external destinations observe results out of order. The
 existing durable receipt already provides both recovery and ordering, so a new
 Queue or table would duplicate authority.
 
+For recall: adding a timeout or a shorter guessed budget still keeps a provider
+call on the message path and would introduce a defensive limit the team has not
+chosen. Starting recall asynchronously cannot add a result to an inference
+request that has already begun, and conditionally restarting the request would
+make first-turn behavior nondeterministic. Removing the memory plugin entirely
+would also remove deliberate, task-specific recall; this change removes only the
+automatic admission lookup.
+
 **Consequences:** External delivery can trail later in-app inference. Its lane
 must remain idempotent and ordered, and every mutation of its due time must keep
 the shared object alarm armed. Only canonical terminalization and loop fencing
 may gate promotion of the next queued input.
 
-### 2026-09-01 — Message runs leave automatic long-term-memory recall off their critical path
-
-**What changed:** Opening and follow-up composer messages, elicitation answers,
-non-automation inbound email, and Slack opening, follow-up, and elicitation messages no longer
-call `freezeRunMemoryContext` before the first model request. Their immutable run
-scope records a null memory-context hash. The `rally_memory` plugin and explicit
-`memory_search` tool are unchanged. Non-message runs and automation executions
-retain automatic frozen admission recall even when an automation's trigger
-reason is also `inbound_email`.
-
-**Why:** Production traces for three ordinary composer messages showed the
-fixed Qwen query embedding taking 8.46–8.83 seconds before main inference, while
-the vector leg failed, FTS recalled no items, and the run continued without any
-memory context. A message already has its immediate context in the durable
-transcript, so this speculative lookup should not delay every reply.
-
-**Considered and rejected:** adding a timeout or a shorter guessed budget still
-keeps a provider call on the message path and would introduce a defensive limit
-the team has not chosen. Starting recall asynchronously cannot add a result to
-an inference request that has already begun, and conditionally restarting the
-request would make first-turn behavior nondeterministic. Removing the memory
-plugin entirely would also remove deliberate, task-specific recall; this change
-removes only the automatic admission lookup.
-
-**What a future change has to respect:** a new human-message ingress must join
-the no-admission-recall set. If automatic recall is reintroduced for messages,
-it needs evidence that its result value outweighs its provider latency and a
-failure path that does not silently pay for an unusable vector result.
+A new human-message ingress must join the no-admission-recall set. If automatic
+recall is reintroduced for messages, it needs evidence that its result value
+outweighs its provider latency and a failure path that does not silently pay for
+an unusable vector result.
 
 ### 2026-09-01 — The standing policy gains a site trigger; the craft goes to a skill
 
@@ -2299,53 +2297,46 @@ discovery prompt promises is available.
 
 Shipped in the pull request for this change.
 
-### 2026-08-30 — The multimodal plugin creates replay-safe speech resources
-
-**What changed:** `rally_multimodal_generation` now advertises a third Bind
-write, `generate_audio`. It calls the main Azure `gpt-4o-mini-tts` deployment,
-MIME-verifies and bounds one MP3 response, and publishes it under the durable
-effect identity. Desktop current-resource and version previews render native
-audio controls; the tool result and plugin system message carry the AI-voice
-disclosure because the same player also serves user-uploaded audio.
-
-**Why:** Generated speech needs the same plugin activation, receipt, timeout,
-regional storage and resource ownership as generated images. Keeping it in the
-existing multimodal plugin avoids a parallel lifecycle for one media subtype.
-
-**Considered and rejected:** Injecting generated audio into the following model
-turn. The output is for the person to play, not evidence the model needs to
-reconsume. Also rejected: a guessed charge when Azure returns no usage and the
-shared OpenRouter cache has no endpoint price for this model.
-
-**Consequences:** Audio generation is available anywhere the main Azure
-credential pair already enables multimodal generation. Its receipt and metadata
-must not persist the source text or instructions, and no billing entry is
-created without provider usage and a valid shared price.
-
-### 2026-08-30 — A dedicated plugin generates and edits durable images
+### 2026-08-30 — A dedicated multimodal plugin generates durable images and replay-safe speech
 
 **What changed:** Runs with main Azure inference credentials now advertise the
-deferred `rally_multimodal_generation` plugin. Its initial two Bind tools call Azure's
-`gpt-image-2` image endpoints, return an ephemeral image part to the current
-turn. Generation publishes one durable generated resource under a
+deferred `rally_multimodal_generation` plugin. Its initial two Bind tools call
+Azure's `gpt-image-2` image endpoints and return an ephemeral image part to the
+current turn. Generation publishes one durable generated resource under a
 receipt-derived identity; editing publishes a new version of the selected image
 resource under the same resource ID. Tool timeouts are fixed at five minutes.
+
+The plugin also advertises a third Bind write, `generate_audio`. It calls the
+main Azure `gpt-4o-mini-tts` deployment, MIME-verifies and bounds one MP3
+response, and publishes it under the durable effect identity. Desktop
+current-resource and version previews render native audio controls; the tool
+result and plugin system message carry the AI-voice disclosure because the same
+player also serves user-uploaded audio.
 
 **Why:** The agent needs a native image capability that participates in Bind's
 plugin discovery, receipt policy, and workstream resource ownership. Reusing a
 chat-model route or Terminal would either misstate the provider API or make a
-first-class product operation depend on a sandbox.
+first-class product operation depend on a sandbox. Generated speech needs the
+same plugin activation, receipt, timeout, regional storage and resource
+ownership as generated images; keeping it in the same plugin avoids a parallel
+lifecycle for one media subtype.
 
 **Considered and rejected:** Preloading the plugin on every run; generation is
 specialized and its instructions and tools need not consume every model turn.
 Also rejected: failing closed on a missing cached price, because an
-observability/cache failure should not deny the requested image. The no-price
-case is logged and left uncharged.
+observability/cache failure should not deny the requested image; the no-price
+case is logged and left uncharged. For speech: injecting generated audio into
+the following model turn, since the output is for the person to play, not
+evidence the model needs to reconsume; and a guessed charge when Azure returns
+no usage and the shared OpenRouter cache has no endpoint price for this model.
 
-**Consequences:** The plugin is absent without the main Azure credential pair.
-West remains future fallback infrastructure and is not selected implicitly.
-The durable receipt stores JSON only; a later turn views the attached resource
-instead of replaying provider bytes.
+**Consequences:** The plugin is absent without the main Azure credential pair,
+and audio generation is available anywhere that pair already enables multimodal
+generation. West remains future fallback infrastructure and is not selected
+implicitly. The durable receipt stores JSON only; a later turn views the
+attached resource instead of replaying provider bytes. An audio receipt and its
+metadata must not persist the source text or instructions, and no billing entry
+is created without provider usage and a valid shared price.
 
 ### 2026-08-30 — Bound Grok models use Bind's Azure-first provider route
 
@@ -3068,42 +3059,8 @@ acceptance criterion — a rail entry that opens to the formatted document —
 cannot be met until the rail can show one. That is a client change the PRD
 deliberately excluded ("no desktop release"), so it is named here rather than
 smuggled in.
-### 2026-08-27 — Durable-memory embeddings move to OpenRouter
 
-**What changed:** Memory query and document embeddings now use OpenRouter's
-native embeddings endpoint through the shared inference gateway, with
-`qwen/qwen3-embedding-8b` as a fixed route with no model fallbacks and explicit 1,024
-dimensions. Query/document input types remain distinct. Vector namespaces are
-derived from the fixed requested model and dimension contract, provider model
-drift fails closed, and WorkspaceDO
-migration 23 requeues every current active memory while keeping old Qwen
-vectors unreachable during the rebuild.
-
-**Why:** Memory embeddings were the remaining language-model inference path
-calling Workers AI directly, outside the shared provider and observability
-boundary. Reusing the existing 1,024-dimensional indexes avoids a destructive
-Vectorize replacement, but equal vector length is not semantic compatibility,
-so the old and new spaces need a hard query boundary.
-
-**Considered and rejected:** Mixing the previous Workers AI Qwen3 0.6B and new
-OpenRouter Qwen3 8B vectors because both are 1,024-dimensional, replacing both
-regional Vectorize indexes, and using a
-metadata filter that would require provisioning another metadata index. A
-versioned namespace is supported without extra index configuration and makes a
-partial rebuild fail toward FTS rather than false semantic matches.
-
-**Consequences:** The static `memory_embedding` feature label identifies this
-category in diagnostics, but no Flagship rule or Ace edit can change its model.
-Changing the fixed model requires a code change paired with an active-memory
-requeue.
-The current OpenRouter embeddings request schema does not accept Broadcast's
-custom `trace` object. It receives workspace `user` plus `X-Session-ID`; Rally
-keeps feature, trace, intended/requested/resolved model, fallback, and latency
-as content-free regional diagnostics. Query embeddings use the active
-substream in that session; document projection uses the owning work stream's
-canonical main substream.
-
-### 2026-08-27 — OpenRouter SDK serialization and loop-wide provider traces
+### 2026-08-27 — Inference moves to the OpenRouter SDK with loop-wide traces, and durable-memory embeddings follow
 
 **What changed:** Rally's provider boundary now uses the official OpenRouter SDK
 schemas instead of a direct OpenAI SDK type dependency. Every structured and
@@ -3112,24 +3069,37 @@ streaming request enables router metadata and sends `user`, a stable
 `trace_id` across all of its turns, and each model turn is a separate named span
 containing its OpenRouter generation; inference and route fields distinguish
 retries. `feature` carries the model category's exact Flagship key while
-`source` retains the execution surface. Provider `user` and trace `user_id`
-both use the workspace ID; a relevant person remains separate as
-`context_user_id`. `intended_model` retains the primary model selected before
-route traversal while `model` records each attempted candidate, making fallback
-requests directly queryable. Successful streaming attempts retain returned router
-metadata.
+`source` retains the execution surface. Provider `user` and trace `user_id` both
+use the workspace ID; a relevant person remains separate as `context_user_id`.
+`intended_model` retains the primary model selected before route traversal while
+`model` records each attempted candidate, making fallback requests directly
+queryable. Successful streaming attempts retain returned router metadata.
 
-Locally invalid SDK requests are terminal before transport: Rally does not
-retry them on the same model or send them to a fallback. Structured retries,
-repairs, and fallback models retain one trace ID while their provider request
-IDs remain distinct. Provider-controlled error prose is discarded before any
-operational or lakehouse record is built.
+Locally invalid SDK requests are terminal before transport: Rally does not retry
+them on the same model or send them to a fallback. Structured retries, repairs,
+and fallback models retain one trace ID while their provider request IDs remain
+distinct. Provider-controlled error prose is discarded before any operational or
+lakehouse record is built.
+
+Memory query and document embeddings now use OpenRouter's native embeddings
+endpoint through the shared inference gateway, with `qwen/qwen3-embedding-8b` as
+a fixed route with no model fallbacks and explicit 1,024 dimensions.
+Query/document input types remain distinct. Vector namespaces are derived from
+the fixed requested model and dimension contract, provider model drift fails
+closed, and WorkspaceDO migration 23 requeues every current active memory while
+keeping old Qwen vectors unreachable during the rebuild.
 
 **Why:** The local inference lakehouse proves what Rally sent and received, but
 provider-side diagnosis previously had no complete way to join a routed request
 back to its workspace, conversation, relevant person, run, deployment, or exact
 loop turn. Changing trace IDs per turn would also fragment one agent execution
 into unrelated traces.
+
+Memory embeddings were the remaining language-model inference path calling
+Workers AI directly, outside the shared provider and observability boundary.
+Reusing the existing 1,024-dimensional indexes avoids a destructive Vectorize
+replacement, but equal vector length is not semantic compatibility, so the old
+and new spaces need a hard query boundary.
 
 **Considered and rejected:** Using one trace per model turn, overloading
 `session_id` with a host request ID, deriving product identity from synthetic
@@ -3138,11 +3108,28 @@ Global-only Rally lakehouse. Those respectively lose loop topology, break
 conversation grouping, mislabel one-shot surfaces such as meeting notes, or
 weaken Rally's exact regional evidence.
 
+For embeddings: mixing the previous Workers AI Qwen3 0.6B and new OpenRouter
+Qwen3 8B vectors because both are 1,024-dimensional, replacing both regional
+Vectorize indexes, and using a metadata filter that would require provisioning
+another metadata index. A versioned namespace is supported without extra index
+configuration and makes a partial rebuild fail toward FTS rather than false
+semantic matches.
+
 **Consequences:** New inference surfaces must provide an explicit trace context
 when the generic harness IDs are not product IDs. Work-stream sessions remain
 `<workstream_id>-<substream_id>`, trace IDs remain stable for a loop, workspace
 IDs are the provider/PostHog identity, and OpenRouter account owners must
 configure Broadcast destinations and privacy policy separately.
+
+The static `memory_embedding` feature label identifies the embedding category in
+diagnostics, but no Flagship rule or Ace edit can change its model; changing the
+fixed model requires a code change paired with an active-memory requeue. The
+current OpenRouter embeddings request schema does not accept Broadcast's custom
+`trace` object. It receives workspace `user` plus `X-Session-ID`; Rally keeps
+feature, trace, intended/requested/resolved model, fallback, and latency as
+content-free regional diagnostics. Query embeddings use the active substream in
+that session; document projection uses the owning work stream's canonical main
+substream.
 
 ### 2026-08-27 — Explicit plugin activation may prepare convergent runtime state
 
@@ -3571,52 +3558,7 @@ expired lease is a
 [`durable-object-alarms.md`](durable-object-alarms.md) decision and is not this
 change's to make.
 
-### 2026-08-24 — Inference evidence preserves product substream identity
-
-**What changed:** Lakehouse request and attempt records now carry the canonical
-product `substream_id`. The main feed defaults to `"0"`, and root and inline
-child inference both inherit the workflow input's substream; inline child
-lineage remains represented by `request_id` and `parent_request_id`.
-
-**Why:** A work-stream-only analytical key cannot distinguish model calls once
-multiple product substreams exist inside one work stream, while using inline
-children as synthetic substreams would confuse execution lineage with product
-conversation identity.
-
-**Considered and rejected:** Leaving `substream_id` implicit until the product
-creates a second substream. The Pipeline stream schema is immutable, so waiting
-would force a resource replacement precisely when the identifier first became
-necessary.
-
-**Consequences:** Current main-feed evidence is explicitly identified as
-substream `"0"`; future workflow substreams flow into the lakehouse without
-changing child-run semantics or adding a D1 lookup path.
-
-### 2026-08-24 — The opt-in D1/R2 inference ledger is retired
-
-**What changed:** Migration 0094 drops `agent_inference_payload_logs` and the
-`workspaces.log_agent_inference` preference. The API contract, stored desktop
-session field, Workspace Settings toggle, and request-only `agent-inference/`
-writer were removed. Hosted capture now has one path: the regional inference
-lakehouse. Historical R2 objects are retained rather than deleted implicitly.
-
-**Why:** Keeping a second request-only index duplicated sensitive inference
-content, made absence ambiguous because the workspace flag defaulted off, and
-left operators choosing between two incomplete diagnostic surfaces after the
-lossless lakehouse became authoritative for inference analysis.
-
-**Considered and rejected:** Keeping the D1 row as a fast work-stream lookup.
-That preserves a second schema and lifecycle solely for convenience; the
-lakehouse already indexes `workstream_id`, `substream_id`, `request_id`, and
-`inference_request_id` without putting analytical state back into D1.
-
-**Consequences:** D1 no longer stores analytical inference metadata and the
-general payload bucket receives no new `agent-inference/` objects. The owning
-`SubstreamAgent` or `BlockDashboardAgent` still stores its operational
-`inference_attempts` rows because those belong to execution recovery, not
-analytics.
-
-### 2026-08-24 — Provider calls expose lossless request and terminal envelopes
+### 2026-08-24 — Provider calls expose lossless envelopes to a regional lakehouse keyed by substream, and the opt-in D1/R2 ledger is retired
 
 **What changed:** Every streaming attempt now identifies the provider invocation
 model and carries its complete normalized response. Every structured provider
@@ -3625,20 +3567,56 @@ successful JSON response envelope, bounded failure classification, typed usage,
 latency, response bytes, repair position, and terminal validation result to the
 host capture hook.
 
+Lakehouse request and attempt records carry the canonical product
+`substream_id`. The main feed defaults to `"0"`, and root and inline child
+inference both inherit the workflow input's substream; inline child lineage
+remains represented by `request_id` and `parent_request_id`.
+
+Migration 0094 drops `agent_inference_payload_logs` and the
+`workspaces.log_agent_inference` preference. The API contract, stored desktop
+session field, Workspace Settings toggle, and request-only `agent-inference/`
+writer were removed. Hosted capture now has one path: the regional inference
+lakehouse. Historical R2 objects are retained rather than deleted implicitly.
+
 **Why:** The existing inference ledger described routing and cost, while its
 opt-in payload object stopped at the request body. A regional lakehouse cannot
 answer why a model behaved differently across providers or repairs without the
 matching output/error envelope and one ID joining the request to the attempt.
+
+A work-stream-only analytical key cannot distinguish model calls once multiple
+product substreams exist inside one work stream, while using inline children as
+synthetic substreams would confuse execution lineage with product conversation
+identity.
+
+Keeping a second request-only index duplicated sensitive inference content, made
+absence ambiguous because the workspace flag defaulted off, and left operators
+choosing between two incomplete diagnostic surfaces after the lossless lakehouse
+became authoritative for inference analysis.
 
 **Considered and rejected:** Reconstructing responses from transcript messages.
 That loses provider IDs, raw usage and finish metadata, structured validation
 failures, rejected provider envelopes, and calls whose output never committed to
 the transcript.
 
+Leaving `substream_id` implicit until the product creates a second substream.
+The Pipeline stream schema is immutable, so waiting would force a resource
+replacement precisely when the identifier first became necessary.
+
+Keeping the D1 row as a fast work-stream lookup. That preserves a second schema
+and lifecycle solely for convenience; the lakehouse already indexes
+`workstream_id`, `substream_id`, `request_id`, and `inference_request_id`
+without putting analytical state back into D1.
+
 **Consequences:** The host hook now handles highly sensitive data and must keep
 it on the regional path described in `inference-lakehouse.md`. Ordinary Workers
 Logs and object-local operational ledgers remain redacted; only the explicit
-lossless store receives the full envelopes.
+lossless store receives the full envelopes. Current main-feed evidence is
+explicitly identified as substream `"0"`; future workflow substreams flow into
+the lakehouse without changing child-run semantics or adding a D1 lookup path.
+D1 no longer stores analytical inference metadata and the general payload bucket
+receives no new `agent-inference/` objects. The owning `SubstreamAgent` or
+`BlockDashboardAgent` still stores its operational `inference_attempts` rows
+because those belong to execution recovery, not analytics.
 
 ### 2026-08-23 — The work-stream prompt states what a written answer is made of
 
@@ -4035,47 +4013,39 @@ operational queries.
 `block_dashboard_*` outcomes. Prompt and UI reviews must continue to treat
 HyperSight as the visible name.
 
-### 2026-08-18 — HyperSight input is a reproducible model-array interval
-
-**What changed:** Every block dispatch binds the exact eligible compaction
-checkpoint hash and a tool-safe upper sequence selected by main
-`SubstreamAgent("0")`. The block passes that checkpoint fence into the ordinary
-Bind run assembly rather than resolving “latest” at execution time.
-
-**Why:** HyperSight may begin after another turn or compaction. A message-ID
-waterline alone neither fixes the lossy prefix nor proves a provider-valid tool
-boundary.
-
-**Considered and rejected:** Copying the full array into WorkstreamDO and
-allowing the block to read the current transcript. One duplicates high-volume
-data in the control plane; the other changes inputs after dispatch.
-
-**Consequences:** Exact tool calls/results after compaction are retained,
-pre-compaction tools are represented only by the summary, and a stale fence
-fails before model inference.
-
-### 2026-08-18 — Each HyperSight block gets a durable Bind-loop owner
+### 2026-08-18 — Each HyperSight block gets a durable Bind-loop owner fed a reproducible model-array interval
 
 **What changed:** Stable block IDs now resolve to `BlockDashboardAgent`
 instances. WorkstreamDO durably fans out configured runs, each block agent uses
 main `SubstreamAgent("0")` as its fenced source/runtime ledger, and result
-versions settle back into WorkstreamDO. Both agent classes share Rally's
-custom keep-alive and drain primitives; Bind remains the loop implementation.
+versions settle back into WorkstreamDO. Both agent classes share Rally's custom
+keep-alive and drain primitives; Bind remains the loop implementation. Every
+block dispatch binds the exact eligible compaction checkpoint hash and a
+tool-safe upper sequence selected by main `SubstreamAgent("0")`; the block
+passes that checkpoint fence into the ordinary Bind run assembly rather than
+resolving “latest” at execution time.
 
 **Why:** HyperSight loops can be long and must recover independently, but a
 derived block is not a conversation substream and should not acquire a second
-message feed or serialize another block's execution.
+message feed or serialize another block's execution. HyperSight may also begin
+after another turn or compaction, and a message-ID waterline alone neither fixes
+the lossy prefix nor proves a provider-valid tool boundary.
 
 **Considered and rejected:** WorkstreamDO-owned inference, source-agent-owned
 fan-out, one agent for every block in the work stream, Workflows, and adopting
 the Agents SDK for the loop. They place compute in the control plane, duplicate
 configuration ownership, couple unrelated blocks, or add orchestration and
-harness abstractions without improving the existing Bind semantics.
+harness abstractions without improving the existing Bind semantics. For the
+block's input: copying the full array into WorkstreamDO and allowing the block
+to read the current transcript. One duplicates high-volume data in the control
+plane; the other changes inputs after dispatch.
 
 **Consequences:** The block agent owns execution/retry while source transcript
 and tool/run records remain transactionally beside the work-stream data they
-reference. Tests must prove fenced reads, dispatch/result idempotency, and
-eviction recovery.
+reference. Exact tool calls/results after compaction are retained,
+pre-compaction tools are represented only by the summary, and a stale fence
+fails before model inference. Tests must prove fenced reads, dispatch/result
+idempotency, and eviction recovery.
 
 ### 2026-08-17 — Work-stream full loops move into `SubstreamAgent`
 
@@ -4747,55 +4717,48 @@ This log starts here. The reasoning behind everything above it predates the log
 and was not recorded; do not read the absence of an entry as an absence of a
 reason for any of it.
 
-### 2026-08-12 — Deferred surfaces remain visible to host-side narrowing
-
-**What changed:** After a deferred plugin loads, the API now replaces the
-host-owned placeholder tool array as well as returning the tools to Bind.
-Restored and explicitly preloaded dynamic plugins load before their activation
-receipt is persisted, so that receipt always carries the discovered surface hash.
-
-**Why:** Bind correctly exposed the activated surface to the parent model, but
-inline-child construction reads the API's frozen plugin objects rather than
-Bind's private registry. Leaving that object empty made an already-active
-dynamic plugin inherit no read tools. The same empty placeholder had no surface
-hash when a prior activation hint was persisted before Bind could call
-`loadTools`, causing the next run to fail during setup.
-
-**Considered and rejected:** Re-discovering from the provider during child
-construction. That could produce a different surface from the one the parent
-activated and would spend another provider call while freezing child authority.
-
-**Consequences:** Any dynamic adapter that returns Rally-classified read tools
-can pass that exact activated subset to a child. Hosted MCP currently classifies
-all provider-authored tools as writes, so its tools remain excluded by the
-child's independent read-only policy. A dynamic provider failure while restoring
-a hint drops that hint and leaves the plugin available for an explicit later
-load; it does not abort unrelated work.
-
-Shipped in the pull request for this change.
-
-### 2026-08-12 — Deferred plugins may load a live tool surface at activation
+### 2026-08-12 — Deferred plugins may load a live tool surface at activation, and it stays visible to host-side narrowing
 
 **What changed:** `HarnessPlugin.loadTools` lets an authorized deferred plugin
 replace its empty tool array during `load_plugin`. The Bind registry receives
 the loaded tools only after reauthorization, loads them once per run, and uses
-the same persistence, policy, execution, and receipt path as static tools.
+the same persistence, policy, execution, and receipt path as static tools. After
+a deferred plugin loads, the API also replaces the host-owned placeholder tool
+array as well as returning the tools to Bind. Restored and explicitly preloaded
+dynamic plugins load before their activation receipt is persisted, so that
+receipt always carries the discovered surface hash.
 
 **Why:** Hosted MCP servers own tool catalogs that can change independently of
 Rally and can vary by account. Resolving every eligible connection at run start
 would waste provider calls on plugins the model never uses; resolving after
 activation would expose an activation that had no callable surface.
 
+Bind correctly exposed the activated surface to the parent model, but
+inline-child construction reads the API's frozen plugin objects rather than
+Bind's private registry. Leaving that object empty made an already-active
+dynamic plugin inherit no read tools. The same empty placeholder had no surface
+hash when a prior activation hint was persisted before Bind could call
+`loadTools`, causing the next run to fail during setup.
+
 **Considered and rejected:** Treating dynamic MCP tools as a second registry
 outside Bind. That would duplicate name resolution, tool policy, serialization,
 and receipts exactly where consistency matters. Eager loading was rejected for
-the provider-call and refresh cost above.
+the provider-call and refresh cost above. Also rejected: re-discovering from the
+provider during child construction, which could produce a different surface from
+the one the parent activated and would spend another provider call while
+freezing child authority.
 
 **Consequences:** A dynamic plugin catalog entry can be available even though it
 has no tools yet. Any caller that inherits capabilities before activation must
 fall back to the frozen dynamic grant, while static plugins continue deriving
 their exact capabilities from visible tools. Dynamic metadata remains remote
-input and never replaces the plugin's trusted display or system guidance.
+input and never replaces the plugin's trusted display or system guidance. Any
+dynamic adapter that returns Rally-classified read tools can pass that exact
+activated subset to a child. Hosted MCP currently classifies all
+provider-authored tools as writes, so its tools remain excluded by the child's
+independent read-only policy. A dynamic provider failure while restoring a hint
+drops that hint and leaves the plugin available for an explicit later load; it
+does not abort unrelated work.
 
 Shipped in the pull request for this change.
 

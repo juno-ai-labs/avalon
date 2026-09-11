@@ -561,7 +561,7 @@ mutation invalidation alone left other windows stale; reusing the authorized
 workspace socket avoids a second cross-window data transport. Keep the full
 library separate from the filtered enabled shortcut list.
 
-### 2026-09-03: The automation room is gone; an automation's chat is a conversation feed
+### 2026-09-03 — The automation room is gone; an automation's chat is a conversation feed
 
 **What changed:** The `automation_agent` route kind, `use-automation-agent-socket.ts`,
 and the automation object's socket room are removed. An automation's page
@@ -805,36 +805,7 @@ preserve both the discovery guarantee and owner teardown paths.
 
 Shipped in #341.
 
-### 2026-08-26 — Proactive expansion requires user intent and bounded reasoning
-
-**What changed:** The architecture now defines the conditions for proactively
-connecting another socket surface and the additional identity, lifecycle,
-cost, authorization, instrumentation, and real-runtime checks required for
-non-zero substreams. No runtime behavior changed.
-
-**Why:** Moving handshakes to Node makes wider fan-out mechanically easy, and
-Durable Object hibernation can make an idle socket look free. Additional
-substreams multiply ticket requests, snapshots, object wakes, renderer state,
-and reconnect work even when they do not keep an object actively billed. A
-durable rule is needed before transport capability becomes accidental product
-policy.
-
-**Considered and rejected:** Opening every substream known to a selected work
-stream would warm low-probability destinations and require discovery work that
-can itself wake each object. A fixed transport-wide connection cap would hide
-which product interactions matter and invent a number without a product or
-platform derivation.
-
-**Consequences:** Future proactive coverage must name the interaction it makes
-ready, select candidates from already-available authority, show worst-case
-fan-out arithmetic, preserve immediate revocation and jittered teardown, and
-prove the visible boundary in Electron. Other substreams require tuple-keyed
-pool and cache ownership; they cannot reuse the current workstream-only key or
-duplicate its WorkstreamDO control connection.
-
-Shipped in #341.
-
-### 2026-08-26 — Work-stream socket pairs move outside Chromium's handshake queue
+### 2026-08-26 — Work-stream socket pairs move outside Chromium's handshake queue, and proactive expansion requires user intent and bounded reasoning
 
 **What changed:** Packaged Electron now opens each selected work stream's
 WorkstreamDO control socket and substream `0` feed socket through a route-confined
@@ -842,10 +813,21 @@ Node broker. The active work stream, all pins, five recent unpinned work streams
 and all running work streams are opened proactively and independently; the
 singleton WorkspaceDO socket remains in Chromium.
 
+The architecture also defines the conditions for proactively connecting another
+socket surface and the additional identity, lifecycle, cost, authorization,
+instrumentation, and real-runtime checks required for non-zero substreams; that
+part changed no runtime behavior.
+
 **Why:** Chromium serialized simultaneous WebSocket handshakes to the same
 endpoint even when they routed to different Durable Objects. That made a socket
 swarm queue behind itself and moved connection setup back onto a later sidebar
 click, conflicting with the two-second click-to-feed-and-send-ready goal.
+
+Moving handshakes to Node makes wider fan-out mechanically easy, and Durable
+Object hibernation can make an idle socket look free. Additional substreams
+multiply ticket requests, snapshots, object wakes, renderer state, and reconnect
+work even when they do not keep an object actively billed. A durable rule is
+needed before transport capability becomes accidental product policy.
 
 **Considered and rejected:** Separate Chromium sessions remove the shared
 endpoint lock but duplicate storage, cache, proxy, certificate, and lifecycle
@@ -854,11 +836,24 @@ renderer state machines and make browser development a second product. A raw
 Node transport broker preserves one protocol implementation while allowing
 parallel handshakes.
 
+For proactive coverage: opening every substream known to a selected work stream
+would warm low-probability destinations and require discovery work that can
+itself wake each object. A fixed transport-wide connection cap would hide which
+product interactions matter and invent a number without a product or platform
+derivation.
+
 **Consequences:** The privileged bridge must remain route-confined, renderer
 events must stay multiplexed through one listener, and full renderer teardown
 must terminate every owned Node socket. Workspace commands, HyperSight blocks,
 dictation, browser development, Durable Object admission, and hibernation keep
 their existing owners. Future socket kinds do not inherit broker access without
 an explicit schema and route-validator change.
+
+Future proactive coverage must name the interaction it makes ready, select
+candidates from already-available authority, show worst-case fan-out
+arithmetic, preserve immediate revocation and jittered teardown, and prove the
+visible boundary in Electron. Other substreams require tuple-keyed pool and
+cache ownership; they cannot reuse the current workstream-only key or duplicate
+its WorkstreamDO control connection.
 
 Shipped in #341.

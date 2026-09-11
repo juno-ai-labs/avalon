@@ -843,40 +843,52 @@ for contrast. The registry no longer describes those shades as fixed across
 appearances: stable identity means preserving the saved key, not identical RGB
 values in light and dark. Existing palette values are unchanged.
 
-### 2026-09-07 — Replace the stale orange palette with Rally neon yellow
+### 2026-09-07 — Rally neon yellow replaces the stale orange palette, and an account owns a personal accent
 
-Rally uses #ccff00, matching the public site's primary brand color. Both desktop
-appearances now use that yellow for brand fills and the legacy orange swatch.
-The stored swatch identifier remains compatible with existing user selections;
-its onboarding label is Neon yellow. Export accents also use the yellow.
-Brand marks and text stay black in light mode and white in dark mode for
-legibility, replacing the temporary onboarding-only override. Brand fills use
-dark foregrounds. Do not reintroduce the prior orange palette.
-
-
-### 2026-09-05 — Add account-owned personal accents
+**What changed:** Rally uses #ccff00, matching the public site's primary brand
+color. Both desktop appearances now use that yellow for brand fills and the
+legacy orange swatch. The stored swatch identifier remains compatible with
+existing user selections; its onboarding label is Neon yellow. Export accents
+also use the yellow. Brand marks and text stay black in light mode and white in
+dark mode for legibility, replacing the temporary onboarding-only override.
+Brand fills use dark foregrounds.
 
 Onboarding and Settings share a server-owned avatar/color editor. The selected
 color derives sidebar and highlight accents from the existing project palette;
 light/dark appearance remains device-owned. Bright colors use dark action text
-for contrast. This avoids introducing another named theme for each color. The
-[new-user onboarding module](new-user-onboarding.md) owns persistence and sync.
+for contrast. The [new-user onboarding module](new-user-onboarding.md) owns
+persistence and sync.
 
-### 2026-09-05 — Align fatal and run recovery states with the theme
+**Why:** The orange palette was stale against the public site, whose primary
+brand color is the neon yellow. A personal accent derived from the project
+palette gives each account its own colour without the theme engine having to
+know about it.
 
-Fatal recovery shares the connection screen's rounded raised card and pill
-action. Failed and stopped run notices use compact rounded surfaces, quieter
-icon tiles and wrapping actions below the message so long diagnostics do not
-compete with buttons for width. Semantic danger colors and all recovery behavior
-remain unchanged; these scoped rules do not restyle unrelated alerts.
+**Considered and rejected:** Introducing another named theme for each personal
+color; deriving the accent from the existing project palette avoids that.
 
-### 2026-09-05 — Bring connection recovery into the current visual language
+**Consequences:** Do not reintroduce the prior orange palette. The accent is
+account-owned while the light/dark appearance stays device-owned, and the
+onboarding module, not this one, persists and syncs the choice.
 
-The regional service error card now uses soft rounded grouped surfaces, quieter
-icon treatment, compact typography and pill actions in both appearances. Styling
-is scoped to recovery screens so onboarding does not inherit the change.
-The endpoint, development guidance and recovery actions remain intact;
-the screen scrolls in short windows and actions wrap at narrow widths.
+### 2026-09-05 — Connection, fatal and run recovery states adopt the current visual language
+
+**What changed:** The regional service error card now uses soft rounded grouped
+surfaces, quieter icon treatment, compact typography and pill actions in both
+appearances; the screen scrolls in short windows and actions wrap at narrow
+widths. Fatal recovery shares that connection screen's rounded raised card and
+pill action. Failed and stopped run notices use compact rounded surfaces,
+quieter icon tiles and wrapping actions below the message so long diagnostics
+do not compete with buttons for width.
+
+**Why:** The recovery screens had not followed the rest of the application into
+the current visual language, and a run notice with a long diagnostic was
+sharing its width with its buttons.
+
+**Consequences:** Styling is scoped to recovery screens so onboarding does not
+inherit the change, and these scoped rules do not restyle unrelated alerts. The
+endpoint, development guidance and recovery actions remain intact, and semantic
+danger colors and all recovery behavior are unchanged.
 
 ### 2026-09-05 — Review fixes preserve scaling and keyboard visibility
 
@@ -1277,39 +1289,6 @@ person has to check before they can change it.
 
 Shipped in TBD.
 
-### 2026-08-21 — The documents catch up with the two-axis picker
-
-**What changed:** `docs/e2e.md`'s appearance acceptance step, the worked theme
-file here, the `data-theme` example, and a new "Deliberately unfinished" list.
-
-**Why:** the axes were split several commits before the documents were, and the
-stale text was not merely out of date — it was actively wrong in ways that cost
-someone time.
-
-- The acceptance step asked a tester to choose Airy and confirm it *stopped*
-  following the Mac. That is the exact bug the split exists to prevent, so
-  following the step would have reported a working app as broken.
-- The worked example carried `"id": "airy-dark"` against a file on disk named
-  `air-dark`. Copying it produces a theme that fails the registry check.
-- The `data-theme` example showed a `data-theme-choice` attribute that no longer
-  exists; `applyTheme` sets `data-theme-family` and `data-theme-mode`. The
-  paragraph's reasoning was still right, which is what made it hard to notice —
-  it described the attribute that superseded it.
-
-The changelog's own references to `airy` are left alone. They are correct as
-history, and so is the one in the migration section, which is about reading a
-preference an older build wrote.
-
-**Why the unfinished list exists:** three reference-design items are knowingly
-not done. They were stated in the pull request, which nobody reading this file in
-a year can reach. A decision that is only in a review thread is a decision that
-will be rediscovered as a bug.
-
-**What a future change has to respect:** an acceptance step is executable
-documentation — someone will follow it literally against a build they did not
-write. Stale prose elsewhere misleads; stale prose there manufactures a defect
-report.
-
 ### 2026-08-21 — Secondary windows keep a flat ground, on purpose
 
 **What changed:** nothing in how it renders. A comment at the mount site, an
@@ -1400,31 +1379,6 @@ flavour — has to carry the tokens it names, or resolve them before it leaves.
 **Found in review, not by tests.** The invariant list reasoned that an inline
 `var()` always resolves against the cascade, which is true everywhere except the
 one place this markup is re-hosted, and no test covered that place.
-
-### 2026-08-21 — A rebase can demote a heading, and nothing noticed
-
-**What changed:** the eight changelog headings a rebase had truncated are
-restored, and `scripts/check-document-headings.mjs` fails the build on the shape
-they left behind.
-
-**Why:** rebasing this branch onto a `main` 124 commits ahead ate `### 2026-0`
-off the front of eight headings — seven here and one in `docs/security.md` that
-was not even this branch's entry. The result is still valid Markdown, so nothing
-failed: the line stays in the file, keeps its text, and merely stops being a
-heading. It leaves the outline, and the entry it titled is swallowed into the
-one above it. `docs/module-documents.md` makes the changelog the one section a
-module document may not lose, so it earns a gate.
-
-**Why the check is shaped the way it is:** it looks for the residue — a
-date-like fragment followed by an em dash on a line that is not a heading —
-rather than trying to validate headings in general. A general rule argues with
-every document that has a reason to be unusual; this one only fires on damage
-that has actually occurred. Fenced code is skipped, so a document explaining
-this failure can show it.
-
-**What a future change has to respect:** a merge conflict in prose does not
-announce itself the way one in code does. There is no parser to reject it and no
-test that reads for sense. When a rebase touches documents, diff the headings.
 
 ### 2026-08-21 — The main process carries the choice, not the appearance
 
@@ -1748,59 +1702,7 @@ picked for; at other window shapes it stretches with the window, which is the
 behaviour a full-window backdrop wants anyway. Do not "fix" that back to a
 viewport unit without giving the swatch a backdrop of its own.
 
-### 2026-08-20 — The window has one backdrop, and a theme can draw it
-
-`sys.color.surface.wash` is gone. In its place is `sys.backdrop.*`, seven tokens
-that are the CSS `background-*` longhands under their own names, painted on
-`.workspace-shell` and nowhere else, with `cmp.pane.background` as the fill the
-content pane draws over it.
-
-The wash was painted twice — once by the shell, once by the main pane — because
-the pane was opaque and would otherwise have hidden the theme's light.
-`background-attachment: fixed` was supposed to keep the two copies in register,
-and does, but only while both elements are viewport-sized; the pane is not, and
-Airy's glow stopped at the navigation's edge and started again beside it. The
-fix is not a better way to synchronise two copies: it is one copy, with the
-pane's fill made themeable so Airy can set it to `transparent` and let the
-backdrop through. A test now names the only elements allowed to paint the
-backdrop image. The work stream's composer dock lost its gradient in the same
-change — it lays the composer out as a grid row rather than floating it over the
-transcript, so the gradient hid nothing and had only ever been invisible because
-it ended on the pane's own colour. Under a transparent pane it became an opaque
-rectangle cutting the backdrop off.
-
-The token names are deliberately not new. Sizing, centring, tiling and zoom all
-have answers that a decade of use has sanded smooth, and a theme that wants
-`background-size: cover` should write exactly that rather than a synonym invented
-here. What the theme file adds is the one step it cannot write by hand: `image`
-accepts `{"svg": "…"}` for artwork drawn in the theme, `{"url": "https://…"}`
-for one fetched over the network, `{"gradient": "…"}`, and an array of those for
-a layer stack. Inline SVG is percent-encoded into a data URI; it is rejected
-without the SVG namespace, and rejected if it aliases a token, because a data URI
-is its own document and cannot read a custom property — encoding the braces and
-moving on would have drawn the artwork in its fallback colour under every theme.
-
-The generator also began writing *every* token into *every* theme's block
-instead of letting a theme fall through to `:root`. Inheritance worked while
-`data-theme` sat on the document, because `[data-theme='light']` and `:root`
-match the same element and the more specific block wins. It does not work for a
-nested element with a `data-theme` of its own: an alias is substituted where it
-is declared, so `--av-cmp-pane-background: var(--av-sys-color-surface-default)`
-on `:root` resolves to the *dark* surface and inherits down regardless of the
-ramp redeclared beneath it. The Settings miniature is that element, and the Light
-swatch previewed a dark surface the moment the pane fill became an alias. Filling
-the blocks out costs a few kilobytes and makes `data-theme` mean the same thing
-anywhere in the tree; a future change must not "optimise" the repetition back
-out.
-
-Not done: the docks that genuinely float over a scrolling transcript still fade
-to `sys.color.surface.default`. That is correct for a scrim — it has to hide what
-passes under it — but in Airy it means the backdrop's light stops behind them.
-Giving those a scrim that shows the backdrop needs a mask, and a mask over the
-dock would take the composer inside it with it; it was not worth the complexity
-for the small amount of glow involved.
-
-### 2026-08-20 — A theme is a JSON file, and tokens are named by tier
+### 2026-08-20 — A theme is a JSON file, tokens are named by tier, and the window has one backdrop a theme can draw
 
 **What changed:** `config/design-tokens/` is now the source of truth: a
 `registry.json` declaring every token with its type and its prose, and one file
@@ -1808,7 +1710,15 @@ per theme supplying values. `scripts/build-theme-css.mjs` generates
 `themes.css`; `pnpm tokens:check` runs in CI and fails on drift. Every token was
 renamed to a three-tier dot-separated taxonomy (`ref` / `sys` / `cmp`) written
 to custom properties under an `--av-` namespace — 189 tokens and about 1,300
-references. Not one rendered value changed.
+references. Not one rendered value changed in the rename.
+
+`sys.color.surface.wash` is gone. In its place is `sys.backdrop.*`, seven tokens
+that are the CSS `background-*` longhands under their own names, painted on
+`.workspace-shell` and nowhere else, with `cmp.pane.background` as the fill the
+content pane draws over it. A test now names the only elements allowed to paint
+the backdrop image. The work stream's composer dock lost its gradient in the
+same change. The generator also began writing *every* token into *every*
+theme's block instead of letting a theme fall through to `:root`.
 
 **Why:** Asked for, and the flat CSS names had reached the point where they were
 guesses. `--line` and `--line-3` were a semantic alias and a ramp step with
@@ -1817,6 +1727,41 @@ nothing in the name to say which; `--label-size` was typography while
 colour under two names, as were `--gold` and `--yellow`. A tier prefix answers
 "what kind of decision is this" before the reader has to know the system, which
 is the property every reference cited converges on.
+
+The wash was painted twice — once by the shell, once by the main pane — because
+the pane was opaque and would otherwise have hidden the theme's light.
+`background-attachment: fixed` was supposed to keep the two copies in register,
+and does, but only while both elements are viewport-sized; the pane is not, and
+Airy's glow stopped at the navigation's edge and started again beside it. The
+fix is not a better way to synchronise two copies: it is one copy, with the
+pane's fill made themeable so Airy can set it to `transparent` and let the
+backdrop through. The composer dock's gradient went because the dock lays the
+composer out as a grid row rather than floating it over the transcript, so the
+gradient hid nothing and had only ever been invisible because it ended on the
+pane's own colour. Under a transparent pane it became an opaque rectangle
+cutting the backdrop off.
+
+The backdrop token names are deliberately not new. Sizing, centring, tiling and
+zoom all have answers that a decade of use has sanded smooth, and a theme that
+wants `background-size: cover` should write exactly that rather than a synonym
+invented here. What the theme file adds is the one step it cannot write by
+hand: `image` accepts `{"svg": "…"}` for artwork drawn in the theme,
+`{"url": "https://…"}` for one fetched over the network, `{"gradient": "…"}`,
+and an array of those for a layer stack. Inline SVG is percent-encoded into a
+data URI; it is rejected without the SVG namespace, and rejected if it aliases a
+token, because a data URI is its own document and cannot read a custom property
+— encoding the braces and moving on would have drawn the artwork in its
+fallback colour under every theme.
+
+Filling every theme's block out is what makes a nested `data-theme` work.
+Inheritance worked while `data-theme` sat on the document, because
+`[data-theme='light']` and `:root` match the same element and the more specific
+block wins. It does not work for a nested element with a `data-theme` of its
+own: an alias is substituted where it is declared, so
+`--av-cmp-pane-background: var(--av-sys-color-surface-default)` on `:root`
+resolves to the *dark* surface and inherits down regardless of the ramp
+redeclared beneath it. The Settings miniature is that element, and the Light
+swatch previewed a dark surface the moment the pane fill became an alias.
 
 **Considered and rejected:**
 
@@ -1833,6 +1778,9 @@ is the property every reference cited converges on.
 - *Nesting the JSON by tier.* Flat dotted keys are what VS Code uses and they
   diff cleanly; a nested tree makes a one-token change a multi-line hunk and
   makes two themes hard to compare side by side.
+- *A better way to keep two copies of the backdrop in register.* Two copies is
+  the defect; one copy over a themeable pane fill removes it rather than
+  synchronising it.
 
 **Consequences:** Adding a theme is a JSON file plus an entry in `themeChoices`.
 A number that decides an appearance belongs in that JSON, not in a rule.
@@ -1842,11 +1790,22 @@ Renaming a token means renaming it in the registry, in every theme, and in
 `app.css` together — the reference guard fails on a half-done rename, which is
 the point.
 
+Filling the blocks out costs a few kilobytes and makes `data-theme` mean the
+same thing anywhere in the tree; a future change must not "optimise" the
+repetition back out.
+
 Two dead references surfaced during the rename and were fixed: `var(--mono)`
 and `var(--muted-strong)`, both referenced but never defined since 1.100.0, so
 two values had been rendering in the interface font instead of monospace and one
 control had been taking whatever colour it inherited. Nothing would have caught
 either before the guard existed.
+
+Not done: the docks that genuinely float over a scrolling transcript still fade
+to `sys.color.surface.default`. That is correct for a scrim — it has to hide what
+passes under it — but in Airy it means the backdrop's light stops behind them.
+Giving those a scrim that shows the backdrop needs a mask, and a mask over the
+dock would take the composer inside it with it; it was not worth the complexity
+for the small amount of glow involved.
 
 Shipped in #TBD.
 
