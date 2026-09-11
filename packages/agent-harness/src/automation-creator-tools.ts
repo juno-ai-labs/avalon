@@ -87,7 +87,14 @@ export function rememberAutomationPeopleSearchResult(
   output: unknown,
   resolvedPersonIds: Set<string>,
 ): void {
-  const people = asRecord(output).people;
+  const record = asRecord(output);
+  // `you` is a person the search returned like any other, so a rule may name
+  // it like any other. The host already seeds this set with the same id when
+  // it builds the plugin; recording it here is what keeps the replay path,
+  // which rebuilds the set from stored tool output alone, agreeing with it.
+  const you = asRecord(record.you).id;
+  if (typeof you === "string") resolvedPersonIds.add(you);
+  const people = record.people;
   if (!Array.isArray(people)) return;
   for (const person of people) {
     const id = asRecord(person).id;

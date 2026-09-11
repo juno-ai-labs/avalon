@@ -1458,7 +1458,11 @@ async function projectModelProtocolTranscript(
         })
       : message.author.type === "human"
         ? await projectParticipantModelMessage(env, {
-            author: { type: "human" },
+            author: {
+              type: "human",
+              userId: message.author.user.id,
+              displayName: message.author.user.name,
+            },
             messageType: message.messageType,
             text: message.textContent,
             structuredContent: message.structuredContent,
@@ -1677,10 +1681,22 @@ function createAvalonAutomationsPlugin(
     resourceType: string;
     sourceBindingKeys: readonly string[];
   }>();
-  const resolvedPersonIds = new Set<string>();
   const authorUserId = input.executionPrincipal?.type === "user"
     ? input.executionPrincipal.userId
     : null;
+  /**
+   * Person ids a submitted rule is allowed to name.
+   *
+   * Seeded with the person the run acts for, because the guard this feeds is
+   * about provenance and not about ceremony: it exists so a rule can only name
+   * someone the model *looked up* rather than invented, and the execution
+   * principal is the one id on the run that the host itself supplied. Making
+   * the model earn it through a directory search proved nothing and cost a
+   * conversation — a run asked to notify the person asking searched the
+   * directory for `me`, matched nobody, and had to stop and ask which person
+   * that was, holding this id the whole time.
+   */
+  const resolvedPersonIds = new Set<string>(authorUserId ? [authorUserId] : []);
   /**
    * The evaluator rules the model set, waiting for a submission to attach them
    * to. Null until it sets any; a draft with no event trigger never needs them.
@@ -1796,7 +1812,22 @@ function createAvalonAutomationsPlugin(
             ORDER BY u.name COLLATE NOCASE
             LIMIT 10`,
         ).bind(input.workspaceId, term, term).all<{ id: string; name: string; email: string }>();
-        return { people: (rows.results ?? []).map((row) => ({ id: row.id, name: row.name, email: row.email })) };
+        // `you` rides on every result rather than on a matching query, because
+        // the query that needs it is the one that cannot match: this is a
+        // substring search over names and emails, and "me", "my", and "I" are
+        // none of those. It is the caller's own row and costs one read of a
+        // table already open, so a search that fails to place a pronoun still
+        // answers the question the pronoun was asking.
+        const you = authorUserId === null ? null : await env.DB.prepare(
+          `SELECT u.id, u.name, u.email
+             FROM workspace_members m
+             JOIN users u ON u.id = m.user_id
+            WHERE m.workspace_id = ? AND m.user_id = ? AND m.status = 'active'`,
+        ).bind(input.workspaceId, authorUserId).first<{ id: string; name: string; email: string }>();
+        return {
+          ...(you ? { you: { id: you.id, name: you.name, email: you.email } } : {}),
+          people: (rows.results ?? []).map((row) => ({ id: row.id, name: row.name, email: row.email })),
+        };
       },
       // The resources a watch trigger may name, seen as the person the run acts
       // for, with the plugin each one is reached through.
