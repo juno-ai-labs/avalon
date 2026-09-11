@@ -508,7 +508,9 @@ export function rehypeCitationEmbedRows(rendersCard: (resourceId: string) => boo
 }
 
 /**
- * A grounding source: a numbered marker after the punctuation, and nothing else.
+ * A grounding source: an asterisk after the punctuation with a source popover.
+ * Accessible labels retain source numbers to distinguish adjacent citations.
+ * A saved still keeps numbers so markers identify its printed source list.
  *
  * The popover rides the app's own tooltip rather than a hand-positioned box.
  * That is not a preference: the transcript is a scroll container, and an
@@ -529,6 +531,7 @@ function CitationPill({ citation, number, onOpen }: {
   number: React.ReactNode;
   onOpen?: () => void;
 }): React.JSX.Element {
+  const { still } = useCitationRender();
   const opens = citation.target.scheme === 'external' ? 'Opens in your browser' : 'Opens in preview';
   const label = typeof number === 'string' || typeof number === 'number'
     ? `Source ${String(number)}: ${citation.label}`
@@ -542,7 +545,7 @@ function CitationPill({ citation, number, onOpen }: {
             className="citation-pill"
             onClick={onOpen}
             type="button"
-          >{number}</button>
+          >{still ? number : '*'}</button>
         </Tooltip.Trigger>
         <Tooltip.Portal>
           <Tooltip.Content className="tooltip citation-pill-popover" collisionPadding={12} side="top" sideOffset={6}>

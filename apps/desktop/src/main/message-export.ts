@@ -463,14 +463,15 @@ ${syntax}
   .citation-card-kind { color: #6b6d5e; font-size: 10px; }
   /* Sized and raised exactly as the app's is, and for the same reason: GFM's
      sup wrapper applies its own smaller and its own super, and stacking the
-     pill's on top of those left a digit too small to read. The card is the
-     turn, saved — the marker has to be the same marker. */
+     pill's on top of those left a digit too small to read. The card keeps numbered
+     markers to identify its printed source list; neutralising the wrapper
+     keeps those numbers readable at the intended size. */
   .markdown-body sup:has(.citation-pill) { font-size: inherit; vertical-align: baseline; }
   .citation-pill {
-    background: #e4e6c8;
-    border: 1px solid #ccd4a0;
+    background: #ededed;
+    border: 1px solid #b5b5b5;
     border-radius: 999px;
-    color: #4a6a12;
+    color: #070707;
     display: inline-block;
     font: inherit;
     font-size: 0.72em;

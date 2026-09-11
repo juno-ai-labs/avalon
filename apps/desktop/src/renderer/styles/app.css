@@ -3450,43 +3450,20 @@ pre {
    space at all, which is the whole reason the trailing source list is not
    rendered.
 
-   GFM wraps a footnote reference in `<sup>`, and the browser's own `sup` rule
-   is `font-size: smaller; vertical-align: super`. Sizing the pill on top of
-   that compounds: 0.83 × 0.74 left a five-pixel digit floating two raises above
-   the line — smaller than the plain superscript it replaces, and too small to
-   tell a 1 from a 7. The wrapper is neutralised first so the pill's own size and
-   raise are the only ones that apply.
-
-   It hugs its digits and is raised by a measured amount rather than by
-   `super`: a `min-width` wide enough for two digits left a single one floating
-   in its own box, which reads as a stray space after the punctuation, and the
-   keyword's raise sat the marker clear of the line it belongs to.
-
-   The fill is the brand *tint* with brand ink on it, the pairing `.mention-chip`
-   already uses. A solid `brand-base` is the primary submit button's colour —
-   three of them in a paragraph shout louder than the chip a reader is meant to
-   click — and in the Air light theme `brand-on` over `brand-base` is 3.01:1,
-   which fails AA at any size, let alone this one. */
-.markdown-body sup:has(.citation-pill) { font-size: inherit; vertical-align: baseline; }
+   Neutralise GFM's smaller superscript so the pill's size and raise apply
+   only once. The compact box hugs its asterisk; the measured raise keeps it
+   close to the sentence. Primary text supplies both ink and a quiet tint so
+   citations stay neutral and readable in light and dark appearances. */
+.markdown-body sup:has(.citation-pill) { font-size: inherit; top: 0; vertical-align: baseline; }
 .citation-pill,
-.citation-pill-pending { background: color-mix(in srgb, var(--av-sys-color-brand-base) 16%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-brand-base) 30%, transparent); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-brand-ink); display: inline-block; font: inherit; font-size: 0.72em; font-weight: 680; line-height: 1.35; padding: 0 0.42em; text-align: center; vertical-align: 0.32em; }
+.citation-pill-pending { background: color-mix(in srgb, var(--av-sys-color-text-default) 16%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-text-default) 30%, transparent); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-default); display: inline-block; font: inherit; font-size: 0.72em; font-weight: 680; line-height: 1.35; padding: 0 0.42em; text-align: center; vertical-align: 0.32em; }
 .citation-pill { cursor: pointer; }
-.citation-pill:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 30%, transparent); }
-/* The pill a streaming turn wears until its definition arrives. The geometry
-   is shared with the rule above rather than restated, because the whole point
-   is that the line does not move when the number lands — a second copy of the
-   padding and the raise would drift, and the drift would read as the text
-   twitching mid-sentence.
-
-   Its own tint stays too: the box is already the colour it is about to be, so
-   the change at resolution is a number appearing in a rectangle, not a
-   rectangle appearing — and the block standing in for the digit is the number's
-   own ink, held back. Its width is about one figure in this font, chosen
-   between the narrowest (`1`) and the widest (`0`) because a skeleton cannot
-   know which number it is waiting for; `1ch` is the zero exactly and reads
-   wide under every other digit. Its height stays under the line-height, so the
-   strut and not the block decides how tall the pill is. */
-.citation-pill-pending::after { animation: citation-pill-pending-shimmer 1.4s ease-in-out infinite; background: color-mix(in srgb, var(--av-sys-color-brand-ink) 26%, transparent); border-radius: 1px; content: ''; display: inline-block; height: 0.74em; vertical-align: -0.06em; width: 0.55em; }
+.citation-pill:hover { background: color-mix(in srgb, var(--av-sys-color-text-default) 30%, transparent); }
+/* Pending and resolved pills share geometry so resolution does not shift
+   the sentence. An invisible asterisk gives the shimmer its exact glyph width
+   in the active font, without estimating a digit width. The background paints
+   the skeleton while transparent text reserves the resolved marker's space. */
+.citation-pill-pending::after { animation: citation-pill-pending-shimmer 1.4s ease-in-out infinite; background: linear-gradient(color-mix(in srgb, var(--av-sys-color-text-default) 26%, transparent) 0 0) center / 100% 0.74em no-repeat; border-radius: 1px; color: transparent; content: '*'; display: inline-block; }
 @keyframes citation-pill-pending-shimmer {
   0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
