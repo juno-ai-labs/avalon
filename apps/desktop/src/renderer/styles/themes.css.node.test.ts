@@ -62,7 +62,7 @@ describe('no colour is written into app.css', () => {
 
   function literalColoursIn(css: string): string[] {
     const found: string[] = [];
-    for (const [, property, value] of css.replace(/\/\*[\s\S]*?\*\//gu, ' ').matchAll(/([a-z0-9-]+)\s*:\s*([^;{}]+)[;}]/gu)) {
+    for (const [, property, value] of css.replace(/\/\*[\s\S]*?\*\//gu, ' ').matchAll(/([\w-]+)\s*:\s*([^;{}]+)[;}]/gu)) {
       if (!value) continue;
       // A mask is never painted: the compositor samples its alpha channel and
       // throws the rest away, so a colour written into one cannot render wrong
@@ -71,7 +71,17 @@ describe('no colour is written into app.css', () => {
       // the alternative that would satisfy a blind check, `currentColor`, is
       // worse: it would couple how much of the line survives the mask to
       // whatever alpha a text token happens to carry.
-      if (/(?:^|-)mask(?:-image)?$/u.test(property ?? '')) continue;
+      //
+      // Anchored at both ends, and only over these four spellings. An
+      // unanchored `-mask` suffix also exempts `--overlay-mask` and every other
+      // custom property whose name happens to end that way — and a custom
+      // property *is* painted, wherever it is substituted, so that spelling
+      // would hand a literal colour a way out of the guard rather than
+      // describing a mask. The property pattern above is `[\w-]+` for the
+      // mirror-image reason: keying on the colon alone saw every declaration,
+      // and a narrower class silently drops `--BRAND` and friends out of the
+      // scan entirely.
+      if (/^(?:-webkit-)?mask(?:-image)?$/u.test(property ?? '')) continue;
       // A token's own value is not a literal in this file — `themes.css` is
       // where colours are allowed to be written down.
       const outsideVar = value.replace(/var\([^)]*\)/gu, ' ');
@@ -218,8 +228,15 @@ describe('no colour is written into app.css', () => {
     // Deliberate, per the exemption above — and only for the mask properties.
     expect(literalColoursIn('.a { mask-image: linear-gradient(#000, transparent); }')).toEqual([]);
     expect(literalColoursIn('.a { background-image: linear-gradient(#000, transparent); }')).toEqual(['#000']);
-    // A digit in the property name still leaves the declaration in scope.
+    // A digit in the property name still leaves the declaration in scope, and
+    // so do the capitals and underscores a custom property is allowed.
     expect(literalColoursIn('.a { --space-1: red; }')).toEqual(['red']);
+    expect(literalColoursIn('.a { --BRAND: red; }')).toEqual(['red']);
+    expect(literalColoursIn('.a { --Brand_Color: red; }')).toEqual(['red']);
+    // The exemption is the four mask spellings, not anything ending in `-mask`.
+    expect(literalColoursIn('.a { -webkit-mask-image: linear-gradient(#000, transparent); }')).toEqual([]);
+    expect(literalColoursIn('.a { --overlay-mask: #0009; }')).toEqual(['#0009']);
+    expect(literalColoursIn('.a { mask-composite: add; border: 1px solid red; }')).toEqual(['red']);
   });
 });
 

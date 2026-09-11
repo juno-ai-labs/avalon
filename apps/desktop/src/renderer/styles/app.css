@@ -174,12 +174,23 @@ pre {
 
    Both ends of the keyframe hold the same value because nothing here is meant
    to move — the timeline is being asked a question about overflow, not used as
-   a clock. `animation-duration: auto` is what hands the timeline the job of
-   pacing it, and must stay after the shorthand, which resets it to `0s`. This
-   survives the global reduced-motion block below, which forces every duration
-   to 0.001ms: `both` fills the one value outside the active interval, so the
-   fade is the same for that reader as for anyone else — correctly, since it is
-   not motion. */
+   a clock.
+
+   **Both longhands must stay below the shorthand, which resets both of them.**
+   `animation-duration: auto` is what hands the timeline the pacing; the
+   shorthand puts it back to `0s`. `animation-timeline` is the one that costs
+   the condition: reinstated above the shorthand it falls back to the
+   document's timeline, `auto` computes to `0s` against that, `both` holds the
+   100% keyframe from the first frame, and every line here takes the mask
+   whether or not it clips anything — the unconditional fade this whole
+   arrangement exists to avoid, reintroduced by a reordering that looks like
+   tidying. `app.css.node.test.ts` asserts both positions rather than both
+   presences.
+
+   The fill mode is also what survives the global reduced-motion block below,
+   which forces every duration to 0.001ms: `both` fills the one value outside
+   the active interval, so the fade is the same for that reader as for anyone
+   else — correctly, since it is not motion. */
 @keyframes clipped-line-fade {
   0%, 100% {
     mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
