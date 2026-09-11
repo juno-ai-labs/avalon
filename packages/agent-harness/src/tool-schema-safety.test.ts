@@ -666,12 +666,12 @@ describe("readableRootUnionBranch", () => {
  *
  * Under `@juno-ai/bind` 13 the sanitizer collapsed it to `{ type: "string",
  * minLength: 1 }` with "Accepts string or null." appended to the description,
- * and a model that will not leave the key out put `"/"`, `". "` and
- * `".000001"` in it for thousands of refused calls, or the timestamp of its own
- * previous post. Bind 14 rewrites it to a union instead. That is the
- * dependency's behaviour, not this module's, which is why it is asserted here:
- * a bind release that collapsed again would put the invented values back, and
- * this file is where that would surface first.
+ * and a model that will not leave the key out invented values for it; the
+ * Sidekick delivery PRD's `research.md` has the record. Bind 14 rewrites it to
+ * a union instead. That is the dependency's behaviour, not this module's,
+ * which is why it is asserted here: a bind release that collapsed again would
+ * put the invented values back, and this file is where that would surface
+ * first.
  */
 const SEND_MESSAGE_THREAD_TS_AS_AUTHORED = {
   type: "object",

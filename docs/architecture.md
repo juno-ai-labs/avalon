@@ -117,7 +117,7 @@ flowchart LR
   C --> D
   C --> S["WorkspaceDO alarm"]
   S --> SA
-  SA --> A["Rally Bind 13 adapter"]
+  SA --> A["Rally Bind 14 adapter"]
   A --> O["OpenRouter"]
   A --> T["Authorized connection plugins"]
   A --> X["Deferred Terminal plugin"]
@@ -433,7 +433,7 @@ connector authority, and resource metadata. The provider supplies isolation and 
 filesystem/lifecycle primitives, not Rally's receipts or authorization. See
 [`terminal-workspaces.md`](terminal-workspaces.md).
 
-The production entry point adapts `@juno-ai/bind` 13.0.0 to Rally's OpenRouter
+The production entry point adapts `@juno-ai/bind` 14.0.0 to Rally's OpenRouter
 transport and durable ports. Bind owns transcript healing, plugin and skill
 activation, turn/tool iteration, completion-defect recovery, epoch-aware
 streaming, and classified route traversal. Rally owns authorization, regional

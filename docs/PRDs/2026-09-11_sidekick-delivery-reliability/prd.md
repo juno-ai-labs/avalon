@@ -303,4 +303,23 @@ answer was lost.
 
 ## Decision log
 
-None yet.
+### 2026-09-11 — Absence reaches the wire through the sanitizer, not through per-parameter conversion
+
+**Decided:** `@juno-ai/bind` 14 rewrites a nullable single type to `anyOf`
+with a null branch for every tool of every consumer, and the registry-wide
+guard in `apps/api/test/tool-schema-sanitization.test.ts` asserts that every
+authored null branch is delivered, naming the three multi-type unions Bind 14
+still collapses by design. No connector parameter is converted by hand.
+
+**Why:** The first draft of design decision 3 converted the 28 collapsed
+branches one connector at a time, as the 2026-09-03 entry in `agent-tools.md`
+had planned. That fixes one repository and leaves the next parameter, and every
+other consumer of Bind, free to ship the shape again. The collapse lives in
+Bind, so the rewrite belongs beside the code it replaces, and the guard is what
+proves it stays delivered.
+
+**Changes:** Design decision 3 as first drafted is superseded; the section
+above reads the way it was decided. Goal 2's implementing change is the Bind
+pin and the guard, shipped in #723 with this PRD. The `thread_ts` `pattern` and
+the matching `SlackTimestampSchema` check, the other half of decision 3, are
+still phase 0 work and did not ship there.

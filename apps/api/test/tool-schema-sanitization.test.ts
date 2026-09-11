@@ -120,17 +120,16 @@ describe("tool schema sanitization", () => {
   });
 
   it("delivers every authored null branch, on every tool, in either spelling", () => {
-    // Every property of every authored tool, not only the cursors. Until
+    // Every declaration of every authored tool, not only the cursors. Until
     // `@juno-ai/bind` 14 this could not hold: the sanitizer collapsed the flat
     // `type: ["string", "null"]` to `type: "string"`, 28 parameters across four
     // connectors were declared that way, and the guard above was filtered to
-    // cursors so it would not fail for them. What that cost is on record. A
-    // scheduled Sidekick posting to Slack was handed `send_message.thread_ts`
-    // as a bare string with "or send null" in the prose, could not spell "no
-    // thread" in the half of the declaration it treats as binding, and put
-    // `"/"`, `". "` and `".000001"` in it for thousands of refused calls, or
-    // the timestamp of its own previous post, which is how it came to reply to
-    // itself. Bind 14 rewrites that declaration to `anyOf` with a null branch,
+    // cursors so it would not fail for them. What that cost is on record:
+    // `send_message.thread_ts` was one of the 28, and a scheduled Sidekick
+    // invented values for it for thousands of refused calls or replied to its
+    // own previous post (the 2026-09-11 entry in `docs/agent-tools.md`, and
+    // the Sidekick delivery PRD's `research.md`). Bind 14 rewrites that
+    // declaration to `anyOf` with a null branch,
     // so the whole registry is now asserted, nested declarations included
     // (`droppedNullableBranches` walks `items`, `$defs` and composition
     // branches and names each finding by its dotted path), and a bind release

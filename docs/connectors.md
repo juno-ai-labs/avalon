@@ -988,33 +988,29 @@ fixture table instead, where it is reviewable.
 
 ### 2026-09-11 — The collapsed null-branch backlog is retired by Bind 14
 
-**What changed:** Nothing in the adapters. `@juno-ai/bind` 14 rewrites a flat
-`type: [T, "null"]` to `anyOf: [{type: T, …}, {type: "null"}]` on the way to
-the wire, so the 28 parameters the entries below counted as "still collapsed"
-(Linear 13, Granola 7, Slack 6, Notion 2) now reach the model with their null
-branch, and the registry-wide assertion in
-`apps/api/test/tool-schema-sanitization.test.ts`, which now walks nested
-declarations too, reports exactly three dropped branches across every
-connector and names them: the cell values of Google's `sheets.update_values`
-and `sheets.append_values`, and the artifact query tool's `params`, each a
-multi-type union with `null` that Bind 14 still collapses because no union of
-scalar branches has been measured on every provider. The comments on Slack's
-`optionalId` and on `GOOGLE_PAGE_TOKEN_SCHEMA` say so instead of describing
-the collapse as current.
+**What changed:** Nothing in the adapters. `@juno-ai/bind` 14 delivers a flat
+`type: [T, "null"]` as a union, so the 28 parameters the entries below counted
+as "still collapsed" (Linear 13, Granola 7, Slack 6, Notion 2) now reach the
+model with their null branch, and the registry-wide assertion in
+`apps/api/test/tool-schema-sanitization.test.ts` names the three Bind 14 still
+collapses by design: the cell values of Google's `sheets.update_values` and
+`sheets.append_values`, and the artifact query tool's `params`, each a
+multi-type union with `null`.
 
 **Why:** The backlog was left for per-parameter decisions about what `null`
-means for an id or a filter. That reasoning still belongs in each description,
-but the wire was forbidding the value regardless of what the prose decided, and
-one of the six Slack parameters was `send_message.thread_ts`: a scheduled
-Sidekick could not spell "no thread" and invented `"/"`, `". "` and
-`".000001"` for thousands of refused calls, or replied to its own previous post.
-[`agent-tools.md`](agent-tools.md) records the rule change and the alternative
-that was rejected.
+means for an id or a filter, and the wire was forbidding the value regardless
+of what the prose decided; one of the Slack six was `send_message.thread_ts`.
+The [`agent-tools.md`](agent-tools.md) entry of the same date owns the
+reasoning and the alternative that was rejected.
 
 **Consequences:** a new connector cannot ship the collapsed shape, because the
-guard now covers every property; a parameter Bind 14 still collapses (a
-multi-type union with `null`) is reported by name. Descriptions still owe the
-reader what `null` requests.
+guard covers every declaration, and a parameter in one of the shapes Bind 14
+still collapses is reported by name. Descriptions still owe the reader what
+`null` requests. And the wire is the only thing that changed:
+`SlackTimestampSchema` still accepts any non-empty string, and the `pattern`
+that refuses a non-timestamp before the provider call is phase 0 of
+[the Sidekick delivery PRD](PRDs/2026-09-11_sidekick-delivery-reliability/prd.md),
+not this change.
 
 ### 2026-09-11 — Connections report tool counts
 
