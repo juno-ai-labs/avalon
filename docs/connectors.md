@@ -996,15 +996,36 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
-### 2026-09-11 — A manifest declares which scopes its activity is delivered on
+### 2026-09-11 — Granola's real event types, and the scopes a manifest delivers activity on
 
-**What changed:** `ConnectorManifest` gained an optional
-`activityConnectionScopes`, defaulting to `supportedScopes`; Granola declares
-`["workspace"]`. `connectorActivityTriggerDescriptors` now takes the
-connection's scope and returns no triggers for one outside that set.
+**What changed:** Two reasons a Granola-triggered Sidekick could not work, both
+found while tracing one that never ran.
 
-**Why:** Granola supports both connection scopes but delivers events on only
-one — the webhook endpoint is registered against the workspace API key, and a
+The connection could not be created at all. `createGranolaWebhookEndpoint`
+subscribed to `note.regenerated`, which Granola does not define — it has three
+event types, and reports a regeneration as `note.edited`. Granola fails the
+whole registration on an unknown name, and that registration is the first
+provider call the setup makes, so every attempt to connect Granola at workspace
+scope died there with the provider's 400. The event type is gone from the
+subscription, the inbound event schema, the manifest's triggers, and
+[`connector-digestibility.md`](connector-digestibility.md).
+
+And a rule could be bound to a connection that receives nothing.
+`ConnectorManifest` gained an optional `activityConnectionScopes`, defaulting to
+`supportedScopes`; Granola declares `["workspace"]`.
+`connectorActivityTriggerDescriptors` now takes the connection's scope and
+returns no triggers for one outside that set.
+
+**Why the wrong event type survived:** its test built the expected request from
+the same constant the adapter sends and read its 201 from a stub that accepted
+any body, so the assertion could only agree with itself. `granolaWebhookApi` in
+`granola.test.ts` now validates event names and answers 400 the way Granola
+does, and a second test proves that fake refuses what the provider refuses —
+otherwise the first test's success still means nothing. **A fake that cannot say
+no is not a test of a provider contract.**
+
+**Why the scope declaration:** Granola supports both connection scopes but
+delivers events on only one — the webhook endpoint is registered against the workspace API key, and a
 personal connection is MCP OAuth that subscribes to nothing. That fact was
 stated only inside `webhookActivity.normalize`, which throws `unauthorized` for
 a non-workspace connection. It is the wrong place for it to be the only
@@ -1030,7 +1051,10 @@ having no triggers; do not reintroduce a caller that reads
 `manifest.activityTriggers` directly to answer whether something can be
 triggered. A connector added with a per-account subscription must declare its
 narrower set, and the manifest refuses a set that is empty, outside
-`supportedScopes`, or narrows activity the connector never declared.
+`supportedScopes`, or narrows activity the connector never declared. And the
+subscribed event list is a copy of Granola's enum rather than a wish: adding a
+name Granola does not define does not degrade delivery, it takes the whole
+connection down.
 
 ### 2026-09-11 — Google, Slack, Linear, Notion, and Granola describe their parameters
 

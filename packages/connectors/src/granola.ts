@@ -287,7 +287,7 @@ const GranolaWebhookEndpointSchema = z.looseObject({
 });
 const GranolaWebhookEventSchema = z.looseObject({
   event_id: z.string().uuid(),
-  event_type: z.enum(["note.access_granted", "note.edited", "note.generated", "note.regenerated"]),
+  event_type: z.enum(["note.access_granted", "note.edited", "note.generated"]),
   note_id: z.string().regex(/^not_[A-Za-z0-9]{14}$/u),
   occurred_at: z.string().datetime({ offset: true }),
   data: z.looseObject({ changed_fields: z.array(z.string()).max(20).optional() }).optional(),
@@ -313,7 +313,10 @@ export async function createGranolaWebhookEndpoint(
       body: JSON.stringify({
         url: normalizeHttpsUrl(webhookUrl),
         scopes: ["workspace"],
-        events: ["note.access_granted", "note.edited", "note.generated", "note.regenerated"],
+        // Granola's three event types, exactly. It rejects the whole request
+        // with 400 if the array names anything else, so this list is a copy of
+        // the provider's enum and not a wish.
+        events: ["note.access_granted", "note.edited", "note.generated"],
       }),
       signal,
     },
@@ -553,7 +556,6 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
           "note.access_granted": "Granola note access granted",
           "note.edited": "Granola note edited",
           "note.generated": "Granola note generated",
-          "note.regenerated": "Granola note regenerated",
         }[verified.event_type];
         return {
           workspaceId: connection.workspaceId,
@@ -598,14 +600,15 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
         { id: GranolaCapabilities.personalRead, kind: "tool" },
       ],
       // A meeting note being written for the first time is the meeting; every
-      // later pass over the same note is Granola improving its own output, and
-      // being granted access to an existing note is a permission change rather
-      // than something that happened.
+      // later pass over the same note is Granola improving its own output
+      // (which it reports as `note.edited`, regeneration included), and being
+      // granted access to an existing note is a permission change rather than
+      // something that happened.
       activityTriggers: defineConnectorActivityTriggers(
         "Granola",
         {
           digestible: ["note.generated"],
-          operational: ["note.access_granted", "note.edited", "note.regenerated"],
+          operational: ["note.access_granted", "note.edited"],
         },
         {
           "note.generated": {

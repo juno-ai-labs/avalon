@@ -84,7 +84,7 @@ describe("Granola workspace connection", () => {
       body: {
         url: expect.stringMatching(/^https:\/\/api\.example\.test\/ingest\/granola\//u),
         scopes: ["workspace"],
-        events: ["note.access_granted", "note.edited", "note.generated", "note.regenerated"],
+        events: ["note.access_granted", "note.edited", "note.generated"],
       },
     })]);
 
