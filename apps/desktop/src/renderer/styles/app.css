@@ -3119,12 +3119,25 @@ pre {
 /* The live timer under the feed is the next event row, drawn by the surface. */
 .activity-presence .agent-work-timing { margin-top: var(--av-sys-space-block-gap); }
 .message-block { margin: 0; }
-.message-block > header { align-items: center; display: flex; gap: var(--space-2); margin-bottom: var(--space-2); }
+.message-block > header { align-items: center; display: flex; gap: var(--space-2); margin-bottom: var(--space-2); min-width: 0; }
+/* The name takes the leftover width and ellipsizes there; everything else in
+   the line keeps its intrinsic width. A Sidekick's name is whatever a person
+   typed when they created it, and the schema allows 300 characters, so without
+   this the line wraps to three rows and squeezes the time into a column. The
+   truncation point is derived from the container rather than chosen, which is
+   why there is no cap here to argue about. */
+.message-block > header > .message-author {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* The header mixes three type sizes, and each one's line box is taller than its
    glyphs by a different amount, so centring the boxes leaves the text looking
    off-centre. Collapsing the children to their glyph height makes the flex
    centring act on what a reader actually sees. */
-.message-block > header > * { line-height: 1; }
+.message-block > header > * { flex: 0 0 auto; line-height: 1; }
 /* One identity line for every turn, drawn by `MessageByline`. The name and the
    time each take one colour and one size whoever is speaking, so Rally's turn
    and a person's read as the same kind of row; what tells people apart is the

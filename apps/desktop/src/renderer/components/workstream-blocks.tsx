@@ -2509,6 +2509,11 @@ export function MessageBlock({
     );
   }
   const automation = message.messageType === 'automation_activation';
+  // The Sidekick that delivered it, under the name frozen into the row at
+  // delivery. A row whose structured content did not parse keeps the generic
+  // label rather than showing a blank author.
+  const automationName = message.automationActivation?.automationName;
+  const automationAuthor = automationName ?? 'Automation';
   if (!automation && (message.authorType === 'system' || message.messageType === 'system')) {
     return <SystemMessageBlock disclosure={rowDisclosure} message={message} />;
   }
@@ -2545,7 +2550,7 @@ export function MessageBlock({
       aria-label={sending ? 'Sending message' : pending && pendingLabel
         ? `${pendingLabel}: message from ${humanAuthorName}`
         : human ? `Message from ${humanAuthorName}`
-          : automation ? 'Automation result' : undefined}
+          : automation ? `Result from ${automationAuthor}` : undefined}
       aria-busy={message.streaming || sending || undefined}
       className={clsx(
         'message-block',
@@ -2567,7 +2572,7 @@ export function MessageBlock({
           messages the one thing on screen with no time against it. */}
       <MessageByline
         align={human ? 'end' : 'start'}
-        author={human ? humanAuthorName : automation ? 'Automation' : 'Rally'}
+        author={human ? humanAuthorName : automation ? automationAuthor : 'Rally'}
         contextLabel={message.contextLabel}
         createdAt={message.createdAt}
         dot={human}
