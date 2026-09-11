@@ -2,6 +2,7 @@ import {
   AutomationSetEvaluatorRulesInputV1Schema,
   ConnectorActivityTriggerDescriptorV2Schema,
   ExternalEventPredicateV1Schema,
+  automationTriggersAdmitResourceType,
   type AutomationSetEvaluatorRulesInputV1,
   type ConnectorActivityTriggerDescriptorV2,
   type DraftExternalEventEvaluatorV1,
@@ -153,9 +154,7 @@ export function validateDraftEvaluatorRules(
         : undefined;
       if (
         selectedResource
-        && !descriptor.resourceRelationships.some(
-          (relationship) => relationship.resourceType === selectedResource.resourceType,
-        )
+        && !automationTriggersAdmitResourceType([descriptor], selectedResource.resourceType)
       ) {
         throw evaluatorIssue(index, ["source", "resourceId"], "sidekick_evaluator_resource_relationship_invalid");
       }

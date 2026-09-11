@@ -95,7 +95,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
-| `packages/contracts/src/automation-evaluators.ts` | The strict external-event evaluator grammar (`always`, or `all` over leaves) and the delivery message the matcher emits. |
+| `packages/contracts/src/automation-evaluators.ts` | The strict external-event evaluator grammar (`always`, or `all` over leaves), the delivery message the matcher emits, and `automationBindableResourceTypes` — the one answer to which resources a rule may name, which search, both validators and the `resourceId` normalizer all read. |
 | `apps/api/src/services/external-event-evaluator.ts` | The pure predicate evaluator WorkspaceDO matches registrations with. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Migration 31: `automation_directory` and `workspace_external_event_registrations`; `applyAutomationDirectory`, `listAutomationDirectory`, `listWorkstreamAutomations`, `automationOwner`, `workstreamParticipant`, `applyExternalEventRegistrations`, `matchExternalEventDestinations`, and the owning-room archive fan-out `notifyOwningRoomArchival`. |
 | `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `admitExternalEvent`, and a run child's effects to the object through the shared effect leg. |
@@ -294,6 +294,35 @@ groups, non-finite numbers, and wrong scalar kinds are rejected at every
 boundary; missing fields make positive and negative predicates false and only
 `presence.not_exists` matches absence; matching is case-sensitive with no
 coercion. A rule that needs OR is two rules.
+
+A rule may also narrow itself to one resource, and `automationBindableResourceTypes`
+(contracts) is the single answer to which one: the resource types the rule's own
+triggers declare a `resourceRelationships` entry for. Those are the containers an
+event happens *inside* — a repository, a channel, a project, a page, a folder, a
+Drive file, a mail thread — never the files, commits, check runs, messages or
+pull requests the events themselves produce, and never a resource with no
+connection to bind through, which is every upload, note and generated document.
+The accept-side validator, the drafting tool's pre-flight check, the normalizer
+that drops an unusable id, and the reconciler that turns a watched work-stream
+resource into registrations all ask that one function, and so does
+`resources_search`: it searches that set and nothing else, and reports it as
+`searchableResourceTypes` beside the rows.
+
+That field is what an empty answer has to be read against, because after the
+filter an empty page has two unrelated causes. With types listed, the query
+matched none of them and another wording may: the container exists and the rule
+should still name it. With no types listed, no resource can narrow a rule in this
+workspace at all, and only then is the rule written with a filter leaf instead —
+one repository is `repository equals owner/name`, which every GitHub event
+declares a filter field for. Telling the model the second when the first is true
+is how a search miss reaches a person as "the automation system cannot bind
+this", which is the sentence the whole path exists to stop repeating.
+
+A declared relationship is not a promise that anything materializes the type:
+Granola declares `granola_folder` and writes only `granola_note`, so a Granola
+workspace searches a type that has no rows. That reads as the first case above
+and is indistinguishable from a miss from here; it is a connector-side gap, and
+[`connectors.md`](connectors.md) carries the invariant it violates.
 
 **Inbound email** arrives at the automation's permanent address
 ([`workstream-email-addresses.md`](workstream-email-addresses.md)). The regional
@@ -580,6 +609,8 @@ or the memory store the automation scope lives in.
 | `apps/api/test/resend-inbound-email.test.ts`, `workstream-email-routing.test.ts`, `workstream-email-address.test.ts` | `pnpm --filter @rally/api test` | The single admission call, its receipts, and the address claim. |
 | `apps/api/test/access-revocation.test.ts` | `pnpm --filter @rally/api test` | The workspace fan-out naming an automation and the consumer walking its children. |
 | `packages/agent-harness/src/automation-creator-tools.test.ts` | `pnpm --filter @rally/agent-harness test` | The drafting tools, the `all` evaluator shape, and the submission pre-check. |
+| `packages/contracts/src/automation-evaluator-resources.test.ts` | `pnpm --filter @rally/contracts test` | Which resources a rule may name: the bindable set and its predicate, and the sentinel and structural cases that drop an id before the parse. |
+| `apps/api/test/automation-creator-catalog.test.ts` | `pnpm --filter @rally/api test` | The drafting catalog and its research tools against the routed workspace database: the connection a webhook earns by its triggers alone, people search, and `resources_search` returning only bindable containers — the fresher event resource beside them left out, and nothing at all where a connector declares no relationship. |
 
 Traps worth knowing before writing one here. The `test-workers` D1 starts with
 no schema, so a test that exercises membership or sessions declares those tables
@@ -685,6 +716,74 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-11 — One answer to which resources a rule may name
+
+**What changed:** `automationBindableResourceTypes` and
+`automationTriggersAdmitResourceType` (contracts) return the resource types a
+set of triggers declares a relationship to, and the predicate over that set. The
+accept-side validator, the drafting tool's pre-flight check and the `resourceId`
+normalizer now all read it rather than each walking `resourceRelationships`
+itself. `resources_search` reads it too: it passes those types to
+`ResourceService.list`, whose new optional `resourceTypes` confines a page to
+them, and an empty admissible set returns nothing rather than everything. Each
+returned row carries the `relationships` it is reached through — resolved
+against its own plugin's declarations rather than the workspace-wide union — and
+the answer carries `searchableResourceTypes`, which is what separates "this query
+matched nothing" from "nothing here could ever match". The description stops
+enumerating a vocabulary by hand and points at that field instead;
+`plugin_inspect` now projects `resourceRelationships`, so the refusal that tells
+the model to read the relationships it lists is finally true.
+[`connectors.md`](connectors.md) carries the matching invariant, because
+declaring a relationship is now also what makes a container findable while
+somebody is drafting.
+
+**Why:** `resources_search` offered every resource in the workspace, ordered by
+recency, ten at a time. Connector activity materializes a resource per file,
+commit, check run, pull request, review and comment, so in a workspace working on
+one repository the repository itself was two rows in eighty thousand, all
+matching its name, and always staler than its own events: the container could not
+be returned at all. The drafting agent searched, found no repository, and
+reported that it could not bind GitHub events — so a Sidekick asked for on pull
+request opened and merged was saved with a timer and no registration. The tool
+was offering, by count, almost exclusively rows the accept-side validator was
+certain to refuse.
+
+Making search ask the same question acceptance asks is what keeps the two from
+being different answers, which is the defect class this path already carries
+scars from. The set is derived from the drafting catalog the model inspects, not
+from a list of types maintained beside it, so a connector that declares a new
+relationship is searchable the moment it declares it and no second place has to
+learn about it. Review found the fifth caller that had been walking
+`resourceRelationships` alone — WorkspaceDO's watched-resource reconciler — which
+is the same point made against the change itself, so it reads the function now
+too.
+
+The first draft of the tool description told the model an empty result meant no
+resource could narrow the rule. That is only true when the admissible set is
+itself empty, and stating it unconditionally would hand a person "the automation
+system cannot bind this" on a mistyped query — the exact sentence this entry
+exists because of. Hence `searchableResourceTypes`: the tool reports what it
+searched, and the two cases stop looking alike.
+
+What a future change has to respect. `ruleTriggersCanNameAResource` is
+deliberately narrower than the length test it replaced: a relationship entry
+with no `resourceType` cannot equal any resource's type, so an id written
+against it could only ever be refused. That is unreachable through a parsed
+descriptor and is asserted in the contracts test rather than left as a trap.
+An empty `resourceTypes` means *nothing
+matches*, not *no filter*. A caller that means "every type" omits the field, and
+the product's own resource list does. Confining the page also costs the early
+exit the old query got from a common term — SQLite now scans the table rather
+than stopping at ten recent matches — which is accepted rather than indexed: the
+worst case is what every low-selectivity query already paid, and this one runs a
+handful of times inside a drafting run. An index on `resource_type` is the answer
+if that ever shows up as a real cost, and it needs a WorkspaceDO migration.
+
+Not done here, and still true: search ranks by recency alone, so a workspace with
+hundreds of repositories can still push the intended one past the tenth row. The
+fix is relevance ordering (exact, then prefix, then substring), which changes the
+cursor the product's list paginates on and is worth doing as its own change.
 
 ### 2026-09-10 — A work stream lists the Sidekicks it owns, beside the ones it loaded
 
