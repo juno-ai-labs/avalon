@@ -443,11 +443,18 @@ interface SidekickTileTip {
   label: React.ReactNode;
   /** Away from whatever the pointer is on, which differs per answer. */
   side: 'top' | 'bottom';
-  /** A modifier beside `.tooltip`, for an answer the base width does not fit. */
-  className?: string | undefined;
 }
 
-function SidekickStripTile({ glyph, label, name, onClick, tip }: {
+function SidekickStripTile({ description, glyph, label, name, onClick, tip }: {
+  /**
+   * What the tooltip would say about the tile that its name does not, for a
+   * reader who has no pointer to rest on the thing it is about. The glyph's
+   * lifecycle marker is drawn inside `aria-hidden` artwork, so its sentence
+   * reaches assistive technology only if the surface carries it — the rule this
+   * rail already keeps for the public-scope badge on a work-stream row, which
+   * names itself on the row rather than in its own tooltip.
+   */
+  description?: string | undefined;
   glyph: React.ReactNode;
   /**
    * What the tile is called to a screen reader, which the caption cannot be: it
@@ -474,14 +481,22 @@ function SidekickStripTile({ glyph, label, name, onClick, tip }: {
 }): React.JSX.Element {
   return (
     <div className="sidebar-context-target">
+      {/*
+        `disableHoverableContent`, like every other tooltip in this rail that
+        hangs off something small: there is nothing in a name or a state to
+        travel into, and the grace area Radix otherwise keeps between a trigger
+        and its content swallows the move onto the tile beside this one.
+      */}
       <Tip
-        {...(tip.className ? { className: tip.className } : {})}
+        className="sidekick-tile-tooltip"
         collisionPadding={8}
+        disableHoverableContent
         label={tip.label}
         side={tip.side}
       >
         <button
           className="sidebar-row automation-row automation-tile"
+          aria-description={description}
           aria-label={label}
           onClick={onClick}
           type="button"
@@ -519,8 +534,12 @@ function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.
       // back. That is what one root buys over two — no second delay, no gap,
       // and no ordering to get right.
       tip={markerHovered
-        ? { label: SIDEKICK_RUNNING_MARKER.description, side: 'bottom', className: 'hexagon-marker-tooltip' }
+        ? { label: SIDEKICK_RUNNING_MARKER.description, side: 'bottom' }
         : { label: `${sidekick.name}${scopeDescription}`, side: 'top' }}
+      // The same sentence, for a reader with no pointer to rest on the play.
+      // The accessible name above says *which* state; this says what it means,
+      // which is the half the mark gets wrong on its own.
+      description={SIDEKICK_RUNNING_MARKER.description}
     />
   );
 }

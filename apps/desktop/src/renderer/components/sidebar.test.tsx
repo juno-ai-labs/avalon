@@ -1433,7 +1433,6 @@ describe('Sidebar work-stream markers', () => {
     fireEvent.pointerMove(tile.querySelector('.automation-glyph-marker')!.parentElement!, { pointerType: 'mouse' });
     await waitFor(
       () => expect(screen.getByRole('tooltip')).toHaveTextContent('in service and waiting on its triggers'),
-      { timeout: 5_000 },
     );
     // And only that one, because there is only one: the tile has a single
     // tooltip slot and the pointer decides what it says.
@@ -1452,6 +1451,28 @@ describe('Sidebar work-stream markers', () => {
   function playTarget(tile: HTMLElement): HTMLElement {
     return tile.querySelector('.automation-glyph-marker')!.parentElement as HTMLElement;
   }
+
+  it('opens on keyboard focus, which is the whole of what the native tooltip could not do', async () => {
+    const tile = renderStripTile();
+
+    // The reason this rail took `Tip` at all. A `title` draws nothing for a
+    // reader who arrives by Tab, on the one row whose caption is ellipsized at
+    // 80px and dropped outright by the rail.
+    act(() => { tile.focus(); });
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Team brief · Workspace');
+  });
+
+  it('says what the play means to a reader who cannot rest a pointer on it', () => {
+    const tile = renderStripTile();
+
+    // The marker is drawn inside `aria-hidden` artwork and its target is a
+    // non-focusable `<g>`, so the sentence reaches assistive technology only
+    // because the tile carries it. Giving the target a tab stop instead would
+    // put one inside every tile in the strip.
+    expect(tile).toHaveAccessibleDescription('Active — in service and waiting on its triggers.');
+    expect(playTarget(tile)).not.toHaveAttribute('tabindex');
+  });
 
   it('answers for the play when the pointer reaches it inside the tile tooltip\'s own delay', () => {
     // The path a pointer actually takes: across the tile, onto the play, before
