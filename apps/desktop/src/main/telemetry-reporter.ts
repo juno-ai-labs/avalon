@@ -5,6 +5,7 @@ import {
   type TelemetryEnvelope,
   type TelemetryEventName,
   type TelemetryIdentityScope,
+  type TelemetryMenuBarAction,
   type TelemetrySource,
   TELEMETRY_ENVELOPE_SCHEMA,
 } from '@rally/contracts';
@@ -216,17 +217,16 @@ export class TelemetryReporter {
 
   menuBarOpened(properties: {
     signedIn: boolean;
-    suggestionCount: number;
     recentCount: number;
     pinnedCount: number;
   }): Promise<void> {
     return this.captureProduct('menu_bar_opened', 'desktop-main', properties);
   }
 
-  menuBarActionSelected(
-    action: 'new_meeting_note' | 'new_workstream' | 'new_automation' | 'suggested_work'
-      | 'recent_workstream' | 'pinned_workstream' | 'open_rally' | 'quit_rally',
-  ): Promise<void> {
+  /** Typed from the registry rather than from a second copy of the list. The
+   * two were hand-copied unions and drifted, and every `open_rally` this sent
+   * was refused at ingestion by an enum that spelled it `open_avalon`. */
+  menuBarActionSelected(action: TelemetryMenuBarAction): Promise<void> {
     return this.captureProduct('menu_bar_action_selected', 'desktop-main', { action });
   }
 

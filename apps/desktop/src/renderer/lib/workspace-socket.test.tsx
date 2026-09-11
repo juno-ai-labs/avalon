@@ -40,7 +40,6 @@ vi.mock('./platform', () => ({
       applicationFocus.listeners.add(listener);
       return () => applicationFocus.listeners.delete(listener);
     },
-    observeClientFeatureFlags: async () => undefined,
   }),
 }));
 

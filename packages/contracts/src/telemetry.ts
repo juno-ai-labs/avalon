@@ -161,6 +161,32 @@ const surfaceEntrypoint = z.enum([
   "home_waiting", "home_suggested", "menu_bar", "command_shortcut", "deep_link", "notification",
   "automation_run_list", "in_app_link", "settings", "unknown",
 ]);
+/**
+ * Every row the macOS status menu has ever reported selecting.
+ *
+ * Exported so `TelemetryReporter` takes its parameter type from here: the two
+ * were hand-copied unions before, they drifted, and `open_rally`/`quit_rally`
+ * were emitted for months against an enum that only admitted the `avalon`
+ * spelling — every one of those events was refused at ingestion.
+ *
+ * Nothing is removed when a row leaves the menu. This schema is what admits an
+ * event at ingestion and released clients keep sending what their build offers,
+ * so a retired value stays admitted and simply stops arriving. Read a value's
+ * presence here as "has been emitted by some shipped build", never as "the
+ * current menu offers this".
+ */
+export const TELEMETRY_MENU_BAR_ACTIONS = [
+  // Retired with the Suggestions section and the three New rows.
+  "new_workstream", "new_automation", "suggested_work", "new_meeting_note",
+  // Retired spellings, from before the product was named Rally.
+  "open_avalon", "quit_avalon",
+  "recent_workstream", "pinned_workstream", "open_rally", "quit_rally",
+] as const;
+
+export type TelemetryMenuBarAction = (typeof TELEMETRY_MENU_BAR_ACTIONS)[number];
+
+const menuBarAction = z.enum(TELEMETRY_MENU_BAR_ACTIONS);
+
 const automationTriggerType = z.enum([
   "manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook", "inbound_email",
 ]);
@@ -564,8 +590,17 @@ export const TELEMETRY_EVENTS = {
     identityScopes: ["anonymous-epoch", "platform-user", "workspace-user"],
     properties: deferredZodSchema(() => z.strictObject({
       signedIn: z.boolean(),
-      suggestionCount: z.number().int().min(0).max(4),
-      recentCount: z.number().int().min(0).max(5),
+      /**
+       * No longer emitted: the status menu dropped its Suggestions section, so
+       * there is no count to take. Kept optional rather than removed because
+       * this schema is what admits an event at ingestion, and a released client
+       * still sends it. Historical rows carry it; do not read its absence as
+       * "nothing was suggested".
+       */
+      suggestionCount: z.number().int().min(0).max(4).optional(),
+      /** Raised from 5 with the ten-row recent list. A released client's
+       * smaller count still validates, so the two cohorts stay comparable. */
+      recentCount: z.number().int().min(0).max(10),
       pinnedCount: z.number().int().min(0).max(5),
     })),
     propertyClassifications: {
@@ -587,10 +622,7 @@ export const TELEMETRY_EVENTS = {
     category: "product",
     identityScopes: ["anonymous-epoch", "platform-user", "workspace-user"],
     properties: deferredZodSchema(() => z.strictObject({
-      action: z.enum([
-        "new_meeting_note", "new_workstream", "new_automation", "suggested_work",
-        "recent_workstream", "pinned_workstream", "open_avalon", "quit_avalon",
-      ]),
+      action: menuBarAction,
     })),
     propertyClassifications: { action: "product" },
     priority: "normal",

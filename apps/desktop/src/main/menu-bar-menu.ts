@@ -1,31 +1,23 @@
 import type { MenuItemConstructorOptions } from 'electron';
-
-/** One suggested work stream, as `GET /work-opportunities` describes it. */
-export interface MenuBarSuggestion {
-  readonly id: string;
-  readonly version: number;
-  readonly label: string;
-}
+import { groupActivityItems, type RecencyGroup } from '../common/recency-groups';
 
 export interface MenuBarWorkstream {
   readonly id: string;
   readonly title: string;
+  /** The recency the sidebar sorts and groups this row by — a visit where the
+   * server reports one, otherwise the last message. See `workstreamRecencyAt`. */
+  readonly lastActivityAt: string;
 }
 
 export interface MenuBarContent {
-  readonly suggestions: readonly MenuBarSuggestion[];
   readonly recents: readonly MenuBarWorkstream[];
   /** In the reader's own hand-arranged order. See `workstream-pinning.md`. */
   readonly pinned: readonly MenuBarWorkstream[];
 }
 
-export const emptyMenuBarContent: MenuBarContent = { suggestions: [], recents: [], pinned: [] };
+export const emptyMenuBarContent: MenuBarContent = { recents: [], pinned: [] };
 
 export type MenuBarAction =
-  | 'new_meeting_note'
-  | 'new_workstream'
-  | 'new_automation'
-  | 'suggested_work'
   | 'recent_workstream'
   | 'pinned_workstream'
   | 'open_rally'
@@ -34,10 +26,6 @@ export type MenuBarAction =
 export interface MenuBarActions {
   /** Observational only: a reporting failure must not block the selected row. */
   readonly selected: (action: MenuBarAction) => void;
-  readonly newMeetingNote: () => void;
-  readonly newWorkstream: () => void;
-  readonly newAutomation: () => void;
-  readonly startSuggestion: (suggestion: MenuBarSuggestion) => void;
   readonly openWorkstream: (workstreamId: string) => void;
   readonly openRally: () => void;
   readonly quit: () => void;
@@ -47,11 +35,11 @@ export interface MenuBarMenuOptions {
   readonly appName: string;
   readonly content: MenuBarContent;
   readonly signedIn: boolean;
-  readonly meetingRecordingAvailable: boolean;
-  readonly suggestedWorkAvailable: boolean;
   /** Whether this macOS draws real section headers. See
    * {@link supportsSectionHeaders}. */
   readonly sectionHeaders: boolean;
+  /** Injected so the recency headings can be driven in tests. */
+  readonly now?: Date;
   readonly actions: MenuBarActions;
 }
 
@@ -75,20 +63,11 @@ function sectionHeader(label: string, supported: boolean): MenuItemConstructorOp
 }
 
 /**
- * Names the thing that has to happen for Rally to have anything to suggest,
- * because with no connector there is nothing to suggest *from* and the section
- * would otherwise look broken rather than unstarted.
- *
- * The longest fixed string in the menu, and past the limit
- * {@link menuBarLabel} imposes on content. That limit exists to stop one
- * model-written title stretching the menu; this is our own copy, it has to read
- * in full, and it is the width of the menu only for an account with no
- * connectors — which is exactly the account it is written for.
+ * How many recent work streams the menu shows, per the product contract. Read
+ * as a page size too: `GET /workstreams` returns this many *unpinned* rows plus
+ * the whole pinned list, which is exactly what the two sections need.
  */
-const SUGGESTIONS_EMPTY_LABEL = 'Connect platforms to get daily suggestions on work streams to create';
-
-/** How many recent work streams the menu shows, per the product contract. */
-export const MENU_BAR_RECENT_LIMIT = 5;
+export const MENU_BAR_RECENT_LIMIT = 10;
 /**
  * How many pinned work streams the menu shows — the top of the reader's own
  * arrangement. This is a **display** limit for a menu that has to stay a menu,
@@ -98,10 +77,9 @@ export const MENU_BAR_RECENT_LIMIT = 5;
 export const MENU_BAR_PINNED_LIMIT = 5;
 /**
  * A macOS menu is as wide as its widest row, so one long label stretches every
- * other one. Both things this menu lists are model-written and allowed 180
- * characters by their contracts — a suggested prompt is a sentence, and a work
- * stream Rally named itself can be nearly as long — so the limit is set by
- * what stays readable rather than by what arrives.
+ * other one. Work-stream titles are model-written and allowed 180 characters by
+ * their contract — a work stream Rally named itself can run most of that — so
+ * the limit is set by what stays readable rather than by what arrives.
  */
 const MENU_BAR_LABEL_MAX_LENGTH = 60;
 /**
@@ -123,10 +101,10 @@ const TRAILING_PUNCTUATION = /[\s,;:.!?—–-]+$/u;
 const GRAPHEMES = new Intl.Segmenter('en', { granularity: 'grapheme' });
 
 /**
- * Flattens a title or prompt to something a single menu row can hold.
+ * Flattens a title to something a single menu row can hold.
  *
- * Both arrive model-written, so they carry newlines and runs of whitespace that
- * a menu renders as a stretched, ragged row, and either can be long enough to
+ * Titles arrive model-written, so they carry newlines and runs of whitespace
+ * that a menu renders as a stretched, ragged row, and one can be long enough to
  * set the width of the whole menu.
  */
 export function menuBarLabel(rawLabel: string): string {
@@ -149,17 +127,33 @@ export function menuBarLabel(rawLabel: string): string {
 }
 
 /**
+ * The heading the recent list falls back to when it has nothing under it.
+ *
+ * With rows, the recent list carries the sidebar's own recency headings and no
+ * heading of its own — the two surfaces list the same work streams and should
+ * not label them differently. With no rows there is no recency to name, and a
+ * bare disabled sentence at the bottom of the menu reads as a stray broken item
+ * rather than as an answer, so the section names itself instead.
+ */
+const RECENT_EMPTY_HEADER = 'Recent';
+
+/**
  * Builds the status item's drop-down as a plain Electron template, so the whole
  * mapping from content to menu is testable without a display server.
  *
- * The order is the product contract: the three things a person can always
- * start, then a rule, then **Suggestions** with whatever Rally is currently
- * suggesting, then a rule and **Recent** with the five most recent work streams,
- * then a rule and **Pinned** with the top five of the reader's own arrangement.
- * Each of the three renders whether or not it has anything in it; an empty one
- * says how it fills. The trailing group is not part of that contract but is what
- * makes the item usable at all — Rally can be launched hidden at login, and
- * then this menu is the only way to open a window or quit.
+ * The order is the product contract: **Pinned** with the top of the reader's own
+ * arrangement, then a rule and the recent work streams under the same recency
+ * headings the sidebar uses. Pinned sits above Recent because a pin is a
+ * standing choice and belongs where it can be found without reading past
+ * whatever moved today — the recent list is ten rows now, and a section
+ * underneath a list that long is a section nobody scans to. Both sections render
+ * whether or not they have anything in them; an empty one says how it fills.
+ *
+ * Nothing above them starts anything. Every row here reopens something that
+ * already exists, which is the one thing this surface can do that no window can
+ * — Rally can be launched hidden at login, and then the menu is the whole
+ * application. The trailing group is not part of the contract but is what makes
+ * the item usable at all: it is the only way to open a window or quit.
  */
 export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstructorOptions[] {
   const { actions, content } = options;
@@ -171,13 +165,7 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     }
     invoke();
   };
-  const template: MenuItemConstructorOptions[] = [
-    ...(options.meetingRecordingAvailable
-      ? [{ label: 'New Meeting/Note', click: tracked('new_meeting_note', actions.newMeetingNote) }]
-      : []),
-    { label: 'New Work Stream', click: tracked('new_workstream', actions.newWorkstream) },
-    { label: 'New Automation', click: tracked('new_automation', actions.newAutomation) },
-  ];
+  const template: MenuItemConstructorOptions[] = [];
 
   const openWorkstreamRow = (
     workstream: MenuBarWorkstream,
@@ -187,54 +175,82 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     click: tracked(action, () => actions.openWorkstream(workstream.id)),
   });
 
-  const pushGroup = (title: string, emptyLabel: string, rows: MenuItemConstructorOptions[]): void => {
-    template.push(sectionHeader(title, options.sectionHeaders));
-    if (rows.length > 0) template.push(...rows);
-    else template.push({ label: emptyLabel, enabled: false });
+  // Only between rows. The first section is always the top of the menu now, and
+  // a menu that opens on a rule looks like it failed to draw its first item.
+  const pushSeparator = (): void => {
+    if (template.length > 0) template.push({ type: 'separator' });
   };
 
-  template.push({ type: 'separator' });
+  /**
+   * Draws one titled section, and owns the rule above it.
+   *
+   * The two failures this exists to make unrepresentable are a header with
+   * nothing under it and a rule with nothing on one side of it, both of which
+   * read as a menu that failed to draw rather than as an answer. So a group
+   * that would be empty is not drawn at all — header and rule together — and a
+   * section that must survive being empty says so by passing `emptyLabel`,
+   * which is the line shown in place of no rows.
+   *
+   * Three outcomes, and no fourth: rows, the caller's empty line, or nothing.
+   * A caller cannot get a bare header by passing an empty array, which is what
+   * the earlier shape of this helper allowed once its empty line stopped being
+   * a required argument.
+   */
+  const pushGroup = (
+    title: RecencyGroup | string,
+    rows: MenuItemConstructorOptions[],
+    emptyLabel?: string,
+  ): void => {
+    const body = rows.length > 0
+      ? rows
+      : emptyLabel === undefined ? [] : [{ label: emptyLabel, enabled: false }];
+    if (body.length === 0) return;
+    pushSeparator();
+    template.push(sectionHeader(title, options.sectionHeaders), ...body);
+  };
 
-  // Suggestions and Pinned are dropped whole when nobody is signed in: neither
-  // has anything to say to a stranger, and the Recent row below already carries
-  // the one message that state needs. Signed in, every group renders — an empty
-  // one says how it fills instead of disappearing, because the people it is
-  // empty for are exactly the ones who have not found the feature yet.
-  if (options.signedIn && options.suggestedWorkAvailable) {
-    pushGroup(
-      'Suggestions',
-      SUGGESTIONS_EMPTY_LABEL,
-      content.suggestions.map((suggestion) => ({
-        label: menuBarLabel(suggestion.label),
-        click: tracked('suggested_work', () => actions.startSuggestion(suggestion)),
-      })),
-    );
-    template.push({ type: 'separator' });
-  }
-
-  pushGroup(
-    'Recent',
-    // A menu that silently loses its lower half reads as broken. Say which of
-    // the two reasons it is: nothing to show, or nobody to show it to.
-    options.signedIn ? 'No recent work streams' : 'Sign in to Rally',
-    content.recents.slice(0, MENU_BAR_RECENT_LIMIT)
-      .map((workstream) => openWorkstreamRow(workstream, 'recent_workstream')),
-  );
-
-  // Below Recent, because a pin is a standing choice and the recent list is
-  // what moved today.
+  // Pinned is dropped whole when nobody is signed in: it has nothing to say to
+  // a stranger, and the Recent row below already carries the one message that
+  // state needs. Signed in it renders even when empty — an empty section says
+  // how it fills instead of disappearing, because the people it is empty for are
+  // exactly the ones who have not found pinning yet.
   if (options.signedIn) {
-    template.push({ type: 'separator' });
     pushGroup(
       'Pinned',
-      'Pin a work stream to see it here',
       content.pinned.slice(0, MENU_BAR_PINNED_LIMIT)
         .map((workstream) => openWorkstreamRow(workstream, 'pinned_workstream')),
+      'Pin a work stream to see it here',
     );
   }
 
+  // The same grouping the sidebar draws, from the same function, so a heading
+  // never means one thing in the window and another in the menu. Recency is
+  // taken at build time rather than at open, which is also when the menu is
+  // rebuilt — a heading can therefore be an hour stale on a menu nobody has
+  // touched, and the refresh the pointer triggers is what corrects it.
+  const recents = content.recents.slice(0, MENU_BAR_RECENT_LIMIT);
+  if (recents.length > 0) {
+    // Each group arrives non-empty — `groupActivityItems` drops a heading with
+    // nothing under it — so none of these needs an empty line, and a group that
+    // somehow had none would correctly not be drawn.
+    for (const group of groupActivityItems(recents, options.now ?? new Date())) {
+      pushGroup(
+        group.label,
+        group.streams.map((workstream) => openWorkstreamRow(workstream, 'recent_workstream')),
+      );
+    }
+  } else {
+    pushGroup(
+      RECENT_EMPTY_HEADER,
+      [],
+      // A menu that silently loses its lower half reads as broken. Say which of
+      // the two reasons it is: nothing to show, or nobody to show it to.
+      options.signedIn ? 'No recent work streams' : 'Sign in to Rally',
+    );
+  }
+
+  pushSeparator();
   template.push(
-    { type: 'separator' },
     { label: `Open ${options.appName}`, click: tracked('open_rally', actions.openRally) },
     { label: `Quit ${options.appName}`, click: tracked('quit_rally', actions.quit) },
   );
