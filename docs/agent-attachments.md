@@ -25,6 +25,7 @@ source of truth for retry, replay, and compaction recovery.
 | `apps/api/src/services/resource-object-cleanup.ts` | Retries regional object deletion without logging object keys or provider bodies. |
 | `apps/api/src/durable-objects/workspace-resources-protocol.ts` | The typed request/result contracts for every resource-domain WorkspaceDO method, with refusals as outcomes rather than throws. |
 | `apps/api/src/durable-objects/workspace-resources-storage.ts` | The resource domain's SQL against the object's own storage: upload commit, draft delete, connector resolve, hydration swaps, watches, version reads, cleanup claims, alias claims, inbound-email receipts, webhook resource upserts, and the maintenance bounds beside them. |
+| `apps/api/src/services/resource-listing.ts` | The listing flag that separates a resource being *reachable* from its being *advertised*, the SQL predicate every enumerating statement applies, and the metadata helper its one producer writes. |
 | `apps/api/src/services/workstream-resource-visibility.ts` | Defines the shared principal-visibility SQL and provides full sidebar, bounded point lookup, keyset page, and aggregate inventory queries. |
 | `apps/api/src/services/workstream-resource-inventory.ts` | Renders the bounded current-principal inventory appended to live and replayed compaction checkpoints. |
 | `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
@@ -337,6 +338,21 @@ character envelope.
 - Relationship detachment revokes discovery and access but does not delete shared
   objects; resource deletion, expiry, or orphan ownership ends the object
   lifecycle.
+- Listing is presentation, never authorization. An unlisted resource is absent
+  from every surface that *advertises* it — the artifacts rail, the workspace
+  resource list, `list_resources`, the compaction inventory, the search
+  projection, and the `resource_attached` socket event — and unchanged
+  everywhere something resolves it by id, so a reachable resource never becomes
+  unreachable by being unlisted, and an unreachable one never becomes readable
+  by being listed.
+- **Advertising is about what the caller does with the answer, not the shape of
+  the read.** A statement that enumerates applies
+  `listedResourceVisibilitySql` and a point lookup does not, but
+  `attachRuntimeResource` is a point lookup whose result is *broadcast*, so it
+  applies the rule too — a by-id read feeding a socket event puts the row on
+  every open client's rail exactly as an enumeration would. Any new caller that
+  turns a resolved resource into something a member sees without asking for it
+  decides the same way.
 - Original content identity describes the exact selected R2 bytes, so a cursor or
   derivative version cannot silently cross into newly hydrated content.
 - A model derivative becomes current only after its content object is complete;
@@ -627,6 +643,84 @@ cheap discovery and continuation paths.
 
 ## Changelog
 
+### 2026-09-11 — An attachment is reachable and advertised, separately
+
+**What changed:** `resource-listing.ts` adds one flag in a resource's
+`metadata_json`. An unlisted resource keeps its work-stream link and every
+by-id path — opened from a link, resolved by `loadVisibleWorkstreamResourcesByIds`,
+imported by `terminal_import_resource`, authorized exactly as before — and
+leaves every surface that advertises it: the artifacts rail, `GET /resources`,
+`list_resources`, the inventory appendix compaction leaves behind, the
+`resource_attached` socket event, and the search projection, where a null
+category also withdraws a row indexed earlier. Terminal's
+repository-replacement backup is the first and only producer, and WorkspaceDO
+migration 52 marks the ones already written.
+
+**Why:** Attaching a resource had been one fact, and for anything a person or a
+model produced on purpose that was right — you want to find what you made. It is
+wrong for a capture Rally takes *for* someone: repository checkout cannot replace
+a workspace in place, so it archives the old one first, and that archive has to
+stay reachable while being nobody's deliverable. Listed, a 21 MiB
+`application/gzip` sat in the artifacts rail next to real output and consumed a
+row of the model's inventory despite `model_content_status = 'unsupported'`
+making it unreadable.
+
+**Considered and rejected:** *Not attaching the backup at all* — `importResource`
+resolves only attached resources, so that trades a rail entry for an
+unrecoverable backup, which is the whole point of making it. *A new
+`relationship_type`* — direction is a two-value enum feeding both rails, the
+vocabulary is CHECK-constrained in a shipped migration whose hash a new value
+would move, and "is this a deliverable" is not the same question as "which way
+does it flow". *Filtering by title or provider in the renderer* — leaves the
+model's inventory and search untouched and matches on a repository name. *A
+distinct `provider`* — `provider` drives `requiresAttachment` in
+`authorizationResourceFacts`, so a listing decision would have moved an
+authorization one. *A column on `workstream_resource_links`* — the right shape if
+this recurs, but a WorkstreamDO migration, a protocol change and a mirror write
+for a single producer, against a JSON key that costs one `UPDATE` to withdraw.
+
+**What a future change has to respect:** There are **three** places the rule
+lands, and the first two are easy to mistake for one. `loadVisibleRows` here
+and `WorkstreamObjectProductService.resources` both read attached links and join
+`resources`; the first feeds the model's tools and the inventory, the second is
+what `GET /workstreams/:id` and the socket's first frame assemble the member's
+rails from, so fixing only one leaves the other advertising. Each takes an
+optional id list and adds the clause on exactly the branch that has none, while
+`RESOURCE_WITH_WATCH_STATE_SQL` omits it entirely as a point lookup. The third
+is `attachRuntimeResource`, which is a point lookup whose answer is broadcast as
+a `resource_attached` event — SQL shape says nothing there, so it tests the
+metadata directly and withholds the event. Its `unlisted` outcome is
+deliberately not `readback_failed`: the link committed, so asking for a
+canonical resync would re-derive a rail that is already right.
+
+Nothing may read listing as an access decision. And a stored `listing` change
+does **not** invalidate search on its own — migration 43 narrowed the
+`resources` update trigger to the columns search reads plus `metadata_json`'s
+`description`, so any future write that flips `listing` on an indexed row
+enqueues `resource_search_versions` itself, the way migration 52 does. Promote
+the flag to a column when a second producer wants something a boolean cannot
+say; one producer does not justify the schema.
+
+Two things the rule deliberately does not reach, both worth knowing before
+someone reports them as bugs:
+
+- **Text already written stays written.** A compaction checkpoint's stored
+  summary is the model's own prose, replayed verbatim, and it may name a
+  resource that has since been unlisted. Only the inventory *appendix* beside it
+  is re-rendered from a filtered read. Unlisting is not redaction, and no
+  fingerprint can make it so: the visibility fence is
+  `inventory:<resource_inventory_revision>`, which belongs to the WorkstreamDO,
+  while a listing change is a WorkspaceDO write — and a migration in one object
+  may not reach into another's tables. A checkpoint written under an older
+  template version replays its frozen messages wholesale for the same reason.
+  Both clear on the next compaction.
+- **`workstream-attachment-tools.ts` has an unwired `loadVisibleResources`
+  option.** It is a `VisibleWorkstreamResourceSet` supplied by a caller, and the
+  page path prefers it over `loadVisibleWorkstreamResourcePage`. Nothing passes
+  it today. Whoever wires it up owns applying the listing rule to whatever
+  produces that set, because routing an enumeration through a caller-supplied
+  read is exactly how the predicate gets bypassed without anyone editing SQL.
+
 ### 2026-09-11 — `list` can be confined to a set of resource types
 
 **What changed:** `ResourceService.list` takes an optional `resourceTypes`, and
@@ -639,6 +733,7 @@ some workspaces. `docs/automation-lifecycle.md`'s entry of the same date has the
 failure that forced it. It is recorded here because this document owns the
 listing path, and the empty-array branch is exactly the kind a later reader
 removes as dead weight.
+
 
 ### 2026-09-08 — Align search admission wording
 

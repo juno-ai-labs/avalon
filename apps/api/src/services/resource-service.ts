@@ -1,4 +1,5 @@
 import { createAccessContext, requireAuthorizedRead } from './authorization-service';
+import { listedResourceVisibilitySql } from './resource-listing';
 import type { AccessContext } from './authorization-policy';
 import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
 import {
@@ -140,6 +141,10 @@ export class ResourceService {
       "(c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)",
       "(r.provider != 'avalon_upload' OR r.attachment_status = 'attached')",
       NOTE_RESOURCE_VISIBILITY_SQL,
+      // Enumeration only. `RESOURCE_WITH_WATCH_STATE_SQL` deliberately omits
+      // this: an unlisted resource is still fetched, opened and downloaded by
+      // whoever holds its id.
+      listedResourceVisibilitySql('r'),
     ];
     const bindings: unknown[] = [this.auth.workspaceId, this.auth.userId];
     bindings.push(this.auth.userId);

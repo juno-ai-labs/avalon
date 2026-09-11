@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import type { AuthContext } from "../src/env";
 import { ResourceService } from "../src/services/resource-service";
+import { unlistedResourceMetadata } from "../src/services/resource-listing";
 import { createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import {
   createTestWorkspaceDO,
@@ -102,6 +103,39 @@ describe("resource listing", () => {
     expect(firstPage.items.map((resource) => resource.id)).toEqual([thirdResourceId]);
     const secondPage = await service.list({ limit: 1, cursor: firstPage.nextCursor!, resourceTypes: ['github_repository', 'drive_file'] });
     expect(secondPage.items.map((resource) => resource.id)).toEqual([firstResourceId]);
+  });
+
+  it("omits an unlisted resource from the workspace list while still serving it by id", async ({ onTestFinished }) => {
+    const regional = new DatabaseSync(':memory:');
+    const workspace = createTestWorkspaceDO({ workspaceId, regionalDatabase: regional });
+    seedMember(regional);
+    onTestFinished(() => { workspace.objectDatabase.close(); regional.close(); });
+    // `fixture`, like the case above: `avalon_generated` carries
+    // `requiresAttachment`, and an attachment decision is a different axis from
+    // the listing one under test here.
+    const insert = workspace.objectDatabase.prepare(`INSERT INTO resources
+      (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+      VALUES (?, ?, 'document', 'fixture', ?, ?, 'attached', ?, ?)`);
+    const at = '2026-09-11T04:00:00.000Z';
+    insert.run(firstResourceId, workspaceId, 'Migration plan.md', '{}', at, at);
+    insert.run(
+      secondResourceId, workspaceId, 'Terminal backup before acme/widget',
+      JSON.stringify({ size: 22_535_876, ...unlistedResourceMetadata() }), at, at,
+    );
+    const service = new ResourceService(createTestEnv({
+      DB: sqliteD1(regional), APP_ENV: 'test', AVALON_REGION: 'global',
+      WORKSPACE_DOS: testWorkspaceObjectBinding(workspace.instance, ['executeRuntimeSql', 'readAuthorizationSnapshots', 'writeAuthorizationSnapshots', 'authorizationResourceFacts']),
+    }), auth);
+
+    const listed = await service.list({ limit: 25 });
+    expect(listed.items.map((resource) => resource.id)).toEqual([firstResourceId]);
+
+    // The other half of the same rule: `RESOURCE_WITH_WATCH_STATE_SQL` omits
+    // the predicate on purpose, so whoever holds the id still gets the row.
+    await expect(service.get(secondResourceId)).resolves.toMatchObject({
+      id: secondResourceId,
+      title: 'Terminal backup before acme/widget',
+    });
   });
 
   it("rejects malformed cursors before querying storage", async () => {

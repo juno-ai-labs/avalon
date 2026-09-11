@@ -2960,6 +2960,54 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // keeps its `not_before`, as in 47. See docs/text-search.md, "Version skew
   // between producers and the consumer".
   statements: ['UPDATE resource_search_versions SET pending = 1'],
+}, {
+  version: 52,
+  description: 'unlist the Terminal recovery backups already attached',
+  // Repository checkout has always attached its pre-replacement archive as an
+  // ordinary generated resource, so every one made before this version is in
+  // its work stream's artifacts rail and its model inventory. The producer now
+  // marks new ones unlisted; these are the ones already written.
+  //
+  // Scoped by the identity the backup path derives rather than by title, which
+  // carries a repository name. Idempotent, and no wider than the one producer:
+  // `terminal-final-diff:` captures are the work's own output and stay listed.
+  //
+  // Two triggers on `resources` matter here, and they behave oppositely.
+  //
+  // `resources_search_update` will **not** fire: migration 43 narrowed it to
+  // the columns search reads plus `metadata_json`'s `description` key, and
+  // `listing` is neither. A backup indexed before this upgrade would therefore
+  // never be re-projected, and would stay in search results forever while
+  // absent from every other surface — so the second statement performs the
+  // same upsert that trigger would have, over exactly the rows the first
+  // marked.
+  //
+  // `resources_create_semantic_version` **will** fire, because it watches
+  // `metadata_json` wholesale and this row's `current_version` is unchanged.
+  // Each marked backup therefore gains a `resource_versions` row identical to
+  // its predecessor but for the flag. That is accepted rather than suppressed:
+  // making the trigger's `WHEN` false means bumping `current_version` in this
+  // statement, which leaves the counter ahead of the history it indexes. The
+  // version is attributed instead — the staging columns exist precisely so a
+  // producer can say who moved the pointers, and `system` is the true answer.
+  // `revision_cause` stays null because this is not `created`, `published`,
+  // `refetched` or `replaced`, and null is what that column already means for
+  // a capture whose producer has no cause to name.
+  statements: [
+    `UPDATE resources
+        SET metadata_json = json_set(metadata_json, '$.listing', 'unlisted'),
+            revision_author_kind = 'system'
+      WHERE provider = 'avalon_generated'
+        AND provider_resource_id LIKE 'terminal-workspace-backup:%'
+        AND COALESCE(json_extract(metadata_json, '$.listing'), '') != 'unlisted'`,
+    `INSERT INTO resource_search_versions (resource_id, revision, pending, not_before)
+     SELECT id, 1, 1, 0 FROM resources
+      WHERE provider = 'avalon_generated'
+        AND provider_resource_id LIKE 'terminal-workspace-backup:%'
+        AND json_extract(metadata_json, '$.listing') = 'unlisted'
+     ON CONFLICT(resource_id)
+       DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0`,
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
