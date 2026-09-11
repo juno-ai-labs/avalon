@@ -236,6 +236,31 @@ Participants are one facepile button onto the
 existing management dialog. Selecting a row switches the feed's substream; the
 rail itself stays at work-stream scope.
 
+Neither rail ends a line it cannot fit with an ellipsis or a hard cut: the line
+fades out. `@keyframes clipped-line-fade` in `app.css` carries a `mask-image`
+whose last 24px go to transparent, and the rule under it lists every line the
+two rails clip — a row title, the flex line a title shares with a system-work
+cog, a row hint, a project name, a Sidekick tile's caption, the account row's
+name and address, and a centre-rail row's name and subtitle. A mask rather than
+a gradient painted over the line, because each of those rows has an idle, a
+hover and a current fill and an overlay matched to one shows as a bar in the
+other two.
+
+The fade appears only where something is actually clipped, and nothing measures
+anything to decide that. The mask rides a scroll-driven animation whose timeline
+is the line's own inline scroller: a line whose text fits is not scrollable, its
+timeline is inactive, and an animation on an inactive timeline contributes
+nothing — so a title ending a few pixels short of the edge keeps its last
+characters at full ink, which an unconditional mask would fade for no reason.
+Renaming a row, dragging either rail, or collapsing one re-decides on its own.
+The keyframe holds one value at both ends because nothing is meant to move; the
+timeline is being asked a question about overflow, not used as a clock. That is
+also why the fade survives the stylesheet's reduced-motion block, which forces
+every animation to 0.001ms: the fill keeps the single value applied outside the
+active interval. `app.css.node.test.ts` pins the three declarations and that no
+listed line went back to an ellipsis, because jsdom lays nothing out and no
+component test can see any of it.
+
 Its device-local collapse preference is independent of the global sidebar.
 Expanded width defaults to 280px and is draggable between 240px and 400px;
 the icon rail is 96px (`COLLAPSED_SIDEBAR_WIDTH`), matching the existing Grok navigation. Its trailing-edge
@@ -469,6 +494,45 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-11 — A rail fades what it cannot fit, and only when it cannot fit it
+
+**What changed:** Every line the navigation sidebar and the work-stream sidebar
+clip now ends in a fade instead of an ellipsis or a hard cut — row titles and
+hints, project names, Sidekick tile captions, the account row, and the centre
+rail's names and subtitles. One `@keyframes clipped-line-fade` and one rule
+listing those lines replace the `text-overflow: ellipsis` each carried. The
+fade is conditional on real overflow, expressed as a scroll-driven animation on
+the line's own inline scroller rather than as a measurement.
+
+**Why:** Reported from a screenshot of both rails side by side, where the two
+halves of the same list ended two different ways and neither said "there is more
+of this here". `…` spends three characters saying it, which on a 12px row is
+most of a word; and the sidebar's title never got even that — it is a flex line
+so that a system-work cog can sit beside the text, ellipsis is a block
+behaviour, and the title was being cut at a hard vertical edge that reads as a
+rendering fault. A mask was chosen over a gradient overlay because these rows
+carry three fills and an overlay matched to one is a visible bar in the other
+two.
+
+**Consequences:** the condition is the part to respect. An unconditional mask
+fades the tail of a title that ends a few pixels short of the edge — text
+nothing clipped — and the obvious fix, measuring each line with a
+`ResizeObserver`, would put one on every row in a list that already runs its own
+motion choreography. The inactive-timeline behaviour gives the same answer for
+free and re-decides itself on a rename or a drag, so a change here should keep
+the question in CSS rather than move it into the component. Three details are
+load-bearing and easy to delete by accident: `animation-duration: auto` has to
+stay *after* the shorthand that resets it to `0s`; the fill mode is what keeps
+the mask applied for a reader whose reduced-motion preference forces every
+duration to 0.001ms; and both keyframe stops hold the same value, because the
+timeline is a question about overflow rather than a clock. The `#000` in the
+mask also made `themes.css.node.test.ts` exempt mask declarations from the
+"no colour is written into app.css" guard — a mask is sampled for alpha and
+never painted, so a literal in one cannot render wrong under another theme, and
+the alternative that would have satisfied the guard blindly, `currentColor`,
+would have tied how much of the line survives to whatever alpha a text token
+carries.
 
 ### 2026-09-11 — Coming back to Rally is neither a hover nor a focus
 
