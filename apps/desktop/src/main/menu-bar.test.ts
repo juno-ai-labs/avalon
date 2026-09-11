@@ -18,6 +18,7 @@ function harness(options: {
   stored?: Partial<StoredApplicationSettings>;
   content?: MenuBarContent;
   createTrayFails?: boolean;
+  now?: () => number;
 } = {}) {
   const menus: MenuItemConstructorOptions[][] = [];
   const destroy = vi.fn();
@@ -48,6 +49,7 @@ function harness(options: {
     },
     onChange,
     logWarning,
+    ...(options.now ? { now: options.now } : {}),
   });
   return { controller, createTray, destroy, menus, onChange, logWarning, storedSettings: () => settings };
 }
@@ -185,6 +187,71 @@ describe('menu bar controller', () => {
     expect(createTray).toHaveBeenCalledTimes(1);
     expect(controller.enabled()).toBe(true);
     expect(controller.present()).toBe(true);
+  });
+
+  it('rebuilds the headings once a recency boundary has passed, with no new content', async () => {
+    // 23:30, so the row is under Today and the next boundary is midnight.
+    let now = new Date('2026-09-10T23:30:00').getTime();
+    const subject = harness({
+      now: () => now,
+      content: {
+        recents: [{ id: 'a', title: 'Acme renewal', lastActivityAt: new Date(now - 4 * 3_600_000).toISOString() }],
+        pinned: [],
+      },
+    });
+    await subject.controller.initialize();
+    expect(subject.menus.at(-1)?.map((item) => item.label)).toContain('Today');
+
+    // The pointer reaching the item before midnight must not rebuild: a
+    // crossing is not a reason to redraw a menu that is still true.
+    now += 60_000;
+    subject.controller.refreshIfHeadingsExpired();
+    expect(subject.menus).toHaveLength(1);
+
+    // Past midnight the same row belongs under Yesterday. Nothing about the
+    // content moved, and offline nothing would: a failed refresh publishes
+    // nothing, so without this the menu says Today until the next good fetch.
+    now += 31 * 60_000;
+    subject.controller.refreshIfHeadingsExpired();
+
+    const rebuilt = subject.menus.at(-1)?.map((item) => item.label);
+    expect(subject.menus).toHaveLength(2);
+    expect(rebuilt).toContain('Yesterday');
+    expect(rebuilt).not.toContain('Today');
+  });
+
+  it('does nothing when the item is off', () => {
+    const subject = harness({ stored: { menuBarEnabled: false } });
+    subject.controller.refreshIfHeadingsExpired();
+
+    expect(subject.menus).toHaveLength(0);
+    expect(subject.createTray).not.toHaveBeenCalled();
+  });
+
+  it('does not record a heading boundary for a build that failed', async () => {
+    let now = new Date('2026-09-10T23:30:00').getTime();
+    const subject = harness({ now: () => now });
+    await subject.controller.initialize();
+    subject.menus.length = 0;
+    const tray = subject.createTray.mock.results[0]?.value as MenuBarTray;
+    let failing = true;
+    vi.spyOn(tray, 'setContextMenu').mockImplementation((template) => {
+      if (failing) throw new Error('the status item went away');
+      subject.menus.push(template);
+    });
+
+    // Past midnight, so the headings have expired and a rebuild is due. A
+    // build that throws leaves the previous menu installed, so the boundary it
+    // would have recorded describes a menu nobody is looking at. Recording it
+    // anyway would suppress every retry until that boundary passed.
+    now += 31 * 60_000;
+    subject.controller.refreshIfHeadingsExpired();
+    expect(subject.logWarning).toHaveBeenCalledTimes(1);
+    expect(subject.menus).toHaveLength(0);
+
+    failing = false;
+    subject.controller.refreshIfHeadingsExpired();
+    expect(subject.menus).toHaveLength(1);
   });
 
   it('rebuilds the drop-down from whatever is currently cached', async () => {

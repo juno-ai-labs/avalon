@@ -3705,9 +3705,14 @@ function createMenuBarTray(): MenuBarTray {
   // pointer reaching the item is roughly a menu's worth of time before it is
   // read. `refreshIfStale` is what keeps a pointer crossing the menu bar from
   // becoming a request.
-  const refreshContent = (): void => {
-    // Signed out there is nothing to ask for, and every attempt would log two
-    // warnings. The menu already says so, and a sign-in refreshes on its own.
+  const prepareMenu = (): void => {
+    // Before the fetch, and unconditionally: the headings are a function of the
+    // clock as well as the content, so they can be wrong with nothing to
+    // re-fetch — and a refresh that fails publishes nothing to rebuild from.
+    // The controller's own guard makes this a no-op unless a boundary passed.
+    menuBarController.refreshIfHeadingsExpired();
+    // Signed out there is nothing to ask for, and every attempt would log a
+    // warning. The menu already says so, and a sign-in refreshes on its own.
     if (!inMemoryAuthSet) return;
     void menuBarContentStore.refreshIfStale(MENU_BAR_CONTENT_MAX_AGE_MS);
   };
@@ -3719,9 +3724,9 @@ function createMenuBarTray(): MenuBarTray {
       pinnedCount: Math.min(content.pinned.length, MENU_BAR_PINNED_LIMIT),
     });
   });
-  tray.on('mouse-enter', refreshContent);
+  tray.on('mouse-enter', prepareMenu);
   tray.on('click', () => {
-    refreshContent();
+    prepareMenu();
     // Both this and `menu-will-show` observe the open. Which of the two macOS
     // raises for a status item's own menu is not something this repository can
     // check — there is no menu bar in the sandbox — and reporting nothing is

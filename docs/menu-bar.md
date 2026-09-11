@@ -148,9 +148,22 @@ The store also carries each row's recency forward, through `workstreamRecencyAt`
 rather than `lastActivityAt` alone. That is what puts a work stream under the
 same heading in the menu as in the sidebar: a visit counts as activity, so one
 opened an hour ago belongs above one a background run touched, and the sidebar
-has always read it that way. Grouping happens when the template is built, not
-when the content is fetched, so a heading can be an hour stale on a menu nobody
-has touched; the refresh the pointer triggers is what corrects it.
+has always read it that way.
+
+**A heading is a function of the content and of the clock, and only the first
+of those publishes anything.** Grouping happens when the template is built,
+which is when content changes — so a row that was under **Today** at 23:59
+belongs under **Yesterday** a minute later with nothing to re-fetch and nothing
+to rebuild from. A content refresh cannot cover it, because the case that
+matters most is the one where content stops arriving: a failed refresh publishes
+nothing at all, so offline overnight the menu would keep saying **Today**
+indefinitely. `MenuBarController.refreshIfHeadingsExpired()` closes it. The
+pointer reaching the status item calls it, a menu's worth of time before anyone
+reads the headings, and it rebuilds from whatever is cached — no request, no
+wake. `nextRecencyBoundary` guards it, so the overwhelmingly common crossing,
+where nothing has expired, returns immediately. The boundary is recorded only
+once `setContextMenu` has accepted the menu it describes; recording it for a
+build that threw would suppress every retry until it passed.
 
 Opening the drop-down emits the product event `menu_bar_opened` with only
 whether the account is signed in and bounded counts for recent and pinned rows.
@@ -236,6 +249,12 @@ destination, so the hidden state is not sticky.
 - **`menuBarEnabled` is a preference; `menuBarPresent` is a fact.** Both cross
   the bridge, because a toggle that succeeded and an item that exists are
   different claims and only the second one is what the person asked for.
+- **A heading that has stopped being true is rebuilt before it is read, not on
+  a timer.** The clock changes a heading without changing a byte of content, and
+  the surface has no window to revalidate on. The pointer arriving at the status
+  item is the one moment that is both free and late enough to be right, so
+  anything that adds a time-dependent label to this menu belongs behind
+  `refreshIfHeadingsExpired`, never behind a content change alone.
 - **One list, one set of headings.** The recent rows here and the recent rows in
   the sidebar are the same work streams, grouped by `common/recency-groups.ts`
   and by the recency `workstreamRecencyAt` returns. A surface that computed its
@@ -320,7 +339,8 @@ is the point of the module being there rather than beside either one.
 | Nothing recent | A **Recent** header over one disabled row. This is the only state that draws that header: with rows, the recency groups name themselves. |
 | Signed out | **Pinned** is dropped entirely, header and rule included; the recent section carries the sign-in row, and it is then the first thing in the menu. The leading separator is suppressed rather than drawn against nothing. |
 | More than five pins | The top five of the arrangement are shown, ungrouped and unsorted. This is a display limit on a menu, not a cap on pinning — see the invariant in [`workstream-pinning.md`](workstream-pinning.md) about nothing counting pins against a limit. |
-| A recency heading goes stale | It can. The menu is rebuilt on content changes, not on open, so a row can sit under **Last hour** for longer than an hour on a menu nobody has touched. The pointer reaching the status item refreshes the content, which rebuilds it. Correcting it on a timer would mean waking the process to redraw a menu nobody is looking at. |
+| A recency heading expires | The pointer reaching the status item rebuilds the menu from cache before anyone reads it, guarded by `nextRecencyBoundary` so a crossing that changes nothing is not a rebuild. Between those, a heading on a menu nobody has touched can be wrong; correcting it on a timer would mean waking the process to redraw a menu nobody is looking at. |
+| A recency heading expires while the menu is **open** | Not covered. macOS owns an open menu and nothing can redraw it underneath the reader. |
 | macOS 13 or older | Every header falls back to a disabled row. Everything else is unchanged. |
 | A request hangs | Aborted after 8 s (`MENU_BAR_REQUEST_TIMEOUT_MS`). A wedged request would otherwise freeze the content for the life of the process. |
 | Sign-out while a refresh is in flight | The generation moves, so that answer is discarded on arrival and a caller asking again gets a new request rather than the superseded one. |
@@ -411,6 +431,42 @@ is reported before `app.focus`, so the application-open coalescer suppresses the
 generic Electron activation callback rather than also counting a Dock open.
 
 ## Changelog
+
+### 2026-09-11 — A heading that expires is rebuilt before it is read
+
+**What changed:** `MenuBarController.refreshIfHeadingsExpired()` rebuilds the
+drop-down from cached content when a recency boundary has passed since the last
+build, guarded by `nextRecencyBoundary`. The pointer reaching the status item
+calls it, before the content refresh rather than after. The controller now takes
+an injectable `now` and passes it to the template, so the boundary it records
+and the headings it builds read the same clock.
+
+**Why:** review of #700 caught it. The recency headings are a function of the
+content *and* of the time, and the menu was rebuilt only when content changed.
+That is wrong in the case that matters most: a refresh that fails publishes
+nothing, so it rebuilds nothing. Offline across midnight, the menu kept saying
+**Today** indefinitely, and a work stream sat under a heading the sidebar had
+already moved it out of. The 15-second staleness window hid the smaller version
+of the same bug, where a pointer arrival skipped the fetch and so skipped the
+rebuild with it.
+
+**Considered and rejected:** a timer on `nextRecencyBoundary`, which is what the
+sidebar does. A renderer is already awake and painting; the main process is not,
+and waking it to redraw a menu nobody is looking at buys a heading that is
+correct only in the moments nobody reads it. The pointer arriving is both free
+and late enough, and it is the same hook the content refresh already uses.
+
+Also rejected: rebuilding unconditionally on every pointer arrival. The
+crossing fires whenever anyone passes the status item, and the guard makes the
+overwhelmingly common case — nothing expired — a comparison rather than a
+`Menu.buildFromTemplate`.
+
+**Consequences:** a boundary passing while the menu is *open* is still not
+covered and cannot be: macOS owns an open menu. Anything added to this menu
+whose label depends on the clock has to go behind the same guard, or it
+inherits the bug this entry fixes. The boundary is recorded only after
+`setContextMenu` returns, so a build that throws retries on the next arrival
+rather than going quiet until the boundary it never reached.
 
 ### 2026-09-11 — The menu became a way back to work, not a way to start it
 
