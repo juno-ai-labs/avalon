@@ -214,7 +214,11 @@ sections, and the one thing that is non-negotiable: each such document ends with
 a **running changelog**, newest entry first, appended **in the same change as the
 code**. An entry records what changed _and why it changed_ — the pressure that
 forced it, the alternative that was rejected, and what a future change has to
-respect. **Only add meaningful and material entries.**
+respect. **Only add meaningful and material entries: one per pull request per
+document, in the document that owns the mechanism, and none for a rename, a
+test, a review round, or a documentation catch-up** —
+[`docs/module-documents.md`](docs/module-documents.md#what-earns-an-entry) has
+the full list and the test.
 
 The code says what the module does and the diff says what moved; only
 that section says why, and it is written for whoever changes this module a year
