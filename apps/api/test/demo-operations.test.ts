@@ -484,6 +484,30 @@ describe("the operator routes", () => {
     const demos = await app.request("/internal/demos", { headers: { authorization: `Bearer ${DEMOS_TOKEN}` } }, env);
     expect(demos.status).toBe(200);
     await expect(demos.json()).resolves.toEqual({ operations: [] });
+
+    // The template route answers the company's directory now, so its own door
+    // is asserted rather than assumed from the router it shares.
+    const anonymousTemplate = await app.request("/internal/demos/template", {}, env);
+    expect(anonymousTemplate.status).toBe(401);
+    const misfiledTemplate = await app.request("/internal/demos/template", { headers: { authorization: `Bearer ${MISFILED_SUPPORT_TOKEN}` } }, env);
+    expect(misfiledTemplate.status).toBe(403);
+    expect(await anonymousTemplate.text()).not.toContain("@rallywith.ai");
+    expect(await misfiledTemplate.text()).not.toContain("@rallywith.ai");
+  });
+
+  it("refuses the cast as the operator used to give it: a name per role, not an account", async () => {
+    // The wire shape changed, and an old client is refused by the contract at
+    // the boundary rather than reaching the directory read with a name in hand.
+    const { env, app, launched } = fixture();
+    const headers = { authorization: `Bearer ${DEMOS_TOKEN}`, "content-type": "application/json" };
+    const named = await app.request("/internal/demos", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ...request(), cast: { priya: "Priya Raman", marcus: "Sam Burton", dana: "Ben Diaz" } }),
+    }, env);
+    expect(named.status).toBe(400);
+    expect(launched).toEqual([]);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM demo_operations").first()).toEqual({ count: 0 });
   });
 
   it("start, read and list an operation through the real rows, starting its Workflow once", async () => {
