@@ -1025,7 +1025,7 @@ async function invalidateRows(
 
 const filterJsonSchema = {
   $ref: "#/$defs/filterNode",
-  description: "Return only rows matching this condition. One predicate is `{\"column\": \"state\", \"op\": \"eq\", \"value\": \"open\"}`; combine several with `{\"all\": [ … ]}` for and, `{\"any\": [ … ]}` for or, nested as deeply as needed. Omit it for every row. A column the table does not have, and a value whose type its column will not take, are both refused with an error naming the column — so call table_describe first and match each column's declared type. What is silent is a well-formed condition nothing satisfies: that returns an empty page, which is an answer about the rows rather than a fault in the filter.",
+  description: "Return only rows matching this condition. One predicate is `{\"column\": \"state\", \"op\": \"eq\", \"value\": \"open\"}`; combine several with `{\"all\": [ … ]}` for and, `{\"any\": [ … ]}` for or, nested at most four levels deep — beyond that the filter is refused. Omit it for every row. A column the table does not have, and a value whose type its column will not take, are both refused with an error naming the column — so call table_describe first and match each column's declared type. What is silent is a well-formed condition nothing satisfies: that returns an empty page, which is an answer about the rows rather than a fault in the filter.",
 };
 const filterNodeJsonSchema = {
   anyOf: [
