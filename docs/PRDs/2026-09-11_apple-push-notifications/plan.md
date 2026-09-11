@@ -129,8 +129,13 @@ before items 1–4 exist, and nothing in phase 1 can send before 5–7 exist.
 ### Apple Developer account (team `7ZLT6A8W25`)
 
 1. **App ID.** Certificates, Identifiers & Profiles → Identifiers →
-   `ai.rallywith.desktop` → enable **Push Notifications**. (When the iOS app
-   exists: the same on its App ID. Nothing else Apple-side is per app.)
+   `ai.rallywith.desktop` (register it as an explicit App ID if notarization
+   never needed one; a wildcard cannot carry push) → enable **Push
+   Notifications** *and* **Associated Domains**. The second is for
+   [https work-stream links](../2026-09-11_https-work-stream-links/prd.md),
+   which ship after push; enabling it now means that PRD needs no second
+   profile, secret, or release to unlock its entitlement. (When the iOS app
+   exists: the same two on its App ID. Nothing else Apple-side is per app.)
 2. **APNs authentication key.** Keys → create one with **Apple Push
    Notifications service (APNs)** enabled. Download the `.p8` once — Apple does
    not offer it again — and record the **Key ID**. Store the file in the team's
@@ -139,7 +144,10 @@ before items 1–4 exist, and nothing in phase 1 can send before 5–7 exist.
 3. **Developer ID provisioning profile.** Profiles → create → **Developer ID**
    (under *Distribution*, not *Mac App Store*) → App ID `ai.rallywith.desktop`
    → the Developer ID Application certificate already used for signing →
-   download the `.provisionprofile`. Record its **expiry date** in the runbook
+   download the `.provisionprofile`. It carries both capabilities from step 1;
+   the app declares only `aps-environment` until the links PRD adds
+   `associated-domains`, and a profile may carry a capability the app does not
+   yet claim. Record its **expiry date** in the runbook
    beside the signing certificate's: Apple states an installed Developer ID app
    using a profile for advanced capabilities must keep a valid profile to run,
    so renewal is a release, not a chore. Renewing means a new profile file, a
