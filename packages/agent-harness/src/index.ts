@@ -3105,6 +3105,10 @@ export interface HarnessPlugin {
   shortWireName: string;
   /** Static, code-authored label used only for catalog display and discovery. */
   displayName?: string;
+  /** Participant-facing label; must never be copied into model prompt metadata. */
+  activityDisplayName?: string;
+  /** Host-authored connector identity for participant activity grouping. */
+  connectorType?: string;
   /** Additional static, code-authored aliases accepted by plugin search. */
   searchAliases?: readonly string[];
   description: string;

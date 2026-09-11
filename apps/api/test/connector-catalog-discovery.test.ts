@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createConnectorRegistry } from "@rally/connectors";
+import { createConnectorRegistry, createCustomMcpConnector } from "@rally/connectors";
 import { __integrationTesting } from "../src/services/integrations";
 
 /**
@@ -153,5 +153,41 @@ describe("the Google presentation, which is rebuilt rather than passed through",
     const { searchAliases } = present([]);
     expect(searchAliases).toContain("email");
     expect(searchAliases).toContain("spreadsheets");
+  });
+});
+
+
+describe("custom MCP connection names", () => {
+  it.each(["Engineering", "Customer research"])("names the server %s", (name) => {
+    expect(__integrationTesting.customMcpActivityName(name)).toBe(name);
+  });
+
+  it("removes control and direction characters from the visible name", () => {
+    expect(__integrationTesting.customMcpActivityName("  Engineering\n\u202eMCP  "))
+      .toBe("Engineering MCP");
+  });
+
+  it.each([undefined, "", " \u202e "])("falls back for an absent name %s", (name) => {
+    expect(__integrationTesting.customMcpActivityName(name)).toBe(createCustomMcpConnector({ redirectUri: "https://api.example.com/callback" }).manifest.displayName);
+  });
+
+  it("preserves Unicode joiners and normalizes line separators on both activity paths", () => {
+    const label = "👩‍💻 فارسی‌نام\u2028Team\u2029MCP";
+    const normalized = "👩‍💻 فارسی‌نام Team MCP";
+    expect(__integrationTesting.customMcpActivityName(label)).toBe(normalized);
+    expect(__integrationTesting.toolInvocationOwningPlugin({
+      connection_id: "custom", owner_model_plugin_id: "plugin_custom_mcp",
+      owner_connector_type: "custom_mcp", owner_display_name: label,
+    })).toMatchObject({ canonicalId: "connection:custom", connectorType: "custom_mcp", displayName: normalized, icon: "plug" });
+  });
+
+  it("uses the participant label and connector identity for transcript activity", () => {
+    const plugin = {
+      canonicalId: "connection:custom", modelId: "plugin_custom_mcp", shortWireName: "custom_mcp",
+      displayName: "Custom MCP server", activityDisplayName: "Slack", connectorType: "custom_mcp",
+      description: "Static description", tools: [], preload: false,
+    };
+    expect(__integrationTesting.transcriptPluginPresentation({ corePlugins: [], plugins: [plugin] }, plugin.canonicalId))
+      .toEqual({ label: "Slack", connectorType: "custom_mcp" });
   });
 });

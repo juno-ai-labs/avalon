@@ -22,7 +22,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 53;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 54;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2980,6 +2980,11 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     version: 53,
     description: "requeue every committed turn after the 2026-09-10 consumer version skew dead-lettered rewrites",
     statements: CONVERSATION_SEARCH_REPROJECTION_MIGRATION_STATEMENTS,
+  },
+  {
+    version: 54,
+    description: "retain connector identity independently of participant activity labels",
+    statements: ["ALTER TABLE transcript_activities ADD COLUMN connector_type TEXT"],
   },
 ];
 
