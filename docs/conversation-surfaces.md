@@ -532,7 +532,9 @@ runs retain their separate Retry action.
 made the outcome read like a failure awaiting recovery. The August 20 harness
 entry correctly required stopped to remain visible and distinct from failed,
 but its fresh-retry affordance did not preserve that distinction in the
-finished interface.
+finished interface. The removed follow-up also claimed partial tool activity
+was no longer running even though Stop is observed at the post-step boundary
+and the active step settles first.
 
 **Considered and rejected:** Keeping Retry as a quieter link. Any replay action
 still suggests that stopping was an interruption to recover from rather than a
