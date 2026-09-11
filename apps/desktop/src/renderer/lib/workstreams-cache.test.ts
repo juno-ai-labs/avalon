@@ -13,6 +13,7 @@ import {
   WORKSTREAMS_QUERY_KEY,
   workstreamDetailQueryKey,
 } from './workstreams-cache';
+import { applyHarnessStatus } from './use-workstream-socket';
 import type { WorkstreamSummary } from './types';
 
 function summary(): WorkstreamSummary {
@@ -244,6 +245,27 @@ describe('patchCachedWorkstream', () => {
 
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.title).toBe('Typed cache boundary!');
     expect(queryClient.getQueryData(['workstream', summary().id])).toBeUndefined();
+  });
+});
+
+describe('applyHarnessStatus', () => {
+  it('drops a pending stop with the status the stop belonged to', () => {
+    const queryClient = new QueryClient();
+    const key = workstreamDetailQueryKey('parent');
+    queryClient.setQueryData(key, {
+      id: 'parent', harnessStatus: 'running', stopRequested: true,
+    });
+
+    // A new run starting locally, ahead of the canonical snapshot. The flag
+    // described the run that just ended; carried over, the composer dock opens
+    // the next one by announcing a wait nobody asked for.
+    applyHarnessStatus(queryClient, 'parent', 'running', '0');
+    expect(queryClient.getQueryData(key)).toMatchObject({ stopRequested: true });
+
+    applyHarnessStatus(queryClient, 'parent', 'completed', '0');
+    expect(queryClient.getQueryData(key)).toMatchObject({
+      harnessStatus: 'completed', stopRequested: false,
+    });
   });
 });
 
