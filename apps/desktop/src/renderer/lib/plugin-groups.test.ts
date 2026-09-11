@@ -114,6 +114,14 @@ describe('pluginGroup', () => {
     });
   });
 
+  it('keeps a custom MCP named Slack separate from Slack and another same-named server', () => {
+    const custom = pluginGroup('connection:custom', 'Slack', 'custom_mcp');
+    expect(custom).toMatchObject({ key: 'custom_mcp:connection:custom', name: 'Slack', icon: 'plug', activeVerb: 'Using Slack' });
+    expect(custom?.key).not.toBe(pluginGroup('connection:slack', 'Slack', 'slack')?.key);
+    expect(custom?.key).not.toBe(pluginGroup('connection:other', 'Slack', 'custom_mcp')?.key);
+    expect(pluginGroup('connection:github', 'GitHub internal MCP', 'custom_mcp')?.icon).toBe('plug');
+  });
+
   it('keys a connector on its name so two connections to one service share a row', () => {
     // The canonical block says `connection:<uuid>` and the live pre-canonical
     // row says `plugin_slack`; a reader looking at either sees Slack.

@@ -54,6 +54,7 @@ export const TranscriptPluginRunSchema = z.object({
   pluginId: z.string().min(1),
   /** The plugin's display name, or its canonical id when it carries none. */
   displayName: z.string().min(1),
+  connectorType: z.string().min(1).optional(),
   state: z.enum(["active", "completed", "failed", "cancelled", "abandoned", "ambiguous"]),
   /** Total measured work. Null when the timing cannot be established. */
   durationMs: z.number().int().nonnegative().nullable(),
@@ -71,6 +72,7 @@ export const TranscriptActivitySchema = z.object({
   subjectId: z.string().min(1),
   callIndex: z.number().int().nonnegative().nullable(),
   label: z.string().min(1),
+  connectorType: z.string().min(1).optional(),
   state: z.enum(["active", "completed", "failed", "cancelled", "abandoned", "ambiguous"]),
   intervals: z.array(TranscriptIntervalSchema),
   revision: z.number().int().positive(),

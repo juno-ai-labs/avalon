@@ -10,6 +10,32 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 
 describe("work-stream schema migration in workerd", () => {
+  it("upgrades populated v53 activities and retains connector identity on updates", async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName("plugin-connector-identity-v54");
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 53),
+        component: "substream_agent_do", workerVersionId: "v53", now: 1_000 });
+      state.storage.sql.exec(`INSERT INTO transcript_activities
+        (activity_id, parent_activity_id, scope, subject_id, call_index, label, lifecycle_state, revision, created_at, updated_at)
+        VALUES ('old', NULL, 'plugin', 'connection:old', 0, 'Custom MCP server', 'completed', 1, 1000, 1000)`);
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+        component: "substream_agent_do", workerVersionId: "current", now: 2_000 });
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      expect(transcript.transcriptActivity("old")).toMatchObject({ label: "Custom MCP server", state: "completed" });
+      expect(transcript.transcriptActivity("old")?.connectorType).toBeUndefined();
+      const edge = { activityId: "custom", parentActivityId: null, scope: "plugin" as const,
+        subjectId: "connection:custom", callIndex: 0, label: "Slack", occurredAtUtc: new Date(2_000).toISOString() };
+      transcript.upsertActivity({ ...edge, connectorType: "custom_mcp", action: "start", revision: 1 });
+      transcript.upsertActivity({ ...edge, action: "complete", revision: 2 });
+      expect(transcript.transcriptActivity("custom")).toMatchObject({ label: "Slack", connectorType: "custom_mcp", state: "completed" });
+    });
+  });
+
   it("upgrades a populated v27 object through the pre-rebuild history with foreign keys enforced", async () => {
     const stub = env.MIGRATION_PROBE_DO!.getByName("populated-v27-upgrade");
     await stub.ping();

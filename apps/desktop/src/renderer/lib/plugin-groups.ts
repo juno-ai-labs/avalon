@@ -189,11 +189,16 @@ function connectorIconForName(displayName: string): PluginGroupIcon {
 export function pluginGroup(
   pluginId: string | undefined,
   displayName: string | undefined,
+  connectorType?: string,
 ): PluginGroup | null {
   if (pluginId) {
     const grouped = GROUPED_PLUGIN_IDS.get(pluginId);
     if (grouped) return grouped;
     if (isUnnamedFirstPartyPlugin(pluginId, displayName)) return RALLY_GROUP;
+  }
+  if (connectorType === 'custom_mcp' && pluginId) {
+    const name = displayName || 'Custom MCP server';
+    return { key: `custom_mcp:${pluginId}`, name, icon: 'plug', ...usedGroupVerbs(name) };
   }
   // Two connections to the same service — a personal and a workspace Slack —
   // are one place as far as the reader is concerned, so the name is the key
