@@ -331,6 +331,42 @@ describe('WorkstreamSidebar', () => {
     expect(within(screen.getByRole('region', { name: 'Artifacts' })).getByRole('heading', { name: 'Artifacts' })).toBeInTheDocument();
   });
 
+  it('lists the room’s Sidekicks under the people, and drops the section when it has none', () => {
+    const onRemove = vi.fn();
+    const { rerender } = render(<Tooltip.Provider><WorkstreamSidebar
+      workstream={workstream}
+      presentUserIds={[]}
+      sidekicks={[
+        { id: 'sidekick-1', name: 'Release notes', description: 'Draft the notes.' },
+        { id: 'sidekick-2', name: 'Editor', description: 'Review wording.', note: 'Unavailable', onRemove },
+      ]}
+      onOpenArtifact={vi.fn()}
+      onParticipants={vi.fn()}
+      onFocusTranscript={vi.fn()}
+    /></Tooltip.Provider>);
+    const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
+    const sections = within(sidebar).getAllByRole('region').map((section) => section.getAttribute('aria-label'));
+    expect(sections).toEqual(['Artifacts', 'Work-stream participants', 'Sidekicks']);
+    const rows = within(within(sidebar).getByRole('region', { name: 'Sidekicks' })).getAllByRole('button');
+    expect(rows.map((row) => row.getAttribute('aria-label')))
+      .toEqual(['Release notes', 'Editor', 'Remove Editor']);
+    expect(screen.getByText('Unavailable · Review wording.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Editor' }));
+    expect(onRemove).toHaveBeenCalledOnce();
+
+    // Neither an empty answer nor a pending one leaves a heading behind, the
+    // way the artifact section above drops itself; the caller is where the two
+    // states are kept apart.
+    for (const pending of [{ sidekicks: [] }, {}]) {
+      rerender(<Tooltip.Provider><WorkstreamSidebar
+        workstream={workstream} presentUserIds={[]} {...pending}
+        onOpenArtifact={vi.fn()} onParticipants={vi.fn()} onFocusTranscript={vi.fn()}
+      /></Tooltip.Provider>);
+      expect(screen.queryByRole('region', { name: 'Sidekicks' })).toBeNull();
+      expect(screen.queryByText('Sidekicks')).toBeNull();
+    }
+  });
+
   it('drags relative to the second sidebar, persists its width, and stops after release', () => {
     const view = setup();
     const handle = screen.getByRole('separator', { name: 'Resize work-stream sidebar' });

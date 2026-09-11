@@ -47,7 +47,19 @@ Loading a Sidekick in a workstream's main substream also persists a deduplicated
 attachment. Future executions load eligible attachments using their latest
 accepted revision; retries retain the admitted bodies while rechecking access.
 Loads in other substreams stay execution-local. Removing an attachment affects
-future executions. The center sidebar lists attachments, not all owned automations.
+future executions.
+
+A work stream's own rails list **Sidekicks**: the Sidekicks the room owns —
+`listWorkstreamAutomations`, read through `GET /sidekicks/workstream/:id`, which
+refuses a caller who is not a participant — together with the attachments its
+main conversation has loaded, folded into one list keyed by Sidekick id. A row
+opens that Sidekick in the library window; the removal on a row is the
+attachment's, and a room's own Sidekick that has never been loaded carries none.
+A merged row takes its lifecycle from the owned summary and its availability
+from the attachment, because each list knows one of them. The section is absent
+entirely — heading included — for a room with none and while the answer is
+still on its way, as the artifact section beside it is; a failure is the one
+thing it shows beside whichever rows did arrive rather than instead of them.
 
 The Sidekicks library opens in its own window from the account popup, immediately
 above Settings. It lists accessible personal, workspace, and room Sidekicks.
@@ -91,7 +103,9 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is a Sidekick resolves the workspace scope and the Sidekick's own `sidekick` scope. |
 | `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Delete, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
 | `apps/desktop/src/renderer/components/appearance-picker.tsx` | The one icon-and-colour palette, shared with the work stream's header. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows. |
-| `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | Enabled standalone Sidekick tiles above the account menu open library details, and `SidekickStripTile`, the tile shape they and the empty strip's **New Sidekick** action share; the center rail shows authorized main-conversation attachments and the participant facepile. |
+| `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | Enabled standalone Sidekick tiles above the account menu open library details, and `SidekickStripTile`, the tile shape they and the empty strip's **New Sidekick** action share; the center rail shows the participant facepile and this room's Sidekicks. |
+| `apps/desktop/src/renderer/components/sidekick-section.tsx` | `SidekickSection`, the **Sidekicks** section both of a work stream's rails render, and `workstreamSidekickRows`, the merge of what the room owns with what its conversation loaded — owned first, one row per Sidekick, `undefined` until both answers are in. |
+| `apps/desktop/src/renderer/components/workstream-sidebar.tsx`, `screens/conversation-surface.tsx` | The section's place below **Participants**; the two queries behind it (`workstream-sidekicks` and `attached-sidekicks`), the participant check that decides whether a row may be detached, and the 403 a non-participant viewer's listing is read as none. |
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` it cuts out of the fill along that marker's own outline (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen, and the empty strip's tile is the same silhouette outlined around a plus. |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksWindow`: the window's routes, and the one place its Escape-to-close gesture is installed. |
 | `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
@@ -131,8 +145,8 @@ create a second draft. The existing `rally:sidekicks` plugin can also create a
 workstream-owned Sidekick from a workstream conversation. The persisted plugin
 id and the canonical tool names stay; the model reads the plugin as
 `rally_sidekicks` and its tools under the `sidekick_` prefix. Workstream-owned
-entries are managed in the
-library; the center sidebar shows loaded attachments only.
+entries are managed in the library and listed in their own room's rails, beside
+that conversation's loaded attachments.
 
 `createAutomation` reserves the durable owner before bootstrapping its main
 `SubstreamAgent`, preserving the existing automation parent identity and routes.
@@ -671,6 +685,42 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-10 — A work stream lists the Sidekicks it owns, beside the ones it loaded
+
+**What changed:** Both of a work stream's rails now render one **Sidekicks**
+section, below **Participants** in the center sidebar and after the resources in
+the inspector rail. It lists what `GET /sidekicks/workstream/:id` returns — the
+Sidekicks this room owns — merged by id with the attachments its main
+conversation has loaded, owned first. `SidekickSection` is the row shape and
+`workstreamSidekickRows` the merge, both new; the attachments-only component
+they replace is gone. Neither rail keeps a heading over an empty list. The
+`automations` sync topic and the pushed sidebar list now invalidate
+`workstream-sidekicks` alongside `attached-sidekicks`.
+
+**Why:** A room's Sidekick was reachable only through the library's ownership
+filter, which is the one surface that is *not* the room — while this module has
+said since the scope was introduced that such a Sidekick "is listed only in the
+room's rail". The rail had the client for it (`getWorkstreamAutomations`, dead
+code) and the server has always had the route; what was missing was the section.
+The alternative was a second section beside the attachments one, which would
+have put two headings called **Sidekicks** in one rail and asked a reader to
+know the difference between owning and loading in order to find one. They are
+merged instead, because for a reader they are one question — which Sidekicks are
+in this room — and a Sidekick can honestly be both: a room's own loadable
+Sidekick loaded in its main conversation appears in both answers and is one
+object. Where it does, the owned summary wins the row: it carries the chosen
+appearance and the live lifecycle, which an attachment record does not, and the
+attachment contributes only its **Remove**, which is the one thing it alone can
+say — availability is the attachment's, the way appearance and lifecycle are the
+owned summary's, so a merged row reads `Unavailable` from it when the lifecycle
+has nothing to add. A future change here has to keep three things: `undefined` and `[]` stay
+apart in the caller even though this rail draws neither, because the day a
+surface here does speak about emptiness it may only do so for `[]`; a
+non-participant's 403 is an answer about the viewer and is read as an empty list
+rather than an error, since a workspace-scoped room can be opened by anyone in
+the workspace; and removal detaches the attachment, never the Sidekick — a
+room's own Sidekick is deleted from its profile in the library.
 
 ### 2026-09-11 — `people_search` can answer "me"
 

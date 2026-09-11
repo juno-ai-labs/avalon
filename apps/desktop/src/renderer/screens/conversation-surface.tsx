@@ -20,7 +20,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
-  type SidekickAttachment,
   type TranscriptActivity,
   type TranscriptTurn,
   type WorkstreamMessageDeliveryState,
@@ -94,6 +93,7 @@ import {
 import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import { workstreamSidekickRows, type SidekickRow } from '../components/sidekick-section';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { InspectorRail } from '../components/inspector-rail';
@@ -634,9 +634,9 @@ export interface ConversationSurfaceProps {
   substreamLaunch?: ConversationSubstreamLaunch | null;
   renderHeader?: (context: ConversationHeaderContext) => React.ReactNode;
   renderSidebar?: (context: ConversationHeaderContext & {
-    attachedSidekicks: SidekickAttachment[] | undefined;
-    attachedSidekicksError: string | undefined;
-    removeSidekick: ((id: string) => void) | undefined;
+    /** This room's Sidekicks; `undefined` until both lists behind it answer. */
+    sidekicks: SidekickRow[] | undefined;
+    sidekicksError: string | undefined;
     focusTranscript: () => void;
     openArtifact: (id: string, returnFocus: HTMLElement) => void;
   }) => React.ReactNode;
@@ -1359,6 +1359,11 @@ export function ConversationSurface({
     onSuccess: (updated, { target, member }) => {
       if (updated) queryClient.setQueryData(workstreamDetailQueryKey(id, target), updated);
       else cacheAddedParticipant(target, member);
+      // Participation is what decides whether the room's own Sidekicks may be
+      // listed at all, and it is not in this query's key: somebody who joins
+      // the main room would otherwise keep the empty list their refusal
+      // cached, and somebody who leaves would keep the names it held.
+      if (target === '0') void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks', id] });
       setParticipantDialogOpen(false);
     },
   });
@@ -1375,6 +1380,7 @@ export function ConversationSurface({
         participants: current.participants.filter((participant) => participant.id !== member.id),
       } : current);
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+      if (target === '0') void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks', id] });
       if (member.id === session?.user.id && (target !== '0' || previous?.scope === 'personal')) {
         setParticipantDialogOpen(false);
         if (target !== '0') {
@@ -1501,11 +1507,24 @@ export function ConversationSurface({
     },
   });
 
-  // Loaded main-stream attachments belong in the rail; owned Sidekicks are
-  // managed through the dedicated library. Fetch only while the rail is open.
+  // The two halves of what this room's rails show under **Sidekicks**: the
+  // Sidekicks the room owns, and the ones its main conversation has loaded.
+  // Both are the room's, so both are fetched here and folded into one list.
   const attachedSidekicks = useQuery({
     queryKey: ['attached-sidekicks', id],
     queryFn: ({ signal }) => api!.getAttachedSidekicks(id!, signal),
+    enabled: Boolean(api && id && parentKind === 'workstream'),
+  });
+  const ownedSidekicks = useQuery({
+    queryKey: ['workstream-sidekicks', id],
+    // A person viewing a room they do not participate in may not list what it
+    // owns, and that refusal is about the viewer rather than about the room —
+    // rendering it as an error would put a permission notice where a list
+    // belongs, on every workspace-scoped room a non-participant opens.
+    queryFn: ({ signal }) => api!.getWorkstreamSidekicks(id!, signal).catch((error: unknown) => {
+      if (error instanceof ApiError && error.status === 403) return [];
+      throw error;
+    }),
     enabled: Boolean(api && id && parentKind === 'workstream'),
   });
   const removeSidekick = useMutation({
@@ -1519,6 +1538,10 @@ export function ConversationSurface({
       void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
     } else {
       void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks', id] });
+      // A room's Sidekick is created from its conversation, by the run that is
+      // writing the turns this sequence counts, so the list that would show it
+      // is stale exactly when the transcript moves.
+      void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks', id] });
     }
   }, [id, parentKind, queryClient, sidekickRefreshSequence]);
 
@@ -1917,6 +1940,22 @@ export function ConversationSurface({
     ...displayedDetail, resources: [], participants: [], viewers: [],
   };
   const resourceManagementDetail = resourcePreview?.workstreamScoped ? sidebarDetail : displayedDetail;
+  // One list for both rails, composed once: the room's own Sidekicks and its
+  // conversation's attachments are two answers about the same objects, and
+  // only a participant may detach one.
+  const sidekickRows = workstreamSidekickRows({
+    // A failed owned read is not a pending one: the attachments answered, and
+    // hiding them because the other half failed takes down a list that worked.
+    // The error still travels beside the rows that did arrive.
+    owned: ownedSidekicks.isError ? [] : ownedSidekicks.data,
+    attached: attachedSidekicks.data,
+    ...(sidebarDetail.participants.some((person) => person.id === session?.user.id)
+      ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate(sidekickId) }
+      : {}),
+  });
+  const sidekicksError = ownedSidekicks.error?.message
+    ?? attachedSidekicks.error?.message
+    ?? removeSidekick.error?.message;
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),
   ).values()];
@@ -1925,9 +1964,8 @@ export function ConversationSurface({
     <ConnectorConnectionsProvider connections={connections.data}>
     <div className="conversation-layout">
       {renderSidebar?.({
-        attachedSidekicks: attachedSidekicks.data,
-        attachedSidekicksError: attachedSidekicks.error?.message ?? removeSidekick.error?.message,
-        removeSidekick: sidebarDetail.participants.some((person) => person.id === session?.user.id) ? (sidekickId) => removeSidekick.mutate(sidekickId) : undefined,
+        sidekicks: sidekickRows,
+        sidekicksError,
         detail: sidebarDetail,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
@@ -2197,9 +2235,8 @@ export function ConversationSurface({
         resourceVersionsError={resourceVersions.error?.message}
         {...(siteArtifacts ? { siteArtifacts } : {})}
         workstream={resourceManagementDetail}
-        attachedSidekicks={attachedSidekicks.data}
-        onRemoveSidekick={sidebarDetail.participants.some((person) => person.id === session?.user.id) ? (sidekickId) => removeSidekick.mutate(sidekickId) : undefined}
-        attachedSidekicksError={attachedSidekicks.error?.message ?? removeSidekick.error?.message}
+        sidekicks={sidekickRows}
+        sidekicksError={sidekicksError}
       />}
 
       <AddParticipantDialog
