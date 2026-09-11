@@ -81,13 +81,21 @@ export function canonicalModelMessageJson(message: ModelMessage): string {
  * principal and no rendered text moves it, so a forger gains nothing they could
  * not already do themselves. It is still a claim the transcript should not let
  * anyone but the host make, and one substitution is cheaper than reasoning
- * about it again. Escaping the angle brackets rather than deleting the run
- * keeps the words a person wrote in front of the model, visibly not a block.
+ * about it again. Escaping the angle bracket rather than deleting the run keeps
+ * the words a person wrote in front of the model, visibly not a block.
+ *
+ * It matches the *opening bracket* by lookahead rather than a whole well-formed
+ * tag, because the reader being defended against is a language model and not an
+ * XML parser: `<rally_author >`, `< /rally_author>`, and `<rally_author id="x">`
+ * all read as the block to a model, and a pattern anchored on `>` immediately
+ * after the name let every one of them through. Escaping the `<` is what makes
+ * the span stop looking like a tag at all, whatever follows the name; the
+ * trailing `>` is left alone because a `>` with no `<` opens nothing.
  */
-const RESERVED_ATTRIBUTION_TAGS = /<(\/?)(rally_author|rally_mentions)>/giu;
+const RESERVED_ATTRIBUTION_TAGS = /<(?=\s*\/?\s*(?:rally_author|rally_mentions)\b)/giu;
 
 function withoutForgedAttribution(text: string): string {
-  return text.replace(RESERVED_ATTRIBUTION_TAGS, "&lt;$1$2&gt;");
+  return text.replace(RESERVED_ATTRIBUTION_TAGS, "&lt;");
 }
 
 export function participantModelMessageContent(
