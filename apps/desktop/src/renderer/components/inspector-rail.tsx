@@ -835,10 +835,28 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       <Dialog.Root open onOpenChange={(open) => { if (!open) lightbox.onClose(); }}>
         <Dialog.Portal>
           <Dialog.Overlay className="attachment-lightbox-overlay" />
-          <Dialog.Content aria-describedby={undefined} className="attachment-lightbox is-document-viewer resource-lightbox" onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            if (lightbox.returnFocus.isConnected) lightbox.returnFocus.focus();
-          }}>
+          <Dialog.Content
+            aria-describedby={undefined}
+            className="attachment-lightbox is-document-viewer resource-lightbox"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              if (lightbox.returnFocus.isConnected) lightbox.returnFocus.focus();
+            }}
+            /*
+              Keep the dialog's own focus rather than handing it to the first
+              control. Every control in this chrome is an icon with a tooltip,
+              and Radix opens a tooltip on focus: the preview would open with a
+              tooltip nobody asked for, and that tooltip is then the topmost
+              dismissable layer, so it, not the preview, is what the first
+              Escape closes. `preventDefault` leaves focus on this element, which
+              Radix gives `tabindex="-1"`, so the focus trap still has its entry
+              point.
+            */
+            onOpenAutoFocus={(event) => {
+              event.preventDefault();
+              (event.currentTarget as HTMLElement | null)?.focus();
+            }}
+          >
             <Dialog.Title className="attachment-lightbox-a11y-title">{headerTitle}</Dialog.Title>
             {content}
           </Dialog.Content>

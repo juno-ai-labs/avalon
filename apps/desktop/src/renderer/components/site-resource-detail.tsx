@@ -324,14 +324,14 @@ function SiteDataPanel({
   return (
     <div className="site-data">
       <SegmentedControl
-        label="Which stored table to show"
+        ariaLabel="Which stored table to show"
         onChange={setSelected}
         options={tables.map((table) => ({
           value: table.name,
-          // The row count reads as part of the name without the screen reader
-          // running the two together as one word.
-          label: <>{table.name} <small>{table.rowCount}</small></>,
-          name: `${table.name}, ${table.rowCount} rows`,
+          label: table.name,
+          // The count is what a person picks a table by, and the control takes
+          // plain text labels, so it rides along as the segment's own tooltip.
+          title: `${table.rowCount} rows`,
         }))}
         value={selected ?? ''}
       />
