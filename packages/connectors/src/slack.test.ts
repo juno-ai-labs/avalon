@@ -514,6 +514,35 @@ describe("Slack connector", () => {
     }
   });
 
+  it("states the create_conversation choice at tool level and validates it at execution", () => {
+    const definition = slackTools.find((tool) => tool.name === "create_conversation");
+    expect(definition).toMatchObject({
+      description: expect.stringMatching(/exactly one.*`name`.*channel.*`user_ids`.*direct or group message/iu),
+      inputSchema: {
+        properties: {
+          name: { description: expect.stringContaining("Omit it when using `user_ids`.") },
+          user_ids: { description: expect.stringContaining("Omit it when using `name`.") },
+          is_private: { description: expect.stringMatching(/ignored for direct and group messages.*cannot be changed later/iu) },
+        },
+      },
+    });
+
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+    });
+    expect(adapter.validateToolInput?.("create_conversation", {})).toBeInstanceOf(Error);
+    expect(adapter.validateToolInput?.("create_conversation", {
+      name: "project-alpha",
+      user_ids: ["UALEX"],
+    })).toBeInstanceOf(Error);
+    expect(adapter.validateToolInput?.("create_conversation", { name: "Project Alpha" })).toBeInstanceOf(Error);
+    expect(adapter.validateToolInput?.("create_conversation", { name: "project-alpha" })).toBeNull();
+    expect(adapter.validateToolInput?.("create_conversation", { user_ids: ["UALEX"] })).toBeNull();
+  });
+
   it("uses Slack's query transport for conversations.info", async () => {
     const fetcher: FetchLike = vi.fn(async (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
@@ -1048,7 +1077,7 @@ describe("Slack connector", () => {
       .resolves.toMatchObject({ output: { member_user_ids: ["UALEX", "UADA"] } });
   });
 
-  it("executes the three workspace Slack writes with stable provider identities", async () => {
+  it("executes workspace Slack writes with stable provider identities", async () => {
     const requests: Array<{ method: string; body: Record<string, unknown> }> = [];
     const fetcher: FetchLike = vi.fn(async (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
@@ -1060,6 +1089,10 @@ describe("Slack connector", () => {
       if (method === "conversations.create") return json({
         ok: true,
         channel: { id: "CNEW", name: "project-alpha", is_private: false },
+      });
+      if (method === "conversations.open") return json({
+        ok: true,
+        channel: { id: "DNEW", is_im: false, is_mpim: true },
       });
       throw new Error(`Unexpected URL ${url}`);
     });
@@ -1089,8 +1122,14 @@ describe("Slack connector", () => {
       name: "project-alpha",
       is_private: false,
     }, context)).resolves.toMatchObject({ providerOperationId: "CNEW" });
+    await expect(adapter.executeTool("create_conversation", {
+      user_ids: ["UALEX", "UADA"],
+      is_private: true,
+    }, context)).resolves.toMatchObject({ providerOperationId: "DNEW" });
     expect(requests.find((request) => request.method === "chat.postMessage")?.body.client_msg_id)
       .toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/u);
+    expect(requests.find((request) => request.method === "conversations.open")?.body)
+      .toEqual({ users: "UALEX,UADA" });
   });
 
   it("rejects free workspace plans and refreshes user-only MCP tokens", async () => {

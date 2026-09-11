@@ -80,7 +80,7 @@ Slack membership and visibility.
 | --- | --- | --- | --- |
 | `send_message` | `chat.postMessage` | `chat:write` | Sends a bot-authored channel or thread message. Rally supplies a stable `client_msg_id` for retry idempotency. |
 | `add_reaction` | `reactions.add` | `reactions:write` | Adds a bot reaction. Slack's `already_reacted` response is treated as a successful retry. |
-| `create_conversation` | `conversations.create` or `conversations.open` | `channels:manage`, `groups:write`, `im:write`, `mpim:write` | Creates a public/private channel by name or opens a DM/MPIM for one to eight user IDs. |
+| `create_conversation` | `conversations.create` or `conversations.open` | `channels:manage`, `groups:write`, `im:write`, `mpim:write` | Accepts exactly one of a channel name or one to eight user IDs, then creates a public/private channel or opens a DM/MPIM. |
 
 These tools use Rally's normal external-write confirmation, authorization, audit,
 and durable-receipt policies. A workspace Slack task can use them without the
