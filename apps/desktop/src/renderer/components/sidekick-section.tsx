@@ -37,19 +37,34 @@ export interface SidekickRow {
  * section beside this one drops itself for the same reason. The two states are
  * still kept apart in the caller, because only one of them may ever be turned
  * into a claim about the room.
+ *
+ * An `error` sits *beside* the rows rather than replacing them. The rows it
+ * would replace are ones that arrived: a detach that failed is no reason for
+ * the Sidekicks it did not detach to disappear, and a failed read of one of
+ * the two lists behind this section is no reason to drop the other. Alone —
+ * nothing arrived — it takes the section's heading with it, because then the
+ * reader is being told about this section rather than about a row in it.
  */
 export function SidekickSection({ items, error }: {
   items?: SidekickRow[] | undefined;
   error?: string | undefined;
 }): React.JSX.Element | null {
-  if (error) return <InlineError>{error}</InlineError>;
-  if (!items?.length) return null;
+  if (!items?.length) {
+    return error
+      ? <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><h2>Sidekicks</h2>
+        <InlineError>{error}</InlineError>
+      </section>
+      : null;
+  }
   return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><h2>Sidekicks</h2>
+    {error && <InlineError>{error}</InlineError>}
     <ul className="sidekick-section-list">{items.map((item) => <li key={item.id}>
       {/* The rail's own tooltip rather than the platform's, as the artifact
           rows above take it: a name this rail truncates — or hides outright
-          when compact — is the whole reason the row carries one. */}
-      <Tip label={item.name} side="right">
+          when compact — is the whole reason the row carries one. The note
+          rides along because compact hides the copy underneath, and a row
+          nobody can read is the one place **Paused** is worth saying twice. */}
+      <Tip label={item.note ? `${item.name} · ${item.note}` : item.name} side="right">
         <button className="workstream-context-row" type="button" aria-label={item.name} onClick={() => void desktopBridge().openSidekicks(item.id)}>
           {/* The library's own hexagon, at the rail's size: compact drops every
               title in this rail, and a Sidekick row without its mark collapses
@@ -93,16 +108,23 @@ export function workstreamSidekickRows({ owned, attached, onRemoveAttachment }: 
   onRemoveAttachment?: ((id: string) => void) | undefined;
 }): SidekickRow[] | undefined {
   if (!owned || !attached) return undefined;
-  const attachedIds = new Set(attached.map((attachment) => attachment.id));
+  const attachments = new Map(attached.map((attachment) => [attachment.id, attachment]));
   const rows: SidekickRow[] = owned.map((sidekick) => {
-    const note = ownedNote(sidekick.status);
+    const attachment = attachments.get(sidekick.id);
+    // Lifecycle first, because that is the owned summary's to state; then the
+    // attachment's own answer, which is the other direction of the rule above.
+    // An `active` Sidekick can still be an unavailable attachment — publishing
+    // a triggered revision over an instruction-only one clears `loadable`
+    // while the room's conversation keeps the attachment — and the row would
+    // otherwise say nothing about a Sidekick its next run will not load.
+    const note = ownedNote(sidekick.status) ?? (attachment && !attachment.available ? 'Unavailable' : undefined);
     return {
       id: sidekick.id,
       name: sidekick.name,
       description: sidekick.description,
       ...(sidekick.appearance ? { appearance: sidekick.appearance } : {}),
       ...(note ? { note } : {}),
-      ...(attachedIds.has(sidekick.id) && onRemoveAttachment
+      ...(attachment && onRemoveAttachment
         ? { onRemove: () => onRemoveAttachment(sidekick.id) }
         : {}),
     };

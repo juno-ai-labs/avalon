@@ -397,7 +397,11 @@ alongside its conversation's attachments and passes one merged list to both
 rails. The center sidebar renders it as a **Sidekicks** section below
 **Participants**; the inspector rail renders the same rows. `SidekickSection`
 replaces the attachments-only component, and each row carries the hexagon the
-library draws it with and the rail's own `Tip` rather than a platform `title`.
+library draws it with and the rail's own `Tip` — labelled with the note as well
+as the name, since compact hides the copy and the tooltip is then the only way
+to read that a Sidekick is paused — rather than a platform `title`. Adding or
+removing a main-room participant invalidates the owned list, which participation
+gates and the query key does not carry.
 
 **Why:** The section the sidebar had listed only attachments, so a Sidekick
 created in the room — the kind whose managers are that room's participants —
