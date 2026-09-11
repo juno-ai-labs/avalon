@@ -213,15 +213,24 @@ export function orderedTranscriptOwnsRunTiming(
  * `timing` is left to the feed whenever the ordered transcript already draws
  * the run's own rows, which is why it is the one answer that can be `null`
  * while a run is plainly going.
+ *
+ * The `timing` answer carries the props it was decided from rather than naming
+ * a kind and leaving the caller to fetch them. A bare kind made the call site
+ * assert `runTiming!` back, which moved the non-null guarantee out of the
+ * compiler and into this function and that spread agreeing — so a fourth answer,
+ * or a `timing` branch that stopped requiring `runTiming`, would have spread
+ * `null` at render instead of failing typecheck.
  */
 export function conversationActivityRow(input: {
   status: HarnessStatus;
   compactingThisRun: boolean;
   orderedOwnsRunTiming: boolean;
   runTiming: AgentWorkTimingProps | null;
-}): 'compacting' | 'timing' | null {
-  if (input.compactingThisRun && input.status === 'running') return 'compacting';
-  if (!input.orderedOwnsRunTiming && input.runTiming) return 'timing';
+}): { kind: 'compacting' } | { kind: 'timing'; timing: AgentWorkTimingProps } | null {
+  if (input.compactingThisRun && input.status === 'running') return { kind: 'compacting' };
+  if (!input.orderedOwnsRunTiming && input.runTiming) {
+    return { kind: 'timing', timing: input.runTiming };
+  }
   return null;
 }
 
@@ -2267,10 +2276,10 @@ export function ConversationSurface({
               virtualizer={transcriptVirtualizer}
             />
           )}
-          <ActivityPresence>{activityRow === 'compacting'
+          <ActivityPresence>{activityRow?.kind === 'compacting'
             ? <AgentCompactionIndicator />
-            : activityRow === 'timing'
-              && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming!} />}</ActivityPresence>
+            : activityRow?.kind === 'timing'
+              && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...activityRow.timing} />}</ActivityPresence>
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
