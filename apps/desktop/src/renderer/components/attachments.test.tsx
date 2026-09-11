@@ -1,9 +1,19 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import * as Tooltip from '@radix-ui/react-tooltip';
+import { cleanup, fireEvent, render as renderBare, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageAttachment } from '../lib/types';
 import { AttachmentLightbox } from './attachment-lightbox';
 import { type AttachmentPreview, MessageAttachments, PendingAttachmentTile } from './attachments';
+
+/**
+ * Every render here goes through the tooltip provider, the way the application
+ * mounts one at its root: the lightbox's actions are icons alone, so each one
+ * carries a tooltip, and Radix throws without it.
+ */
+function render(ui: React.JSX.Element) {
+  return renderBare(<Tooltip.Provider>{ui}</Tooltip.Provider>);
+}
 
 describe('attachment presentation', () => {
   it('shows unavailable content without a spinner or a dead download action', () => {
@@ -11,6 +21,15 @@ describe('attachment presentation', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('no preview available');
     expect(screen.queryByRole('button', { name: 'Download Unavailable.pdf' })).toBeNull();
     expect(screen.queryByText('Preparing preview…')).toBeNull();
+  });
+
+  it('opens without a tooltip nobody asked for', () => {
+    // Its actions are icons with tooltips, and Radix opens a tooltip on focus.
+    // A dialog hands focus to its first control, so the preview used to open
+    // with a label floating over it, and that tooltip then ate the Escape
+    // meant for the preview.
+    render(<AttachmentLightbox preview={{ name: 'note.txt', mimeType: 'text/plain' }} onClose={vi.fn()} />);
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
   it('reports download failures instead of leaving an unhandled rejection', async () => {
@@ -190,7 +209,9 @@ describe('attachment presentation', () => {
     // A socket snapshot recreates both the record and the containing array.
     // Neither is a media change, so the blob URL and DOM image must survive it.
     view.rerender(
-      <MessageAttachments attachments={[{ ...attachment }]} loadContent={loadContent} onOpen={onOpen} />,
+      <Tooltip.Provider>
+        <MessageAttachments attachments={[{ ...attachment }]} loadContent={loadContent} onOpen={onOpen} />
+      </Tooltip.Provider>,
     );
     await Promise.resolve();
 

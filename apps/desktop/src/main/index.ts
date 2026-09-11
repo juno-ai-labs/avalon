@@ -2958,6 +2958,7 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
       const handle: ArtifactViewHandle = {
         destroyed: () => contents.isDestroyed(),
         setBounds: (bounds) => view.setBounds(bounds),
+        setBorderRadius: (radius) => view.setBorderRadius(radius),
         loadURL: async (url) => await contents.loadURL(url),
         close: () => contents.close(),
       };
@@ -3027,7 +3028,12 @@ function parseArtifactPreviewRequest(raw: unknown): DesktopArtifactPreviewReques
   const value = raw as Record<string, unknown>;
   const bounds = parseArtifactPreviewBounds(value.bounds);
   if (!bounds || typeof value.artifactId !== 'string' || typeof value.url !== 'string') return null;
-  return { artifactId: value.artifactId, url: value.url, bounds };
+  // A corner the renderer cannot state is no corner: this is presentation, and
+  // refusing the whole presentation over it would cost the preview itself.
+  const cornerRadius = typeof value.cornerRadius === 'number' && Number.isFinite(value.cornerRadius)
+    ? Math.max(0, value.cornerRadius)
+    : 0;
+  return { artifactId: value.artifactId, url: value.url, bounds, cornerRadius };
 }
 
 function parseArtifactWindowRequest(raw: unknown): DesktopArtifactWindowRequest | null {

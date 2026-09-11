@@ -1713,6 +1713,7 @@ describe('window-control gutter while the sidebar is a drawer', () => {
 });
 
 /**
+/*
  * The search modal is a fixed frame over shifting contents.
  *
  * A reader retries a failed continuation by clicking a button that is only
@@ -1744,5 +1745,76 @@ describe('workspace search modal geometry', () => {
     expect(footer).toContain('flex-shrink: 0;');
     // The other conditional child never occupies flow at all.
     expect(rule('.rally-search-state')).toContain('position: absolute;');
+  });
+});
+
+/*
+ * The live artifact detail is the surface that showed why the GrokBot rules
+ * being scoped to `.app-shell` is a real constraint rather than a tidy detail:
+ * it renders through a Radix portal, which mounts on `document.body`, so it
+ * missed every one of them and drew the pre-rewrite bordered-card family
+ * instead. The grouping primitive it now uses is unscoped for that reason, and
+ * the pane's corner is shared with a native view that CSS cannot reach.
+ */
+describe('the shared shell primitives and the artifact pane', () => {
+  it('lifts tooltips over every lightbox, not only the one that needed it first', () => {
+    // A tooltip is the only label an icon-only action has, and `.tooltip` sits
+    // at 1000 against a lightbox's 1001. Keyed on the class both viewers
+    // carry, because the media viewer's buttons are icons over an image with
+    // nothing else to name them.
+    const lifted = rule('body:has(.attachment-lightbox) .tooltip');
+    expect(lifted).toContain('z-index: 1005');
+    expect(rule('.attachment-lightbox')).toContain('z-index: 1001');
+  });
+
+  it('paints a pressed icon only where a button opted into being a toggle', () => {
+    // `aria-pressed` is on icon buttons that are not visual toggles: the
+    // composer's dictation button carries it through `transcribing` and
+    // `finalizing` while painting itself from `.microphone-control.is-listening`,
+    // so a rule keyed on the attribute alone washes it during the states that
+    // class does not cover.
+    // A rule qualified by something else (`.grokbot-computer-button`, say) is
+    // a component painting its own control and is fine. What must not exist is
+    // one that claims every pressed icon button in the tree.
+    const bare = preludes()
+      .flatMap((prelude) => prelude.split(','))
+      .map((selector) => selector.trim())
+      .filter((selector) => /^\.icon-button\[aria-pressed='true'\](?::[a-z-]+(?:\([^)]*\))?)*$/u.test(selector));
+    expect(bare).toEqual([]);
+    expect(rule(".icon-button-toggle[aria-pressed='true']:hover:not(:disabled)"))
+      .toContain('var(--av-cmp-row-background-selected)');
+  });
+
+  it('leaves the primitives unscoped, so a portal gets them without a shell ancestor', () => {
+    expect(rule('.inset-surface')).not.toBeNull();
+    const scoped = preludes().filter((prelude) => /\.app-shell[^,]*\.inset-surface\b/u.test(prelude));
+    expect(scoped).toEqual([]);
+  });
+
+  it('draws no edge of its own around the page, and no gutter around the pane', () => {
+    // The border and the corner the pane used to carry were a second frame
+    // inside the lightbox's own, around content that already fills it.
+    const pane = rule('.site-detail-pane');
+    expect(pane).not.toContain('border:');
+    expect(pane).not.toContain('border-radius');
+    expect(rule('.resource-lightbox .rail-scroll:has(> .site-detail)')).toContain('padding: 0');
+  });
+
+  it('rounds the page against the dialog\u2019s outside edge and nothing else', () => {
+    // Two numbers in one file now: the dialog's own corner and the pane's
+    // bottom pair. The composited view is given whatever the pane draws, read
+    // off the element at present time, so the main process states no radius of
+    // its own and a host that draws no corner gets a square view.
+    const host = /border-radius:\s*(\d+)px/u.exec(rule('.attachment-lightbox.is-document-viewer') ?? '')?.[1];
+    const pane = rule('.resource-lightbox .site-detail-pane');
+
+    expect(host).toBeDefined();
+    expect(pane).toContain(`border-bottom-left-radius: ${host!}px`);
+    expect(pane).toContain(`border-bottom-right-radius: ${host!}px`);
+    // The top pair stays square: that edge meets the header, not the outside.
+    expect(rule('.site-detail-pane')).not.toContain('border-radius');
+
+    const main = readFileSync(resolve(process.cwd(), 'src/main/artifact-viewers.ts'), 'utf8');
+    expect(main).not.toContain('PREVIEW_CORNER_RADIUS');
   });
 });
