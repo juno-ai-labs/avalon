@@ -78,7 +78,7 @@ export function AgentCompactionIndicator(): React.JSX.Element {
 }
 
 /**
- * What the activity row says between a Stop request and the run ending.
+ * What the composer dock says between a Stop request and the run ending.
  *
  * Stop is observed only at the loop's next safe step boundary: the response in
  * flight and every tool it already asked for settle first, and no further
@@ -89,9 +89,14 @@ export function AgentCompactionIndicator(): React.JSX.Element {
  * while the row above went on counting "Rally is working for 42s" — so a Stop
  * that was working read as a Stop that was ignored.
  *
- * This is the acknowledgement, in the place the reader is already watching. It
- * names what is being waited on rather than a duration: the only number worth
- * printing is how much longer, and nothing here can know it.
+ * This is the acknowledgement. It borrows the activity rows' shape because it
+ * is the same kind of line, but it is drawn in the dock rather than in the
+ * feed: the dock is outside the scroller, and a reader who has scrolled up to
+ * read history is exactly who needs to see this. `conversationShowsStoppingRow`
+ * has that in full.
+ *
+ * It names what is being waited on rather than a duration: the only number
+ * worth printing is how much longer, and nothing here can know it.
  */
 export function RunStoppingIndicator(): React.JSX.Element {
   const appearance = useAppearance();
