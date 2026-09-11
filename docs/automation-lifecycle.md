@@ -731,6 +731,24 @@ production inspection paths.
 
 ## Changelog
 
+### 2026-09-11 — A delivered Sidekick result carries no trust label
+
+**What changed:** `renderUntrustedAutomationResultMessage` is deleted. The Bind
+payload written by `admitAutomationActivation`, and the projection of the same
+row on every later run, are now a user-role message carrying the Sidekick's name,
+the delivery timestamp and the result body — no `UNTRUSTED SIDEKICK RESULT`
+header. `renderTriggerActivityMessage` and
+`renderUntrustedExternalEventMessage` are deleted with it.
+
+**Why:** Requested by the team and reaffirmed. The row is still `actor='system'`
+with a null author and still queues rather than interrupts; only the label is
+gone.
+
+**What a future change has to respect:** the disposition classifier reads the
+result behind the same payload the woken run does, so a change to that payload's
+shape changes what the classifier sees. The attribution line is what distinguishes
+it from a person's message now that the header does not.
+
 ### 2026-09-11 — One tooltip per strip tile, saying whichever part of it the pointer is on
 
 **What changed:** `SidekickStripTile` trades its native `title` for the shared

@@ -24,11 +24,6 @@ import {
   memberSafeHarnessFailureMessage,
   renderScheduledDigestBriefMessage,
   renderScheduledWakeupMessage,
-  renderTriggerActivityMessage,
-  renderUntrustedAutomationResultMessage,
-  renderUntrustedInboundEmailMessage,
-  renderUntrustedExternalEventMessage,
-  renderUntrustedSlackOriginMessage,
   renderWorkstreamSystemPrompt,
   renderCompactionCheckpointContent,
   rejectToolModesBeforeCall,
@@ -1384,7 +1379,7 @@ async function projectModelProtocolTranscript(
     if (message.structuredContent?.kind === "inbound_email") {
       if (message.id === input.triggerMessageId) {
         projected.push(modelDerivative(
-          renderUntrustedInboundEmailMessage(modelMessageContent(message)),
+          { role: "user", content: modelMessageContent(message) },
           "participant_turn",
           message.id,
           message.sequenceNumber,
@@ -1401,7 +1396,14 @@ async function projectModelProtocolTranscript(
     if (message.structuredContent?.kind === "external_event") {
       if (message.id === input.triggerMessageId) {
         projected.push(modelDerivative(
-          renderUntrustedExternalEventMessage(modelMessageContent(message)),
+          {
+            role: "user",
+            content: [
+              "EVENT THAT STARTED THIS RUN:",
+              "Work from its contents: name its fields and values in your result as the Sidekick's instructions ask.",
+              modelMessageContent(message),
+            ].join("\n"),
+          },
           "participant_turn",
           message.id,
           message.sequenceNumber,
@@ -1419,15 +1421,16 @@ async function projectModelProtocolTranscript(
     // Unlike the two exceptions above, an activation is admitted on every run
     // and not only when it is the trigger. It is standing context: the agent
     // should be able to consult last Monday's agenda when somebody asks a
-    // question today. The label is identical either way; nothing about being
-    // older makes an automation's output more trustworthy.
+    // question today.
     if (message.messageType === "automation_activation") {
       projected.push(modelDerivative(
-        renderUntrustedAutomationResultMessage({
-          automationName: automationActivationName(message.structuredContent),
-          deliveredAt: message.createdAt,
-          text: modelMessageContent(message),
-        }),
+        {
+          role: "user",
+          content: [
+            `"${automationActivationName(message.structuredContent)}", delivered ${message.createdAt}.`,
+            modelMessageContent(message),
+          ].join("\n"),
+        },
         "participant_turn",
         message.id,
         message.sequenceNumber,
@@ -5374,7 +5377,15 @@ async function loadRunPromptContext(
   const additionalMessages: ModelMessage[] = [];
   if (input.slackOrigin) {
     additionalMessages.push(modelDerivative(
-      renderUntrustedSlackOriginMessage(input.slackOrigin),
+      {
+        role: "user",
+        content: JSON.stringify({
+          nearbyMessagesStatus: input.slackOrigin.nearbyMessagesStatus,
+          nearbyMessages: input.slackOrigin.nearbyMessages,
+          attachments: input.slackOrigin.attachments,
+          appContext: input.slackOrigin.appContext,
+        }),
+      },
       "run_context",
       input.triggerMessageId ?? `slack-origin:${JSON.stringify([
         input.slackOrigin.teamId,
@@ -5429,7 +5440,7 @@ async function loadRunPromptContext(
     };
     if (recallsMemoryAtAdmission) memoryQueryParts.push(JSON.stringify(triggerContext));
     triggerMessage = modelDerivative(
-      renderTriggerActivityMessage(triggerContext),
+      { role: "user", content: JSON.stringify(triggerContext) },
       "connector_activity",
       input.activityId,
     );
