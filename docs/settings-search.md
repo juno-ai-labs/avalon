@@ -155,17 +155,6 @@ rather than on `workspace`. A new section that `sectionLabels` does not name is
 now a type error. An exclusive-choice strip is a `radiogroup` everywhere, so it
 costs one tab stop and its arrows move the choice.
 
-### 2026-09-08 — Move personal appearance to Account
-
-Account now exposes name, avatar initials and color as individual searchable settings. The compact profile editor previews edits immediately and saves valid changes automatically through the existing account save path; Application retains device appearance controls.
-
-### 2026-09-07 — Preserve the theme guard across grouped selectors
-
-The navigation-painter invariant now allows the separate Settings panel and
-checks every selector in a grouped rule. Reading only the final selector could
-hide a nested painter behind an allowed panel. Search input props now stay on
-the input, and its wrapper focus rule is separate from the global focus rule.
-
 ### 2026-09-07 — Settings shares the main sidebar's search control and interaction colors
 
 **What changed:** Settings uses the main sidebar's search component and visual
@@ -182,16 +171,6 @@ have to be made twice, which is how the drift happened the first time.
 
 **Consequences:** Grouped selectors keep the main window authoritative for both
 the control and its colors, while local settings discovery is preserved.
-
-### 2026-09-05 — Verify review findings before merging (#557)
-
-**What changed:** Restored discovery aliases, indexed MCP setup policy, aligned provider actions with scope, keyed permission option labels, and made reveal cancel on navigation, interaction and failed reads. Replayed metadata no longer throws during render.
-
-**Why:** Review exposed real discovery regressions and late-focus hazards not exercised by the original happy-path tests.
-
-**Considered and rejected:** Arbitrary observer timeouts would race slow legitimate reads. Removing setup discovery contradicts the requirement that all settings be searchable. A general plugin or form engine remains unnecessary.
-
-**Consequences:** Search remains read-only; cancellation and instance identity now have direct regression coverage. Action labels do not receive keyboard activation focus.
 
 ### 2026-09-05 — Define settings once for presentation and discovery
 

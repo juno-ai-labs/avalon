@@ -396,16 +396,6 @@ resident.
 
 ## Changelog
 
-### 2026-09-07 — Ace relays demo preparation to Global
-
-**What changed:** Beside retirement, Ace reads and drives demo preparation
-through Global's public API with Global's `demos` token.
-
-**Why:** Demos are prepared in Global only — the template is a Global
-workspace and the Workflow is bound there — so the Demos page has one region
-to ask. The same relay, the same per-region credential rule, and the same
-recorded exception; nothing new crosses a region.
-
 ### 2026-09-07 — Ace relays workspace retirement to the region that owns the workspace
 
 **What changed:** Ace calls the owning region's public API over HTTPS with
@@ -542,26 +532,6 @@ and responders stop rather than querying Global as a substitute.
 
 Shipped in the pull request for this change. See
 [`analytics-lakehouse.md`](analytics-lakehouse.md).
-
-### 2026-08-24 — Ace's operator directory is named as a regional exception
-
-**What changed:** The boundary now explicitly records that Ace directly reads
-EU D1 and transiently exposes matching directory fields to an authorized
-operator, while its queue fan-out continues to carry only opaque IDs and a flag
-key.
-
-**Why:** The earlier text claimed names and full email addresses never crossed
-regions even though Ace's configured EU D1 binding and directory route did
-exactly that. A regional guarantee must describe the deployed read path, not
-only the notification payload.
-
-**Considered and rejected:** Describing Ace as an RPC-only product runtime. Ace
-is a shared internal administrative plane with an explicit direct-directory
-requirement; hiding that distinction would preserve the contradiction.
-
-**Consequences:** Product/API regional access remains RPC-only. Any expansion of
-Ace beyond transient directory lookup and opaque fan-out is a new residency
-decision and must update this exception rather than inherit it silently.
 
 ### 2026-08-24 — Ace fans product-flag keys into regional ownership
 
@@ -720,28 +690,6 @@ added at the committing service, remain idempotent, and keep recipient identity
 out of semantic event properties. EU public-site funnels are aggregate across
 page loads; Global can form anonymous acquisition paths. The route endpoint
 grants no event or account authority and remains Global-only.
-
-### 2026-08-13 — Terminal activation stays within the Global US target
-
-**What changed:** The Global Worker now declares Terminal supported with the
-verified Daytona `us` target and `daytona-small` snapshot. Its API credential
-remains a regional Worker secret. EU has the same provider values staged as
-regional bindings but remains explicitly unsupported.
-
-**Why:** The operator supplied an enabled Global configuration after validating
-the Daytona bootstrap and corrected stop-before-archive lifecycle, and requested
-that EU be preconfigured without activation. Leaving Global capability
-unsupported would make that integration unavailable; enabling EU against the
-staged US target would cross the regional data boundary.
-
-**Considered and rejected:** Inferring EU capability from the staged values, or
-storing the Daytona API key in Wrangler configuration. The former could route EU
-content to a US target; the latter would commit a provider credential.
-
-**Consequences:** Normal deployments preserve each region's non-secret Terminal
-bindings while Cloudflare retains `DAYTONA_API_KEY` as a regional secret. EU
-requires its own target-specific acceptance record and an explicit capability
-change before activation.
 
 ### 2026-08-13 — EU telemetry control is narrow and keyless, and onboarding telemetry resolves a region immediately
 

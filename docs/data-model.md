@@ -1134,13 +1134,6 @@ cleanup exclusions, and revision fences; deleting retained watermarks or caching
 due times would weaken those guarantees. Future queries must retain predicates
 that select the pending indexes, and migration history remains immutable.
 
-### 2026-09-08 — Store per-user sidebar access history
-
-Migration 37 records visits separately from activity and read state because the
-sidebar must follow one person's access across sessions. The table stays in the
-regional WorkspaceDO and is not exposed through the generic database facade.
-
-
 ### 2026-09-08 — Order Sidekick registration replacement
 
 Sidekick owner migration 4 stores `registration_generation`; WorkspaceDO migration
@@ -1150,11 +1143,6 @@ Equal-generation retries now preserve the boundary and empty replacements retain
 the fence. These are object-owned SQLite migrations, not regional D1 migrations.
 The Cloudflare class stays `AutomationDO` for the compatibility deployment.
 
-### 2026-09-07 — Sidekick loading and attachment storage
-
-SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Substream migration 43 adds sidekick_attachments and sidekick_execution_skills for conversation ownership and retry-stable instruction snapshots. Existing namespace lookup keys remain unchanged.
-
-This composes knowledge with existing execution machinery while keeping one Sidekick identity and preserving authorization boundaries.
 ### 2026-09-07 — Persist new-user identity and learning progress
 
 Onboarding needs the same appearance and resumable setup across sessions.
@@ -2063,46 +2051,6 @@ and is the only version that can be right. Also rejected: leaving the two
 CHECKs narrow and storing the new kind as `mention`, which would have made the
 delivery branch guess from the payload shape.
 
-### 2026-08-22 — The per-migration test suite is retired
-
-**What changed:** `packages/db/test/migrations.test.ts` is deleted — 3062 lines
-and 48 tests that applied the chain step by step and asserted on each
-intermediate schema. `baseline-migration.test.ts` still replays all 95 files and
-diffs the result against the checked-in baseline, so the chain is still executed
-on every run; what is gone is the per-step assertion. The three tests in that
-file that covered the development seed rather than a migration moved to
-`packages/db/test/dev-seed.test.ts`.
-
-**Why:** Every migration now sits at or below the 0090 baseline boundary, and a
-deployed migration is immutable. `scripts/d1-baseline.test.mjs` already fails if
-a subsumed migration is edited or a file is inserted below the boundary — the
-manifest digest covers the file list *and* the contents. A test asserting that
-`0037` leaves a particular column therefore could not catch a regression the
-digest does not catch first: the file it describes cannot change. What the suite
-did still cost was runtime — it was most of `pnpm --filter @rally/db test`,
-which drops from ~24s to ~3s.
-
-**The alternative that was rejected:** keeping the ~14 tests that assert on
-pre-0090 legacy shapes and deleting the rest. It draws the line in the wrong
-place — those are the *least* relevant, describing tables 0090 dropped, and
-keeping them would have left the impression that a per-migration test is still
-the thing to write when adding a migration. It is not: a new migration is
-covered by the baseline equivalence check and by the service test for the
-behaviour it enables.
-
-**What a future change has to respect:** a migration above the baseline boundary
-is still *replayed* — `baseline-migration.test.ts` builds one database from the
-whole chain and another from the baseline plus everything above it, then diffs
-their tables, columns, foreign keys, indexes, triggers and seeded rows. `0091` is
-the first such migration and is covered that way today. What it does not get is
-the digest: the manifest pins only what the baseline subsumes, so an edit to a
-migration above the boundary is not caught the way an edit below it is. That
-makes the boundary worth moving when the chain above it grows, and it means a
-migration whose point is a *data backfill* — which an empty-database replay never
-exercises — still needs a test where its behaviour is used. And `seed.sql` and
-`seed-product.json` are not migrations: they stay editable, so `dev-seed.test.ts`
-keeps asserting that the D1 seed never recreates a product table 0090 dropped.
-
 ### 2026-08-21 — A work stream is born private
 
 **What changed:** A new work stream's scope defaults to `personal` rather than
@@ -2518,29 +2466,6 @@ flushes and verifies that state before
 opening a route; Electron pages the WorkspaceDO socket; and D1 cannot recover or
 override the directory after cutover.
 
-### 2026-08-18 — HyperSight persistence adopts BlockDashboard identifiers
-
-**What changed:** Regional D1 and object-local SQLite tables, indexes, triggers,
-origins, errors, and import mappings now use `block_dashboard_*`. Deployed D1
-migration `0043_hypersight.sql` remains byte-for-byte immutable; the forward
-`0078_rename_hypersight_to_block_dashboard.sql` migration performs that rename. The
-per-block execution owner is `BlockDashboardAgent`; API shapes use
-`BlockDashboard` types.
-
-**Why:** Persistence should name the authority it implements rather than a
-product label. The common prefix now joins configuration, dispatch, execution,
-socket receipts, and publication state in schema inspection and telemetry.
-
-**Considered and rejected:** Keeping old physical table names while renaming
-only TypeScript, and renaming the historical migration file. The former leaves
-misleading storage vocabulary; the latter replays because D1 tracks the full
-filename rather than only its numeric prefix.
-
-**Consequences:** The unshipped DO baseline uses the final name directly, while
-D1 reaches it through a new forward migration. Tests assert both historical
-migration immutability and the resulting schema. Visible dashboard text still
-says HyperSight and is not derived from storage identifiers.
-
 ### 2026-08-18 — Active compaction is operational state, and derived block output gains a reconnect-safe checkpoint
 
 **What changed:** The work-stream object map now names
@@ -2662,40 +2587,6 @@ and storage bottleneck.
 **Consequences:** Cross-object relationships are RPC/outbox contracts, never SQL
 joins. The authoritative DDL/catalog for all four Durable Object classes is in
 [`workstream-durable-object.md`](workstream-durable-object.md).
-
-### 2026-08-17 — Serving names now match the WorkstreamDO authority
-
-**What changed:** The work-stream map now names the normalized object-local root,
-parts, participants, runs, tool effects, attention, compaction, wakeup, resource
-link, suggestion, and Terminal tables as the serving records. The D1
-`workstreams` row is explicitly an identity anchor; directory, resource-link,
-and suggestion-feedback rows are explicitly rebuildable projections.
-
-**Why:** Once serving contract 1 routes all product operations to the object,
-describing the frozen legacy D1 table names as canonical would invite a new
-writer or read fallback and recreate split authority.
-
-**Considered and rejected:** Renaming every established repository and API type
-in the same cutover. The local compatibility views preserve those code-level
-names without preserving duplicate product storage.
-
-**Consequences:** New schema and query design starts from the normalized local
-tables. D1 foreign-key anchors and projections may support regional joins, but
-must never be used to reconstruct product state when the object is unavailable.
-
-### 2026-08-17 — D1 gains a durable inbox for WorkstreamDO regional effects
-
-**What changed:** Regional D1 records hash-checked WorkstreamDO effect receipts,
-monotonic sidebar projections, and short-lived mention delivery intents.
-
-**Why:** Workspace queries and delivery require relational membership, identity,
-and connector state that correctly remains outside a single work stream.
-
-**Considered and rejected:** Copying credentials/users into each object or
-retaining notification bodies after settlement.
-
-**Consequences:** D1 can serve cross-workstream lists and external delivery
-without becoming work-stream product authority.
 
 ### 2026-08-17 — Object-local SQL is named separately from canonical D1, and work-stream product rows acquire an authority boundary
 

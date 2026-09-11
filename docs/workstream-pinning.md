@@ -512,15 +512,6 @@ Counting pooled sockets as visits would promote rows the person never viewed.
 access fields, keep pins manual, and do not reinterpret message activity as visits.
 
 
-### 2026-09-07 — Make startup failure and explicit-route coverage match the real shell
-
-The landing now surfaces an unavailable workspace socket even before the list
-query is enabled. Query errors alone cannot report a failed opening connection.
-Explicit New and work-stream destinations are covered through the actual app
-route table; cross-workspace deep links keep an inert composer route while their
-resource action resolves, so the default landing cannot open an unrelated room.
-
-
 ### 2026-09-05 — Open the first sidebar work stream by default
 
 Startup and workspace activation now resolve the root route from the shared
@@ -547,25 +538,6 @@ matches made the server append hidden pins, moving work the reader never touched
 Hidden pins keep their positions, matching the reference app's slot-preserving
 reorder behavior; the server still receives the complete list.
 
-
-### 2026-08-30 — Command-number pills share the automation You chip
-
-**What changed:** The held-Command `⌘1`–`⌘9` overlay now renders through the
-same `Badge` + `scope-badge` chrome as an automation row's You / Workspace
-chip, instead of a taller, shadowed, warmer pill of its own.
-
-**Why:** The two chips sit in the same sidebar, and the command hints were
-reading as a second control language — larger, raised, and a different grey —
-next to the flat You badges they were meant to sit beside.
-
-**Considered and rejected:** Restating the You-chip colours and padding on
-`.command-shortcut-pill`. That would match once and drift the next time either
-rule moved. Sharing the classes is the thing that keeps them the same.
-
-**Consequences:** Overlay-only extras (the fade-in, tabular numbers, and the
-command glyph) live on `.scope-badge.command-shortcut-pill` so they cannot lose
-to `.scope-badge` on source order. Changing the automation badge now changes
-the command hints too; that is the point.
 
 ### 2026-08-27 — Project ordering stays independent from pins
 
@@ -686,26 +658,6 @@ one reorder into N object mutations with no atomic order.
 **Consequences:** WorkspaceDO is the only post-cutover pin writer. Its directory
 waterline changes after each effective mutation, and the first page may contain
 up to 1,000 pins in addition to at most 250 recent rows.
-
-### 2026-08-13 — Command shortcut discovery and use are distinct signals
-
-**What changed:** Holding Command reports one reveal per physical hold, and a
-successful numbered navigation reports the selected number plus a bounded
-destination class. Repeated keydowns, unavailable numbers, and dialog-blocked
-attempts are excluded.
-
-**Why:** Navigation outcomes alone could not distinguish discovering the
-numbered overlay from using it, while raw route or work-stream identifiers would
-create unnecessary high-cardinality analytics.
-
-**Considered and rejected:** Reporting every Meta keydown, route paths, titles,
-or failed shortcut attempts. Those respectively inflate long holds, expose
-content or identifiers, and count interactions the product intentionally did
-not perform.
-
-**Consequences:** The reveal event's available count remains capped at nine and
-the use event taxonomy must stay aligned with the pinned-then-recent target
-builder. Product analytics opt-out suppresses both.
 
 ### 2026-08-12 — Command numbering continues into recent work
 

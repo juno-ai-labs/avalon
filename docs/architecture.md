@@ -1454,4 +1454,3 @@ Workflow deadlines. The reasoning behind architecture decisions before this
 entry was not recorded here and was not reconstructed.
 
 Shipped in #130.
-

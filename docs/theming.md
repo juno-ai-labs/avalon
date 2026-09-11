@@ -826,23 +826,6 @@ retained `gray` and `brown` — and
 appearances. A fill whose contrast flips must move the table in the same change
 or that test fails.
 
-### 2026-09-08 — Give member messages independent appearance roles
-
-Human message colors use `cmp.member-message.<profile-color>.background`,
-`foreground`, and `dot`. Both appearance files declare all eight profiles.
-These roles preserve the current colors while allowing light and dark tuning
-without changing avatar or project colors. Components select a profile role;
-they do not decide text contrast from a hard-coded list of hues.
-
-
-### 2026-09-08 — Identity palette keys are stable; shades are appearance-specific
-
-Projects and work streams store semantic color keys and resolve the shared
-`sys.color.project.*` tokens. Each appearance may tune its values independently
-for contrast. The registry no longer describes those shades as fixed across
-appearances: stable identity means preserving the saved key, not identical RGB
-values in light and dark. Existing palette values are unchanged.
-
 ### 2026-09-07 — Rally neon yellow replaces the stale orange palette, and an account owns a personal accent
 
 **What changed:** Rally uses #ccff00, matching the public site's primary brand
@@ -870,25 +853,6 @@ color; deriving the accent from the existing project palette avoids that.
 **Consequences:** Do not reintroduce the prior orange palette. The accent is
 account-owned while the light/dark appearance stays device-owned, and the
 onboarding module, not this one, persists and syncs the choice.
-
-### 2026-09-05 — Connection, fatal and run recovery states adopt the current visual language
-
-**What changed:** The regional service error card now uses soft rounded grouped
-surfaces, quieter icon treatment, compact typography and pill actions in both
-appearances; the screen scrolls in short windows and actions wrap at narrow
-widths. Fatal recovery shares that connection screen's rounded raised card and
-pill action. Failed and stopped run notices use compact rounded surfaces,
-quieter icon tiles and wrapping actions below the message so long diagnostics
-do not compete with buttons for width.
-
-**Why:** The recovery screens had not followed the rest of the application into
-the current visual language, and a run notice with a long diagnostic was
-sharing its width with its buttons.
-
-**Consequences:** Styling is scoped to recovery screens so onboarding does not
-inherit the change, and these scoped rules do not restyle unrelated alerts. The
-endpoint, development guidance and recovery actions remain intact, and semantic
-danger colors and all recovery behavior are unchanged.
 
 ### 2026-09-05 — Review fixes preserve scaling and keyboard visibility
 
@@ -1418,32 +1382,6 @@ by automated reviewers, and neither was caught by the suite: nothing asserted
 what main does with a *pair* of choices, and nothing exercised a relaunch.
 `common/themes.test.ts` now pins the composition main performs.
 
-### 2026-08-21 — A stopped run gets its own hue
-
-**What changed:** `sys.color.stopped.base`, and the two `main` features that
-needed it — `.status-stopped .status-dot` and the `.run-stopped-notice` block —
-now read from the theme rather than from literals.
-
-**Why:** these arrived on `main` while this branch was open, written against the
-stylesheet's old vocabulary (`--muted`, `--surface-2`, `--line`, `--ink`). The
-rebase replayed the tokenisation over them, which left the notice pointing at
-five variables that no longer exist and dropped the status dot entirely. The
-`var()`-is-declared invariant caught the first; nothing could catch the second,
-because a rule that is gone asserts nothing — it was found by diffing the
-rebased tree against `main`.
-
-**Why a new token rather than an existing one.** A stopped run is not a failure
-and not a warning: someone halted it on purpose and nothing went wrong. Reusing
-`danger` or `warning` would say otherwise in every theme, and the neutral ramp
-has no warm step — `#a78668` is a dimmed ember with no equivalent anywhere in
-the existing scales. The light appearances take it down to `#8a6a4d` so it holds
-against a near-white ground; Air Dark lifts it to `#ab8a6d`.
-
-**What a future change has to respect:** a feature that lands on `main` while a
-theming branch is open will be written in whatever vocabulary `main` has. The
-rebase will not flag it. Diff the rebased tree against `main` for the files both
-sides touched, rather than trusting a clean replay.
-
 ### 2026-08-20 — Rendered markdown takes its scale from the theme
 
 **What changed:** `cmp.markdown.*` — heading sizes, leading and margin, `strong`
@@ -1682,26 +1620,6 @@ against a stubbed fetch rather than a live host, because a shipped theme that
 fetched a font would put a first-run flash and a first-run request into every
 install to demonstrate a feature nobody had asked for yet.
 
-### 2026-08-20 — Airy is lit by two circles, not two corners
-
-**What changed:** `sys.backdrop.image` in Airy is two overlapping amber discs
-sitting in the field — one at 67%/28%, one lower and left of centre at 52%/84% —
-instead of the two corner washes it had.
-
-**Why:** the corner washes were a guess at the reference, and the reference has
-circles: discs with a discernible edge, placed in the canvas, overlapping, with
-the corners of the window left near-black. Reading them as corner lights put the
-brightness where the design had none and left the middle flat.
-
-**Their radii are percentages, not `vw`.** `vw` was the first cut and it is
-wrong: a percentage radius is relative to the *background positioning area*, and
-the Settings miniature is a 92×58 swatch with its own. Sized in `vw` it sampled a
-window-sized glow through a keyhole and previewed a flat brown block. The cost is
-that a disc is only exactly circular at the aspect ratio the two percentages were
-picked for; at other window shapes it stretches with the window, which is the
-behaviour a full-window backdrop wants anyway. Do not "fix" that back to a
-viewport unit without giving the swatch a backdrop of its own.
-
 ### 2026-08-20 — A theme is a JSON file, tokens are named by tier, and the window has one backdrop a theme can draw
 
 **What changed:** `config/design-tokens/` is now the source of truth: a
@@ -1933,38 +1851,6 @@ because a theme could plausibly want one without the other. Both `--prose-gap`
 and `--leading-prose` reach the human turn as well as the agent's, the former
 directly and the latter through a `calc()` that keeps the turn slightly tighter
 than surrounding prose.
-
-Shipped in #TBD.
-
-### 2026-08-19 — Airy has one ground, the full width of the window
-
-**What changed:** Airy's `--sidebar` is `transparent` rather than a tint, and its
-`--canvas` and `--surface` are the same colour. The page and the light across it
-now run the full width of the window, under the navigation and the message feed
-alike, with only `--sidebar-edge` between them. The other themes are unchanged:
-they keep a tinted navigation over a distinct content pane.
-
-**Why:** The tint and the second ground were each a seam. A translucent
-navigation still reads as a *layer over* the page rather than as part of it, and
-`--surface` sitting two units off `--canvas` put a faint edge down the middle of
-a design whose whole idea is one continuous lit surface. Removing both is what
-makes the light look like it belongs to the window rather than to two panes that
-happen to agree.
-
-**Considered and rejected:** Making `.main-pane` transparent and giving it a
-`--pane-fill` token, so the shell's ground would show through it. That is the
-general version and it needs a second token — the composer dock fades into the
-pane to mask the feed scrolling under it, and a transparent pane leaves that
-gradient with nothing to fade *to*, so it would have needed both a fill and a
-"what the pane resolves to" colour. Setting `--surface` equal to `--canvas` gets
-the same picture with no new vocabulary and no way for the two to drift.
-
-**Consequences:** A theme now says "I have one ground" by making those two
-tokens equal, and nothing in the stylesheet needs to know. Anything that fades
-into the content pane — the composer dock is the one that exists — keeps fading
-to `--surface`, which stays correct whether or not a theme has collapsed the
-two. `background-attachment: fixed` on every `--canvas-wash` painter is now
-load-bearing for the full-width read, not just for the navigation's edge.
 
 Shipped in #TBD.
 

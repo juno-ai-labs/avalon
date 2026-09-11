@@ -1195,22 +1195,6 @@ degrades to `unsupported` if that EU secret (or another required Daytona
 value) is absent. Settings continues to read availability from the regional
 API rather than from hardcoded copy.
 
-### 2026-08-29 — The revoked-import note check asks WorkspaceDO a typed question
-
-**What changed:** `hasRevokedImportedResource` in `terminal/coordinator.ts`
-resolves note visibility through `WorkspaceDO.visibleNoteResourceIds` instead
-of a `notes` SELECT through the workspace runtime facade. The predicate is
-unchanged — unarchived, and workspace-scoped or owned by the run's principal,
-with a non-user principal seeing only workspace-scoped notes.
-
-**Why:** Part of the notes half of the facade-to-RPC conversion
-([`meeting-notes.md`](meeting-notes.md) has the full entry): the facade routes
-by table name, and a note table it did not recognise would be answered by the
-regional database as `no such table`. The `resources` reads beside it stay on
-the routed `env.DB` handle deliberately — that domain converts separately, and
-removing the routing for statements that still need it is how PR #404's
-regression happened.
-
 ### 2026-08-29 — The Terminal network policy moves behind typed WorkspaceDO methods
 
 **What changed:** `terminalNetworkSettings`, `terminalNetworkMode`,
@@ -1574,22 +1558,6 @@ replace a Terminal workspace.
 visibility. Mutations that require participation authorize at the participant
 authority once and must use internal readers after that boundary rather than
 re-entering public authorization.
-
-### 2026-08-25 — Sandbox paths are .rally
-
-**What changed:** `/workspace/.avalon` and `/workspace/.avalon-output` are
-`/workspace/.rally` and `/workspace/.rally-output`, along with the
-`resources/`, `tmp/`, `logs/`, and `publications/` trees beneath them and the
-`rally-publisher-*` session names. `AVALON_RESOURCE_DIR`, which carries the
-output path into the sandbox, keeps its name.
-
-**Why:** The rename. Safe to do without a compatibility path because the
-snapshot bootstrap that creates these directories is idempotent and a sandbox
-is per work stream and short-lived — one already running against an older
-snapshot keeps its `.avalon` directories until it is replaced, and nothing
-reads them afterwards. The env var stayed because renaming a variable the
-sandbox image's own scripts read is a coordinated change with that image, not
-with this repository.
 
 ### 2026-08-23 — Accepted-command recovery requires a whole-sandbox stop
 
@@ -2078,23 +2046,6 @@ The execution provider boundary does not change who owns Rally's run state.
 then claims the exact lifecycle transition in the object. Daytona remains the
 sandbox provider.
 
-### 2026-08-13 — Terminal lifecycle telemetry observes transitions, not tool reuse
-
-**What changed:** Sandbox acquisition reports `start`, `restore`, or
-`repository_replace` only when that acquire actually performs the corresponding
-lifecycle transition. Reusing an already-running sandbox emits no lifecycle
-event.
-
-**Why:** Every Terminal command calls `acquire`. Treating the running fast path
-as `start` multiplied adoption counts by ordinary tool usage.
-
-**Considered and rejected:** Deduplicating downstream by sandbox ID. A later
-real restore or replacement belongs to the same work stream and must remain
-observable; transition truth is available only in the coordinator.
-
-**Consequences:** Provider operation metrics and product lifecycle metrics retain
-their distinct meanings. New acquire fast paths must explicitly decide whether
-they performed a lifecycle transition before invoking the observer.
 ### 2026-08-13 — Git trusts Daytona's secret-substitution proxy CA
 
 **What changed:** Repository bootstrap and the ephemeral trusted publisher now
@@ -2269,23 +2220,6 @@ contract; the latter exposes workspace content and infrastructure identifiers.
 **Consequences:** Product and platform dashboards remain separate and can be
 correlated only through bounded classes. Telemetry failure cannot alter a
 provider transition, policy revision, or cleanup decision.
-### 2026-08-13 — Provider acceptance stops before archive
-
-**What changed:** The real-provider acceptance probe now performs the archive
-transition as stop, archive, then start before checking the restored workspace.
-Its restart-and-restore lifecycle order has a focused regression test.
-
-**Why:** The probe restarted the sandbox to verify warm start and then attempted
-to archive that running sandbox. Daytona requires a stopped sandbox before
-archive, so a valid provider and snapshot failed the acceptance gate.
-
-**Considered and rejected:** Making the provider silently stop on every archive
-request. Lifecycle callers own state transitions, and hiding an extra provider
-mutation would weaken their read-back and durable-state assumptions.
-
-**Consequences:** The acceptance probe performs one additional stop operation
-and now exercises the same explicit transition required by Daytona. Production
-lifecycle behavior is unchanged.
 
 ### 2026-08-13 — Provider replay and durable receipts reject stale state
 

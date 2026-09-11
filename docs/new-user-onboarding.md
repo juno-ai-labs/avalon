@@ -188,15 +188,6 @@ has conversations enters one rather than an empty draft; a creator's empty
 workspace still opens the composer. The rule and the reason are in
 [`workstream-pinning.md`](workstream-pinning.md#leaving-for-the-first-work-stream).
 
-### 2026-09-08 — Preserve live text and scope profile notifications
-
-Acknowledged text retains typed whitespace locally so a save cannot remove the
-space before a surname. Save-status changes reuse profile identity and the
-member map is memoized. Immediate writes remain intentional for live backend
-updates; only edits arriving during an in-flight save are coalesced. Global
-notifications exclude foreign and abandoned workspaces, and EU publication
-failures propagate rather than disappearing after projection commits.
-
 ### 2026-09-08 — Save profile changes immediately and move personal appearance to Account
 
 Account profile edits now preview immediately and autosave through one
@@ -219,17 +210,6 @@ The first-task design was removed before release, so no production journey needs
 its starter IDs, prompt or example/skipped stages. Removed those fields and
 collapsed the two unshipped migrations into version 34. Keeping compatibility
 for a design that never shipped would permanently enlarge the storage contract.
-
-### 2026-09-07 — Address review findings
-
-Scoped connector selections now survive both pages and refreshes. Profile drafts
-refresh on conflicting revisions, partial appearance updates retain name and
-initials, and regional discovery avoids repeated projection invalidations.
-Identity and sync outages must not lock an already authenticated regional user
-out of the app. OAuth callbacks stay in onboarding. Invitation retries reconcile
-server state to avoid replacing an already delivered invitation. The unused
-calendar discovery surface was removed because the final flow explicitly uses
-manual email chips. Bright avatar colors use dark ink for legibility.
 
 ### 2026-09-07 — Introduce guided account and workspace onboarding with shared account appearance
 

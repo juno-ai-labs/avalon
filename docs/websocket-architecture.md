@@ -545,15 +545,6 @@ broker handshakes discard query configuration, so a new metadata capability can
 no longer prevent the entire connection from opening. Appearance is unconditional.
 
 
-### 2026-09-08 — Admit the control socket's appearance capability
-
-The Electron destination guard now permits exactly `?workstreamAppearance=1`
-on work-stream control sockets. The ticket endpoint already emits that capability;
-rejecting every query prevented control connections and left private children
-absent from the sidebar even after successful creation. Tickets remain confined
-to subprotocols, and unknown, duplicated or feed-socket queries remain rejected.
-The broker confinement test covers both the valid capability and those refusals.
-
 ### 2026-09-08 — Refresh Sidekick surfaces through workspace synchronization
 
 Added library and attachment invalidation to existing automation pushes. Local

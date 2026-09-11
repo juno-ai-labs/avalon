@@ -309,17 +309,6 @@ for Azure-bound models in its route plan.
 
 ## Changelog
 
-### 2026-09-09 — Apply the team-approved acquisition admission limits
-
-Global now declares the `ACCESS_EDGE_RATE_LIMITER` binding at the team's approved
-30 requests/IP/minute, alongside finite application limits documented in
-[private access](private-access.md). The initial deployment stopped for a missing
-Turnstile site key; the widget and Global secret have now been provisioned through
-the signed-in dashboard. This removes the configuration gap while retaining
-fail-closed behavior if the binding or secret is later removed. The team selected
-`hi@rallywith.ai` for acknowledgement mail after verifying its domain in Resend;
-inbound mail is not required.
-
 ### 2026-09-09 — Bound and recover early-access operations
 
 **What changed:** Global acquisition now runs a fail-closed pre-database guard in `worker-events.ts`. A finite approved `ACCESS_EDGE_RATE_LIMITER` binding and four finite application limits, plus `TURNSTILE_SECRET_KEY`, are required for production acquisition. The Global recovery router uses the existing Ace operator credential. No EU acquisition or cross-region provider credentials are introduced.

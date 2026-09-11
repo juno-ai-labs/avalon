@@ -716,23 +716,6 @@ Child archive admission uses the same `parent_archived` ticket field as parent a
 
 ## Changelog
 
-### 2026-09-09 — Strip diagnostics even when malformed
-
-Header presence now controls stripping, independently of numeric parsing, to
-keep malformed values off both subprotocol and legacy query-ticket handshakes.
-Real workerd verifies both paths. The proposed activation attribute is now
-`room_outside_accept_ms` because constructor work and queueing also contribute.
-
-PR #607.
-
-### 2026-09-08 — Keep child patches out of Main's shared cache
-
-The shared `patchCachedWorkstream` primitive now updates the sidebar list only
-for Main. Child rename and scope events still update their addressed detail,
-while Main REST rename responses use the same primitive with Main's address.
-This preserves the cache consolidation without reintroducing child titles in
-the parent's sidebar row.
-
 ### 2026-09-08 — Make socket evolution independent of URL capabilities
 
 An appearance query flag caused installed desktop validation to block the entire
@@ -790,14 +773,6 @@ owns the evidence and the attributes.
 unchanged: they are set after the ticket is consumed and carry no authority.
 
 Shipped in #607.
-
-### 2026-09-08 — Document personal access frames and cursor recovery
-
-WorkspaceDO pushes one visited row to the same user's sessions. Access/creation
-time now defines directory paging, and changed cursor anchors restart the walk.
-This replaces shared-activity ordering without treating background sockets as
-visits or broadcasting personal history to other users.
-
 
 ### 2026-09-06 — Page older history from viewport position
 
@@ -1530,24 +1505,6 @@ exposes Retry for the REST recovery twin while the socket continues reconnecting
 offline and access-revoked states expose the same manual path. Ordinary navigation
 does not read REST. Retained sockets and access-revocation behavior are unchanged.
 
-### 2026-08-25 — Opening telemetry names command-queue readiness
-
-**What changed:** `workstream_send_ready` records when a sidebar-opened composer
-can hand a message to the workspace command queue and which workspace socket
-state existed then.
-
-**Why:** The composer and feed normally paint together, but feed visibility is
-not independent proof that the send handler is installed. Reconnecting does not
-block client queue admission, so connection-open time is not the boundary.
-
-**Considered and rejected:** Using the pooled WorkstreamDO or SubstreamAgent
-socket as the send gate. User commands deliberately travel through WorkspaceDO;
-the child feed rejects them.
-
-**Consequences:** The readiness event can say `reconnecting` without
-contradiction. Delivery and server acknowledgement remain part of the message
-send flow, not the opening milestone.
-
 ### 2026-08-25 — Every work-stream socket attempt names why it started and the pooled lease that served it
 
 **What changed:** WorkstreamDO-control and SubstreamAgent-feed loops emit
@@ -1753,26 +1710,6 @@ and only the overloaded conditions move to application codes.
 **Consequences:** New workspace-socket terminal causes need a distinct shared
 code and a desktop mapping. Diagnostics may add bounded fixed fields, paths, or
 codes, but never raw frames or rejected values.
-
-### 2026-08-22 — The sidebar push does not re-ask who may listen
-
-**What changed:** Rebasing this branch onto `main` landed it on top of the
-access-revocation queue. The sweep this branch had added to `publishSidebarList`
-is gone with the mechanism it belonged to, and that publish is synchronous
-again, as are `runWorkspaceSql` and its callers.
-
-**Why:** The finding it answered was real — a revoked session kept receiving a
-viewer's whole automation and note list — but the answer is no longer the
-publisher's. `docs/access-revocation.md` closes an open socket from a queue
-message written by whoever ended the access, and names re-checking authorization
-on the way out as the mechanism it replaced. A publisher that asks again is the
-thing that is not to come back, whatever it is publishing: the bound belongs to
-the socket, not to any one payload sent over it.
-
-**Considered and rejected:** Keeping an interval-gated sweep on this one path
-because it is the widest payload the object sends. Width is not the argument —
-if the socket is still open it is authorized, and if it is not it has already
-been closed, so a second opinion here can only disagree with the queue.
 
 ### 2026-08-22 — An admitted socket is never re-authorized, only closed
 
@@ -2046,28 +1983,6 @@ cross-continent Azure WebSocket).
 **Consequences:** Dictation admission fails closed if the workspace object is
 unreachable. The lease-release retry loop remains as defense in depth but no
 longer papers over a racing store.
-
-### 2026-08-18 — Block sockets and optimistic ordering survive stale browser events
-
-**What changed:** BlockDashboard socket ticket failures use the same stopped,
-revoked, offline-aware reconnect gate as socket closes, and a redundant browser
-`online` event leaves an already open or connecting socket alone. HyperSight
-block drag cancellation restores the authoritative order, while keyboard and
-drop reorders retain an optimistic configuration until the parent acknowledges
-that exact order; live run updates merge into it meanwhile.
-
-**Why:** A late ticket rejection could arm a reconnect after unmount, and an
-`online` event could visually demote a healthy connection. Parent query pushes
-can also carry the old block order while a save is in flight, which previously
-made successful keyboard reorders appear to snap back.
-
-**Considered and rejected:** Disabling live query updates during a save. Block
-run checkpoints remain useful while configuration is pending, so only the
-stale configuration fields are held optimistically.
-
-**Consequences:** Connection state no longer glitches on redundant network
-events, and block ordering changes remain stable without suppressing streamed
-HyperSight results.
 
 ### 2026-08-18 — Schema-drifted agent frames leave bounded diagnostics
 

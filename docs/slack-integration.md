@@ -808,29 +808,6 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 
 ## Changelog
 
-### 2026-09-02 — The Slack support URL became a real Support Center
-
-**What changed:** `https://rallywith.ai/support` now opens a public, multi-page
-Support Center for the Rally desktop app, every shipped connector, privacy, and
-safe issue reporting. Slack has its own connector page explaining invocation
-surfaces, connection testing and reauthorization, identity linking through App
-Home, and the separate steps for disconnecting Rally and removing the app from
-Slack. The center preserves the public two-business-day response commitment and
-the single `help@rallywith.ai` address registered in the Slack manifest.
-
-**Why:** Slack's directory needs a working support destination, but the earlier
-page was mostly one connector-specific setup guide with a short Slack paragraph.
-It did not function as the general support surface named by the manifest.
-
-**Considered and rejected:** Linking the manifest directly to an email address
-or introducing a hosted help-desk portal. Email alone gives users no safe
-troubleshooting path before disclosure, while a second provider and support
-identity would add operational work without improving the small public corpus.
-
-**What a future change has to respect:** Keep the manifest URL public and
-stable, keep provider credentials and customer content out of support email,
-and do not publish a second role address unless it is confirmed to be monitored.
-
 ### 2026-09-01 — Slack handoffs retain their Rally workspace
 
 **What changed:** Link challenges, App Home settings/automation buttons,
@@ -1170,20 +1147,6 @@ a stable, queryable outcome and destination IDs when known. Do not remove an ID
 because it belongs to Slack; do not replace it with mutable profile fields or
 message content.
 
-### 2026-08-25 — The directory contact moved to Rally help
-
-**What changed:** Slack's public app-directory `support_email` now uses
-`help@rallywith.ai`, matching the Rally site and the product owner's single
-catch-all policy.
-
-**Why:** The earlier Rally cut-over intentionally kept
-`support@with-avalon.com` until a receiving Rally alias was confirmed; printing
-an unmonitored address would have created a support outage. With
-`help@rallywith.ai` confirmed as the operational catch-all, retaining the Avalon
-address would instead split external communication across two role identities.
-This changes provider metadata only; applying it still requires the App Manifest
-editor cut-over described below.
-
 ### 2026-08-25 — The Slack app is Rally: `@Rally`, `/rally`
 
 **What changed:** `config/provider-apps/slack.json` now registers the app and bot
@@ -1209,8 +1172,8 @@ Avalon prefixes remain accepted inbound.
 Deliberately unchanged: the two superseded OAuth redirect URLs and the
 `with-avalon.com` entry in `unfurl_domains`, both of which keep links and
 callbacks minted before the rename working. This historical entry originally
-held `support_email` on `support@with-avalon.com`; the newer changelog entry
-records why that hold is now closed.
+held `support_email` on `support@with-avalon.com` until a monitored Rally
+alias was confirmed; the manifest has since moved to `help@rallywith.ai`.
 
 The shortcut `callback_id`s moved in #294 and are inert: a Slack shortcut carries
 no action id, so nothing in the ingress compares against them. The bot rename is

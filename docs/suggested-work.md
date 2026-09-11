@@ -448,14 +448,6 @@ re-ranked only by whatever else moves it. Do not read the current ordering as
 evidence the tournament is working or failing. A surface that comes back must
 bring impression reporting with it, or it inherits a frozen list.
 
-### 2026-09-04 — Keep the menu-bar consumer when replacing the home screen
-
-**What changed and why:** The Grok-style conversation launcher removes the home
-suggestion cards, not Suggested Work as a product capability. The native menu
-bar still reads, records impressions, and starts suggestions directly; it does
-not navigate to a removed home-card action. Admission and ranking remain for
-that reachable consumer. Removing them would require a separate product decision.
-
 ### 2026-09-03 — Suggested Work stops paying a frontier model to ignore CI
 
 **What changed:** Three bounds on the same pipeline. `enqueueActivityOpportunity`
@@ -607,55 +599,6 @@ of truth.
 from data visible to the acting member. Missing optional context skips the
 detailed event (with the legacy successful-start fallback) and can never turn a
 successful suggestion action into an HTTP 500.
-
-### 2026-08-23 — The ranking pipeline is asserted against the object that runs it
-
-**What changed:** `test-workers/opportunity-ranking.test.ts`, fourteen specs
-over `opportunityRankingCandidates`, `opportunityRankingState`,
-`storeOpportunityRanking`, `recordOpportunityRankingRound`,
-`settleOpportunityRanking` and `completeOpportunityStart`.
-
-**Why:** the entry below deleted these operations' regional D1 arms, which left
-their Worker-side callers reaching the object through Node stubs. A stub answers
-whatever it was told to, so from that point nothing asserted what the object
-decides — who is a candidate, whose dismissal counts, or whether a ranking
-request that arrives mid-pass survives the settle.
-
-**What a future change has to respect:** `settleRanking`'s
-`CASE WHEN request_seq = ?` is not an optimisation. It is what keeps a member's
-request from being cleared by the pass that did not answer it, and clearing it
-unconditionally is one half of the standoff `docs/potential-bugs.md` describes.
-The test that pins it is "leaves a request that arrived while it was ranking".
-
-### 2026-08-22 — The read path's request rules move to the suite that runs them
-
-**What changed:** The nine `authority.phase === "durable_object_open"` gates in
-`work-opportunity-service.ts` are gone, along with the regional D1 implementation
-each one guarded — admission context, the due markers, `persistDecision`, the
-ranking candidates, the cached ranking state, the ranking round, the stored set,
-and `list`/`recordImpressions`/`dismiss`/`start`. `suggested-work-scheduling.test.ts`
-is deleted; its six behaviours are now asserted against a real WorkspaceDO in
-`test-workers/durable-object-runtime.test.ts`, together with the impression
-debounce that moved there from `work-opportunity-batching.test.ts`.
-
-**Why:** Migration 0090 closed the phase permanently, so every non-open arm had
-been unreachable since — but the tests over them had not moved, and they were the
-only tests those six rules had. A member's stored ranking being served in its
-stored order, the recency fallback, the refill on a hole, the empty-set steady
-state, the dismissal's own refill and the active-members-only due marker were all
-being proved against an implementation nothing runs.
-
-**Rejected:** Retargeting the Node suite at a stubbed `handleProductRequest`. The
-stub would have had to answer for `listOpportunities`, which is where every one of
-these rules actually lives, so the suite would have asserted its own fixture. The
-one Node assertion kept is the one that is genuinely the Worker's — that the
-renderer contract strips the execution prompt and admission reasoning the object
-hands back — and it is written with the object returning both.
-
-**What a future change has to respect:** These rules are `listOpportunities`,
-`dismissOpportunity` and `recordImpressions` in `workspace-product-storage.ts`. A
-change to when a read files a ranking request belongs in the workerd suite; a Node
-test cannot see it.
 
 ### 2026-08-19 — Provenance roots and user links import under the object's uniqueness
 
