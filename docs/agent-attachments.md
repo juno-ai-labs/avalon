@@ -697,9 +697,29 @@ Nothing may read listing as an access decision. And a stored `listing` change
 does **not** invalidate search on its own — migration 43 narrowed the
 `resources` update trigger to the columns search reads plus `metadata_json`'s
 `description`, so any future write that flips `listing` on an indexed row
-enqueues `resource_search_versions` itself, the way migration 51 does. Promote
+enqueues `resource_search_versions` itself, the way migration 52 does. Promote
 the flag to a column when a second producer wants something a boolean cannot
 say; one producer does not justify the schema.
+
+Two things the rule deliberately does not reach, both worth knowing before
+someone reports them as bugs:
+
+- **Text already written stays written.** A compaction checkpoint's stored
+  summary is the model's own prose, replayed verbatim, and it may name a
+  resource that has since been unlisted. Only the inventory *appendix* beside it
+  is re-rendered from a filtered read. Unlisting is not redaction, and no
+  fingerprint can make it so: the visibility fence is
+  `inventory:<resource_inventory_revision>`, which belongs to the WorkstreamDO,
+  while a listing change is a WorkspaceDO write — and a migration in one object
+  may not reach into another's tables. A checkpoint written under an older
+  template version replays its frozen messages wholesale for the same reason.
+  Both clear on the next compaction.
+- **`workstream-attachment-tools.ts` has an unwired `loadVisibleResources`
+  option.** It is a `VisibleWorkstreamResourceSet` supplied by a caller, and the
+  page path prefers it over `loadVisibleWorkstreamResourcePage`. Nothing passes
+  it today. Whoever wires it up owns applying the listing rule to whatever
+  produces that set, because routing an enumeration through a caller-supplied
+  read is exactly how the predicate gets bypassed without anyone editing SQL.
 
 ### 2026-09-11 — `list` can be confined to a set of resource types
 
