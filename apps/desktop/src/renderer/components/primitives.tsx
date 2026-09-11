@@ -64,9 +64,12 @@ export function ConnectorMark({ className, mark }: {
  * delay, in the platform's own type, and never appears on keyboard focus.
  *
  * The trigger is `asChild`, so the child element *is* the trigger and keeps its
- * own classes, ref and handlers. One child cannot be slotted directly: Radix's
- * Slot string-merges `className`, so an element whose class is a callback (a
- * `NavLink`) needs a plain wrapper to be the trigger instead.
+ * own classes, ref and handlers. Radix's Slot string-merges `className`, so an
+ * element whose class is a *callback* — a `NavLink` — reaches the DOM wearing
+ * that callback's source text and no styling at all. Resolve the class to a
+ * string at the call site and the link slots directly; a plain wrapper is the
+ * fallback for where that cannot be done, and costs the child its own place in
+ * the DOM.
  */
 export function Tip({
   align,
