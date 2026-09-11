@@ -75,7 +75,13 @@ serves it through `rally-font://`.
   or dark before it reaches `data-theme`; otherwise the generated selectors do
   not provide a complete token set.
 - **Renderer rules use semantic tokens.** A literal colour in `app.css` works in
-  one appearance and bypasses the contrast decisions in the token files.
+  one appearance and bypasses the contrast decisions in the token files. A
+  `mask-image` is the one exemption `themes.css.node.test.ts` makes, and it is
+  not really one: a mask is sampled for its alpha channel and never painted, so
+  nothing in it can render wrong under the other appearance. Writing `#000`
+  there means "fully opaque", and it is the honest spelling — `currentColor`
+  would satisfy the guard while tying the mask's strength to whatever alpha the
+  element's text token happens to carry.
 - **An appearance file holds only what differs between light and dark.**
   Everything else is `base.json`, and `scripts/build-theme-assets.test.mjs`
   holds the line from both sides: the files partition the registry, both
@@ -174,6 +180,36 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-09-11 — A mask is not a colour
+
+**What changed:** `themes.css.node.test.ts` reads the property name alongside
+the value and skips exactly `mask`, `mask-image` and their `-webkit-` spellings
+when it looks for literal colours in `app.css`. The `Invariants` bullet above
+records the exemption. The guard's own self-check gained cases for a mask that
+is let through, the same gradient on `background-image` that is not, a
+`-mask`-suffixed custom property that is *not* exempt, `mask-composite` which is
+not a mask image, and three custom-property spellings that stay in scope.
+
+Both halves of the pattern were corrected after review. The exemption is
+anchored at both ends: an unanchored `-mask` suffix also exempted
+`--overlay-mask` and anything else named that way, and a custom property is
+painted wherever it is substituted, so that spelling would have handed a literal
+colour a way *out* of the guard rather than describing a mask. And the property
+capture is `[\w-]+` rather than a lowercase class: keying on the colon alone had
+seen every declaration, and the narrower class silently dropped `--BRAND` and
+`--Brand_Color` out of the scan entirely.
+
+**Why:** The navigation and work-stream rails now fade a line they cannot fit
+rather than ellipsizing it, and the mask that does it needs one fully opaque
+stop. A mask is never painted; the compositor takes its alpha and discards the
+rest, so a colour written into one cannot look right in one appearance and wrong
+in the other — which is the entire failure this guard exists to catch. Leaving
+the guard as it was would have forced `currentColor` into the gradient instead,
+which passes a blind check but makes how much of the line survives the mask
+depend on the alpha of whichever text token the line inherits: a real defect
+traded for a clean test. See
+[`conversation-surfaces.md`](conversation-surfaces.md) for the fade itself.
 
 ### 2026-09-11 — The tooltip rejoins the neutral ramp and stops reading warm
 

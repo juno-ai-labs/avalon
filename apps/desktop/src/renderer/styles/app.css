@@ -148,6 +148,75 @@ pre {
   to { transform: rotate(360deg); }
 }
 
+/* A single line that does not fit ends in a fade.
+
+   Both navigation rails used to end one of two ways, and neither said "there is
+   more of this here": `text-overflow: ellipsis` spends three characters saying
+   it — on a 12px row that is most of a word — and a flex line like
+   `.sidebar-row-title-copy` never got even that, because ellipsis is a block
+   behaviour and a title that is one anonymous item beside an icon is cut at a
+   hard vertical edge instead, which reads as a rendering fault.
+
+   The fade is a mask rather than a gradient painted over the line. Every row
+   under it carries at least three fills — idle, hover, and current — and an
+   overlay matched to one of them shows as a bar in the other two; a mask is
+   the row's own ground whatever the row is doing.
+
+   It appears only when something is actually clipped, with no measuring and no
+   observer. The mask is carried by a scroll-driven animation whose timeline is
+   the line's own inline scroller: a box whose text fits is not scrollable, its
+   timeline is therefore inactive, and an animation on an inactive timeline
+   contributes nothing — so a title ending a few pixels short of the edge keeps
+   its last characters at full ink, which is the case an unconditional mask gets
+   wrong. Nothing has to be told when to re-decide either: renaming a row,
+   dragging either rail wider, or collapsing one activates and deactivates each
+   timeline on its own.
+
+   Both ends of the keyframe hold the same value because nothing here is meant
+   to move — the timeline is being asked a question about overflow, not used as
+   a clock.
+
+   **Both longhands must stay below the shorthand, which resets both of them.**
+   `animation-duration: auto` is what hands the timeline the pacing; the
+   shorthand puts it back to `0s`. `animation-timeline` is the one that costs
+   the condition: reinstated above the shorthand it falls back to the
+   document's timeline, `auto` computes to `0s` against that, `both` holds the
+   100% keyframe from the first frame, and every line here takes the mask
+   whether or not it clips anything — the unconditional fade this whole
+   arrangement exists to avoid, reintroduced by a reordering that looks like
+   tidying. `app.css.node.test.ts` asserts both positions rather than both
+   presences.
+
+   The fill mode is also what survives the global reduced-motion block below,
+   which forces every duration to 0.001ms: `both` fills the one value outside
+   the active interval, so the fade is the same for that reader as for anyone
+   else — correctly, since it is not motion. */
+@keyframes clipped-line-fade {
+  0%, 100% {
+    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
+  }
+}
+
+/* The lines both rails clip. They are listed here rather than each carrying the
+   three declarations at its own rule because the set is one decision: a rail
+   fades what it cannot fit. Anonymous children are matched by shape — a
+   `.workstream-context-copy` line is a bare `<span>` or `<small>` written at
+   five call sites — so a row added to either rail tomorrow inherits the fade
+   instead of quietly reintroducing the hard cut. */
+.account-copy span,
+.account-copy strong,
+.automation-tile-name,
+.project-row-link > span,
+.sidebar-row-hint-text,
+.sidebar-row-title,
+.sidebar-row-title-copy,
+.workstream-context-copy > small,
+.workstream-context-copy > span {
+  animation: clipped-line-fade linear both;
+  animation-duration: auto;
+  animation-timeline: scroll(self inline);
+}
+
 .rally-mark {
   background: currentColor;
   color: var(--av-sys-color-brand-ink);
@@ -966,7 +1035,7 @@ pre {
   min-width: 0;
   text-decoration: none;
 }
-.project-row-link > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-row-link > span { overflow: hidden; white-space: nowrap; }
 .project-row-link.is-active { color: var(--av-sys-color-text-default); font-weight: 600; }
 .project-sidebar-empty { color: var(--av-sys-color-text-muted); font-size: 11px; margin: 0; padding: 6px 8px 6px 18px; }
 /* Nested members start where the accordion column ends, so they share a
@@ -1211,7 +1280,6 @@ pre {
 .sidebar-row-title,
 .sidebar-row-hint {
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -1221,12 +1289,12 @@ pre {
    means unread. The weight above is what the row itself says. */
 
 .sidebar-row-hint { align-items: center; color: var(--av-ref-color-neutral-9); display: flex; font-size: var(--av-sys-font-size-hint); gap: 3px; margin-top: var(--av-cmp-row-hint-gap); }
-/* The hint is a flex row so a scope badge can sit beside its text, which is
-   also why the `text-overflow` above never applied to it: ellipsis is a block
-   behavior. A work-stream description now runs to 280 characters, so the text
-   needs its own ellipsizing box — without `min-width: 0` a flex item refuses to
-   shrink below its content and clips mid-word at the panel edge instead. */
-.sidebar-row-hint-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The hint is a flex row so a scope badge can sit beside its text. A
+   work-stream description now runs to 280 characters, so the text needs a
+   clipping box of its own to fade at — without `min-width: 0` a flex item
+   refuses to shrink below its content and the panel edge cuts it instead,
+   past where the box the fade is measured against ends. */
+.sidebar-row-hint-text { min-width: 0; overflow: hidden; white-space: nowrap; }
 /* An automation nothing can start again, and one Rally stopped, both say so on
    the row rather than only in the colour of a dot. The warning hue is the same
    one the automation's own screen uses for the sentence behind it. */
@@ -1318,8 +1386,8 @@ pre {
 
 .account-trigger:hover { background: var(--av-sys-color-surface-subtle); }
 .account-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.account-copy strong { font-size: 13px; font-weight: 500; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.account-copy span { color: var(--av-sys-color-text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-copy strong { font-size: 13px; font-weight: 500; line-height: 18px; overflow: hidden; white-space: nowrap; }
+.account-copy span { color: var(--av-sys-color-text-muted); font-size: 10px; overflow: hidden; white-space: nowrap; }
 .account-attention-dot,
 .workspace-activity-dot {
   background: var(--av-sys-color-workstream-unread);
@@ -2896,7 +2964,7 @@ pre {
 .workstream-conversation-row .workstream-context-copy > span,
 .workstream-new-substream .workstream-context-copy > span { font-size: 14px; font-weight: 500; line-height: 20px; }
 .workstream-context-copy > span,
-.workstream-context-copy > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workstream-context-copy > small { overflow: hidden; white-space: nowrap; }
 .workstream-context-copy > small { color: var(--av-sys-color-text-muted); font-size: 13px; line-height: 18px; }
 .workstream-context-resource-icon { align-items: center; color: var(--av-sys-color-text-muted); display: flex; flex: 0 0 36px; height: 36px; justify-content: center; }
 .workstream-context-resource-icon > svg { height: 20px; width: 20px; }
@@ -5732,7 +5800,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .settings-search-results > button,
 .workstream-row .sidebar-row-title { color: var(--av-sys-color-text-default); }
 .workstream-row .sidebar-row-title { align-items: baseline; display: flex; font-size: 12px; font-weight: 520; gap: 6px; justify-content: space-between; line-height: 15px; width: 100%; }
-.sidebar-row-title-copy { align-items: center; display: flex; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-row-title-copy { align-items: center; display: flex; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; }
 .workstream-row.is-active { background: var(--av-sys-color-surface-raised-hover); }
 
 .workstream-header { min-height: 48px; padding: 5px 10px 5px 13px; }
@@ -7176,7 +7244,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .sidebar-automation-strip > .sidebar-context-target:only-child { flex-basis: auto; min-width: 80px; max-width: 100px; }
 .automation-tile-glyph { display: block; height: 60px; transition: height var(--sidebar-layout-motion), width var(--sidebar-layout-motion); width: 60px; }
 .automation-glyph { color: var(--glyph-ink, var(--av-sys-color-text-on-inverse)); display: block; height: 100%; width: 100%; }
-.automation-tile-name { font-size: 11px; font-weight: 400; height: 16px; letter-spacing: .005em; line-height: 16px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; transition: height var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); white-space: nowrap; }
+.automation-tile-name { font-size: 11px; font-weight: 400; height: 16px; letter-spacing: .005em; line-height: 16px; max-width: 100%; overflow: hidden; transition: height var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); white-space: nowrap; }
 /* A running Sidekick's marker is a play cut out of its own hexagon, drawn in
    `HexagonGlyph` — geometry, colour and knockout together, in the viewBox units
    that scale it with the tile. Nothing here positions it: the box no longer
