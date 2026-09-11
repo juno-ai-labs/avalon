@@ -1302,9 +1302,12 @@ belongs in Bind rather than in this repository's pre-sanitizer corrector, and
 `droppedNullableBranches` becomes the guard that Bind keeps delivering it.
 
 **What a future change has to respect:** `apps/api/test/tool-schema-sanitization.test.ts`
-now asserts zero dropped null branches over every property of every authored
-tool, so a Bind upgrade that collapsed again fails there naming the tool and the
-parameter. A Bind upgrade regenerates `patches/@juno-ai__bind@<version>.patch`
+now asserts the dropped null branches over every declaration of every authored
+tool, nested ones included, as an exact list: three multi-type unions with
+`null` that Bind 14 still collapses (two Sheets cell values and the artifact
+query's `params`) and nothing else, so a Bind upgrade that collapsed again
+fails there naming the tool and the dotted path, and a new multi-type union
+has to be added by name. A Bind upgrade regenerates `patches/@juno-ai__bind@<version>.patch`
 rather than renaming it: the hunks apply to 14.0.0 only with fuzz, which pnpm
 does not tolerate. And the lockfile is edited for the Bind entries alone; a
 non-frozen install re-resolves every `latest` catalog entry and drags unrelated

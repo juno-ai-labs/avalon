@@ -206,22 +206,116 @@ function stableKey(value: unknown): string {
  * shape, which is why this guard stays after the sanitizer stopped doing it:
  * it is what fails if a bind release starts again.
  *
- * Reports `property: authored-null-branch-not-delivered` for each one, so a
- * caller can assert over the set it owns.
+ * Reports `path: authored-null-branch-not-delivered` for each one, the path
+ * dotted from the root (`thread_ts`, `triggers.items.rrule`, `$defs.Cursor`),
+ * so a caller can assert over the set it owns and a failure names the field.
  */
 export function droppedNullableBranches(schema: Record<string, unknown>): string[] {
-  const sanitized = sanitizeToolSchema(schema);
-  const authored = isPlainObject(schema.properties) ? schema.properties : {};
-  const delivered = isPlainObject(sanitized.properties) ? sanitized.properties : {};
   const found: string[] = [];
-  for (const [name, declaration] of Object.entries(authored)) {
-    if (!isPlainObject(declaration) || !admitsNull(declaration)) continue;
-    const after = delivered[name];
-    if (!isPlainObject(after) || !admitsNull(after)) {
-      found.push(`${name}: authored-null-branch-not-delivered`);
+  walkNullablePair(schema, sanitizeToolSchema(schema), "", 0, found);
+  return found;
+}
+
+/**
+ * Walk the authored schema and its sanitized copy in step, reporting every
+ * property whose authored null branch the sanitized copy no longer admits.
+ *
+ * Root properties were the whole of this once, and that left a hole a review
+ * named: `submit_draft` declares a dozen nullable fields under
+ * `triggers.items.properties`, and a bind regression confined to the recursive
+ * rewrite would have collapsed them while a guard that read only the root
+ * stayed green. So the walk descends through every position that holds a
+ * subschema, and reports the full dotted path so a failure names the field.
+ *
+ * The two trees are parallel except where the rewrite itself moved structure:
+ * a nullable node comes back as `anyOf: [<typed branch>, {type: "null"}]`, so
+ * the authored node's own `properties` and `items` now live on that typed
+ * branch. `deliveredStructure` looks through that one shape, and only that
+ * one, before descending; an authored `anyOf` is walked branch by branch
+ * against the sanitized one, index for index.
+ */
+function walkNullablePair(
+  authored: unknown,
+  delivered: unknown,
+  path: string,
+  depth: number,
+  found: string[],
+): void {
+  if (!isPlainObject(authored) || depth > MAX_DEPTH) return;
+  // Judged on the node itself, at every position the walk reaches, so a
+  // nullable `items`, `$defs` target, or composition branch is reported by
+  // its own path; the root is a parameters object and never nullable.
+  if (path && admitsNull(authored) && !(isPlainObject(delivered) && admitsNull(delivered))) {
+    found.push(`${path}: authored-null-branch-not-delivered`);
+  }
+  const childDepth = depth + 1;
+  const structure = deliveredStructure(delivered);
+  const join = (segment: string): string => (path ? `${path}.${segment}` : segment);
+  const authoredProperties = isPlainObject(authored.properties) ? authored.properties : {};
+  const deliveredProperties = isPlainObject(structure?.properties) ? structure.properties : {};
+  for (const [name, declaration] of Object.entries(authoredProperties)) {
+    walkNullablePair(declaration, deliveredProperties[name], join(name), childDepth, found);
+  }
+  for (const keyword of ["$defs", "definitions", "patternProperties", "dependentSchemas"] as const) {
+    const authoredMap = authored[keyword];
+    const deliveredMap = structure?.[keyword];
+    if (!isPlainObject(authoredMap)) continue;
+    for (const [name, entry] of Object.entries(authoredMap)) {
+      walkNullablePair(entry, isPlainObject(deliveredMap) ? deliveredMap[name] : undefined, join(`${keyword}.${name}`), childDepth, found);
     }
   }
-  return found;
+  for (const keyword of ["items", "additionalProperties", "propertyNames", "not", "if", "then", "else", "contains"] as const) {
+    const authoredValue = authored[keyword];
+    if (Array.isArray(authoredValue)) {
+      const deliveredValue = structure?.[keyword];
+      authoredValue.forEach((entry, index) => {
+        walkNullablePair(entry, Array.isArray(deliveredValue) ? deliveredValue[index] : undefined, join(`${keyword}[${index}]`), childDepth, found);
+      });
+      continue;
+    }
+    if (isPlainObject(authoredValue)) {
+      walkNullablePair(authoredValue, structure?.[keyword], join(keyword), childDepth, found);
+    }
+  }
+  const authoredPrefix = authored.prefixItems;
+  if (Array.isArray(authoredPrefix)) {
+    const deliveredPrefix = structure?.prefixItems;
+    authoredPrefix.forEach((entry, index) => {
+      walkNullablePair(entry, Array.isArray(deliveredPrefix) ? deliveredPrefix[index] : undefined, join(`prefixItems[${index}]`), childDepth, found);
+    });
+  }
+  for (const keyword of COMPOSITION_KEYWORDS) {
+    const authoredBranches = authored[keyword];
+    if (!Array.isArray(authoredBranches)) continue;
+    // The authored composition is read off the delivered node itself, not its
+    // typed view: a node the rewrite touched carried no composition of its own
+    // (the rewrite declines any node that does), so an authored `anyOf` is
+    // always still an `anyOf` at the same place.
+    const deliveredBranches = isPlainObject(delivered) ? delivered[keyword] : undefined;
+    authoredBranches.forEach((branch, index) => {
+      walkNullablePair(branch, Array.isArray(deliveredBranches) ? deliveredBranches[index] : undefined, join(`${keyword}[${index}]`), childDepth, found);
+    });
+  }
+}
+
+/**
+ * The node whose `properties`, `items`, and the rest a delivered node's
+ * structure lives on: the node itself, unless the sanitizer rewrote a nullable
+ * declaration into `anyOf: [<typed branch>, {type: "null"}]`, in which case the
+ * typed branch. Any other shape, including a union with two typed branches, is
+ * returned as it is and read literally.
+ */
+function deliveredStructure(delivered: unknown): Record<string, unknown> | null {
+  if (!isPlainObject(delivered)) return null;
+  const branches = Array.isArray(delivered.anyOf) ? delivered.anyOf : null;
+  if (!branches || "type" in delivered || "properties" in delivered) return delivered;
+  const typed = branches.filter((branch) => !isNullBranch(branch));
+  const nulls = branches.length - typed.length;
+  return nulls === 1 && typed.length === 1 && isPlainObject(typed[0]) ? typed[0] : delivered;
+}
+
+function isNullBranch(branch: unknown): boolean {
+  return isPlainObject(branch) && branch.type === "null" && Object.keys(branch).length === 1;
 }
 
 /** Whether a property declaration admits `null`, in either spelling. */
