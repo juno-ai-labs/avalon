@@ -1055,14 +1055,13 @@ describe('RunFailureNotice', () => {
 });
 
 describe('RunStoppedNotice', () => {
-  it('makes a terminal member stop explicit and offers a fresh retry', () => {
-    const onRetry = vi.fn();
-    render(<RunStoppedNotice onRetry={onRetry} retrying={false} />);
+  it('makes a terminal member stop explicit without offering a retry', () => {
+    const { container } = render(<RunStoppedNotice />);
 
     expect(screen.getByRole('status', { name: 'Run stopped' }))
-      .toHaveTextContent('Its partial tool activity is no longer running.');
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(onRetry).toHaveBeenCalledOnce();
+      .toHaveTextContent('This run was stopped by request.');
+    expect(container.querySelector('.run-stopped-icon svg')).toHaveAttribute('fill', 'currentColor');
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   });
 });
 
