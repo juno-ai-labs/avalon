@@ -1287,9 +1287,10 @@ pattern, enum and `required` transforms still apply to it. A genuine multi-type
 union still collapses, and so does a nullable type at the parameters root, in a
 branch of a root union, or in a composition branch whose `required` reaches
 the enclosing node. The loop patch this repository carries (`acceptMessage`,
-`beforeToolMessageAccepted`, `onStepSettled`) is unchanged upstream and was
-regenerated against 14.0.0, since pnpm keys a patch by exact version. The
-lockfile changes only the Bind entries.
+`beforeToolMessageAccepted`, `onStepSettled`) targets files that are
+byte-identical between 13.0.0 and 14.0.0; it was regenerated rather than
+renamed, since pnpm keys a patch by exact version and the old file's hunks were
+inexact (below). The lockfile changes only the Bind entries.
 
 **Why:** The collapse left a caller unable to say "none" in the half of a
 declaration it treats as binding. Measured twice: a Drive cursor took `"x"`,
@@ -1308,8 +1309,12 @@ tool, nested ones included, as an exact list: three multi-type unions with
 query's `params`) and nothing else, so a Bind upgrade that collapsed again
 fails there naming the tool and the dotted path, and a new multi-type union
 has to be added by name. A Bind upgrade regenerates `patches/@juno-ai__bind@<version>.patch`
-rather than renaming it: the hunks apply to 14.0.0 only with fuzz, which pnpm
-does not tolerate. And the lockfile is edited for the Bind entries alone; a
+from a `git diff` rather than renaming it. The 13.0.0 file's hunk line counts
+were inexact: GNU `patch` needed fuzz to apply it to 13.0.0 itself, and pnpm's
+applier had been tolerating that. The loop files did not change between 13.0.0
+and 14.0.0, so a rename would have worked by accident; a regenerated diff
+states exact hunks against the version it names, and is what the next upgrade
+should produce too. And the lockfile is edited for the Bind entries alone; a
 non-frozen install re-resolves every `latest` catalog entry and drags unrelated
 majors along.
 
