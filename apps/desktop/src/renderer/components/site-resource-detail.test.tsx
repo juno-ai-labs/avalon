@@ -277,6 +277,27 @@ describe('the actions the host draws in its header', () => {
     }
   });
 
+  it('opens its labels upward, away from the page composited below the header', async () => {
+    // The pane under this header is covered by a native view whenever an
+    // artifact is showing, and that view paints above all renderer DOM. A
+    // label hanging downward is behind the page, and no `z-index` reaches it:
+    // it is not a DOM sibling of the thing covering it.
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    const { props } = setup();
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+
+    // Focus rather than hover: Radix opens on focus without waiting out the
+    // pointer delay, and the side is the same either way.
+    fireEvent.focus(screen.getByRole('button', { name: /Pop out/u }));
+    const tip = await screen.findByRole('tooltip');
+    expect(tip).toHaveAttribute('data-side', 'top');
+    vi.unstubAllGlobals();
+  });
+
   it('labels and copies the canonical public link, which carries no access code', async () => {
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
