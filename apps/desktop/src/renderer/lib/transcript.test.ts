@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { WorkstreamTranscriptSnapshot } from '@rally/contracts';
+import { CONNECTOR_CONNECTION_CARD_WIRE_NAME, type WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import type { Message, ThoughtEventData } from './types';
 import {
   collapseSettledWorkIntoAccordion,
+  dedupeAdjacentConnectorConnectionCards,
   foldSettledWorkIntoMessages,
   createElicitationMessage,
   adjacentTranscriptRange,
@@ -44,6 +45,72 @@ const base = {
 };
 
 describe('transcript messages', () => {
+  it('collapses only adjacent repeats of the same connector card', () => {
+    const first = createToolEventMessage({
+      ...base,
+      id: 'card-first',
+      toolEvent: {
+        id: 'card-first',
+        name: CONNECTOR_CONNECTION_CARD_WIRE_NAME,
+        status: 'completed',
+        input: { connectorId: 'slack', scope: 'personal' },
+      },
+    });
+    const repeated = createToolEventMessage({
+      ...base,
+      id: 'card-repeated',
+      toolEvent: {
+        id: 'card-repeated',
+        name: CONNECTOR_CONNECTION_CARD_WIRE_NAME,
+        status: 'completed',
+        summary: 'Presented the slack personal connection card',
+      },
+    });
+    const answer = createTextMessage({ ...base, id: 'answer', text: 'Try again later.' });
+    const later = createToolEventMessage({ ...repeated, id: 'card-later', toolEvent: {
+      ...repeated.toolEvent!, id: 'card-later',
+    } });
+
+    expect(dedupeAdjacentConnectorConnectionCards([first, repeated, answer, later])
+      .map((message) => message.id)).toEqual(['card-first', 'answer', 'card-later']);
+  });
+
+  it('keeps adjacent cards when their catalog id or scope differs', () => {
+    const card = (id: string, connectorId: 'google-mail-calendar' | 'google-drive-workspace', scope: 'personal' | 'workspace') =>
+      createToolEventMessage({
+        ...base,
+        id,
+        toolEvent: {
+          id,
+          name: CONNECTOR_CONNECTION_CARD_WIRE_NAME,
+          status: 'completed',
+          input: { connectorId, scope },
+        },
+      });
+
+    expect(dedupeAdjacentConnectorConnectionCards([
+      card('mail', 'google-mail-calendar', 'personal'),
+      card('drive-personal', 'google-drive-workspace', 'personal'),
+      card('drive-workspace', 'google-drive-workspace', 'workspace'),
+    ]).map((message) => message.id)).toEqual(['mail', 'drive-personal', 'drive-workspace']);
+  });
+
+  it('keeps a connector connection card out of collapsed plugin machinery', () => {
+    const card = createToolEventMessage({
+      ...base,
+      toolEvent: {
+        id: 'connector-card',
+        name: CONNECTOR_CONNECTION_CARD_WIRE_NAME,
+        status: 'completed',
+        pluginId: 'rally:core',
+        pluginName: 'Rally',
+        input: { connectorId: 'slack', scope: 'personal' },
+      },
+    });
+
+    expect(groupPluginToolMessages([card])).toEqual([card]);
+  });
+
   it.each([false, true])('keeps custom MCP identity through transcript projection (activity fallback=%s)', (fallback) => {
     const turn = {
       transcriptSequence: 1, turnId: 'turn-custom', entryKind: 'conversation' as const,

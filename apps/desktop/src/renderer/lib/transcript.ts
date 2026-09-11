@@ -5,7 +5,9 @@ import { pluginGroup } from './plugin-groups';
 import {
   AutomationActivationV1Schema,
   AutomationDraftProposedV1Schema,
+  CONNECTOR_CONNECTION_CARD_WIRE_NAME,
   ElicitationSchema,
+  connectorConnectionCardInputFromToolEvent,
   type TranscriptActivity,
   type PendingTranscriptInput,
   type TranscriptPluginRun,
@@ -990,6 +992,37 @@ export function composeTranscript(
 }
 
 /**
+ * A repeated presentation call beside the card it just presented is one
+ * product control, not two transcript rows. Collapse only an uninterrupted run
+ * of the same validated connector and scope. Keep the first row's stable id so
+ * an existing message anchor still points at the surviving card.
+ * Any intervening conversation row or transcript seam starts a new occasion.
+ */
+export function dedupeAdjacentConnectorConnectionCards(messages: readonly Message[]): Message[] {
+  const rows: Message[] = [];
+  for (const message of messages) {
+    const card = connectorConnectionCardInputFromToolEvent(message.toolEvent);
+    const previous = rows.at(-1);
+    const previousCard = connectorConnectionCardInputFromToolEvent(previous?.toolEvent);
+    if (card && previous && previousCard
+      && message.precededByTranscriptGap !== true
+      && card.connectorId === previousCard.connectorId
+      && card.scope === previousCard.scope) {
+      rows[rows.length - 1] = {
+        ...message,
+        id: previous.id,
+        ...(previous.precededByTranscriptGap ? { precededByTranscriptGap: true } : {}),
+        attentionSequenceNumber: message.attentionSequenceNumber
+          ?? previous.attentionSequenceNumber,
+      };
+      continue;
+    }
+    rows.push(message);
+  }
+  return rows;
+}
+
+/**
  * What one row contributes to its plugin's group, or null when the row is not
  * plugin activity at all.
  */
@@ -1043,6 +1076,7 @@ function pluginGroupContribution(message: Message): {
  * checks `precededByTranscriptGap` itself — see `Message`.
  */
 function continuesPluginActivityRun(message: Message): boolean {
+  if (message.toolEvent?.name === CONNECTOR_CONNECTION_CARD_WIRE_NAME) return false;
   return message.messageType === 'tool_event'
     || message.messageType === 'plugin_activity'
     || message.messageType === 'thought';

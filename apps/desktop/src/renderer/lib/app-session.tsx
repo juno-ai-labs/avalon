@@ -54,7 +54,9 @@ export interface PendingInvitation {
 }
 
 export interface PendingConnectorOAuth {
-  source?: 'onboarding';
+  source?: 'onboarding' | 'conversation';
+  connectorId?: string;
+  scope?: 'personal' | 'workspace';
   attemptId: string;
   provider: ConnectorOAuthProvider;
   region: Region;
@@ -977,6 +979,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       if (intent.kind === 'connector-result') {
         const connectorName = intent.provider ? connectorProviderNames[intent.provider] : null;
         const applyConnectorResult = async (): Promise<void> => {
+          const pending = pendingConnectorOAuthRef.current;
+          const pendingMatches = pending !== null
+            && pending.provider === intent.provider
+            && (intent.attemptId === null || pending.attemptId === intent.attemptId)
+            && (intent.target === null || (
+              pending.workspaceId === intent.target.workspaceId
+              && pending.region === intent.target.region
+            ));
           if (intent.status === 'connected') {
             setDeepLinkError(null);
             await Promise.all([
@@ -984,17 +994,17 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
               invalidateCachedWorkstreamDetails(queryClient),
               queryClient.invalidateQueries({ queryKey: ['automation'] }),
             ]);
-            const pending = pendingConnectorOAuthRef.current;
-            const fromOnboarding = pending?.source === 'onboarding' && pending.provider === intent.provider && pending.workspaceId === intent.target?.workspaceId && pending.region === intent.target?.region;
-            if (intent.target && !fromOnboarding) await bridge.openSettings('connections');
-            setPendingConnectorOAuth(null);
+            const stayInPlace = pendingMatches
+              && (pending.source === 'onboarding' || pending.source === 'conversation');
+            if (intent.target && !stayInPlace) await bridge.openSettings('connections');
           } else {
             reportDeepLinkFailure(
               intent.status === 'denied'
                 ? `${connectorName ?? 'Connector'} authorization was cancelled.`
-                : `${connectorName ?? 'Connector'} could not be connected. Try again from Connections.`,
+                : `${connectorName ?? 'Connector'} could not be connected. Try again.`,
             );
           }
+          if (pendingMatches) setPendingConnectorOAuth(null);
         };
         if (intent.target) {
           await runInDeepLinkWorkspace(intent.target, applyConnectorResult);

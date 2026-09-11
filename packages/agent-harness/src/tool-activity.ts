@@ -1,3 +1,8 @@
+import {
+  CONNECTOR_CONNECTION_CARD_WIRE_NAME,
+  CONNECTOR_CONNECTION_STATE_WIRE_NAME,
+} from "@rally/contracts";
+
 /**
  * Transcript rows name what a tool did, not which wire symbol was called. Every
  * chat surface renders the same row component, so every surface has to get its
@@ -36,6 +41,16 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     started: "Asking for a decision",
     settled: "Asked for a decision",
     failed: "Could not ask for a decision",
+  },
+  [CONNECTOR_CONNECTION_STATE_WIRE_NAME]: {
+    started: "Checking a connector's connection",
+    settled: "Checked a connector's connection",
+    failed: "Could not check a connector's connection",
+  },
+  [CONNECTOR_CONNECTION_CARD_WIRE_NAME]: {
+    started: "Preparing a connector",
+    settled: "Prepared a connector",
+    failed: "Could not prepare a connector",
   },
   workstream_read_resource: {
     started: "Reading an attached resource",

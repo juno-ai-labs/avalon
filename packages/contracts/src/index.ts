@@ -46,6 +46,7 @@ export * from "./automation-evaluators";
 export * from "./automation-agent";
 export * from "./conversation-parent";
 export * from "./conversation-effects";
+export * from "./connector-connection-card";
 import { ConversationParentKindSchema } from "./conversation-parent";
 export * from "./identifiers";
 
