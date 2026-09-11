@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEVICE_PREFERENCES_STORAGE_KEY } from '../lib/device-preferences';
-import { AvatarStack, RallyMark, DropdownSelect, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
+import { installWindowActivationTracking } from '../lib/window-activation';
+import { AvatarStack, DragHint, RallyMark, DropdownSelect, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state, theme }: { size: number; state: string; theme?: string }) => (
@@ -216,6 +217,123 @@ describe('TipGroup', () => {
     fireEvent.pointerLeave(copy, { pointerType: 'mouse' });
 
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * A tip answers a question the person asked by pointing or tabbing at a
+ * control. An application switch asks nothing and produces both gestures
+ * anyway — the control that had focus is focused again, and the window arrives
+ * under a cursor that never moved — so the answer has to be withheld from the
+ * switch without being withheld from anyone else. The guard it asks is
+ * `lib/window-activation.ts`.
+ */
+describe('Tip across an application switch', () => {
+  let stopTracking: (() => void) | null = null;
+
+  beforeEach(() => {
+    stopTracking = installWindowActivationTracking();
+  });
+
+  afterEach(() => {
+    stopTracking?.();
+    stopTracking = null;
+  });
+
+  /** Away and back, with nothing else touched: a Command-Tab in both directions. */
+  function switchAwayAndBack(): void {
+    fireEvent.blur(window);
+    fireEvent.focus(window);
+  }
+
+  function renderTip(): HTMLElement {
+    render(
+      <Tooltip.Provider delayDuration={0}>
+        <Tip delayDuration={0} label="Copy response"><button type="button">Copy</button></Tip>
+      </Tooltip.Provider>,
+    );
+    return screen.getByRole('button', { name: 'Copy' });
+  }
+
+  /**
+   * A hover opens on a timer that a zero delay shortens rather than removes, so
+   * a tip that is absent on this tick is only a tip that has not arrived yet.
+   * Letting the timer turn is what makes the absence mean something. Focus does
+   * not go through it — Radix opens on the event — so only the pointer needs it.
+   */
+  async function expectNoTipOnceTheDelayHasPassed(): Promise<void> {
+    await act(async () => {
+      await new Promise((resolve) => { setTimeout(resolve, 100); });
+    });
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  }
+
+  it('stays shut when the window hands a control its focus back', () => {
+    const copy = renderTip();
+
+    switchAwayAndBack();
+    fireEvent.focus(copy);
+
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  });
+
+  it('stays shut under a cursor the window arrived beneath, and opens when it moves', async () => {
+    const copy = renderTip();
+
+    switchAwayAndBack();
+    fireEvent.pointerOver(copy, { pointerType: 'mouse', clientX: 200, clientY: 120 });
+    fireEvent.pointerMove(copy, { pointerType: 'mouse', clientX: 200, clientY: 120 });
+
+    await expectNoTipOnceTheDelayHasPassed();
+
+    fireEvent.pointerMove(copy, { pointerType: 'mouse', clientX: 204, clientY: 122 });
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Copy response');
+  });
+
+  it('opens on a focus that follows a keystroke rather than a switch', async () => {
+    const copy = renderTip();
+
+    switchAwayAndBack();
+    fireEvent.keyDown(window, { key: 'Tab' });
+    fireEvent.focus(copy);
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Copy response');
+  });
+
+  it('takes a caller-controlled hint down with the window as well', async () => {
+    // `DragHint` renders `open` itself, so dropping the tip's own state cannot
+    // close it — and a resize handle's hint is the one most likely to still be
+    // up at a switch, because the pointer that opened it is resting on a 12px
+    // divider it has no reason to leave.
+    render(
+      <Tooltip.Provider delayDuration={0}>
+        <DragHint action="Drag to resize" shortcut="Double-click to reset">
+          <button type="button">Divider</button>
+        </DragHint>
+      </Tooltip.Provider>,
+    );
+    const divider = screen.getByRole('button', { name: 'Divider' });
+
+    fireEvent.pointerMove(divider, { pointerType: 'mouse', clientX: 300, clientY: 200 });
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Drag to resize');
+
+    fireEvent.blur(window);
+
+    await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
+  });
+
+  it('goes down with the window instead of waiting over the screen behind it', async () => {
+    const copy = renderTip();
+
+    fireEvent.pointerMove(copy, { pointerType: 'mouse', clientX: 200, clientY: 120 });
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Copy response');
+
+    // Nothing else would: the pointer is still over the trigger, and Radix
+    // closes on the pointer leaving it.
+    fireEvent.blur(window);
+
+    await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
   });
 });
 
