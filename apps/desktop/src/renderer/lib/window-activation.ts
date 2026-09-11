@@ -116,7 +116,17 @@ export function installWindowActivationTracking(): () => void {
     window.addEventListener('pointerdown', observeDeliberateInput, true);
     window.addEventListener('keydown', observeDeliberateInput, true);
   }
+  let stopped = false;
   return () => {
+    // A stop called twice would take the count below zero, and the next install
+    // would raise it to zero rather than to one — listeners never re-added, the
+    // guard permanently off, and answering `true` to everyone, which is exactly
+    // what an uninstalled tracker answers. The count exists because this
+    // lifecycle is not the function's own to control (Strict Mode, a second
+    // root, a test's `afterEach`), so a count that can go negative gives up the
+    // property it was counting for.
+    if (stopped) return;
+    stopped = true;
     trackers -= 1;
     if (trackers > 0) return;
     window.removeEventListener('focus', windowActivationChanged);

@@ -112,6 +112,21 @@ describe('window activation', () => {
     expect(hasUserInputSinceWindowActivation()).toBe(true);
   });
 
+  it('survives a stop that is called twice', () => {
+    // The count is what makes two trackers safe; a stop that decrements twice
+    // takes it below zero, and the next install then raises it to zero rather
+    // than to one. Nothing re-adds the listeners after that, and the guard is
+    // off while answering exactly what an uninstalled one answers.
+    const stop = installWindowActivationTracking();
+    stop();
+    stop();
+
+    track();
+    switchAwayAndBack();
+
+    expect(hasUserInputSinceWindowActivation()).toBe(false);
+  });
+
   it('keeps tracking while a second tracker still wants it', () => {
     // Strict Mode mounts an effect, tears it down, and mounts it again. A
     // teardown that removed the listeners regardless would leave the remounted
