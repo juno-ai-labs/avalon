@@ -898,18 +898,6 @@ rename and scope events use the same primitive but only change their addressed
 detail; applying them to the list reintroduced the parent-title bug during cache
 consolidation. Parent responses retain the default Main address.
 
-### 2026-09-09 — Appearance is the unversioned write that may not touch the detail (#619)
-
-Review on #619 found this document describing the appearance receipt as writing
-the row and the detail together, which stopped being true when that receipt was
-narrowed to the row on the same day the entry below was written. The reason is
-the part worth keeping here rather than only in the owning doc: the cached
-detail is the appearance picker's own signal that its optimistic preview is
-finished, so any unversioned write there retires a person's in-flight choice
-against a value they did not pick. Both appearance writers — the receipt, and
-the icon a naming pass chooses — are row-only for that reason, and this is the
-one place the "row and detail together" rule above does not hold.
-
 ### 2026-09-09 — Name the unversioned write and bound what it may carry
 
 The "one receiver" rule said neither socket hook writes the work-stream caches

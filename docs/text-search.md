@@ -1046,24 +1046,19 @@ retrieval failures retain their error behavior; unverified IDs and metadata are
 never returned.
 
 
-### 2026-09-07 — Remove authorization rollout gates
-
-Search uses the core authority path immediately on deployment. Removed shadow
-comparison and activation reads to make deployment sufficient, as requested by
-the team. Missing attachment inventories queue discovery and remain retryable;
-permission checks and the five-minute evidence deadline still apply.
-
-### 2026-09-07 — Add an owner-backed authorization cutover
+### 2026-09-07 — Add an owner-backed authorization cutover and remove its rollout gates
 
 Member search uses the core authorization context and exact attachment
-inventories populated by queued backfill. This replaces repeated work-stream discovery
-with canonical checks along known child paths, retaining source text validation
-and a five-minute bound on permission evidence. See [authorization](authorization.md)
-for rollout controls and the distinction between denial and unavailable authority.
+inventories populated by queued backfill. This replaces repeated work-stream
+discovery with canonical checks along known child paths, retaining source text
+validation and a five-minute bound on permission evidence. See
+[authorization](authorization.md) for rollout controls and the distinction
+between denial and unavailable authority.
 
-### 2026-09-07 — Search review corrections
-
-Search review fixes keep the complete scope prefilter independent of the 100-ID directory batch contract, authorize conversations after asynchronous content validation, and allow transient continuation retries without hiding already visible rows. Authorization denials still clear results; pagination controls sit outside the ARIA listbox.
+Search uses the core authority path immediately on deployment. The shadow
+comparison and activation reads were removed to make deployment sufficient, as
+requested by the team. Missing attachment inventories queue discovery and remain
+retryable; permission checks and the five-minute evidence deadline still apply.
 
 ### 2026-09-07 — Remove serial candidate hydration from interactive search
 

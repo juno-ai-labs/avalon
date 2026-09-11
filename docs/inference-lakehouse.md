@@ -355,13 +355,6 @@ decided retention policy, not a speculative cache or aggregation layer.
 
 ## Changelog
 
-### 2026-09-05 — Correct summary request correlation granularity
-
-The preparation request ID is operation-scoped, not part-scoped. The summary
-adapter deliberately receives the creation operation ID; the earlier wording
-incorrectly promised a separate lookup key for every part. No inference routing
-or stored payload format changed.
-
 ### 2026-09-04 — Structured child inference carries its full address
 
 **What changed:** The shared structured-inference gateway now accepts explicit
@@ -432,48 +425,41 @@ reports the complete generated-ID set without creating their downstream
 resources, and the second pass resumes after an operator commits the reviewed
 pins together.
 
-### 2026-09-01 — Pipeline list responses replace redundant detail reads
+### 2026-09-01 — Pipeline list responses replace redundant detail reads, and the incident retry budget rises to ten attempts
 
 **What changed:** Existing streams, sinks, and pipelines are now verified
 directly from their list responses. The provisioner no longer repeats each
 successful lookup through the resource's detail endpoint, removing six
 Cloudflare Pipelines reads from a two-lakehouse deploy preflight.
 
+The merge-time provisioner's GET retry budget increased from Cloudflare's
+default three total attempts to ten. The existing provider-aligned status
+rules, `Retry-After` handling, jittered backoff, final Ray ID, and
+single-attempt POST behavior are unchanged.
+
 **Why:** The list contracts include every stream, sink, and pipeline field used
 by the immutable-resource assertions. During the Pipelines control-plane
 incident, each unnecessary request was another independent opportunity for an
-HTTP 500 and added no evidence to the drift check.
+HTTP 500 and added no evidence to the drift check. Live probes during the same
+incident showed a failure rate high enough that three attempts across a
+multi-read preflight still made otherwise valid deployments unlikely to
+complete. The operator explicitly selected ten attempts after the smaller
+budget failed to restore reliable deploys.
 
 **Considered and rejected:** Removing the list requests too, because they are
 still required to discover Cloudflare-generated stream IDs, reject duplicate
 names, find the deployment-credential-bound sink, and compare existing
 resources with the checked-in manifests; and retaining the detail reads as a
 second confirmation, because they query the same control plane without checking
-any additional field.
+any additional field. Retrying until success, which could hide a lasting
+control-plane outage; and changing mutation semantics, because repeating a POST
+after a lost response can create duplicate immutable resources.
 
 **Consequences:** A healthy existing two-lakehouse deployment now needs six
 Pipeline control-plane reads instead of twelve. A failed list read still retries
 and ultimately fails closed, and immutable stream, sink, and SQL drift remains
-deployment-blocking.
-
-### 2026-09-01 — The incident retry budget rises to ten attempts
-
-**What changed:** The merge-time provisioner's GET retry budget increased from
-Cloudflare's default three total attempts to ten. The existing provider-aligned
-status rules, `Retry-After` handling, jittered backoff, final Ray ID, and
-single-attempt POST behavior are unchanged.
-
-**Why:** Live probes during the Pipelines incident showed a failure rate high
-enough that three attempts across a multi-read preflight still made otherwise
-valid deployments unlikely to complete. The operator explicitly selected ten
-attempts after the smaller budget failed to restore reliable deploys.
-
-**Considered and rejected:** Retrying until success, which could hide a lasting
-control-plane outage; and changing mutation semantics, because repeating a POST
-after a lost response can create duplicate immutable resources.
-
-**Consequences:** Without a provider-directed `Retry-After`, nine waits add at
-most 47.5 seconds per persistently failing GET before downward jitter. A
+deployment-blocking. Without a provider-directed `Retry-After`, nine waits add
+at most 47.5 seconds per persistently failing GET before downward jitter. A
 persistent fault still blocks deployment with a support-traceable final error.
 
 ### 2026-09-01 — Transient Cloudflare control-plane reads retry safely
@@ -505,62 +491,56 @@ otherwise valid deployment on its first response. A persistent fault still
 fails closed after the provider-standard retry budget with a support-traceable
 Ray ID, and resource creation retains its existing single-attempt semantics.
 
-### 2026-08-27 — Embedding calls join the observable OpenRouter boundary
-
-**What changed:** Durable-memory embeddings now travel through OpenRouter and
-carry workspace `user` plus `X-Session-ID`. Content-free regional diagnostics
-record the feature key, trace/session IDs, intended/requested/resolved model,
-fallback attempt, outcome, and latency without retaining memory text or vectors.
-The query session uses the active substream rather than collapsing every
-conversation into main substream `"0"`.
-
-**Why:** The previous Workers AI call was invisible to the OpenRouter routing
-and provider-observability path, including when a configured fallback differed
-from the intended model.
-
-**Considered and rejected:** Adding chat-only `trace` fields to the embeddings
-body and archiving embedding inputs in the Global inference lakehouse. The
-current SDK schema rejects the former, while the latter would widen retained
-user content without being necessary to diagnose routing.
-
-**Consequences:** OpenRouter/PostHog receive workspace and session correlation
-for embeddings but not custom trace metadata until the embeddings API supports
-it. Rally's regional logs retain the missing content-free routing dimensions;
-the exact embedding content remains deliberately absent. The fixed requested
-model defines the Vectorize namespace, and a differing provider-reported model
-fails closed to FTS instead of silently querying another semantic space.
-
-### 2026-08-27 — Provider traces join Rally's exact inference evidence
+### 2026-08-27 — Provider traces and embedding calls join Rally's observable OpenRouter boundary
 
 **What changed:** Exact request records now include OpenRouter Broadcast
 identity and trace fields, and successful streaming attempt responses may
 include returned router metadata. Provider `user` and trace `user_id` now use
 the workspace ID consistently, with any relevant person in `context_user_id`.
-`feature` records the exact Flagship model
-category/key while `source` records the inference surface. The provider trace
-groups a full harness loop, not an individual model turn; work-stream
-`session_id` values are `<workstream_id>-<substream_id>`. `intended_model`
-records the primary Rally route while `model` records the attempted candidate,
-so fallback requests remain explicit in provider-side analytics. Structured
-fallback and repair attempts retain one call-scoped trace ID, while each
-provider request keeps its own `inference_request_id`.
+`feature` records the exact Flagship model category/key while `source` records
+the inference surface. The provider trace groups a full harness loop, not an
+individual model turn; work-stream `session_id` values are
+`<workstream_id>-<substream_id>`. `intended_model` records the primary Rally
+route while `model` records the attempted candidate, so fallback requests
+remain explicit in provider-side analytics. Structured fallback and repair
+attempts retain one call-scoped trace ID, while each provider request keeps its
+own `inference_request_id`.
+
+Durable-memory embeddings now travel through OpenRouter and carry workspace
+`user` plus `X-Session-ID`. Content-free regional diagnostics record the
+feature key, trace/session IDs, intended/requested/resolved model, fallback
+attempt, outcome, and latency without retaining memory text or vectors. The
+query session uses the active substream rather than collapsing every
+conversation into main substream `"0"`.
 
 **Why:** Operators need to join OpenRouter's routing, timing, and pipeline view
 to Rally's workspace, work stream, substream, relevant person, request,
 deployment, and turn evidence without reconstructing that ownership from
 prompt content. A workspace-stable identity also keeps system-initiated and
-person-initiated inference for one tenant together.
+person-initiated inference for one tenant together. The previous Workers AI
+embedding call was invisible to that routing and provider-observability path,
+including when a configured fallback differed from the intended model.
 
 **Considered and rejected:** Replacing the lakehouse with Broadcast, exporting
 EU inference into Global observability, and making each turn a separate trace.
 Those lose exact Rally-owned evidence, violate the existing residency boundary,
-or hide the topology of a tool-using loop.
+or hide the topology of a tool-using loop. For embeddings: adding chat-only
+`trace` fields to the embeddings body and archiving embedding inputs in the
+Global inference lakehouse. The current SDK schema rejects the former, while
+the latter would widen retained user content without being necessary to
+diagnose routing.
 
 **Consequences:** Broadcast remains separately enabled and governed in the
 OpenRouter account. The Global lakehouse records `user_id = workspace_id` and
 keeps the relevant person in `context_user_id`; it archives provider error
 classifications without provider-controlled prose. EU still performs the
-provider request but creates no Rally analytical archive.
+provider request but creates no Rally analytical archive. OpenRouter/PostHog
+receive workspace and session correlation for embeddings but not custom trace
+metadata until the embeddings API supports it; Rally's regional logs retain the
+missing content-free routing dimensions, and the exact embedding content
+remains deliberately absent. The fixed requested model defines the Vectorize
+namespace, and a differing provider-reported model fails closed to FTS instead
+of silently querying another semantic space.
 
 ### 2026-08-24 — EU inference analytics are deferred
 
@@ -661,77 +641,7 @@ Iceberg table maintenance. Incident queries branch by region. If Cloudflare
 later supports EU Data Catalog, replacing the EU sink requires a deliberate
 immutable-resource migration rather than mutating this sink in place.
 
-### 2026-08-24 — Product substream identity becomes a typed query dimension
-
-**What changed:** Schema version 1 now includes optional typed column
-`substream_id`. Work-stream inference defaults to the canonical main substream
-`"0"`; streaming root and inline-child calls propagate the workflow's actual
-substream ID, while inference outside a work stream leaves the field null. The
-production query recipe filters and displays the dimension.
-
-**Why:** `workstream_id` alone is unambiguous only while every run belongs to
-the main substream. Once one work stream contains multiple real product
-substreams, it cannot identify which conversation produced a request.
-
-**Considered and rejected:** Treating each inline child as a substream. Inline
-children are execution lineage within the same product conversation, already
-represented by `request_id` and `parent_request_id`; assigning synthetic
-substreams would conflate two different boundaries and make future product
-substreams harder to query correctly.
-
-**Consequences:** Current rows linked to work streams are explicitly queryable
-as substream `"0"`, future substreams remain distinct without a second storage
-path, and incident responders must include `substream_id` when narrowing a
-work-stream query. The field was added before the first deployment of this new
-immutable stream schema, so no stream replacement is needed.
-
-### 2026-08-24 — Production inference debugging gets a safe retrieval path
-
-**What changed:** The production runbook now turns a work-stream URL into the
-correct regional R2 SQL API request, a bounded identifier query, the matching
-request/attempt pair, and an R2 Object API retrieval of the exact regional
-archive. It also covers
-at-least-once duplicates, five-minute sink visibility, delivery failures,
-separately scoped responder credentials, and scratch-file handling; `AGENTS.md`
-points agents to that procedure.
-
-**Why:** Naming the table and correlation keys was not enough for an incident
-responder to retrieve evidence safely. The missing steps encouraged broad scans,
-cross-region guessing, deployment-token reuse, or a return to the retired D1
-ledger.
-
-**Considered and rejected:** A custom query proxy in the product API. Production
-debugging does not justify a new raw-content endpoint or another authorization
-surface while Cloudflare already provides authenticated R2 SQL and R2 Object
-APIs.
-
-**Consequences:** Responders use the R2 SQL and R2 Object HTTP APIs, query only
-the owning region and incident window, and move raw JSON to a temporary local
-file only when the typed row is insufficient. The lakehouse remains analytical
-evidence and never becomes product-state repair authority.
-
-### 2026-08-24 — Hosted inference capture becomes lakehouse-only
-
-**What changed:** Migration 0094 and the same Worker release remove the old
-workspace-opt-in D1 index, preference, API/UI contract, and request-only
-`agent-inference/` writer. The lakehouse is now the sole hosted raw-inference
-capture path. Existing legacy R2 objects are left intact rather than erased by
-an infrastructure deployment.
-
-**Why:** Parallel diagnostic stores made completeness depend on an old
-workspace switch and duplicated sensitive request bodies without retaining the
-matching terminal provider envelope.
-
-**Considered and rejected:** Retaining the D1 index as a lookup cache. It would
-keep a second analytical schema and deletion lifecycle in the product database
-for fields the Iceberg table already indexes.
-
-**Consequences:** New inference analytics do not write D1. The operational
-`inference_attempts` rows remain object-local because run recovery depends on
-them, and a separate explicit decision is required before deleting historical
-legacy R2 objects.
-
-### 2026-08-24 — Every model call gains a lossless regional lakehouse trail
+### 2026-08-24 — Every model call gains a lossless regional lakehouse trail, replacing the D1 ledger, with substream identity and a safe retrieval path
 
 **What changed:** Streaming and structured inference now emit exact request and
 terminal attempt records. Each region archives the record in R2, queues a hashed
@@ -740,11 +650,42 @@ Catalog Iceberg table. The main-branch deployment creates and verifies every
 queue, bucket, catalog, stream, sink, pipeline, table path, and generated Worker
 binding without an operator step.
 
+Migration 0094 and the same Worker release remove the old workspace-opt-in D1
+index, preference, API/UI contract, and request-only `agent-inference/` writer.
+The lakehouse is now the sole hosted raw-inference capture path. Existing
+legacy R2 objects are left intact rather than erased by an infrastructure
+deployment.
+
+Schema version 1 includes optional typed column `substream_id`. Work-stream
+inference defaults to the canonical main substream `"0"`; streaming root and
+inline-child calls propagate the workflow's actual substream ID, while
+inference outside a work stream leaves the field null. The production query
+recipe filters and displays the dimension.
+
+The production runbook turns a work-stream URL into the correct regional R2 SQL
+API request, a bounded identifier query, the matching request/attempt pair, and
+an R2 Object API retrieval of the exact regional archive. It also covers
+at-least-once duplicates, five-minute sink visibility, delivery failures,
+separately scoped responder credentials, and scratch-file handling;
+`AGENTS.md` points agents to that procedure.
+
 **Why:** The opt-in D1/R2 inference ledger was built for individual debugging,
 not complete analytical coverage, and a Queue message cannot carry the largest
 valid multimodal request. Staging the exact bytes in the existing regional
 payload store keeps the queue small, makes integrity checkable, and lets the
 Iceberg table retain broad query columns without truncating source evidence.
+Parallel diagnostic stores made completeness depend on an old workspace switch
+and duplicated sensitive request bodies without retaining the matching terminal
+provider envelope.
+
+`workstream_id` alone is unambiguous only while every run belongs to the main
+substream. Once one work stream contains multiple real product substreams, it
+cannot identify which conversation produced a request.
+
+Naming the table and correlation keys was not enough for an incident responder
+to retrieve evidence safely. The missing steps encouraged broad scans,
+cross-region guessing, deployment-token reuse, or a return to the retired D1
+ledger.
 
 **Considered and rejected:** Sending the full record directly through Queue,
 which fails above 128 KB; sending directly from the inference path to Pipeline,
@@ -753,8 +694,37 @@ and dropping or truncating prompt/response fields, which contradicts the
 requirement to keep maximal metadata and makes the pathological calls the least
 diagnosable ones.
 
+Retaining the D1 index as a lookup cache. It would keep a second analytical
+schema and deletion lifecycle in the product database for fields the Iceberg
+table already indexes.
+
+Treating each inline child as a substream. Inline children are execution
+lineage within the same product conversation, already represented by
+`request_id` and `parent_request_id`; assigning synthetic substreams would
+conflate two different boundaries and make future product substreams harder to
+query correctly.
+
+A custom query proxy in the product API. Production debugging does not justify
+a new raw-content endpoint or another authorization surface while Cloudflare
+already provides authenticated R2 SQL and R2 Object APIs.
+
 **Consequences:** Inference storage is intentionally duplicated between raw R2
-and Iceberg, delivery is at-least-once and must be deduplicated by `event_id` for
-exact counts, raw records have no automatic retention yet, and the deployment
-token needs R2 Data Catalog and Pipelines permissions in addition to the
-existing Worker/Queue permissions.
+and Iceberg, delivery is at-least-once and must be deduplicated by `event_id`
+for exact counts, raw records have no automatic retention yet, and the
+deployment token needs R2 Data Catalog and Pipelines permissions in addition to
+the existing Worker/Queue permissions.
+
+New inference analytics do not write D1. The operational `inference_attempts`
+rows remain object-local because run recovery depends on them, and a separate
+explicit decision is required before deleting historical legacy R2 objects.
+
+Current rows linked to work streams are explicitly queryable as substream
+`"0"`, future substreams remain distinct without a second storage path, and
+incident responders must include `substream_id` when narrowing a work-stream
+query. The field was added before the first deployment of this new immutable
+stream schema, so no stream replacement is needed.
+
+Responders use the R2 SQL and R2 Object HTTP APIs, query only the owning region
+and incident window, and move raw JSON to a temporary local file only when the
+typed row is insufficient. The lakehouse remains analytical evidence and never
+becomes product-state repair authority.

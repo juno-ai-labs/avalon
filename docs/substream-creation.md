@@ -823,33 +823,39 @@ previous selected-feed wiring made shared chrome change when a child was selecte
 and could apply parent API responses to a child cache. Keep the two contexts
 explicit; selecting a child must not change the scope of sidebar actions.
 
-### 2026-09-05 — Show the relationship between Main and its substreams
+### 2026-09-05 — Private substreams with replaceable starting context, shown beneath Main
+
+**What changed:** Added a single parent-owned creation flow with versioned
+strategy/selector/transform hooks, independently pinned creator-only membership
+and a Gemini summary policy. Preview and feed share one read-only renderer so
+history strategies display their actual selected text, not just a message
+count.
 
 The center sidebar now groups indented child rows beneath Main, with the create
-action last. Corner connectors and creator avatars make the hierarchy visible
-without adopting the reference mockup's separate palette or oversized cards.
+action last. Corner connectors and creator avatars make the hierarchy visible.
 Collapsed mode keeps the same navigable icon rail and the resize logic is
-unchanged; this presentation must not change child discovery or membership.
-Connectors use the sidebar-border token, not muted text: Grok Bot's packaged
-weak-border palette uses approximately 10% foreground opacity, so the hierarchy
-stays subordinate to the conversation labels in both appearances.
+unchanged.
 
-### 2026-09-04 — Private substreams with replaceable starting context
-
-Added a single parent-owned creation flow with versioned strategy/selector/
-transform hooks, independently pinned creator-only membership and a Gemini
-summary policy. The requirement is to evolve how every substream starts without
+**Why:** The requirement is to evolve how every substream starts without
 building multiple creation implementations or offering a strategy picker.
-Persisted capture and selected seed were chosen over copying live transcript
-and run state so retries keep the reviewed context and inherited instructions
-cannot execute. The parent remains the discovery and membership authority;
-creating another work stream or relying on broad parent membership was rejected
-because either would break private child semantics. Socket-only baseline reset
-and end-to-end timing prevent REST recovery races and misleading latency claims.
 Real-window acceptance exposed a local-root/external-address FK mismatch on the
-first instruction and a Main snapshot that erased control-owned child discovery;
-both now have regression coverage. Private directory suppression is specific to
-WorkstreamDO: automation parents still consume child status locally even when
-they do not forward the original child projection. Preview and feed share one
-read-only renderer so history strategies display their actual selected text,
-not just a message count.
+first instruction and a Main snapshot that erased control-owned child
+discovery; both now have regression coverage.
+
+**Considered and rejected:** Copying live transcript and run state instead of a
+persisted capture and selected seed: the capture keeps the reviewed context
+across retries and stops inherited instructions from executing. Creating
+another work stream, or relying on broad parent membership: the parent remains
+the discovery and membership authority, and either alternative would break
+private child semantics. REST recovery for the baseline reset: socket-only
+baseline reset and end-to-end timing prevent REST recovery races and
+misleading latency claims. In the sidebar, the reference mockup's separate
+palette and oversized cards were not adopted, and connectors use the
+sidebar-border token rather than muted text: Grok Bot's packaged weak-border
+palette uses approximately 10% foreground opacity, so the hierarchy stays
+subordinate to the conversation labels in both appearances.
+
+**Consequences:** Private directory suppression is specific to WorkstreamDO:
+automation parents still consume child status locally even when they do not
+forward the original child projection. The sidebar presentation must not
+change child discovery or membership.

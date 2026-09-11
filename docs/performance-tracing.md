@@ -786,10 +786,6 @@ open through continuation and user wait time until results or a terminal respons
 The latency target remains about useful results rather than candidate-page speed.
 
 
-### 2026-09-07 — Search review corrections
-
-Search traces are admitted when a request starts, retaining the last interaction clock for debounce measurement. Superseded keystrokes that never issue work produce no event. Closing search is distinct from unmounting; cumulative request time includes rejected pages.
-
 ### 2026-09-07 — Measure search from typing through painted results
 
 **What changed:** The existing `renderer_perf_flow` contract accepts
@@ -912,7 +908,7 @@ send-ready remain the authoritative total. Operators should compare direct and
 proxied routes separately and join ticket/connection IDs into server phases.
 Speculative hover spans can be separated from committed opens without inferring
 intent from timing.
-### 2026-09-01 — Message-send tracing starts at the admitted room
+### 2026-09-01 — Message-send tracing starts at the admitted room, and plain sends skip the roster fetch
 
 **What changed:** Current desktop sends produce a socket-rooted
 `workstream.room.create_message` trace in SubstreamAgent. Its child spans cover
@@ -922,39 +918,35 @@ desktop compatibility traffic. The existing `workstream_send_ready` event keeps
 its `workspaceSocketState` field for telemetry-schema continuity, but the value
 now describes the message-carrying SubstreamAgent socket.
 
+On the client, `messageMentionPayload` returns an empty mention payload without
+calling `/workspace/members` unless the outgoing text contains `@` or the
+durable `person://` mention scheme. The existing resolution path is unchanged
+once either marker is present.
+
 **Why:** The selected substream socket already carries the exact route and
 admitted identity. The parent trace described work the product no longer needs:
 a WorkspaceDO invocation, D1 session/membership recheck, and a child binding
 call before the owner could write.
 
+Production send traces showed every plain message paying 100–118 ms for a
+roster it could not use before the workspace socket command began. Mention
+resolution needs that roster; a message with no mention syntax does not.
+
 **Considered and rejected:** Keeping an empty parent correlation span would
 misrepresent the runtime path. Reusing the old span name in the child would hide
 the authority change and make old/new production samples indistinguishable.
 
+Caching the roster on the send path would still add cache ownership and
+invalidation semantics to messages that need no roster at all. Inferring from
+`selected` alone would miss hand-typed `@Name` mentions and pasted durable
+mention Markdown.
+
 **Consequences:** Diagnose current send latency from
 `workstream.room.create_message`; seeing `workstream.message.send` means the
 client has not yet upgraded. Both still join the renderer by
-`rally.message.client_id`.
-
-### 2026-09-01 — Plain message sends do not fetch the workspace roster
-
-**What changed:** `messageMentionPayload` returns an empty mention payload
-without calling `/workspace/members` unless the outgoing text contains `@` or
-the durable `person://` mention scheme. The existing resolution path is
-unchanged once either marker is present.
-
-**Why:** Production send traces showed every plain message paying 100–118 ms for
-a roster it could not use before the workspace socket command began. Mention
-resolution needs that roster; a message with no mention syntax does not.
-
-**Considered and rejected:** caching the roster on this path would still add
-cache ownership and invalidation semantics to messages that need no roster at
-all. Inferring from `selected` alone would miss hand-typed `@Name` mentions and
-pasted durable mention Markdown.
-
-**Consequences:** `resolve_mentions` remains a measured phase, but it is local
-and effectively immediate for plain text. New mention syntaxes must be added to
-this gate when they are added to resolution.
+`rally.message.client_id`. `resolve_mentions` remains a measured phase, but it
+is local and effectively immediate for plain text. New mention syntaxes must be
+added to this gate when they are added to resolution.
 
 ### 2026-08-26 — Work-stream open includes both transcript islands and usable composer
 
@@ -1007,34 +999,7 @@ and regional telemetry.
 
 Shipped in #341.
 
-### 2026-08-26 — Renderer traces persist locally and cold wakes expose initialization
-
-**What changed:** macOS builds now package a native Unified Logging bridge that
-writes the already-governed `renderer_perf_flow` record under Rally's
-performance subsystem before the upload preference gate. Each migrated Durable
-Object also opens `initialize` and `schema_migrate` spans and emits one
-structured duration row per wake.
-
-**Why:** Packaged DevTools made renderer lines inaccessible and process exit
-discarded them, while a slow automatic binding span combined platform wake,
-constructor work, schema migration, and transport into one number. Neither gap
-could be repaired after a user supplied a session time window.
-
-**Considered and rejected:** A text log with application-owned rotation adds a
-second retention and file-security subsystem; Unified Logging is the idiomatic
-macOS durable store and Console.app already reads it. Reporting every migration
-pass to the fleet tracker would turn a timing question into cross-region queue
-traffic and defeat its deploy/heartbeat dedupe; structured Worker logs provide
-the per-wake record without changing tracker semantics.
-
-**Consequences:** Local renderer records survive app restarts and remain on the
-device regardless of Product analytics, while governed uploads still obey the
-account preference and regional route. Migration and initialization failures
-remain behaviorally identical. Workerd's pinned clock can report `0 ms` for
-synchronous work, and the residual outside `initialize` is inferred platform
-wake plus binding transport rather than a separately timed phase.
-
-### 2026-08-26 — Renderer phase timings use the governed regional telemetry path
+### 2026-08-26 — Renderer phase timings reach regional telemetry and local Unified Logging, and cold wakes expose initialization
 
 **What changed:** Every completed renderer `workstream_create`,
 `workstream_open`, and `workstream_message_send` trace now emits one closed
@@ -1042,26 +1007,45 @@ wake plus binding transport rather than a separately timed phase.
 line. Exact phase and blocked milliseconds, bounded counts, closed outcomes,
 and join identifiers travel through validated main-process IPC and the existing
 regional spool. The operation remains fire-and-forget and never waits for a
-preference read or telemetry delivery.
+preference read or telemetry delivery. macOS builds also package a native
+Unified Logging bridge that writes the same governed `renderer_perf_flow`
+record under Rally's performance subsystem before the upload preference gate.
+Each migrated Durable Object also opens `initialize` and `schema_migrate` spans
+and emits one structured duration row per wake.
 
 **Why:** Packaged builds do not expose DevTools, so the only evidence capable of
 splitting the observed multi-second ticket-to-upgrade gap into renderer `dial`,
 network handshake, service wait, or main-thread blocking disappeared with the
 process. Backend timings could locate the gap but could not classify it, which
-made the two-second P90 goal unactionable from production evidence.
+made the two-second P90 goal unactionable from production evidence. Process
+exit discarded the renderer lines as well, and a slow automatic binding span
+combined platform wake, constructor work, schema migration, and transport into
+one number. None of these gaps could be repaired after a user supplied a
+session time window.
 
 **Considered and rejected:** Forwarding `[perf]` console objects wholesale
 would create an open telemetry vocabulary and could silently export future
 annotations. A renderer OpenTelemetry exporter would bypass regional routing,
 consent, validation, and the durable spool. Keeping only the existing total
 paint metric preserves percentiles but cannot identify which phase to change.
+For the local record, a text log with application-owned rotation adds a second
+retention and file-security subsystem; Unified Logging is the idiomatic macOS
+durable store and Console.app already reads it. Reporting every migration pass
+to the fleet tracker would turn a timing question into cross-region queue
+traffic and defeat its deploy/heartbeat dedupe; structured Worker logs provide
+the per-wake record without changing tracker semantics.
 
 **Consequences:** Diagnostic events obey the Product analytics preference;
 Global can reach PostHog and the lakehouse while EU remains internal-region
 only. The 90-day event omits cursor positions, close codes, raw server event
 names, errors, URLs, and content. Adding a renderer phase now requires an
 explicit contract change or it remains local, and raw console lines are still
-ephemeral.
+ephemeral. Local renderer records survive app restarts and remain on the device
+regardless of Product analytics, while governed uploads still obey the account
+preference and regional route. Migration and initialization failures remain
+behaviorally identical. Workerd's pinned clock can report `0 ms` for
+synchronous work, and the residual outside `initialize` is inferred platform
+wake plus binding transport rather than a separately timed phase.
 
 ### 2026-08-25 — The socket snapshot is the cold-open clock
 
@@ -1134,38 +1118,20 @@ one click, then use `rally.request.id` to inspect one call. Authentication repla
 inside one `RallyApi` call deliberately retains its request ID because it is one
 caller-level request under a renewed credential.
 
-### 2026-08-25 — Opening, lease, and request IDs keep separate scopes
-
-**What changed:** A sidebar attempt now emits start and terminal outcome events
-under one opening operation ID. The detail request reuses it. Socket starts use
-their own operation ID for the ticket request, carry the pending opening ID when
-applicable, and carry the socket owner's stable lease ID. The feed and opening
-outcome record the lease that served the painted transcript.
-
-**Why:** One identifier cannot simultaneously name a user interaction, several
-ticket requests, and a pooled connection that may predate that interaction.
-Rapid navigation also needs a durable superseded outcome rather than a missing
-completion row.
-
-**Considered and rejected:** Timestamp joins are ambiguous for A to B to A
-switches. Making the click ID the request ID for both control and feed would
-merge independent requests. Treating the work-stream ID as a session would
-merge every open and reconnect for that resource.
-
-**Consequences:** `operation_id` means the event's own attempt: opening attempt
-on opening/feed events, socket attempt on socket-start events. `openAttemptId`
-is the explicit parent on a socket start; `socketLeaseId` joins control/feed
-attempts to the retained owner. None is a Cloudflare trace ID, ticket, or
-authorization value.
-
-### 2026-08-25 — The approved feed-paint metric exports totals, not renderer traces
+### 2026-08-25 — The feed-paint metric exports click-scoped totals, and opening, lease, and request IDs keep separate scopes
 
 **What changed:** A click-scoped operation ID now labels the desktop's
 `workstream_feed_visible` product event and, when the open needs it,
-`GET /workstreams/:id`. The event
-exports exact click-to-data-ready and click-to-painted-feed milliseconds. The
-local renderer tracer remains local, and its phase list and long-task overlap
-are not copied into the product envelope.
+`GET /workstreams/:id`. The event exports exact click-to-data-ready and
+click-to-painted-feed milliseconds. The local renderer tracer remains local,
+and its phase list and long-task overlap are not copied into the product
+envelope.
+
+A sidebar attempt emits start and terminal outcome events under that one
+opening operation ID, and the detail request reuses it. Socket starts use their
+own operation ID for the ticket request, carry the pending opening ID when
+applicable, and carry the socket owner's stable lease ID. The feed and opening
+outcome record the lease that served the painted transcript.
 
 **Why:** The earlier decision below rejected regional renderer latency because
 no concrete product question required raw values. The requested average and
@@ -1173,17 +1139,32 @@ P50/P75/P90/P99 click-to-feed distribution cannot be reconstructed from local
 lines, socket-open timing, or duration buckets. Reusing the request ID makes
 backend phase attribution possible without inventing a second trace graph.
 
+One identifier cannot simultaneously name a user interaction, several ticket
+requests, and a pooled connection that may predate that interaction. Rapid
+navigation also needs a durable superseded outcome rather than a missing
+completion row.
+
 **Considered and rejected:** Exporting `[perf]` lines wholesale would move a
 diagnostic vocabulary into the product contract and retain substantially more
 state. Minting `traceparent` still forks Cloudflare's trace graph. Keeping only
 buckets makes the requested percentiles mathematically unavailable.
 
+Timestamp joins are ambiguous for A to B to A switches. Making the click ID the
+request ID for both control and feed would merge independent requests. Treating
+the work-stream ID as a session would merge every open and reconnect for that
+resource.
+
 **Consequences:** Exact totals are governed Product analytics and follow its
 consent and regional destinations; detailed phases remain diagnostic. A reader
 joins an uncached open on the opening operation/request ID and must not treat it
 as authorization or as a Cloudflare trace ID. A `feed_cache` open has no detail
-request to join by design. The newer entry above owns correlation to socket
-attempts and retained leases.
+request to join by design.
+
+`operation_id` means the event's own attempt: opening attempt on opening/feed
+events, socket attempt on socket-start events. `openAttemptId` is the explicit
+parent on a socket start; `socketLeaseId` joins control/feed attempts to the
+retained owner. None is a Cloudflare trace ID, ticket, or authorization value.
+
 ### 2026-08-25 — Subscription snapshots name replay-loss recovery
 
 **What changed:** `workstream.room.socket.subscribe` records

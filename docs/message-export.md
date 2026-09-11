@@ -286,12 +286,6 @@ Two traps:
 
 Still rendering presents image embeds as titled file cards and styles the file wrapper. An exported message retains every delivered resource without fetching live previews or depending on gallery navigation.
 
-### 2026-09-07 — Use the current brand accent
-
-Replaced the decorative orange export accent with Rally neon yellow (#ccff00),
-matching the desktop brand palette and removing the retired orange treatment.
-
-
 ### 2026-08-30 — Export trust names the closed break-tag exception
 
 **What changed:** The export contract and this document now state that the

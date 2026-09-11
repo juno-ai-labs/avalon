@@ -535,123 +535,38 @@ The Ace receipt contract carries `parents`. `retireWorkspaceForOperator` takes
 the operator. The `ace-form` classes are the form primitive any Ace detail pane
 uses.
 
-### 2026-09-08 — Retirement ships on its own
-
-**What changed:** This module is split out of the demo-workspace branch and
-lands ahead of it, with its own document. The route moved to
-`routes/workspace-operations.ts`, the receipt's contract to
-`contracts/workspace-retirement.ts`, and Ace's relay to `regional-api.ts`.
-The walk no longer writes a regional shadow of the tombstone: the demo
-register that read it arrives with the demo feature, which restores that
-write when it lands. Entries below that mention a register describe the
-combined branch as it was written.
-
-**Why:** The gate wraps every method of every object class that can belong to
-a workspace, and the demo feature that first needed it is ten thousand lines
-that nothing runs until an operator starts a demo. Reviewed and observed
-together, the one change with a production footprint would have been hidden
-under the one without; apart, the gate merges with nothing calling it yet, so
-its only effect is the negative tombstone check and the schema steps — which
-is exactly what is worth watching on its own before anything closes a
-workspace.
-
-**Considered and rejected:** Landing the gate inside the demo PR after all —
-the reason above. Archiving instead of retiring, using the abandonment row the
-product already has — it closes every door through the API and the sockets
-but reaches nothing inside the objects, so a room's alarm still fires and a
-Queue still redelivers to it; acceptable for a demo, and still an option if
-"permanently quiet" turns out to matter less than the blast radius here.
-
-**Consequences:** `retireWorkspaceGraph` takes no `completedAt` and writes no
-D1 row; a feature that wants a regional record of a closed workspace writes
-it after the receipt reports complete. The tombstone is conversation-object
-schema v48, WorkspaceDO 41 with the graph at 42, WorkstreamDO 8, and Sidekick
-5 — renumbered three times on rebase as `main` took the numbers before them,
-most recently v46 and v47 (Sidekick skill names, shared appearance) and
-WorkspaceDO 40 (appearance).
-
-### 2026-09-07 — Review: the door checks the region, and every router names its roles
-
-**What changed:** `retireWorkspaceForOperator` refuses an id the region's
-`workspaces` table does not hold. `requireOperatorRole` takes every role a
-router admits, and the telemetry router names `support` and `security`, so
-`demos` is refused there. Ace holds one operator token per region,
-`RALLY_OPERATOR_TOKEN` and `RALLY_EU_OPERATOR_TOKEN`.
-
-**Why:** A review swarm on the finished feature. The walk deliberately infers
-nothing from an id, which left the door in front of it able to "retire" an id
-the other region owned as a set of brand-new empty objects and report
-success. The `demos` role reached three telemetry routes because only the new
-routers narrowed by role. A shared token was destructive authority in both
-jurisdictions from one leak.
-
-**Considered and rejected:** Region-binding the operator principal instead of
-two tokens — a second secret is the smaller change and matches the per-region
-rule `security.md` already states.
-
-**Consequences:** Adding an operator router means naming its roles. A wrong
-region is a refusal, not a phantom retirement.
-
-### 2026-09-05 — Any workspace can be retired
-
-**What changed:** `retireWorkspaceGraph` no longer consults a register of
-demo workspaces; `isRetirableDemoWorkspace` and its refusal are gone.
-
-**Why:** From review. The register-as-authorization was bookkeeping for a
-surface that one Access policy already admits, and an operator tool that can
-retire *any* workspace is what was actually wanted.
-
-**Considered and rejected:** Keeping the register check as a soft warning —
-either it blocks or it is noise.
-
-**Consequences:** The confirmation in Ace is the only thing between an operator
-and an irreversible close of a customer workspace; build it to make the operator
-type or paste the id.
-
-### 2026-09-05 — A permit is a call, not a method name
-
-**What changed:** A permitted method now runs against a view of its own instance
-with the gate lifted, so the whole call beneath it is unfenced. The construction
-window became a depth counter opened by `initializeDurableObject` itself;
-`SubstreamAgent`'s runtime recovery became a prototype method; dispositions
-resolve per instance at call time; a policy entry naming a method its class does
-not have throws at load; the negative tombstone answer is cached. Retirement now
-takes its region from the Worker rather than the caller, reports an empty
-workspace complete, and asks each parent for its children through an RPC that
-answers "missing" and "identity mismatch" instead of throwing them.
-
-**Why:** The first version could not express the one thing it needed to. A permit
-was a method name, so every permitted entry point refused itself on the first
-private helper it reached — `revokeSocketAccess` on all three classes that have
-it, `syncAgentTimerAlarms` on every rebuilt `SubstreamAgent`, and three found
-before those. In production that is the region-wide access-revocation queue
-dead-lettering one message per retired object, and a retired workspace becoming
-permanently unreachable within minutes of going idle, taking operator inspection,
-the resumable walk, and every drop with it. Five instances of one defect,
-discovered one at a time, is a mechanism that cannot state its own requirement.
-
-**Considered and rejected:** Naming the helpers — that is what failed, five
-times, and the list can only ever be as complete as the last person to trace a
-call graph by hand. A re-entrancy flag set on entry to a permitted method — the
-original objection stands: a flag is visible to whatever the runtime admits while
-that method is awaiting, and a product call could take it. Gating only the doors
-a caller can reach — TypeScript's `private` is not a runtime fact, so every
-helper is reachable over RPC and "door" is not a distinction the runtime can
-make.
-
-**Consequences:** A new permitted entry point needs no call-graph audit, but a
-permitted method now runs its whole tree unfenced, so permitting something that
-writes product state is a real mistake rather than a partial one. Anything that
-opens `initializeDurableObject` is inside the construction window for its whole
-duration. A closure the constructor binds cannot be reached by a permit, so
-recovery-shaped work belongs on the prototype. Callers no longer pass a region.
-
-### 2026-09-05 — A retired object refuses at every door, not at the edge
+### 2026-09-08 — A retired object refuses at every door, a permit is a call, any workspace can be retired, and retirement ships on its own
 
 **What changed:** New module. A permanent tombstone in each object's own SQLite,
 a class-level gate wrapping every callable method of the five classes that can
 belong to a workspace, a recorded object graph captured before the tombstone,
 and a resumable walk that closes children before parents.
+
+A permitted method runs against a view of its own instance with the gate
+lifted, so the whole call beneath it is unfenced. The construction window is a
+depth counter opened by `initializeDurableObject` itself; `SubstreamAgent`'s
+runtime recovery is a prototype method; dispositions resolve per instance at
+call time; a policy entry naming a method its class does not have throws at
+load; the negative tombstone answer is cached. Retirement takes its region from
+the Worker rather than the caller, reports an empty workspace complete, and
+asks each parent for its children through an RPC that answers "missing" and
+"identity mismatch" instead of throwing them.
+
+`retireWorkspaceGraph` consults no register of demo workspaces;
+`isRetirableDemoWorkspace` and its refusal are gone. `retireWorkspaceForOperator`
+refuses an id the region's `workspaces` table does not hold.
+`requireOperatorRole` takes every role a router admits, and the telemetry
+router names `support` and `security`, so `demos` is refused there. Ace holds
+one operator token per region, `RALLY_OPERATOR_TOKEN` and
+`RALLY_EU_OPERATOR_TOKEN`.
+
+The module is split out of the demo-workspace branch and lands ahead of it,
+with its own document. The route moved to `routes/workspace-operations.ts`, the
+receipt's contract to `contracts/workspace-retirement.ts`, and Ace's relay to
+`regional-api.ts`. The walk no longer writes a regional shadow of the
+tombstone: the demo register that read it arrives with the demo feature, which
+restores that write when it lands. The register mentioned above describes the
+combined branch as it was written.
 
 **Why:** The spike this was built on retired a workspace with a straight-line
 best-effort walk and found two things it could not fix from outside. The
@@ -662,21 +577,92 @@ re-armed after traffic, because clearing an alarm does not stop the code that
 re-derives it. A check at the edge, or a helper each method is expected to
 call, addresses neither.
 
-**Considered and rejected:** A `Proxy` around the instance — workerd dispatches
-to prototype properties, so the proxy is not in the path. A per-method helper —
-229 methods on WorkspaceDO alone, and the failure mode is a method somebody
-forgot. A re-entrancy escape so permitted methods could call refused ones — that
-is a hole a product call could take, and the cost of not having it is that
-retirement's own helpers are listed explicitly, which is loud rather than silent.
-Gating on the workspace name ending in `-demo` — wrong in both directions, and
-the PRD rules it out. Draining stranded outbox rows — publishing out of a closed
-workspace. Deleting them — deciding whose they now are.
+The first version of the gate could not express the one thing it needed to. A
+permit was a method name, so every permitted entry point refused itself on the
+first private helper it reached — `revokeSocketAccess` on all three classes
+that have it, `syncAgentTimerAlarms` on every rebuilt `SubstreamAgent`, and
+three found before those. In production that is the region-wide
+access-revocation queue dead-lettering one message per retired object, and a
+retired workspace becoming permanently unreachable within minutes of going
+idle, taking operator inspection, the resumable walk, and every drop with it.
+Five instances of one defect, discovered one at a time, is a mechanism that
+cannot state its own requirement.
+
+From review, the register-as-authorization was bookkeeping for a surface that
+one Access policy already admits, and an operator tool that can retire *any*
+workspace is what was actually wanted.
+
+A review swarm on the finished feature found three more things. The walk
+deliberately infers nothing from an id, which left the door in front of it
+able to "retire" an id the other region owned as a set of brand-new empty
+objects and report success. The `demos` role reached three telemetry routes
+because only the new routers narrowed by role. A shared token was destructive
+authority in both jurisdictions from one leak.
+
+The gate wraps every method of every object class that can belong to a
+workspace, and the demo feature that first needed it is ten thousand lines
+that nothing runs until an operator starts a demo. Reviewed and observed
+together, the one change with a production footprint would have been hidden
+under the one without; apart, the gate merges with nothing calling it yet, so
+its only effect is the negative tombstone check and the schema steps — which
+is exactly what is worth watching on its own before anything closes a
+workspace.
+
+**Considered and rejected:**
+
+- For the gate itself: a `Proxy` around the instance — workerd dispatches to
+  prototype properties, so the proxy is not in the path. A per-method helper —
+  229 methods on WorkspaceDO alone, and the failure mode is a method somebody
+  forgot. A re-entrancy escape so permitted methods could call refused ones —
+  that is a hole a product call could take, and the cost of not having it was
+  that retirement's own helpers were listed explicitly, which is loud rather
+  than silent. Gating on the workspace name ending in `-demo` — wrong in both
+  directions, and the PRD rules it out. Draining stranded outbox rows —
+  publishing out of a closed workspace. Deleting them — deciding whose they now
+  are.
+- For permits: naming the helpers — that is what failed, five times, and the
+  list can only ever be as complete as the last person to trace a call graph by
+  hand. A re-entrancy flag set on entry to a permitted method — the original
+  objection stands: a flag is visible to whatever the runtime admits while that
+  method is awaiting, and a product call could take it. Gating only the doors a
+  caller can reach — TypeScript's `private` is not a runtime fact, so every
+  helper is reachable over RPC and "door" is not a distinction the runtime can
+  make.
+- Keeping the register check as a soft warning — either it blocks or it is
+  noise.
+- Region-binding the operator principal instead of two tokens — a second
+  secret is the smaller change and matches the per-region rule `security.md`
+  already states.
+- Landing the gate inside the demo PR after all — the reason above. Archiving
+  instead of retiring, using the abandonment row the product already has — it
+  closes every door through the API and the sockets but reaches nothing inside
+  the objects, so a room's alarm still fires and a Queue still redelivers to
+  it; acceptable for a demo, and still an option if "permanently quiet" turns
+  out to matter less than the blast radius here.
 
 **Consequences:** Adding a method to any of the five gated classes fences it by
 default; an effect receiver added without a `drop` entry will refuse and strand
-its Queue message, so new receivers must be classified. A permitted method that
-calls an unlisted private helper throws the first time retirement runs. The
-alarm coordinator's mutators are inert on a retired object, so code that assumes
-`armNextAlarm` always arms is wrong there.
+its Queue message, so new receivers must be classified. The alarm coordinator's
+mutators are inert on a retired object, so code that assumes `armNextAlarm`
+always arms is wrong there. Under the first design a permitted method that
+called an unlisted private helper threw the first time retirement ran; with a
+permit as a call, a new permitted entry point needs no call-graph audit, but a
+permitted method runs its whole tree unfenced, so permitting something that
+writes product state is a real mistake rather than a partial one. Anything that
+opens `initializeDurableObject` is inside the construction window for its whole
+duration. A closure the constructor binds cannot be reached by a permit, so
+recovery-shaped work belongs on the prototype. Callers no longer pass a region.
+
+The confirmation in Ace is the only thing between an operator and an
+irreversible close of a customer workspace; build it to make the operator type
+or paste the id. Adding an operator router means naming its roles. A wrong
+region is a refusal, not a phantom retirement.
+
+`retireWorkspaceGraph` takes no `completedAt` and writes no D1 row; a feature
+that wants a regional record of a closed workspace writes it after the receipt
+reports complete. The tombstone is conversation-object schema v48, WorkspaceDO
+41 with the graph at 42, WorkstreamDO 8, and Sidekick 5 — renumbered three
+times on rebase as `main` took the numbers before them, most recently v46 and
+v47 (Sidekick skill names, shared appearance) and WorkspaceDO 40 (appearance).
 
 Design: `docs/PRDs/2026-09-04_demo-workspace/prd.md`.
