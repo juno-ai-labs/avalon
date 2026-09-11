@@ -40,7 +40,6 @@ import {
   type ReactNode,
 } from 'react';
 import type {
-  ConnectorOAuthProvider,
   ConnectorOAuthStart,
   CustomMcpToolPolicy,
 } from '@rally/contracts';
@@ -70,16 +69,6 @@ import type {
 
 type SettingsSection = DesktopSettingsSection;
 type ConnectionFilter = 'all' | 'connected' | 'not_connected';
-
-const connectorProviderName: Record<ConnectorOAuthProvider, string> = {
-  custom_mcp: 'Custom MCP server',
-  google: 'Google',
-  github: 'GitHub',
-  granola: 'Granola',
-  linear: 'Linear',
-  notion: 'Notion',
-  slack: 'Slack',
-};
 
 const reconnectableConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
   'google',
@@ -419,8 +408,6 @@ export function WorkspaceSettingsScreen({
   const [applicationSettingsLoadError, setApplicationSettingsLoadError] = useState<string | null>(null);
   const [reconnectTarget, setReconnectTarget] = useState<WorkstreamConnection | null>(null);
   const [disconnectTarget, setDisconnectTarget] = useState<WorkstreamConnection | null>(null);
-  const [connectorOAuthMessage, setConnectorOAuthMessage] = useState<string | null>(null);
-  const [connectorOAuthError, setConnectorOAuthError] = useState<string | null>(null);
   const [granolaWorkspaceModalOpen, setGranolaWorkspaceModalOpen] = useState(false);
   const [granolaWorkspaceApiKey, setGranolaWorkspaceApiKey] = useState('');
   const [webhookModalScope, setWebhookModalScope] = useState<'you' | 'workspace' | null>(null);
@@ -641,10 +628,6 @@ export function WorkspaceSettingsScreen({
       await desktopBridge().openExternal(authorization.url);
       return { kind: 'oauth' as const, authorization, provider: input.provider };
     },
-    onMutate: () => {
-      setConnectorOAuthMessage(null);
-      setConnectorOAuthError(null);
-    },
     onSuccess: (result) => {
       if (result.kind === 'direct') {
         void queryClient.invalidateQueries({ queryKey: ['connections'] });
@@ -705,10 +688,6 @@ export function WorkspaceSettingsScreen({
       await desktopBridge().openExternal(authorization.url);
       return { kind: 'oauth' as const, authorization };
     },
-    onMutate: () => {
-      setConnectorOAuthMessage(null);
-      setConnectorOAuthError(null);
-    },
     onSuccess: (result) => {
       setCustomMcpModalScope(null);
       if (result.kind === 'direct') {
@@ -741,10 +720,6 @@ export function WorkspaceSettingsScreen({
       const attempt = await api!.getConnectorOAuthAttempt(authorization.attemptId);
       await desktopBridge().openExternal(authorization.url);
       return { authorization, provider: attempt.provider };
-    },
-    onMutate: () => {
-      setConnectorOAuthMessage(null);
-      setConnectorOAuthError(null);
     },
     onSuccess: ({ authorization, provider }) => setPendingConnectorOAuth({
       attemptId: authorization.attemptId,
@@ -998,7 +973,6 @@ export function WorkspaceSettingsScreen({
       || pendingConnectorOAuth.region !== workspace.region
       || pendingConnectorOAuth.workspaceId !== workspace.id) return;
     let cancelled = false;
-    const providerName = connectorProviderName[pendingConnectorOAuth.provider];
 
     const reconcile = async (): Promise<void> => {
       try {
@@ -1007,27 +981,14 @@ export function WorkspaceSettingsScreen({
         if (attempt.status === 'pending') return;
         setPendingConnectorOAuth(null);
         if (attempt.status === 'succeeded') {
-          setConnectorOAuthError(null);
-          setConnectorOAuthMessage(`${providerName} is connected.`);
           void Promise.all([
             queryClient.invalidateQueries({ queryKey: ['connections'] }),
             invalidateCachedWorkstreamDetails(queryClient),
             queryClient.invalidateQueries({ queryKey: ['automation'] }),
           ]);
-          return;
         }
-        setConnectorOAuthMessage(null);
-        setConnectorOAuthError(
-          attempt.status === 'denied'
-            ? `${providerName} authorization was cancelled.`
-            : attempt.errorCode === 'oauth_attempt_expired'
-              ? `${providerName} authorization expired. Try connecting again.`
-              : `${providerName} could not be connected. Try again.`,
-        );
       } catch {
-        if (!cancelled) {
-          setConnectorOAuthError(`${providerName} authorization could not be confirmed. Refresh connections or try again.`);
-        }
+        // Keep the pending attempt so the next workspace update can reconcile it.
       }
     };
 
@@ -1710,10 +1671,6 @@ export function WorkspaceSettingsScreen({
                     {visibleProviders.length === 0 && <EmptyState title="No connectors here" description="Change the filter to see other available providers." />}
                   </div>
                 </div>
-                {connectorOAuthMessage && <p className="settings-oauth-status" role="status"><Check aria-hidden="true" size={14} />{connectorOAuthMessage}</p>}
-                {(connectorOAuthError || connections.error || connectorCatalog.error || connectProvider.error || createGranolaWorkspaceConnection.error || createWebhookConnection.error || rotateWebhookSecret.error || reconnectConnection.error) && (
-                  <InlineError>{connectorOAuthError ?? connections.error?.message ?? connectorCatalog.error?.message ?? connectProvider.error?.message ?? createGranolaWorkspaceConnection.error?.message ?? createWebhookConnection.error?.message ?? rotateWebhookSecret.error?.message ?? reconnectConnection.error?.message}</InlineError>
-                )}
               </section>
             )}
 
