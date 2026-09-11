@@ -59,6 +59,7 @@ export {
   WorkstreamErrorState,
   acceptedMessageOverlayDeliveryState,
   branchProvenance,
+  conversationReadAcknowledgement,
   highestVisibleAttentionSequence,
   initialTranscriptAnchorIndex,
   manualElicitationResponse,

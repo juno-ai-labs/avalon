@@ -465,6 +465,41 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-11 — A substream's unread divider can now be read away
+
+**What changed:** The surface acknowledges reads in whatever conversation it is
+showing. `conversationReadAcknowledgement` in `conversation-surface.tsx` is the
+one place that decides what a conversation owes, addressed to itself, and the
+`if (substreamId !== '0') return` that opened the old callback is gone. The
+request goes to that conversation's own read-state endpoint (see
+[`workstream-durable-object.md`](workstream-durable-object.md)), and its answer
+patches that conversation's own detail entry, which
+`patchCachedWorkstreamViewerState` was already addressing correctly.
+
+**Why:** the feed drew a divider it could not clear. `firstUnreadIndex` is
+computed from the addressed conversation's own `firstUnreadSequenceNumber` and
+handed to `MessageFeed` unconditionally, unlike `onStartSubstream` beside it,
+while the acknowledgement was Main-only, so in a substream the **Unread
+messages** rule sat above the newest reply permanently. Because sending a turn
+advances its author's own waterline, the divider landed between the person's
+question and Rally's answer to it, which is the least useful place it could be
+and the one it could not leave.
+
+**Considered and rejected:** suppressing the divider in a substream, which is
+the smaller diff and the wrong half to change: the child's unread state is real,
+it is what the reader wants, and hiding it would have left mentions and the
+opening scroll position reading from a waterline nothing maintains. Also
+rejected: leaving the in-flight key naming only the work stream. It is reset
+whenever the conversation address changes, so two children cannot collide
+today, but a key for a per-conversation request that cannot name the
+conversation is a trap for the next change.
+
+**What a future change has to respect:** the acknowledgement, the divider, and
+the opening anchor all read the same conversation's viewer fields. A surface
+that starts drawing one of them from the parent's detail entry while the others
+read the child's puts the divider back where it was.
+
+
 ### 2026-09-11 — The navigation's plus says what it starts, and it starts a work stream
 
 **What changed:** The `+` in the navigation titlebar and its twin in the rail
