@@ -53,15 +53,22 @@ function ConversationRowMenu({ actions, children, target }: {
 }
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ workstream, creatingSubstream = false, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekicksError, substreamActions, mainActions }: {
+export function WorkstreamSidebar({ workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekicksError, substreamActions, mainActions }: {
   workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'appearance' | 'resources' | 'participants'> & Pick<WorkstreamChildDirectory, 'privateChildren'>;
   /**
    * A substream is being created in this work stream: the composer has been
    * submitted and creation is in flight. The rail draws the row it is about to
    * have, so the conversation on screen is one the rail shows — the same
    * promise every other conversation in it keeps.
+   *
+   * `reservedSubstreamId` is the child preparation reserved, once it has
+   * answered with one, and it is how the placeholder gets out of the way: the
+   * child is published to this rail from inside the confirmation, so the
+   * directory can carry its real row while creation is still in flight, and a
+   * placeholder that only watched `launching` would stand beside it. Null until
+   * preparation answers, when nothing can be listed yet.
    */
-  creatingSubstream?: boolean;
+  creatingSubstream?: { reservedSubstreamId: string | null } | null;
   presentUserIds: readonly string[];
   /**
    * This work stream's Sidekicks — the ones it owns and the ones its
@@ -136,6 +143,28 @@ export function WorkstreamSidebar({ workstream, creatingSubstream = false, prese
     try { localStorage.setItem(WIDTH_KEY, String(next)); } catch { /* Best-effort device preference. */ }
   };
   const artifacts = workstream.resources.filter((resource) => resource.direction === 'artifact');
+  /**
+   * The substream being created, once it has a row of its own here.
+   *
+   * A child is published to this rail from inside its confirmation, so the
+   * directory can carry its real row while creation is still in flight — and
+   * one conversation with two rows is the thing this list must never show. The
+   * reserved id is what tells the two apart; without it there is nothing listed
+   * to collide with.
+   */
+  const reserved = creatingSubstream?.reservedSubstreamId ?? null;
+  const publishedReserved = reserved !== null
+    && (workstream.privateChildren?.some((child) => child.substreamId === reserved) ?? false)
+    ? reserved
+    : null;
+  /** A row is owed to a substream that has none yet. */
+  const pendingSubstream = creatingSubstream !== null && publishedReserved === null;
+  /**
+   * The row the reader is on, which during a creation is the substream being
+   * created — the launch surface is already showing that conversation's opening
+   * turn, and the route follows a tick later, when the response lands.
+   */
+  const currentSubstreamId = publishedReserved ?? selectedSubstreamId;
   return (
     <aside aria-label="Work-stream sidebar" className={clsx('workstream-context-sidebar', compact && 'is-compact', (resizing || keyResizing) && 'is-resizing')} ref={sidebar} style={{ flexBasis: effectiveWidth }}>
       <div className="workstream-context-toolbar window-drag" />
@@ -143,8 +172,8 @@ export function WorkstreamSidebar({ workstream, creatingSubstream = false, prese
         <ConversationRowMenu actions={mainActions}
           target={{ substreamId: '0', title: workstream.title }}>
           <button
-            className={clsx('workstream-context-row workstream-conversation-row', selectedSubstreamId === '0' && 'is-current')}
-            aria-current={selectedSubstreamId === '0' ? 'page' : undefined}
+            className={clsx('workstream-context-row workstream-conversation-row', currentSubstreamId === '0' && 'is-current')}
+            aria-current={currentSubstreamId === '0' ? 'page' : undefined}
             aria-label={`Go to conversation: ${workstream.title}`}
             title={workstream.title}
             type="button"
@@ -162,9 +191,9 @@ export function WorkstreamSidebar({ workstream, creatingSubstream = false, prese
             const initial = [...child.title.trim()][0]?.toUpperCase();
             const row = (
               <button
-                aria-current={selectedSubstreamId === child.substreamId ? 'page' : undefined}
+                aria-current={currentSubstreamId === child.substreamId ? 'page' : undefined}
                 aria-label={`Go to substream: ${child.title}`}
-                className={clsx('workstream-context-row workstream-conversation-row', selectedSubstreamId === child.substreamId && 'is-current')}
+                className={clsx('workstream-context-row workstream-conversation-row', currentSubstreamId === child.substreamId && 'is-current')}
                 onClick={() => onSelectSubstream?.(child.substreamId)}
                 title={child.title}
                 type="button"
@@ -184,7 +213,7 @@ export function WorkstreamSidebar({ workstream, creatingSubstream = false, prese
               ? <ConversationRowMenu actions={substreamActions} key={child.substreamId} target={{ substreamId: child.substreamId, title: child.title }}>{row}</ConversationRowMenu>
               : <Fragment key={child.substreamId}>{row}</Fragment>;
           })}
-          {creatingSubstream && (
+          {pendingSubstream && (
             /* The substream being created, in the place the directory will
                put it: last, because children are listed oldest first. It is
                not a button — there is nowhere to go, the reader is already on
@@ -193,10 +222,10 @@ export function WorkstreamSidebar({ workstream, creatingSubstream = false, prese
                the server's to derive and a second answer to what a first line
                is would disagree the moment either changed. */
             <div
-              aria-current={selectedSubstreamId === PENDING_SUBSTREAM_DRAFT_ID ? 'page' : undefined}
+              aria-current={currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID ? 'page' : undefined}
               className={clsx(
                 'workstream-context-row workstream-conversation-row workstream-pending-substream',
-                selectedSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && 'is-current',
+                currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && 'is-current',
               )}
             >
               <span aria-hidden="true" className="workstream-context-mark">
@@ -224,11 +253,11 @@ export function WorkstreamSidebar({ workstream, creatingSubstream = false, prese
             // the row above says it instead — this one is back to being what
             // starts the next substream.
             <button
-              aria-current={selectedSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && !creatingSubstream ? 'page' : undefined}
+              aria-current={currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && !pendingSubstream ? 'page' : undefined}
               aria-label="New substream"
               className={clsx(
                 'workstream-context-row workstream-new-substream',
-                selectedSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && !creatingSubstream && 'is-current',
+                currentSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && !pendingSubstream && 'is-current',
               )}
               onClick={onNewSubstream}
               title="New substream"
