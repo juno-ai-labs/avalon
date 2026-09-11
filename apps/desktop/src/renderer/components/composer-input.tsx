@@ -156,6 +156,7 @@ interface ComposerInputProps {
   placeholder: string;
   rows?: number;
   shouldSubmitOnEnter?: () => boolean;
+  /** Host-owned trailing action, rendered to the right of Send. */
   submitAccessory?: ReactNode;
   submitDisabled: boolean;
   submitLabel: string;
@@ -695,13 +696,12 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
           </div>
           {footerHint && <span className="composer-hint">{footerHint}</span>}
           <div className="composer-submit-area">
-            {submitAccessory}
             {messageCapsule && (
               <div className={clsx('microphone-control', dictation.state === 'listening' && 'is-listening')}>
                 {dictationButton('Start voice input')}
               </div>
             )}
-            {/* Send stays in place whether or not there is anything to send. It
+            {/* Send stays visible whether or not there is anything to send. It
                 used to appear with the first character, which moved the
                 microphone under the cursor mid-keystroke and left the empty
                 composer with no visible way to send at all — the affordance a
@@ -711,6 +711,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
             <button aria-label={submitLabel} className="composer-send" disabled={(submitDisabled && !dictationActive) || sendAfterDictation} onClick={() => void submit()} type="button">
               {submitting || sendAfterDictation ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
             </button>
+            {submitAccessory}
           </div>
         </div>
       </div>
