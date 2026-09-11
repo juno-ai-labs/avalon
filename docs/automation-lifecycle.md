@@ -731,6 +731,25 @@ production inspection paths.
 
 ## Changelog
 
+### 2026-09-11 — A Sidekick's result names the Sidekick, and its documents land in the room
+
+**What changed:** Two things a room sees from a Sidekick. The activation row's
+author slot renders the Sidekick's name from the row's `automationName` instead
+of the constant "Automation" (`transcript.ts` parses it into
+`Message.automationActivation`; `workstream-blocks.tsx` reads it, falling back
+to "Automation" for a row whose structured content will not parse). And a
+work-stream-scoped Sidekick now publishes into the owning room's namespace —
+see [`terminal-workspaces.md`](terminal-workspaces.md) for that half.
+
+**Why:** The name was already frozen into every activation row at delivery,
+precisely so a later rename would not restate who spoke last week, and the
+client was throwing it away. A room with several Sidekicks showed the same word
+for all of them.
+
+**What a future change has to respect:** the name is the delivered one, never
+the Sidekick's current title. Reading it live would rewrite history on a rename,
+which is the thing freezing it at delivery exists to prevent.
+
 ### 2026-09-11 — A delivered Sidekick result carries no trust label
 
 **What changed:** `renderUntrustedAutomationResultMessage` is deleted. The Bind

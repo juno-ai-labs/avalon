@@ -1379,7 +1379,7 @@ async function projectModelProtocolTranscript(
     if (message.structuredContent?.kind === "inbound_email") {
       if (message.id === input.triggerMessageId) {
         projected.push(modelDerivative(
-          { role: "user", content: modelMessageContent(message) },
+          { role: "user", content: `INBOUND EMAIL:\n${modelMessageContent(message)}` },
           "participant_turn",
           message.id,
           message.sequenceNumber,
@@ -5379,12 +5379,12 @@ async function loadRunPromptContext(
     additionalMessages.push(modelDerivative(
       {
         role: "user",
-        content: JSON.stringify({
+        content: `SLACK CONTEXT:\n${JSON.stringify({
           nearbyMessagesStatus: input.slackOrigin.nearbyMessagesStatus,
           nearbyMessages: input.slackOrigin.nearbyMessages,
           attachments: input.slackOrigin.attachments,
           appContext: input.slackOrigin.appContext,
-        }),
+        })}`,
       },
       "run_context",
       input.triggerMessageId ?? `slack-origin:${JSON.stringify([
@@ -5440,7 +5440,7 @@ async function loadRunPromptContext(
     };
     if (recallsMemoryAtAdmission) memoryQueryParts.push(JSON.stringify(triggerContext));
     triggerMessage = modelDerivative(
-      { role: "user", content: JSON.stringify(triggerContext) },
+      { role: "user", content: `SIDEKICK TRIGGER:\n${JSON.stringify(triggerContext)}` },
       "connector_activity",
       input.activityId,
     );
@@ -5916,6 +5916,9 @@ async function loadHarnessTools(
     env,
     input,
     inObjectResourceAttacher,
+    // A work-stream-scoped Sidekick publishes into the room that owns it. Null
+    // for every other run, which publishes into its own conversation.
+    { publicationWorkstreamId: runDefinition?.owningWorkstreamId ?? null },
   );
   const multimodalGenerationPlugin = createAvalonMultimodalGenerationPlugin(
     env,

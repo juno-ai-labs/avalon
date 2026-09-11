@@ -2228,11 +2228,32 @@ describe('an automation result in the room', () => {
   it('renders as an ordinary authored message, named Automation', () => {
     render(<MessageBlock {...actions} collapseHeadings message={activation} />);
 
-    const article = screen.getByRole('article', { name: 'Automation result' });
+    // The generic label is the fallback: this row carries no parsed activation,
+    // so there is no Sidekick name to put in the author slot.
+    const article = screen.getByRole('article', { name: 'Result from Automation' });
     expect(article).toHaveClass('message-block', 'agent-message');
     expect(article.querySelector('.message-author')?.textContent).toBe('Automation');
     // Not "Rally": the room is being told what an automation found, and the
     // name in the author slot is the whole of what marks it as one.
+    expect(article.textContent).not.toContain('Rally');
+  });
+
+  it('names the Sidekick that delivered it, and falls back when the row will not parse', () => {
+    render(<MessageBlock {...actions} collapseHeadings message={{
+      ...activation,
+      automationActivation: {
+        automationId: '00000000-0000-7000-8000-0000000000aa',
+        automationName: 'Refresh Avalon Open Pull Requests Dashboard',
+      },
+    }} />);
+
+    // The name frozen into the row at delivery, not the generic label: a reader
+    // scanning a busy room needs to know which Sidekick is talking.
+    const article = screen.getByRole('article', {
+      name: 'Result from Refresh Avalon Open Pull Requests Dashboard',
+    });
+    expect(article.querySelector('.message-author')?.textContent)
+      .toBe('Refresh Avalon Open Pull Requests Dashboard');
     expect(article.textContent).not.toContain('Rally');
   });
 

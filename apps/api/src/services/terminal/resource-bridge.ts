@@ -282,6 +282,22 @@ export function createTerminalResourceBridge(
   env: Env,
   terminalPort: TerminalPortFactory,
   inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
+  /**
+   * Where a published document belongs, when that is not the conversation the
+   * run is executing in.
+   *
+   * A work-stream-scoped Sidekick runs in its own conversation under the
+   * automation, with its own sandbox and its own transcript, but the documents
+   * it publishes are the owning room's: "refresh the dashboard" means the
+   * dashboard that room already has. Without this the publish identity is
+   * `terminal:<automation-id>:<path>`, which can never collide with the room's
+   * `terminal:<room-id>:<path>`, so every run created a private fork at v1 and
+   * the room's copy was never touched again.
+   *
+   * Only publication is redirected. The sandbox, the resources a run may read,
+   * and the import path stay addressed to the run's own conversation.
+   */
+  publicationWorkstreamId?: string | null,
 ): TerminalResourceBridge {
   // The layered runtime database routes resource rows to WorkspaceDO and
   // tool/link rows to SubstreamAgent. Keep every statement single-authority;
@@ -289,6 +305,26 @@ export function createTerminalResourceBridge(
   const workspace = env.DB;
   const attachResource = inObjectResourceAttacher
     ?? ((input) => attachWorkstreamRuntimeResource(env, input));
+  const publicationWorkstream = (context: { workstreamId: string }) =>
+    publicationWorkstreamId ?? context.workstreamId;
+  /**
+   * Link a published document to the work stream that owns it.
+   *
+   * The in-object attacher writes through the object this run executes in,
+   * which is the right door only when the document lands in that same
+   * conversation. A redirected publication lands in a different object, so it
+   * takes the ordinary cross-object path instead.
+   */
+  const attachPublication = (
+    context: { workspaceId: string; workstreamId: string },
+    input: { resourceId: string; attachedByUserId: string | null },
+  ) => {
+    const workstreamId = publicationWorkstream(context);
+    const args = { workspaceId: context.workspaceId, workstreamId, ...input };
+    return workstreamId === context.workstreamId
+      ? attachResource(args)
+      : attachWorkstreamRuntimeResource(env, args);
+  };
   return {
     async importResource(context, input, destinationPath, sandboxGeneration, providerSandboxId, provider) {
       const rows = await loadVisibleWorkstreamResourcesByIds(
@@ -489,7 +525,7 @@ export function createTerminalResourceBridge(
       // unique per call, which recognized a replay of that one call and nothing
       // else, so a second draft of the same file became a second document.
       const providerResourceId = input.providerResourceId
-        ?? await publishedResourceIdentity(context.workstreamId, input.filePath);
+        ?? await publishedResourceIdentity(publicationWorkstream(context), input.filePath);
       const select = `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
                 model_content_status, created_at
            FROM resources
@@ -512,12 +548,13 @@ export function createTerminalResourceBridge(
 
       if (settled) {
         const relink = async () => {
-          const linked = await createResourceObjectPort(env, context.workspaceId, context.workstreamId)
-            .isAttached({ resourceId: settled.id });
+          const linked = await createResourceObjectPort(
+            env,
+            context.workspaceId,
+            publicationWorkstream(context),
+          ).isAttached({ resourceId: settled.id });
           if (linked) return;
-          await attachResource({
-            workspaceId: context.workspaceId,
-            workstreamId: context.workstreamId,
+          await attachPublication(context, {
             resourceId: settled.id,
             attachedByUserId: context.executionPrincipal.type === "user"
               ? context.executionPrincipal.userId
@@ -604,9 +641,7 @@ export function createTerminalResourceBridge(
             timestamp,
             context.harnessRunId,
           ).run();
-        await attachResource({
-          workspaceId: context.workspaceId,
-          workstreamId: context.workstreamId,
+        await attachPublication(context, {
           resourceId,
           attachedByUserId: context.executionPrincipal.type === "user"
             ? context.executionPrincipal.userId
@@ -650,7 +685,7 @@ export function createTerminalResourceBridge(
     },
 
     async publishedKindForPath(context, filePath) {
-      const providerResourceId = await publishedResourceIdentity(context.workstreamId, filePath);
+      const providerResourceId = await publishedResourceIdentity(publicationWorkstream(context), filePath);
       const row = await workspace.prepare(
         `SELECT resource_type, mime_type FROM resources
           WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`,
@@ -680,7 +715,7 @@ export function createTerminalResourceBridge(
     async publishSiteResource(context, input, site) {
       const effectIntentId = requireTerminalEffectIntent(context, "publication");
       const providerResourceId = await publishedResourceIdentity(
-        context.workstreamId,
+        publicationWorkstream(context),
         input.filePath,
       );
       const select = `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
@@ -737,7 +772,7 @@ export function createTerminalResourceBridge(
       const title = [...(input.displayName?.trim() || siteTitle(input.filePath))].slice(0, 300).join("");
       const written = await writeArtifactVersion(env, {
         workspaceId: context.workspaceId,
-        workstreamId: context.workstreamId,
+        workstreamId: publicationWorkstream(context),
         region: env.AVALON_REGION,
         artifactId: previous?.artifactId ?? null,
         resourceId,
@@ -810,9 +845,7 @@ export function createTerminalResourceBridge(
           timestamp,
           context.harnessRunId,
         ).run();
-        await attachResource({
-          workspaceId: context.workspaceId,
-          workstreamId: context.workstreamId,
+        await attachPublication(context, {
           resourceId,
           attachedByUserId: context.executionPrincipal.type === "user"
             ? context.executionPrincipal.userId
@@ -825,7 +858,7 @@ export function createTerminalResourceBridge(
         artifactId: written.artifactId,
         hostnameStub,
         workspaceId: context.workspaceId,
-        workstreamId: context.workstreamId,
+        workstreamId: publicationWorkstream(context),
         resourceId,
         mode: site.mode,
         stateful: site.stateful,
@@ -839,7 +872,7 @@ export function createTerminalResourceBridge(
       await pointArtifactAtVersion(env, {
         artifactId: written.artifactId,
         workspaceId: context.workspaceId,
-        workstreamId: context.workstreamId,
+        workstreamId: publicationWorkstream(context),
         resourceId,
         region: env.AVALON_REGION,
         manifest: written.manifest,
