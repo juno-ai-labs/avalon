@@ -57,6 +57,17 @@ export interface ListResourcesInput {
   query?: string | undefined;
   cursor?: string | undefined;
   limit: number;
+  /**
+   * Restrict the page to these resource types.
+   *
+   * Absent means every type, which is what the product's own list wants. An
+   * empty array is deliberately not the same thing: it is a caller whose set
+   * of admissible types came out empty, and handing it the workspace's
+   * resources would be offering precisely what it cannot use. The caller that
+   * needs this is `automation_resources_search`, whose admissible set is
+   * `automationBindableResourceTypes`.
+   */
+  resourceTypes?: readonly string[] | undefined;
 }
 
 interface ResourceCursor {
@@ -135,6 +146,11 @@ export class ResourceService {
         OR LOWER(COALESCE(r.provider_resource_id, '')) LIKE ? ESCAPE '\\'
       )`);
       bindings.push(pattern, pattern, pattern, pattern);
+    }
+    if (input.resourceTypes) {
+      if (input.resourceTypes.length === 0) return { items: [], complete: true, nextCursor: null };
+      filters.push(`r.resource_type IN (${input.resourceTypes.map(() => "?").join(", ")})`);
+      bindings.push(...input.resourceTypes);
     }
     if (cursor) {
       filters.push("(r.updated_at < ? OR (r.updated_at = ? AND r.id < ?))");
