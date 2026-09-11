@@ -469,6 +469,79 @@ describe('work-stream context sidebar layout', () => {
   });
 });
 
+/**
+ * Neither navigation rail ends a line it cannot fit with an ellipsis or a hard
+ * cut: both fade it out, and only when there is something clipped to fade. The
+ * whole of that condition is three declarations — a timeline made from the
+ * line's own inline scroller, which a line whose text fits does not have; the
+ * `auto` duration that hands the timeline the pacing, and which has to stay
+ * after the shorthand that resets it to `0s`; and the fill that keeps the mask
+ * applied outside the active interval, including for the reader whose
+ * reduced-motion preference forces every duration to 0.001ms.
+ *
+ * Nothing in a component test can see any of it. jsdom lays nothing out, so a
+ * rail that lost the fade — or went back to an ellipsis — asserts identically
+ * everywhere else in the suite.
+ */
+describe('clipped lines in both navigation rails', () => {
+  const FADED_LINES = [
+    '.account-copy span',
+    '.account-copy strong',
+    '.automation-tile-name',
+    '.project-row-link > span',
+    '.sidebar-row-hint-text',
+    '.sidebar-row-title',
+    '.sidebar-row-title-copy',
+    '.workstream-context-copy > small',
+    '.workstream-context-copy > span',
+  ];
+
+  it('fades a line from its own inline scroller, so a line that fits keeps its last characters', () => {
+    const fade = rule(FADED_LINES.join(',\n'));
+
+    expect(fade).not.toBeNull();
+    expect(fade).toContain('animation: clipped-line-fade linear both;');
+    // Both longhands, by position rather than presence. The shorthand resets
+    // `animation-timeline` as well as `animation-duration`, and reinstating the
+    // timeline *above* it is the reordering that silently costs the condition:
+    // the timeline falls back to the document's, `auto` then computes to `0s`
+    // against it, `both` holds the 100% keyframe from the first frame, and
+    // every line takes the mask whether or not it clips anything. Confirmed in
+    // Chromium 141, which is the engine this renderer runs on. A `toContain`
+    // for either longhand is order-blind and passes straight through that.
+    const shorthand = fade?.indexOf('animation: clipped-line-fade') ?? 0;
+    expect(fade?.indexOf('animation-duration: auto;')).toBeGreaterThan(shorthand);
+    expect(fade?.indexOf('animation-timeline: scroll(self inline);')).toBeGreaterThan(shorthand);
+  });
+
+  it('holds the one mask at both ends of the keyframe, because nothing here moves', () => {
+    const keyframe = stylesheet.match(/@keyframes clipped-line-fade \{([\s\S]*?)\n\}/u)?.[1] ?? null;
+
+    expect(keyframe).not.toBeNull();
+    expect(keyframe).toContain('0%, 100% {');
+    expect(keyframe).toContain(
+      'mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);',
+    );
+  });
+
+  it.each([
+    ['.sidebar-row-title,\n.sidebar-row-hint'],
+    ['.sidebar-row-title-copy'],
+    ['.sidebar-row-hint-text'],
+    ['.project-row-link > span'],
+    ['.automation-tile-name'],
+    ['.account-copy strong'],
+    ['.account-copy span'],
+    ['.workstream-context-copy > span,\n.workstream-context-copy > small'],
+  ])('clips %s without an ellipsis to fade out', (selector) => {
+    const declarations = rule(selector);
+
+    expect(declarations).not.toBeNull();
+    expect(declarations).toContain('overflow: hidden;');
+    expect(declarations).not.toContain('text-overflow');
+  });
+});
+
 /** The declarations inside one rule within an already bounded stylesheet fragment. */
 function ruleWithin(source: string, selector: string): string | null {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
