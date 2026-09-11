@@ -15,9 +15,12 @@ import { formatDateTime, formatRelative } from '../lib/format';
  * the whole screen.
  */
 export function RelativeTime({
+  className,
   format = formatRelative,
   value,
 }: {
+  /** A class for the `<time>` itself, where a surface styles it by name. */
+  className?: string;
   /**
    * The label, given the instant and the clock it is read against. The
    * default is the feed's "7 minutes ago"; a surface with its own calendar
@@ -39,7 +42,7 @@ export function RelativeTime({
     <Tooltip.Provider delayDuration={450}>
       <Tooltip.Root>
         <Tooltip.Trigger asChild>
-          <time dateTime={value}>{format(value, new Date(now))}</time>
+          <time className={className} dateTime={value}>{format(value, new Date(now))}</time>
         </Tooltip.Trigger>
         <Tooltip.Portal>
           <Tooltip.Content className="tooltip" side="top" sideOffset={6}>

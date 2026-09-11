@@ -47,6 +47,27 @@ describe('relative time', () => {
   });
 
   /**
+   * The guard above names `formatRelative` and nothing else, which is exactly
+   * how the sidebar's own vocabulary slipped past it: `formatSidebarActivityTime`
+   * produces the same kind of label — "Yesterday", a weekday, a clock time — and
+   * two of its call sites survived the sweep because the grep that found the
+   * others did not know the name. The visible row froze at `11:58 PM` while the
+   * hover preview over it, which had been converted, read `Yesterday`. A
+   * vocabulary is a `format` prop, so the module that defines one may name it and
+   * the component that renders one may take it; anybody else calling it is
+   * painting a label that will not move.
+   */
+  it('renders the sidebar vocabulary through the component too, not beside it', () => {
+    expect(importers(/\bformatSidebarActivityTime\b/u, 'renderer/components/relative-time.node.test.ts'))
+      .toEqual(['renderer/components/sidebar.tsx']);
+    const sidebar = readFileSync(resolve(root, 'renderer/components/sidebar.tsx'), 'utf8');
+    // Defined once, and passed rather than called: a bare call outside the
+    // definition is the shape this is here to keep out.
+    expect(sidebar.match(/formatSidebarActivityTime\(/gu)).toHaveLength(1);
+    expect(sidebar).toContain('function formatSidebarActivityTime(');
+  });
+
+  /**
    * One interval for the whole window, not one per label. A feed with fifty
    * turns, both sidebars and an open inspector would otherwise arm fifty-odd
    * timers that all do the same thing, and each would drift into its own second.

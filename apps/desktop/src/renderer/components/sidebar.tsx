@@ -805,7 +805,7 @@ function WorkstreamRow({
                   {naming ? <TitleSkeleton /> : workstream.title}
                 </span>
               </span>
-              {workstream.hasUnread && <time className="sidebar-row-activity" dateTime={workstream.lastActivityAt}>{formatSidebarActivityTime(workstream.lastActivityAt)}</time>}
+              {workstream.hasUnread && <RelativeTime className="sidebar-row-activity" format={formatSidebarActivityTime} value={workstream.lastActivityAt} />}
             </span>
             {/* The manual order is the whole point of the section, and a
                 pointer-only affordance leaves it unreadable to anyone not
