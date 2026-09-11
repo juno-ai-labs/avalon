@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { asSubstreamId, asWorkspaceId } from '@rally/contracts';
 import { applyDurableObjectSqliteMigrations } from '../src/durable-objects/sqlite-migrations';
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from '../src/durable-objects/workstream-object-schema';
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from '../src/durable-objects/workspace-do';
 import { WorkstreamTranscriptStorage } from '../src/durable-objects/workstream-transcript-storage';
 import { seedWorkstreamRoot } from './helpers/substream-fixture';
 import { workspaceDOName } from '../src/durable-objects/names';
@@ -270,6 +271,78 @@ describe('conversation display projection', () => {
         .toEqual([{ message_id: 'search-turn:delivered-turn', state: 'pending' }, { message_id: 'search-turn:pending-turn', state: 'pending' }]);
       expect(sql.exec<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workstream_search_display_update'`).toArray())
         .toEqual([{ name: 'workstream_search_display_update' }]);
+    });
+  });
+});
+
+/**
+ * The 2026-09-10 deploy dead-lettered document jobs whose publish intent the
+ * source had already cleared, leaving their index rows stale with nothing left
+ * to republish them. Both objects re-project once on their next wake.
+ */
+describe('re-projection after the consumer version skew', () => {
+  it('marks every resource pending again without touching its revision or a committed retry schedule', async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName('search-reprojection-upgrade-from-v50');
+    await stub.ping();
+    const watermarks = (sql: SqlStorage) => sql.exec<{ resource_id: string; revision: number; pending: number; not_before: number }>(
+      'SELECT resource_id, revision, pending, not_before FROM resource_search_versions ORDER BY resource_id').toArray();
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage,
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 50),
+        component: 'workspace_do', workerVersionId: 'v50', now: 1_000 });
+      const sql = state.storage.sql;
+      sql.exec("INSERT INTO workspace_identity VALUES (1, ?, 'global', 'wnam', 0, 0)", workspaceId);
+      for (const [id, title] of [['00000000-0000-7000-8000-00000000c001', 'Published'], ['00000000-0000-7000-8000-00000000c002', 'Backoff']] as const) {
+        sql.exec(`INSERT INTO resources (id, workspace_id, resource_type, provider, title, metadata_json, created_at, updated_at)
+          VALUES (?, ?, 'generated_file', 'avalon_generated', ?, '{}', '2026-09-10T00:00:00Z', '2026-09-10T00:00:00Z')`, id, workspaceId, title);
+      }
+      // One row published and then dead-lettered (pending already cleared),
+      // one still waiting out a dispatch retry.
+      sql.exec("UPDATE resource_search_versions SET revision = 7, pending = 0 WHERE resource_id = '00000000-0000-7000-8000-00000000c001'");
+      sql.exec("UPDATE resource_search_versions SET revision = 3, pending = 1, not_before = 123 WHERE resource_id = '00000000-0000-7000-8000-00000000c002'");
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+        component: 'workspace_do', workerVersionId: 'reprojection', now: 2_000 });
+      expect(watermarks(state.storage.sql)).toEqual([
+        { resource_id: '00000000-0000-7000-8000-00000000c001', revision: 7, pending: 1, not_before: 0 },
+        { resource_id: '00000000-0000-7000-8000-00000000c002', revision: 3, pending: 1, not_before: 123 },
+      ]);
+    });
+  });
+
+  it('requeues every committed turn at its current revision and keeps a newer pending one', async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName('search-reprojection-upgrade-from-v52');
+    await stub.ping();
+    const identity = { workspaceId, workstreamId: '00000000-0000-7000-8000-000000009e04' };
+    const outbox = (sql: SqlStorage) => sql.exec<{ message_id: string; source_version: number; state: string; not_before: number }>(
+      `SELECT message_id, source_version, state, not_before FROM durable_outbox
+       WHERE channel = 'search_projection_v1' ORDER BY message_id`).toArray();
+    await runInDurableObject(stub, async (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 52),
+        component: 'substream_agent_do', workerVersionId: 'v52', now: 1_000 });
+      seedWorkstreamRoot(state, 1, identity);
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      for (const [turnId, ordinal] of [['lost-turn', 1], ['waiting-turn', 2]] as const) {
+        await transcript.appendParticipantMessage({ turnId, actor: 'system', authorUserId: null, authorSnapshot: null,
+          text: `Searchable ${turnId}`, createdAtUtc: '2026-09-10T00:00:00Z', attentionOrdinal: ordinal });
+      }
+      const sql = state.storage.sql;
+      // The lost turn's reference was drained before its job dead-lettered; the
+      // waiting one carries an edit the trigger recorded ahead of the row.
+      sql.exec(`DELETE FROM durable_outbox WHERE message_id = 'search-turn:lost-turn'`);
+      sql.exec(`UPDATE durable_outbox SET source_version = 9, not_before = 456 WHERE message_id = 'search-turn:waiting-turn'`);
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+        component: 'substream_agent_do', workerVersionId: 'reprojection', now: 2_000 });
+      const sql = state.storage.sql;
+      const revision = sql.exec<{ revision: number }>(`SELECT revision FROM participant_transcript_turns WHERE turn_id = 'lost-turn'`).one().revision;
+      expect(outbox(sql)).toEqual([
+        { message_id: 'search-turn:lost-turn', source_version: revision, state: 'pending', not_before: 0 },
+        { message_id: 'search-turn:waiting-turn', source_version: 9, state: 'pending', not_before: 0 },
+      ]);
     });
   });
 });
