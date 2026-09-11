@@ -174,7 +174,7 @@ the edit is wrong, not the test.
 
 ## Changelog
 
-### 2026-09-03: The second host is gone
+### 2026-09-03 — The second host is gone
 
 **What changed:** `AutomationAgent`, which installed this array inside its
 migration 1, was deleted with Wrangler tag `v9`. `SubstreamAgent` is the one

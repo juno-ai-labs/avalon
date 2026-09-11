@@ -165,56 +165,40 @@ and model errors.
 
 ## Changelog
 
-### 2026-09-08 — Give Terra's sub-agents individual budgets
-
-**What changed:** Terra's review prompt now instructs it to give each sub-agent
-a 15-minute budget.
-
-**Why:** The team requested an explicit budget for delegated reviews within
-Terra's existing 60-minute overall budget.
-
-**Considered and rejected:** Reducing Terra's overall budget would also reduce
-the time available to coordinate and synthesize the reviews.
-
-**Consequences:** The sub-agent budget is a prompt instruction, not an enforced
-timer. Terra's overall budget and the other reviewers' prompts are unchanged.
-
-### 2026-09-08 — Extend Sol's job ceiling without changing its prompt
-
-**What changed:** Sol's GitHub Actions timeout is 60 minutes. Its prompt still
-says 15 minutes; the workflow contract tests pin those values independently.
-
-**Why:** The team requested additional execution time for Sol without telling
-the model about that additional budget.
-
-**Considered and rejected:** Updating Sol's prompt to 60 minutes would contradict
-the requested separation between the runner ceiling and model-facing budget.
-
-**Consequences:** Sol can continue until the 60-minute job ceiling, including
-setup and publication, while still being instructed to finish its review within
-15 minutes. Terra and the disabled reviewer gates are unchanged.
-
-### 2026-09-08 — Disable three reviewers and extend Terra's budget
+### 2026-09-08 — Disable three reviewers and adjust Sol's and Terra's budgets
 
 **What changed:** DeepSeek, Kimi, and Grok are disabled at the job gate for both
 automatic and trusted comment triggers. Sol remains enabled. Terra's job timeout
-and reviewer-facing prompt budget are both 60 minutes. Tests pin the enabled set
-and each budget.
+and reviewer-facing prompt budget are both 60 minutes, and its review prompt
+now instructs it to give each sub-agent a 15-minute budget. Sol's GitHub
+Actions timeout is 60 minutes while its prompt still says 15 minutes. Tests pin
+the enabled set and each budget; the workflow contract tests pin Sol's two
+values independently.
 
 **Why:** The latest-50-PR audit found substantial review noise and unreliable
 Grok delivery. The team requested those three lanes stop running and explicitly
-chose a longer Terra budget after its repeated 30-minute timeouts.
+chose a longer Terra budget after its repeated 30-minute timeouts, together
+with an explicit budget for delegated reviews within Terra's 60-minute overall
+budget. The team requested additional execution time for Sol without telling
+the model about that additional budget.
 
 **Considered and rejected:** Keeping the three lanes available through the
 comment command would not satisfy disabling them from running. Removing their
 harness definitions would make a future deliberate re-enable harder to review.
-Increasing every reviewer's timeout would exceed the requested scope.
+Increasing every reviewer's timeout would exceed the requested scope. Reducing
+Terra's overall budget to make room for its sub-agents would also reduce the
+time available to coordinate and synthesize the reviews. Updating Sol's prompt
+to 60 minutes would contradict the requested separation between the runner
+ceiling and model-facing budget.
 
 **Consequences:** New review rounds run only Sol and Terra once this workflow is
 in the ref used by the trigger. Already-running jobs and old workflow reruns keep
 their original configuration. Re-enabling a lane requires changing its gate and
 the enabled-set test; Terra's larger budget is not a claim that its reliability
-problem is fixed.
+problem is fixed. The sub-agent budget is a prompt instruction, not an enforced
+timer. Sol can continue until the 60-minute job ceiling, including setup and
+publication, while still being instructed to finish its review within 15
+minutes.
 
 ### 2026-09-01 — Reviewer job and prompt budgets separated
 

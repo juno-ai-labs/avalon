@@ -644,22 +644,6 @@ is hyphenated: the provisional title and a title a person typed are still prose,
 and both sit in the same list. Changing the length again is one constant in the
 naming service and one sentence in the prompt, and they have to move together.
 
-### 2026-08-24 — Both server read sites import the grace they were spelling out
-
-**What changed:** `directoryWorkstream` in WorkspaceDO and `summary` in the
-work-stream object now import `WORKSTREAM_NAMING_GRACE_MS` instead of comparing
-against a literal `60_000`.
-
-**Why:** Review on #271. The invariant above says the grace is one constant, and
-the code did not hold it: the constant had exactly one non-test importer — the
-client hook this change added — while both authorities wrote the number. Nobody
-grepping for `60_000` would have found the client rule, and nobody changing the
-constant would have found the server ones. The pull request that writes an
-invariant down is the cheapest place to make it true.
-
-**Consequences:** Changing the grace is now one edit. The three readers agree by
-construction rather than by review.
-
 ### 2026-08-24 — The grace is derived per render rather than held in state
 
 **What changed:** `useNamingSkeleton` no longer keeps an `expired` flag. It

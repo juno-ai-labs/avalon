@@ -293,31 +293,19 @@ not shipped, so preserving that historical number has no compatibility value.
 **Consequences:** Apply `0084_shared_notion_connection_routing.sql`; no data
 transform or compatibility alias is required.
 
-### 2026-08-12 — Existing bot routes retain their migrated connection
-
-**What changed:** Historical Notion public-integration rows are migrated from
-personal to workspace scope when they do not carry `notion.personal.mcp`.
-
-**Why:** Those bot grants already registered their Notion workspace route under
-the earlier connection flow. Treating them as the new personal MCP credential
-dialect broke refresh without creating a replacement route or authorization.
-
-**Considered and rejected:** Re-registering every route in the migration. EU D1
-cannot write the Global route directory from SQL, and the routes already exist
-from original authorization; connection tests remain the repair path for a
-missing route.
-
-**Consequences:** The connection ID and existing Global route remain stable
-while its regional authorization semantics become workspace-scoped. New
-personal MCP connections create no route and are excluded by capability.
-
-Shipped in the pull request for this change.
-
-### 2026-08-12 — The shared callback also admits personal hosted MCP OAuth
+### 2026-08-12 — The shared callback admits personal hosted MCP OAuth, a user-approved install is one workspace bot grant, and existing bot routes keep their connection
 
 **What changed:** Notion's region-routed callback now completes either a
 personal official-MCP authorization or a workspace public-integration install.
 Only the workspace branch creates, tests, or retires a webhook route.
+
+The regional connection created after a routed Notion callback is now
+workspace-scoped with no Rally user owner. The approving Notion identity
+remains encrypted credential metadata, webhook activity has no personal target,
+and only a Rally owner or administrator may start or complete the flow.
+
+Historical Notion public-integration rows are migrated from personal to
+workspace scope when they do not carry `notion.personal.mcp`.
 
 **Why:** The two connections need different provider identities but Notion is
 still one Rally connector with one registered callback. Treating every Notion
@@ -325,29 +313,36 @@ success as a bot install would put a personal MCP workspace ID into the Global
 webhook directory and make route health part of a connection that receives no
 webhooks.
 
+Notion requires a user to approve public OAuth but returns an installed bot
+that authors later API mutations. The ingress previously carried that grant
+into a personal row and therefore routed shared workspace events to the
+approver.
+
+The historical bot grants already registered their Notion workspace route under
+the earlier connection flow. Treating them as the new personal MCP credential
+dialect broke refresh without creating a replacement route or authorization.
+
 **Considered and rejected:** A second regional callback dedicated to MCP. It
 would duplicate the routing and state-consumption path without changing where
 the encrypted DCR client and tokens must land.
+
+Making `owner=user` a Rally scope decision: it is provider protocol metadata,
+while Rally's workspace principal is the authority boundary.
+
+Re-registering every route in the migration. EU D1 cannot write the Global
+route directory from SQL, and the routes already exist from original
+authorization; connection tests remain the repair path for a missing route.
 
 **Consequences:** Authorization routing is shared, while webhook routing remains
 workspace-only. Any future Notion connection mode must declare explicitly
 whether it creates provider ingress rather than inheriting that behavior from
 the provider name.
 
+For migrated rows the connection ID and existing Global route remain stable
+while their regional authorization semantics become workspace-scoped. New
+personal MCP connections create no route and are excluded by capability.
+
 Shipped in the pull request for this change.
-
-### 2026-08-12 — User-approved OAuth installs one workspace bot grant
-
-**What changed:** The regional connection created after a routed Notion callback
-is now workspace-scoped with no Rally user owner. The approving Notion identity
-remains encrypted credential metadata, webhook activity has no personal target,
-and only a Rally owner or administrator may start or complete the flow.
-
-**Why:** Notion requires a user to approve public OAuth but returns an installed
-bot that authors later API mutations. The ingress previously carried that grant
-into a personal row and therefore routed shared workspace events to the approver.
-Making `owner=user` a Rally scope decision was rejected: it is provider
-protocol metadata, while Rally's workspace principal is the authority boundary.
 
 ### 2026-08-12 — Subscription setup becomes one-time and locally retrievable
 
@@ -372,7 +367,7 @@ reader. Encrypted D1 storage plus local decryption solves the operator handoff;
 token-bound, superseding nonces make the unavoidable query parameter safe after
 its first request and preserve retry after a mid-capture failure.
 
-### 2026-08-12 — A retired workspace is answered, and the challenge has one door
+### 2026-08-12 — A retired workspace is answered, the challenge has one door, and the bridges ship as a staged rollout
 
 **What changed:** A delivery whose every route is disabled now returns
 `{accepted, activityCount: 0}` instead of the retry-me 503, so the directory
@@ -381,33 +376,31 @@ regional host is refused with `notion_setup_wrong_host` instead of being stored
 there. The four `default*InRegion` helpers regained the
 `AVALON_REGION === "global"` check the Linear equivalents carry.
 
-**Why:** Both are consequences of one subscription serving every customer, which
-is what makes this module different from the per-tenant webhooks it was modelled
-on. Disabling a Rally connection does not uninstall the integration at Notion,
-so a retired workspace keeps delivering with nothing that will ever make its
-route active again; answering those with a 503 spends the full retry budget on
-each one and risks Notion disabling the subscription that every other customer
-depends on. And the challenge arrives exactly once: the regional handler would
-have stored it and answered 200 without replicating, which surfaces later as a
-total delivery failure for the region that never got a copy — the failure the
-replication exists to prevent, reached through the other door.
+`runbook.md` gained a three-stage bootstrap for the release that first ships
+this module, and `Operations` above points at it. No code changed for that.
 
-### 2026-08-12 — The bridges ship as a staged rollout, not on the automatic deploy
+**Why:** The first two are consequences of one subscription serving every
+customer, which is what makes this module different from the per-tenant
+webhooks it was modelled on. Disabling a Rally connection does not uninstall
+the integration at Notion, so a retired workspace keeps delivering with nothing
+that will ever make its route active again; answering those with a 503 spends
+the full retry budget on each one and risks Notion disabling the subscription
+that every other customer depends on. And the challenge arrives exactly once:
+the regional handler would have stored it and answered 200 without
+replicating, which surfaces later as a total delivery failure for the region
+that never got a copy — the failure the replication exists to prevent, reached
+through the other door.
 
-**What changed:** `runbook.md` gained a three-stage bootstrap for the release
-that first ships this module, and `Operations` above points at it. No code
-changed.
-
-**Why:** The two bridges are a circular pair: Global's config binds
-`EU_NOTION_BRIDGE` to an entrypoint EU does not export yet, and EU's binds
-`GLOBAL_NOTION_ROUTER` to one Global does not export yet. The automatic
-merge-triggered deployment runs EU then Global, and neither order can succeed —
-whichever goes first references an entrypoint that does not exist. The repository
-had already met this with work-stream inbound email and written the rule down;
-what it had not done was make the rule findable from the module that trips it.
-A future module that adds a cross-region entrypoint in only one direction does
-**not** need this, and should not copy the staging by reflex — the cost is a
-release that cannot be landed by merging.
+The two bridges are a circular pair: Global's config binds `EU_NOTION_BRIDGE`
+to an entrypoint EU does not export yet, and EU's binds `GLOBAL_NOTION_ROUTER`
+to one Global does not export yet. The automatic merge-triggered deployment
+runs EU then Global, and neither order can succeed — whichever goes first
+references an entrypoint that does not exist. The repository had already met
+this with work-stream inbound email and written the rule down; what it had not
+done was make the rule findable from the module that trips it. A future module
+that adds a cross-region entrypoint in only one direction does **not** need
+this, and should not copy the staging by reflex — the cost is a release that
+cannot be landed by merging.
 
 ### 2026-08-12 — The ingress never claims the Worker's own regional API
 

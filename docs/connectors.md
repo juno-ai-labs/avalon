@@ -1881,7 +1881,7 @@ written. Remove that adapter, the legacy Workflow binding, discriminator
 compatibility, and the physical `workflow_instance_id` column only after live
 pre-cutover instances are proven drained.
 
-### 2026-08-25 — Every connector operation is observable at two layers
+### 2026-08-25 — Every connector operation is observable at two layers, and delivery has an observable terminal outcome
 
 **What changed:** The connector registry now wraps every adapter surface with
 shared structured lifecycle logging and wraps every configured provider fetch
@@ -1897,11 +1897,26 @@ resource IDs are retained as correlation fields; Slack timestamp identifiers
 use an explicit field-name allowlist, and non-ID arguments are not retained.
 Observer failures are swallowed so diagnostics cannot alter connector delivery.
 
+On the delivery side, connector-event Workflow instance IDs now use a branded,
+Cloudflare-validated `wf_<sha256>` value derived from the typed connector-event
+identity tuple. Provider and Rally identifiers influence only the digest, so
+they cannot alter the external ID's alphabet or length. Polling, regional
+enqueue, Queue admission, WorkspaceDO ingestion/claim/settlement, and Workflow
+completion now emit correlated structured outcomes, including replay, busy,
+redrive, exhaustion, and partial-stream poll results.
+
 **Why:** Delivery-pipeline logs can prove that an event reached a Workflow or
 durable outbox, but they cannot distinguish an adapter decision from an HTTP
 refusal or show whether a connector branch was entered at all. Instrumenting
 both boundaries makes the redundancy intentional: when one layer stops before
 the other, that absence is itself useful evidence.
+
+The delivery pipeline could not prove where an event finished either. An
+invalid instance ID could make every Google poll appear to drain from the
+shared Queue while no processing Workflow was ever created. Queue depth proved
+only that the consumer acknowledged or exhausted a message; it did not prove
+where a connector event finished or whether a partial Google stream advanced
+its cursor.
 
 **Considered and rejected:** Logging only individual adapters was rejected
 because the next connector would begin uninstrumented and hosted MCP/shared HTTP
@@ -1910,39 +1925,21 @@ or health text was rejected because those values can carry connector content or
 credentials. Pure Rally and provider identifiers remain present because they
 are the stable correlation keys needed to follow one operation.
 
+Treating Queue drain as delivery evidence, logging only thrown exceptions, and
+removing deterministic Workflow IDs were also rejected. They respectively hide
+downstream state, leave expected skip/replay branches invisible, or weaken
+idempotency at the Workflow boundary.
+
 **What a future change has to respect:** A connector added to
 `createConnectorRegistry` must receive both wrappers. New adapter surfaces must
 join the shared lifecycle wrapper rather than relying on call-site logging.
 Keep starts at `debug` and terminal results at a production-visible level, keep
 expected versus unexpected failure levels distinct, and never let observer
-behavior or logging content affect the provider call.
-
-### 2026-08-25 — Connector delivery has an observable terminal outcome
-
-**What changed:** Connector-event Workflow instance IDs now use a branded,
-Cloudflare-validated `wf_<sha256>` value derived from the typed connector-event
-identity tuple. Provider and Rally identifiers influence only the digest, so
-they cannot alter the external ID's alphabet or length. Polling, regional
-enqueue, Queue admission, WorkspaceDO ingestion/claim/settlement, and Workflow
-completion now emit correlated structured outcomes, including replay, busy,
-redrive, exhaustion, and partial-stream poll results.
-
-**Why:** An invalid instance ID could make every Google poll appear to drain
-from the shared Queue while no processing Workflow was ever created. Queue
-depth proved only that the consumer acknowledged or exhausted a message; it did
-not prove where a connector event finished or whether a partial Google stream
-advanced its cursor.
-
-**Considered and rejected:** Treating Queue drain as delivery evidence, logging
-only thrown exceptions, and removing deterministic Workflow IDs were rejected.
-They respectively hide downstream state, leave expected skip/replay branches
-invisible, or weaken idempotency at the Workflow boundary.
-
-**What a future change has to respect:** Each connector boundary must log one
-content-free terminal or deferred outcome with stable correlation IDs. A new
-branch must not acknowledge, replay, skip, or settle an event without making
-that decision queryable, and Workflow instance IDs must remain deterministic
-and valid under Cloudflare's ID grammar.
+behavior or logging content affect the provider call. Each connector boundary
+must log one content-free terminal or deferred outcome with stable correlation
+IDs. A new branch must not acknowledge, replay, skip, or settle an event
+without making that decision queryable, and Workflow instance IDs must remain
+deterministic and valid under Cloudflare's ID grammar.
 
 ### 2026-08-25 — Connection management makes scope and consequences explicit
 
@@ -1954,49 +1951,46 @@ and valid under Cloudflare's ID grammar.
 
 **What a future change has to respect:** “Not connected” is scope-aware: a dual-scope provider remains actionable until every scope the current viewer can install has a matching connection. Any mutation that returns a one-time credential must keep its result surface open until that credential is shown, and modal-owned failures must render inside the modal rather than behind its overlay.
 
-### 2026-08-24 — Public activity fans into private admission contexts
+### 2026-08-24 — Public activity fans into private admission contexts, and a resource watch cannot broaden a restricted activity
 
 **What changed:** When deterministic and contextual routes decline a
 workspace-visible connector event, Suggested Work enqueues it once for every
 active member rather than once for the workspace. Each window is personal, while
 the event retains its workspace source audience for later routing authorization.
 
+In the other direction, before injecting a restricted connector activity
+through an explicit resource watch, the consumer now asks the authoritative
+main SubstreamAgent for the watched work stream's current audience. The target
+must be personal and every active participant must already be in the activity
+audience. Workspace-visible activity is unchanged.
+
 **Why:** Every member may read a workspace event, and each may have a private
 work stream where it belongs. A workspace-only directory read could not consider
 those authorized private targets.
 
-**Considered and rejected:** A single inference over the union of private
-directories, or duplicating both workspace and user batches. Those respectively
-disclose private titles across members or create competing suggestions from the
-same event.
+The watch check had the opposite defect: it admitted a target when any one
+permitted activity reader could read it. That allowed one person's private
+connector activity to be copied into a workspace stream, or into a private
+stream shared with somebody outside the activity audience.
+
+**Considered and rejected:** For the fan-out, a single inference over the union
+of private directories, or duplicating both workspace and user batches. Those
+respectively disclose private titles across members or create competing
+suggestions from the same event.
+
+For the watch check, checking only the connection owner, retaining the
+any-reader test, or reading legacy D1 participants. None proves the required
+subset relationship, and WorkspaceDO's directory projection may lag the work
+stream that owns participant state.
 
 **What a future change has to respect:** Fan-out may duplicate public evidence;
 it must never merge users' private contexts. Source visibility and admission
 window visibility remain separate facts. With `N` active members this path costs
 `N` enqueue RPCs and may yield `N` independent admissions; there is no
 cross-member dedupe because the private contexts are intentionally disjoint.
-
-### 2026-08-24 — A resource watch cannot broaden a restricted activity
-
-**What changed:** Before injecting a restricted connector activity through an
-explicit resource watch, the consumer now asks the authoritative main
-SubstreamAgent for the watched work stream's current audience. The target must
-be personal and every active participant must already be in the activity
-audience. Workspace-visible activity is unchanged.
-
-**Why:** The old check admitted a target when any one permitted activity reader
-could read it. That allowed one person's private connector activity to be copied
-into a workspace stream, or into a private stream shared with somebody outside
-the activity audience.
-
-**Considered and rejected:** Checking only the connection owner, retaining the
-any-reader test, or reading legacy D1 participants. None proves the required
-subset relationship, and WorkspaceDO's directory projection may lag the work
-stream that owns participant state.
-
-**What a future change has to respect:** Moving content is authorized from
-source audience to target audience, not by one actor's ability to see both. A
-target may narrow an activity audience; it may never broaden it.
+Moving content is authorized from source audience to target audience, not by
+one actor's ability to see both. A target may narrow an activity audience; it
+may never broaden it.
 
 ### 2026-08-21 — A conversation too large to be a room opens to the workspace
 
@@ -2151,50 +2145,45 @@ router's allowlist (wrong object — participant rows live with the work stream,
 not the workspace), and relaxing the fence for this one writer (re-opens the
 dual-authority hole the cutover closed).
 
-### 2026-08-18 — Connector ingress routing is migration-tested and repairable
-
-**What changed:** The D1 ingress directory's backfill and insert/update triggers
-are covered for provider-user fallbacks and disabled status. The WorkspaceDO
-writer derives the same minimal route shape in one helper. Slack workspace
-claim audits commit explicitly to regional D1 after the local session claim and
-repair the same audit on claim replay.
-
-**Why:** Provider ingress must discover a workspace before addressing its DO,
-but connector product state is no longer in D1. An implicit subquery across the
-two authorities could route the audit mutation into the object and lose the
-regional record.
-
-**Considered and rejected:** Keeping connector product rows in D1, copying full
-configuration into the route, and batching local claim state with the regional
-audit.
-
-**Consequences:** D1 retains opaque routing fields only. A committed claim may
-temporarily precede its audit during an outage, but replay repairs the
-deterministic audit ID without changing product authority.
-
-### 2026-08-18 — Connector product state moves into WorkspaceDO
+### 2026-08-18 — Connector product state moves into WorkspaceDO, and ingress routing is migration-tested and repairable
 
 **What changed:** WorkspaceDO now owns connection credentials/configuration,
 refresh leases/cursors/health, external identities, connection-scoped webhook
-replay receipts, OAuth attempt status, workspace-local Slack policy/sessions/jobs, and the canonical
-normalized event. Provider ingress uses opaque global routing metadata, a
-regional Queue carrying the bounded normalized event, typed WorkspaceDO RPC,
-then a deterministic Workflow. Legacy D1 activity bodies are imported and
-scrubbed during cutover instead of retained as a live handoff.
+replay receipts, OAuth attempt status, workspace-local Slack
+policy/sessions/jobs, and the canonical normalized event. Provider ingress uses
+opaque global routing metadata, a regional Queue carrying the bounded
+normalized event, typed WorkspaceDO RPC, then a deterministic Workflow. Legacy
+D1 activity bodies are imported and scrubbed during cutover instead of retained
+as a live handoff.
+
+The D1 ingress directory's backfill and insert/update triggers are covered for
+provider-user fallbacks and disabled status. The WorkspaceDO writer derives the
+same minimal route shape in one helper. Slack workspace claim audits commit
+explicitly to regional D1 after the local session claim and repair the same
+audit on claim replay.
 
 **Why:** Connection and normalized-event rows each belong to exactly one
 workspace. Keeping either in D1 made the routing plane a product authority and
 made credential refresh/event processing span databases unnecessarily.
 
-**Considered and rejected:** Unbounded/raw provider payloads in Queue, D1 product
-projections, and an event row shared by installations in multiple workspaces.
-Those alternatives weaken retry/residency boundaries or cross workspace
-authorization.
+Provider ingress must still discover a workspace before addressing its DO, but
+connector product state is no longer in D1. An implicit subquery across the two
+authorities could route the audit mutation into the object and lose the
+regional record.
 
-**Consequences:** D1 retains only provider/setup receipts and routes needed
-before the workspace is known. A raw provider delivery may fan out to multiple
-installed workspaces, but each resulting normalized event is independently
-authorized and stored in one WorkspaceDO.
+**Considered and rejected:** Keeping connector product rows in D1,
+unbounded/raw provider payloads in Queue, D1 product projections, and an event
+row shared by installations in multiple workspaces. Those alternatives weaken
+retry/residency boundaries or cross workspace authorization. Also rejected:
+copying full configuration into the route, and batching local claim state with
+the regional audit.
+
+**Consequences:** D1 retains only opaque routing fields and the provider/setup
+receipts and routes needed before the workspace is known. A raw provider
+delivery may fan out to multiple installed workspaces, but each resulting
+normalized event is independently authorized and stored in one WorkspaceDO. A
+committed claim may temporarily precede its audit during an outage, but replay
+repairs the deterministic audit ID without changing product authority.
 
 ### 2026-08-18 — Connector events become workspace-local durable authority
 
@@ -2270,26 +2259,7 @@ before falling back to an all-repositories default. Settings repair must preserv
 the malformed row's revision, and future credential caches must be invalidated
 in the same transaction as any policy downgrade.
 
-### 2026-08-13 — Full access means native repository CLI access
-
-**What changed:** Terminal maps connector `full_access` to a short-lived
-single-repository GitHub App token inside the Daytona sandbox, while
-`read_only` remains technically enforced by token permissions. The harness
-prepares the work-stream branch and tells the model to stay on it.
-
-**Why:** Models already know Git and GitHub CLI, PRs routinely receive multiple
-commits, and GitHub offers no branch-scoped installation token. A second publish
-authorization parser and custom write path added friction without expressing a
-provider primitive that exists.
-
-**Considered and rejected:** A smart-HTTP/API proxy and a per-push participant
-gate. Connector Settings is the explicit durable access decision.
-
-**Consequences:** `full_access` is repository-wide at the provider. Policy
-updates must invalidate Terminal credential freshness before another command,
-and model guidance must continue to name the prepared branch behavior.
-
-### 2026-08-13 — Repository policy becomes connector-owned model context
+### 2026-08-13 — Repository policy becomes connector-owned model context, and full access means native repository CLI access
 
 **What changed:** GitHub connections now persist a revisioned all-or-selected
 repository policy with read-only or full remote access, expose a dynamic
@@ -2298,23 +2268,37 @@ access to the model, and reject remote writes outside that policy. When no
 repository is named, the plugin tells the model to search and choose from
 context instead of delegating a chooser to the participant.
 
+Terminal maps connector `full_access` to a short-lived single-repository GitHub
+App token inside the Daytona sandbox, while `read_only` remains technically
+enforced by token permissions. The harness prepares the work-stream branch and
+tells the model to stay on it.
+
 **Why:** Repository selection was presented as an interruption even when the
 model already had installation-scoped discovery and enough context to make the
 choice. At the same time, App installation access was too coarse to express
 that a repository could be inspected and edited locally without authorizing a
 remote push or pull request.
 
+On the sandbox side, models already know Git and GitHub CLI, PRs routinely
+receive multiple commits, and GitHub offers no branch-scoped installation
+token. A second publish authorization parser and custom write path added
+friction without expressing a provider primitive that exists.
+
 **Considered and rejected:** Keeping one participant chooser per work stream,
 and equating read-only with an immutable sandbox checkout. The former stranded
 runs and made ordinary code tasks interactive; the latter prevented useful
 local analysis and edits even though only the remote repository needed the
-narrower boundary.
+narrower boundary. Also rejected: a smart-HTTP/API proxy and a per-push
+participant gate. Connector Settings is the explicit durable access decision.
 
 **Consequences:** New GitHub operations must resolve the current policy and,
 for explicitly configured repositories, revalidate the immutable repository ID.
 Every model-visible repository listing must carry effective access. A future
 connector with settings can reuse the dynamic navigation contract, but must own
-its own typed settings endpoint and authorization semantics.
+its own typed settings endpoint and authorization semantics. `full_access` is
+repository-wide at the provider. Policy updates must invalidate Terminal
+credential freshness before another command, and model guidance must continue
+to name the prepared branch behavior.
 
 ### 2026-08-13 — Connector adoption separates intent, established configuration, health, and activity
 
@@ -2408,33 +2392,7 @@ an active work stream. Dropping unclaimed activity was rejected because the home
 screen remains a less intrusive place to propose work; deleting digestibility or
 routing history was rejected because both remain useful to a later tuning pass.
 
-### 2026-08-12 — Historical Notion bot grants move with their real identity
-
-**What changed:** Migration `0072_notion_connection_scope_split.sql` converts
-pre-MCP Notion personal rows to workspace scope while leaving rows granted
-`notion.personal.mcp` personal. The Notion adapter is always registered for the
-personal flow; public-integration credentials are optional configuration needed
-only when workspace authorization or bot-token operations run.
-
-**Why:** Existing rows hold public-integration bot credentials, not hosted-MCP
-OAuth metadata. Routing every `scope = personal` row through MCP made them fail
-refresh and disappear from the tool surface, while their stale owner also
-blocked a real personal connection. The capability dialect is deterministic
-evidence of which identity each row contains.
-
-**Considered and rejected:** Disabling the old rows or requiring every member to
-reconnect. That would discard a valid shared bot grant and leave its already
-registered webhook route orphaned. Keeping the public client secret mandatory
-for the whole adapter was also rejected because personal DCR does not use it.
-
-**Consequences:** The migration deliberately broadens legacy rows to the
-workspace semantics their provider bot always had. Operators can offer personal
-Notion MCP without configuring a public integration, although workspace connect
-attempts then fail with an explicit configuration error.
-
-Shipped in the pull request for this change.
-
-### 2026-08-12 — Personal MCP tools are discovered, not guessed
+### 2026-08-12 — Personal MCP tools are discovered, not guessed; Notion becomes a bot-owned workspace capability and its historical bot grants move with their real identity
 
 **What changed:** Personal Granola and Slack plugins now pass through their
 servers' live tool surfaces, and Notion gained a personal connection through its
@@ -2442,10 +2400,37 @@ official hosted MCP server. The shared abstraction is documented in
 [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md). Notion's existing public
 integration remains the workspace bot path.
 
+That public-integration path now declares only workspace scope. Its OAuth
+callback still records the Notion user who approved the install, but the Rally
+connection has no user owner, tools require the workspace execution principal,
+and webhook activity is workspace-scoped with no target user. The administrator
+gate protects both the workspace start and callback, while the same card
+separately offers personal MCP.
+
+Migration `0072_notion_connection_scope_split.sql` converts pre-MCP Notion
+personal rows to workspace scope while leaving rows granted
+`notion.personal.mcp` personal, so legacy public-integration rows are promoted
+by a capability-aware migration rather than interpreted as personal MCP
+credentials. The Notion adapter is always registered for the personal flow;
+public-integration credentials are optional configuration needed only when
+workspace authorization or bot-token operations run.
+
 **Why:** The static Granola and Slack definitions represented one response at
 one point in time, not a contract the MCP server was required to preserve. They
 could drift in either direction and made adding Notion an invitation to repeat
 provider-specific transport and OAuth code.
+
+The Notion provider grant installs a Rally bot into a selected part of a Notion
+workspace, and Notion attributes the resulting edits and comments to that bot.
+Treating the human who clicked Allow as the runtime owner made an organization
+capability appear personal, hid it from teammates, and sent shared change
+activity only to that person.
+
+Existing rows hold public-integration bot credentials, not hosted-MCP OAuth
+metadata. Routing every `scope = personal` row through MCP made them fail
+refresh and disappear from the tool surface, while their stale owner also
+blocked a real personal connection. The capability dialect is deterministic
+evidence of which identity each row contains.
 
 **Considered and rejected:** Keeping Notion workspace-only after establishing
 that its public integration acts as a bot. That correctly describes the public
@@ -2455,35 +2440,28 @@ Keeping static tool allowlists as a safety boundary was also rejected because
 Rally's capability grant, principal checks, confirmation policy, and receipts
 already provide that boundary without inventing a provider catalog.
 
-**Consequences:** The workspace-only Notion decision immediately below still
-governs the public-integration mode, but no longer the connector as a whole.
-Historical public-integration rows are migrated to that workspace mode.
-Future MCP providers must use live discovery and preserve a static trusted
-catalog/policy boundary; they must not paste a current `tools/list` response
-into `agentPlugin.tools`.
+Reusing Notion's `owner=user` parameter as Rally's scope signal was rejected
+because it describes who approves public OAuth, not who the installed bot acts
+as. Leaving old rows personal was rejected because the credential is an
+installed bot regardless of the Rally label; treating that label as privacy
+would both misstate provider authority and break the row once personal scope
+acquired the distinct hosted-MCP credential dialect. Disabling the old rows or
+requiring every member to reconnect was rejected as well: that would discard a
+valid shared bot grant and leave its already registered webhook route orphaned.
+Keeping the public client secret mandatory for the whole adapter was also
+rejected because personal DCR does not use it.
+
+**Consequences:** The workspace-only Notion decision still governs the
+public-integration mode, but no longer the connector as a whole. Historical
+public-integration rows are migrated to that workspace mode; the migration
+deliberately broadens legacy rows to the workspace semantics their provider
+bot always had. Future MCP providers must use live discovery and preserve a
+static trusted catalog/policy boundary; they must not paste a current
+`tools/list` response into `agentPlugin.tools`. Operators can offer personal
+Notion MCP without configuring a public integration, although workspace
+connect attempts then fail with an explicit configuration error.
 
 Shipped in the pull request for this change.
-
-### 2026-08-12 — Notion becomes a bot-owned workspace capability
-
-**What changed:** Notion now declares only workspace scope. Its OAuth callback
-still records the Notion user who approved the install, but the Rally connection
-has no user owner, tools require the workspace execution principal, and webhook
-activity is workspace-scoped with no target user. The administrator gate protects
-both the workspace start and callback, while the same card separately offers
-personal MCP. Legacy public-integration rows are promoted by a capability-aware
-migration rather than interpreted as personal MCP credentials.
-
-**Why:** The provider grant installs a Rally bot into a selected part of a
-Notion workspace, and Notion attributes the resulting edits and comments to that
-bot. Treating the human who clicked Allow as the runtime owner made an
-organization capability appear personal, hid it from teammates, and sent shared
-change activity only to that person. Reusing Notion's `owner=user` parameter as
-Rally's scope signal was rejected because it describes who approves public OAuth,
-not who the installed bot acts as. Leaving old rows personal was rejected because
-the credential is an installed bot regardless of the Rally label; treating that
-label as privacy would both misstate provider authority and break the row once
-personal scope acquired the distinct hosted-MCP credential dialect.
 
 ### 2026-08-12 — Unsigned webhook setup is a connector pattern, not a Notion exception
 

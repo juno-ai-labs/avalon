@@ -744,39 +744,7 @@ window open, which is deliberate but means a person can accumulate meeting
 windows if the service is down; if that becomes the common failure, the answer is
 a regenerate control on the note screen, not closing over the error.
 
-### 2026-08-11 — Ending a meeting closes its window and opens the note
-
-**What changed:** **End** now closes the meeting window once finalization
-succeeds and takes the main window to that note, raised, via an
-`avalon://notes/<id>` deep link the main process sends only to the main window.
-`closeMeetingNotes` carries an optional note id for it, validated as a uuid in
-the main process like every other IPC argument. A failed finalization leaves the
-window open; the native close path is unchanged.
-
-**Why:** The window used to sit there after End showing a finished summary, which
-left the person to close it and find the note themselves — two steps to reach the
-thing they had just made, in a window that no longer had a job. The note is where
-the summary lives permanently, and it is the surface with the sharing, archiving,
-and transcript controls the meeting window deliberately lacks.
-
-**Considered and rejected:** Having the meeting window navigate itself and stay
-open. It is a separate 1120×820 window opened for a recording; keeping it around
-as a second note viewer means two windows can show one note and disagree. Also
-rejected: adding an IPC channel for "navigate the main window". The deep-link
-channel already carries exactly this and the renderer already has a dispatcher
-for it — a second mechanism would be a second place to keep in step. It is sent
-only to the main window rather than through `sendDeepLink`, because the settings
-renderer has no business navigating because a meeting ended.
-
-**Consequences:** The link is internal: `emitDeepLink` does not accept
-`avalon://notes/...` from the operating system, so a note cannot be opened by
-anything outside the app, and widening that is a deliberate decision about an
-unauthenticated entry point rather than a formality. Any future caller of
-`closeMeetingNotes` has to decide whether it is handing the person onward or just
-closing a window; passing the id always would make every close a navigation,
-including the ones that are really an app quit.
-
-### 2026-08-11 — The refresh cadence is served from Flagship rather than compiled in
+### 2026-08-11 — The refresh cadence is served from Flagship rather than compiled in, and ending a meeting closes its window and opens the note
 
 **What changed:** `control-tower-refresh-seconds` is now a Flagship flag,
 resolved by `control-tower-flags.ts` and read by both ends: the meeting screen
@@ -787,7 +755,14 @@ desktop's two cadence constants became one fallback,
 `DEFAULT_MEETING_NOTES_INTERVAL_MS`, whose value comes from the same
 `CONTROL_TOWER_REFRESH_SECONDS` declaration the server clamps against.
 
-**Why:** The cadence set by the entry above is the single most consequential
+In the same change, **End** now closes the meeting window once finalization
+succeeds and takes the main window to that note, raised, via an
+`avalon://notes/<id>` deep link the main process sends only to the main window.
+`closeMeetingNotes` carries an optional note id for it, validated as a uuid in
+the main process like every other IPC argument. A failed finalization leaves the
+window open; the native close path is unchanged.
+
+**Why:** The cadence set by the entry below is the single most consequential
 number in this module — it multiplies inference spend, transcript row count, and
 how current the product feels — and it was reachable only by shipping a desktop
 build. That is the wrong instrument for a number that wants tuning against real
@@ -798,14 +773,30 @@ reuse what it wrote last time *because* it runs again shortly, so a cadence the
 prompt describes differently from the one the client keeps is a briefing written
 for a schedule nobody is on.
 
-**Considered and rejected:** Reading it through the main-process poll that serves
-Application → Developer. That poll exists so both windows read one answer and so
-`application-settings.json` has an owner; a cadence is neither, and re-reading it
-every minute would move a recording's own segment boundaries mid-meeting. Asking
-once, in the renderer that acts on it, gives a meeting one cadence for its whole
-length. Also rejected: interpolating the cadence into the system prompt, which is
-a module constant the harness re-renders every turn — run data belongs in the
-request, and a prefix that varies per call is a cache that stops working.
+The window used to sit there after End showing a finished summary, which left
+the person to close it and find the note themselves — two steps to reach the
+thing they had just made, in a window that no longer had a job. The note is where
+the summary lives permanently, and it is the surface with the sharing, archiving,
+and transcript controls the meeting window deliberately lacks.
+
+**Considered and rejected:** For the cadence: reading it through the
+main-process poll that serves Application → Developer. That poll exists so both
+windows read one answer and so `application-settings.json` has an owner; a
+cadence is neither, and re-reading it every minute would move a recording's own
+segment boundaries mid-meeting. Asking once, in the renderer that acts on it,
+gives a meeting one cadence for its whole length. Also rejected: interpolating
+the cadence into the system prompt, which is a module constant the harness
+re-renders every turn — run data belongs in the request, and a prefix that
+varies per call is a cache that stops working.
+
+For End: having the meeting window navigate itself and stay open. It is a
+separate 1120×820 window opened for a recording; keeping it around as a second
+note viewer means two windows can show one note and disagree. Also rejected:
+adding an IPC channel for "navigate the main window". The deep-link channel
+already carries exactly this and the renderer already has a dispatcher for it —
+a second mechanism would be a second place to keep in step. It is sent only to
+the main window rather than through `sendDeepLink`, because the settings
+renderer has no business navigating because a meeting ended.
 
 **Consequences:** Three readers now have to agree on one number, and they do only
 because the default and its bounds are declared once in `@rally/contracts`;
@@ -818,6 +809,14 @@ still keeps the clock. That is now the whole remaining gap, and
 lives. Provisioning is one flag with no rules, seeded at the default: until it
 exists in the `avalon-api` app, every reader falls through to sixty seconds,
 which is exactly the behavior this entry replaced.
+
+The note link is internal: `emitDeepLink` does not accept `avalon://notes/...`
+from the operating system, so a note cannot be opened by anything outside the
+app, and widening that is a deliberate decision about an unauthenticated entry
+point rather than a formality. Any future caller of `closeMeetingNotes` has to
+decide whether it is handing the person onward or just closing a window; passing
+the id always would make every close a navigation, including the ones that are
+really an app quit.
 
 ### 2026-08-11 — Control Tower refreshes every minute, and its prompt is written for a ten-second run
 

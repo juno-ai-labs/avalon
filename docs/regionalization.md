@@ -648,48 +648,39 @@ Global supports R2 SQL/Iceberg operations. EU incident response uses the R2
 Object API against bounded UTC Parquet partitions. No code may silently route an
 EU query or failed EU delivery to Global.
 
-### 2026-08-24 — Inference analytics leaves regional D1
-
-**What changed:** Migration 0094 removes the workspace inference preference and
-`agent_inference_payload_logs` from both regional D1 databases. The old
-request-only payload writer is gone; all new hosted raw-inference capture uses
-the already-split regional lakehouse.
-
-**Why:** Region splitting did not justify keeping two analytical systems inside
-each region. The D1 index duplicated fields already queryable in the regional
-Iceberg table and made completeness depend on a workspace opt-in.
-
-**Considered and rejected:** Keeping D1 as a regional lookup cache. That would
-preserve a second sensitive-data lifecycle and product-database dependency for
-an operator-only query path.
-
-**Consequences:** D1 remains identity, membership, routing, migration/control,
-and operational storage; inference analytics no longer expands that role.
-Historical `agent-inference/` R2 objects are retained pending a separate
-deletion decision.
-
-### 2026-08-24 — Inference analytics comes to rest in two regional lakehouses
+### 2026-08-24 — Inference analytics comes to rest in two regional lakehouses and leaves regional D1
 
 **What changed:** Global and EU each gained an inference payload prefix, Queue,
 Pipeline stream/sink, and R2 Data Catalog Iceberg table. Queue bodies carry only
 a verified pointer; prompt, tool, response, error, identity, and usage content
-stays in the producer's region from capture through query.
+stays in the producer's region from capture through query. Migration 0094
+removes the workspace inference preference and `agent_inference_payload_logs`
+from both regional D1 databases. The old request-only payload writer is gone;
+all new hosted raw-inference capture uses the split regional lakehouse.
 
 **Why:** A shared analytical destination would undo the existing workspace
 boundary, while putting full inference bodies on Queue would create another
 sensitive surface and exceed its message ceiling for valid requests. The
 regional payload archive is already the fixed storage dependency and is the only
 place large exact records can be staged without crossing or truncating them.
+Region splitting also did not justify keeping two analytical systems inside
+each region: the D1 index duplicated fields already queryable in the regional
+Iceberg table and made completeness depend on a workspace opt-in.
 
 **Considered and rejected:** One account-wide inference table with a `region`
 column. A column labels data after it has crossed; it does not constrain which
 Worker, Queue consumer, bucket jurisdiction, sink credential, or query principal
-can access it.
+can access it. Keeping D1 as a regional lookup cache, which would preserve a
+second sensitive-data lifecycle and product-database dependency for an
+operator-only query path.
 
 **Consequences:** Operators query two catalogs, the deployment creates and
 validates both resource chains, and the Pipeline stream IDs are materialized
 into ignored per-deploy Wrangler configs rather than committed as cross-account
-identifiers.
+identifiers. D1 remains identity, membership, routing, migration/control, and
+operational storage; inference analytics no longer expands that role.
+Historical `agent-inference/` R2 objects are retained pending a separate
+deletion decision.
 
 ### 2026-08-17 — Workspace routing persists west/east Durable Object affinity
 
@@ -736,47 +727,42 @@ jurisdictional ID graph; an unrestricted predecessor is never reopened as a
 fallback. Local workerd skips jurisdictions and hints because it does not
 implement them.
 
-### 2026-08-13 — Invitation conversion is measured by the regional authority
+### 2026-08-13 — Invitation conversion is measured by the regional authority, and public-site identity is selected after the Cloudflare route
 
 **What changed:** The service that commits each invitation lifecycle transition
 now emits one idempotent regional terminal event for created, revoked, accepted,
 and declined outcomes, including bounded role, delivery, and elapsed-time
-dimensions.
+dimensions. Separately, a no-store, content-free Global telemetry route lookup
+was added. The public site uses it before reading browser analytics storage:
+Global may reuse a first-party anonymous epoch, while an affirmative EU route
+uses only an in-memory page epoch and the existing named EU telemetry bridge.
 
 **Why:** Client clicks and email-provider acceptance could not establish whether
 an invitation actually became a member, was declined, or was revoked. The
 regional mutation is the only boundary that can report that journey without
 guessing or crossing regions.
 
-**Considered and rejected:** Renderer-only events, email addresses, workspace
-names, invite URLs/tokens, and Global aggregation of EU invitation outcomes.
-Those alternatives count intent as success, expose identity or bearer material,
-or violate the invitation's owning-region boundary.
+For the public site, the desktop's capability bootstrap assumes an epoch already
+exists. Applying that order to a website would read or mint a persistent
+identifier before Rally knew whether the visitor belonged to the EU internal
+path.
+
+**Considered and rejected:** For invitations: renderer-only events, email
+addresses, workspace names, invite URLs/tokens, and Global aggregation of EU
+invitation outcomes. Those alternatives count intent as success, expose
+identity or bearer material, or violate the invitation's owning-region boundary.
+For the public site: one Global browser identity for all locations, persisting
+an EU identity in `localStorage`, and using a disposable bootstrap as the route
+probe. Those choices merge residency histories, persist more EU data, or create
+a 90-day control row for a request that only needed a two-value route.
 
 **Consequences:** Product funnels can join invitation terminal states by the
 opaque invitation ID inside one region. New invitation terminal states must be
 added at the committing service, remain idempotent, and keep recipient identity
-out of semantic event properties.
+out of semantic event properties. EU public-site funnels are aggregate across
+page loads; Global can form anonymous acquisition paths. The route endpoint
+grants no event or account authority and remains Global-only.
 
-### 2026-08-13 — Public-site identity is selected after the Cloudflare route
-
-**What changed:** Added a no-store, content-free Global telemetry route lookup.
-The public site uses it before reading browser analytics storage: Global may
-reuse a first-party anonymous epoch, while an affirmative EU route uses only an
-in-memory page epoch and the existing named EU telemetry bridge.
-
-**Why:** The desktop's capability bootstrap assumes an epoch already exists.
-Applying that order to a website would read or mint a persistent identifier
-before Rally knew whether the visitor belonged to the EU internal path.
-
-**Considered and rejected:** One Global browser identity for all locations,
-persisting an EU identity in `localStorage`, and using a disposable bootstrap as
-the route probe. Those choices merge residency histories, persist more EU data,
-or create a 90-day control row for a request that only needed a two-value route.
-
-**Consequences:** EU public-site funnels are aggregate across page loads; Global
-can form anonymous acquisition paths. The route endpoint grants no event or
-account authority and remains Global-only.
 ### 2026-08-13 — Terminal activation stays within the Global US target
 
 **What changed:** The Global Worker now declares Terminal supported with the
@@ -799,51 +785,41 @@ bindings while Cloudflare retains `DAYTONA_API_KEY` as a regional secret. EU
 requires its own target-specific acceptance record and an explicit capability
 change before activation.
 
-### 2026-08-13 — EU telemetry control is narrow and keyless
-
-**What changed:** The EU Worker uses `GLOBAL_TELEMETRY_CONTROL` for three strict
-commands: opaque preference mutation, onboarding-journey authorization, and
-journey closure. The capability-signing key remains Global-only, while the
-separate Global-to-EU bridge carries validated event projections.
-
-**Why:** EU must link its locally minted analytics person to a journey routed by
-Global without copying a Global signing key or exporting the EU person identity.
-Preference also remains canonical in the one identity control plane.
-
-**Considered and rejected:** Sharing the key, reading Global journey rows from EU,
-or extending the event projection bridge into a bidirectional payload channel.
-Those alternatives collapse independent regional authority or widen the one
-allowed event crossing.
-
-**Consequences:** Cross-region telemetry has two directional bindings with
-different negative-space contracts. New control commands must remain payload-free,
-and new event projections may move only Global-to-EU after route validation.
-
-Shipped in the pull request for this change. Design: [regional telemetry
-PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
-
-### 2026-08-12 — Onboarding telemetry resolves a region immediately
+### 2026-08-13 — EU telemetry control is narrow and keyless, and onboarding telemetry resolves a region immediately
 
 **What changed:** Global classifies a pre-workspace anonymous epoch from
 Cloudflare's coarse country signal, sends affirmative-EU onboarding projections
 through a narrow named RPC, and otherwise routes to Global. Explicit workspace
 bindings take over for future events. Global and EU now have separate telemetry
-D1 state, R2 buckets, processing, and destination configuration.
+D1 state, R2 buckets, processing, and destination configuration. In the other
+direction, the EU Worker uses `GLOBAL_TELEMETRY_CONTROL` for three strict
+commands: opaque preference mutation, onboarding-journey authorization, and
+journey closure. The capability-signing key remains Global-only, while the
+separate Global-to-EU bridge carries validated event projections.
 
 **Why:** Onboarding funnels begin before workspace selection, while an EU user
 must not have a crash dump saved or an event sent to the US PostHog project merely
 because the region is not known yet. The user chose immediate coarse routing and
-explicitly rejected a pending holding area.
+explicitly rejected a pending holding area. EU must then link its locally minted
+analytics person to a journey routed by Global without copying a Global signing
+key or exporting the EU person identity. Preference also remains canonical in
+the one identity control plane.
 
 **Considered and rejected:** Queueing unresolved records in Global, later moving
 them when a workspace is selected, recording the detected country, or falling EU
 telemetry back to Global during an outage. Each weakens residency or makes one
-event's region mutable.
+event's region mutable. For the control path: sharing the key, reading Global
+journey rows from EU, or extending the event projection bridge into a
+bidirectional payload channel. Those alternatives collapse independent regional
+authority or widen the one allowed event crossing.
 
 **Consequences:** A failed or unavailable geolocation signal takes the documented
 Global fallback, but an affirmative EU result is sticky for that event. Future
 workspace selection never migrates historical telemetry, and both deployments
-must provision their dedicated telemetry resources before rollout.
+must provision their dedicated telemetry resources before rollout. Cross-region
+telemetry has two directional bindings with different negative-space contracts.
+New control commands must remain payload-free, and new event projections may
+move only Global-to-EU after route validation.
 
 Shipped in the pull request for this change. Design: [regional telemetry
 PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).

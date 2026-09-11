@@ -1481,27 +1481,36 @@ skipping the verified compatibility release; the later class rename must also
 update migration tracking. Permanent email claims and separate stored loading
 policy remain intact rather than conflating visibility with execution rights.
 
-### 2026-09-07 — Retain standalone tiles while rebasing Sidekicks
+### 2026-09-07 — Sidekicks compose reusable knowledge with optional execution, and the strip's tiles are the enabled standalone ones
 
-The personal and workspace shortcut tiles from PRs #581 and #582 now represent
-enabled standalone Sidekicks. The user chose enabled lifecycle over in-progress
-runs, so no execution-state projection is needed. Tiles open the library detail;
-drafts and paused entries remain manageable there without occupying the strip.
-The account popup retains PR #578's simplified ordering, and the Sidekick
-WorkspaceDO projection moves to migration 35 after onboarding's released 34.
-Replacing the new tiles with library-only navigation was rejected because people
-still need direct access to enabled delegated work.
+**What changed:** Sidekicks broaden automation ownership to instructions that
+can load into an existing conversation. Loadability is stored policy output.
+Publication is conversational and immediate, and execution bindings remain
+unnecessary for knowledge alone. Main-conversation loads persist attachments,
+and per-execution snapshots keep edits from changing resumed instructions. The
+library has a dedicated window. The personal and workspace shortcut tiles from
+PRs #581 and #582 now represent enabled standalone Sidekicks; tiles open the
+library detail, and drafts and paused entries remain manageable there without
+occupying the strip. The account popup retains PR #578's simplified ordering,
+and the Sidekick WorkspaceDO projection moves to migration 35 after
+onboarding's released 34.
 
-### 2026-09-07 — Sidekicks compose reusable knowledge with optional execution
+**Why:** Loadability is stored as policy output so future eligibility rules can
+change without rewriting consumers. The class rename preserves namespace
+identity, because replacing objects would discard conversations and execution
+history. The library gets its own window so management does not displace
+ongoing work. The tiles show the enabled lifecycle rather than in-progress runs
+because that was the choice made for them, so no execution-state projection is
+needed.
 
-Sidekicks broaden automation ownership to instructions that can load into an
-existing conversation. Loadability is stored policy output so future eligibility
-rules can change without rewriting consumers. Publication is conversational and
-immediate, while execution bindings remain unnecessary for knowledge alone.
-Main-conversation loads persist attachments and per-execution snapshots prevent
-edits from changing resumed instructions. The class rename preserves namespace
-identity; replacing objects would discard conversations and execution history.
-The library has a dedicated window so management does not displace ongoing work.
+**Considered and rejected:** Replacing the new tiles with library-only
+navigation, because people still need direct access to enabled delegated work.
+Replacing the objects under the rename, for the reason above.
+
+**Consequences:** Loadability is read from stored policy, never recomputed by a
+consumer. A resumed execution reads its own snapshot of the instructions, not
+the current revision. The strip holds only enabled standalone Sidekicks; a
+draft or a paused one is reached through the library.
 
 ### 2026-09-07 — Include workspace automations in the strip
 
@@ -1545,7 +1554,7 @@ geometry but not its amber glow. Workspace automation rows remain available only
 in legacy full-sidebar mode. Reference bundle names above record the inspected
 version, not runtime dependencies.
 
-### 2026-09-04: A replayed create provisions the conversation it skipped
+### 2026-09-04 — A replayed create provisions the conversation it skipped
 
 **What changed:** `AutomationService.createAutomation` runs the runtime
 bootstrap and the conversation provisioning on every call, not only when the
@@ -1561,7 +1570,7 @@ stable harness run id, so a retry is the same call again.
 **Consequences:** A replay costs one bootstrap RPC and one provisioning RPC
 that answer at once; nothing else.
 
-### 2026-09-04: Apply reconciles on replay, refuses a pause, and creates the declared tables; a retried admission arms its run
+### 2026-09-04 — Apply reconciles on replay, refuses a pause, and creates the declared tables; a retried admission arms its run
 
 **What changed:** `AutomationDO.apply` records `applied_effects_revision`
 (migration v2) only after its tail has run, and its replay guard reads that
@@ -1593,7 +1602,7 @@ A table a run created under a declared name with a different shape refuses
 the apply, which is the conflict the earlier design deferred; it surfaces at
 apply, where a person can rename the declaration.
 
-### 2026-09-04: A run reads the event that woke it, and an array field has operators it can use
+### 2026-09-04 — A run reads the event that woke it, and an array field has operators it can use
 
 **What changed:** A matched delivery (`WorkspaceExternalEventSchema`) now
 carries the event's `textSnippet` and `metadata` beside its title and
@@ -1633,7 +1642,7 @@ transcript as prose; it is labelled as the connector's words and not an
 instruction, and the structured content says `untrusted`. A manifest that
 wants `equals` on an array field must say so.
 
-### 2026-09-04: A rule's "no resource" sentinel, a poison-pill event, and a replayable dev ingress
+### 2026-09-04 — A rule's "no resource" sentinel, a poison-pill event, and a replayable dev ingress
 
 **What changed:** `withoutUnusableAutomationResourceIds` (contracts) drops
 a rule's `resourceId` where it cannot mean anything: a sentinel (the nil or
@@ -1690,7 +1699,7 @@ identity refusal is terminal and logged once under
 retries. The dev route cannot express two different payloads under one
 provider event id, which is the ledger's rule, not the route's.
 
-### 2026-09-04: A webhook's triggers are its configured event types, and its payload keys are the filter fields
+### 2026-09-04 — A webhook's triggers are its configured event types, and its payload keys are the filter fields
 
 **What changed:** `connectorActivityTriggerDescriptors` (`lib/connector-activity-triggers.ts`)
 derives a generic webhook connection's triggers from the connection's own
@@ -1718,7 +1727,7 @@ an event type to the connection adds a trigger the next draft can name. An
 open descriptor is validated for shape only, and a leaf on a key the payload
 lacks is a miss at match time, not a refusal at accept.
 
-### 2026-09-04: A webhook can start an automation, and the drafting agent can look things up
+### 2026-09-04 — A webhook can start an automation, and the drafting agent can look things up
 
 **What changed:** `loadAutomationCreatorPluginCatalog` keeps a connection whose
 connector is event-capable (`manifest.activityTriggers` or a `webhookActivity`
@@ -1755,7 +1764,7 @@ can be fired on a running stack through `POST /dev/connector-events`, a
 development-only ingress that enqueues a normalized activity where a verified
 webhook would, so everything after ingress is the production path.
 
-### 2026-09-04: A room can edit an automation it owns
+### 2026-09-04 — A room can edit an automation it owns
 
 **What changed:** `submit_draft` accepts an `automationId` beside the draft,
 and the plugin gains `automations_list`, which the host answers with the
@@ -1776,7 +1785,7 @@ the draft is parsed, so the stored definition never carries an address.
 `AutomationDO.readDetail` as the person the run acts for.
 
 
-### 2026-09-04: A posted result drains into the room, and the rail survives an archive
+### 2026-09-04 — A posted result drains into the room, and the rail survives an archive
 
 **What changed:** The pending-input drain in `workstream-transcript-storage.ts`
 tested the canonical payload's role, which is `system` for an
@@ -1809,7 +1818,7 @@ answers `409 conversation_not_ready` instead of an untyped 500, and deleting
 an already-deleted automation re-enqueues its directory row so a sidebar entry
 left behind by a lost queue message can be cleared through the API.
 
-### 2026-09-03: The automation is rebuilt as a conversation parent
+### 2026-09-03 — The automation is rebuilt as a conversation parent
 
 **What changed:** `AutomationAgent` is deleted (Wrangler tag `v9`) and
 `AutomationDO` created with a fresh one-migration schema: one automation row,

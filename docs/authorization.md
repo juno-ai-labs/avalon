@@ -452,7 +452,6 @@ or pushed updates; memory writes retain their canonical path. Memory keys regist
 scope and parent dependencies for targeted retries. The separate visibility probe
 measures KV read visibility without adding probes or freshness checks to searches.
 
-
 ### 2026-09-08 — Verify publication and failure boundaries during review
 
 Review identified timestamp ties, workspace-wide registry scans, and KV network
@@ -463,28 +462,26 @@ Preserve source timing through discovery coalescing and KV retries, excluding
 untimed initial-fill retries. Alarm arming after committed runtime SQL is
 background work so a scheduling error cannot misreport the write as rejected.
 
-
-### 2026-09-08 — Measure mutation-to-publication latency
-
-The platform needs propagation evidence before reusing search's KV authorization
-model. Preserve source mutation time across durable outboxes, coalescing and
-Queue retries; emit completed/failed attempt timings and acknowledged key counts.
-Separate write acknowledgement from edge visibility and identify measurements
-that begin at a WorkspaceDO directory projection, rather than disguising missing
-upstream time as full source latency. This uses existing operational logs rather
-than adding a measurement service or read-time refresh.
-
-### 2026-09-08 — Trust eventually consistent search decisions
+### 2026-09-08 — Trust eventually consistent search decisions and measure mutation-to-publication latency
 
 Production searches spent seconds walking canonical conversation owners before
 loading content. The product explicitly chose fast, eventually consistent search
 authorization. Restore cross-request decisions through KV/regional SQLite and
-mutation-driven push, without a five-minute serving deadline or refresh timer. Remove downstream product
-authorization and automation seating from admitted search-content reads. Canonical
-source text and index revisions remain independently validated. This supersedes
-the earlier retirement of cross-request search decisions; future changes must not
-silently restore owner rechecks on cache hits.
+mutation-driven push, without a five-minute serving deadline or refresh timer.
+Remove downstream product authorization and automation seating from admitted
+search-content reads. Canonical source text and index revisions remain
+independently validated. This supersedes the earlier retirement of
+cross-request search decisions; future changes must not silently restore owner
+rechecks on cache hits.
 
+The platform needs propagation evidence before reusing search's KV
+authorization model. Preserve source mutation time across durable outboxes,
+coalescing and Queue retries; emit completed/failed attempt timings and
+acknowledged key counts. Separate write acknowledgement from edge visibility
+and identify measurements that begin at a WorkspaceDO directory projection,
+rather than disguising missing upstream time as full source latency. This uses
+existing operational logs rather than adding a measurement service or
+read-time refresh.
 
 ### 2026-09-08 — Clarify observable pagination metadata
 
@@ -531,13 +528,6 @@ snapshot RPCs remain inert during rollout. Ordinary reads still require canonica
 grants, unavailable authority remains explicit, and performance must be measured
 again; the earlier changelog's five-minute guarantees are superseded.
 
-
-### 2026-09-07 — Preserve the workstream access-history migration
-
-Main claimed WorkspaceDO migration 37 for personal workstream access history.
-Moved the unmerged authorization migration to 38, preserving both schemas and
-main's migration ledger. SubstreamAgent authorization remains migration 44.
-
 ### 2026-09-07 — Return verified partial results and remove unused helpers
 
 The team chose useful verified results over failing a whole list for one
@@ -545,14 +535,6 @@ unavailable authority. Lists now expose `complete: false`; direct reads retain
 retryable failure. Desktop search and resource pickers label incompleteness and
 retry without exposing unverified candidates. Removed unused `within()` and
 `AuthorizedView` rather than carrying an API without a production caller.
-
-
-### 2026-09-07 — Preserve Sidekick migrations during rebase
-
-Main moved the automation implementation into SidekickDO and claimed the next
-object migration numbers. Authorization facts now live on SidekickDO behind the
-existing AutomationDO compatibility export. Authorization uses WorkspaceDO
-migration 38 and SubstreamAgent migration 44, preserving main's published schemas.
 
 ### 2026-09-07 — Verify review findings against canonical authority
 
@@ -566,17 +548,7 @@ Removed host wrappers that merely rechecked their own input. Kept the agreed
 five-minute read bound and whole-query retryable failures: silently dropping
 unverifiable rows would misrepresent an incomplete result as complete.
 
-
-### 2026-09-07 — Enable authorization on deployment
-
-Removed per-workspace shadow and activation controls at the team's request so
-shipping the code enables one read implementation immediately. Retained exact
-permission checks, the five-minute freshness bound and complete negative
-evidence. Missing discovery starts through the existing Queue automatically;
-repeated reads must not reset already progressing jobs. Operator backfill and
-status remain for proactive migration and repair.
-
-### 2026-09-07 — Introduce bounded, composable read authority
+### 2026-09-07 — Introduce bounded, composable read authority, enabled on deployment
 
 Search's source verification repeatedly scanned work streams to discover resource
 attachments, while projected membership lacked a reliable freshness boundary.
@@ -585,3 +557,10 @@ read context. Keep policy as typed local code rather than introducing Oso Cloud
 or a general graph interpreter. Preserve the team's five-minute read bound and
 regional ownership. Future changes must not exchange complete discovery or
 canonical observation time for a faster but misleading empty result.
+
+Per-workspace shadow and activation controls were removed at the team's request
+so shipping the code enables one read implementation immediately, retaining
+exact permission checks, the five-minute freshness bound and complete negative
+evidence. Missing discovery starts through the existing Queue automatically;
+repeated reads must not reset already progressing jobs. Operator backfill and
+status remain for proactive migration and repair.

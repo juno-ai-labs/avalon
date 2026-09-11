@@ -825,27 +825,7 @@ reports non-advancing coverage as an error. Renderer behavior is owned by
 
 Shipped through [PR #565](https://github.com/juno-ai-labs/avalon/pull/565).
 
-### 2026-09-04 — A child is ready only after its inherited context is complete
-
-**What changed:** The desktop treats an initial-context snapshot as part of the
-child's canonical opening baseline. Chunked context must assemble and validate
-before sends become ready. A close during assembly discards the partial value
-and reconnects from sequence zero; malformed matching chunks request a fresh
-authoritative snapshot.
-
-**Why:** Resuming after the snapshot sequence while some context chunks were
-missing could permanently skip the immutable seed, and a malformed completed
-assembly previously remained full and ignored every retransmitted chunk.
-
-**Considered and rejected:** Keeping a previously cached seed while a newer
-snapshot's chunks arrive. That would call the child ready against context the
-current authority had not completed sending.
-
-**Consequences:** Main conversations retain their existing readiness path.
-Child readiness now requires detail, transcript, and either an explicitly empty
-context snapshot or one fully validated inherited-context payload.
-
-### 2026-09-04 — Private child tickets carry parent membership authority
+### 2026-09-04 — Private child sockets admit on parent membership, wait for complete inherited context, and recover in place
 
 **What changed:** WorkstreamDO authorizes non-main feed tickets against the
 exact ready child and exact active member, returning that member's version. The
@@ -854,37 +834,51 @@ requires its versioned parent mirror before either prepared or direct socket
 admission and rechecks the mirror on commands. The WorkstreamDO control snapshot
 also pushes the viewer's complete ready-child directory.
 
+The desktop treats an initial-context snapshot as part of the child's canonical
+opening baseline. Chunked context must assemble and validate before sends
+become ready. A close during assembly discards the partial value and reconnects
+from sequence zero; malformed matching chunks request a fresh authoritative
+snapshot.
+
+Both main and child `resync_required` handling now rejects pending range work,
+discards partial snapshot assembly, abandons the old connection generation,
+resets the addressed resume cursor to zero, and installs the new admitted
+socket's snapshot as the authoritative baseline. The opening screen's Retry
+action starts a fresh bounded socket sequence without a REST reader.
+
 **Why:** Parent-level readability does not imply sibling-child readability, and
 a ticket minted before removal must stop working without waiting for expiry.
+
+Resuming after the snapshot sequence while some context chunks were missing
+could permanently skip the immutable seed, and a malformed completed assembly
+previously remained full and ignored every retransmitted chunk.
+
+Main's REST detour and child's socket reset were two recovery state machines
+for the same SubstreamAgent authority. They could race independently ordered
+cache writes and made a child's correct identity-preserving behavior an
+exception.
 
 **Considered and rejected:** A REST child-list fetch and child-local roster as
 the admission authority. They add a second refresh state machine and cannot
 fence a stale signed ticket against a later parent removal.
 
+Keeping a previously cached seed while a newer snapshot's chunks arrive. That
+would call the child ready against context the current authority had not
+completed sending.
+
 **Consequences:** Rolling clients treat an absent `privateChildren` field as an
 empty list. New servers always send it. Non-main tickets with no positive
 membership version fail closed before SubstreamAgent creates an identity.
 
-### 2026-09-04 — Every conversation recovers through its addressed socket
+Main conversations retain their existing readiness path. Child readiness now
+requires detail, transcript, and either an explicitly empty context snapshot or
+one fully validated inherited-context payload.
 
-**What changed:** Both main and child `resync_required` handling now rejects
-pending range work, discards partial snapshot assembly, abandons the old
-connection generation, resets the addressed resume cursor to zero, and installs
-the new admitted socket's snapshot as the authoritative baseline. The opening
-screen's Retry action starts a fresh bounded socket sequence without a REST
-reader.
+Snapshot failure is visible instead of hidden behind a second transport. Keep
+sending disabled until the new baseline arrives, and preserve the
+connection-generation and snapshot fences that reject late frames.
 
-**Why:** Main's REST detour and child's socket reset were two recovery state
-machines for the same SubstreamAgent authority. They could race independently
-ordered cache writes and made a child's correct identity-preserving behavior an
-exception.
-
-**Consequences:** Snapshot failure is visible instead of hidden behind a second
-transport. Keep sending disabled until the new baseline arrives, and preserve
-the connection-generation and snapshot fences that reject late frames.
-
-
-### 2026-09-04: No feed ticket for an archived work stream
+### 2026-09-04 — No feed ticket for an archived work stream
 
 **What changed:** `ConversationService.socketTicket` refuses a `workstream`
 parent that is archived with `404 conversation_not_found`, the same answer its
@@ -898,7 +892,7 @@ and snapshot included. A ticket for one opened a socket that logged
 so the client waited on nothing. Refusing at the ticket makes the archive
 visible at the first request rather than as a silent socket.
 
-### 2026-09-03: One feed ticket for every conversation, named by its parent
+### 2026-09-03 — One feed ticket for every conversation, named by its parent
 
 **What changed:** The feed ticket is issued at
 `GET /conversations/:parentId/substreams/:substreamId/socket` and presented at
@@ -1622,41 +1616,21 @@ the child feed rejects them.
 contradiction. Delivery and server acknowledgement remain part of the message
 send flow, not the opening milestone.
 
-### 2026-08-25 — A pooled owner has one traceable socket lease
-
-**What changed:** Every mounted work-stream socket owner receives one UUIDv7
-lease ID. Its WorkstreamDO control and SubstreamAgent feed starts share that ID
-across reconnects until the owner leaves the pool. Each start keeps a separate
-operation ID for its own ticket request and records a pending sidebar-opening
-ID when it has one. The click lifecycle records the serving lease, including a
-lease created by hover before the click.
-
-**Why:** A work-stream ID groups every historical connection and a socket
-request ID identifies only one dial. Neither says which retained control/feed
-pair served a specific opening. A click-parent ID alone also cannot connect a
-pre-click hover warmup to the later opening that consumed it.
-
-**Considered and rejected:** Reusing the click operation ID for ticket requests
-would make multiple distinct requests indistinguishable. Minting a new lease on
-every reconnect would reduce the lease to another attempt ID. Assigning a click
-retroactively to the hover-start event would rewrite causality rather than
-representing the pooled lifetime.
-
-**Consequences:** A lease is renderer-local correlation, not authorization or a
-server socket identity. It ends when the keyed pool owner unmounts; reconnects
-within that lifetime retain it. Direct non-pooled hooks generate the same shape
-for test and embedding compatibility. The ID is content-free Product analytics
-and follows the existing regional and consent boundary.
-
-### 2026-08-25 — Every work-stream socket attempt names why it started
+### 2026-08-25 — Every work-stream socket attempt names why it started and the pooled lease that served it
 
 **What changed:** WorkstreamDO-control and SubstreamAgent-feed loops emit
 `workstream_socket_started` immediately before every ticket request. Initial
 attempts distinguish hover warmup, active work stream, background work stream,
 and retained work stream; every later attempt is `reconnect`. The event's
-operation ID is reused as the ticket request's `x-request-id`. The newer lease
-entry above adds pooled-lifetime and opening-parent lineage without changing
-that request correlation.
+operation ID is reused as the ticket request's `x-request-id`.
+
+Every mounted work-stream socket owner also receives one UUIDv7 lease ID. Its
+WorkstreamDO control and SubstreamAgent feed starts share that ID across
+reconnects until the owner leaves the pool. Each start keeps a separate
+operation ID for its own ticket request and records a pending sidebar-opening
+ID when it has one. The click lifecycle records the serving lease, including a
+lease created by hover before the click. The lease adds pooled-lifetime and
+opening-parent lineage without changing the request correlation above.
 
 **Why:** Connected/drop telemetry omits attempts that fail before a handshake,
 and pool call sites cannot see internal reconnects. With hover warming and
@@ -1664,15 +1638,34 @@ five-minute retained pairs, counting only route opens also confuses “no socket
 needed” with “a socket start was missed.” The connection loop is the only
 boundary every reason crosses.
 
+A work-stream ID groups every historical connection and a socket request ID
+identifies only one dial. Neither says which retained control/feed pair served
+a specific opening. A click-parent ID alone also cannot connect a pre-click
+hover warmup to the later opening that consumed it.
+
 **Considered and rejected:** Emitting from the pool would miss direct hooks and
 reconnects. Emitting on `WebSocket` construction would miss ticket failures.
 Calling a hover-warmed control socket a feed start would misstate the presence
 boundary: hover still never starts the SubstreamAgent feed.
 
+Reusing the click operation ID for ticket requests would make multiple distinct
+requests indistinguishable. Minting a new lease on every reconnect would reduce
+the lease to another attempt ID. Assigning a click retroactively to the
+hover-start event would rewrite causality rather than representing the pooled
+lifetime.
+
 **Consequences:** Start counts are attempt counts and may exceed successful
 connections. Each start can join its regional ticket request, while the
 existing `realtime_socket_state` event remains the source for connected,
-retrying, and stopped outcomes. Both are Product analytics and honor opt-out.
+retrying, and stopped outcomes.
+
+A lease is renderer-local correlation, not authorization or a server socket
+identity. It ends when the keyed pool owner unmounts; reconnects within that
+lifetime retain it. Direct non-pooled hooks generate the same shape for test
+and embedding compatibility. Both events and the lease ID are content-free
+Product analytics that honor opt-out and follow the existing regional and
+consent boundary.
+
 ### 2026-08-25 — A deliberate sidebar hover warms the work-stream control socket
 
 **What changed:** Holding the pointer over a sidebar work-stream row for one
@@ -2225,133 +2218,109 @@ across transient reconnects. WorkstreamDO sockets still provide fresher complete
 detail snapshots for selected/running rows but are not required to render a
 workspace list.
 
-### 2026-08-18 — HyperSight sockets use the BlockDashboard protocol name
-
-**What changed:** Block-agent ticket audiences, headers, event discriminators,
-routes, desktop query keys, and hook names now use `block-dashboard`, backed by
-`BlockDashboardAgent`. The rendered panel and all accessibility labels remain
-HyperSight.
-
-**Why:** The direct socket is an implementation boundary, not the product
-surface. A single internal name makes route, binding, SQL, and replay telemetry
-searchable as one subsystem.
-
-**Considered and rejected:** Serving `/hypersight` aliases or accepting both
-event vocabularies. No external client has shipped against this protocol, so
-dual admission would add permanent ambiguity without a compatibility benefit.
-
-**Consequences:** Desktop and Worker must deploy together for this unshipped
-cutover. Product copy tests continue to assert HyperSight, while protocol tests
-assert only BlockDashboard paths and event names.
-
-### 2026-08-18 — Transcript history pages come from SubstreamAgent on demand
+### 2026-08-18 — Substream sockets page history and carry compaction state, and every agent socket resumes from a durable checkpoint
 
 **What changed:** The feed socket now supports correlated before/after cursor
 reads from object-local message authority. Electron's upward infinite scroll,
 newer recovery, and jump-to-latest use those reads while preserving viewport
 position.
 
+SubstreamAgent feed events and snapshots now carry the active Bind compaction
+run/attempt/index/trigger/start time. Electron renders that phase directly and
+restores it after replay history is unavailable.
+
+Each visible HyperSight block now opens a purpose-scoped, single-use,
+hibernating socket directly to its `BlockDashboardAgent`. The block agent
+commits and emits the same active-stream checkpoint contract as SubstreamAgent;
+WorkstreamDO continues to publish configuration/preferences but no longer
+relays per-block run output.
+
 **Why:** Once SubstreamAgent owns the message feed, fetching older pages through
 a separate regional transport duplicates authorization and can race the live
 snapshot. A room-sequenced page reply would be worse: one reader scrolling
 would advance every reader's replay cursor.
 
-**Considered and rejected:** Broadcasting page results, allocating a room
-sequence per page, loading the whole transcript in the initial snapshot, and
-polling REST while scrolling. They respectively leak viewer work, corrupt
-resume semantics, exceed frame/memory bounds, or restore a split serving path.
+A silent token interval is not a protocol. The user needs to distinguish
+context summarization from slow inference, tools, and a disconnected socket
+even after switching away and back.
+
+The block DO owns the complete loop, so routing token output through
+WorkstreamDO created a second publication hop and could not resume an in-flight
+answer from the execution owner's checkpoint. Direct block sockets make every
+agent authority independently streamable and recoverable after eviction or UI
+navigation.
+
+**Considered and rejected:** For history pages: broadcasting page results,
+allocating a room sequence per page, loading the whole transcript in the
+initial snapshot, and polling REST while scrolling. They respectively leak
+viewer work, corrupt resume semantics, exceed frame/memory bounds, or restore a
+split serving path.
+
+For compaction: heuristics based on elapsed time and an in-memory only event.
+Neither has a durable boundary, and both glitch on reconnect.
+
+For block sockets: terminal-result-only block sockets, relaying block tokens
+through WorkstreamDO, and polling. They respectively hide long progress, load
+the control object, or cannot preserve smooth live output.
 
 **Consequences:** Pagination is request/reply, per-reader, reauthorized, capped
 at 250 rows and 900 KB, and wakes only the target agent when a user asks for
 history. The loading row/button remains as progress and retry UI; ordinary
 scrolling starts the request automatically.
 
-### 2026-08-18 — Compaction activity survives socket reconnect
+Compaction lifecycle frames share the ordered SubstreamAgent room sequence;
+only the matching run/attempt/index may finish the phase, and terminal status
+is a defensive clear. HyperSight does not send the event because its runs do
+not enable context compaction today.
 
-**What changed:** SubstreamAgent feed events and snapshots now carry the active
-Bind compaction run/attempt/index/trigger/start time. Electron renders that phase
-directly and restores it after replay history is unavailable.
+The block-socket decision supersedes the earlier no-block-socket consequence
+below. Electron opens block sockets only while the HyperSight panel is visible,
+closes removed blocks, replaces from full checkpoints, and ignores stale
+revisions. Idle accepted sockets hibernate; block socket tickets have a fourth
+audience and their own SQL replay receipts. Committed block frames pass through
+a caught serial publication queue that coalesces adjacent unsent checkpoints,
+so delivery order is preserved and a viewer-side or authorization dependency
+can neither fail the owned agent loop nor build an unbounded stream backlog.
 
-**Why:** A silent token interval is not a protocol. The user needs to
-distinguish context summarization from slow inference, tools, and a disconnected
-socket even after switching away and back.
+### 2026-08-18 — Electron holds separate workspace, work-stream, and substream sockets, and HyperSight rides the WorkstreamDO one
 
-**Considered and rejected:** Heuristics based on elapsed time and an in-memory
-only event. Neither has a durable boundary, and both glitch on reconnect.
+**What changed:** Each authenticated renderer now holds one persistent
+WorkspaceDO synchronization/command socket, a complete-metadata WorkstreamDO
+socket for each active/running work stream, and the direct SubstreamAgent
+transcript socket. Each has a distinct ticket audience and SQL replay/receipt
+boundary.
 
-**Consequences:** Compaction lifecycle frames share the ordered SubstreamAgent
-room sequence; only the matching run/attempt/index may finish the phase, and
-terminal status is a defensive clear. HyperSight does not send the event because
-its runs do not enable context compaction today.
-
-### 2026-08-18 — Every agent socket streams and resumes from a durable checkpoint
-
-**What changed:** Each visible HyperSight block now opens a purpose-scoped,
-single-use, hibernating socket directly to its `BlockDashboardAgent`. The block
-agent commits and emits the same active-stream checkpoint contract as
-SubstreamAgent; WorkstreamDO continues to publish configuration/preferences but
-no longer relays per-block run output.
-
-**Why:** The block DO owns the complete loop, so routing token output through
-WorkstreamDO created a second publication hop and could not resume an in-flight
-answer from the execution owner's checkpoint. Direct block sockets make every
-agent authority independently streamable and recoverable after eviction or UI
-navigation.
-
-**Considered and rejected:** Terminal-result-only block sockets, relaying block
-tokens through WorkstreamDO, and polling. They respectively hide long progress,
-load the control object, or cannot preserve smooth live output.
-
-**Consequences:** This decision supersedes the earlier no-block-socket
-consequence below. Electron opens block sockets only while the HyperSight panel
-is visible, closes removed blocks, replaces from full checkpoints, and ignores
-stale revisions. Idle accepted sockets hibernate; block socket tickets have a
-fourth audience and their own SQL replay receipts. Committed block frames pass
-through a caught serial publication queue that coalesces adjacent unsent
-checkpoints, so delivery order is preserved and a viewer-side or authorization
-dependency can neither fail the owned agent loop nor build an unbounded stream
-backlog.
-
-### 2026-08-18 — HyperSight converges on the WorkstreamDO socket
-
-**What changed:** HyperSight configuration, per-block run status/results, and
-viewer preference now arrive as WorkstreamDO control events. Individual
-`BlockDashboardAgent` instances expose no desktop socket.
-
-**Why:** A derived block is work-stream metadata, not an ordered conversation
-feed. Adding a socket per block would multiply background connections and
-duplicate authorization/reconnect state without improving token delivery.
-
-**Considered and rejected:** Broadcasting block results from main
-SubstreamAgent, opening a block-agent WebSocket, and REST polling. Those options
-misplace publication authority, increase idle sockets, or add avoidable churn.
-
-**Consequences:** The renderer applies block-result versions from the existing
-work-stream control connection; the source feed remains limited to canonical
-conversation data and active output.
-
-### 2026-08-17 — Electron uses separate workspace, work-stream, and substream sockets
-
-**What changed:** Each authenticated renderer now holds one persistent WorkspaceDO
-synchronization/command socket, a complete-metadata WorkstreamDO socket for each
-active/running work stream, and the direct SubstreamAgent transcript socket.
-Each has a distinct ticket audience and SQL replay/receipt boundary.
+HyperSight configuration, per-block run status/results, and viewer preference
+arrive as WorkstreamDO control events. Individual `BlockDashboardAgent`
+instances expose no desktop socket.
 
 **Why:** Workspace settings/directories, aggregate work-stream metadata, and a
 high-volume ordered model feed have different authorities and lifecycles. The
-previous per-message workspace socket could not keep settings or sibling clients
-live, while putting metadata on token frames would couple navigation state to an
-agent run.
+previous per-message workspace socket could not keep settings or sibling
+clients live, while putting metadata on token frames would couple navigation
+state to an agent run.
+
+A derived block is work-stream metadata, not an ordered conversation feed.
+Adding a socket per block would multiply background connections and duplicate
+authorization/reconnect state without improving token delivery.
 
 **Considered and rejected:** One multiplexed workspace socket for all token
 traffic, WorkstreamDO metadata inferred from the child feed, and periodic REST
 polling. They respectively recreate a workspace throughput bottleneck, lose
 model-free metadata updates, and spend resources while still adding sync delay.
 
+For HyperSight: broadcasting block results from main SubstreamAgent, opening a
+block-agent WebSocket, and REST polling. Those options misplace publication
+authority, increase idle sockets, or add avoidable churn.
+
 **Consequences:** New workspace surfaces must map to a typed sync topic and new
 WorkstreamDO fields must be included in its full snapshot. The renderer must
 clear nullable snapshot fields, preserve the workspace version cursor across
 reconnect, and keep child sockets only for selected or running work streams.
+
+The renderer applies block-result versions from the existing work-stream
+control connection; the source feed remains limited to canonical conversation
+data and active output.
 
 ### 2026-08-17 — Socket acceptance follows the documented hibernation lifecycle
 
@@ -2411,40 +2380,35 @@ writing until the connection happened to close.
 Sockets serialized before this claim existed are deliberately closed with 1012
 when they first try to write and reconnect with a fresh ticket.
 
-### 2026-08-17 — Admission follows the work-stream authority generation
-
-**What changed:** Room admission now names the authority generation it must
-reauthorize against, while ticket replay receipts and hibernating transport stay
-local to the same object.
-
-**Why:** After product authority moves, a frozen legacy participant row cannot
-revoke a live reader. Workspace membership remains a D1 fact; work-stream
-participation becomes an object fact.
-
-**Considered and rejected:** Keeping D1 participant rows as an authorization
-fallback, which would silently restore a second authority.
-
-**Consequences:** Maintenance closes every existing room socket. Reconnect is
-admitted only after the regional generation opens and the new authority answers.
-
-### 2026-08-16 — Room ticket receipts move into named local SQL
+### 2026-08-17 — Room ticket receipts move into named local SQL and admission follows the authority generation
 
 **What changed:** The verified ticket JTI remains consumed by the one
 work-stream room, but its replay receipt now lives on the `socket_ticket`
 channel in `durable_inbox_receipts`. Existing `socket-ticket:<jti>` values are
-imported in place and then deleted.
+imported in place and then deleted. Room admission now names the authority
+generation it must reauthorize against, while ticket replay receipts and
+hibernating transport stay local to the same object.
 
 **Why:** The Durable Object was already SQLite-backed. A named receipt table
 gives replay protection an inspectable key and retention query instead of an
 unstructured hidden value, without moving the bearer ticket into the room.
 
+After product authority moves, a frozen legacy participant row cannot revoke a
+live reader. Workspace membership remains a D1 fact; work-stream participation
+becomes an object fact.
+
 **Considered and rejected:** Consuming the work-stream JTI in D1, which would
 add a regional database write and contention point to every socket admission;
-and passing the signed ticket through, which broadens credential exposure.
+passing the signed ticket through, which broadens credential exposure; and
+keeping D1 participant rows as an authorization fallback, which would silently
+restore a second authority.
 
-**Consequences:** Admission semantics and error codes are unchanged. Any new
-room ticket path must use the SQL receipt operation and preserve the edge/room
-split between signature verification and final authorization.
+**Consequences:** Admission semantics and error codes are unchanged by the
+receipt move. Any new room ticket path must use the SQL receipt operation and
+preserve the edge/room split between signature verification and final
+authorization. Maintenance closes every existing room socket. Reconnect is
+admitted only after the regional generation opens and the new authority
+answers.
 
 ### 2026-08-11 — The ticket moves from the query string to the handshake subprotocol
 

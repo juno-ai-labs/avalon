@@ -384,15 +384,9 @@ sessions, each acknowledged with one info line.
 
 The user changed five-minute freshness from a hard bound to a design goal after
 production expiry stalls. Global KV authorization caching is inert. Reads no longer enforce evidence age or reuse persisted
-grants; canonical checks and Queue discovery remain separate. Previous five-minute
-lease claims below are historical and superseded. Session and socket rules are unchanged.
-
-### 2026-09-07 — Specify the ordinary-read freshness boundary
-
-Documented the approved five-minute evidence lease for member search and resource
-reads so socket revocation guarantees are not mistaken for immediate invalidation
-of reusable read proofs. Session admission, mutation and socket policies retain
-their existing authority paths.
+grants; canonical checks and Queue discovery remain separate. The earlier
+five-minute lease claim is historical and superseded. Session and socket rules
+are unchanged.
 
 ### 2026-09-05 — Parent access and membership incarnation both fence child admission
 
@@ -442,7 +436,7 @@ the mirror actually existing.
 **Consequences:** The per-user membership version, not a global child counter,
 fences tickets; changing user B never invalidates user A's unchanged receipt.
 
-### 2026-09-04: The walk reaches every automation a person could read, and a lost room
+### 2026-09-04 — The walk reaches every automation a person could read, and a lost room
 
 **What changed:** `WorkspaceDO.revokeSocketAccess` names every non-deleted
 automation for a user revocation instead of only the ones the person
@@ -466,7 +460,7 @@ list already made. A room participant's removal is now a producer like the
 other four, with the same rule: it publishes in the request that wrote the
 fact.
 
-### 2026-09-03: The automation hop lists children instead of closing a room
+### 2026-09-03 — The automation hop lists children instead of closing a room
 
 **What changed:** The `automation` target resolves `AutomationDO`, asks it
 `listChildren`, and publishes one `substream` hop per child with the automation

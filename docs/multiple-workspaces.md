@@ -584,13 +584,16 @@ no code path can extend a session past it. A session created before this
 change carries its original thirty-day expiry until its first renewal, which
 slides it like any other.
 
-### 2026-09-02 — A renewal merges into the files on disk, and an identity rebuilds its profile
+### 2026-09-02 — A renewal merges into the files on disk, an identity rebuilds its profile, and one dot marks any activity
 
 **What changed:** `writeSplitSessionFiles` merges a renewed session into the
 profile set read from disk when this process has not read it yet, and
 `loadStoredIdentitySession` refreshes an identity credential whose profile is
 missing instead of reporting no identity. A workspace counts as stored by its
-credential alone when the directory decides whose attention to read.
+credential alone when the directory decides whose attention to read. The
+account menu's background rows show a single green dot when the attention read
+reports anything at all, and nothing otherwise; the coloured count is gone, and
+its detail lives on in the tooltip and the accessible name.
 
 **Why:** After a restart, the menu came up asking for a reconnect and listing
 only the active workspace while the credential file still held three
@@ -601,30 +604,20 @@ survived. An identity credential without its profile then read as no
 identity at all. This reproduces the reported symptom on its own, with no
 token race involved.
 
+The count needed explaining — what the number was, what its colour meant, why
+one row had a dot and another a number — and the person reading the menu only
+wanted to know whether there was anything to look at.
+
 **Considered and rejected:** Loading the auth set inside the write the same
 way. The auth set's loader falls back to migrating a legacy session file,
 which itself writes, and every caller already holds the auth set it is
-renewing; the profile set is the one nothing guaranteed had been read.
+renewing; the profile set is the one nothing guaranteed had been read. Keeping
+the count with its tooltip: a mark that needs a legend is not pulling its
+weight in a menu opened for a second.
 
 **Consequences:** A write never narrows the stored sets to what one process
 has seen. A missing profile is a cache miss that a refresh fills, not a
-missing credential.
-
-### 2026-09-02 — One dot for any activity
-
-**What changed:** The account menu's background rows show a single green dot
-when the attention read reports anything at all, and nothing otherwise. The
-coloured count is gone; its detail lives on in the tooltip and the accessible
-name.
-
-**Why:** The count needed explaining — what the number was, what its colour
-meant, why one row had a dot and another a number — and the person reading
-the menu only wanted to know whether there was anything to look at.
-
-**Considered and rejected:** Keeping the count with its tooltip. A mark that
-needs a legend is not pulling its weight in a menu opened for a second.
-
-**Consequences:** The attention contract is unchanged; only its presentation
+missing credential. The attention contract is unchanged; only its presentation
 narrowed. A future need to rank workspaces by urgency has the data already.
 
 ### 2026-09-02 — A switch dissolves, lands on the new work-stream page, and the menu explains its marks

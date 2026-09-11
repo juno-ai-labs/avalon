@@ -918,7 +918,7 @@ the operation's end; fix the pack and start another. Every status write on the
 operation row is fenced on the status it expects, not only on the attempt. A
 new list over ids uses `boundParameterChunks`.
 
-### 2026-09-08 — Preparation ships after retirement, on its own
+### 2026-09-08 — The demo module lands after retirement: a durable operation, the seeder, the readiness barrier, withheld candidates, and its review round
 
 **What changed:** This module is the third PR of a split: the loop's
 transcript mark landed first, retirement second with its own document, and
@@ -926,7 +926,68 @@ this is what remains — the register, connection copying, the pack, the seeder,
 the barrier, the operation, the routes and the Demos page. The retirement
 route and its Ace relay live in retirement's files; this feature adds the
 walk's `retired_at` write on the operation row, the `demos` role's other
-routes, and the Demos page beside the Workspaces tab.
+routes, and the Demos page beside the Workspaces tab. The parts, in the order
+they were decided:
+
+- *Withholding.* Regional discovery drops the template and an unpublished
+  candidate from a member's workspace list, and activating an unpublished
+  candidate answers `demo_workspace_preparing`.
+- *Retirement, and no demo mode.* `retireWorkspaceGraph` no longer consults
+  the register; `isRetirableDemoWorkspace` and its refusal are gone (the walk
+  itself is now [`workspace-retirement.md`](workspace-retirement.md)).
+  `currentDemoWorkspace` became `liveDemoWorkspaces`, a list. Demo mode — the
+  suppression of background connector activity in a demo — is dropped from the
+  PRD before it was built.
+- *The seeder.* `DemoSeedSchema` in contracts, and an optional `seed` on the
+  message the object admits, on `initialize`, and on the run's execution
+  context. The object skips the addressing classifier for a seed action and
+  starts a run exactly when the seed carries a turn. The harness sets
+  `OpenRouterConfig.fetch` to `demoSeedProviderFetch` for a seeded run.
+  `demo-pack.ts` holds the schema, the planner, and the placeholder pack;
+  `demo-seeder.ts` plays one action at a time and records
+  `demo_seed_receipts`. A `demo_seed` auth principal lets the cast act without
+  a session.
+- *Readiness.* `demo-readiness.ts`: `demoReadinessManifest` derives what each
+  verified viewer should find from the pack's steps, its new `expect` section
+  and the seeder's receipts, and `checkDemoReadiness` compares that with the
+  viewer's whole directory, their attention summary, and each room's canonical
+  detail read as its creator, reporting every gap by name. The pack schema
+  gains `expect` and checks a viewer's listed rooms against the rooms the pack
+  makes visible to them; `packRoomFacts` is the one statement of who ends up
+  in a room.
+- *The operation.* `demo_operations` and `demo_operation_phases`;
+  `demo-preparation.ts` with start, retry, abandon, status, the template's
+  cast candidates, and the five phase functions; `DemoPreparationWorkflow`
+  bound as `DEMO_PREPARATION_WORKFLOW` in both regions; `/internal/demos` and
+  `/internal/workspaces/:id/retire` behind a new `demos` operator role;
+  `RegionalOnboardingService.createWorkspaceForMember`, a session-less create
+  that shares the rows, journal, checks and object initialization with
+  `create`. The wait was first bounded by `DEMO_PROJECTION_WAIT_TIMEOUT_MS`,
+  unset by default; the review below removed it.
+- *The review round.* `0099`, `0100` and `0101` folded into one file — `0099`
+  as written, `0100_demo_workspaces.sql` after `main` took `0099` on rebase —
+  that creates `demo_operations`, `demo_operation_phases` and
+  `demo_seed_receipts`; the register table is gone and `demo_operations`
+  carries `ready_at` and `retired_at`, with no foreign key on `workspace_id`.
+  The operation is fenced by attempt: a phase refuses a superseded driver,
+  every status write names its attempt, a Workflow step never retries, the
+  Workflow's `run` records whatever stops it outside a phase, a failed launch
+  marks the operation failed, and a `running` operation can be retried.
+  `DEMO_PROJECTION_WAIT_TIMEOUT_MS` is gone; the wait is bounded by a round
+  count derived from Cloudflare's published steps-per-instance limit and fails
+  as `demo_projection_wait_exhausted` with the last gaps kept. The presenter
+  must be a template member, checked at start and in the first phase, and a
+  cast cannot seat one person twice. The telemetry router refuses `demos`.
+  Retirement refuses an id the region's `workspaces` table does not hold;
+  abandon takes a confirmation and refuses a published demo by `ready_at` as
+  well as status. The readiness barrier refuses a viewer the workspace does not
+  seat instead of inventing a role. A seeded run skips admission-time memory
+  recall. `DEMO_PREPARATION_WORKFLOW` is optional, required in production
+  Global only, and the demo write routes refuse outside Global. Ace holds one
+  operator token per region, `RALLY_OPERATOR_TOKEN` and
+  `RALLY_EU_OPERATOR_TOKEN`. The placeholder pack's assistant turns cite only
+  what the people said, and `@{role}` in Rally's prose expands to the cast's
+  names.
 
 **Why:** The combined branch was eleven thousand lines with three different
 blast radii — a model-context change in every multi-person room, a gate on
@@ -934,239 +995,155 @@ every object method, and an additive feature nothing runs until an operator
 starts it — and reviewing and observing them together would have hidden the
 first two under the third.
 
+- *Withholding.* Preparation takes minutes, and a presenter who opens a
+  candidate in the middle of it sees a half-seeded sidebar and can open a room
+  the pack has not finished writing. The template is separate and permanent:
+  it holds the demo cast's real connections and is never a workspace a member
+  should find.
+- *Retirement, and no demo mode.* Three decisions from review. The
+  register-as-authorization was bookkeeping for a surface that one Access
+  policy already admits, and an operator tool that can retire *any* workspace
+  is what was actually wanted. Demos run concurrently — two presenters, two
+  prospects, the same afternoon — so "the current demo" and "retire the
+  predecessor once the successor is Ready" were the wrong shape: New demo
+  creates one, retirement is a separate action, and neither knows about the
+  other. And demo mode was judged not worth the branching it adds: scheduled
+  work is something a demo might want to show, and a demo that behaves like
+  any other workspace is simpler to reason about than one with a second set of
+  rules.
+- *The seeder.* The PRD's seeding rule — every seeded fact through the
+  production writer, as the member who did it — leaves two decisions nobody in
+  that path can make: whether a line starts a run, and what the run says. The
+  spike carried both on a replay context that also carried a historical
+  instant, and the instant was the part the PRD rejected. So the seed carries
+  identity and the one turn, and nothing else, and it decides addressing
+  itself rather than through `forcedHarnessOrigin`: one field that says "run,
+  and say this" or "no run" cannot disagree with a second flag that says the
+  same thing. One turn rather than a script of turns because a seeded run
+  makes no tool calls — a stale tool name in seeded history is a wrong claim
+  about what Rally did — and without tool calls Bind asks once; a second
+  request is refused rather than repeated, which is the failure the spike's
+  first adapter had. Applying and settling are separate calls so the operation
+  can hold both in one step and a test can force the alarm between them.
+  `demo_seed` is its own principal value rather than a reuse of `connector` so
+  the run's authorization record says who acted; the object verifies both the
+  same way.
+- *Readiness.* The PRD's readiness contract is a read through the ordinary
+  directory and attention surfaces as every intended viewer, against
+  expectations generated from the receipts, following pagination, opening
+  nothing as the presenter. The spike's `awaitWorkspaceDirectory` checked only
+  that an id was present, and read as the author. Derived where derivation is
+  honest — room set, seats, state, order, ids — and stated in the pack where it
+  is not: the per-viewer flags depend on who opened what, and the seeder's own
+  reads open rooms for the cast, so a derivation would encode the seeder's
+  reading habits as product truth. The barrier is one comparison rather than a
+  wait because the wait policy is the team's open decision, and the operation
+  that holds the deadline is the place for it.
+- *The operation.* The PRD's operation is durable, resumable, identified by an
+  id the operator chooses, and readable as phases with real receipts. A
+  Workflow gives the durability and the retry; the rows give the identity and
+  the receipts, and keeping every phase idempotent is what makes the two
+  agree — the Workflow's retry and the operator's retry both resume rather
+  than repeat. The workspace id is allocated onto the row before creation so
+  no retry can make two workspaces. Creation goes through onboarding because
+  the PRD requires ordinary regional placement, membership and routing, and
+  through a session-less variant because a session minted for the presenter
+  by an operator would be a credential nobody signed in for. The wait is a
+  loop of steps rather than one long step so an eviction resumes at the next
+  check, at the cost of the platform's step limit bounding an open wait —
+  recorded rather than capped, because the ceiling is the team's to set. The
+  routes reuse the operator credential with a role of their own: one secret
+  to rotate, and a token that can only do this.
+- *The review round.* A review swarm on the finished feature. The foreign key
+  was a shipping defect: D1 enforces it on the write, and the creating phase
+  writes the id before the row it would reference, so preparation died at its
+  second phase in production and in no test — the workerd fixture declared the
+  table without the constraint. The register was a second table holding the
+  operation's identity with two extra columns and one dead reader, and two
+  children of the same operation id pointed at different parents. The state
+  machine had no fence: a phase failure marked the operation failed while the
+  step's own retries were still pending, Retry was offered on that, and a
+  second driver would have raced the first — up to a stale driver flipping a
+  published demo back to `failed` and Abandon retiring it. The wait ceiling
+  could never fire, because the phase row's `started_at` was reset every
+  round, and its value arrived through a Wrangler variable, which the limits
+  document names as smuggling. The `demos` role reached three telemetry routes
+  because only the demo routers narrowed by role. A presenter was checked to
+  exist and not to belong to the template, which would have handed a customer
+  account a workspace holding the template's credentials. The barrier
+  fabricated a `member` role for a viewer membership did not know. A seeded
+  run embedded its recall query through the real endpoint. A shared token was
+  destructive authority in both jurisdictions from one leak.
+
+**Considered and rejected:**
+
+- *Withholding.* Withholding a *retired* demo too — it is closed by its
+  tombstone, and hiding it as well would make a workspace vanish from its
+  presenter's switcher while its rooms still answered. Filtering the template
+  by name — renaming it would defeat the filter, and naming another workspace
+  `demo-template` would acquire it. Refusing to activate the template — the
+  filter is a discovery filter, not its security gate, and an operator
+  maintains it by opening it.
+- *Retirement, and no demo mode.* Keeping the register check as a soft
+  warning — either it blocks or it is noise. Keeping demo mode as a flag — the
+  whole objection was the flag.
+- *The seeder.* Carrying the turn on `forcedHarnessOrigin`, a second flag that
+  could disagree with the seed; a replay context with a historical instant,
+  which the PRD rejected; a script of turns, which would put tool names in
+  seeded history that no tool call backs.
+- *Readiness.* The spike's `awaitWorkspaceDirectory`, which checked only that
+  an id was present and read as the author; deriving the per-viewer flags from
+  the seeder's own reads, which would have encoded its reading habits as
+  product truth.
+- *The operation.* One long Workflow step for the whole wait — its result is
+  what the platform memoizes, so an eviction would restart the wait from the
+  beginning. A second operator secret with the same shape — one secret to
+  rotate, and a role that names what it can do, was the smaller change.
+- *The review round.* Keeping the ceiling as an env var and fixing the reset —
+  the number would still arrive sideways, and the platform's own limit already
+  bounds the same wait; the round count is arithmetic from that limit, not a
+  number chosen here. Step retries kept and the operation marked failed only
+  after them — the operator's Retry is the retry, and one mechanism is easier
+  to reason about than two racing. Region-binding the operator principal
+  instead of two tokens — a second secret is the smaller change and matches
+  the per-region rule `security.md` already states.
+
 **Consequences:** Nothing in this PR runs until an operator starts a demo.
 Retirement's invariants are stated once, in its own document; this one says
 only what the demo adds to them.
 
-### 2026-09-07 — Review: one driver, one table, and every door named
-
-**What changed:** `0099`, `0100` and `0101` folded into one file — `0099` as
-written, `0100_demo_workspaces.sql` after `main` took `0099` on rebase — that creates
-`demo_operations`, `demo_operation_phases` and `demo_seed_receipts`; the
-register table is gone and `demo_operations` carries `ready_at` and
-`retired_at`, with no foreign key on `workspace_id`. The operation is fenced by
-attempt: a phase refuses a superseded driver, every status write names its
-attempt, a Workflow step never retries, the Workflow's `run` records whatever
-stops it outside a phase, a failed launch marks the operation failed, and a
-`running` operation can be retried. `DEMO_PROJECTION_WAIT_TIMEOUT_MS` is gone;
-the wait is bounded by a round count derived from Cloudflare's published
-steps-per-instance limit and fails as `demo_projection_wait_exhausted` with the
-last gaps kept. The presenter must be a template member, checked at start and
-in the first phase, and a cast cannot seat one person twice. The telemetry
-router refuses `demos`. Retirement refuses an id the region's `workspaces`
-table does not hold; abandon takes a confirmation and refuses a published
-demo by `ready_at` as well as status. The readiness barrier refuses a viewer
-the workspace does not seat instead of inventing a role. A seeded run skips
-admission-time memory recall. `DEMO_PREPARATION_WORKFLOW` is optional,
-required in production Global only, and the demo write routes refuse outside
-Global. Ace holds one operator token per region, `RALLY_OPERATOR_TOKEN` and
-`RALLY_EU_OPERATOR_TOKEN`. The placeholder pack's assistant turns cite only
-what the people said, and `@{role}` in Rally's prose expands to the cast's
-names.
-
-**Why:** A review swarm on the finished feature. The foreign key was a
-shipping defect: D1 enforces it on the write, and the creating phase writes
-the id before the row it would reference, so preparation died at its second
-phase in production and in no test — the workerd fixture declared the table
-without the constraint. The register was a second table holding the operation's
-identity with two extra columns and one dead reader, and two children of the
-same operation id pointed at different parents. The state machine had no fence:
-a phase failure marked the operation failed while the step's own retries were
-still pending, Retry was offered on that, and a second driver would have raced
-the first — up to a stale driver flipping a published demo back to `failed`
-and Abandon retiring it. The wait ceiling could never fire, because the phase
-row's `started_at` was reset every round, and its value arrived through a
-Wrangler variable, which the limits document names as smuggling. The `demos`
-role reached three telemetry routes because only the demo routers narrowed by
-role. A presenter was checked to exist and not to belong to the template,
-which would have handed a customer account a workspace holding the template's
-credentials. The barrier fabricated a `member` role for a viewer membership did
-not know. A seeded run embedded its recall query through the real endpoint. A
-shared token was destructive authority in both jurisdictions from one leak.
-
-**Considered and rejected:** Keeping the ceiling as an env var and fixing the
-reset — the number would still arrive sideways, and the platform's own limit
-already bounds the same wait; the round count is arithmetic from that limit,
-not a number chosen here. Step retries kept and the operation marked failed
-only after them — the operator's Retry is the retry, and one mechanism is
-easier to reason about than two racing. Region-binding the operator principal
-instead of two tokens — a second secret is the smaller change and matches the
-per-region rule `security.md` already states.
-
-**Consequences:** `demo_operations` is the register; nothing else records
-which workspaces this feature made. Every status write must carry the attempt.
-Adding an operator router means naming its roles. The migration is one file,
-unshipped, and stays editable until it ships.
+- *Withholding.* Discovery pays one D1 read bounded by the workspaces the
+  member is actually in, and none at all for a member in no demo. A caller
+  that shows a workspace list must expect `demo_workspace_preparing` from
+  activation.
+- *Retirement, and no demo mode.* The confirmation in Ace is the only thing
+  between an operator and an irreversible close of a customer workspace; build
+  it to make the operator type or paste the id. Nothing assumes one live demo:
+  every reader of the register takes a list. A demo's connectors poll, watch
+  and notify like anyone's, so a presenter can be interrupted by mail
+  arriving — that is now a pack and account-hygiene concern, not a code one.
+- *The seeder.* A seed must never gain an instant. The receipt is written
+  after confirmation, and a replayed action must keep meeting the production
+  path's own receipt — the derived client message id and resource id are what
+  make that true, so an action whose write cannot be keyed that way cannot be
+  a seed action. The elicitation is addressed to the room; the
+  targeted-question seam the spike tried is a contract change the PRD
+  declined.
+- *Readiness.* The presenter is read only through non-opening surfaces; a
+  canonical read as the presenter would destroy the state the check exists to
+  verify. Every gap is reported, not the first, because the operator's waiting
+  state lists them. Notification effects are not part of readiness and must
+  not become a precondition of it — the projection they ride beside is.
+- *The operation.* Every phase must stay safe to run twice. Publishing Ready
+  stays inside the waiting phase. Abandon retires and closes; it never deletes
+  rows. The operator credential's `demos` role must not gain telemetry reach,
+  nor the telemetry roles this reach.
+- *The review round.* `demo_operations` is the register; nothing else records
+  which workspaces this feature made. Every status write must carry the
+  attempt. Adding an operator router means naming its roles. The migration is
+  one file, unshipped, and stays editable until it ships.
 
 Design: `docs/PRDs/2026-09-04_demo-workspace/prd.md`.
-
-### 2026-09-07 — One durable operation prepares a demo end to end
-
-**What changed:** `demo_operations` and `demo_operation_phases` (`0101`);
-`demo-preparation.ts` with start, retry, abandon, status, the template's cast
-candidates, and the five phase functions; `DemoPreparationWorkflow` bound as
-`DEMO_PREPARATION_WORKFLOW` in both regions; `/internal/demos` and
-`/internal/workspaces/:id/retire` behind a new `demos` operator role;
-`RegionalOnboardingService.createWorkspaceForMember`, a session-less create
-that shares the rows, journal, checks and object initialization with `create`;
-`DEMO_PROJECTION_WAIT_TIMEOUT_MS`, unset by default.
-
-**Why:** The PRD's operation is durable, resumable, identified by an id the
-operator chooses, and readable as phases with real receipts. A Workflow gives
-the durability and the retry; the rows give the identity and the receipts, and
-keeping every phase idempotent is what makes the two agree — the Workflow's
-retry and the operator's retry both resume rather than repeat. The workspace id
-is allocated onto the row before creation so no retry can make two workspaces.
-Creation goes through onboarding because the PRD requires ordinary regional
-placement, membership and routing, and through a session-less variant because a
-session minted for the presenter by an operator would be a credential nobody
-signed in for. The wait is a loop of steps rather than one long step so an
-eviction resumes at the next check, at the cost of the platform's step limit
-bounding an open wait — recorded rather than capped, because the ceiling is the
-team's to set. The routes reuse the operator credential with a role of their
-own: one secret to rotate, and a token that can only do this.
-
-**Considered and rejected:** One long Workflow step for the whole wait — its
-result is what the platform memoizes, so an eviction would restart the wait
-from the beginning. A second operator secret with the same shape — one secret
-to rotate, and a role that names what it can do, was the smaller change.
-
-**Consequences:** Every phase must stay safe to run twice. Publishing Ready
-stays inside the waiting phase. Abandon retires and closes; it never deletes
-rows. The operator credential's `demos` role must not gain telemetry reach,
-nor the telemetry roles this reach.
-
-Design: `docs/PRDs/2026-09-04_demo-workspace/prd.md`.
-
-### 2026-09-07 — Ready is every verified viewer's projection matching the pack
-
-**What changed:** `demo-readiness.ts`: `demoReadinessManifest` derives what
-each verified viewer should find from the pack's steps, its new `expect`
-section and the seeder's receipts, and `checkDemoReadiness` compares that with
-the viewer's whole directory, their attention summary, and each room's
-canonical detail read as its creator, reporting every gap by name. The pack
-schema gains `expect` and checks a viewer's listed rooms against the rooms the
-pack makes visible to them; `packRoomFacts` is the one statement of who ends up
-in a room.
-
-**Why:** The PRD's readiness contract is a read through the ordinary directory
-and attention surfaces as every intended viewer, against expectations generated
-from the receipts, following pagination, opening nothing as the presenter. The
-spike's `awaitWorkspaceDirectory` checked only that an id was present, and read
-as the author. Derived where derivation is honest — room set, seats, state,
-order, ids — and stated in the pack where it is not: the per-viewer flags depend
-on who opened what, and the seeder's own reads open rooms for the cast, so a
-derivation would encode the seeder's reading habits as product truth. The
-barrier is one comparison rather than a wait because the wait policy is the
-team's open decision, and the operation that holds the deadline is the place
-for it.
-
-**Considered and rejected:** The spike's `awaitWorkspaceDirectory`, which
-checked only that an id was present and read as the author; deriving the
-per-viewer flags from the seeder's own reads, which would have encoded its
-reading habits as product truth.
-
-**Consequences:** The presenter is read only through non-opening surfaces; a
-canonical read as the presenter would destroy the state the check exists to
-verify. Every gap is reported, not the first, because the operator's waiting
-state lists them. Notification effects are not part of readiness and must not
-become a precondition of it — the projection they ride beside is.
-
-Design: `docs/PRDs/2026-09-04_demo-workspace/prd.md`.
-
-### 2026-09-07 — The seeder: a pack, a provider seam, and receipts
-
-**What changed:** `DemoSeedSchema` in contracts, and an optional `seed` on the
-message the object admits, on `initialize`, and on the run's execution context.
-The object skips the addressing classifier for a seed action and starts a run
-exactly when the seed carries a turn. The harness sets `OpenRouterConfig.fetch`
-to `demoSeedProviderFetch` for a seeded run. `demo-pack.ts` holds the schema,
-the planner, and the placeholder pack; `demo-seeder.ts` plays one action at a
-time and records `demo_seed_receipts` (`0100`). A `demo_seed` auth principal
-lets the cast act without a session.
-
-**Why:** The PRD's seeding rule — every seeded fact through the production
-writer, as the member who did it — leaves two decisions nobody in that path can
-make: whether a line starts a run, and what the run says. The spike carried both
-on a replay context that also carried a historical instant, and the instant was
-the part the PRD rejected. So the seed carries identity and the one turn, and
-nothing else, and it decides addressing itself rather than through
-`forcedHarnessOrigin`: one field that says "run, and say this" or "no run"
-cannot disagree with a second flag that says the same thing. One turn rather than
-a script of turns because a seeded run makes no tool calls — a stale tool name in
-seeded history is a wrong claim about what Rally did — and without tool calls
-Bind asks once; a second request is refused rather than repeated, which is the
-failure the spike's first adapter had. Applying and settling are separate calls
-so the operation can hold both in one step and a test can force the alarm
-between them. `demo_seed` is its own principal value rather than a reuse of
-`connector` so the run's authorization record says who acted; the object
-verifies both the same way.
-
-**Considered and rejected:** Carrying the turn on `forcedHarnessOrigin`, a
-second flag that could disagree with the seed; a replay context with a
-historical instant, which the PRD rejected; a script of turns, which would put
-tool names in seeded history that no tool call backs.
-
-**Consequences:** A seed must never gain an instant. The receipt is written
-after confirmation, and a replayed action must keep meeting the production
-path's own receipt — the derived client message id and resource id are what
-make that true, so an action whose write cannot be keyed that way cannot be a
-seed action. The elicitation is addressed to the room; the targeted-question
-seam the spike tried is a contract change the PRD declined.
-
-Design: `docs/PRDs/2026-09-04_demo-workspace/prd.md`.
-
-### 2026-09-05 — Any workspace can be retired, several demos can be live, and there is no demo mode
-
-**What changed:** `retireWorkspaceGraph` no longer consults the register;
-`isRetirableDemoWorkspace` and its refusal are gone (the walk itself is now
-[`workspace-retirement.md`](workspace-retirement.md)). `currentDemoWorkspace`
-became `liveDemoWorkspaces`, a list. Demo mode — the suppression of background
-connector activity in a demo — is dropped from the PRD before it was built.
-
-**Why:** Three decisions from review. The register-as-authorization was
-bookkeeping for a surface that one Access policy already admits, and an
-operator tool that can retire *any* workspace is what was actually wanted.
-Demos run concurrently — two presenters, two prospects, the same afternoon —
-so "the current demo" and "retire the predecessor once the successor is Ready"
-were the wrong shape: New demo creates one, retirement is a separate action,
-and neither knows about the other. And demo mode was judged not worth the
-branching it adds: scheduled work is something a demo might want to show, and a
-demo that behaves like any other workspace is simpler to reason about than one
-with a second set of rules.
-
-**Considered and rejected:** Keeping the register check as a soft warning —
-either it blocks or it is noise. Keeping demo mode as a flag — the whole
-objection was the flag.
-
-**Consequences:** The confirmation in Ace is the only thing between an operator
-and an irreversible close of a customer workspace; build it to make the operator
-type or paste the id. Nothing assumes one live demo: every reader of the
-register takes a list. A demo's connectors poll, watch and notify like anyone's,
-so a presenter can be interrupted by mail arriving — that is now a pack and
-account-hygiene concern, not a code one.
-
-### 2026-09-05 — The template and an unpublished candidate are withheld
-
-**What changed:** Regional discovery drops both from a member's workspace list,
-and activating an unpublished candidate answers `demo_workspace_preparing`.
-
-**Why:** Preparation takes minutes, and a presenter who opens a candidate in the
-middle of it sees a half-seeded sidebar and can open a room the pack has not
-finished writing. The template is separate and permanent: it holds the demo
-cast's real connections and is never a workspace a member should find.
-
-**Considered and rejected:** Withholding a *retired* demo too — it is closed by
-its tombstone, and hiding it as well would make a workspace vanish from its
-presenter's switcher while its rooms still answered. Filtering the template by
-name — renaming it would defeat the filter, and naming another workspace
-`demo-template` would acquire it. Refusing to activate the template — the filter
-is a discovery filter, not its security gate, and an operator maintains it by
-opening it.
-
-**Consequences:** Discovery pays one D1 read bounded by the workspaces the member
-is actually in, and none at all for a member in no demo. A caller that shows a
-workspace list must expect `demo_workspace_preparing` from activation.
 
 Earlier entries — the gate, the permit-as-a-call, and the first version of the
 walk — are in [`workspace-retirement.md`](workspace-retirement.md#changelog).

@@ -329,60 +329,64 @@ The URL capability broke the control connection in installed desktop builds.
 Appearance now travels unconditionally and receivers tolerate additive protocol
 changes. This supersedes the capability-based compatibility approach below.
 
-### 2026-09-09 — Every unversioned appearance write is row-only, generated icons included (#619)
+### 2026-09-09 — Rally chooses the icon a work stream starts with, and every unversioned appearance write is row-only
 
-Review on #619 caught the naming pass's generated icon being written to the
-cached detail as well as the sidebar row, on the reasoning that a generated icon
-has no optimistic preview to retire. That reasoning was wrong in one direction it
-did not consider: the icon has no preview of *its own*, but the detail is where
-`settled()` looks to retire **somebody else's**, and its `changed` arm fires when
-the detail's icon moves off the baseline to *any* value — deliberately, because
-another person changing the icon has to retire a pending choice too. So a
-generated icon landing between a person's receipt and their projection retired
-their in-flight choice to the generated glyph and held the header there for the
-seconds the projection takes. That is the same defect as the 2026-09-09 entry
-below, reached through a different writer.
-
-The rule is now stated as a property of the writer rather than of the caller:
-**the cached detail is the picker's own signal, and only the versioned
-projection may move it.** `patchCachedGeneratedAppearance` is gone;
-`patchCachedGeneratedIcon` replaces it, row-only like the receipt-time write.
-The cost is the one the entry below already accepted — the header glyph waits
-for the projection — and it is smaller here, because until it lands the header
-shows the id-derived default rather than a wrong stored value.
-
-The same review raised the row half, and that one earned a condition rather than
-an argument: an event carries an icon only when the object had none when it
-renamed, so a row that has one holds something newer, and the event can arrive
-after that receipt because the two travel different paths. `patchCachedGeneratedIcon`
-declines a row that already has an icon. That is an ordering rule for a write
-whose value is known-stale the moment anything else is present, not a second
-copy of the object's own "only where none is stored" — which stays
-authoritative.
-
-Patching `settled()` instead was rejected: distinguishing "moved to my value"
-from "moved to someone else's" would break the case that arm exists for. If the
-header ever needs a generated icon immediately, the fix is the one the entry
-below already names — a receipt or event carrying the committed appearance and a
-version, so the write is authoritative rather than optimistic — not a second
-unversioned writer with its own exception.
-
-### 2026-09-09 — Rally chooses the icon a work stream starts with (#619)
-
-Every icon key now carries a description of the mark it draws in
-`workstream-appearance.ts` — the drawing only, never what the icon is for, so
+**What changed:** Every icon key now carries a description of the mark it draws
+in `workstream-appearance.ts` — the drawing only, never what the icon is for, so
 matching stays with the model that has the request — and the work-stream naming
-pass renders that catalog into its prompt and chooses an icon alongside the name — so a sidebar shows marks that mean something instead of a
-column of id-derived glyphs. The write is in `rename`, in the same transaction as
-the title, and refuses any work stream that already has a stored icon: the
-picker's command is unconditional and a person choosing an icon settles no title,
-so the "already stored" condition is the only thing standing between a naming
-pass and someone's choice. Nothing about the picker, the colour, the projection,
-or the deterministic default changed. The catalog gaining a second audience is
-the thing to respect: an icon added here is now also an icon a model may choose,
-and it needs a description of its shape in the same edit. Why the second naming pass may not
-revisit the first one's icon, and what provenance on the appearance would buy, is
-in [`workstream-naming.md`](workstream-naming.md).
+pass renders that catalog into its prompt and chooses an icon alongside the
+name, so a sidebar shows marks that mean something instead of a column of
+id-derived glyphs. The write is in `rename`, in the same transaction as the
+title, and refuses any work stream that already has a stored icon: the picker's
+command is unconditional and a person choosing an icon settles no title, so the
+"already stored" condition is the only thing standing between a naming pass and
+someone's choice. Nothing about the picker, the colour, the projection, or the
+deterministic default changed.
+
+On the client, `patchCachedGeneratedAppearance` is gone;
+`patchCachedGeneratedIcon` replaces it, row-only like the receipt-time write,
+and it declines a row that already has an icon. The rule is now stated as a
+property of the writer rather than of the caller: **the cached detail is the
+picker's own signal, and only the versioned projection may move it.**
+
+**Why:** Review on #619 caught the naming pass's generated icon being written to
+the cached detail as well as the sidebar row, on the reasoning that a generated
+icon has no optimistic preview to retire. That reasoning was wrong in one
+direction it did not consider: the icon has no preview of *its own*, but the
+detail is where `settled()` looks to retire **somebody else's**, and its
+`changed` arm fires when the detail's icon moves off the baseline to *any*
+value — deliberately, because another person changing the icon has to retire a
+pending choice too. So a generated icon landing between a person's receipt and
+their projection retired their in-flight choice to the generated glyph and held
+the header there for the seconds the projection takes. That is the same defect
+as the 2026-09-09 entry below ("The receipt writes the row, not the detail"),
+reached through a different writer.
+
+The same review raised the row half, and that one earned a condition rather
+than an argument: an event carries an icon only when the object had none when
+it renamed, so a row that has one holds something newer, and the event can
+arrive after that receipt because the two travel different paths. Declining a
+row that already has an icon is an ordering rule for a write whose value is
+known-stale the moment anything else is present, not a second copy of the
+object's own "only where none is stored" — which stays authoritative.
+
+**Considered and rejected:** Patching `settled()` instead: distinguishing
+"moved to my value" from "moved to someone else's" would break the case that
+arm exists for. If the header ever needs a generated icon immediately, the fix
+is the one the entry below already names — a receipt or event carrying the
+committed appearance and a version, so the write is authoritative rather than
+optimistic — not a second unversioned writer with its own exception.
+
+**Consequences:** The cost is the one the entry below already accepted — the
+header glyph waits for the projection — and it is smaller here, because until
+it lands the header shows the id-derived default rather than a wrong stored
+value. The catalog gaining a second audience is the thing to respect: an icon
+added here is now also an icon a model may choose, and it needs a description
+of its shape in the same edit. Why the second naming pass may not revisit the
+first one's icon, and what provenance on the appearance would buy, is in
+[`workstream-naming.md`](workstream-naming.md).
+
+Shipped in #619.
 
 ### 2026-09-09 — The receipt writes the row, not the detail
 

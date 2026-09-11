@@ -492,7 +492,7 @@ another swatch. Projects whose creators leave the palette untouched share the
 same gray icon, trading automatic color distinction for a neutral starting
 point.
 
-### 2026-08-27 — Project editing moves onto the owning surfaces
+### 2026-08-27 — Project editing moves onto the owning surfaces, reads become socket-owned state, and review closes audience and delivery gaps
 
 **What changed:** The project icon opens the shared icon/color grid, the name
 renames inline, the participant face pile opens the shared people picker, and
@@ -503,50 +503,46 @@ reusable nested-menu component with a selected checkmark. The creation form
 uses the shared dropdown and themed text field, and its icon grid previews the
 currently selected project color across every icon.
 
+The subscribe payload now carries active and inactive project directories, and
+every successful project write broadcasts a versioned, viewer-specific
+replacement to all subscribed workspace sockets. Public project GET routes and
+desktop project fetchers were removed.
+
+Project participant removals now require the documented role and converge
+through member work streams, personal-project admission rejects a broader
+work-stream audience, project-start creation derives its audience from the
+project, and default-resource Queue publication uses a WorkspaceDO outbox. The
+desktop also orders project snapshots by waterline, keeps project controls as
+independent mutations, and reports drag failures honestly. Duplicate names are
+allowed.
+
 **Why:** One Settings dialog hid unrelated actions behind an extra step and
 made a partially saved multi-mutation form possible. The inline resource
 dropdown also left the section visually unbalanced and did not scale to choosing
 more than one resource.
+
+Project invalidation followed by REST could race its own mutation and left
+another person's open window stale. Rally's socket boundary requires data, not
+change notifications, to come down the connection.
+
+Review found paths that could widen a personal project, strand a committed
+default before Queue admission, overwrite a newer project directory, or
+disclose an invisible personal-project name. These are authority and user trust
+failures rather than presentation polish.
 
 **Considered and rejected:** Keeping the general Settings dialog and styling
 only this one project submenu. Direct controls make each mutation's boundary
 visible, while a shared nested-menu primitive keeps submenu spacing and selected
 state consistent for later consumers.
 
-### 2026-08-27 — Project reads become socket-owned state
+Keeping `projects` as a generic workspace-sync topic and invalidating React
+Query. That preserves two readers for one authority and pays a second round
+trip whenever project state changes.
 
-**What changed:** The subscribe payload now carries active and inactive project
-directories, and every successful project write broadcasts a versioned,
-viewer-specific replacement to all subscribed workspace sockets. Public project
-GET routes and desktop project fetchers were removed.
-
-**Why:** Project invalidation followed by REST could race its own mutation and
-left another person's open window stale. Rally's socket boundary requires data,
-not change notifications, to come down the connection.
-
-**Considered and rejected:** Keeping `projects` as a generic workspace-sync
-topic and invalidating React Query. That preserves two readers for one authority
-and pays a second round trip whenever project state changes.
-
-### 2026-08-27 — Review closes audience and delivery gaps
-
-**What changed:** Project participant removals now require the documented role
-and converge through member work streams, personal-project admission rejects a
-broader work-stream audience, project-start creation derives its audience from
-the project, and default-resource Queue publication uses a WorkspaceDO outbox.
-The desktop also orders project snapshots by waterline, keeps project controls
-as independent mutations, and reports drag failures honestly. Duplicate names
-are allowed.
-
-**Why:** Review found paths that could widen a personal project, strand a
-committed default before Queue admission, overwrite a newer project directory,
-or disclose an invisible personal-project name. These are authority and user
-trust failures rather than presentation polish.
-
-**Considered and rejected:** Direct Queue sends after the RPC, a workspace-wide
-project-name namespace, and one combined settings save spanning two mutations.
-They respectively lose committed work, leak private metadata, and create a
-partial-write interaction the project space does not need.
+Direct Queue sends after the RPC, a workspace-wide project-name namespace, and
+one combined settings save spanning two mutations. They respectively lose
+committed work, leak private metadata, and create a partial-write interaction
+the project space does not need.
 
 **Consequences:** WorkspaceDO alarms now include project publication work;
 Queue consumers prefer the requester but can use another active participant.

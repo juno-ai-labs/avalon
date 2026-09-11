@@ -572,7 +572,7 @@ gate is deliberately open, so a retired object taking such a migration re-arms a
 real platform alarm; the wake is then dropped, so it is inert residue rather
 than a live schedule.
 
-### 2026-09-03: The automation object stores a run entry per occurrence
+### 2026-09-03 — The automation object stores a run entry per occurrence
 
 **What changed:** `AutomationDO` replaces `AutomationAgent` as the fourth
 adopter. Its stored kinds are `automation_schedule` and `automation_run`; the
@@ -1035,19 +1035,3 @@ take its siblings down — is now a property of the drain itself. Maintenance is
 also no longer all-or-nothing per alarm: each pass is its own entry with its own
 due time, so a Slack reap that has been failing for an hour no longer re-runs
 the memory-index outbox every time it retries.
-
-### 2026-08-22 — Same-instant entries are an ordering guarantee, not an accident
-
-**What changed:** No behaviour. The total order the due query already had —
-effective instant, then `kind`, then `alarm_key` — is now written down as an
-invariant, and `scheduled-alarms.test.ts` drains a tie of
-`SCHEDULED_ALARM_DRAIN_LIMIT * 2 + 5` entries sharing one millisecond, asserting
-each runs exactly once across the three wakes it takes.
-
-**Why:** The drain limit and the tie-break were two independent decisions, and
-nothing tied them together: the limit is only safe because the ordering makes
-consecutive slices partition the tie. Ordered on the instant alone the query is
-still correct for a tie that fits in one wake, so the defect would only appear on
-the workspace whose whole digest fan-out lands on the hour — the case with the
-least tolerance for a wake-up that never comes. A future change may widen the
-`ORDER BY`, but it may not drop the primary key from it.

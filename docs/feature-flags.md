@@ -1153,7 +1153,7 @@ cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
 
-### 2026-09-10 — A pin belongs to a conversation, and a substream can carry one
+### 2026-09-10 — A substream can carry a model pin, and the model control has one home in every layout
 
 **What changed:** A substream can be pinned to a model when it is created, by
 the same developer-mode selector the work-stream launcher has;
@@ -1163,6 +1163,11 @@ object's summary projection now emits `modelOverride`, which
 fall back to the pin when a run recorded no model. This section is written in
 terms of a *conversation* rather than a work stream throughout, because that is
 what the column has always belonged to.
+
+The single-row message capsule shows the model pill beside its attachment
+button instead of hiding the choice inside that button's menu, and the
+capsule's leading grid column sizes to its contents rather than to a fixed
+42px.
 
 **Why:** Routing already resolved the pin from the row of the conversation a run
 executes in — a substream reads its own row, not its parent's — but nothing
@@ -1174,11 +1179,22 @@ branch. The projection gap was the matching half: this document already claimed
 before its first token was being described as following a flag it never
 consults.
 
+The control also had two homes depending on the layout *and* the state: a
+radio group in the composer-actions menu while a work stream was being started,
+and a pill in the toolbar once it existed. The answer to "which model is this?"
+therefore moved the moment it stopped being a question, and a substream's
+composer — capsule-shaped like every conversation — had nowhere to show a pin at
+all.
+
 **Considered and rejected:** Falling back to the parent's row when a substream's
 is null, and the equivalent copy-at-creation. Both make a pin travel to work
 nobody pinned, and the read-time version adds a second object read to every
 unpinned substream's run. Also rejected: emitting the pin from the directory
 projection as well, which would put it in every sidebar row to serve one pill.
+
+For the control, keeping the menu for the choice and adding the pill only for
+the settled state. That is the same two-homes problem with the seam moved, and
+it makes a read-only pill more prominent than the decision it records.
 
 **Consequences:** A substream of a pinned work stream still follows the flag
 unless it names a model itself — that is unchanged behaviour, now deliberate
@@ -1187,29 +1203,10 @@ every `get`, create and update response carries it; it is validated with
 `agentModelOverride` on the way out, so a retired model reads as unpinned rather
 than failing the whole response on the schema.
 
-### 2026-09-10 — The model control has one home in every layout
-
-**What changed:** The single-row message capsule shows the model pill beside its
-attachment button instead of hiding the choice inside that button's menu, and
-the capsule's leading grid column sizes to its contents rather than to a fixed
-42px.
-
-**Why:** The control had two homes depending on the layout *and* the state: a
-radio group in the composer-actions menu while a work stream was being started,
-and a pill in the toolbar once it existed. The answer to "which model is this?"
-therefore moved the moment it stopped being a question, and a substream's
-composer — capsule-shaped like every conversation — had nowhere to show a pin at
-all.
-
-**Considered and rejected:** Keeping the menu for the choice and adding the pill
-only for the settled state. That is the same two-homes problem with the seam
-moved, and it makes a read-only pill more prominent than the decision it
-records.
-
-**Consequences:** A row holding only the attachment button still measures 42px,
-so composers with no model control are pixel-identical. A composer that does
-show one gives the pill its label width out of the text column; the names are
-short and never wrap.
+A row holding only the attachment button still measures 42px, so composers with
+no model control are pixel-identical. A composer that does show one gives the
+pill its label width out of the text column; the names are short and never
+wrap.
 
 ### 2026-09-04 — Frozen substream summaries use their recorded route
 
@@ -1229,7 +1226,7 @@ client in the feature, which would fork deadlines and inference evidence.
 **Consequences:** Context-policy changes affect new preparation receipts only.
 An admitted receipt keeps its exact requested model and has no fallback route.
 
-### 2026-09-03: The automation compiler and disposition roles are gone
+### 2026-09-03 — The automation compiler and disposition roles are gone
 
 **What changed:** `agent-model-automation-compiler` and
 `agent-model-automation-result-disposition` are no longer roles, and
@@ -1421,6 +1418,7 @@ to this list from now on goes at the top of its family; a test enforces that for
 every family whose ids carry comparable version numbers, which is all of them
 except `gpt-5.6-*` and `deepseek-v4-*`, whose members share a version and are
 ordered by hand.
+
 ### 2026-08-31 — Multiple-workspace rollout is presentation-only and defaults off
 
 **What changed:** `multiple-workspaces-enabled` is served as
@@ -1603,32 +1601,7 @@ now also fires on a flag no client reads, which is harmless: it always
 re-evaluates and re-sends the complete client contract regardless of which key
 changed.
 
-### 2026-08-24 — Suggested Work and workspace templates become managed product flags
-
-**What changed:** `suggested-work-enabled` and
-`automation-workspace-templates-enabled` joined the Ace-managed Boolean flag
-set. Electron hides their entry points while off and avoids view-local reads for
-surfaces it does not draw. Suggested Work and workspace-template API routes do
-not evaluate these flags.
-
-**Why:** These features need per-person and per-workspace staged visibility in
-Electron. The rollout controls whether the application presents the feature; it
-is not an entitlement or authorization boundary, so it must not change server
-behavior for older clients, integrations, or direct API callers.
-
-**Considered and rejected:** Enforcing the same flags on product routes and
-Electron action authorities. That would turn a show/hide control into a product
-capability gate and make targeted visibility unexpectedly alter API behavior.
-Also rejected: stopping Suggested Work generation, because opportunities remain
-workspace product state regardless of whether one person's Electron shows them.
-
-**Consequences:** Both flags fail closed until Flagship returns exact `true`.
-Template update metadata may still exist on an automation while the flag is off,
-but Electron does not expose it. All Suggested Work and workspace-template API
-operations remain available. Future consumers may use these flags for Electron
-visibility only and must not add server-side action gates.
-
-### 2026-08-24 — Enabled-named product flags push per-user values through WorkspaceDO
+### 2026-08-24 — Enabled-named product flags push per-user values through WorkspaceDO, and Suggested Work and workspace templates join them
 
 **What changed:** `hypersight-enabled` and `meeting-recording-enabled` join the
 client contract as fail-closed Boolean flags. Ace is their write path; a shared
@@ -1636,21 +1609,45 @@ Queue enumerates both regional D1 workspace directories, regional consumers RPC
 the owning WorkspaceDO, and each connected user receives a privately evaluated
 full flag object. Subscribe returns the same object for reconciliation.
 
+`suggested-work-enabled` and `automation-workspace-templates-enabled` joined
+the same Ace-managed Boolean flag set. Electron hides their entry points while
+off and avoids view-local reads for surfaces it does not draw. Suggested Work
+and workspace-template API routes do not evaluate these flags.
+
 **Why:** Product managers need targeting changes without a deploy, while a
 minute poll leaves visible application surfaces stale and one value cannot
 represent multiple users in a targeted workspace. The names were made
 directional because a bare Boolean name does not say what true means.
+
+Suggested Work and workspace templates need per-person and per-workspace staged
+visibility in Electron. The rollout controls whether the application presents
+the feature; it is not an entitlement or authorization boundary, so it must not
+change server behavior for older clients, integrations, or direct API callers.
 
 **Considered and rejected:** A value-bearing broadcast is wrong for per-user
 rules. A permanent desktop poll repeats work while still leaving a delay.
 Direct Flagship dashboard edits cannot drive a push because Flagship exposes no
 documented outbound notification endpoint.
 
+Enforcing the Suggested Work and template flags on product routes and Electron
+action authorities. That would turn a show/hide control into a product
+capability gate and make targeted visibility unexpectedly alter API behavior.
+Also rejected: stopping Suggested Work generation, because opportunities remain
+workspace product state regardless of whether one person's Electron shows them.
+
 **Consequences:** Managed product flags are edited through Ace, Queue/RPC
 messages remain key-only, Electron visibility fails closed, and new Boolean
 application flags use an Enabled name with an off default. Product API
-availability is independent of these flags. Earlier reasoning in this document
-predates the running changelog and was not reconstructed.
+availability is independent of these flags.
+
+All four flags fail closed until Flagship returns exact `true`. Template update
+metadata may still exist on an automation while the flag is off, but Electron
+does not expose it. All Suggested Work and workspace-template API operations
+remain available. Future consumers may use these flags for Electron visibility
+only and must not add server-side action gates.
+
+Earlier reasoning in this document predates the running changelog and was not
+reconstructed.
 
 ### 2026-08-22 — A preparing work stream is identity, not readable attributes
 
