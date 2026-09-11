@@ -61,13 +61,16 @@ serves it through `rally-font://`.
 - **There is one design and exactly two resolved appearances.** Adding a named
   theme family would restore UI and state the product no longer supports.
   Account-owned accent color is independent of this light/dark preference.
-- **Seven tokens are the account accent in disguise.** `html[data-personal-color]`
-  rewrites `cmp.row.background-selected` and the six `sys.color.accent.*`, so a
-  rule naming one of them paints in the member's own colour, not in chrome. The
-  neutral grey those tokens hold is the unconfigured case, not the design —
-  reach for them only where the surface is meant to carry identity, and check a
+- **The account accent is seven tokens, and they are the only ones.**
+  `html[data-personal-color]` rewrites the whole `sys.color.accent.*` group —
+  `base`, `strong`, `soft`, `wash`, `edge`, `tint` and `on` — so a rule naming
+  one of them paints in the member's own colour, not in chrome. The neutral
+  value they hold is the unconfigured case, not the design, so check a
   screenshot against an account that has a personal colour set before believing
-  one that does not.
+  one that does not. `cmp.row.background-selected` was an eighth until the entry
+  below removed the re-point; a future accent that wants a row back gives that
+  row a token of its own rather than re-pointing the one everything shares, and
+  `palette.css.node.test.ts` fails if it comes back.
 - **`system` is a preference, not a palette.** It must always resolve to light
   or dark before it reaches `data-theme`; otherwise the generated selectors do
   not provide a complete token set.
@@ -214,10 +217,13 @@ is not what that rule is for. The consequence a future change has to accept is
 that recording is unmistakably red only in light; dark gets the app's dark-mode
 red, which is the same red every other danger surface uses.
 
-**What a future change has to respect:** a control that is not identity does not
+**What a future change has to respect:** a control that is not selected does not
 read `cmp.row.background-selected`, whatever it looks like in a screenshot taken
-by an account with no personal colour set — that token is a personal accent in
-disguise, and its neutral value is the unconfigured case, not the design.
+by an account with no personal colour set. When this was written that token was
+also re-pointed to the account accent, which is how a microphone ended up
+wearing a member's colour; the entry below has since removed the re-point, so
+the fill is neutral for everyone and the remaining reason stands on its own —
+the button is chrome, not a selection.
 
 ### 2026-09-10 — The account accent colours marks and controls, and fills no row
 
