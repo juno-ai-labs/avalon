@@ -155,3 +155,31 @@ describe("the Google presentation, which is rebuilt rather than passed through",
     expect(searchAliases).toContain("spreadsheets");
   });
 });
+
+
+describe("custom MCP connection names", () => {
+  const fallback = {
+    displayName: "Custom MCP server",
+    description: "Static catalog description",
+    searchAliases: ["custom_mcp"],
+    systemMessage: "Static policy",
+  };
+
+  it.each(["Engineering", "Customer research"])("names the server %s", (name) => {
+    expect(__integrationTesting.connectorPluginPresentation(
+      "custom_mcp", [], "custom_mcp", fallback, name,
+    )).toEqual({ ...fallback, displayName: name });
+  });
+
+  it("removes control and direction characters from the visible name", () => {
+    expect(__integrationTesting.connectorPluginPresentation(
+      "custom_mcp", [], "custom_mcp", fallback, "  Engineering\n\u202eMCP  ",
+    ).displayName).toBe("Engineering MCP");
+  });
+
+  it.each([undefined, "", " \u202e "])("falls back for an absent name %s", (name) => {
+    expect(__integrationTesting.connectorPluginPresentation(
+      "custom_mcp", [], "custom_mcp", fallback, name,
+    )).toEqual(fallback);
+  });
+});

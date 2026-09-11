@@ -2122,7 +2122,7 @@ async function loadAutomationCreatorPluginCatalog(
       description: adapter.agentPlugin.description,
       searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
-    });
+    }, typeof row.display_name === "string" ? row.display_name : undefined);
     let definitions = staticDefinitions;
     if (dynamicCapability) {
       try {
@@ -6012,7 +6012,7 @@ async function loadHarnessTools(
       description: adapter.agentPlugin.description,
       searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
-    });
+    }, typeof row.display_name === "string" ? row.display_name : undefined);
     const dynamicCapability = dynamicConnectorCapability(adapter, scope, grantedScopes);
     const staticDefinitions = dynamicCapability
       ? []
@@ -6347,7 +6347,13 @@ function connectorPluginPresentation(
   grantedScopes: readonly string[],
   wirePrefix: string,
   fallback: { displayName: string; description: string; searchAliases: string[]; systemMessage: string },
+  connectionDisplayName?: string,
 ): { displayName: string; description: string; searchAliases: string[]; systemMessage: string } {
+  if (connectorType === "custom_mcp") {
+    // A configured name identifies the server; it is never instruction prose.
+    const name = connectionDisplayName?.replace(/[\p{Cc}\p{Cf}]+/gu, " ").trim();
+    return { ...fallback, displayName: name || "Custom MCP server" };
+  }
   if (connectorType !== "google") return fallback;
 
   const granted = new Set(grantedScopes);
