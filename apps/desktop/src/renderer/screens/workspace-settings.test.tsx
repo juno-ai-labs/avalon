@@ -1110,11 +1110,13 @@ describe('Workspace settings', () => {
     const mailCard = (await screen.findByText('Google Mail + Calendar')).closest('article');
     fireEvent.click(await enabledConnectAction(mailCard!, 'Connect only for me'));
 
-    expect(await screen.findByText('Google authorization was cancelled.')).toBeVisible();
+    await waitFor(() => expect(api.getConnectorOAuthAttempt).toHaveBeenCalledWith('a'.repeat(43)));
+    await enabledConnectAction(mailCard!, 'Connect for me');
+    expect(screen.queryByText('Google authorization was cancelled.')).not.toBeInTheDocument();
     expect(api.getConnectorOAuthAttempt).toHaveBeenCalledWith('a'.repeat(43));
   });
 
-  it('uses the server-owned attempt provider for reconnect status messaging', async () => {
+  it('reconciles the server-owned reconnect attempt without a footer message', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000010',
       connectorType: 'google',
@@ -1150,7 +1152,9 @@ describe('Workspace settings', () => {
     expect(api.reconnectConnection).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
 
-    expect(await screen.findByText('Notion authorization was cancelled.')).toBeVisible();
+    await waitFor(() => expect(api.getConnectorOAuthAttempt).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh Imported connection label' })).toBeEnabled());
+    expect(screen.queryByText('Notion authorization was cancelled.')).not.toBeInTheDocument();
     expect(api.reconnectConnection).toHaveBeenCalledWith(
       '00000000-0000-7000-8000-000000000010',
       'google',
