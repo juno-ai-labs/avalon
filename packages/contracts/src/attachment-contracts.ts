@@ -357,7 +357,7 @@ export const AttachmentReadResourceArgumentsSchema = z.strictObject({
     .describe("The resource to start reading, as the `resourceId` list_resources returned, for example `a1b2c3d4-e5f6-4789-a012-3456789abcde`. Its `slug` is a short alias for writing about the resource and is not accepted here. Send this or `cursor`, never both.")
     .optional(),
   startCharacter: NonNegativeIntegerSchema
-    .describe("Begin the page at this character offset into the extracted text, counting from 0. Defaults to 0. Use it with `resourceId` to jump to an offset a search result reported; an offset past the end returns an empty page rather than an error.")
+    .describe("Begin the page at this character offset into the extracted text, counting from 0. Defaults to 0. Use it with `resourceId` to jump to an offset a search result reported. An offset beyond the end of the text is refused as `invalid_cursor`, so do not probe past the tail, and do not reuse an offset taken from an earlier version of the resource — read `charactersBefore` and `charactersAfter` to tell where the text ends.")
     .optional(),
   cursor: CursorSchema
     .describe("Continue an earlier read: send the exact cursor that call returned, by itself and with no other argument. It already carries the resource and the position, so pairing it with `resourceId` or `startCharacter` is refused.")

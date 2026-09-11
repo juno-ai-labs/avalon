@@ -2127,7 +2127,7 @@ const automationDraftSubmissionJsonSchema = {
         properties: {
           pluginId: { type: "string", pattern: "^plugin_[a-z][a-z0-9_]{0,62}$", description: "The plugin, as a `pluginId` from plugins_list or plugins_search, for example `plugin_slack`. A connector's display name is not a plugin id." },
           recommendedTools: { type: "array", items: { type: "string" }, description: "The tools this Sidekick actually needs from that plugin, named exactly as plugin_inspect reports them. Use [] when the whole plugin is needed rather than particular tools." },
-          reason: { type: "string" }
+          reason: { type: "string", description: "Why this Sidekick needs that plugin, in one sentence, for the person approving it." }
         },
         required: ["pluginId", "recommendedTools", "reason"]
       }
@@ -2153,8 +2153,8 @@ const automationDraftSubmissionJsonSchema = {
                 name: { type: "string", description: "The column's name as every run will spell it, for example pull_request_url." },
                 description: { type: "string", description: "What this column holds, written for a run that has only the schema to go on." },
                 type: { type: "string", enum: ["string", "url", "number", "integer", "boolean", "datetime", "date"], description: "The column's type, which decides how filters compare it. Use datetime for an ISO 8601 timestamp and date for a plain calendar date." },
-                required: { type: "boolean" },
-                searchable: { type: "boolean" }
+                required: { type: "boolean", description: "Refuse a row that leaves this column empty. Use it for the columns a row is meaningless without." },
+                searchable: { type: "boolean", description: "Include this column in the free-text search each run's table_query can do. Set it on the prose columns: a table with none returns nothing for every search, and columns cannot be changed once the Sidekick is accepted." }
               },
               required: ["name", "description", "type", "required", "searchable"]
             }

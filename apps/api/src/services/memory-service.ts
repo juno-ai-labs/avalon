@@ -1055,7 +1055,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
     {
       definition: {
         name: "invalidate",
-        description: "Reversibly invalidate an authorized durable memory. Copy memoryItemId and expectedRevision from memory_search; after a revision conflict, call memory_search with memoryItemId and retry from that exact result.",
+        description: "Retire an authorized durable memory so it stops being recalled. This is final for these tools — nothing restores an invalidated memory, and a later update on it is refused — so write the fact again with memory_add if it holds again. Copy memoryItemId and expectedRevision from memory_search; after a revision conflict, call memory_search with memoryItemId and retry from that exact result.",
         capability: "memory.write",
         mode: "write",
         idempotency: "provider_key",
@@ -1069,7 +1069,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
               minimum: 1,
               description: "Copy revision exactly from memory_search for this memoryItemId.",
             },
-            reason: { type: "string", minLength: 1, maxLength: 2_000, description: "Why the fact no longer holds, in one or two sentences. Invalidation is reversible, so say what changed rather than only that it is wrong." },
+            reason: { type: "string", minLength: 1, maxLength: 2_000, description: "Why the fact no longer holds, in one or two sentences, for the person reviewing what the run did. Nothing here brings the memory back: a later memory_update on it is refused, so if the fact turns out to hold again, write it again with memory_add." },
           },
           required: ["memoryItemId", "expectedRevision", "reason"],
         },

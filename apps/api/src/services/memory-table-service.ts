@@ -1070,7 +1070,7 @@ const columnJsonSchema = {
     description: { type: "string", description: "What this column holds, written for a run a year from now that has only the schema to go on, for example \"Owner and repository, as owner/name\"." },
     type: { type: "string", enum: ["string", "url", "number", "integer", "boolean", "datetime", "date"], description: "The column's type, which decides how filters compare it. Use datetime for an ISO 8601 timestamp and date for a plain calendar date; string holds either as text and compares it character by character." },
     required: { type: "boolean", description: "Refuse a row that leaves this column empty. Use it for the columns a row is meaningless without." },
-    searchable: { type: "boolean", description: "Include this column in the free-text search that table_query's `search` runs. Set it on the prose columns; a numeric or boolean column gains nothing from it." },
+    searchable: { type: "boolean", description: "Include this column in the free-text search that table_query's `search` runs. Set it on the prose columns; a numeric or boolean column gains nothing from it. A table with no searchable column returns nothing for every search, and columns cannot be changed later, so decide it here." },
   },
   required: ["name", "description", "type", "required", "searchable"],
 };
@@ -1218,7 +1218,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
               enum: MEMORY_SCOPE_KINDS,
               description: "How long the table should outlive this run, narrowest first: `workstream` for this work stream alone, `sidekick` for future runs of this installed Sidekick, `user` for one person, `workspace` for everyone here. Not every run authorizes every kind; a refusal names the ones this run does have.",
             },
-            name: { type: "string", description: "A short name for the table, for example \"Reviewed repositories\". A table already existing under this name in the chosen scope is reopened rather than duplicated, so reuse the name deliberately." },
+            name: { type: "string", description: "A short name for the table, for example \"Reviewed repositories\". A table already under this name in the chosen scope is reopened rather than duplicated, but only when this call declares it identically — same description, usage instructions, key columns, and columns. Any other difference is refused as a name conflict, and since columns cannot be added to a table later, a table that turns out to be too narrow needs a new name rather than a re-create." },
             description: { type: "string", description: "What the table holds and why it exists, in a sentence or two. This is what table_search matches, so write the words someone would look for." },
             usageInstructions: { type: "string", description: "How a later run should use this table: when to insert, when to update, and what each unusual column means. Write it for a run that has never seen this table and cannot ask you." },
             columns: { type: "array", items: columnJsonSchema, description: "The table's columns, at least one. Columns cannot be added or renamed afterwards, so declare the ones the work will need rather than the minimum for the first row." },
@@ -1292,7 +1292,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
     {
       definition: {
         name: "invalidate_rows",
-        description: "Reversibly invalidate authorized rows. Copy memoryTableRowId and expectedRevision from table_query; after a revision conflict, call table_query with memoryTableRowIds and retry from those exact results.",
+        description: "Retire authorized rows so they stop being returned. This is final for these tools: nothing restores an invalidated row, a later update on one is refused, and its natural key stays taken — so re-inserting the same fact is silently skipped as a duplicate rather than bringing it back. Copy memoryTableRowId and expectedRevision from table_query; after a revision conflict, call table_query with memoryTableRowIds and retry from those exact results.",
         capability: "table.write",
         mode: "write",
         idempotency: "provider_key",
@@ -1313,7 +1313,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
                 required: ["memoryTableRowId", "expectedRevision"],
               },
             },
-            reason: { type: "string", description: "Why these rows no longer hold, in one or two sentences. Invalidation is reversible, so say what would make the row true again if anything would." },
+            reason: { type: "string", description: "Why these rows no longer hold, in one or two sentences, for the person reviewing what the run did. Nothing here brings a row back, and its natural key stays taken, so be sure before sending this." },
           },
           required: ["memoryTableId", "rows", "reason"],
         },
