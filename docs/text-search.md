@@ -161,6 +161,16 @@ source, source ID, scope, stable document ID, revision, and text (null for delet
 Adapters extract text and preserve authority; they cannot choose chunk sizes,
 embedding models, normalization, or indexing behavior. No adapter writes Turbopuffer.
 
+The batch, document and display schemas strip keys they do not name rather
+than reject them. A deploy runs the objects and the Queue consumer on different
+builds for minutes (see [version skew](#version-skew-between-producers-and-the-consumer)),
+so a consumer must index a document from a producer ahead of it with the fields
+it understands, and it logs `search_document_keys_ignored` with the stripped key
+paths when that happens. A field is therefore added in one deploy and
+back-filled by a re-projection migration in a later one: a re-projection that
+ships beside the field it needs is partly consumed by the old build and leaves
+rows without it, and the log is what says whether that happened.
+
 Resource updates invalidate search only when category or text inputs change:
 provider, title, canonical URL, original/derivative MIME types, content references
 and hashes, or the string description in metadata. WorkspaceDO migration 43
@@ -407,6 +417,30 @@ rewrite or watermark lands, typically seconds. The team accepted this window,
 with ten minutes as the bound the projection chain is expected to meet and a
 non-empty dead-letter queue as the signal that it did not.
 
+### Version skew between producers and the consumer
+
+The objects pick up a new Worker version on their next request; a Queue
+consumer isolate keeps running the previous version until it is recycled, which
+on 2026-09-10 was about twenty-five minutes. In that window an old consumer
+receives documents shaped by the new build. Until this change the schemas were
+strict, so a document carrying a field the old build did not name failed to
+parse; the job retried (five retries, no configured delay) onto whichever
+isolate next took it, and 19 of 535 rejected deliveries exhausted their retries
+into the dead-letter queue. Their publish intent was already gone: `publishResourceSearch`
+clears `pending` and the outbox deletes a turn's row when the Queue accepts the
+reference, not when the index write lands. A dead-lettered rewrite therefore
+leaves its row exactly as it was (for that deploy, without `connection_id` and
+the display attributes, so search omits it) until the source next mutates,
+which for a connector resource can be never.
+
+The schemas now strip unknown keys, so the window produces rows written to the
+old contract instead of dead letters, and the consumer names the stripped keys
+in `search_document_keys_ignored`. What it does not produce is a row with the
+new field: the deploy rule in [One Queue pipeline](#one-queue-pipeline) exists
+because only a re-projection that runs after the window rewrites those rows.
+Clearing the intent on successful indexing rather than on publish would make a
+dead letter recoverable by the object itself; that is the open question below.
+
 Turbopuffer requires a valid embedding for live documents in a vector-enabled
 namespace. Callers must retain failed projection work for retry. The service does
 not invent retry limits or result caps; the caller supplies its product limit.
@@ -444,7 +478,10 @@ The pinned Qwen tokenizer was separately exercised in workerd with its actual
 public model assets served from a temporary local mirror. The same pipeline suite
 proves the display attributes each producer writes and the patch passes a renamed
 or archived conversation runs; `test-workers/search-projection.test.ts`
-covers the display trigger, its outbox channel and the migration-52 requeue;
+covers the display trigger, its outbox channel, the migration-52 requeue and the
+migration-51 and migration-53 re-projections against a cleared watermark and a
+drained outbox row; `test/search-document.test.ts` covers the contract accepting
+a document from a build ahead of it and naming the keys it dropped;
 `test-workers/search-authorization.test.ts`, `test-workers/conversation-parent-contract.test.ts`
 and `test/search-route.test.ts` cover deferred fills, connection-admitted rows and index-served rendering;
 `test-workers/search-authorization-universe.test.ts` covers what each push target registers, the
@@ -472,7 +509,13 @@ the `search_conversation_v1` channel and requeues every committed turn once so i
 lexical row is rewritten with the display attributes; WorkspaceDO migration 47
 marks every resource pending for the same rewrite. A row is omitted from results
 until its rewrite lands, so a workspace's search fills in as its objects wake and
-the Queue drains.
+the Queue drains. WorkspaceDO migration 51 and SubstreamAgent migration 53 run
+those two passes a second time, to rewrite the rows whose jobs the 2026-09-10
+version skew dead-lettered; the retry log carries no resource or turn id, so
+the affected rows could not be listed and the whole fleet re-projects instead.
+Both migrations are lazy in the same way as 47 and 52: use **Force a
+migration** for both classes in each region to make the pass complete, then
+watch the regional activity Queue drain and its dead-letter queue stay empty.
 
 Object alarms dispatch pending references only when the regional Turbopuffer key
 and `OPENROUTER_API_KEY` are present. Otherwise intents remain pending and search
@@ -510,6 +553,16 @@ including JSON, JavaScript, and XML through the shared attachment classifier;
 missing derivatives cannot produce body matches until extraction completes.
 
 ## Open questions
+
+A source's publish intent is cleared when the Queue accepts the reference, so a
+job that dead-letters leaves nothing behind to republish it and recovery is a
+fleet-wide re-projection or a manual redrive. Clearing `pending` (and the outbox
+row) on a successful index write instead would let the object republish on its
+own: the pipeline already treats a redelivered job for an indexed revision as a
+no-op. It needs a completion RPC from the consumer back to each object, a lease
+so an unacknowledged reference is republished after a delay rather than on every
+alarm, and that delay is a number for the team to set. It was left out of the
+2026-09-11 change as too large for an incident fix.
 
 Production deployment and backfill remain to be completed and verified; the
 512/128-token policy requires no environment configuration. Memory,
@@ -552,6 +605,47 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-09-11 — Tolerate document fields from a newer build, and re-project the rows the skew lost
+
+**What changed:** The search batch, document and display schemas are plain
+objects that strip keys they do not name, where they were strict. The document
+phase logs `search_document_keys_ignored` with the stripped key paths.
+WorkspaceDO migration 51 marks every resource pending and SubstreamAgent
+migration 53 re-queues every committed turn, the same passes migrations 47 and
+52 ran. The rule that a new document field ships in one deploy and its
+re-projection in a later one is written into the pipeline section.
+
+**Why:** The 2026-09-10 deploy that added `display`, `substreamId` and
+`connectionId` produced 535 `search_indexing_retry` warnings in twenty-five
+minutes: the objects were on the new build, the Queue consumer isolates were
+still on the old one, and the old build's strict schema rejected every new
+document with a ZodError. 19 jobs exhausted their five retries into the
+dead-letter queue, and the dead-letter backlog rose from single digits to
+about 150. Those rows are stale with nothing left to republish them, because
+both sources clear their publish intent when the Queue accepts the reference,
+and the retry log names neither the resource nor the turn. Every future deploy
+that adds a field would do the same.
+
+**Considered and rejected:** Keeping the schemas strict and lengthening the
+retry schedule, so a rejected job outlives the window; a consumer isolate's
+lifetime is not bounded by anything this repository controls, so no delay is
+known to be enough. Re-marking pending only for workspaces active in the
+window; no source we have lists them (the log carries no id, the dead-letter
+queue has no consumer and expires in 24 hours), and a list that misses one
+leaves a stale row nobody will notice, where a full pass at the cost migration
+47 already measured (about 55 minutes to drain some 160k messages, with no
+provider calls because completed chunk rows are skipped) cannot. Clearing
+`pending` on successful indexing instead of on publish; it is the right design
+and is recorded under Open questions, but it needs a completion RPC, a lease
+and a number the team has to set, which is more than an incident fix.
+
+**Consequences:** A consumer behind its producers now writes rows to the
+contract it knows, silently except for the log, so a field that has to reach
+existing rows must be back-filled by a migration in the deploy after the one
+that adds it. Both new migrations are lazy until the fleet is force-migrated,
+like 47 and 52. `pending` still clears on publish; a dead letter still needs a
+redrive or a re-projection until the open question is taken up.
 
 ### 2026-09-10 — Hold the search modal at one size, and unlabel row shortcuts
 
