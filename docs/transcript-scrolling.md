@@ -405,37 +405,6 @@ canonical response activity has a loaded assistant-turn anchor; after that
 point the ordered timing row is the only renderer, avoiding both a reconnect
 gap before the first committed assistant turn and a duplicate historical row.
 
-### 2026-08-23 — The follow now runs per reveal tick, and that was re-verified, not assumed
-
-**What changed:** Nothing in this module's code. The paced reveal
-([`streaming-reveal.md`](streaming-reveal.md)) changed the premise the
-re-render invariant rested on: a streaming turn now grows the last row up to
-once per animation frame, driven by a reveal loop, rather than once per wire
-frame driven by a socket event. The invariant above is restated in those terms.
-
-**Why:** The invariant said the screen must re-render "for every streamed
-token" and warned that a paced renderer decoupling commits from token arrival
-changes that premise. The reveal was deliberately built at the cache level —
-each tick writes the revealed prefix through
-`queryClient.setQueryData(['messages', …])` — precisely so this screen keeps
-re-rendering on every visible change and the follow's layout effect keeps
-correcting in the same frame as the text. The alternative, revealing from
-state inside the message row, was rejected because the row can grow without a
-screen commit and the correction would land a frame late — the lag-then-snap
-this module exists to prevent.
-
-**Consequences:** Verified against the running client mid-stream, per this
-document's own testing section: the follow holds the end at 0px through a
-paced turn; a ten-tick upward trackpad gesture during one moves the viewport
-and it stays put across twenty further wire frames; **Jump to latest** appears
-and, once clicked, the follow resumes and holds the end again. The follow's
-layout effect now runs at up to the display rate during a stream — its
-`scrollHeight` read was already gated on following, and the whole-screen
-commit at that rate is what the streaming markdown work in
-[`markdown-rendering.md`](markdown-rendering.md) exists to make affordable.
-
-Shipped in #258.
-
 ### 2026-08-22 — The reader's scrolling, not the screen's, decides where the transcript sits
 
 **What changed:** Following the newest message moved out of the work-stream

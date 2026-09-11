@@ -552,39 +552,3 @@ both Workers. A personal MCP outage or DCR change is diagnosed at the hosted
 server boundary, not by editing the public connection dashboard.
 
 Shipped in #139.
-
-### 2026-08-12 — Notion's user approver installs a Rally workspace bot
-
-**What changed:** The registration guide now distinguishes Notion's required
-`owner=user` OAuth parameter from Rally's workspace-only connection scope. An
-Rally owner or administrator authorizes the selected pages, the regional row has
-no user owner, and the installed bot is the provider actor.
-
-**Why:** The provider dashboard and token response name the approving user, which
-made it tempting to classify the connection as personal. That classification was
-wrong for the product surface: the integration bot authors mutations and the
-selected pages are intended as a shared Rally workspace capability. Changing the
-provider parameter was rejected because it would break the public OAuth contract
-rather than change Rally's authorization model.
-
-### 2026-08-12 — Notion setup secrets leave the webhook URL and Cloudflare logs
-
-**What changed:** Notion's reusable `NOTION_WEBHOOK_SETUP_TOKEN` was replaced by
-a 30-minute, single-use nonce prepared in Global D1. Two operator commands copy
-the subscription URL and the captured verification token directly to the local
-clipboard without printing either. Recreating a subscription prepares a new
-current generation in one D1 transaction; its first challenge supersedes every
-older nonce, and an older in-flight request cannot win the ciphertext write in
-Global or arrive late and overwrite a newer EU replica.
-
-**Why:** Cloudflare records full request URLs independently of Rally's logger,
-so a reusable query-string guard became a 90-day credential in Workers Logs and
-Logpush. Logging the verification token instead would be worse: it is the HMAC
-secret for every later delivery. A public reveal endpoint was rejected because
-it would add a remotely reachable secret-reading surface solely for a one-time
-operator action. The D1-and-local-clipboard path keeps the only plaintext handoff
-on the operator's machine, while token-binding and supersession retain safe
-retries without letting an old URL rotate the active secret.
-
-Earlier registration reasoning was not recorded in a changelog; the prose above,
-`git log`, and the PRDs under `docs/PRDs/` are the surviving record.

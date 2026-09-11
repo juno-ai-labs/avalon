@@ -494,61 +494,6 @@ page shows names it does not compute — `castNames` comes from the regional
 API, which reads the demo's own directory — so a renamed member is renamed on
 the page.
 
-### 2026-09-08 — Review: the Demos page shows the attempt it is on
-
-**What changed:** The Demos page reads a retried operation by its current
-attempt and marks an earlier attempt's rows as that attempt's; keeps polling
-while offline even when nothing is running; shows an abandoned operation's
-outcome and any last failure beside it; says why a template is too small to
-cast instead of rendering a form that cannot be submitted; names the viewer
-beside each readiness gap, parsed with the shared contract; points the
-presenter at the account menu and the `multiple-workspaces-enabled` flag;
-forwards the typed confirmation on abandon rather than re-deriving it from the
-path; sequences a poll behind an action; and lost `GET /api/demos/:id`, which
-nothing called. `responseBody` is one helper shared by both pages.
-
-**Why:** A review swarm. A retried operation showed attempt one's stale
-"running" wait as attempt two's state; an offline page with nothing running
-stopped polling and its banner promised otherwise; a template short of members
-produced a nameless duplicate error; "the workspace switcher" named a control
-Rally does not have, and a presenter without the flag would have seen no
-workspaces at all; and the abandon confirmation was checked in Ace and then
-re-minted from the path, so the regional API never saw what the operator
-typed.
-
-**Considered and rejected:** Keeping the per-operation read for a future
-detail page — a route nothing calls is a route nobody tests.
-
-**Consequences:** `abandonDemoOperation` in `demos.ts` takes the confirmation.
-A phase row's attempt is part of what the page reads, not decoration.
-
-### 2026-09-08 — Review: the Workspaces tab tells the truth about its own state
-
-**What changed:** Retirement status and errors are scoped to the workspace they
-belong to; an incomplete pass is shown with its counts and failed nodes, the
-typed id kept and the button re-armed; the retired mark lives in the app rather
-than the tab; the receipt is neutral rather than red and takes focus; the
-directory route answers an outage with a sentence and names a region that did
-not answer beside the other's rows; the search matches an id; the relay names a
-contract mismatch; `regional()`'s parser is required; every write uses the one
-`sameOrigin` helper; Ace's flag fan-out skips closed workspaces; and the tab's
-`demo-*` classes became the shared `ace-form` family with `.retire-*` for its
-own pieces. Captured in seven states.
-
-**Why:** A review swarm. Global `retiring`/`error` state was shown under
-whichever row was selected; an incomplete pass cleared the confirmation and
-left a dead button; switching tabs lost the mark the document said was kept;
-a directory outage reached the page as the literal `internal_error`; one
-region's outage blanked both; the receipt inherited the source panel's error
-red; and a contract mismatch was indistinguishable from an outage, forever.
-
-**Considered and rejected:** Persisting the retired mark — the directory is the
-authority and a session-long mark is what the page can honestly promise.
-
-**Consequences:** `WorkspacesView` takes `retired` and `onRetired` from the
-app. `/api/directory/workspaces` answers `{ results, unavailableRegions }`. A
-new Ace form uses `.ace-form`.
-
 ### 2026-09-07 — Demos
 
 **What changed:** A Demos page, which lists every preparation with its
@@ -677,24 +622,6 @@ separates a flag Ace must manage from one it must not, so a flag kept outside
 Ace must keep a key that does not end in `-enabled`. Deploying this creates the
 flag with no rules at its `off` default, which changes nothing for anyone until
 a targeting rule is added.
-
-### 2026-08-27 — Memory embeddings stay outside live model routing
-
-**What changed:** Ace does not expose or provision a durable-memory embedding
-role. The inference gateway fixes the model to `qwen/qwen3-embedding-8b` and
-passes no model fallbacks.
-
-**Why:** An embedding-model edit changes the coordinate space. Letting an
-ordinary Flagship rule, rollout, or Ace save change it can make document and
-query vectors incomparable even when they have the same dimensions.
-
-**Considered and rejected:** Managing embeddings like chat inference with an
-empty default fallback list. The empty default does not prevent a later rule or
-operator edit from splitting the vector space.
-
-**Consequences:** Embeddings remain visible in inference diagnostics under the
-static `memory_embedding` feature category, but changing their model requires a
-code change paired with a durable active-memory rebuild.
 
 ### 2026-08-26 — Models makes every agent route editable without flattening rollouts
 
@@ -836,40 +763,6 @@ drag (dragged text, a link, a file). No Flagship-side change; the save
 payload this produces was always a valid one, `_clientId` included and
 stripped before it is sent.
 
-### 2026-08-25 — digests-enabled becomes client-visible after all
-
-**What changed:** `digestsEnabled` joined `ClientFeatureFlagsSchema`, resolved
-in `client-feature-flags.ts` through the same `resolveDigestsEnabled` the
-scheduler already called. Electron reads it to hide the Digest settings
-section entirely when it resolves `false`, rather than leaving the section
-visible and quietly ineffective.
-
-**Why:** The entry below this one said "Electron never reads it" as a
-deliberate, considered boundary — nothing about the flag needed a value
-pushed to a connected client, so crossing that boundary looked like
-unnecessary scope. That boundary did not survive contact with the actual
-question an operator asked next: if someone's digest is turned off from
-outside their control, should their settings screen keep claiming it is on?
-Leaving the section visible and silently ineffective was worse than the
-scope of teaching the client to ask.
-
-**Considered and rejected:** A bespoke "is it off for the workspace" check
-combined with "is it off for the user" in the settings screen. Rejected for
-the reason already established for the delivery side: there is one
-evaluation per (person, workspace), not two to combine, and the settings
-screen calls the identical function the scheduler calls rather than
-re-deriving the answer.
-
-**Consequences:** The fan-out this flag was already paying for on every Ace
-save — previously a harmless no-op, since nothing consumed it — now has a
-real client effect. `digestsEnabled` is the second field in
-`ClientFeatureFlagsSchema` that does not default `false`, after
-`controlTowerRefreshSeconds`, and for a different reason: a cadence has no
-off, while this is a feature whose off state is the exception an operator
-opts someone into. A missing workspace (no organization chosen yet) reads as
-`true` — there is nothing to evaluate against, and that gap should never
-read as "hidden."
-
 ### 2026-08-25 — Ace manages a fifth flag, its first that is not presentation-only
 
 **What changed:** Ace's catalog gained `digests-enabled`, a kill switch for
@@ -935,37 +828,6 @@ boundary.
 shared inputs, while a test-only merge no longer performs a credentialed
 production deployment. Adding another external build or deployment module also
 requires adding it to the pinned path contract.
-
-### 2026-08-25 — Access verification tolerates DNS propagation
-
-**What changed:** The post-deploy Cloudflare Access check now treats a transient
-curl transport failure as an unsuccessful attempt, logs the error, and continues
-through the workflow's existing propagation retries.
-
-**Why:** The first production custom-domain deployment succeeded, but its first
-DNS lookup raced Cloudflare propagation. `set -e` stopped the step on curl exit
-6 before the retry loop could make its second attempt, even though the domain
-resolved and returned Access's 302 redirect seconds later.
-
-**Considered and rejected:** Removing the Access check. A successful Worker
-upload does not prove the internal hostname is protected, so the check remains a
-deployment gate and only expected propagation failures are retried.
-
-### 2026-08-25 — Merge deployment invokes Ace's package script explicitly
-
-**What changed:** The Ace deployment workflow now runs
-`pnpm --filter @rally/ace run deploy`, and its deployment contract pins that
-exact command.
-
-**Why:** pnpm reserves `deploy` as a CLI command. Without `run`, the first
-credentialed Ace release passed every verification gate and then stopped before
-provisioning with `ERR_PNPM_INVALID_DEPLOY_TARGET` instead of invoking the
-package script.
-
-**Considered and rejected:** Renaming the package script only to avoid pnpm's
-command name. The repository-level `deploy:ace` command already invokes it
-correctly with `run`; making the workflow equally explicit fixes the call site
-without changing the documented operator interface.
 
 ### 2026-08-24 — Review hardens live delivery and records Ace's regional exception
 

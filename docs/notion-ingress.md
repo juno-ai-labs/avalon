@@ -259,8 +259,8 @@ subscription handshake. Registration steps are in
 `0066_shared_notion_connection_routing.sql`, byte-identical to the copy on
 `main`, restoring the documented duplicate-`0066` prefix.
 
-**Why:** The 2026-08-18 rename below rested on a false premise — "this branch
-has not shipped." The migration *had* shipped: `main` carried it and both
+**Why:** The 2026-08-18 rename to `0084` rested on a false premise — "this
+branch has not shipped." The migration *had* shipped: `main` carried it and both
 production databases had applied it under the `0066` filename. Wrangler tracks
 applied migrations by full filename, so the rename made production treat the
 same DDL as a new pending migration, and the first automated deploy failed on
@@ -278,20 +278,6 @@ new migrations remain pending. A filename under `packages/db/migrations/` that
 exists on `main` is deployed state and must never be renamed, renumbered, or
 edited — the duplicate-prefix warning in
 [`pull-requests.md`](pull-requests.md) exists precisely for this.
-
-### 2026-08-18 — Shared ingress migration receives a unique sequence
-
-**What changed:** The unshipped shared Notion routing migration moved from the
-duplicate `0066` prefix to `0084`.
-
-**Why:** Duplicate numeric prefixes make deployment ordering and operator
-reporting ambiguous even when filename sorting is deterministic.
-
-**Considered and rejected:** Leaving the collision documented. This branch has
-not shipped, so preserving that historical number has no compatibility value.
-
-**Consequences:** Apply `0084_shared_notion_connection_routing.sql`; no data
-transform or compatibility alias is required.
 
 ### 2026-08-12 — The shared callback admits personal hosted MCP OAuth, a user-approved install is one workspace bot grant, and existing bot routes keep their connection
 

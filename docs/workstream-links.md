@@ -330,15 +330,6 @@ copied into this table; they come from `WorkspaceDO.workspace_workstream_directo
 
 **Considered and rejected:** A separate child URL scheme; the existing link primitive carries the optional child address. Main URLs and legacy readers retain their existing forms.
 
-### 2026-09-02 — A link to the active workspace navigates without re-activating
-
-**What changed:** The desktop opens a link that names the active workspace with
-the session already in use; only a link into another workspace revalidates
-through the platform. **Why:** the round trip re-minted a credential that went
-through the same per-request membership check, and cost a full shell reload on
-every link to the workspace on screen. Entry behavior is owned by
-`multiple-workspaces.md`. Shipped in #484.
-
 ### 2026-09-01 — The addressed native hop has an old-client rejection boundary
 
 **What changed:** The browser now opens

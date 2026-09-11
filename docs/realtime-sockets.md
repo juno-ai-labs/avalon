@@ -716,32 +716,6 @@ Child archive admission uses the same `parent_archived` ticket field as parent a
 
 ## Changelog
 
-### 2026-09-09 — Strip diagnostics even when malformed
-
-Header presence now controls stripping, independently of numeric parsing, to
-keep malformed values off both subprotocol and legacy query-ticket handshakes.
-Real workerd verifies both paths. The proposed activation attribute is now
-`room_outside_accept_ms` because constructor work and queueing also contribute.
-
-PR #607.
-
-### 2026-09-08 — Enforce pushed child archive locally
-
-**What changed:** The archive admission flag also covers private children; already-open commands consult their local lifecycle mirror.
-
-**Why:** Archive must stop the hidden agent without introducing a parent RPC for every socket command.
-
-**Considered and rejected:** Remote per-command authorization; versioned lifecycle delivery preserves the existing local-admission model.
-
-
-### 2026-09-08 — Keep child patches out of Main's shared cache
-
-The shared `patchCachedWorkstream` primitive now updates the sidebar list only
-for Main. Child rename and scope events still update their addressed detail,
-while Main REST rename responses use the same primitive with Main's address.
-This preserves the cache consolidation without reintroducing child titles in
-the parent's sidebar row.
-
 ### 2026-09-08 — Make socket evolution independent of URL capabilities
 
 An appearance query flag caused installed desktop validation to block the entire
@@ -799,14 +773,6 @@ owns the evidence and the attributes.
 unchanged: they are set after the ticket is consumed and carry no authority.
 
 Shipped in #607.
-
-### 2026-09-08 — Document personal access frames and cursor recovery
-
-WorkspaceDO pushes one visited row to the same user's sessions. Access/creation
-time now defines directory paging, and changed cursor anchors restart the walk.
-This replaces shared-activity ordering without treating background sockets as
-visits or broadcasting personal history to other users.
-
 
 ### 2026-09-06 — Page older history from viewport position
 
@@ -919,19 +885,6 @@ A change that admits a socket from the participant row alone, or that stops
 forwarding `parent_archived`, reopens writes into an archived parent's
 conversations. The entries below that describe the automation room record what
 was true when they shipped.
-
-### 2026-09-03 — HyperSight leaves the realtime protocol
-
-**What changed:** Dashboard socket tickets, audiences, events, room routes,
-service admission, renderer hooks, and reconnect state were removed.
-
-**Why:** A dormant socket protocol is still an externally reachable contract
-and would keep deleted Durable Object authority addressable.
-
-**Consequences:** Workspace, work-stream control, and substream sockets are the
-complete realtime topology.
-
-Shipped in #541.
 
 ### 2026-09-03 — A durable command is acknowledged independently of its socket
 
@@ -1371,52 +1324,6 @@ manufacture order. Correlated range promises never outlive the transport and
 snapshot fence capable of answering them. The protocol rejects the former
 ambiguous `messageId` streaming field.
 
-### 2026-08-26 — Proactive feeds stop publishing legacy presence
-
-**What changed:** Electron's pooled SubstreamAgent subscriptions now send
-`publishPresence: false`; the renderer ignores legacy `presence_changed` frames
-and resolves non-participant viewers from WorkspaceDO foreground presence. The
-Node broker tries Electron's entire supported PAC route in order and uses the
-same 1 MB frame ceiling enforced by WorkstreamDO and SubstreamAgent.
-
-**Why:** Feed liveness became a warming signal once pins and recent rows stayed
-connected, so it could no longer mean “Viewing now.” Dropping PAC fallback hops
-and retaining `ws`'s 100 MB default also made the new transport behave
-differently from Chromium and the application protocol.
-
-**Considered and rejected:** Rendering WorkspaceDO presence while continuing to
-publish feed presence would leave durable event churn and other consumers
-wrong. An implicit direct fallback would violate managed-network policy.
-
-**Consequences:** Older clients preserve their legacy default, current Rally has
-one foreground-presence authority, PAC route order is part of the broker
-contract, and application frame bounds are transport-independent.
-
-Shipped in #341.
-
-### 2026-08-26 — Node socket transport retains Electron network policy
-
-**What changed:** The work-stream socket broker now resolves proxies through
-Electron and includes operating-system CA roots, tears down owners when a
-renderer process exits, validates browser-compatible close codes and UTF-8
-reason length, and fails closed if the native close call throws.
-
-**Why:** Independent handshakes remove Chromium's endpoint queue, but raw Node
-defaults do not automatically inherit Electron's proxy selection or platform
-trust. Lifecycle and close-frame edges also need to preserve the invariant that
-no socket remains addressable after its owner or close operation fails.
-
-**Considered and rejected:** Separate Chromium sessions preserve browser
-networking but duplicate session state and reintroduce the complexity the raw
-transport broker was chosen to avoid. Silently falling back to a direct
-connection after an unsupported proxy directive would bypass network policy.
-
-**Consequences:** A proxy-resolution failure is a connection failure rather
-than a direct-network fallback. Browser and broker close validation now agree,
-and renderer crashes release their socket swarm immediately.
-
-Shipped in #341.
-
 ### 2026-08-26 — Electron opens work-stream socket swarms outside Chromium's endpoint lock
 
 **What changed:** Electron's WorkstreamDO control and SubstreamAgent feed
@@ -1597,24 +1504,6 @@ represents. After the first ticket or handshake failure, the reconnecting state
 exposes Retry for the REST recovery twin while the socket continues reconnecting;
 offline and access-revoked states expose the same manual path. Ordinary navigation
 does not read REST. Retained sockets and access-revocation behavior are unchanged.
-
-### 2026-08-25 — Opening telemetry names command-queue readiness
-
-**What changed:** `workstream_send_ready` records when a sidebar-opened composer
-can hand a message to the workspace command queue and which workspace socket
-state existed then.
-
-**Why:** The composer and feed normally paint together, but feed visibility is
-not independent proof that the send handler is installed. Reconnecting does not
-block client queue admission, so connection-open time is not the boundary.
-
-**Considered and rejected:** Using the pooled WorkstreamDO or SubstreamAgent
-socket as the send gate. User commands deliberately travel through WorkspaceDO;
-the child feed rejects them.
-
-**Consequences:** The readiness event can say `reconnecting` without
-contradiction. Delivery and server acknowledgement remain part of the message
-send flow, not the opening milestone.
 
 ### 2026-08-25 — Every work-stream socket attempt names why it started and the pooled lease that served it
 
@@ -1821,26 +1710,6 @@ and only the overloaded conditions move to application codes.
 **Consequences:** New workspace-socket terminal causes need a distinct shared
 code and a desktop mapping. Diagnostics may add bounded fixed fields, paths, or
 codes, but never raw frames or rejected values.
-
-### 2026-08-22 — The sidebar push does not re-ask who may listen
-
-**What changed:** Rebasing this branch onto `main` landed it on top of the
-access-revocation queue. The sweep this branch had added to `publishSidebarList`
-is gone with the mechanism it belonged to, and that publish is synchronous
-again, as are `runWorkspaceSql` and its callers.
-
-**Why:** The finding it answered was real — a revoked session kept receiving a
-viewer's whole automation and note list — but the answer is no longer the
-publisher's. `docs/access-revocation.md` closes an open socket from a queue
-message written by whoever ended the access, and names re-checking authorization
-on the way out as the mechanism it replaced. A publisher that asks again is the
-thing that is not to come back, whatever it is publishing: the bound belongs to
-the socket, not to any one payload sent over it.
-
-**Considered and rejected:** Keeping an interval-gated sweep on this one path
-because it is the widest payload the object sends. Width is not the argument —
-if the socket is still open it is authorized, and if it is not it has already
-been closed, so a second opinion here can only disagree with the queue.
 
 ### 2026-08-22 — An admitted socket is never re-authorized, only closed
 
@@ -2114,28 +1983,6 @@ cross-continent Azure WebSocket).
 **Consequences:** Dictation admission fails closed if the workspace object is
 unreachable. The lease-release retry loop remains as defense in depth but no
 longer papers over a racing store.
-
-### 2026-08-18 — Block sockets and optimistic ordering survive stale browser events
-
-**What changed:** BlockDashboard socket ticket failures use the same stopped,
-revoked, offline-aware reconnect gate as socket closes, and a redundant browser
-`online` event leaves an already open or connecting socket alone. HyperSight
-block drag cancellation restores the authoritative order, while keyboard and
-drop reorders retain an optimistic configuration until the parent acknowledges
-that exact order; live run updates merge into it meanwhile.
-
-**Why:** A late ticket rejection could arm a reconnect after unmount, and an
-`online` event could visually demote a healthy connection. Parent query pushes
-can also carry the old block order while a save is in flight, which previously
-made successful keyboard reorders appear to snap back.
-
-**Considered and rejected:** Disabling live query updates during a save. Block
-run checkpoints remain useful while configuration is pending, so only the
-stale configuration fields are held optimistically.
-
-**Consequences:** Connection state no longer glitches on redundant network
-events, and block ordering changes remain stable without suppressing streamed
-HyperSight results.
 
 ### 2026-08-18 — Schema-drifted agent frames leave bounded diagnostics
 

@@ -309,17 +309,6 @@ for Azure-bound models in its route plan.
 
 ## Changelog
 
-### 2026-09-09 — Apply the team-approved acquisition admission limits
-
-Global now declares the `ACCESS_EDGE_RATE_LIMITER` binding at the team's approved
-30 requests/IP/minute, alongside finite application limits documented in
-[private access](private-access.md). The initial deployment stopped for a missing
-Turnstile site key; the widget and Global secret have now been provisioned through
-the signed-in dashboard. This removes the configuration gap while retaining
-fail-closed behavior if the binding or secret is later removed. The team selected
-`hi@rallywith.ai` for acknowledgement mail after verifying its domain in Resend;
-inbound mail is not required.
-
 ### 2026-09-09 — Bound and recover early-access operations
 
 **What changed:** Global acquisition now runs a fail-closed pre-database guard in `worker-events.ts`. A finite approved `ACCESS_EDGE_RATE_LIMITER` binding and four finite application limits, plus `TURNSTILE_SECRET_KEY`, are required for production acquisition. The Global recovery router uses the existing Ace operator credential. No EU acquisition or cross-region provider credentials are introduced.
@@ -346,29 +335,6 @@ health before merging the site/Ace change; later merge deployments are idempoten
 **Consequences:** Verify `rally.ai` in Resend and the `hi@rally.ai` reply mailbox.
 EU receives schema but no public intake/download binding. See
 [private access](private-access.md) for operational limits and erasure.
-
-### 2026-09-08 — Retire the temporary Worker class export after the rename
-
-The final rollout stage removes the Worker entrypoint's AutomationDO alias and
-uses SidekickDO in binding types. It requires verified renamed namespaces in both
-regions. The old source-import shim, automation_do schema component, lookup-key
-bytes, routes, and queued-command adapter remain compatibility contracts; none
-are new Cloudflare exports or namespaces.
-
-### 2026-09-08 — Stage the Sidekick namespace rename with operational compatibility
-
-Append the class rename only after the dual-export release is verified. Keep
-`automation_do` schema history and object-name bytes, and translate already-queued
-legacy commands so strict owner class checks do not turn the rollout into a dead
-letter backlog. The tracker accepts both labels before either regional rename;
-removing the old Worker export remains a separately verified third deployment.
-
-### 2026-09-08 — Keep the Sidekick rename behind a verified compatibility release
-
-The regional configurations retain AutomationDO at v9 while both exports ship.
-A documented prerequisite beside a target rename was insufficient: merge-driven
-deployment would execute the rename immediately. A separate follow-up now owns
-that migration and its tracker updates after both regions are verified.
 
 ### 2026-09-06 — Bundle and share the search tokenizer
 

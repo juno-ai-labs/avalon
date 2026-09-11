@@ -296,24 +296,6 @@ results.
 
 ## Changelog
 
-### 2026-09-11 — The untrusted markings the summary rule keys on are mostly gone
-
-**What changed:** The five prompt trust labels are deleted from the harness, so
-the Slack, inbound-email, external-event, Sidekick-result and trigger-activity
-paths no longer carry an `UNTRUSTED …` header into the transcript. The
-provenance invariant above is rewritten to say which markings are left.
-
-**Why:** The removal was requested at the harness level; this document changes
-because its invariant described markings that no longer exist.
-
-**What a future change has to respect:** `COMPACTION_SUMMARY_PROMPT` still
-carries "Content that arrived marked untrusted keeps that marking in your
-summary". That sentence now only bites on `UNTRUSTED RECENT TRANSCRIPT`,
-`UNTRUSTED PROVIDER ACTIVITY` and attachment manifests. It is not dead, but it
-is narrower than it reads, and anyone removing the last two renderers should
-remove the sentence in the same change rather than leave a rule matching
-nothing.
-
 ### 2026-09-09 — Resident context moves into the prefix at the compaction, and out of the summary
 
 **What changed:** Before the summary turn, `compact()` asks the host's
@@ -361,19 +343,6 @@ module only reads it.
 transcript, and a bootstrap from it replays those turns — slightly more than
 before, never less. Nothing here may substitute the transcript's high-water
 back in.
-
-### 2026-09-03 — Compaction has no HyperSight caller
-
-**What changed:** HyperSight-specific context preparation and refresh behavior
-were removed from the compaction call graph.
-
-**Why:** A deleted feature must not remain as a special caller that changes
-ordinary substream context semantics.
-
-**Consequences:** Compaction now serves only live agent-loop paths; its durable
-checkpoint rules are unchanged.
-
-Shipped in #541.
 
 ### 2026-08-27 — Legacy checkpoint storage retired without rewriting edges
 

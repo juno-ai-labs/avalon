@@ -980,21 +980,6 @@ forward migration. Existing pending work is retained, with no forced backfill.
 
 PR: #611.
 
-### 2026-09-08 — Validate snapshot revisions and reconcile older search contracts
-
-A second review of PR #600 found that coercing a missing revision to the string
-undefined could silently discard every resource result, and the test only checked
-string length. Revisions now parse as integers, and the workerd test compares them
-with the canonical revision RPC. Malformed-value unit cases exercise the named
-error. The current inner join and integer column already prevent malformed stored
-revisions; this guards future snapshot shape drift, not a reproduced production
-outage. Skipping malformed rows was rejected because it recreates silent result
-loss. Search owns its no-refetch-on-focus policy, so the focus regression test uses
-a default QueryClient and fails when that production option is removed. Updated older invariant, boundary, and failure-mode
-sections that still described hidden refill and post-await checks, superseded by
-PR #600's operation-level admission and explicit pagination. Legacy array clients
-can return zero without continuation; this is the documented compatibility trade-off.
-
 ### 2026-09-08 — Seek pending resource projections by deadline
 
 WorkspaceDO migration 39 adds a partial `(not_before, resource_id)` index for
@@ -1005,14 +990,6 @@ unchanged. The billing investigation found roughly 71,000 reads even with zero
 pending rows; disabling search or deleting completed watermarks would sacrifice
 freshness or stale-write protection. New writes still reset the deadline, and
 publication must clear only the revision it actually sent.
-
-### 2026-09-08 — Preserve the results latency boundary across empty pages
-
-Review caught an empty candidate page ending the search trace as completed. The
-trace now stays open across explicit continuation, including user wait time; the
-empty-page copy says Continue searching without promising readable matches. This
-keeps the latency goal tied to the actual product outcome. Candidate continuation
-metadata remains observable under the member-only pagination contract.
 
 ### 2026-09-08 — Admit search batches once and expose continuation
 
@@ -1034,16 +1011,6 @@ workspace's attachment inventory. Canonical checks share owner observations with
 persistent grant caches are not reused without mutation invalidation. This avoids
 permanent stale grants while keeping the existing Queue discovery and explicit
 partial-results contract. Search latency targets still require production validation.
-
-
-### 2026-09-07 — Preserve verified results during partial authority failures
-
-Search now omits candidates with unavailable authorization and reports
-`complete: false`, following the team's decision to retain useful verified
-results. The modal labels partial pages and offers retry, including when no
-verified matches remain. Request authentication, cancellation and provider-wide
-retrieval failures retain their error behavior; unverified IDs and metadata are
-never returned.
 
 
 ### 2026-09-07 — Add an owner-backed authorization cutover and remove its rollout gates

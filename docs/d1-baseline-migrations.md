@@ -378,22 +378,6 @@ regenerate to make it pass.
 
 ## Changelog
 
-### 2026-08-22 — The digest is now the only guard on a subsumed migration
-
-**What changed:** `packages/db/test/migrations.test.ts` was deleted, so the
-manifest digest and `baseline-migration.test.ts` are what stand behind the
-subsumed chain. The "considered and rejected" note above no longer cites that
-file as a reason squashing is unsafe; the manifest pins the same filenames.
-
-**Why:** a per-migration assertion cannot catch a change to an immutable file
-that the digest does not catch first. See the entry in
-[`data-model.md`](data-model.md#changelog) for the full reasoning.
-
-**What a future change has to respect:** moving the boundary is now the only way
-a migration stops being covered *and* stops being digest-guarded at the same
-time. Regenerating the baseline is still never the fix for a failing baseline
-test.
-
 ### 2026-08-22 — Hold the config and the seeded clock to what they actually claim
 
 **What changed:** `stripJsonComments` drops trailing commas, so the JSONC

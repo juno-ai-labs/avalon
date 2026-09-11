@@ -544,46 +544,6 @@ resolves both from one value rather than keeping two that agree eventually.
 
 Shipped in #689.
 
-### 2026-09-10 — The launch banner carries the substream arrow
-
-**What changed:** The mark beside **New substream** in the launch banner is the
-Tabler `corner-down-right` arrow, the same glyph the rail draws on a substream
-row and the feed draws as a text `↳` on the control that starts one. It was
-`border-corner-pill`.
-
-**Why:** Asked for by the product owner: the pill was the app's only use of that
-glyph, so the one surface that is entirely about substreams was marked with a
-shape that says "substream" nowhere else. This answers the product question the
-2026-09-10 ↳ entry below deliberately left open — that entry kept the pill
-because it was legible in `text-default` where the rail's was not, and said
-whether a creation surface should carry a different mark was a separate
-question about a different surface. It is the same arrow the feed's own **New
-substream** control already uses, so the banner now reads in the feed's sense of
-it — *start* one — rather than in the rail's — *is* one.
-
-**Consequences:** `border-corner-pill` is no longer drawn anywhere in the
-product. The rail's "is a substream" arrow and this banner's "start one" arrow
-are now the same glyph in two senses, which is the reading the ↳ entry below
-already accepted between the rail and the feed's action row; a change to either
-still has to keep both readable.
-
-### 2026-09-10 — The launch field is the conversation's field
-
-**What changed:** Nothing in this surface's own code: the raised composer it
-showed while composing — 86px tall on an 8px corner under a heavier shadow — was
-one of the `.launch-composer` rules, and those are gone. It now draws the same
-44px message capsule as the conversation behind it, on both appearances.
-
-**Why:** A substream is started inside the work stream it branches out of, with
-that conversation's own composer on screen a moment earlier and directly behind
-the surface. Two dressings of one component, six inches apart, read as two
-different controls.
-[`conversation-surfaces.md`](conversation-surfaces.md) carries the full entry.
-
-**Consequences:** The field's first impression is a single row rather than a
-box, which is a smaller target before it is typed into; the banner above it, its
-`border-corner-pill` and the Cancel control are unchanged.
-
 ### 2026-09-10 — A substream carries a model pin of its own
 
 **What changed:** The launch composer offers the same developer-mode model
@@ -617,42 +577,6 @@ rather than an optional one, because the seed it builds spreads the parent's
 detail — which now carries a `modelOverride` — and a caller that omitted it
 would hand the child its parent's pin in the one window somebody is looking at
 the conversation they just created.
-
-### 2026-09-10 — A substream's row carries the ↳, and the creation row a plus
-
-Asked for by the product owner on seeing the rail: the faint `border-corner-pill`
-branch line on each substream row read as a stray grey curve, not as a mark, and
-the `↳` sitting on **New substream** alone put the "this is a branch" arrow on
-the one row that is not one. The arrow now marks each existing substream, in
-muted text rather than the sidebar-border token so it can be seen, and the
-creation row went back to a Tabler `plus`. This supersedes the entry below: the
-sidebar's creation mark and the feed's `↳ New substream` control no longer share
-a glyph, and the arrow is now the rail's "is a substream" mark rather than its
-"start one" mark, so a change to either has to keep that reading. See
-[conversation-surfaces.md](conversation-surfaces.md) for the row itself.
-
-**Rejected:** keeping one glyph for both controls and only recolouring the
-branch line off the 10% token. That fixes legibility and leaves the arrow on
-the creation row, which is the half of the complaint that is about meaning
-rather than contrast.
-
-**Left alone deliberately:** the launch banner
-(`substream-launch.tsx`) still draws `border-corner-pill`. It is a creation
-surface, so the plus would follow the rail's logic, but it is drawn in full ink
-rather than the 10% token, so nothing about it is illegible, and changing it is
-a product decision about a different surface rather than part of this one.
-
-Shipped in #656.
-
-### 2026-09-10 — The sidebar's creation mark matches the feed's
-
-Superseded by the entry above: the sidebar's creation row is a plus again, and
-the arrow moved to the rows that are substreams.
-
-Both entry points into a new substream now use the same `↳`; the sidebar's row
-previously used a Tabler `plus`. See
-[conversation-surfaces.md](conversation-surfaces.md) for why the arrow was the
-one to keep. Whichever mark either control uses, they have to stay the same one.
 
 ### 2026-09-10 — A substream is started from a composer, not from two modals
 
@@ -735,27 +659,6 @@ inference, and creator-only initial membership — is the production path's, and
 a caller that passes a gateway gets all of them. Do not widen it into a seam for
 skipping the capture, the checkpoints, or the recheck.
 
-### 2026-09-09 — Move the message cutoff into the turn's action row
-
-**What changed:** The per-message entry point left the identity line for the
-turn's action row. Nothing about how a substream is created changed — only where
-the control that starts one is drawn.
-
-**Why and how:** The row is shared rendering, which
-[conversation surfaces](conversation-surfaces.md) owns per this document's
-**Boundary**; its entry there carries the reasoning and the constraints a future
-change has to respect.
-
-
-### 2026-09-08 — Review fixes for lifecycle and command boundaries
-
-**What changed:** Child archive now stops the local agent through durable versioned delivery; title validation uses the 180-character contract. Nonparticipants and final-participant removal have distinct errors (`substream_participant_required` and `substream_last_participant`). Other refusals are `substream_member_needs_workstream_access`, `substream_archived`, and `substream_not_found`.
-
-**Why:** Hiding an executing conversation left its agent running, and remote checks added latency to every command. Dialog failures and stale rename completions also needed explicit handling.
-
-**Considered and rejected:** Per-command parent RPCs and a new restore-management screen. Restoration remains available through the existing API, with explicit UI copy. [Work-stream links](workstream-links.md) owns child-addressed links.
-
-
 ### 2026-09-08 — Make child lifecycle and notifications reachable
 
 Added child rename/archive controls and forwarded recipient-addressed child
@@ -815,13 +718,6 @@ versions could strand notifications. The creation dialog locks pending inputs,
 clears failed-attempt state on edit and handles cancellation's empty response;
 inviters update the selected child's roster cache on successful admission.
 Regression tests deliberately remove each backend fix to prove these failures.
-
-### 2026-09-05 — Separate parent sidebar context from child conversation context
-
-Sidebar data, previews and management now use the retained parent snapshot. The
-previous selected-feed wiring made shared chrome change when a child was selected
-and could apply parent API responses to a child cache. Keep the two contexts
-explicit; selecting a child must not change the scope of sidebar actions.
 
 ### 2026-09-05 — Private substreams with replaceable starting context, shown beneath Main
 

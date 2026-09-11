@@ -930,19 +930,6 @@ cursor-zero admission, stale-frame rejection, and send readiness one state
 machine. The general conversation GET is not removed here because other
 parent-owned mutation wrappers still use it for read-after-write.
 
-### 2026-09-03 — HyperSight has neither a socket nor a REST surface
-
-**What changed:** The dashboard ticket audience, WebSocket routes, service
-methods, and HTTP endpoints were deleted together with their clients.
-
-**Why:** The feature is gone and there are no clients to preserve. Leaving one
-transport as compatibility code would leave a writable path into retired state.
-
-**Consequences:** Work-stream control and substream room sockets describe the
-complete live realtime surface.
-
-Shipped in #541.
-
 ### 2026-09-02 — Substream-local commands move together onto the child socket
 
 **What changed:** elicitation answers, pending-input reorder, stop, and retry
@@ -984,20 +971,6 @@ lost authority.
 
 **Consequences:** Sending established the operation-receipt pattern now shared
 by every substream-local command.
-
-### 2026-08-30 — Sidebar participant preview is join time
-
-**What changed:** The bounded participant preview on a personal sidebar row is
-the three most recently added people, not the newest overlay rewrite.
-
-**Why:** overlay `projected_at` is rewritten on unread; it is not who joined.
-The directory and `summary()` now share `participants.added_at` so a REST merge
-cannot swap the three faces.
-
-**Considered and rejected:** keeping overlay recency as a distinct clock. The
-sidebar reads whichever producer last wrote the field.
-
-**What a future change has to respect:** one clock for the preview field.
 
 ### 2026-08-26 — Transcript history becomes range-addressed socket state
 

@@ -2587,38 +2587,6 @@ A second rule falls out of the first and is easy to miss: **relaxing a read gate
 
 Shipped in #113.
 
-### 2026-08-12 — Contextual routing moved out, and takes the digestibility declaration with it
-
-**What changed:** Step 7's speculative half — what becomes a Suggested context
-card — is now [`contextual-routing.md`](contextual-routing.md). This document
-keeps the deterministic pipeline, the manifest contract, and the digestibility
-declaration. Step 8 says what the feedback is now *for*.
-
-**Why:** What becomes a card is now decided by a confidence floor that this
-document's digestibility declaration only sets the starting point for, with the
-workspace's own accept and dismiss history overruling it, its own thresholds and
-windows, a corroboration rule, and a decay rule that exists to stop suppression
-being permanent. That is a subsystem with invariants an outsider can break — most
-of them about `digestible`, which this document owns and that one now reads for a
-different question — and it was about to be four paragraphs inside a document
-already covering seven connectors. The reasoning is in that document's changelog,
-including why reading `digestible` as a veto was tried and reverted.
-
-**Considered and rejected:** Keeping it here under a new heading, per the
-one-module-one-owner rule. Rejected because the two are genuinely separable: this
-document is about what a connector declares and delivers, and that one is about
-what Rally speculates on top of it. The split is recorded in both files, as
-[`module-documents.md`](module-documents.md) requires.
-
-**Consequences:** A change to what a connector declares is still recorded here; a
-change to what is done with the declaration is recorded there. The digestibility
-contract now has a second consumer, so weakening it is no longer only a digest
-question — see the invariant in
-[`contextual-routing.md`](contextual-routing.md#invariants) before treating a
-`digestible` flag as one surface's business.
-
-Shipped in #109.
-
 ### 2026-08-11 — What was fixed for Google was fixed for every connector, including Google
 
 **What changed:** Connector descriptors declare `searchAliases` and end their catalog description with the sentence naming when to load them. A shared `connectorCapabilityRefused` — used by all seven connectors — answers a refusal with the capabilities of this plugin's own tools intersected with the grant. Linear's argument schemas are strict, its `create_issue` takes every field `update_issue` takes, its issue search matches descriptions as well as titles, and it gained `list_workflow_states`. Notion's plugin message states that its search is title-only and names the two ways past it.
