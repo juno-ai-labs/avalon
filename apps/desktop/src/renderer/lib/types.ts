@@ -307,6 +307,7 @@ export interface ToolEventData {
   pluginId?: string;
   /** The owning plugin activity's label, when the transcript carries one. */
   pluginName?: string;
+  connectorType?: string;
   input?: unknown;
   output?: unknown;
 }

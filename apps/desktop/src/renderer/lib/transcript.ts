@@ -469,6 +469,7 @@ export function orderedTranscriptMessages(
             toolCallId: block.toolCallId,
             ...(block.pluginId ? { pluginId: block.pluginId } : {}),
             ...(pluginName === undefined ? {} : { pluginName }),
+            ...((run?.connectorType ?? owner?.connectorType) ? { connectorType: run?.connectorType ?? owner?.connectorType } : {}),
             name: block.toolName,
             status: block.status === 'planned' || block.status === 'started'
               ? 'started'
@@ -571,7 +572,7 @@ export function orderedTranscriptMessages(
     const lastToolIndex = Number.isFinite(anchored)
       ? anchored
       : Math.max(-1, ...lastTurn.blocks.map((block) => block.blockIndex)) + 1;
-    const group = pluginGroup(run.pluginId, run.displayName);
+    const group = pluginGroup(run.pluginId, run.displayName, run.connectorType);
     if (!group) continue;
     const timing = pluginRunTiming(run);
     // The run's own id is the plugin activity's, so the tree the snapshot
@@ -1007,7 +1008,7 @@ function pluginGroupContribution(message: Message): {
   }
   const tool = message.toolEvent;
   if (!tool) return null;
-  const group = pluginGroup(tool.pluginId, tool.pluginName ?? tool.plugin?.displayName);
+  const group = pluginGroup(tool.plugin?.canonicalId ?? tool.pluginId, tool.pluginName ?? tool.plugin?.displayName, tool.connectorType ?? tool.plugin?.connectorType);
   if (!group) return null;
   return {
     key: group.key,
@@ -1602,6 +1603,7 @@ function pluginRunsFromActivities(
       turnId: parent.subjectId,
       pluginId: activity.subjectId,
       displayName: activity.label,
+      ...(activity.connectorType ? { connectorType: activity.connectorType } : {}),
       state: activity.state,
       durationMs: durationKnown ? completedMs : null,
       elapsedMsAtSnapshot,

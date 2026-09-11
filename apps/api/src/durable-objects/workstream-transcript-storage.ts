@@ -132,6 +132,7 @@ interface TranscriptAttachmentRow extends Record<string, SqlStorageValue> {
 }
 
 interface ActivityRow extends Record<string, SqlStorageValue> {
+  connector_type: string | null;
   activity_id: string;
   parent_activity_id: string | null;
   scope: string;
@@ -154,6 +155,7 @@ interface IntervalRow extends Record<string, SqlStorageValue> {
 }
 
 export interface ActivityEdge {
+  connectorType?: string;
   activityId: string;
   parentActivityId: string | null;
   scope: TranscriptActivity["scope"];
@@ -2268,7 +2270,7 @@ export class WorkstreamTranscriptStorage {
     if (!Number.isFinite(occurredAt)) throw new Error("invalid_activity_timestamp");
     this.storage.transactionSync(() => {
       const existing = this.sql.exec<ActivityRow>(
-        `SELECT activity_id, parent_activity_id, scope, subject_id, call_index, label,
+        `SELECT activity_id, parent_activity_id, scope, subject_id, call_index, label, connector_type,
                 lifecycle_state, revision
            FROM transcript_activities WHERE activity_id = ?`,
         edge.activityId,
@@ -2295,11 +2297,12 @@ export class WorkstreamTranscriptStorage {
       const nextState = Number(childActive) > 0 ? "active" : requestedState;
       this.sql.exec(
         `INSERT INTO transcript_activities
-           (activity_id, parent_activity_id, scope, subject_id, call_index, label,
+           (activity_id, parent_activity_id, scope, subject_id, call_index, label, connector_type,
             lifecycle_state, revision, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(activity_id) DO UPDATE SET
            label = excluded.label,
+           connector_type = COALESCE(excluded.connector_type, transcript_activities.connector_type),
            lifecycle_state = excluded.lifecycle_state,
            revision = excluded.revision,
            updated_at = excluded.updated_at
@@ -2317,6 +2320,7 @@ export class WorkstreamTranscriptStorage {
         edge.subjectId,
         edge.callIndex,
         edge.label,
+        edge.connectorType ?? null,
         nextState,
         edge.revision,
         occurredAt,
@@ -2578,7 +2582,7 @@ export class WorkstreamTranscriptStorage {
   transcriptActivity(activityId: string, snapshotAt = Date.now()): TranscriptActivity | null {
     const row = this.sql.exec<ActivityRow>(
       `SELECT activity_id, parent_activity_id, scope, subject_id, call_index,
-              label, lifecycle_state, revision
+              label, connector_type, lifecycle_state, revision
          FROM transcript_activities WHERE activity_id = ?`,
       activityId,
     ).toArray()[0];
@@ -3013,10 +3017,11 @@ export class WorkstreamTranscriptStorage {
       activity_id: string;
       subject_id: string;
       label: string;
+      connector_type: string | null;
       lifecycle_state: string;
       turn_id: string;
     } & Record<string, SqlStorageValue>>(
-      `SELECT plugin.activity_id, plugin.subject_id, plugin.label,
+      `SELECT plugin.activity_id, plugin.subject_id, plugin.label, plugin.connector_type,
               plugin.lifecycle_state, turn_activity.subject_id AS turn_id
          FROM transcript_activities plugin
          JOIN transcript_activities turn_activity
@@ -3092,6 +3097,7 @@ export class WorkstreamTranscriptStorage {
         turnId: row.turn_id,
         pluginId: row.subject_id,
         displayName: row.label,
+        ...(row.connector_type ? { connectorType: row.connector_type } : {}),
         state: row.lifecycle_state as TranscriptPluginRun["state"],
         durationMs: durationKnown ? completedMs : null,
         elapsedMsAtSnapshot: elapsedMs,
@@ -3126,7 +3132,7 @@ export class WorkstreamTranscriptStorage {
           WHERE activity.parent_activity_id IS NOT NULL
        )
        SELECT activity.activity_id, activity.parent_activity_id, activity.scope,
-              activity.subject_id, activity.call_index, activity.label,
+              activity.subject_id, activity.call_index, activity.label, activity.connector_type,
               activity.lifecycle_state, activity.revision
          FROM transcript_activities activity
          JOIN selected ON selected.activity_id = activity.activity_id
@@ -3164,6 +3170,7 @@ export class WorkstreamTranscriptStorage {
       subjectId: row.subject_id,
       callIndex: row.call_index === null ? null : Number(row.call_index),
       label: row.label,
+      ...(row.connector_type ? { connectorType: row.connector_type } : {}),
       state: row.lifecycle_state as TranscriptActivity["state"],
       intervals: (intervalsByActivity.get(row.activity_id) ?? []).map((interval) => ({
         intervalId: interval.interval_id,

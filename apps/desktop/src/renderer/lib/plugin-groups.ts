@@ -143,8 +143,9 @@ function isUnnamedFirstPartyPlugin(pluginId: string, displayName: string | undef
  * The canonical transcript identifies a connector plugin by its connection id
  * — `connection:<uuid>` — which says nothing about which service it is, and the
  * icon the backend does resolve travels on the live tool-invocation row alone.
- * So a name is all this surface has, and it is a stable one: these are manifest
- * strings, not user input.
+ * Shipped connectors use these manifest names. Custom MCP runs carry an
+ * explicit connector type and bypass this inference, because their labels
+ * are user input.
  *
  * Recovering the type rather than picking a mark here is what keeps a connector
  * wearing one mark everywhere. `connectorBrandMark` is the single table, and
@@ -189,13 +190,18 @@ function connectorIconForName(displayName: string): PluginGroupIcon {
 export function pluginGroup(
   pluginId: string | undefined,
   displayName: string | undefined,
+  connectorType?: string,
 ): PluginGroup | null {
   if (pluginId) {
     const grouped = GROUPED_PLUGIN_IDS.get(pluginId);
     if (grouped) return grouped;
     if (isUnnamedFirstPartyPlugin(pluginId, displayName)) return RALLY_GROUP;
   }
-  // Two connections to the same service — a personal and a workspace Slack —
+  if (connectorType === 'custom_mcp' && pluginId) {
+    const name = displayName || 'Custom MCP server';
+    return { key: `custom_mcp:${pluginId}`, name, icon: 'plug', ...usedGroupVerbs(name) };
+  }
+  // Two connections to the same shipped service — a personal and a workspace Slack —
   // are one place as far as the reader is concerned, so the name is the key
   // rather than the id. It is also the only key the live pre-canonical row and
   // the canonical block that replaces it can both produce: they identify the
