@@ -106,7 +106,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | Enabled standalone Sidekick tiles above the account menu open library details, and `SidekickStripTile`, the tile shape they and the empty strip's **New Sidekick** action share; the center rail shows the participant facepile and this room's Sidekicks. |
 | `apps/desktop/src/renderer/components/sidekick-section.tsx` | `SidekickSection`, the **Sidekicks** section both of a work stream's rails render, and `workstreamSidekickRows`, the merge of what the room owns with what its conversation loaded — owned first, one row per Sidekick, `undefined` until both answers are in. |
 | `apps/desktop/src/renderer/components/workstream-sidebar.tsx`, `screens/conversation-surface.tsx` | The section's place below **Participants**; the two queries behind it (`workstream-sidekicks` and `attached-sidekicks`), the participant check that decides whether a row may be detached, and the 403 a non-participant viewer's listing is read as none. |
-| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` — a symbol, a colour, and the sentence it means — which it cuts out of the fill along that marker's own outline and gives its own hover target, tooltip, and `onMarkerHover` report so the surface around it can hold its own tooltip closed (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen, and the empty strip's tile is the same silhouette outlined around a plus. |
+| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` — a symbol, a colour, and the sentence it means — which it cuts out of the fill along that marker's own outline, gives a hover target the size of the marker's whole box, and reports as `onMarkerHover` so the surface can say what the marker means in its own tooltip (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen, and the empty strip's tile is the same silhouette outlined around a plus. |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksWindow`: the window's routes, and the one place its Escape-to-close gesture is installed. |
 | `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
 
@@ -185,24 +185,19 @@ whatever the row is painted in. The New Sidekick tile is the same tile and the
 same hexagon, outlined and dashed with a plus in it rather than filled, and
 carries no lifecycle marker.
 
-Both the tile and that play answer a pointer, through the renderer's own `Tip`
-rather than a native `title`. The tile names the Sidekick, and its scope where
-that is **Workspace** — the caption is ellipsized at 80px and the rail drops it
-outright, so the tooltip is how a tile is read — opening **upward**, because a
-strip tile's neighbour is beside it and above the strip is the work-stream list.
-The play says what it stands for, `Active — in service and waiting on its
-triggers.`, opening **downward** onto the account row rather than across the next
-Sidekick, and wrapped to two lines by `.hexagon-marker-tooltip`. The tile's line
-does not name the state as well: every tile in the strip is active, the play
-reports it, and a screen reader still gets it from the tile's `aria-label`, which
-is unchanged. The play keeps the pointer to itself while it is on it, so only one
-of the two is ever open: it stops the `pointermove` from reaching the tile, and
-the tile also holds its own tooltip closed — `tipSuppressed`, fed by the
-hexagon's `onMarkerHover` — for as long as the pointer is on the marker. Selecting a tile opens its detail in the singleton Sidekicks library
-window. Management and execution controls remain on that authorized detail;
-directory summaries alone do not advertise those capabilities. Search sits
-above the scrolling streams in both layouts, and the rail adds New chat under
-it; neither scrolls with the list.
+Both the tile and that play answer a pointer, through **one** tooltip per tile —
+the renderer's own `Tip`, never a native `title`. The tile has a single tooltip
+slot and what it says follows what the pointer is on: the Sidekick's name, and
+its scope where that is **Workspace**, opening **upward** because the caption is
+ellipsized at 80px and the rail drops it outright; and while the pointer is on
+the play, that marker's own sentence — `Active — in service and waiting on its
+triggers.` — opening **downward** onto the account row, in the width
+`.hexagon-marker-tooltip` holds it to. The hexagon reports the pointer
+(`onMarkerHover`, over a transparent target the size of the marker's whole box)
+and owns the words (`HexagonMarker.description`); the rail owns the slot. The
+answer swaps both ways with no second delay and no gap. The tile's line never
+names the state: every tile in the strip is active, the play reports it, and a
+screen reader gets it from the tile's `aria-label`, which is unchanged.
 
 The strip follows the installed Grok Bot 0.44.0 pinned layout, inspected on
 2026-09-07 in `Contents/Resources/app.asar`: `index-C6zjACOA.js` and
@@ -615,7 +610,7 @@ or the memory store the automation scope lives in.
 | `apps/api/test-workers/automation-post-result.test.ts` | `pnpm --filter @rally/api test:workers` | The result tool appending into the owning room's substream `0`, and refused for an archived room and a stale generation. |
 | `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick. |
 | `apps/desktop/src/renderer/screens/automation.test.tsx` | `pnpm --filter @rally/desktop test` | The profile's appearance saving: an older response losing to a newer Sidekick already in the cache, and its own response applied when nothing newer arrived. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx`, `components/workstream-glyph.test.tsx` | `pnpm --filter @rally/desktop test` | The strip: which Sidekicks qualify, the tile's accessible name, the play cut out of the hexagon with its own mask, and the two tooltips — the tile carrying the name and scope through `Tip` rather than a native `title`, the marker carrying its sentence over a hit target the size of its whole box, and one of them open at a time — including on the path that crosses the tile and reaches the play inside the tile tooltip's own delay, driven on fake timers. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx`, `components/workstream-glyph.test.tsx` | `pnpm --filter @rally/desktop test` | The strip: which Sidekicks qualify, the tile's accessible name, the play cut out of the hexagon with its own mask, and the two tooltips — the tile carrying the name and scope through `Tip` rather than a native `title`, the tile's one tooltip saying whichever part of it the pointer is on, swapping both ways with no second delay, and answering for the play even when the pointer reaches it inside the tile tooltip's own delay — that one driven on fake timers, each advance flushed on its own. |
 | `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | The binding half in isolation: the table absent from D1, a recommended plugin bound from the workspace object's connections, a missing one refused, a disabled row skipped for the live one. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and watched work streams; a redelivery admits once. |
 | `apps/api/test-workers/conversation-parent-contract.test.ts`, `conversation-effect-queue.test.ts` | `pnpm --filter @rally/api test:workers` | The parent contract through the real ticket route, and the effect legs an automation's children use, including a child effect producing no `parent_effect` row. Owned by [`workstream-durable-object.md`](workstream-durable-object.md#testing). |
@@ -733,16 +728,17 @@ production inspection paths.
 
 ## Changelog
 
-### 2026-09-11 — The strip's tile and its play each answer a pointer
+### 2026-09-11 — One tooltip per strip tile, saying whichever part of it the pointer is on
 
 **What changed:** `SidekickStripTile` trades its native `title` for the shared
-`Tip`, opening above the tile and carrying the Sidekick's name and, for a
-workspace Sidekick, its scope — no longer the lifecycle. `HexagonMarker` gains a
-`description`, `SIDEKICK_RUNNING_MARKER` fills it with `Active — in service and
-waiting on its triggers.`, and `HexagonGlyph` gives the painted marker a
-transparent hit rect over its whole box, its own `Tip` below it, and a
-`pointermove` that stops at the marker. `.hexagon-marker-tooltip` caps that tip
-at 220px.
+`Tip`, and takes its whole answer as one `SidekickTileTip` — label, side, and an
+optional width modifier — so a tile has exactly one tooltip however many things
+are drawn in it. `SidekickTile` picks that answer from where the pointer is: the
+Sidekick's name and scope above the tile, or the running marker's own sentence
+below it. `HexagonMarker` gains a `description`, `SIDEKICK_RUNNING_MARKER` fills
+it with `Active — in service and waiting on its triggers.`, and `HexagonGlyph`
+gives the painted marker a transparent hit rect over its whole box and reports
+`onMarkerHover`. `.hexagon-marker-tooltip` caps that answer at 220px.
 
 **Why:** Neither half of a tile could be read. The caption is ellipsized at 80px
 and the rail drops it, so a `title` was the only way to the name — the platform's
@@ -756,46 +752,43 @@ idle between triggers.
 
 The description belongs to `HexagonMarker` beside the symbol and the colour,
 for the reason the knockout belongs to the hexagon: whoever adds the second
-marker states what it means or ships an unexplained one, and the primitive is
-where that is unavoidable. The hover target is the marker's whole 26-unit box
-rather than the play, because SVG hit-tests what is painted and the play is
-about 7px across in the rail.
+marker states what it means or ships an unexplained one. Only the hexagon can
+say *when* the marker is under the pointer, too, because the play is drawn in
+its viewBox rather than positioned by the rail. But the hexagon does not draw
+the answer, and that is the whole lesson below.
 
-**Considered and rejected:** keeping the lifecycle in the tile's line as the
-`title` had it. Every tile in the strip is active, so it spent the tile's one
-line on the one fact they all share, and it printed **Active** twice a
-centimetre apart the moment a pointer reached the play — which is what the
-public badge on the work-stream rows settled on 2026-08-30. Also rejected: an
-HTML badge positioned over the tile to hang the tooltip on, which would put back
-the containing block the play's knockout deleted.
+**Considered and rejected:** a second `Tip` on the marker itself, nested inside
+the tile's. It is the obvious shape — the explanation hangs where the thing is —
+and it cannot work. A Radix root dispatches a document-wide "close everything
+else" the moment it *decides* to open, which is before the controlled `open` a
+caller passes is consulted, so two roots nested like this resolve to whichever
+decided last rather than to the one being pointed at. Both failure modes were
+seen in a real window. First, plainly: a pointer crossing the tile on its way to
+the play starts the tile's 450ms, the marker's opens at 300ms, and the tile's
+lands on top of it at 450ms — the sentence flashing and being replaced by the
+name. Stopping the marker's `pointermove` fixes only the order where nothing had
+started, and it stops the event dead, because React's `stopPropagation` calls
+the native one and React delegates from the root container: the sidebar's own
+`window` listener for the resize pill's proximity stops hearing about a pointer
+inside the marker's box too. Then, subtly: vetoing the tile's open with a
+controlled `open`, as `DragHint` vetoes its hint, leaves the dispatch in place,
+so the tile's refused open still closed the marker's — a pointer on the play got
+*no* tooltip at all. One root has one answer and cannot race itself.
 
-**What a future change has to respect:** keeping one tooltip open takes *both*
-halves of "the marker keeps the pointer", and neither is tidying. Radix closes
-whatever tooltip is open when another opens, but it never cancels one that is
-merely pending, so two nested triggers resolve by order. The stopped
-`pointermove` keeps a tile that has not started from starting — that is the
-pointer arriving straight onto the play, where the tile would otherwise have
-opened at its 450ms over a marker tip opened at 300ms. It cannot reach back and
-cancel a timer already running, which is the path a pointer actually takes:
-across the tile body and onto the play inside the tile's own delay, where the
-tile has no `pointerleave` to clear it by, because the marker is inside it.
-`tipSuppressed` is the veto for that one, taken during the render as `DragHint`
-takes its own. Both failures were seen in the window as the play's sentence
-being replaced by the Sidekick's name.
+Also rejected, again: naming the lifecycle in the tile's line. Every tile in the
+strip is active, so it spent the tile's one line on the one fact they all share.
 
-The consequence to know: a pointer that has visited the play and moved back onto
-the same tile gets no tooltip until it leaves the tile and returns, because
-Radix's trigger opens once per pointer entry and that entry was spent. It was
-left there rather than forced open on the way back, which would have to fire on
-a state transition that also happens when the pointer leaves the strip
-altogether — a tooltip committing to the screen for one frame on the way out is
-worse than a second's silence on the way back. A pointer that arrives on the
-play *first* is unaffected: the stopped move means the tile's entry is still
-unspent, and its name opens normally when the pointer moves onto it.
+**What a future change has to respect:** the marker reports rather than draws.
+Re-nesting a second tooltip inside this one brings back the ordering above,
+which no arrangement of delays fixes — the dispatch is on the decision, not on
+the render. A third thing in the tile worth explaining is another branch in
+`SidekickTile`'s one answer.
 
-A marker tip also requires a `Tooltip.Provider` above any hexagon that draws
-one; the app has one at its root, and a test rendering a hexagon on its own
-supplies it.
+And a trap in testing it: advancing fake timers past both delays in a single
+`act` lets a tooltip mount *after* the document event it should have heard,
+which reads as a pass for a race that is still there — it is how the nested
+version's regression test passed while the window showed the defect. Let each
+timer land in its own flush.
 
 ### 2026-09-11 — One answer to which resources a rule may name
 

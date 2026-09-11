@@ -18,7 +18,6 @@ import { PROJECT_COLOR_RING, type ProjectColorKey, type WorkstreamAppearance as 
 import clsx from 'clsx';
 import { useId } from 'react';
 import { glyphInk } from '../lib/project-palette';
-import { Tip } from './primitives';
 import { PROJECT_ICONS } from './project-icons';
 
 const WORKSTREAM_ICONS = [
@@ -181,11 +180,13 @@ export interface HexagonMarker {
   /** A theme token; see `docs/theming.md`. */
   color: string;
   /**
-   * What the marker means, in the one place a pointer can ask: the symbol is
-   * the whole of what a reader sees, and a symbol nobody can name is a mark to
-   * be learned rather than read. Part of the marker rather than of the surface
-   * around it for the same reason its geometry is — whoever adds the second
-   * marker states its meaning here or ships an unexplained one.
+   * What the marker means, for the surface to show when the pointer is on it.
+   * The symbol is the whole of what a reader sees, and a symbol nobody can name
+   * is a mark to be learned rather than read. The words are the marker's, next
+   * to its shape and its colour, for the same reason its geometry is the
+   * hexagon's — whoever adds the second marker states its meaning here or ships
+   * an unexplained one. Where they are drawn is the surface's, because the
+   * surface owns the one tooltip a tile has; see the `<g>` below.
    */
   description: string;
 }
@@ -203,7 +204,8 @@ export interface HexagonMarker {
  * the work-stream markers' own `statusDescription` — the state named, then one
  * clause on what it means — so the two families of mark in this window explain
  * themselves the same way, and it stays short enough to wrap to two lines in
- * the width `.hexagon-marker-tooltip` holds it to.
+ * the width `.hexagon-marker-tooltip` holds the tile's tooltip to while it is
+ * saying this.
  */
 export const SIDEKICK_RUNNING_MARKER: HexagonMarker = {
   symbol: Play,
@@ -264,12 +266,11 @@ export function HexagonGlyph({ className, fill, ink, marker, onMarkerHover, symb
   /** The state to mark, or nothing where there is no state to mark. */
   marker?: HexagonMarker | undefined;
   /**
-   * That the pointer is on the marker, for a surface that has a tooltip of its
-   * own to stand down. Only the hexagon knows where the marker is, so only the
-   * hexagon can say when it is being pointed at; what the surface does with
-   * that is its own business, and a surface with nothing to suppress passes
-   * nothing. See the veto in `sidebar.tsx`'s `SidekickStripTile` for why a
-   * surface needs telling rather than inferring it from its own pointer events.
+   * That the pointer is on the marker. Only the hexagon knows where the marker
+   * is — the play is drawn in this viewBox so it scales with the tile, rather
+   * than positioned by the surface — so only the hexagon can say when it is
+   * being pointed at. What the surface does with that is its own business, and
+   * one with nothing to say passes nothing.
    */
   onMarkerHover?: ((over: boolean) => void) | undefined;
   symbol: LucideIcon;
@@ -306,60 +307,38 @@ export function HexagonGlyph({ className, fill, ink, marker, onMarkerHover, symb
       <Icon x={25} y={25} size={50} strokeWidth={1.9} />
       {marker && (
         /*
-          Pointer-only, like the sidebar's own public-scope badge and for the
-          same reason: the trigger is a `<g>` inside artwork the surface around
-          it hides from assistive technology, and making it focusable would put
-          a tab stop inside every tile that draws a marker. What the marker says
-          reaches a screen reader through that surface's accessible name
-          instead, which is the rule this hexagon already keeps.
+          The marker's hover target, and nothing more. What it *means* is the
+          marker's own (`description`), and where that gets shown belongs to the
+          surface: a tile has one tooltip slot, and a second Radix root inside
+          the first one's trigger cannot share it. Radix dispatches a global
+          "close everything else" the moment a root decides to open — before the
+          controlled prop it then asks for is refused — so two roots nested like
+          this do not resolve to one tooltip, they resolve to whichever decided
+          last, and a caller that vetoes the outer one gets no tooltip at all
+          rather than the right one. Both were seen in the window: the marker's
+          sentence replaced by the tile's name, and then replaced by nothing.
+
+          So the hexagon says *that* the pointer is on the marker, and the
+          surface above chooses what its one tooltip says. It also keeps the
+          pointer out of it: no `stopPropagation`, which reaches past React to
+          the sidebar's own `window` listeners.
         */
-        <Tip className="hexagon-marker-tooltip" collisionPadding={8} delayDuration={300} disableHoverableContent
-          label={marker.description} side="bottom" sideOffset={8}>
+        <g onPointerLeave={() => onMarkerHover?.(false)} onPointerMove={() => onMarkerHover?.(true)}>
           {/*
-            The marker keeps the pointer to itself, and that takes both halves
-            below. Radix closes whatever tooltip is open when another opens, but
-            it never cancels one that is merely *pending*, and two triggers
-            nested like this therefore resolve by order: a surface still inside
-            its own opening delay when the pointer reaches the marker opens
-            second and takes the answer away again — the marker's sentence
-            flashing and being replaced by the name of the thing it is on.
-
-            Stopping the move keeps a surface that has not started from
-            starting: its trigger sees no move while the pointer is here, so a
-            pointer arriving straight onto the marker leaves it with nothing to
-            open, and a surface the pointer later moves back onto has not spent
-            its one chance to open. Radix's own handler is composed onto this
-            same element and still runs; only the surface above stops hearing.
-
-            `onMarkerHover` is the other half, and it is the one that covers the
-            path a pointer actually takes — across the surface and onto the
-            marker, inside that surface's delay. A stopped move cannot reach
-            back and cancel a timer already running, so the surface is told
-            instead, and vetoes its own open for as long as the pointer is here.
+            The target is the marker's whole box rather than the play inside it.
+            SVG hit-tests what is painted, and the play is about 7px across at
+            the rail's 36px — a target a pointer lands on by accident, not one it
+            can be rested on. A transparent fill is still a fill, so the rect
+            answers `visiblePainted` while painting nothing; `fill="none"` would
+            be invisible to the pointer too.
           */}
-          <g
-            onPointerLeave={() => onMarkerHover?.(false)}
-            onPointerMove={(event) => {
-              event.stopPropagation();
-              onMarkerHover?.(true);
-            }}
-          >
-            {/*
-              The hover target is the marker's whole box rather than the play
-              inside it. SVG hit-tests what is painted, and the play is about
-              7px across at the rail's 36px — a target a pointer lands on by
-              accident, not one it can be rested on. A transparent fill is still
-              a fill, so the rect answers `visiblePainted` while painting
-              nothing; `fill="none"` would be invisible to the pointer too.
-            */}
-            <rect fill="transparent" height={MARKER_BOX} width={MARKER_BOX} x={MARKER_ORIGIN} y={MARKER_ORIGIN} />
-            {/* Solid rather than stroked: at the rail's 36px the marker is about 7px
-                across, where a 2-unit outline is most of the symbol and the shape
-                stops reading as a play at all. */}
-            <marker.symbol className="automation-glyph-marker" fill={marker.color} size={MARKER_BOX} stroke="none"
-              x={MARKER_ORIGIN} y={MARKER_ORIGIN} />
-          </g>
-        </Tip>
+          <rect fill="transparent" height={MARKER_BOX} width={MARKER_BOX} x={MARKER_ORIGIN} y={MARKER_ORIGIN} />
+          {/* Solid rather than stroked: at the rail's 36px the marker is about 7px
+              across, where a 2-unit outline is most of the symbol and the shape
+              stops reading as a play at all. */}
+          <marker.symbol className="automation-glyph-marker" fill={marker.color} size={MARKER_BOX} stroke="none"
+            x={MARKER_ORIGIN} y={MARKER_ORIGIN} />
+        </g>
       )}
     </svg>
   );
