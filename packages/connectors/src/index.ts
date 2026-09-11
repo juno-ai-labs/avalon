@@ -35,6 +35,7 @@ export {
 } from "./provider-utils";
 export {
   CUSTOM_MCP_CONNECTOR_TYPE,
+  CUSTOM_MCP_DISPLAY_NAME,
   CustomMcpAgentPluginDescriptor,
   CustomMcpCapabilities,
   createCustomMcpConnector,

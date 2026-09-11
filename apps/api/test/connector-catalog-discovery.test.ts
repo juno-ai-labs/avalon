@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createConnectorRegistry } from "@rally/connectors";
+import { createConnectorRegistry, createCustomMcpConnector } from "@rally/connectors";
 import { __integrationTesting } from "../src/services/integrations";
 
 /**
@@ -168,7 +168,17 @@ describe("custom MCP connection names", () => {
   });
 
   it.each([undefined, "", " \u202e "])("falls back for an absent name %s", (name) => {
-    expect(__integrationTesting.customMcpActivityName(name)).toBe("Custom MCP server");
+    expect(__integrationTesting.customMcpActivityName(name)).toBe(createCustomMcpConnector({ redirectUri: "https://api.example.com/callback" }).manifest.displayName);
+  });
+
+  it("preserves Unicode joiners and normalizes line separators on both activity paths", () => {
+    const label = "👩‍💻 فارسی‌نام\u2028Team\u2029MCP";
+    const normalized = "👩‍💻 فارسی‌نام Team MCP";
+    expect(__integrationTesting.customMcpActivityName(label)).toBe(normalized);
+    expect(__integrationTesting.toolInvocationOwningPlugin({
+      connection_id: "custom", owner_model_plugin_id: "plugin_custom_mcp",
+      owner_connector_type: "custom_mcp", owner_display_name: label,
+    })).toMatchObject({ canonicalId: "connection:custom", connectorType: "custom_mcp", displayName: normalized, icon: "plug" });
   });
 
   it("uses the participant label and connector identity for transcript activity", () => {
