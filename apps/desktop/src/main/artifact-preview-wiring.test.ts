@@ -50,6 +50,10 @@ describe('artifact preview wiring', () => {
     // The OS opener rejects when it cannot launch a URL, and this process only
     // monitors uncaught exceptions — a discarded rejection would take it down.
     expect(text).toContain('void shell.openExternal(url).catch(');
+    // Activation belongs to a document, and a same-origin navigation does not
+    // spend it, so the press has to be dropped when the document commits — or
+    // the next page's `onload` inherits the click.
+    expect(text).toContain("contents.on('did-navigate', () => activation.reset())");
   });
 
   it('removes the entry only when the window that owns it closes', () => {

@@ -149,12 +149,14 @@ describe('confining a surface to its artifact', () => {
    */
   function contents(activated = false) {
     const opened: string[] = [];
+    const shownHere: string[] = [];
     const handoff = {
       // Spends the press, as the real tracker does: these cases are about what
       // the fence does with an answer, and one of them is about asking twice.
       takeActivation: () => { const had = activated; activated = false; return had; },
       externalAllowed: (url: string) => new URL(url).protocol === 'https:',
       openExternal: (url: string) => { opened.push(url); },
+      navigateInPlace: (url: string) => { shownHere.push(url); },
     };
     const handlers: {
       navigate?: (event: { preventDefault(): void }, url: string) => void;
@@ -166,6 +168,7 @@ describe('confining a surface to its artifact', () => {
       handlers,
       handoff,
       opened,
+      shownHere,
       activate: (on: boolean) => { activated = on; },
       openWindow: (url: string) => windowOpen?.({ url }),
       requestPermission: (name: string) => {
@@ -314,6 +317,21 @@ describe('confining a surface to its artifact', () => {
     confineToArtifactOrigin(surface.stub as never, ORIGIN, surface.handoff);
     expect(surface.openWindow('https://example.com')).toEqual({ action: 'deny' });
     expect(surface.opened).toEqual(['https://example.com']);
+    expect(surface.shownHere).toEqual([]);
+  });
+
+  it('shows a same-origin target=_blank page in this surface rather than dropping it', () => {
+    // An in-site `<a href="/docs" target="_blank">` is an ordinary link. There
+    // is no second window to give it, and the browser would open it without the
+    // viewer session — 401 on a protected site — so it is shown here.
+    const surface = contents();
+    confineToArtifactOrigin(surface.stub as never, ORIGIN, surface.handoff);
+    expect(surface.openWindow(`${ORIGIN}/docs`)).toEqual({ action: 'deny' });
+
+    expect(surface.shownHere).toEqual([`${ORIGIN}/docs`]);
+    // No press was needed and none was spent: in-place same-origin navigation
+    // is a power the page already has through `location`.
+    expect(surface.opened).toEqual([]);
   });
 
   it('denies every permission request outright', () => {
@@ -350,6 +368,37 @@ describe('a surface’s transient user activation', () => {
     expect(activation.active()).toBe(true);
   });
 
+  it('arms on the events HTML calls activation-triggering, and on no others', () => {
+    for (const triggering of ['mouseDown', 'pointerDown', 'keyDown', 'rawKeyDown', 'touchEnd', 'gestureTap']) {
+      const activation = new ArtifactUserActivation(clock().now);
+      activation.record(triggering);
+      expect(activation.active(), triggering).toBe(true);
+    }
+
+    // A release whose press happened somewhere else, a text event, a touch that
+    // may still be cancelled, and a pointer release we cannot tell from a mouse
+    // one: each would make this gate wider than the rule it reconstructs.
+    for (const inert of ['mouseUp', 'keyUp', 'char', 'touchStart', 'touchCancel', 'pointerUp', 'contextMenu']) {
+      const activation = new ArtifactUserActivation(clock().now);
+      activation.record(inert);
+      expect(activation.active(), inert).toBe(false);
+    }
+  });
+
+  it('drops the press when the document that received it goes', () => {
+    // Otherwise a click on an in-site link stays live across the navigation it
+    // caused, and the next document's `onload` spends somebody's click on a
+    // destination they never saw. A same-origin navigation does not consume the
+    // activation, so this is the only thing standing between the two documents.
+    const time = clock();
+    const activation = new ArtifactUserActivation(time.now);
+    activation.record('mouseDown');
+    activation.reset();
+
+    expect(activation.active()).toBe(false);
+    expect(activation.take()).toBe(false);
+  });
+
   it('expires with the browser’s own activation lifespan', () => {
     const time = clock();
     const activation = new ArtifactUserActivation(time.now);
@@ -366,21 +415,21 @@ describe('a surface’s transient user activation', () => {
   it('reports a press once and spends it', () => {
     const time = clock();
     const activation = new ArtifactUserActivation(time.now);
-    activation.record('mouseUp');
+    activation.record('mouseDown');
 
     expect(activation.take()).toBe(true);
     expect(activation.take()).toBe(false);
     expect(activation.active()).toBe(false);
 
     // The next press re-arms it: a person who clicks again has asked again.
-    activation.record('mouseUp');
+    activation.record('mouseDown');
     expect(activation.take()).toBe(true);
   });
 
   it('reads a clock that moved backwards as inactive, not as a permanent activation', () => {
     const time = clock();
     const activation = new ArtifactUserActivation(time.now);
-    activation.record('mouseUp');
+    activation.record('mouseDown');
     time.advance(-60_000);
 
     expect(activation.active()).toBe(false);
