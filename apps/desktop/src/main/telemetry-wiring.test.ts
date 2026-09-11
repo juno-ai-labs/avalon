@@ -92,16 +92,14 @@ describe('Electron telemetry wiring', () => {
     expect(source).toContain('reportJavascriptErrorCandidate(rawCandidate, telemetryWindowContext(event.sender))');
   });
 
-  it('coalesces menu opening hooks and reports successful menu-bar suggestion use', () => {
+  it('coalesces menu opening hooks into one reported open', () => {
     const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
-    const contentSource = readFileSync(`${process.cwd()}/src/main/menu-bar-content.ts`, 'utf8');
 
     expect(source).toContain("tray.on('click', () =>");
     expect(source).toContain("menu.on('menu-will-show', () => openObserver.opened())");
     expect(source).toContain("menu.on('menu-will-close', () => openObserver.closed())");
     expect(source).toContain("telemetryReporter?.menuBarOpened");
     expect(source).toContain('telemetryReporter?.menuBarActionSelected(action)');
-    expect(contentSource).toContain("surface: 'menu_bar'");
   });
 
   it('reports actual settings snapshots and applied main-owned changes', () => {
@@ -144,7 +142,10 @@ describe('Electron telemetry wiring', () => {
   it('preserves native navigation sources and holds quit behind one bounded flush', () => {
     const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
 
-    expect(source).toContain("emitDeepLink(`${customProtocol}://workstreams/new`, 'menu_bar')");
+    // The menu's own rows: every one that opens something re-enters through the
+    // existing deep links rather than through a second navigation path, and
+    // carries `menu_bar` so the open is not misread as a Dock activation.
+    expect(source).toContain("emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'menu_bar')");
     expect(source).toContain('const telemetryQuitBarrier = new TelemetryQuitBarrier');
     expect(source).toContain('if (telemetryQuitBarrier.hold(() => app.quit())) event.preventDefault()');
     expect(source).not.toContain("void telemetryReporter?.applicationLifecycle('graceful_exit')");

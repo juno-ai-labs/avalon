@@ -1,17 +1,25 @@
 import type { WorkstreamBatchFilter } from '@rally/contracts';
 
+import {
+  groupActivityItems,
+  hourInMilliseconds,
+  workstreamRecencyAt,
+  type RecencyGroup,
+} from '../../common/recency-groups';
+
 import type { HarnessStatus, WorkstreamSummary } from './types';
+
+export {
+  groupActivityItems,
+  nextRecencyBoundary,
+  workstreamRecencyAt,
+  type RecencyGroup,
+} from '../../common/recency-groups';
 
 const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const shortTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 
-/** Missing metadata means an older server; explicit null means never visited. */
-export function workstreamRecencyAt(workstream: Pick<WorkstreamSummary, 'lastAccessedAt' | 'createdAt' | 'lastActivityAt'>): string {
-  return workstream.lastAccessedAt === undefined
-    ? workstream.lastActivityAt
-    : workstream.lastAccessedAt ?? workstream.createdAt ?? workstream.lastActivityAt;
-}
 
 export function compareWorkstreamRecency(left: WorkstreamSummary, right: WorkstreamSummary): number {
   return Date.parse(workstreamRecencyAt(right)) - Date.parse(workstreamRecencyAt(left))
@@ -221,31 +229,6 @@ export function workstreamMarkerStatus(
   return MARKER_PRECEDENCE.find((status) => active.has(status)) ?? own;
 }
 
-export type RecencyGroup = 'Last hour' | 'Today' | 'Yesterday' | 'This week' | 'This month' | 'Before this month';
-
-const hourInMilliseconds = 3_600_000;
-
-/** The next instant when a recency heading can change without new data. */
-export function nextRecencyBoundary(
-  items: ReadonlyArray<{ lastActivityAt: string }>,
-  now = new Date(),
-): number {
-  const nowTimestamp = now.getTime();
-  let next = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() + 1,
-  ).getTime();
-  for (const item of items) {
-    const timestamp = activityTimestamp(item);
-    const leavesLastHourAt = timestamp + hourInMilliseconds;
-    if (Number.isFinite(leavesLastHourAt) && leavesLastHourAt > nowTimestamp) {
-      next = Math.min(next, leavesLastHourAt);
-    }
-  }
-  return next;
-}
-
 /** The server-side range that describes one visible recency heading. */
 export function recencyGroupBatchFilter(
   label: RecencyGroup,
@@ -283,56 +266,6 @@ export function recencyGroupBatchFilter(
     }
   })();
   return { lastActivityAt: range, pinned: false, includeSystem: false };
-}
-
-function activityTimestamp(item: { lastActivityAt: string }): number {
-  const timestamp = new Date(item.lastActivityAt).getTime();
-  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
-}
-
-export function groupActivityItems<T extends { lastActivityAt: string }>(
-  items: T[],
-  now = new Date(),
-): Array<{ label: RecencyGroup; streams: T[] }> {
-  const groups = new Map<RecencyGroup, T[]>();
-  const nowTimestamp = now.getTime();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
-  const startOfWeek = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() - now.getDay(),
-  ).getTime();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-
-  const ordered = [...items].sort(
-    (a, b) => activityTimestamp(b) - activityTimestamp(a),
-  );
-
-  for (const stream of ordered) {
-    let label: RecencyGroup;
-    const timestamp = activityTimestamp(stream);
-    if (timestamp >= nowTimestamp - hourInMilliseconds) label = 'Last hour';
-    else if (timestamp >= startOfToday) label = 'Today';
-    else if (timestamp >= startOfYesterday) label = 'Yesterday';
-    else if (timestamp >= startOfWeek) label = 'This week';
-    else if (timestamp >= startOfMonth) label = 'This month';
-    else label = 'Before this month';
-    groups.set(label, [...(groups.get(label) ?? []), stream]);
-  }
-
-  const priority: RecencyGroup[] = [
-    'Last hour',
-    'Today',
-    'Yesterday',
-    'This week',
-    'This month',
-    'Before this month',
-  ];
-  return priority.flatMap((label) => {
-    const grouped = groups.get(label);
-    return grouped?.length ? [{ label, streams: grouped }] : [];
-  });
 }
 
 export function groupWorkstreams(

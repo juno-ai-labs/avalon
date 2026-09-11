@@ -6,11 +6,19 @@ them is allowed to run. Unclaimed connector activity becomes a candidate, a mode
 admits a fraction of it, and a bounded tournament orders each member's four ahead
 of any request that will show them.
 
-The Grok-style new-chat screen no longer shows suggestion cards. The native
-menu bar remains a consumer: `menu-bar-content.ts` reads suggestions, records
-impressions, and starts one through its version-checked `/start` endpoint before
-opening the returned work stream. The producer is therefore retained, not
-orphaned by the removal of the home-screen presentation.
+**Nothing renders these suggestions today.** The Grok-style new-chat screen
+dropped its suggestion cards, and on 2026-09-11 the macOS status menu dropped its
+Suggestions section — see [`menu-bar.md`](menu-bar.md). Admission, ranking, and
+the scheduling below all still run, and `GET /work-opportunities` still answers;
+there is simply no surface asking. Read every "the menu bar reads this" below as
+describing a consumer that existed and can exist again, not one that is running.
+
+Two things follow. The ranking's dependence on attention is now unfed: nothing
+reports impressions, so the tournament has no evidence that a suggestion was put
+in front of someone and passed over. And whoever brings a surface back inherits
+the impression obligation with it — a surface that displays without reporting
+freezes its own list. `clientFeatureFlags.suggestedWorkEnabled` likewise has no
+client consumer left; it still gates the API.
 
 Read this before changing admission, ranking, the `work_opportunities` family of
 tables, or `GET /work-opportunities`. Two properties hold the whole thing
@@ -287,7 +295,7 @@ enter telemetry.
 ## Boundary
 
 This module owns candidate admission, the ranking tournament, its scheduling, and
-the stored set the menu bar reads. It does not own:
+the stored set a surface would read. It does not own:
 
 | For | Read |
 | --- | --- |
@@ -415,6 +423,30 @@ of how the last ranking ended — and `request_seq` against the scheduler's clai
 value.
 
 ## Changelog
+
+### 2026-09-11 — The last consumer went away; the producer stayed
+
+**What changed:** The macOS status menu dropped its Suggestions section, so
+`menu-bar-content.ts` no longer reads `GET /work-opportunities`, no longer posts
+impressions, and no longer starts a suggestion. Nothing in this module changed.
+No candidate admission, ranking, schedule, table, or endpoint was touched.
+
+**Why:** the menu was reworked around getting back into work already in flight
+rather than starting something new — [`menu-bar.md`](menu-bar.md) argues that in
+full. Suggested Work lost its surface as a consequence of that decision, not
+because anything here was judged wrong.
+
+**Considered and rejected:** switching the producer off in the same change.
+Admission and ranking are a scheduled, stateful subsystem with its own hard-won
+properties, and turning it off is a product decision about the capability, not a
+detail of a menu edit. Left running and named here instead, so whoever makes that
+call makes it deliberately.
+
+**Consequences:** ranking follows attention, and nothing is reporting attention
+any more — no surface records impressions, so each member's ordered four is now
+re-ranked only by whatever else moves it. Do not read the current ordering as
+evidence the tournament is working or failing. A surface that comes back must
+bring impression reporting with it, or it inherits a frozen list.
 
 ### 2026-09-04 — Keep the menu-bar consumer when replacing the home screen
 
