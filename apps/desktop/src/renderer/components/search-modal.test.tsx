@@ -236,6 +236,33 @@ describe('workspace search modal', () => {
     expect(search).toHaveBeenLastCalledWith({ query: 'danil', category: 'all', pageSize: 7 }, expect.any(AbortSignal));
   });
 
+  it('measures the cache window from the first page, not the last continuation', async () => {
+    const search = vi.fn<React.ComponentProps<typeof SearchModal>['search']>()
+      .mockResolvedValueOnce({ results: [result], nextCursor: 'next' })
+      .mockResolvedValueOnce({ results: [{ ...result, id: 'message-2' }], nextCursor: null })
+      .mockResolvedValue({ results: [result], nextCursor: null });
+    // Only `Date` is faked, so the pages can be admitted at times the test
+    // chooses while the debounce and every wait below stay real.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const admittedAt = Date.now();
+      const { setOpen } = setup(search);
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
+      await screen.findByRole('option');
+      // The continuation lands inside the window and must not extend it: the
+      // first page is what the reader would be shown again, and nothing has
+      // readmitted it.
+      vi.setSystemTime(admittedAt + 25_000);
+      await reachEndOfList();
+      await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2));
+      expect(search).toHaveBeenCalledTimes(2);
+      vi.setSystemTime(admittedAt + 30_001);
+      setOpen(false);
+      setOpen(true);
+      await waitFor(() => expect(search).toHaveBeenCalledTimes(3));
+    } finally { vi.useRealTimers(); }
+  });
+
   it('hides previously authorized results when revalidation fails', async () => {
     const search = vi.fn().mockResolvedValueOnce({ results: [result] }).mockRejectedValue(new Error('access changed'));
     const { client } = setup(search);
