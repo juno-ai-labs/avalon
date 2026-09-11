@@ -2046,12 +2046,13 @@ export function ConversationSurface({
     // A compaction has to be running AND belong to the run on screen. Reading
     // the id straight off `activeCompaction` would compare `undefined` with the
     // id of a run that has none either, and a room with no run at all would
-    // report itself compacting. Truthiness rather than `!== null`, because the
+    // report itself compacting. `!= null` rather than `!== null`, because the
     // absent value here is sometimes `undefined`: the type says
     // `AgentCompactionState | null`, but a connection double that names only
-    // the fields its test drives leaves the key off entirely.
-    compactingThisRun: Boolean(socketConnection.activeCompaction)
-      && socketConnection.activeCompaction?.harnessRunId
+    // the fields its test drives leaves the key off entirely. It narrows too,
+    // which `Boolean(…)` did not, so the read below needs no `?.`.
+    compactingThisRun: socketConnection.activeCompaction != null
+      && socketConnection.activeCompaction.harnessRunId
         === (detail.latestHarnessRunId ?? detail.latestHarnessRun?.id),
     orderedOwnsRunTiming,
     runTiming,

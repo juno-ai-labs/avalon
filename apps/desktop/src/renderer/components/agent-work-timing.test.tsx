@@ -41,10 +41,13 @@ describe('AgentWorkTiming', () => {
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-speed', '1');
   });
 
-  it('says a stop is pending in words, and in a live region, with no number to promise', () => {
+  it('says a stop is pending in words, marked up as a status, with no number to promise', () => {
     const { container } = render(<RunStoppingIndicator />);
 
     expect(screen.getByText(STOPPING_LABEL)).toBeInTheDocument();
+    // The markup only — whether a screen reader announces a freshly inserted
+    // live region is a real question and jsdom cannot answer it, so the name
+    // above claims the attributes rather than the announcement.
     expect(screen.getByRole('status')).toHaveAccessibleName(STOPPING_LABEL);
     // Still active: the response and its tools are genuinely still settling,
     // and a parked row would read as a run that had already ended.

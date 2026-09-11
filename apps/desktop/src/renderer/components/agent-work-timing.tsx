@@ -7,8 +7,17 @@ import { useAppearance } from '../lib/theme';
 /**
  * One sentence for one state, so the row above the composer and the tooltip on
  * the Stop button inside it cannot describe the same pending stop two ways.
+ *
+ * "work" rather than "response", because the response is not the last thing
+ * being waited on. A step is one accepted model response *plus* settlement of
+ * every tool call it already emitted, and the production run this came from
+ * shows the difference plainly: the response finished 7.0s after the click, and
+ * a tool it had already asked for then ran for 3.0s more. Naming the response
+ * promised a boundary that arrives while the agent is visibly still working —
+ * a tool row appearing above a line that says the response is what we are
+ * waiting on reads as the stop being ignored all over again.
  */
-export const STOPPING_LABEL = 'Stopping after the current response…';
+export const STOPPING_LABEL = 'Stopping once the current work finishes…';
 
 export interface AgentWorkTimingProps {
   active: boolean;
@@ -110,23 +119,9 @@ export function AgentCompactionIndicator(): React.JSX.Element {
 /**
  * What the composer dock says between a Stop request and the run ending.
  *
- * Stop is observed only at the loop's next safe step boundary: the response in
- * flight and every tool it already asked for settle first, and no further
- * provider request begins — `docs/workstream-durable-object.md` owns that
- * contract. A production run measured eleven seconds between the click and the
- * terminal commit. For all of it, the only sign the request had landed was a
- * spinner inside the composer's 28px Stop button and a tooltip nobody hovers,
- * while the row above went on counting "Rally is working for 42s" — so a Stop
- * that was working read as a Stop that was ignored.
- *
- * This is the acknowledgement. It borrows the activity rows' shape because it
- * is the same kind of line, but it is drawn in the dock rather than in the
- * feed: the dock is outside the scroller, and a reader who has scrolled up to
- * read history is exactly who needs to see this. `conversationShowsStoppingRow`
- * has that in full.
- *
- * It names what is being waited on rather than a duration: the only number
- * worth printing is how much longer, and nothing here can know it.
+ * It borrows the activity rows' shape because it is the same kind of line, but
+ * it is drawn in the dock rather than in the feed, and it carries no duration.
+ * `docs/conversation-surfaces.md` owns both reasons.
  */
 export function RunStoppingIndicator(): React.JSX.Element {
   return <ActivityStatusRow label={STOPPING_LABEL} />;
