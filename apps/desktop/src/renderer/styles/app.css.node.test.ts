@@ -629,6 +629,80 @@ describe('sidebar group breaks follow the group-gap token', () => {
   });
 });
 
+/**
+ * The microphone had both faults a state-on-a-shape can have. Its recording red
+ * was set once, on the shared control, and then silently overpainted in the
+ * message capsule by two shape rules carrying two more classes; and its resting
+ * fill named `cmp.row.background-selected`, which `html[data-personal-color]`
+ * rewrites into the member's own accent, so the one control in the composer
+ * wearing a personal colour looked deliberate to anyone whose account had none.
+ *
+ * Neither is visible in a DOM assertion and neither is visible in a screenshot
+ * taken by the seeded local account, so they are guarded here: the shape rules
+ * must keep standing down while recording, and no rule reaching the microphone
+ * may name a token the account accent rewrites.
+ */
+describe('dictation button recording state', () => {
+  // The seven the account accent re-points, plus the selection fill. That fill
+  // is no longer re-pointed — the microphone wearing a member's colour is what
+  // got the re-point removed — but a microphone is not a selection either, so
+  // it stays banned here on the reason that outlives the accent.
+  const NOT_THE_MICROPHONE_S = [
+    '--av-cmp-row-background-selected',
+    '--av-sys-color-accent-base',
+    '--av-sys-color-accent-strong',
+    '--av-sys-color-accent-soft',
+    '--av-sys-color-accent-wash',
+    '--av-sys-color-accent-edge',
+    '--av-sys-color-accent-tint',
+    '--av-sys-color-accent-on',
+  ];
+
+  it('fills with danger and takes the ink that pairs with it', () => {
+    const recording = rule('.microphone-control.is-listening .dictation-button');
+    expect(recording).toContain('background: var(--av-sys-color-danger-base);');
+    expect(recording).toContain('color: var(--av-sys-color-danger-on);');
+  });
+
+  it('lets no rule paint the button while it is recording except that one', () => {
+    // Order matters here, and it is the whole point. `':not(.is-listening)'`
+    // contains `'.is-listening'` as a substring, so skipping every prelude that
+    // merely mentions the state would exempt the over-specified rules this
+    // guard exists to catch — a capsule rule spelled *with* `.is-listening`
+    // rather than around it out-specifies the state rule exactly as the one
+    // that omits it. Only two preludes may paint: the state rule itself, and a
+    // shape rule that has stood down with `:not(…)`.
+    const STATE_RULE = '.microphone-control.is-listening .dictation-button';
+    const offenders: string[] = [];
+
+    for (const [, selector = '', body = ''] of stylesheet.matchAll(/([^{}]+)\{([^{}]*)\}/gu)) {
+      const prelude = selector.replace(/\/\*[\s\S]*?\*\//gu, ' ').trim();
+      if (!prelude.includes('.dictation-button')) continue;
+      if (!/(?:^|;|\s)(?:background|color):/u.test(body)) continue;
+      if (prelude === STATE_RULE) continue;
+      if (prelude.includes(':not(.is-listening)')) continue;
+      offenders.push(prelude);
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('gives the microphone no fill that carries identity or selection', () => {
+    const offenders: string[] = [];
+
+    for (const [, selector = '', body = ''] of stylesheet.matchAll(/([^{}]+)\{([^{}]*)\}/gu)) {
+      const prelude = selector.replace(/\/\*[\s\S]*?\*\//gu, ' ').trim();
+      if (!/\.(?:dictation-button|microphone-control|microphone-menu-trigger)\b/u.test(prelude)) continue;
+
+      for (const token of NOT_THE_MICROPHONE_S) {
+        if (body.includes(token)) offenders.push(`${prelude} { ${token} }`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+});
+
 // These rows were built for the home screen's Needs attention section and are
 // now the project space's, which renders three of the six tracks. The project
 // and source rules below are dead until something fills those tracks again; the

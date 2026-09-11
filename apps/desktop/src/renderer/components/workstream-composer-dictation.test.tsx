@@ -7,10 +7,18 @@ import type { WorkstreamDetail } from '../lib/types';
 
 const dictationHarness = vi.hoisted(() => ({
   emit: undefined as ((transcript: string) => void) | undefined,
+  // What `stop` writes out before it settles, standing in for the tail the real
+  // hook drains: it delivers the final transcript and only then finishes the
+  // attempt, so a caller that submits on `stop` resolving is a render behind it.
+  finalTranscript: undefined as string | undefined,
   setError: undefined as ((error: string | undefined) => void) | undefined,
-  setState: undefined as ((state: 'idle' | 'listening' | 'transcribing' | 'finalizing') => void) | undefined,
+  setState: undefined as ((state: 'idle' | 'listening' | 'transcribing' | 'finalizing' | 'error') => void) | undefined,
   start: vi.fn(),
   stop: vi.fn(),
+  stopError: undefined as string | undefined,
+  // A finalization that never answers, which the real hook holds open for its
+  // 60s completion timeout before failing.
+  stopHangs: false,
 }));
 
 vi.mock('../lib/use-realtime-dictation', async (importOriginal) => {
@@ -22,7 +30,7 @@ vi.mock('../lib/use-realtime-dictation', async (importOriginal) => {
       _api: unknown,
       onTranscript: (transcript: string) => void,
     ) => {
-      const [state, setState] = React.useState<'idle' | 'listening' | 'transcribing' | 'finalizing'>('idle');
+      const [state, setState] = React.useState<'idle' | 'listening' | 'transcribing' | 'finalizing' | 'error'>('idle');
       const [error, setError] = React.useState<string>();
       dictationHarness.emit = onTranscript;
       dictationHarness.setError = setError;
@@ -39,6 +47,22 @@ vi.mock('../lib/use-realtime-dictation', async (importOriginal) => {
         state,
         stop: async () => {
           dictationHarness.stop();
+          if (dictationHarness.stopHangs) {
+            setState('finalizing');
+            return new Promise<void>(() => undefined);
+          }
+          // `finish(attempt, 'error', …)` is where a drain or socket failure
+          // lands. It rejects the finalization promise that `stop` returned and
+          // then moves to `error`, so the returned promise rejects as well as
+          // the state changing — a caller that only watches the state leaves
+          // that rejection unhandled, which Vitest fails the run for.
+          if (dictationHarness.stopError !== undefined) {
+            const failure = new Error(dictationHarness.stopError);
+            setError(dictationHarness.stopError);
+            setState('error');
+            throw failure;
+          }
+          if (dictationHarness.finalTranscript !== undefined) onTranscript(dictationHarness.finalTranscript);
           setState('idle');
         },
       };
@@ -75,8 +99,11 @@ const workstream: WorkstreamDetail = {
 
 beforeEach(() => {
   dictationHarness.emit = undefined;
+  dictationHarness.finalTranscript = undefined;
   dictationHarness.setError = undefined;
   dictationHarness.setState = undefined;
+  dictationHarness.stopError = undefined;
+  dictationHarness.stopHangs = false;
   dictationHarness.start.mockReset();
   dictationHarness.stop.mockReset();
   vi.stubGlobal('ResizeObserver', class {
@@ -126,7 +153,7 @@ describe('WorkstreamComposer live dictation', () => {
 
     expect(input).toHaveValue('Existing draft live words');
     expect(input).toHaveAttribute('readonly');
-    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
 
     const stopButton = screen.getByRole('button', { name: 'Stop dictation' });
     act(() => stopButton.focus());
@@ -202,6 +229,182 @@ describe('WorkstreamComposer live dictation', () => {
     await waitFor(() => expect(dictationHarness.stop).toHaveBeenCalledOnce());
     await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
     expect(dictationHarness.stop.mock.invocationCallOrder[0]).toBeLessThan(onSend.mock.invocationCallOrder[0]!);
+  });
+
+  it('sends the finalized transcript when send is pressed mid-recording', async () => {
+    const onSend = vi.fn(async () => undefined);
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={onSend}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    act(() => dictationHarness.setState?.('listening'));
+    act(() => dictationHarness.emit?.('Draft the'));
+    const send = screen.getByRole('button', { name: 'Send message' });
+    expect(send).toBeEnabled();
+
+    dictationHarness.finalTranscript = 'Draft the launch note';
+    fireEvent.click(send);
+
+    await waitFor(() => expect(dictationHarness.stop).toHaveBeenCalledOnce());
+    // The tail, not the text as it stood when the click landed.
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('Draft the launch note', [], undefined, undefined));
+    expect(onSend).toHaveBeenCalledOnce();
+  });
+
+  it('stops and sends a recording that has not produced a transcript yet', async () => {
+    const onSend = vi.fn(async () => undefined);
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={onSend}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    // Nothing has been typed and no partial has arrived, so the host still
+    // calls the draft empty — but the recording may hold a whole sentence that
+    // only lands on the final commit, and Send has to be able to reach it.
+    act(() => dictationHarness.setState?.('listening'));
+    const send = screen.getByRole('button', { name: 'Send message' });
+    expect(send).toBeEnabled();
+
+    dictationHarness.finalTranscript = 'Everything I said at once';
+    fireEvent.click(send);
+
+    await waitFor(() => expect(dictationHarness.stop).toHaveBeenCalledOnce());
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('Everything I said at once', [], undefined, undefined));
+  });
+
+  it('stops without sending when the recording produced nothing', async () => {
+    const onSend = vi.fn(async () => undefined);
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={onSend}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    act(() => dictationHarness.setState?.('listening'));
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await waitFor(() => expect(dictationHarness.stop).toHaveBeenCalledOnce());
+    // Silence stops the recording and sends nothing; it must not post an empty
+    // message just because Send was allowed to reach the stop.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled());
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('keeps the draft and does not send when stopping to send fails', async () => {
+    const onSend = vi.fn(async () => undefined);
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={onSend}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    act(() => dictationHarness.setState?.('listening'));
+    act(() => dictationHarness.emit?.('Draft the'));
+    dictationHarness.stopError = 'The dictation connection closed before transcription completed.';
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await waitFor(() => expect(screen.getByText('The dictation connection closed before transcription completed.')).toBeVisible());
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByRole('textbox', { name: 'Message the work stream' })).toHaveValue('Draft the');
+  });
+
+  it('lets the microphone cancel a send whose finalization never answers', async () => {
+    const onSend = vi.fn(async () => undefined);
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={onSend}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    act(() => dictationHarness.setState?.('listening'));
+    act(() => dictationHarness.emit?.('Draft the launch note'));
+    dictationHarness.stopHangs = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    // Send is spinning, Enter returns on the pending flag, and the field is
+    // read-only while finalizing — the microphone is the only control left.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled());
+    const microphone = screen.getByRole('button', { name: 'Cancel sending' });
+    fireEvent.pointerDown(microphone, { button: 0 });
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
+    expect(onSend).not.toHaveBeenCalled();
+    // The drain is left to finish on its own; the transcript stays in the draft.
+    expect(screen.getByRole('textbox', { name: 'Message the work stream' })).toHaveValue('Draft the launch note');
+    expect(dictationHarness.stop).toHaveBeenCalledOnce();
   });
 
   it('supports pointer click-to-toggle without double stopping', async () => {

@@ -101,7 +101,7 @@ describe('ComposerInput message capsule', () => {
     }
   });
 
-  it('shows only the action menu and voice chrome around an empty draft', () => {
+  it('keeps send on screen but disabled around an empty draft', () => {
     renderInput({
       api: { getTranscriptionSocketTicket: vi.fn() },
       layout: 'message-capsule',
@@ -114,17 +114,19 @@ describe('ComposerInput message capsule', () => {
     expect(screen.getByRole('button', { name: 'Start voice input' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Mention a participant' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Choose microphone' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument();
+    // Absent is what this used to be, and an empty composer then had nothing on
+    // it that said how to send.
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   });
 
-  it('adds send without taking dictation away when the draft has content', () => {
+  it('enables send without taking dictation away when the draft has content', () => {
     renderInput({
       api: { getTranscriptionSocketTicket: vi.fn() },
       layout: 'message-capsule',
       value: 'Hello there',
     });
 
-    expect(screen.getByRole('button', { name: 'Send' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Start voice input' })).toBeVisible();
   });
 });
