@@ -33,7 +33,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
+import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import type { CreateProjectRequest, ProjectSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
 import {
   formatDateTime,
@@ -386,18 +386,8 @@ function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
   workstreamId: string;
   workspace: Pick<Workspace, 'id' | 'region'>;
 }): React.JSX.Element {
-  const copy = async (): Promise<void> => {
-    const bridge = desktopBridge();
-    const { webBaseUrl } = await bridge.getRuntimeConfig();
-    await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, {
-      region: workspace.region,
-      workspaceId: workspace.id,
-      workstreamId,
-    }));
-    reportTelemetryProductIntent({
-      kind: 'content_copied', contentType: 'workstream_link', resourceType: 'workstream', resourceId: workstreamId,
-    });
-  };
+  const copy = (): Promise<void> => copyWorkstreamLink({ region: workspace.region, workspaceId: workspace.id }, workstreamId);
+
   return (
     <ContextMenu.Item className="menu-item" onSelect={() => void copy().catch(() => undefined)}>
       <Copy aria-hidden="true" size={16} /> Copy work stream link

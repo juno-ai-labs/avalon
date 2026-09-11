@@ -5,6 +5,11 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
+  renameSubstream: vi.fn(),
+  setSubstreamArchived: vi.fn(),
+  renameWorkstream: vi.fn(),
+  archiveWorkstream: vi.fn(),
+  setWorkstreamScope: vi.fn(),
   addParticipant: vi.fn(),
   addSubstreamParticipant: vi.fn(),
   removeSubstreamParticipant: vi.fn(),
@@ -69,6 +74,7 @@ vi.mock('../lib/use-transcript-follow', () => ({
 import { patchCachedWorkstreamAppearance, setCachedWorkstreams } from '../lib/workstreams-cache';
 import { workstreamFeedSourceQueryKey } from '../lib/telemetry';
 import { substreamInitialContextQueryKey } from '../lib/use-workstream-socket';
+import { desktopBridge } from '../lib/platform';
 import { WorkstreamScreen } from './workstream';
 import type { WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 
@@ -165,6 +171,93 @@ describe('socket-first work-stream open', () => {
     }];
     return boot;
   }
+
+  async function mainMenu(action: string): Promise<void> {
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Go to conversation: Recovered work stream' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: action }));
+  }
+
+  it.each(['make_public', 'rename', 'archive'] as const)('reports successful Main %s and never reports failed attempts', async (action) => {
+    const boot = recoveryBoot();
+    const report = vi.spyOn(desktopBridge(), 'reportTelemetryProductIntent').mockResolvedValue(undefined);
+    const mutation = action === 'make_public' ? api.setWorkstreamScope : action === 'rename' ? api.renameWorkstream : api.archiveWorkstream;
+    mutation.mockRejectedValueOnce(null).mockResolvedValue({ ...boot, scope: action === 'make_public' ? 'workspace' : 'personal' });
+    renderScreen(cache => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+    const label = action === 'make_public' ? 'Make public to workspace' : action === 'rename' ? 'Rename' : 'Archive work stream';
+    await mainMenu(label);
+    if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed parent' } });
+    if (action !== 'make_public') fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
+    await screen.findByText(action === 'make_public' ? 'The work stream could not be made public.' : `That work stream could not be ${action === 'rename' ? 'renamed' : 'archived'}.`);
+    expect(report.mock.calls.filter(([event]) => event.kind === 'workstream_action_completed')).toHaveLength(0);
+    if (action === 'make_public') {
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      await mainMenu(label);
+    } else fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
+    await waitFor(() => expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'workstream_action_completed', workstreamId, action, origin: 'ad_hoc', pinned: false,
+    })));
+    expect(mutation.mock.calls.every(([id]) => id === workstreamId)).toBe(true);
+  });
+
+  it.each(['rename', 'archive'] as const)('keeps Main and child %s targets separate while a child is selected', async (action) => {
+    const childId = '00000000-0000-7000-8000-00000000066a';
+    const parent = recoveryBoot();
+    const child = recoveryBoot({ title: 'Private investigation' });
+    api.renameWorkstream.mockResolvedValue(parent);
+    api.archiveWorkstream.mockResolvedValue(parent);
+    api.renameSubstream.mockResolvedValue(undefined);
+    api.setSubstreamArchived.mockResolvedValue(undefined);
+    renderScreen(cache => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [
+        { substreamId: childId, title: child.title, createdByUserId: null, createdAt: child.createdAt, updatedAt: child.updatedAt },
+      ] });
+    }, childId);
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Go to substream: Private investigation' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: action === 'rename' ? 'Rename' : 'Archive substream' }));
+    if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed child' } });
+    fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
+    await waitFor(() => expect(action === 'rename' ? api.renameSubstream : api.setSubstreamArchived)
+      .toHaveBeenCalledWith(workstreamId, childId, action === 'rename' ? 'Renamed child' : true));
+    expect(api.renameWorkstream).not.toHaveBeenCalled();
+    expect(api.archiveWorkstream).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    // Re-enter the child after archiving it: the directory fixture remains so
+    // this isolates the row target from the currently selected conversation.
+    act(() => navigateInTest(`/workstreams/${workstreamId}?substream=${childId}`));
+    await mainMenu(action === 'rename' ? 'Rename' : 'Archive work stream');
+    if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed parent' } });
+    fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
+    await waitFor(() => expect(action === 'rename' ? api.renameWorkstream : api.archiveWorkstream)
+      .toHaveBeenCalledWith(...(action === 'rename' ? [workstreamId, 'Renamed parent'] : [workstreamId])));
+    expect(action === 'rename' ? api.renameSubstream : api.setSubstreamArchived).toHaveBeenCalledOnce();
+  });
+
+  it.each(['navigate', 'rename'] as const)('discards a delayed copy failure after %s', async (next) => {
+    session.current = {
+      user: { id: '00000000-0000-7000-8000-000000000671', name: 'Creator', email: 'creator@example.test' },
+      workspace: { id: '00000000-0000-7000-8000-000000000672', region: 'global', role: 'member' },
+    };
+    let rejectCopy: (error: Error) => void = () => {};
+    const copy = vi.spyOn(desktopBridge(), 'copyText').mockImplementation(() => new Promise<void>((_resolve, reject) => { rejectCopy = reject; }));
+    const boot = recoveryBoot();
+    renderScreen(cache => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+    await mainMenu('Copy work stream link');
+    await waitFor(() => expect(copy).toHaveBeenCalledOnce());
+    if (next === 'navigate') act(() => navigateInTest('/workstreams/00000000-0000-7000-8000-000000000651'));
+    else await mainMenu('Rename');
+    await act(async () => rejectCopy(new Error('Clipboard unavailable')));
+    expect(screen.queryByText('Clipboard unavailable')).not.toBeInTheDocument();
+    if (next === 'rename') expect(screen.getByRole('dialog', { name: 'Rename work stream' })).toBeVisible();
+  });
 
   it('positions a laid-out opening before enabling automatic history requests', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);

@@ -55,6 +55,15 @@ themselves.
 The sidebar row and the message control enter the same creation flow; there is no
 context-strategy picker, no title field and no preview step.
 
+The main row’s right-click menu offers **Make public to workspace**, **Rename**,
+**Copy work stream link**, then a separator and **Archive work stream** in danger
+styling. Publication is disabled for an already-public stream and omitted for
+system-managed streams. Child rows offer **Rename**, **Copy substream link**, then
+a separator and **Archive substream** in danger styling. Actions target the row
+that was clicked, including Main while a child is open; rename and archive reuse
+the screen’s target-addressed dialogs. Links use the canonical workspace address
+and include the child suffix only for child rows.
+
 ### The launch surface
 
 Both entry points replace the conversation's three rows — header, transcript,
@@ -431,6 +440,12 @@ surface has already drawn their turn.
 
 ## Testing
 
+`workstream-open.test.tsx` covers row-addressed parent/child rename and archive,
+success-only parent action telemetry, and delayed copy failures after navigation
+or opening another action. Inverting the parent/child mutation branches must
+fail the target tests; removing telemetry calls and the copy guard fails the
+five completion/error cases.
+
 - `apps/api/test/substream-context.test.ts`: plugin extensibility, policies,
   recipe validation, frozen selection, checkpoint provenance and hashes.
 - Summary and initial-context unit suites: pinned inference routing, inert
@@ -480,6 +495,19 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-11 — Manage conversations from their center-sidebar rows
+
+Added the requested parent and child context menus because navigating a row
+should also provide its rename, share-link and archive actions. The center
+sidebar menu presentation is owned here alongside the row hierarchy; parent
+archive continues to use the landing mechanism owned by
+[work-stream pinning](workstream-pinning.md). Publication is deliberately one-way
+in this menu, matching the requested action set rather than adding Make private.
+One menu component derives its labels from the row target, and one link-copy
+helper serves both sidebars and the header. Future changes must keep the clicked
+row independent of the selected conversation, preserve successful-action
+telemetry, and discard errors from an operation the reader has left.
 
 ### 2026-09-11 — The starting context is not drawn, and one substream has one name
 
