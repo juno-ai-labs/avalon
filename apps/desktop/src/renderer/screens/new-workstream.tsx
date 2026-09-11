@@ -83,10 +83,11 @@ function launchedWorkstreamDetail(
     creator: WorkspaceMember;
     /**
      * The model this create pinned, where it pinned one. Carried onto the seeded
-     * run so the work stream's own model pill opens on the name the composer's
-     * selector was showing a moment ago instead of falling back to **Default**
-     * until the refetch answers. Absent means unpinned, which the flag decides
-     * and this process cannot see.
+     * run *and* onto the detail's own `modelOverride`, so the work stream's
+     * model pill opens on the name the composer's selector was showing a moment
+     * ago instead of falling back to **Default** until the refetch answers, and
+     * describes it as pinned rather than as following the flag. Absent means
+     * unpinned, which the flag decides and this process cannot see.
      */
     model?: AgentModelOverride | null;
     origin: string;
@@ -98,6 +99,13 @@ function launchedWorkstreamDetail(
   return {
     ...created.workstream,
     createdAt: created.createdAt,
+    // The pin itself, beside the run below. The run answers *which* model, and
+    // this answers whether that model is fixed — two different claims the pill
+    // makes from two different fields. `created.workstream` cannot supply it:
+    // it is a summary, and `mapWorkstreamSummary` does not carry the column, so
+    // without this a work stream pinned a moment ago describes itself as
+    // following the flag until the first refetch replaces the seed.
+    modelOverride: context.model ?? null,
     createdBy: { ...context.creator, role: 'creator' },
     participants: [{ ...context.creator, role: 'creator' }, ...context.participants ?? []],
     viewers: [],

@@ -6,10 +6,16 @@ import type { Message, WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import { ConnectingCard } from './connecting-card';
 import { SubstreamLaunchSurface, type SubstreamLaunchProps } from './substream-launch';
 
+// The launch composer offers its model selector only while Application →
+// Developer → Debug enabled is on, so this bridge is what turns it on and off.
+const applicationSettings = vi.hoisted(() => ({
+  current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false },
+}));
+
 vi.mock('../lib/platform', () => ({
   desktopServicesAvailable: () => false,
   desktopBridge: () => ({
-    getApplicationSettings: () => Promise.resolve({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false }),
+    getApplicationSettings: () => Promise.resolve(applicationSettings.current),
     onApplicationSettingsChanged: () => () => undefined,
   }),
 }));
@@ -108,8 +114,18 @@ function renderSurface(overrides: Partial<SubstreamLaunchProps> = {}): {
 const composer = (): HTMLElement =>
   screen.getByRole('textbox', { name: 'What should this substream work on?' });
 
+/** Open the composer's model pill, the way Radix's trigger expects to be opened. */
+async function openModelMenu(): Promise<void> {
+  const trigger = await screen.findByRole('button', { name: /^Model:/u });
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+}
+
 describe('substream launch surface', () => {
-  beforeEach(() => { clearAllDrafts(); vi.clearAllMocks(); });
+  beforeEach(() => {
+    clearAllDrafts();
+    vi.clearAllMocks();
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false };
+  });
   afterEach(cleanup);
 
   it('shows the branch point above the composer and hands enter the words that were typed', async () => {
@@ -230,5 +246,46 @@ describe('substream launch surface', () => {
 
     fireEvent.keyDown(composer(), { key: 'Enter' });
     await waitFor(() => expect(attachments.commitLease).toHaveBeenCalledWith('lease'));
+  });
+
+  it('hides the model selector unless developer mode is on', async () => {
+    renderSurface();
+
+    await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    expect(screen.queryByRole('button', { name: /^Model:/u })).not.toBeInTheDocument();
+  });
+
+  it('pins the substream to the model chosen in developer mode', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    const { onCreate } = renderSurface();
+
+    await openModelMenu();
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Grok 4.6' }));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    fireEvent.change(composer(), { target: { value: 'Compare it with last release' } });
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+      modelOverride: 'x-ai/grok-4.6',
+    })));
+  });
+
+  it('starts unpinned rather than inheriting the pin its parent carries', async () => {
+    // A substream is its own conversation with its own row. Seeding this from
+    // the parent would change what an untouched composer does for every
+    // substream of a pinned work stream, silently, and none of those
+    // conversations asked for it.
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    const { onCreate } = renderSurface({ parent: { ...parent, modelOverride: 'x-ai/grok-4.6' } });
+
+    await openModelMenu();
+    expect(await screen.findByRole('menuitemradio', { name: 'Default' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    fireEvent.change(composer(), { target: { value: 'Compare it with last release' } });
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+      modelOverride: null,
+    })));
   });
 });

@@ -64,6 +64,7 @@ import { mentionedPersonNames, prepareMentionMarkdown, type MentionPerson } from
 import { uuidV7 } from "../lib/uuid-v7";
 import { connectionFromRow } from "../mappers/connection";
 import {
+  agentModelOverride,
   pinnedModelRouting,
   resolveAgentModelRouting,
   resolveNewWorkstreamModelRouting,
@@ -1630,6 +1631,11 @@ export class WorkstreamObjectProductService {
       archivedAt: iso(root.archived_at),
       scope: root.scope,
       systemKind: root.system_kind,
+      // Through the same validator routing reads it with, so a model retired
+      // from `AGENT_MODEL_OVERRIDES` reads here as unpinned exactly as it
+      // resolves on the way into a run. Parsing the stored string directly
+      // would fail the whole response instead.
+      modelOverride: agentModelOverride(root.model_override),
       nextPendingWakeup: wakeup ? {
         dueAt: iso(wakeup.due_at),
         promptPreview: truncateUtf16Safe(wakeup.prompt.replace(/\s+/gu, " ").trim(), 40),

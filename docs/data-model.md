@@ -347,7 +347,7 @@ SQL joins.
   majority — means the flag decides. It exists because model *selection* is a
   fleet-wide rollout and this is the opposite question, asked about one piece of
   work at the moment it is created; see
-  [`feature-flags.md`](feature-flags.md#a-work-streams-own-model). The column
+  [`feature-flags.md`](feature-flags.md#a-conversations-own-model). The column
   carries no `CHECK` enumerating the ids: the selectable set is a product decision
   that moves, so it lives in `AGENT_MODEL_OVERRIDES` and is re-validated on read,
   which lets a model be retired without a migration.

@@ -636,6 +636,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           attachmentIds: opening.attachmentIds,
           confirmedParticipantUserIds: opening.confirmedParticipantUserIds,
         },
+        opening.modelOverride,
       ));
       const current = creationRef.current === attempt;
       if (!current) trace.end({ outcome: 'superseded' });
@@ -656,6 +657,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           creator,
           title: created.title,
           createdAt: created.opening.createdAt,
+          modelOverride: opening.modelOverride,
         });
         queryClient.setQueryData(workstreamDetailQueryKey(id, created.substreamId), detail);
         queryClient.setQueryData(
