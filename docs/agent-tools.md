@@ -64,6 +64,30 @@ plugin prefix: Bind prepends the plugin's short wire name when it renders the
 model-facing name, so a tool called `github_list_issues` inside the GitHub
 plugin reaches the model as `github_github_list_issues`.
 
+`core_get_connector_connection_state` and `core_show_connector_connection` are
+the user-run-only recovery pair. Both accept only a trusted connector catalog
+id and `personal`/`workspace` scope. The read returns `connected`,
+`reconnect_required`, or `not_connected` from the caller-visible WorkspaceDO
+rows; `connected` is the last durable state Rally observed, not a provider
+health check. The presentation tool asks the main desktop feed for a
+person-facing control rather than provider data. That feed resolves the card's
+name, mark, copy, capability grant, displayed connection state, and OAuth
+destination; none of those are model-authored. Check state before claiming a
+connector is unavailable or presenting a card when the answer is not already
+known. The presentation call does not establish a connection and must not be
+described as one. Its validated id and scope are also the completed tool fact's
+participant-safe result, so the card remains reconstructible from durable
+history rather than depending on a transient started event.
+
+The model-facing flow is deliberately literal:
+
+1. Call `core_get_connector_connection_state` with `connectorId` and `scope`.
+2. If it returns `connected`, continue the task and do not show a card.
+3. If it returns `reconnect_required` or `not_connected` and that blocks the
+   task, explain the blocker briefly.
+4. Call `core_show_connector_connection` with the same values, then stop the
+   connector-dependent work for that run. Do not claim the connection worked.
+
 ## Principles
 
 ### 1. Fail loud, never silently ignore an input
@@ -953,6 +977,37 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-09-11 — A blocked connector can become an action, without making OAuth model-authored
+
+**What changed:** Added the user-run-only
+`core_get_connector_connection_state` and `core_show_connector_connection`
+tools. Their calls carry only a closed connector catalog id and a
+personal/workspace scope; the first reads the caller-visible durable state and
+the main feed turns the second receipt into an interactive connection card.
+
+**Why:** A connector refusal previously left the agent able to explain the
+problem but unable to put the recovery action beside that explanation. For
+Slack real-time search specifically, a workspace bot authorization can be
+healthy while the missing personal authorization is still the thing required.
+
+**Alternative rejected:** Letting the model supply display copy, capabilities,
+or an authorization URL. Those are security and product decisions, not prose;
+the desktop's trusted catalog and API own them. Also rejected: linking only to
+Settings, which loses the scope the agent already established and makes the
+person reconstruct the next step.
+
+**Consequences:** New cards, their provider/capability discriminator, valid
+scopes, and stable icon names are added once to shared non-UI catalog data; the
+model-visible id enum and cross-field validation derive from it, and the
+desktop consumes its icon names. Automation/workspace principals receive
+neither recovery tool. A presentation call records that a card was shown, not
+that authorization completed; only the OAuth callback may establish that. Its
+terminal fact retains the validated catalog selection so that record continues
+to render as a card from durable history. Both definitions state the complete
+check-then-show flow and use short parameter descriptions so a medium model
+does not have to infer ordering, state meanings, or whether the card completed
+OAuth.
 
 ### 2026-09-11 — A nullable parameter survives in either spelling
 

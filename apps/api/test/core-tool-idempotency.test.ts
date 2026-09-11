@@ -205,6 +205,93 @@ function context(providerIdempotencyKey?: string) {
 }
 
 describe("Avalon core write-tool idempotency", () => {
+  it("retains the safe connector card identity in the completed transcript fact", () => {
+    expect(__integrationTesting.participantSafeToolCompletion(
+      "core_show_connector_connection",
+      {
+        output: { connectorId: "slack", scope: "personal" },
+        summary: "Presented the slack personal connection card",
+      },
+    )).toEqual({ connectorId: "slack", scope: "personal" });
+    expect(__integrationTesting.participantSafeToolCompletion(
+      "core_current_time",
+      { output: { private: true }, summary: "It is noon" },
+    )).toBe("It is noon");
+  });
+
+  it("offers a trusted connector card only to user runs", async () => {
+    const { env } = fixture();
+    const userTool = __integrationTesting.createAvalonTools(env, workflowInput())
+      .find((candidate) => candidate.definition.name === "show_connector_connection");
+
+    expect(userTool?.definition).toMatchObject({
+      capability: "connector.connection.present",
+      mode: "write",
+      idempotency: "safe",
+    });
+    await expect(userTool!.execute({ connectorId: "slack", scope: "personal" }, context()))
+      .resolves.toEqual({
+        output: { connectorId: "slack", scope: "personal" },
+        summary: "Presented the slack personal connection card",
+      });
+    await expect(userTool!.execute({ connectorId: "granola", scope: "workspace" }, context()))
+      .rejects.toThrow("does not support a workspace connection card");
+
+    const workspaceInput = workflowInput();
+    workspaceInput.executionPrincipal = { type: "workspace", workspaceId: WORKSPACE_ID };
+    expect(__integrationTesting.createAvalonTools(env, workspaceInput)
+      .some((candidate) => candidate.definition.name === "show_connector_connection"))
+      .toBe(false);
+    expect(__integrationTesting.createAvalonTools(env, workspaceInput)
+      .some((candidate) => candidate.definition.name === "get_connector_connection_state"))
+      .toBe(false);
+  });
+
+  it("reads the current authorized connector catalog state", async () => {
+    const { env, objectDatabase } = fixture();
+    const stateTool = __integrationTesting.createAvalonTools(env, workflowInput())
+      .find((candidate) => candidate.definition.name === "get_connector_connection_state");
+
+    expect(stateTool?.definition).toMatchObject({
+      capability: "connector.connection.read",
+      mode: "read",
+      idempotency: "safe",
+    });
+    await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "personal" }, context()))
+      .resolves.toMatchObject({ output: { state: "not_connected" } });
+
+    objectDatabase.prepare(
+      `INSERT INTO connector_connections
+         (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+          granted_scopes_json, status, created_at, updated_at, model_plugin_id)
+       VALUES (?, ?, 'google', 'personal', ?, 'Google Drive + Docs + Sheets',
+          ?, 'healthy', '2026-01-01', '2026-01-01', 'plugin_google')`,
+    ).run(
+      "00000000-0000-4000-8000-000000000010",
+      WORKSPACE_ID,
+      USER_ID,
+      JSON.stringify(["drive.read", "docs.read", "sheets.read"]),
+    );
+
+    await expect(stateTool!.execute({ connectorId: "google-mail-calendar", scope: "personal" }, context()))
+      .resolves.toMatchObject({ output: { state: "not_connected" } });
+    await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "personal" }, context()))
+      .resolves.toEqual({
+        output: {
+          connectorId: "google-drive-workspace",
+          scope: "personal",
+          state: "connected",
+        },
+        summary: "google-drive-workspace personal connection is connected",
+      });
+
+    objectDatabase.prepare(
+      "UPDATE connector_connections SET status = 'needs_reconnect' WHERE model_plugin_id = 'plugin_google'",
+    ).run();
+    await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "personal" }, context()))
+      .resolves.toMatchObject({ output: { state: "reconnect_required" } });
+  });
+
   it("revokes private note access from workspace-principal resource tools", async () => {
     const { objectDatabase, objectStore, env } = fixture();
     const noteService = new NoteService(env, {

@@ -47,6 +47,8 @@ interface MessageFeedProps {
   onAcceptDraft?: (automationId: string) => void;
   acceptingDraftFor?: string | null;
   acceptDraftError?: string | undefined;
+  /** Opts the main work-stream feed into interactive connector tool cards. */
+  connectorConnectionCards?: boolean;
   /**
    * Windowing, for the surface that pages.
    *
@@ -171,6 +173,7 @@ export function MessageFeed({
   onAcceptDraft,
   acceptingDraftFor,
   acceptDraftError,
+  connectorConnectionCards = false,
   virtualizer,
 }: MessageFeedProps): React.JSX.Element {
   const feed = useRef<HTMLDivElement>(null);
@@ -239,6 +242,7 @@ export function MessageFeed({
           {...(onAcceptDraft ? { onAcceptDraft } : {})}
           acceptingDraftFor={acceptingDraftFor ?? null}
           acceptDraftError={acceptDraftError}
+          connectorConnectionCards={connectorConnectionCards}
         />
       )}
     </div>

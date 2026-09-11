@@ -37,6 +37,35 @@ returns the legacy shape to a newer desktop. The pending attempt itself lives in
 the application session rather than a Settings component, so changing workspace
 or remounting Settings does not orphan reconciliation.
 
+The main feed may start that same flow from a validated agent tool card. The
+tool stores only a connector catalog id and requested scope; the desktop maps
+that id to the provider, capability bundle, presentation, and regional OAuth
+route already used by Connections. Reconnect uses the existing connection row.
+The model never supplies the authorization URL or requested capability list,
+and the card's presence is not evidence that OAuth completed. A paired read
+tool resolves the same catalog id and scope against caller-visible WorkspaceDO
+rows, returning durable `connected`, `reconnect_required`, or `not_connected`
+state without pretending to have made a fresh provider call.
+
+Once the presentation tool completes, its validated catalog id and scope are
+retained as the terminal transcript fact's participant-safe result. The main
+feed can therefore reconstruct the card from durable history after reload,
+pagination, recovery, or virtualization; it does not depend on the transient
+started event remaining in memory. Rows written before that structured result
+was retained are recovered only from the exact summary sentence the core tool
+itself generated. Arbitrary assistant prose cannot create a card.
+Adjacent repeated presentations of the same connector and scope collapse to the
+newest durable row, while an intervening conversation row keeps a later request
+as a separate occasion.
+
+While the card has not observed `connected`, it follows the active connections
+query in the conversation surface. OAuth completion publishes the workspace
+socket's `connector_connections` topic, which invalidates that query and makes
+the card become **Connected** without polling or relying on application focus. The
+card latches that success: a historical card does not turn back into a recovery
+action if the provider later revokes the grant; a new agent state read owns that
+later decision.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -985,6 +1014,33 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-11 — Agent-presented connection cards reuse the one OAuth authority
+
+**What changed:** A main-feed card can initiate or reconnect a trusted native
+OAuth connector, including a personal Slack connection, while registering its
+pending attempt in the application session. A paired agent tool reads durable
+connection state, and the card follows workspace-socket connection changes
+until it observes and latches **Connected**.
+
+**Why:** Connector failures could identify a missing authorization but offered
+no in-context recovery. Reusing the existing start, reconnect, callback, and
+query-invalidation path keeps the card a new presentation of one authority,
+not a second connection mechanism.
+
+**Alternative rejected:** Storing an OAuth URL or capability list in the
+agent-authored transcript. Either could become stale or hostile, and both
+duplicate decisions already owned by the connector catalog and regional API.
+
+**Consequences:** Shared non-UI catalog data owns card ids, provider/capability
+discriminators, supported scopes, and stable icon names; the model-visible enum
+and validation derive from it, while the desktop consumes its icon names and
+remains responsible for translating those trusted entries into provider
+requests. OAuth completion, denial, and failure continue through the existing
+deep-link receipt and refresh every surface from the shared connection query.
+The terminal transcript fact retains the safe card identity, with an exact
+legacy-summary fallback for earlier rows, so the presentation stays visible;
+adjacent repeats collapse instead of double-stacking.
 
 ### 2026-09-11 — The collapsed null-branch backlog is retired by Bind 14
 
