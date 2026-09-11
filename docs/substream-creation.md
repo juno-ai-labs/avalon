@@ -55,6 +55,15 @@ themselves.
 The sidebar row and the message control enter the same creation flow; there is no
 context-strategy picker, no title field and no preview step.
 
+The main row’s right-click menu offers **Make public to workspace**, **Rename**,
+**Copy work stream link**, then a separator and **Archive work stream** in danger
+styling. Publication is disabled for an already-public stream and omitted for
+system-managed streams. Child rows offer **Rename**, **Copy substream link**, then
+a separator and **Archive substream** in danger styling. Actions target the row
+that was clicked, including Main while a child is open; rename and archive reuse
+the screen’s target-addressed dialogs. Links use the canonical workspace address
+and include the child suffix only for child rows.
+
 ### The launch surface
 
 Both entry points replace the conversation's three rows — header, transcript,
