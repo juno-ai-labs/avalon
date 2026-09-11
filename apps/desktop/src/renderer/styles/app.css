@@ -4098,7 +4098,16 @@ pre {
    document keeps its padding and flows from the top. */
 .resource-lightbox .rail-scroll:has(> .site-detail) { display: flex; flex-direction: column; padding: 0; }
 .resource-lightbox .rail-scroll > .site-detail { flex: 1 1 auto; }
-.resource-lightbox .site-detail-pane { min-height: 280px; }
+/* The page follows the dialog's own curve where it reaches it, and nowhere
+   else: square against the header, round against the outside edge. The
+   composited view carries the same corner from `PREVIEW_CORNER_RADIUS`, on all
+   four corners rather than these two, because Electron takes one radius for
+   the whole view. These three numbers are pinned together by a test. */
+.resource-lightbox .site-detail-pane {
+  min-height: 280px;
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+}
 /* Menus and confirmation dialogs opened by the resource lightbox sit above it. */
 body:has(.resource-lightbox) .dialog-overlay { z-index: 1002; }
 body:has(.resource-lightbox) .dialog-content { z-index: 1003; }

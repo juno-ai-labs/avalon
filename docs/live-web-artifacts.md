@@ -481,6 +481,37 @@ rather than workspace authority.
 
 ## Changelog
 
+### 2026-09-11 — The page rounds where it meets the dialog's outside edge
+
+**What changed:** `setBorderRadius` is back on the view handle and
+`PREVIEW_CORNER_RADIUS` is 16px again, and the renderer's pane rounds its
+*bottom* pair to the same number under `.resource-lightbox`.
+
+**Why:** The entry below left the page square on the reasoning that a square
+view covers the dialog's corner curve rather than spilling past it. It does, and
+that is the problem: what a person sees at the bottom of the lightbox is a
+square page corner sitting inside a frame that is round, with the dialog's own
+curve and shadow visible around it as a notch. The page reaches that edge, so
+the page has to follow it.
+
+Only the bottom pair should round: the top edge meets the header, not the
+outside. CSS can say exactly that and does. Electron's `setBorderRadius` takes
+one radius for all four corners, so the composited view rounds its top corners
+too, and a 16px wedge of the lightbox's surface shows where the page meets the
+header. That is the closest the platform allows, and it is a seam under a
+divider rather than a corner hanging off the surface.
+
+**Considered and rejected:** A smaller radius to shrink the top wedge, which
+would stop the bottom corners matching the dialog and leave a sliver of frame
+showing under the page. Extending the view's rectangle upward so its top corners
+hide behind the header: the view composites *above* the DOM, so it would cover
+the header rather than tuck under it.
+
+**Consequences:** Three numbers in three files that cannot import one another
+(the dialog's radius, the pane's bottom pair, the main process's constant) must
+stay equal; `app.css.node.test.ts` fails if any one moves. If Electron ever
+takes per-corner radii, the top pair is the one to set to zero.
+
 ### 2026-09-10 — The chrome keeps its corner; the page inside it does not
 
 **What changed:** Nothing rounds the composited view any more.
