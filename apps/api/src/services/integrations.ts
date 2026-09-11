@@ -93,6 +93,7 @@ import {
 import { newId, nowIso } from "@rally/db";
 import {
   connectorCapabilitySupportsScope,
+  CUSTOM_MCP_DISPLAY_NAME,
   ConnectorError,
   GoogleFileWriteAuthorizationGuidance,
   pollCheckpointedActivityStreams,
@@ -6341,8 +6342,8 @@ function catalogAliases(
 }
 
 function customMcpActivityName(name: unknown): string {
-  return (typeof name === "string" ? name.replace(/[\p{Cc}\p{Cf}]+/gu, " ").trim() : "")
-    || "Custom MCP server";
+  return (typeof name === "string" ? name.replace(/[\p{Cc}\p{Bidi_Control}\s]+/gu, " ").trim() : "")
+    || CUSTOM_MCP_DISPLAY_NAME;
 }
 
 /** Participant-only metadata; never passed to Bind's prompt catalog. */
@@ -8650,6 +8651,7 @@ export const __integrationTesting = {
   connectorSearchAliases,
   connectorPluginPresentation,
   customMcpActivityName,
+  toolInvocationOwningPlugin,
   transcriptPluginPresentation,
   installInlineChildAgentTool,
   installDynamicPluginTools,

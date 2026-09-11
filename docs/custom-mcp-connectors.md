@@ -136,7 +136,8 @@ can see what is being held back rather than watching it disappear.
   cannot have Rally re-send a bearer token or a configured header to another
   host by answering with a `Location`.
 - **The configured name identifies participant activity only.** Live runs use
-  the saved name after removing control and formatting characters, falling back
+  the saved name after removing controls, bidi formatting, and line breaks while preserving
+  Unicode joiners, falling back
   to `Custom MCP server` when empty. `HarnessPlugin.activityDisplayName` is
   separate from the static model-facing `displayName`, descriptions, aliases,
   and system messages. Automation catalogs also retain the static model name.
@@ -244,6 +245,19 @@ the endpoint and the header are one decision and are captured together.
   and deleting the old one.
 
 ## Changelog
+
+### 2026-09-11 — Name the server in participant activity
+
+Activity for a configured server now says “Using Engineering MCP” when that is
+its saved name. The request exposed a gap: the connection had a name but every
+run used the generic connector title. Reusing the model-facing name was rejected
+because that field enters trusted prompt headings, and inferring the icon from
+the saved name would let a server named Slack join Slack's branded activity.
+Participant labels therefore use a separate field, shared Unicode normalization
+on live and canonical paths, and explicit connector identity. Model catalogs
+remain static; any future named discovery must frame those labels as untrusted
+data. The fallback comes from the adapter's manifest name.
+
 
 ### 2026-09-03 — Rally connects MCP servers it does not ship
 
