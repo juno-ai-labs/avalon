@@ -281,16 +281,16 @@ initial load, reconnect, and while an agent response streams.
 
 A GFM
 footnote whose definition is one paragraph carrying exactly one link becomes an
-inline numbered pill with a hover popover, and its entry is dropped from the
+inline asterisk pill with a hover popover, and its entry is dropped from the
 trailing list; a definition that does not fit that grammar keeps classic
 footnote rendering, and the section renders only what was left. In the common
 all-citations case nothing renders at the bottom at all, which is the vertical
 space the feature exists to reclaim.
 
 **While a turn streams, a reference whose definition has not arrived wears the
-pill's own box with the number not yet in it** — `.citation-pill-pending`, the
+pill's own box with the marker not yet in it** — `.citation-pill-pending`, the
 same tint, border, padding and raise as the pill, holding a shimmering block
-where the digit goes. What is under [Streaming](#streaming) is why it exists:
+whose width follows the asterisk glyph in the active font. What is under [Streaming](#streaming) is why it exists:
 until the definition lands, remark-gfm reads `[^avalon]` as ordinary text, and
 raw markup in the middle of a paragraph is the one thing a reader of a grounded
 answer should never see. The skeleton is `aria-hidden`, because it names
@@ -323,8 +323,8 @@ been removed" — of something that exists and that the reader may be entitled t
 see. Label text says less and says nothing false. The wider lookup returns with
 the rail's fetch-by-id detail, and the two have to land together.
 
-A citation rendered into a **still** — the saved card — keeps its pills *and*
-its trailing source list. Lifting a definition trades the list for a popover,
+A citation rendered into a **still** — the saved card — keeps numbered pills
+instead of asterisks, so they identify entries in its trailing source list. Lifting a definition trades the list for a popover,
 which is the right trade on a surface that can be hovered and the wrong one in a
 picture: the export stylesheet hides the popover, so a lifted card showed bare
 numbers over nothing and the sources were gone from the file somebody kept.
