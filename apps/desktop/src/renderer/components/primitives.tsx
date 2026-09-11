@@ -70,6 +70,7 @@ export function Tip({
   align,
   children,
   className,
+  collisionPadding,
   delayDuration = 450,
   disableHoverableContent,
   label,
@@ -82,6 +83,11 @@ export function Tip({
   children: React.ReactNode;
   /** A modifier beside `.tooltip`, for a shape the base rule does not cover. */
   className?: string;
+  /**
+   * How close to the viewport edge the popper may sit. Radix allows zero, which
+   * reads as clipped for a tip explaining something at the edge of a pane.
+   */
+  collisionPadding?: number;
   delayDuration?: number;
   /**
    * Whether the pointer may travel into the tooltip and keep it open. Off for a
@@ -109,7 +115,13 @@ export function Tip({
     >
       <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
       <Tooltip.Portal>
-        <Tooltip.Content align={align} className={clsx('tooltip', className)} side={side} sideOffset={sideOffset}>
+        <Tooltip.Content
+          align={align}
+          className={clsx('tooltip', className)}
+          collisionPadding={collisionPadding}
+          side={side}
+          sideOffset={sideOffset}
+        >
           {label}
           <Tooltip.Arrow className="tooltip-arrow" />
         </Tooltip.Content>
@@ -129,7 +141,7 @@ interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   tooltipSide?: 'top' | 'right' | 'bottom' | 'left';
   /**
    * Set false when the icon's meaning is already obvious from its position (e.g. a
-   * dialog's close X) — skips mounting the Tooltip.Root/Portal/Content subtree entirely.
+   * dialog's close X) — skips mounting the `Tip` subtree entirely.
    */
   showTooltip?: boolean;
 }
