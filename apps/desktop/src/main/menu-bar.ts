@@ -1,4 +1,5 @@
 import type { MenuItemConstructorOptions } from 'electron';
+import { nextRecencyBoundary } from '../common/recency-groups';
 import { defaultStoredApplicationSettings, type StoredApplicationSettings } from './application-settings';
 import { menuBarMenuTemplate, type MenuBarActions, type MenuBarContent } from './menu-bar-menu';
 
@@ -21,6 +22,8 @@ export interface MenuBarControllerDependencies {
   readonly writeSettings: (settings: Partial<StoredApplicationSettings>) => Promise<void>;
   readonly onChange: (enabled: boolean) => void;
   readonly logWarning: (message: string, error: unknown) => void;
+  /** Injected so the recency boundary can be driven in tests. */
+  readonly now?: () => number;
 }
 
 /**
@@ -35,6 +38,11 @@ export class MenuBarController {
   private tray: MenuBarTray | null = null;
   private enabledState = defaultStoredApplicationSettings.menuBarEnabled;
   private queue: Promise<unknown> = Promise.resolve();
+  /**
+   * When the headings in the menu as currently built stop being true, even if
+   * nothing about its content changes. See {@link refreshIfHeadingsExpired}.
+   */
+  private headingsValidUntil = Number.NEGATIVE_INFINITY;
 
   constructor(private readonly dependencies: MenuBarControllerDependencies) {}
 
@@ -82,17 +90,53 @@ export class MenuBarController {
    * item is off; it does nothing. */
   refresh(): void {
     if (!this.tray) return;
+    const content = this.dependencies.content();
+    const now = new Date((this.dependencies.now ?? Date.now)());
     try {
       this.tray.setContextMenu(menuBarMenuTemplate({
         appName: this.dependencies.appName,
-        content: this.dependencies.content(),
+        content,
         signedIn: this.dependencies.signedIn(),
         sectionHeaders: this.dependencies.sectionHeaders,
+        now,
         actions: this.dependencies.actions,
       }));
+      // Only once the menu it describes is actually installed. Recording the
+      // boundary for a build that threw would suppress every retry until it
+      // passed.
+      this.headingsValidUntil = nextRecencyBoundary(content.recents, now);
     } catch (error) {
       this.dependencies.logWarning('could not rebuild the menu bar item', error);
     }
+  }
+
+  /**
+   * Rebuilds only if a heading in the current menu has stopped being true.
+   *
+   * The recency headings are a function of the content *and of the time*, and
+   * only the first of those produces a change anybody reports: a work stream
+   * that was under **Today** at 23:59 belongs under **Yesterday** a minute
+   * later without one byte of its data moving. `refresh()` alone cannot cover
+   * that, because it is called when content changes — and content stops
+   * changing exactly when this matters most, since a refresh that fails
+   * publishes nothing. Offline overnight, the menu would otherwise keep saying
+   * **Today** indefinitely.
+   *
+   * Called as the pointer reaches the status item, which is a menu's worth of
+   * time before anyone reads it, rather than from a timer: waking the process
+   * to redraw a menu nobody is looking at buys nothing, and the heading only
+   * has to be true when it is read. Guarded by `nextRecencyBoundary` so a
+   * pointer crossing the item is not a rebuild — the overwhelmingly common case
+   * is that no boundary has passed and this returns immediately.
+   *
+   * A boundary that passes while the menu is *open* is deliberately not
+   * covered: macOS owns an open menu, and nothing can redraw it underneath the
+   * reader.
+   */
+  refreshIfHeadingsExpired(): void {
+    if (!this.tray) return;
+    if ((this.dependencies.now ?? Date.now)() < this.headingsValidUntil) return;
+    this.refresh();
   }
 
   destroy(): void {
