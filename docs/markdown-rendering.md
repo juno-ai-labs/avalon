@@ -739,14 +739,6 @@ The traps, both of which have bitten:
 
 ## Changelog
 
-### 2026-09-10 — Neutral asterisk citation markers
-
-Citation pills now show an asterisk and use the primary text token for their
-text, tint, border, hover, and pending shimmer. This removes the green emphasis
-requested by design while following light and dark appearances. Source numbers
-remain in accessible labels and in saved cards, where they identify entries in
-the printed source list; saved pills use a neutral palette too.
-
 ### 2026-09-10 — A published site gets its own mark
 
 **What changed:** `ResourceIcon` draws a Tabler `rosette-asterisk` for
