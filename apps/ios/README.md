@@ -1,10 +1,10 @@
 # Rally iOS
 
 Native SwiftUI client for Rally. It is not Expo, React Native, or Flutter.
-The product surface is a Grok Bot–style transcript: true-black canvas, a
-centered workspace pill, history behind the leading hamburger, and a persistent
-composer. Auth and the regional API are the same contracts the desktop client
-uses (`rallywithai://auth/complete` plus `/auth/desktop/exchange`).
+The product surface is a Grok Bot–style transcript plus the same directory the
+Mac sidebar holds: Chats, Projects, Notes, and Sidekicks. Auth and the regional
+API are the same contracts the desktop client uses (`rallywithai://auth/complete`
+plus `/auth/desktop/exchange`). The App Store icon is the Electron Dark mark.
 
 The owning document is [`docs/ios-client.md`](../../docs/ios-client.md).
 

@@ -15,6 +15,7 @@ struct ComposerBar: View {
     @Environment(\.rallyColors) private var colors
     @FocusState private var focused: Bool
     @State private var photoItem: PhotosPickerItem?
+    @State private var pickingFile = false
 
     private var sendEnabled: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty
@@ -55,6 +56,9 @@ struct ComposerBar: View {
                         .frame(width: 32, height: 32)
                 }
                 .accessibilityLabel("Attach a photo")
+                .contextMenu {
+                    Button("Choose file") { pickingFile = true }
+                }
                 TextField("Ask Rally anything", text: $text, axis: .vertical)
                     .font(RallyType.prompt())
                     .foregroundStyle(colors.textPrimary)
@@ -92,6 +96,13 @@ struct ComposerBar: View {
                 }
                 photoItem = nil
             }
+        }
+        .fileImporter(isPresented: $pickingFile, allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
+            guard case .success(let urls) = result, let url = urls.first else { return }
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url) else { return }
+            onAttach(data, url.lastPathComponent, "application/octet-stream")
         }
     }
 }

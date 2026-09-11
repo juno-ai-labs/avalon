@@ -33,7 +33,58 @@ struct SettingsScreen: View {
                     if let workspace = model.workspaceSession?.workspace {
                         LabeledContent("Workspace", value: workspace.name)
                         LabeledContent("Region", value: workspace.region.displayName)
+                        LabeledContent("Default timezone", value: workspace.timezone)
                     }
+                }
+
+                Section("Digest") {
+                    if let digest = model.digest {
+                        Toggle("Send me a digest", isOn: Binding(
+                            get: { digest.enabled },
+                            set: { enabled in
+                                var next = digest
+                                next.enabled = enabled
+                                if enabled && next.days.isEmpty { next.days = [1, 2, 3, 4, 5] }
+                                if enabled && next.times.isEmpty { next.times = [9 * 60] }
+                                Task { await model.saveDigest(next) }
+                            }
+                        ))
+                        LabeledContent("Days", value: digest.days.map(String.init).joined(separator: ", "))
+                        LabeledContent("Times", value: digest.times.map { "\($0 / 60):\($0 % 60)" }.joined(separator: ", "))
+                        Text("Email is the destination this phone can save. Other delivery connectors stay on the Mac.")
+                            .font(RallyType.caption())
+                            .foregroundStyle(colors.textSecondary)
+                    } else {
+                        Text("Digest schedule loads with the workspace.")
+                            .font(RallyType.caption())
+                            .foregroundStyle(colors.textSecondary)
+                    }
+                }
+
+                Section("Workspace members") {
+                    ForEach(model.members) { member in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(member.name)
+                            HStack {
+                                if let email = member.email { Text(email) }
+                                if let role = member.role { Text(role) }
+                            }
+                            .font(RallyType.caption())
+                            .foregroundStyle(colors.textSecondary)
+                        }
+                    }
+                }
+
+                Section("Connections") {
+                    Text("Connector OAuth, GitHub repository access, custom MCP, inbound webhooks, and Terminal network policy stay on the Mac. This phone uses whatever the workspace already connected.")
+                        .font(RallyType.caption())
+                        .foregroundStyle(colors.textSecondary)
+                }
+
+                Section("This Mac only") {
+                    Text("Menu bar, Dock icon picker, Open Rally at login, and Lockdown mode are desktop application settings. They have no iPhone equivalent.")
+                        .font(RallyType.caption())
+                        .foregroundStyle(colors.textSecondary)
                 }
 
                 Section("Privacy") {

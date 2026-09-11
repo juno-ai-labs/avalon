@@ -21,7 +21,7 @@ struct RootView: View {
             case .pickingWorkspace:
                 WorkspacePickerView()
             case .ready:
-                ConversationScreen()
+                MainShell()
             }
         }
         .animation(.easeInOut(duration: 0.25), value: model.phase)

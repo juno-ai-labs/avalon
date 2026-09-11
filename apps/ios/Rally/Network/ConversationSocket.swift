@@ -10,6 +10,7 @@ actor ConversationSocket {
     enum Incoming: Sendable {
         case snapshot(ConversationBoot)
         case turnUpserted(TranscriptTurn)
+        case olderTurns([TranscriptTurn])
         case commandSucceeded(clientMessageId: String, turnId: String?)
         case commandFailed(message: String)
         case closed(code: URLSessionWebSocketTask.CloseCode)
@@ -65,8 +66,38 @@ actor ConversationSocket {
         try? await task?.send(.string(string))
     }
 
-    func stop(operationId: String) async {
-        let payload: [String: Any] = ["type": "stop_harness", "operationId": operationId]
+    func retry(operationId: String) async {
+        let payload: [String: Any] = ["type": "retry_harness", "operationId": operationId]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let string = String(data: data, encoding: .utf8) else { return }
+        try? await task?.send(.string(string))
+    }
+
+    func answerElicitation(id: String, answer: String?, skipped: Bool, operationId: String) async throws {
+        var inner: [String: Any] = [:]
+        if skipped {
+            inner["skipped"] = true
+        } else if let answer {
+            inner["answer"] = answer
+            inner["skipped"] = false
+        }
+        let payload: [String: Any] = [
+            "type": "answer_elicitation",
+            "operationId": operationId,
+            "elicitationId": id,
+            "payload": inner,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        guard let string = String(data: data, encoding: .utf8) else { return }
+        try await task?.send(.string(string))
+    }
+
+    func loadOlder(requestId: String, beforeSequence: Int) async {
+        let payload: [String: Any] = [
+            "type": "load_transcript_range",
+            "requestId": requestId,
+            "request": ["beforeSequence": beforeSequence] as [String: Any],
+        ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let string = String(data: data, encoding: .utf8) else { return }
         try? await task?.send(.string(string))
@@ -131,6 +162,13 @@ actor ConversationSocket {
         case "client_command_failed":
             let message = (object["error"] as? [String: Any])?["message"] as? String ?? "That message could not be sent."
             continuation?.yield(.commandFailed(message: message))
+        case "transcript_range":
+            let turnsObject = (object["result"] as? [String: Any])?["turns"]
+            if let turnsObject,
+               let turnsData = try? JSONSerialization.data(withJSONObject: turnsObject),
+               let turns = try? JSONCoding.decoder.decode([TranscriptTurn].self, from: turnsData) {
+                continuation?.yield(.olderTurns(turns))
+            }
         default:
             break
         }
