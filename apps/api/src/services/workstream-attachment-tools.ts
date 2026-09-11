@@ -128,7 +128,7 @@ export function createWorkstreamAttachmentTools(
         capability: `${capabilityPrefix}.list`,
         mode: "read",
         idempotency: "safe",
-        inputSchema: z.toJSONSchema(AttachmentListResourcesArgumentsSchema) as Record<string, unknown>,
+        inputSchema: z.toJSONSchema(AttachmentListResourcesArgumentsSchema, { io: "input" }) as Record<string, unknown>,
       },
       // The exclusivity between a cursor and the first page's filters is a
       // refinement, and `z.toJSONSchema` cannot carry one, so the declared
@@ -243,7 +243,7 @@ export function createWorkstreamAttachmentTools(
         capability: `${capabilityPrefix}.read`,
         mode: "read",
         idempotency: "safe",
-        inputSchema: z.toJSONSchema(AttachmentReadResourceArgumentsSchema) as Record<string, unknown>,
+        inputSchema: z.toJSONSchema(AttachmentReadResourceArgumentsSchema, { io: "input" }) as Record<string, unknown>,
       },
       // Same reason as `list_resources` above: exactly one of `resourceId` or
       // `cursor` is a refinement the wire schema cannot state, so the model has
@@ -353,7 +353,7 @@ export function createWorkstreamAttachmentTools(
         capability: `${capabilityPrefix}.search`,
         mode: "read",
         idempotency: "safe",
-        inputSchema: z.toJSONSchema(AttachmentSearchResourceArgumentsSchema) as Record<string, unknown>,
+        inputSchema: z.toJSONSchema(AttachmentSearchResourceArgumentsSchema, { io: "input" }) as Record<string, unknown>,
       },
       execute: async (raw, context) => {
         const args = AttachmentSearchResourceArgumentsSchema.parse(raw);
@@ -428,7 +428,7 @@ export function createWorkstreamAttachmentTools(
         capability: `${capabilityPrefix}.view`,
         mode: "read",
         idempotency: "safe",
-        inputSchema: z.toJSONSchema(AttachmentViewResourceArgumentsSchema) as Record<string, unknown>,
+        inputSchema: z.toJSONSchema(AttachmentViewResourceArgumentsSchema, { io: "input" }) as Record<string, unknown>,
       },
       execute: async (raw) => {
         const args = AttachmentViewResourceArgumentsSchema.parse(raw);
@@ -538,7 +538,7 @@ export function createWorkstreamAttachmentTools(
         capability: `${capabilityPrefix}.summarize`,
         mode: "read",
         idempotency: "safe",
-        inputSchema: z.toJSONSchema(AttachmentSummarizeResourceArgumentsSchema) as Record<string, unknown>,
+        inputSchema: z.toJSONSchema(AttachmentSummarizeResourceArgumentsSchema, { io: "input" }) as Record<string, unknown>,
       },
       execute: async (raw, context) => {
         const args = AttachmentSummarizeResourceArgumentsSchema.parse(raw);

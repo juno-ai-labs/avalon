@@ -407,7 +407,7 @@ describe("GitHub connector", () => {
     const content = await adapter.executeTool("contents.get", { owner: "acme", repo: "widget", path: "README.md" }, context);
     expect(content.output).toMatchObject({ content: "x".repeat(40_000), truncated: true, totalChars: 45_000 });
     const files = await adapter.executeTool("pull_requests.list_files", { owner: "acme", repo: "widget", pullNumber: 5 }, context);
-    expect((files.output as Array<{ patch: string }>)[0]?.patch).toHaveLength(12_000);
+    expect((files.output as { files: { patch: string }[] }).files[0]?.patch).toHaveLength(12_000);
 
     await expect(adapter.executeTool("issues.get", { owner: "acme", repo: "widget", issueNumber: 1 }, context))
       .rejects.toMatchObject({ code: "unsupported_capability" });
@@ -1143,6 +1143,172 @@ describe("GitHub connector", () => {
     await adapter.revoke!(connection, neverAborts());
     expect(calls.at(-1)).toMatchObject({ path: "/applications/github-client/token", method: "DELETE" });
     expect(calls.at(-1)?.authorization?.startsWith("Basic ")).toBe(true);
+  });
+
+  it("lists pull requests without inventing a filter, and pages without dropping one", async () => {
+    // The failure this covers reached production as a correct-looking answer: a
+    // repository with twenty-five open pull requests reported as having none,
+    // because the call carried a `head` GitHub matched nothing against and
+    // answered with HTTP 200 and `[]`. Three things are asserted, because each
+    // one alone still loses part of the answer — the filters are sent only when
+    // the caller asked for them, the page says which ones were applied so an
+    // empty one can be read for what it is, and paging returns every item.
+    const pullRequests = Array.from({ length: 31 }, (_, index) => ({
+      number: index + 1,
+      title: `PR ${index + 1}`,
+      state: "open",
+      head: { ref: `feature-${index + 1}` },
+      base: { ref: "main" },
+    }));
+    const seen: URL[] = [];
+    // Paginated the way GitHub paginates: `page` is indexed in units of the
+    // `per_page` actually sent. A stub that ignores those is what let an
+    // off-by-one in the request slip through the first version of this test.
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      seen.push(url);
+      if (url.pathname !== "/repos/acme/widget/pulls") return jsonResponse({ message: "Not Found" }, 404);
+      if (url.searchParams.get("head")) return jsonResponse([]);
+      const perPage = Number(url.searchParams.get("per_page") ?? 30);
+      const page = Number(url.searchParams.get("page") ?? 1);
+      return jsonResponse(pullRequests.slice((page - 1) * perPage, page * perPage));
+    };
+    const adapter = githubAdapter(fetcher);
+    const context = {
+      connection: personalConnection([GitHubCapabilities.pullRequestsRead]),
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    };
+
+    const listed = await adapter.executeTool("pull_requests.list", { owner: "acme", repo: "widget" }, context);
+
+    // The defaults the executor supplies are its own business: a caller that
+    // named no filter must produce a request that carries none, or the tool
+    // cannot be used to answer "what is open on this repository".
+    expect(seen[0]?.searchParams.get("head")).toBeNull();
+    expect(seen[0]?.searchParams.get("base")).toBeNull();
+    // The page asked for is the page shown. Asking for more than `perPage` to
+    // peek at `hasMore` moves GitHub's own page boundaries, because `page`
+    // counts in units of the `per_page` sent, and the peeked-at item is then
+    // skipped rather than returned by the next page.
+    expect(seen[0]?.searchParams.get("per_page")).toBe("30");
+    expect(listed.output).toMatchObject({
+      count: 30,
+      page: 1,
+      perPage: 30,
+      hasMore: true,
+      appliedFilters: { state: "open" },
+    });
+    expect(listed.summary).toBe("Listed 30 pull requests in acme/widget");
+
+    const second = await adapter.executeTool("pull_requests.list", { owner: "acme", repo: "widget", page: 2 }, context);
+
+    // The item on the boundary. A caller following `hasMore` has to receive it.
+    expect((second.output as { pullRequests: { number: number }[] }).pullRequests.map((pull) => pull.number))
+      .toEqual([31]);
+    expect(second.output).toMatchObject({ count: 1, page: 2, hasMore: false });
+
+    const filtered = await adapter.executeTool(
+      "pull_requests.list",
+      { owner: "acme", repo: "widget", head: "acme:feature-1" },
+      context,
+    );
+
+    expect(seen[2]?.searchParams.get("head")).toBe("acme:feature-1");
+    // The whole point of the envelope: an empty page that names the filter that
+    // emptied it cannot be read as "this repository has no pull requests".
+    expect(filtered.output).toMatchObject({
+      pullRequests: [],
+      count: 0,
+      hasMore: false,
+      appliedFilters: { state: "open", head: "acme:feature-1" },
+    });
+  });
+
+  it("pages issues by what GitHub served rather than by what survives the pull-request filter", async () => {
+    // `issues.list` drops the pull requests GitHub's issues endpoint returns, so
+    // the page it shows is shorter than the page it was served. Paging on the
+    // shown length ends the list early on exactly the repository where it costs
+    // most: one whose issue numbers are mostly pull requests.
+    // Exactly one full page of thirty, of which twenty-four are pull requests:
+    // GitHub has more to serve, and the six that survive the filter must not be
+    // mistaken for the end of the list.
+    const served = [
+      ...Array.from({ length: 24 }, (_, index) => ({ number: index + 1, title: `PR ${index + 1}`, pull_request: { url: "u" } })),
+      ...Array.from({ length: 6 }, (_, index) => ({ number: 100 + index, title: `Issue ${index + 1}` })),
+    ];
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      expect(url.pathname).toBe("/repos/acme/widget/issues");
+      const perPage = Number(url.searchParams.get("per_page") ?? 30);
+      return jsonResponse(served.slice(0, perPage));
+    };
+    const adapter = githubAdapter(fetcher);
+    const listed = await adapter.executeTool("issues.list", { owner: "acme", repo: "widget" }, {
+      connection: personalConnection([GitHubCapabilities.issuesRead]),
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    });
+
+    expect(listed.output).toMatchObject({ count: 6, hasMore: true });
+    expect((listed.output as { issues: { number: number }[] }).issues.map((issue) => issue.number))
+      .toEqual([100, 101, 102, 103, 104, 105]);
+  });
+
+  it("does not read a missing check-run total as the end of the list", async () => {
+    // `actions.list_workflow_runs` and `checks.list_for_ref` take `hasMore` from
+    // GitHub's `total_count`, which is exact when it arrives. Standing the
+    // page's own length in for a missing one is the trap: `page * perPage <
+    // totalCount` is then false for an exactly-full first page, so the one
+    // shape that certainly has more to read is the one that reports the end.
+    const checkRuns = Array.from({ length: 30 }, (_, index) => ({ id: index + 1, name: "build", status: "completed" }));
+    const adapter = githubAdapter(async () => jsonResponse({ check_runs: checkRuns }));
+    const listed = await adapter.executeTool("checks.list_for_ref", { owner: "acme", repo: "widget", ref: "main" }, {
+      connection: personalConnection([GitHubCapabilities.checksRead]),
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    });
+
+    expect(listed.output).toMatchObject({ count: 30, hasMore: true });
+    // Omitted rather than invented: a caller cannot tell a stand-in from a real
+    // total, and this one would be wrong.
+    expect(listed.output).not.toHaveProperty("totalCount");
+
+    const counted = githubAdapter(async () => jsonResponse({ total_count: 30, check_runs: checkRuns }));
+    const exact = await counted.executeTool("checks.list_for_ref", { owner: "acme", repo: "widget", ref: "main" }, {
+      connection: personalConnection([GitHubCapabilities.checksRead]),
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    });
+
+    // With a real total the answer is exact, and thirty of thirty is the end.
+    expect(exact.output).toMatchObject({ count: 30, totalCount: 30, hasMore: false });
+  });
+
+  it("describes every pull-request parameter and asks for none it would have defaulted", () => {
+    // The wire schema is the whole of what a model has to go on, so it is
+    // asserted as a contract rather than left to a reviewer to notice. `head`
+    // is named directly: its format is the one thing that turned a wrong guess
+    // into an empty list instead of an error.
+    const definition = createGitHubConnector(githubConfig(async () => jsonResponse({})))
+      .agentPlugin.tools.find((tool) => tool.name === "pull_requests.list");
+    const schema = definition?.inputSchema as {
+      required: string[];
+      properties: Record<string, { description?: string }>;
+    };
+
+    expect(schema.required).toEqual(["owner", "repo"]);
+    expect(Object.entries(schema.properties).filter(([, value]) => !value.description?.trim()))
+      .toEqual([]);
+    expect(schema.properties.head?.description).toContain("owner:branch");
+    expect(schema.properties.head?.description).toContain("empty list rather than an error");
+
+    // The same ambiguity one level up, on the tool rather than a parameter: an
+    // empty check list reads as "nothing has reported on this commit", and that
+    // is only true when nothing narrowed the query.
+    const checks = createGitHubConnector(githubConfig(async () => jsonResponse({})))
+      .agentPlugin.tools.find((tool) => tool.name === "checks.list_for_ref");
+    expect(checks?.description).toContain("no narrowing entries in appliedFilters");
   });
 });
 

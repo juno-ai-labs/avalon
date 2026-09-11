@@ -79,7 +79,7 @@ const definitions = memoizedValue(() => ({
     mode: "write",
     idempotency: "record_before_execute",
     timeoutMs: MULTIMODAL_GENERATION_TIMEOUT_MS,
-    inputSchema: z.toJSONSchema(GenerateImageArgumentsSchema) as Record<string, unknown>,
+    inputSchema: z.toJSONSchema(GenerateImageArgumentsSchema, { io: "input" }) as Record<string, unknown>,
   },
   edit_image: {
     name: "edit_image",
@@ -88,7 +88,7 @@ const definitions = memoizedValue(() => ({
     mode: "write",
     idempotency: "record_before_execute",
     timeoutMs: MULTIMODAL_GENERATION_TIMEOUT_MS,
-    inputSchema: z.toJSONSchema(EditImageArgumentsSchema) as Record<string, unknown>,
+    inputSchema: z.toJSONSchema(EditImageArgumentsSchema, { io: "input" }) as Record<string, unknown>,
   },
   generate_audio: {
     name: "generate_audio",
@@ -97,7 +97,7 @@ const definitions = memoizedValue(() => ({
     mode: "write",
     idempotency: "record_before_execute",
     timeoutMs: MULTIMODAL_GENERATION_TIMEOUT_MS,
-    inputSchema: z.toJSONSchema(GenerateAudioArgumentsSchema) as Record<string, unknown>,
+    inputSchema: z.toJSONSchema(GenerateAudioArgumentsSchema, { io: "input" }) as Record<string, unknown>,
   },
 } as const satisfies Record<keyof MultimodalGenerationToolExecutors, ToolDefinition>));
 

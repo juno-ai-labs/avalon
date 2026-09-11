@@ -79,11 +79,13 @@ export {
   type BindSystemProjection,
 } from "./bind-loop-projection";
 export {
+  defaultedRequiredParameters,
   droppedNullableBranches,
   nonObjectRootSchema,
   nonObjectRootUnionBranches,
   readableRootUnionBranch,
   repairRootSchemaForProviders,
+  undescribedParameters,
   weakenedCompositionBranches,
 } from "./tool-schema-safety";
 export {
@@ -2763,15 +2765,15 @@ export const AVALON_CURRENT_TIME_TOOL_DEFINITION = {
 } as const satisfies ToolDefinition;
 
 export const RequestElicitationInputSchema = deferredZodSchema(() => z.strictObject({
-  prompt: z.string().min(1).max(4_000),
-  responseType: z.enum(["text", "radio", "single_select", "multi_select"]),
+  prompt: z.string().min(1).max(4_000).describe("The question to put to the person, written as you would say it to them. One question at a time."),
+  responseType: z.enum(["text", "radio", "single_select", "multi_select"]).describe("How the person answers: `text` for a free-form reply and no options, `radio` or `single_select` to choose exactly one of the options, `multi_select` to choose any number of them. Every type but `text` requires `options`."),
   options: z.array(z.strictObject({
-    value: z.string().min(1).max(200),
-    label: z.string().min(1).max(300),
-    description: z.string().max(800).nullable().default(null),
-  })).max(30).default([]),
-  minimumSelections: z.number().int().nonnegative().default(0),
-  maximumSelections: z.number().int().positive().nullable().default(null),
+    value: z.string().min(1).max(200).describe("The identifier returned when this option is chosen. Keep it short and stable; it is not shown to the person."),
+    label: z.string().min(1).max(300).describe("The option as the person reads it, on one line."),
+    description: z.string().max(800).nullable().default(null).describe("A sentence under the label saying what choosing this option means. Send `null` when the label speaks for itself."),
+  })).max(30).default([]).describe("The choices offered, in the order they should appear. Required for `radio`, `single_select`, and `multi_select`; omit it for `text`."),
+  minimumSelections: z.number().int().nonnegative().default(0).describe("Fewest options the person must choose for a `multi_select`. Omit for 0, which lets them choose none. Not meaningful for the other response types."),
+  maximumSelections: z.number().int().positive().nullable().default(null).describe("Most options the person may choose for a `multi_select`. Send `null`, or omit it, for no limit. Not meaningful for the other response types."),
 }).superRefine((input, context) => {
   if (input.responseType !== "text" && input.options.length === 0) {
     context.addIssue({
@@ -2791,12 +2793,16 @@ export const RequestElicitationInputSchema = deferredZodSchema(() => z.strictObj
 
 export type RequestElicitationInput = z.infer<typeof RequestElicitationInputSchema>;
 
+// `io: "input"` describes what the model may send. The default `"output"` mode
+// describes what a parse returns, and lists every `.default()` field as
+// `required` because the parsed value always has one — a tool schema that
+// tells the model to fill in the values the executor would have supplied.
 const requestElicitationInputJsonSchema = memoizedValue(
-  () => z.toJSONSchema(RequestElicitationInputSchema) as Record<string, unknown>,
+  () => z.toJSONSchema(RequestElicitationInputSchema, { io: "input" }) as Record<string, unknown>,
 );
 const automationEvaluatorRulesJsonSchema = memoizedValue(
   () => withoutSentinelIdAlternatives(
-    z.toJSONSchema(AutomationSetEvaluatorRulesInputV1Schema),
+    z.toJSONSchema(AutomationSetEvaluatorRulesInputV1Schema, { io: "input" }),
   ) as Record<string, unknown>,
 );
 
