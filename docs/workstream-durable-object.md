@@ -569,9 +569,12 @@ alternatives are inventing a person id a run could write into a durable
 evaluator rule, or dropping somebody's words to punish a corrupt column.
 
 Both tags are neutralized wherever they appear in text a person typed, so the
-only `<rally_author>` in a projected turn is the one the host wrote. The
-brackets are escaped rather than the run deleted, which leaves the words
-visible and visibly not a block. This is impersonation cover, not an authority
+only `<rally_author>` in a projected turn is the one the host wrote. What is
+matched is the opening bracket of anything that *looks like* it opens one —
+whitespace, a closing slash, and attributes included — because the reader being
+defended against is a language model rather than an XML parser, and
+`<rally_author >` reads as the block to one. The bracket is escaped rather than
+the run deleted, which leaves the words visible and visibly not a block. This is impersonation cover, not an authority
 boundary: a run's authority is its execution principal, and no rendered text
 moves it.
 
