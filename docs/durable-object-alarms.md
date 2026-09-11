@@ -295,7 +295,8 @@ automation's sidebar row from reaching the workspace.
   milliseconds the pass's own cutoff keeps and an alarm that fires early finds
   nothing due; the `resource_objects` arm excludes inactive publication staging
   while including eligible and current/historical referenced rows; the
-  `slack_unfurls` arm counts only links on a connection the sweep would load. An
+  `slack_unfurls` arm counts only links on a connection the sweep would load,
+  using the same millisecond ISO format as the sweep for its 30-day cutoff. An
   arm that counts what its pass leaves behind is the stall gate's steady
   customer — a drip and a report rather than a loop, but a defect all the same.
 - **A bounded pass reports the rows it took off its own due query.** Every
@@ -503,6 +504,23 @@ emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
 
 ## Changelog
+
+### 2026-09-11 — Unfurl expiry uses the sweep's timestamp format
+
+**What changed:** The unfurl due query formats its 30-day cutoff as a UTC ISO
+timestamp with milliseconds, matching the stored links and refresh pass.
+
+**Why:** Production reached 45 stalled attempts because SQLite's space-separated
+`datetime` cutoff sorted before every ISO timestamp on the cutoff day. Three
+expired links remained scheduled while the refresh pass excluded them; the
+oldest pinned the due instant and delayed eligible cards behind retry backoff.
+
+**Considered and rejected:** Resetting the retry counter or advancing expired
+links would hide the disagreement without making the due predicate accurate.
+
+**Consequences:** Expiry must agree in precision, format, and inclusive boundary
+between selection and scheduling. The existing retry gate and retention window
+remain unchanged; this fix does not establish a connection to runtime spikes.
 
 ### 2026-09-08 — Index pending resources and reconcile only affected alarm kinds
 
