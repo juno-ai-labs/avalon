@@ -1,5 +1,5 @@
 import { ServerCog } from 'lucide-react';
-import { connectorProviders } from '../lib/connector-catalog';
+import { connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 import { PersonalSetup } from './guided-onboarding';
 import { githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from '../settings/choices';
 import { SettingToggle } from '../settings/setting-toggle';
@@ -234,7 +234,7 @@ function providerSetting(provider: { id: string; name: string; description: stri
     id: 'provider:' + provider.id, section: 'connections', kind: 'custom',
     label: provider.name, description: provider.description,
     options: [
-      ...(provider.scopes.includes('you') ? ['Connect for me'] : []),
+      ...(provider.scopes.includes('you') ? [PERSONAL_CONNECT_LABEL] : []),
       ...(admin && provider.scopes.includes('workspace') ? ['Connect workspace'] : []),
       'Setup', 'Authorization',
     ],
@@ -1652,7 +1652,7 @@ export function WorkspaceSettingsScreen({
                               {provider.scopes.includes('you' as never) && (
                                 <ConnectorButton
                                   disabled={personalConnectDisabled}
-                                  label="Connect for me"
+                                  label={PERSONAL_CONNECT_LABEL}
                                   onClick={() => {
                                     if (provider.provider === 'custom_mcp') {
                                       openCustomMcpModal('you');
@@ -1671,7 +1671,7 @@ export function WorkspaceSettingsScreen({
                                     connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') });
                                   }}
                                   tooltip={`Only you can use this connection; it acts with your provider identity.${personalConnectTitle ? ` ${personalConnectTitle}` : ''}`}
-                                >{awaitingProvider ? <><LoaderCircle aria-hidden="true" className="spin" size={13} /> Waiting…</> : 'Connect for me'}</ConnectorButton>
+                                >{awaitingProvider ? <><LoaderCircle aria-hidden="true" className="spin" size={13} /> Waiting…</> : PERSONAL_CONNECT_LABEL}</ConnectorButton>
                               )}
                             {provider.scopes.includes('workspace' as never) && isAdmin && (
                               <ConnectorButton

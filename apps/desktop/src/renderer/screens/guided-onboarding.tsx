@@ -14,7 +14,7 @@ import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { OnboardingIntroduction } from '../components/onboarding-introduction';
 import type { Workspace } from '../lib/types';
-import { connectorProviders } from '../lib/connector-catalog';
+import { connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 
 const AccountLoadingContext = createContext(false);
 const ProfileEditorContext = createContext<AccountProfileEditor | null>(null);
@@ -265,7 +265,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
         const authorization = await api!.startProviderConnection(provider.provider, scope, capabilities);
         setPendingConnectorOAuth({ attemptId: authorization.attemptId, provider: provider.provider, region: workspace.region, workspaceId: workspace.id, source: 'onboarding' });
         await desktopBridge().openExternal(authorization.url);
-      })}>Connect {scope === 'you' ? 'for me' : 'for workspace'}</Button>)}</div></>}</div>;
+      })}>{scope === 'you' ? PERSONAL_CONNECT_LABEL : 'Connect for workspace'}</Button>)}</div></>}</div>;
     })}</div>{connectors.isLoading && <p>Loading available connectors…</p>}{(error ?? connectors.error?.message ?? connections.error?.message) && <InlineError>{error ?? connectors.error?.message ?? connections.error?.message}</InlineError>}
   </OnboardingPage>;
   const inviteAddresses = [...new Set([...emails, ...emailDraft.split(/[\s,;]+/u)].map((email) => email.trim().toLowerCase()).filter(Boolean))];

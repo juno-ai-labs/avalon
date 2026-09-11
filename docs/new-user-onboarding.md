@@ -29,7 +29,8 @@ Existing [workspace discovery and invitation acceptance](multiple-workspaces.md)
 choose the regional workspace. Its creator starts at connectors; invited or
 existing members start at personal setup. Optional connector and invitation
 steps can be skipped. OAuth uses the existing connector authorization and
-workspace-addressed callback machinery.
+workspace-addressed callback machinery. The personal action reads **Connect only
+for me**, using the same catalog label as Settings.
 
 Global `users` owns the introduction flag, eligibility, appearance and revision.
 Appearance includes the chosen display name and avatar initials; the name also
