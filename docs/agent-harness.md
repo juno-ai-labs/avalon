@@ -1027,10 +1027,10 @@ participants remain deferred product work.
   run was already authorized to read, and a skill naming an owner plugin makes the
   model load it separately rather than activating it — an auto-activation would let
   a document issue a capability grant.
-- **A triggering activity or inbound email is untrusted user-role evidence**, never
-  promoted into the system prompt. The same holds for a naming request and a skill
-  body, which is wrapped in `<skill_content name=…>` so the model can tell it from
-  platform policy.
+- **A triggering activity or inbound email is user-role content**, never promoted
+  into the system prompt. It carries no trust label of its own. The same holds for
+  a naming request and a skill body, which is wrapped in `<skill_content name=…>`
+  so the model can tell it from platform policy.
 - **The trigger's two jobs stay separate on a retry.** As *identity* it admits a
   brief or an inbound email to the model at all; as *bound*
   (`transcriptFenceMessageId`) it is the newest *turn* the run may see — a turn,
@@ -1268,6 +1268,23 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-11 — Trigger content is no longer labelled untrusted
+
+**What changed:** The five `renderUntrusted*` / `renderTriggerActivityMessage`
+helpers are deleted from `prompts/workstream.ts`. Slack surrounding context, a
+trigger email, an external event, a Sidekick result and a trigger activity are
+projected as plain user-role messages. The prompt-authority invariant above is
+rewritten: the layering by role survives, the trust labelling does not.
+
+**Why:** Requested by the team and reaffirmed. A Sidekick is first-party code
+under an authorized principal, and labelling its own output `UNTRUSTED` was
+judged to be miscommunicating that.
+
+**What a future change has to respect:** `prompts.test.ts` still asserts that an
+injection string reaches a user-role message and never the system one, now
+through the renderers that remain. A new renderer carrying outside content still
+belongs in that test — the role rule is unchanged and is now the only rule.
 
 ### 2026-09-10 — The canonical plugin ids and capability strings follow
 
