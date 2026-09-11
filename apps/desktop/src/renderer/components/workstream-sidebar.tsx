@@ -1,6 +1,6 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { SidekickSection, type SidekickRow } from './sidekick-section';
-import { Archive, GripVertical, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
+import { Archive, Copy, Globe2, GripVertical, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
 import { IconCornerDownRight, IconPlus } from '@tabler/icons-react';
 import { Fragment, useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
@@ -16,24 +16,36 @@ const COLLAPSED_KEY = 'rally.workstream-sidebar-collapsed';
 const WIDTH_KEY = 'rally.workstream-sidebar-width';
 const clampWidth = (width: number): number => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
 
-export interface SubstreamRowTarget { substreamId: string; title: string }
-export interface SubstreamRowActions {
-  onRename: (target: SubstreamRowTarget) => void;
-  onArchive: (target: SubstreamRowTarget) => void;
+export interface ConversationRowTarget { substreamId: string; title: string }
+export interface ConversationRowActions {
+  onMakePublic?: (() => void) | undefined;
+  publicDisabled?: boolean | undefined;
+  onCopyLink?: ((target: ConversationRowTarget) => void) | undefined;
+  onRename: (target: ConversationRowTarget) => void;
+  onArchive: (target: ConversationRowTarget) => void;
 }
 
-function SubstreamRowMenu({ actions, children, target }: {
-  actions: SubstreamRowActions; children: React.ReactNode; target: SubstreamRowTarget;
+function ConversationRowMenu({ actions, children, target }: {
+  actions: ConversationRowActions | undefined; children: React.ReactNode; target: ConversationRowTarget;
 }): React.JSX.Element {
+  if (!actions) return <>{children}</>;
+  const main = target.substreamId === '0';
   return <ContextMenu.Root>
     <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
     <ContextMenu.Portal>
       <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
+        {actions.onMakePublic && <ContextMenu.Item className="menu-item" disabled={actions.publicDisabled} onSelect={actions.onMakePublic}>
+          <Globe2 aria-hidden="true" size={16} /> Make public to workspace
+        </ContextMenu.Item>}
         <ContextMenu.Item className="menu-item" onSelect={() => actions.onRename(target)}>
           <Pencil aria-hidden="true" size={16} /> Rename
         </ContextMenu.Item>
+        {actions.onCopyLink && <ContextMenu.Item className="menu-item" onSelect={() => actions.onCopyLink?.(target)}>
+          <Copy aria-hidden="true" size={16} /> {main ? 'Copy work stream link' : 'Copy substream link'}
+        </ContextMenu.Item>}
+        <ContextMenu.Separator className="menu-separator" />
         <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => actions.onArchive(target)}>
-          <Archive aria-hidden="true" size={16} /> Archive substream
+          <Archive aria-hidden="true" size={16} /> {main ? 'Archive work stream' : 'Archive substream'}
         </ContextMenu.Item>
       </ContextMenu.Content>
     </ContextMenu.Portal>
@@ -41,7 +53,7 @@ function SubstreamRowMenu({ actions, children, target }: {
 }
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekicksError, substreamActions }: {
+export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekicksError, substreamActions, mainActions }: {
   workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'appearance' | 'resources' | 'participants'> & Pick<WorkstreamChildDirectory, 'privateChildren'>;
   presentUserIds: readonly string[];
   /**
@@ -58,7 +70,8 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
   onOpenArtifact: (id: string, returnFocus: HTMLElement) => void;
   onParticipants: () => void;
   onFocusTranscript: () => void;
-  substreamActions?: SubstreamRowActions | undefined;
+  substreamActions?: ConversationRowActions | undefined;
+  mainActions?: ConversationRowActions | undefined;
 }): React.JSX.Element {
   const sidebar = useRef<HTMLElement>(null);
   const [collapsed, setCollapsed] = useState(() => {
@@ -120,17 +133,20 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
     <aside aria-label="Work-stream sidebar" className={clsx('workstream-context-sidebar', compact && 'is-compact', (resizing || keyResizing) && 'is-resizing')} ref={sidebar} style={{ flexBasis: effectiveWidth }}>
       <div className="workstream-context-toolbar window-drag" />
       <div className="workstream-context-scroll">
-        <button
-          className={clsx('workstream-context-row workstream-conversation-row', selectedSubstreamId === '0' && 'is-current')}
-          aria-current={selectedSubstreamId === '0' ? 'page' : undefined}
-          aria-label={`Go to conversation: ${workstream.title}`}
-          title={workstream.title}
-          type="button"
-          onClick={() => { onSelectSubstream?.('0'); onFocusTranscript(); }}
-        >
-          <span className="workstream-context-mark"><WorkstreamMark appearance={workstream.appearance} id={workstream.id} /></span>
-          <span className="workstream-context-copy"><span>{workstream.title}</span></span>
-        </button>
+        <ConversationRowMenu actions={mainActions}
+          target={{ substreamId: '0', title: workstream.title }}>
+          <button
+            className={clsx('workstream-context-row workstream-conversation-row', selectedSubstreamId === '0' && 'is-current')}
+            aria-current={selectedSubstreamId === '0' ? 'page' : undefined}
+            aria-label={`Go to conversation: ${workstream.title}`}
+            title={workstream.title}
+            type="button"
+            onClick={() => { onSelectSubstream?.('0'); onFocusTranscript(); }}
+          >
+            <span className="workstream-context-mark"><WorkstreamMark appearance={workstream.appearance} id={workstream.id} /></span>
+            <span className="workstream-context-copy"><span>{workstream.title}</span></span>
+          </button>
+        </ConversationRowMenu>
         <div className="workstream-substream-list">
           {workstream.privateChildren?.map((child) => {
             // Compact hides the title, and a rail of identical arrows says
@@ -158,7 +174,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
               </button>
             );
             return substreamActions
-              ? <SubstreamRowMenu actions={substreamActions} key={child.substreamId} target={{ substreamId: child.substreamId, title: child.title }}>{row}</SubstreamRowMenu>
+              ? <ConversationRowMenu actions={substreamActions} key={child.substreamId} target={{ substreamId: child.substreamId, title: child.title }}>{row}</ConversationRowMenu>
               : <Fragment key={child.substreamId}>{row}</Fragment>;
           })}
           {onNewSubstream && (
