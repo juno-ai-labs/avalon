@@ -2783,17 +2783,22 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || (input.substreamId !== undefined && input.substreamId !== this.externalSubstreamId())) {
       throw new Error("workstream_runtime_identity_mismatch");
     }
-    const resource = await this.product.attachRuntimeResource(
+    const attachment = await this.product.attachRuntimeResource(
       input.workspaceId,
       input.resourceId,
       input.attachedByUserId,
       input.relationshipType,
     );
     this.invalidatePreparedSocketSnapshots();
-    if (!resource) {
+    // Attached and reachable, deliberately not advertised. The link committed,
+    // so there is nothing to repair and no resync to ask for; the rail a client
+    // rebuilds from the canonical detail already omits it.
+    if (attachment.outcome === "unlisted") return;
+    if (attachment.outcome === "readback_failed") {
       await this.requestCanonicalRoomResyncBestEffort("resource_readback_failed_after_commit");
       return;
     }
+    const resource = attachment.resource;
     try {
       const publication = await this.publishLocalProductEvent(
         identity,

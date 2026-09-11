@@ -17,6 +17,7 @@ import {
 } from "../src/durable-objects/substream-agent";
 import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
+import { unlistedResourceMetadata } from "../src/services/resource-listing";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
 import { substreamLoopId } from "../src/durable-objects/names";
@@ -71,6 +72,7 @@ describe("runtime component invariants", () => {
     const generatedId = "00000000-0000-7000-8000-000000000064";
     const originId = "00000000-0000-7000-8000-000000000065";
     const readbackFailureId = "00000000-0000-7000-8000-000000000066";
+    const backupId = "00000000-0000-7000-8000-000000000067";
     store.ensureIdentity({ workspaceId, parentKind: "workstream", parentId: workstreamId }, "global");
     sql.exec(
       `UPDATE workstream
@@ -105,6 +107,7 @@ describe("runtime component invariants", () => {
       { id: generatedId, title: "Generated recording.mp3", relationship: "generated" },
       { id: originId, title: "Slack thread", relationship: "origin" },
       { id: readbackFailureId, title: "Committed before readback failed", relationship: "generated" },
+      { id: backupId, title: "Terminal backup before acme/widget", relationship: "generated", unlisted: true },
     ].map((entry) => ({
       id: entry.id,
       connection_id: null,
@@ -116,7 +119,10 @@ describe("runtime component invariants", () => {
       content_ref: `global/${entry.id}`,
       content_sha256: "a".repeat(64),
       canonical_url: null,
-      metadata_json: JSON.stringify({ size: 1_024 }),
+      metadata_json: JSON.stringify({
+        size: 1_024,
+        ...("unlisted" in entry ? unlistedResourceMetadata() : {}),
+      }),
       model_content_ref: null,
       model_mime_type: null,
       model_content_sha256: null,
@@ -183,10 +189,13 @@ describe("runtime component invariants", () => {
       creatorId,
       "generated",
     )).resolves.toMatchObject({
-      id: generatedId,
-      relationshipType: "generated",
-      direction: "artifact",
-      sizeBytes: 1_024,
+      outcome: "attached",
+      resource: {
+        id: generatedId,
+        relationshipType: "generated",
+        direction: "artifact",
+        sizeBytes: 1_024,
+      },
     });
     await expect(product.attachRuntimeResource(
       workspaceId,
@@ -194,21 +203,37 @@ describe("runtime component invariants", () => {
       creatorId,
       "origin",
     )).resolves.toMatchObject({
-      id: originId,
-      relationshipType: "origin",
-      direction: "source",
+      outcome: "attached",
+      resource: { id: originId, relationshipType: "origin", direction: "source" },
     });
     expect(sql.exec<{ relationship_type: string }>(
       `SELECT relationship_type FROM workstream_resource_links WHERE resource_id = ?`,
       generatedId,
     ).one()).toEqual({ relationship_type: "generated" });
+    // The live half of the listing rule. A socket event is how an open work
+    // stream's rail learns about a resource without reloading, so it advertises
+    // — and this is the one caller that turns a by-id read into a broadcast.
+    // Attached, so the checkout receipt and an import still resolve it; not
+    // published, so the rail keeps agreeing with the enumeration behind the
+    // initial detail instead of disagreeing with it until the next reload.
+    await expect(product.attachRuntimeResource(
+      workspaceId,
+      backupId,
+      creatorId,
+      "generated",
+    )).resolves.toEqual({ outcome: "unlisted" });
+    expect(sql.exec<{ relationship_type: string }>(
+      `SELECT relationship_type FROM workstream_resource_links WHERE resource_id = ?`,
+      backupId,
+    ).one()).toEqual({ relationship_type: "generated" });
+
     workspaceStub.executeRuntimeSql = () => { throw new Error("workspace read unavailable"); };
     await expect(product.attachRuntimeResource(
       workspaceId,
       readbackFailureId,
       creatorId,
       "generated",
-    )).resolves.toBeNull();
+    )).resolves.toEqual({ outcome: "readback_failed" });
     expect(sql.exec<{ relationship_type: string }>(
       `SELECT relationship_type FROM workstream_resource_links WHERE resource_id = ?`,
       readbackFailureId,
