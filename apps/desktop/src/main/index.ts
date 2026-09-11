@@ -14,7 +14,6 @@ import {
   WorkspaceDepartureSchema,
   WorkspaceDepartureRequestSchema,
   type Session as WireSession,
-  type ClientFeatureFlags,
   type WorkspaceAttention,
   type WorkspaceDeparture,
 } from '@rally/contracts';
@@ -854,10 +853,7 @@ function broadcastSessionChanged(value: WireSession | null): void {
   // account and must not cost an extra poll, and an account swap must not be
   // answered by a request issued as the previous one.
   if (exposed) developerSettingsFlagController.observeSession(flagSessionIdentity(exposed.user.id, exposed.apiBaseUrl));
-  else {
-    developerSettingsFlagController.stop();
-    observeClientFeatureFlags(ClientFeatureFlagsSchema.parse({}));
-  }
+  else developerSettingsFlagController.stop();
   // The menu bar item outlives every window, so it has to be told about a
   // sign-out directly. Leaving the previous account's work-stream titles in the
   // menu would keep them readable to whoever signs in next.
@@ -1288,18 +1284,6 @@ function openMainWindowFromMenuBar(): void {
   });
 }
 
-let meetingRecordingAvailable = false;
-
-function observeClientFeatureFlags(flags: ClientFeatureFlags): void {
-  const changed = meetingRecordingAvailable !== flags.meetingRecordingEnabled;
-  meetingRecordingAvailable = flags.meetingRecordingEnabled;
-  if (changed) {
-    // Only the main-process surfaces are projected here. Renderer surfaces
-    // consume the live workspace-socket cache directly.
-    menuBarController.refresh();
-  }
-}
-
 const menuBarController = new MenuBarController({
   supported: process.platform === 'darwin',
   appName: app.name,
@@ -1308,16 +1292,9 @@ const menuBarController = new MenuBarController({
   // The in-memory credential rather than a live session: this is read while the
   // menu is being built, and it only decides which empty state to show.
   signedIn: () => Boolean(inMemoryAuthSet),
-  meetingRecordingAvailable: () => meetingRecordingAvailable,
   sectionHeaders: supportsSectionHeaders(process.getSystemVersion()),
   actions: {
     selected: (action) => { void telemetryReporter?.menuBarActionSelected(action); },
-    newMeetingNote: () => {
-      activateFromMenuBar();
-      void createMeetingWindow(undefined, 'menu_bar').catch((error: unknown) => {
-        logError('rally', 'failed to open meeting notes from the menu bar', error);
-      });
-    },
     openWorkstream: (workstreamId) => {
       activateFromMenuBar();
       emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'menu_bar');
@@ -1413,7 +1390,6 @@ async function readDeveloperSettingsFlag(): Promise<boolean> {
   if (!response.ok) throw await responseError(response);
   const parsed = ClientFeatureFlagsSchema.safeParse(await response.json());
   if (!parsed.success) throw new Error('Rally returned an unreadable feature flag response');
-  observeClientFeatureFlags(parsed.data);
   return parsed.data.developerSettings;
 }
 
@@ -3095,11 +3071,6 @@ function registerIpc(): void {
   ipcMain.handle('application-settings:get', async (event) => {
     assertTrustedIpcSender(event);
     return desktopApplicationSettings(await lockdownModeController.settings());
-  });
-  ipcMain.handle('feature-flags:observe', (event, rawFlags: unknown) => {
-    assertTrustedIpcSender(event);
-    const flags = ClientFeatureFlagsSchema.parse(rawFlags);
-    observeClientFeatureFlags(flags);
   });
   ipcMain.handle('application-settings:set-lockdown-mode', async (event, rawEnabled: unknown) => {
     assertTrustedIpcSender(event);

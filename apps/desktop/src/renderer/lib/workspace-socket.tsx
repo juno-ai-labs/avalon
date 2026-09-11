@@ -442,7 +442,6 @@ export function WorkspaceSocketProvider({
             }
             if (sync.data.featureFlags) {
               queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, sync.data.featureFlags);
-              void desktopBridge().observeClientFeatureFlags(sync.data.featureFlags).catch(() => undefined);
             }
             // Before the waterline guard, not after. The sidebar rides on the
             // answer to `subscribe`, and a resume where no topic moved carries
@@ -486,7 +485,6 @@ export function WorkspaceSocketProvider({
           const featureFlags = safeParseSocketEvent(WorkspaceFeatureFlagsEventSchema, decoded);
           if (featureFlags.success) {
             queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, featureFlags.data.flags);
-            void desktopBridge().observeClientFeatureFlags(featureFlags.data.flags).catch(() => undefined);
             return;
           }
           const recency = safeParseSocketEvent(WorkspaceWorkstreamRecencyEventSchema, decoded);

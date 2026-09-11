@@ -7,7 +7,6 @@ import { emptyMenuBarContent, type MenuBarActions, type MenuBarContent } from '.
 function noopActions(): MenuBarActions {
   return {
     selected: vi.fn(),
-    newMeetingNote: vi.fn(),
     openWorkstream: vi.fn(),
     openRally: vi.fn(),
     quit: vi.fn(),
@@ -40,7 +39,6 @@ function harness(options: {
     createTray,
     content: () => options.content ?? emptyMenuBarContent,
     signedIn: () => true,
-    meetingRecordingAvailable: () => true,
     sectionHeaders: true,
     actions: noopActions(),
     readSettings: () => Promise.resolve(settings),
@@ -171,8 +169,7 @@ describe('menu bar controller', () => {
       createTray,
       content: () => emptyMenuBarContent,
       signedIn: () => true,
-      meetingRecordingAvailable: () => true,
-      sectionHeaders: true,
+        sectionHeaders: true,
       actions: noopActions(),
       readSettings: () => Promise.reject(new Error('EACCES: permission denied')),
       writeSettings: () => Promise.resolve(),

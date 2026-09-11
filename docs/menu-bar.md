@@ -1,10 +1,13 @@
 # Menu bar item
 
 Rally puts a status item in the macOS menu bar. Clicking it drops down a menu
-that starts a meeting or note, and reopens the top five of the reader's own
-pinned arrangement or any of their ten most recent work streams — grouped under
-the same recency headings the sidebar uses — plus the two controls that keep the
-app reachable when nothing else is on screen: open Rally, and quit.
+that reopens the top five of the reader's own pinned arrangement or any of their
+ten most recent work streams — grouped under the same recency headings the
+sidebar uses — plus the two controls that keep the app reachable when nothing
+else is on screen: open Rally, and quit.
+
+**Every row reopens something that already exists.** The menu starts nothing at
+all: no meeting or note, no work stream, no automation, no suggested work.
 
 It is the one Rally surface that outlives every window. Rally registers itself
 to open at login by default and, on a login launch, opens **no** window at all,
@@ -48,19 +51,17 @@ The drop-down is rebuilt from `menuBarMenuTemplate` whenever the content or the
 preference changes — never on open. A click therefore
 always produces a menu immediately. In order:
 
-1. **New Meeting/Note** — opens a meeting-notes window.
-2. A separator.
-3. A **Pinned** header and the top five of the reader's own arrangement. With
+1. A **Pinned** header and the top five of the reader's own arrangement. With
    nothing pinned the section stays and one disabled row says **Pin a work
    stream to see it here** — most people have never pinned anything, and a
    section that is simply absent teaches them nothing about a feature they have
    not found.
-4. A separator, then the ten most recent work streams from
+2. A separator, then the ten most recent work streams from
    `GET /workstreams?limit=10`, split into the sidebar's own recency groups —
    **Last hour**, **Today**, **Yesterday**, **This week**, **This month**,
    **Before this month** — each with its own header and separated from the next.
    A group with nothing in it is not drawn.
-5. A separator, then **Open Rally** and **Quit Rally**.
+3. A separator, then **Open Rally** and **Quit Rally**.
 
 **The recent list carries the sidebar's headings, not one of its own.** Both
 surfaces list the same work streams, and a heading that meant "the last ten" in
@@ -87,9 +88,9 @@ styles as a real section header. `supportsSectionHeaders` reads
 unclickable either way, because a header that could be activated is a menu row
 that does nothing.
 
-Separators are pushed only between rows. Without the meeting action, and signed
-out, the menu opens directly on a section header, and a leading rule there reads
-as a first item that failed to draw.
+Separators are pushed only between rows. The menu always opens directly on a
+section header now, and a leading rule there reads as a first item that failed to
+draw.
 
 Both list sections carry titles somebody's model wrote, and the contract allows
 180 characters. A macOS menu is as wide as its widest row, so `menuBarLabel`
@@ -99,12 +100,26 @@ whole word when one falls within the final 20 and cutting hard otherwise —
 by the cut is dropped, and the ellipsis fits inside the limit rather than pushing
 past it.
 
-**The menu starts nothing.** There is no New Work Stream row, no New Automation
-row, and no Suggestions section: this surface is for getting back to work that is
-already in flight, and the two rows at the bottom open the app, where starting
-something belongs. `avalon://workstreams/new` and `avalon://automations/new` are
-still handled — the deep-link vocabulary is public and the sidebar uses the same
-routes — they simply have no emitter here.
+**The menu starts nothing.** There is no New Meeting/Note row, no New Work
+Stream row, no New Automation row, and no Suggestions section: this surface is
+for getting back to work that is already in flight, and the two rows at the
+bottom open the app, where starting something belongs.
+`avalon://workstreams/new` and `avalon://automations/new` are still handled — the
+deep-link vocabulary is public and the sidebar uses the same routes — they simply
+have no emitter here. `createMeetingWindow` still takes a `menu_bar` entrypoint
+for the same reason its telemetry enum still admits one: retired emitters, not
+retired values.
+
+That is also why **no client feature flag reaches the main process any more.**
+The meeting row was the last thing here that depended on one, and
+`meetingRecordingEnabled` was mirrored across the bridge purely to decide whether
+to draw it. With the row gone, `observeClientFeatureFlags`, the
+`feature-flags:observe` IPC channel, and the bridge method behind it were removed
+rather than left projecting a value nothing reads. Renderer surfaces — the
+sidebar's own meeting button, the meeting-notes screen — take the same flag from
+the live workspace-socket cache and are unaffected. A future main-process surface
+that needs a flag re-adds the channel; one kept warm for it would be an
+abstraction for a consumer nobody has asked for.
 
 **The menu carries no login-item control.** It is rebuilt only when its content
 moves, and macOS can change the login item from System Settings at any time, so a
@@ -275,6 +290,9 @@ login-item registration. It exposes two IPC channels —
 `DesktopApplicationSettings`: `menuBarEnabled`, `menuBarAvailable`,
 `launchAtLogin`, and `launchAtLoginAvailable`.
 
+It no longer reads any client feature flag: the meeting row was the last
+main-process consumer of one, and the channel that carried them went with it.
+
 It does **not** own: the application menu bar at the top of the screen
 (`application-menu.ts`), the Dock and Finder icon
 ([`desktop-icons.md`](desktop-icons.md)), suggested work, which this surface no
@@ -296,12 +314,11 @@ is the point of the module being there rather than beside either one.
 | Situation | Behavior |
 | --- | --- |
 | A refresh fails | The last good menu stays. A warning is logged once per attempt. |
-| Signed out | The meeting action remains; the recent section becomes a **Recent** header over one disabled **Sign in to Rally** row. Content refreshes are skipped entirely rather than failing once per pointer arrival. |
+| Signed out | The menu is a **Recent** header over one disabled **Sign in to Rally** row, a rule, and the two trailing controls. Content refreshes are skipped entirely rather than failing once per pointer arrival. |
 | A label runs long | Truncated to 60 characters at the last word boundary in the final 20, hard otherwise. |
 | Nothing pinned | The header stays over one disabled row: **Pin a work stream to see it here**. |
 | Nothing recent | A **Recent** header over one disabled row. This is the only state that draws that header: with rows, the recency groups name themselves. |
-| Signed out | **Pinned** is dropped entirely, header and rule included; the recent section carries the sign-in row. |
-| Meeting recording off *and* signed out | The menu opens directly on the **Recent** header. The leading separator is suppressed rather than drawn against nothing. |
+| Signed out | **Pinned** is dropped entirely, header and rule included; the recent section carries the sign-in row, and it is then the first thing in the menu. The leading separator is suppressed rather than drawn against nothing. |
 | More than five pins | The top five of the arrangement are shown, ungrouped and unsorted. This is a display limit on a menu, not a cap on pinning — see the invariant in [`workstream-pinning.md`](workstream-pinning.md) about nothing counting pins against a limit. |
 | A recency heading goes stale | It can. The menu is rebuilt on content changes, not on open, so a row can sit under **Last hour** for longer than an hour on a menu nobody has touched. The pointer reaching the status item refreshes the content, which rebuilds it. Correcting it on a timer would mean waking the process to redraw a menu nobody is looking at. |
 | macOS 13 or older | Every header falls back to a disabled row. Everything else is unchanged. |
@@ -397,12 +414,13 @@ generic Electron activation callback rather than also counting a Dock open.
 
 ### 2026-09-11 — The menu became a way back to work, not a way to start it
 
-**What changed:** Four things at once, because they are one decision. The
-**Suggestions** section is gone, header, rows, impression report and start call
-included. **New Work Stream** and **New Automation** are gone. **Pinned** moved
-above the recent list. And the recent list grew from five rows to ten, now split
-into the sidebar's own recency groups — **Last hour** through **Before this
-month** — instead of sitting under one flat **Recent** header.
+**What changed:** Several things at once, because they are one decision. Every
+row that started something is gone: the **Suggestions** section whole — header,
+rows, impression report and start call — plus **New Work Stream**, **New
+Automation**, and **New Meeting/Note**. **Pinned** moved above the recent list.
+And the recent list grew from five rows to ten, now split into the sidebar's own
+recency groups — **Last hour** through **Before this month** — instead of sitting
+under one flat **Recent** header.
 
 `groupActivityItems`, `nextRecencyBoundary`, `workstreamRecencyAt` and the
 `RecencyGroup` union moved out of `renderer/lib/format.ts` into
@@ -410,13 +428,17 @@ month** — instead of sitting under one flat **Recent** header.
 changed. `MenuBarWorkstream` gained `lastActivityAt`, and the store fills it
 through `workstreamRecencyAt` rather than from the raw field.
 
-**Why:** the drop-down was trying to be two surfaces. Three of its rows started
+**Why:** the drop-down was trying to be two surfaces. Four of its rows started
 something new, and the fixed vocabulary a person could learn was mostly made of
 them — but the app itself is where you start work, and it is two rows away at
 the bottom of this menu. What the status item is uniquely good for is the thing
 no window offers: getting back into a work stream on a Mac that has no Rally
 window open at all. Everything removed here was competing with that for the top
-of a menu that has to stay a menu.
+of a menu that has to stay a menu. **New Meeting/Note** was the closest call: a
+meeting starts away from the keyboard, which is the one argument for starting it
+from the menu bar. It lost to the same rule as the rest — the menu is a way back
+in, and the sidebar's own meeting button is one click further for someone who
+already has Rally open.
 
 Growing the recent list to ten and grouping it was the same judgement from the
 other side. Five rows is not enough to find yesterday's work in, and ten
@@ -440,10 +462,24 @@ memory for no reader.
 
 **Consequences:** `menu_bar_opened` stops carrying `suggestionCount`, and its
 `recentCount` bound moved from 5 to 10. `menu_bar_action_selected` stops
-emitting `new_workstream`, `new_automation`, and `suggested_work`. All three, and
-`suggestionCount`, stay *admitted* by the registry — released clients keep
-sending them, and the registry schema is what accepts an event at ingestion. Do
-not read a historical row as evidence the current menu offers that row.
+emitting `new_workstream`, `new_automation`, `suggested_work`, and
+`new_meeting_note`. All four, and `suggestionCount`, stay *admitted* by the
+registry — released clients keep sending them, and the registry schema is what
+accepts an event at ingestion. Do not read a historical row as evidence the
+current menu offers that row. The `menu_bar` meeting entrypoint likewise stays in
+`createMeetingWindow`'s union and in `surfaceEntrypoint`: a retired emitter, not
+a retired value.
+
+**No client feature flag reaches the main process any more.** The meeting row
+was the last main-process consumer of one, so `observeClientFeatureFlags`, the
+`feature-flags:observe` IPC channel, the `DesktopBridge` method, its preload
+binding, and the two renderer call sites in `workspace-socket.tsx` were all
+removed. Renderer surfaces read the same flags from the live workspace-socket
+cache and are untouched. Whoever next needs a flag in main re-adds the channel;
+keeping it warm for that would be an abstraction for a consumer nobody has asked
+for, and a projection nothing reads is worse than one that does not exist. Note
+that `MenuBarController` no longer has any input that changes between rebuilds
+except its content and the sign-in state.
 
 The menu is no longer a suggestion surface, so the invariant that a surface
 showing suggestions must report them no longer applies to it. Should suggestions

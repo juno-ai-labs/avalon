@@ -15,7 +15,6 @@ export interface MenuBarControllerDependencies {
   readonly createTray: () => MenuBarTray;
   readonly content: () => MenuBarContent;
   readonly signedIn: () => boolean;
-  readonly meetingRecordingAvailable: () => boolean;
   readonly sectionHeaders: boolean;
   readonly actions: MenuBarActions;
   readonly readSettings: () => Promise<StoredApplicationSettings>;
@@ -88,7 +87,6 @@ export class MenuBarController {
         appName: this.dependencies.appName,
         content: this.dependencies.content(),
         signedIn: this.dependencies.signedIn(),
-        meetingRecordingAvailable: this.dependencies.meetingRecordingAvailable(),
         sectionHeaders: this.dependencies.sectionHeaders,
         actions: this.dependencies.actions,
       }));
