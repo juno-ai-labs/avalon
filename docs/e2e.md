@@ -712,7 +712,13 @@ controls sit at the bottom; the account avatar and navigation toggle remain
 side by side. In the global navigation, Search sits above the scrolling
 streams in both widths and the rail's New chat row sits under it; the
 Sidekick strip stays below the streams as a horizontal row in both widths,
-one tile centred and the next showing past the edge when there are more.
+one tile centred and the next showing past the edge when there are more. Rest a
+pointer on a tile in both widths and confirm the app's own tooltip — not the
+desktop's — names the Sidekick above the strip, with **· Workspace** on a
+workspace one, since the caption is ellipsized at the wide width and gone at the
+rail's. Move onto the green play in that tile's corner and confirm the name is
+replaced, not joined, by **Active — in service and waiting on its triggers.**
+below the strip, and that moving off the strip leaves neither behind.
 Collapse and expand the global navigation with ⌘B and confirm its contents
 travel with the edge rather than cutting a frame ahead of it: the rows narrow
 to their marks as the titles fade, the headings close, the search pill closes

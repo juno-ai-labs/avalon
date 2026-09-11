@@ -1410,6 +1410,37 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByRole('link', { name: /Daily product brief/u })).toBeNull();
   });
 
+  it('reads a truncated tile through the renderer\'s own tooltip, and its play through a second', async () => {
+    const shared = { ...automation, loadable: false, id: 'shared', name: 'Team brief', scope: 'workspace' as const };
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly automations={[shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
+    const tile = within(strip).getByRole('button', { name: 'Team brief, Active · Workspace' });
+
+    // One tooltip language per slot. `title` is the desktop's own: a different
+    // delay, a different type, no theme, and nothing at all on keyboard focus —
+    // which is the whole cost here, because the caption is ellipsized at 80px
+    // and the rail drops it, so the tooltip is how the tile is read.
+    expect(tile).not.toHaveAttribute('title');
+
+    fireEvent.pointerMove(tile, { pointerType: 'mouse' });
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Team brief · Workspace');
+    // Not the state: every tile in this strip is active, the play in the corner
+    // reports it, and the tile's one line is better spent on which Sidekick it
+    // is. A screen reader still gets the state, out of the accessible name
+    // asserted above.
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent('Active');
+
+    fireEvent.pointerMove(tile.querySelector('.automation-glyph-marker')!.parentElement!, { pointerType: 'mouse' });
+    await waitFor(
+      () => expect(screen.getByRole('tooltip')).toHaveTextContent('in service and waiting on its triggers'),
+      { timeout: 5_000 },
+    );
+    // And only that one. Radix closes an open tooltip when another opens, so
+    // the tile's name does not sit a centimetre from the marker's explanation
+    // while a pointer rests on the play.
+    expect(screen.getAllByRole('tooltip')).toHaveLength(1);
+  });
+
   it.each([false, true])('offers making the first Sidekick where the shortcuts would be (compact=%s)', (compact) => {
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     // Named for what it holds: an offer to make one, not shortcuts to any.
