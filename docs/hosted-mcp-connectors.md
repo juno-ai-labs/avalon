@@ -429,44 +429,20 @@ change must keep it the only schema rewrite here: the value of "the remote schem
 is forwarded as authored" is that a second rewrite is a second place for a
 provider's contract to silently diverge from what the model was shown.
 
-### 2026-08-12 — Remote hints cannot downgrade write policy
-
-**What changed:** Every hosted-MCP tool now receives write confirmation and a
-record-before-execute receipt regardless of `readOnlyHint`. OAuth discovery uses
-RFC path insertion before the root fallback, a loaded deferred surface is
-retained on the host plugin so later child narrowing sees the activated tools,
-and exact remote operation identities survive model-safe aliasing. Restored
-dynamic activations load and hash their live surface before persistence.
-
-**Why:** Tool annotations are provider hints rather than enforceable contracts;
-using one to skip confirmation made a newly added or mislabeled mutation a
-silent write. Root-only discovery also failed compliant path-scoped servers,
-and keeping loaded tools only inside Bind made the API's child-scope builder see
-the original empty placeholder. Persisting a restored deferred activation before
-loading it left no surface hash, while resolving a call from its alias could
-silently select a different provider operation after catalog drift.
-
-**Considered and rejected:** A static read-tool allowlist. It would recreate the
-catalog snapshot this abstraction exists to remove. Trusting annotations only
-for today's three providers was also rejected because provider ownership does
-not make a hint an authorization guarantee.
-
-**Consequences:** Hosted-MCP reads currently ask for confirmation and are not
-available to read-only inline children. A future lower-friction read path needs
-an independent Rally-authored policy source. Metadata discovery may issue one
-extra 404 request when a server publishes only the root fallback. Hosted MCP
-schemas must declare a top-level object, and a pre-call catalog collision blocks
-the call rather than choosing by provider list order.
-
-Shipped in the pull request for this change.
-
-### 2026-08-12 — Hosted MCP servers own their live tool surfaces
+### 2026-08-12 — Hosted MCP servers own their live tool surfaces, and remote hints cannot downgrade write policy
 
 **What changed:** Rally gained one hosted-MCP abstraction for OAuth discovery,
 DCR, PKCE, rotating credentials, Streamable HTTP sessions, live tool discovery,
 and exact call forwarding. Granola, Slack, and Notion personal connections use
 that live surface; Notion's official MCP server is now the personal counterpart
 to its workspace bot connection.
+
+Every hosted-MCP tool receives write confirmation and a record-before-execute
+receipt regardless of `readOnlyHint`. OAuth discovery uses RFC path insertion
+before the root fallback, a loaded deferred surface is retained on the host
+plugin so later child narrowing sees the activated tools, and exact remote
+operation identities survive model-safe aliasing. Restored dynamic activations
+load and hash their live surface before persistence.
 
 **Why:** Granola and Slack exposed code-authored tool lists derived from one
 observed server response. Those lists were snapshots of providers that can add,
@@ -475,12 +451,25 @@ tool existed after the server removed it or never learn a tool the server added.
 Adding Notion by copying its documented list would have repeated the same
 failure and made every future MCP connector another custom transport.
 
-**Considered and rejected:** Generating source from `tools/list` during releases.
-That still makes deploy time, rather than activation time, authoritative and
-cannot represent account-dependent surfaces. Eagerly discovering every MCP
-connection at run start was also rejected because most credential plugins are
-never loaded; it would spend provider calls and refresh tokens without helping
-the request.
+Tool annotations are provider hints rather than enforceable contracts; using
+one to skip confirmation made a newly added or mislabeled mutation a silent
+write. Root-only discovery also failed compliant path-scoped servers, and
+keeping loaded tools only inside Bind made the API's child-scope builder see
+the original empty placeholder. Persisting a restored deferred activation before
+loading it left no surface hash, while resolving a call from its alias could
+silently select a different provider operation after catalog drift.
+
+**Considered and rejected:** Generating source from `tools/list` during
+releases. That still makes deploy time, rather than activation time,
+authoritative and cannot represent account-dependent surfaces. Eagerly
+discovering every MCP connection at run start was also rejected because most
+credential plugins are never loaded; it would spend provider calls and refresh
+tokens without helping the request.
+
+A static read-tool allowlist. It would recreate the catalog snapshot this
+abstraction exists to remove. Trusting annotations only for today's three
+providers was also rejected because provider ownership does not make a hint an
+authorization guarantee.
 
 **Consequences:** New hosted MCP providers add a small declaration instead of a
 tool catalog, and tool changes take effect on the next activation. A dynamic
@@ -488,3 +477,12 @@ plugin can fail to load when its server returns a malformed or colliding surface
 which is deliberately safer than exposing a partial guess. Future changes must
 keep the static catalog trusted, preserve confirmation/receipts, and never turn
 remote tool metadata into new Rally authority.
+
+Hosted-MCP reads currently ask for confirmation and are not available to
+read-only inline children. A future lower-friction read path needs an
+independent Rally-authored policy source. Metadata discovery may issue one
+extra 404 request when a server publishes only the root fallback. Hosted MCP
+schemas must declare a top-level object, and a pre-call catalog collision blocks
+the call rather than choosing by provider list order.
+
+Shipped in the pull request for this change.

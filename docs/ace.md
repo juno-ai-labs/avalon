@@ -991,47 +991,39 @@ managed Electron UI remains off until an exact server `true`, one Queue batch
 enumerates each region once per distinct key, and regional documentation must
 continue to name Ace's narrow operator-search exception.
 
-### 2026-08-24 — Ace manages Suggested Work and workspace template rollouts
-
-**What changed:** Ace now includes Suggested Work Enabled and Automation
-Workspace Templates Enabled in its fixed product-flag catalog, and its automatic
-deploy provisioner creates both as Boolean flags with an off variation, an on
-variation, and an off default.
-
-**Why:** Product managers need to stage these existing application surfaces
-through the same ergonomic targeting editor and key-only notification path as
-the first two product flags, without dashboard-only configuration that would
-bypass connected-client notification.
-
-**Considered and rejected:** A second editor or a separate Flagship application.
-Both would duplicate targeting vocabulary and split one global rollout control
-plane without introducing a distinct trust or residency boundary.
-
-**Consequences:** Ace's managed set is now four flags. Adding another product
-Boolean still requires an Enabled-named key, fail-closed Electron visibility,
-automatic provisioning, and inclusion in the shared key schema. These controls
-must not change API availability.
-
-### 2026-08-24 — Ace becomes the managed product-flag write path
+### 2026-08-24 — Ace becomes the managed product-flag write path and manages Suggested Work and workspace template rollouts
 
 **What changed:** Ace was introduced as an Access-protected Hono Worker with a
 shared component library, D1-backed targeting editor, automated Flagship
 provisioning, and a shared-to-regional Queue fan-out that updates connected
-desktop clients through WorkspaceDO.
+desktop clients through WorkspaceDO. Its fixed product-flag catalog includes
+Suggested Work Enabled and Automation Workspace Templates Enabled alongside the
+first two product flags, and its automatic deploy provisioner creates both as
+Boolean flags with an off variation, an on variation, and an off default.
 
 **Why:** Product managers need to stage user-facing features by human concepts
 such as a person, workspace, role, or domain without copying opaque IDs or
 deploying application code. Connected clients also need a change promptly, but
 the effective answer differs per user and Flagship exposes no documented
-outbound change notification.
+outbound change notification. Suggested Work and workspace templates are
+existing application surfaces that need staging through the same ergonomic
+targeting editor and key-only notification path as the first two product flags,
+without dashboard-only configuration that would bypass connected-client
+notification.
 
 **Considered and rejected:** Polling every desktop makes propagation depend on
 every client timer and repeats work forever. Sending one value through the
 fan-out is incorrect for targeted rules. Using the Flagship dashboard directly
 cannot trigger Avalon's Queue path. Giving Ace the deployment token would make a
-runtime compromise an account-administration compromise.
+runtime compromise an account-administration compromise. For the two additional
+flags, a second editor or a separate Flagship application would duplicate
+targeting vocabulary and split one global rollout control plane without
+introducing a distinct trust or residency boundary.
 
 **Consequences:** Managed product flags must be edited through Ace, Queue
 payloads remain key-only, reconnect remains the repair path, and future Ace
 pages reuse its Access boundary and component library. The Flagship-only runtime
-credential is a standing deployment prerequisite.
+credential is a standing deployment prerequisite. Ace's managed set is four
+flags. Adding another product Boolean requires an Enabled-named key, fail-closed
+Electron visibility, automatic provisioning, and inclusion in the shared key
+schema. These controls must not change API availability.

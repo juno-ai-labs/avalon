@@ -330,7 +330,6 @@ copied into this table; they come from `WorkspaceDO.workspace_workstream_directo
 
 **Considered and rejected:** A separate child URL scheme; the existing link primitive carries the optional child address. Main URLs and legacy readers retain their existing forms.
 
-
 ### 2026-09-02 — A link to the active workspace navigates without re-activating
 
 **What changed:** The desktop opens a link that names the active workspace with
@@ -414,6 +413,7 @@ invisible to any round-trip test — `never mints the superseded scheme` asserts
 writing side alone and must survive. Removing `avalon:` is a decision about
 shipped clients, not about this module. See
 [`domain-migration.md`](domain-migration.md).
+
 ### 2026-08-22 — The unfurl sweep and App Home read only the object
 
 **What changed:** `slack-unfurl-refresh.ts`'s stale-card selection,

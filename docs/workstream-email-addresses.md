@@ -466,7 +466,7 @@ New version-2 Sidekick definitions receive email only when inbound_email is conf
 This composes knowledge with existing execution machinery while keeping one Sidekick identity and preserving authorization boundaries.
 
 
-### 2026-09-03: One admission call, no screen, no window
+### 2026-09-03 — One admission call, no screen, no window
 
 **What changed:** Automation mail is admitted by one `AutomationDO.admitInboundEmail`
 call after the message is fetched and stored; `screenInboundEmail`, the

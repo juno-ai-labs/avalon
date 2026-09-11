@@ -1121,8 +1121,7 @@ before runs existed and is why a tree carrying no `tool_call` activities still
 produces a row. Any new path that adds turns to a snapshot has to carry their
 runs too — ranges and reconciliation both do now, and a test pins each.
 
-
-### 2026-08-29 — The server says which plugin ran, and for how long
+### 2026-08-29 — The server says which plugin ran and for how long, and Rally works while everything else is used
 
 **What changed:** `WorkstreamTranscriptSnapshot` gained `pluginRuns`: per plugin
 per turn, its display name, state, duration, timing accuracy and tool call ids,
@@ -1131,6 +1130,12 @@ rows from that and joins tool blocks to runs on `toolCallIds`. `durationMs` is
 nullable end to end, and an unknown duration renders as no duration. The
 activity-tree derivation is kept only as a fallback for an API that predates the
 field.
+
+A group also carries its own `activeVerb` and `completedVerb`. Rally reads
+"Rally is working" / "Rally worked"; every other plugin reads "Using Slack" /
+"Used Slack"; the Computer group reads "Using a computer" / "Used a computer". A
+settled response total moves out of the feed into the header of the message it
+produced, via `foldSettledWorkIntoMessages`.
 
 **Why:** A grouped row rendered `Rally worked for 0ms` for runs that really
 worked — one production run logged `tool_calls=2` and `tool_time_ms=6770` while
@@ -1141,14 +1146,27 @@ snapshot that only carried activities reachable by an upward walk seeded from
 development-seeded tool turn leaves both NULL — so for a settled run in that
 state the plugin and tool_call activities never reached the client at all.
 
-Every one of those failures produced the same number, because
-`activityDuration` sums `durationMs ?? elapsedMsAtSnapshot ?? 0`. A missing
-activity, an unreachable one, and an interval closed without a duration all read
-as zero, so the client could not tell "took no time" from "I cannot see the
-timing" and rendered the second as the first. That is what made the bug a
-confident falsehood rather than a gap, and it is why the nullable duration
-matters as much as the new field: even if some upstream join still misses, the
-row now says nothing rather than something false.
+Every one of those failures produced the same number, because `activityDuration`
+sums `durationMs ?? elapsedMsAtSnapshot ?? 0`. A missing activity, an
+unreachable one, and an interval closed without a duration all read as zero, so
+the client could not tell "took no time" from "I cannot see the timing" and
+rendered the second as the first. That is what made the bug a confident
+falsehood rather than a gap, and it is why the nullable duration matters as much
+as the new field: even if some upstream join still misses, the row now says
+nothing rather than something false.
+
+"Slack worked for 5s" makes the connector the actor, which it is not — Rally
+decided to call it. Naming the agent as the subject everywhere would be worse,
+because "Rally worked" is then indistinguishable from the response-level total.
+So the agent keeps the working voice and the tools take the used voice, which
+also reads as what a person would say about their own work. Computer is the only
+group named with a common noun, so it is the only one needing an article; every
+connector is a proper name and takes none.
+
+The response total moved because it stops being progress the moment it settles.
+Left in the feed it is a spent timer sitting under the answer, which reads like
+another step still to come; in the header it sits with the rest of that
+message's provenance, beside the author and the time.
 
 **Considered and rejected:** Putting `pluginRunId` and a resolved duration on
 the tool block instead. It needs no new array, but a plugin's total spans
@@ -1158,50 +1176,27 @@ required. A desktop build updates on its own schedule and has to parse a
 snapshot from an older API, so the field is defaulted and an empty array means
 "this server does not report runs" rather than "no plugin ran".
 
+Deriving the phrasing in the component from the group's name and a boolean. It
+puts a grammar rule in the renderer, and the article case would have been a name
+comparison against "Computer" — a string match that breaks the day the group is
+renamed. Also rejected: folding a turn's *thinking* row into the header too.
+Thinking annotates one step inside a run and several belong to a single message;
+only the response's own total is a fact about the finished message.
+
 **Consequences:** The plugin↔tool relationship is the authority's to state, and
 a client that recomputes it has reintroduced this defect. `pluginRunsForTurns`
-must keep seeding from the turn's own id and walking *down*; a workers test
-pins that a turn whose blocks carry no `activityId` still reports its runs, and
-it fails if the seed goes back to `turn.activityId`. Anywhere a duration is
-summed, one unknown contribution makes the total unknown rather than smaller —
-adding only the parts that reported understates the work by exactly the part
-that did not, and presents the shortfall as certain. The legacy fallback can be
-deleted once no deployed API omits `pluginRuns`.
+must keep seeding from the turn's own id and walking *down*; a workers test pins
+that a turn whose blocks carry no `activityId` still reports its runs, and it
+fails if the seed goes back to `turn.activityId`. Anywhere a duration is summed,
+one unknown contribution makes the total unknown rather than smaller — adding
+only the parts that reported understates the work by exactly the part that did
+not, and presents the shortfall as certain. The legacy fallback can be deleted
+once no deployed API omits `pluginRuns`.
 
-### 2026-08-29 — Rally works; everything else is used
-
-**What changed:** A group carries its own `activeVerb` and `completedVerb`.
-Rally reads "Rally is working" / "Rally worked"; every other plugin reads "Using
-Slack" / "Used Slack"; the Computer group reads "Using a computer" / "Used a
-computer". A settled response total moves out of the feed into the header of the
-message it produced, via `foldSettledWorkIntoMessages`.
-
-**Why:** "Slack worked for 5s" makes the connector the actor, which it is not —
-Rally decided to call it. Naming the agent as the subject everywhere would be
-worse, because "Rally worked" is then indistinguishable from the response-level
-total. So the agent keeps the working voice and the tools take the used voice,
-which also reads as what a person would say about their own work. Computer is
-the only group named with a common noun, so it is the only one needing an
-article; every connector is a proper name and takes none.
-
-The response total moved because it stops being progress the moment it settles.
-Left in the feed it is a spent timer sitting under the answer, which reads like
-another step still to come; in the header it sits with the rest of that
-message's provenance, beside the author and the time.
-
-**Considered and rejected:** Deriving the phrasing in the component from the
-group's name and a boolean. It puts a grammar rule in the renderer, and the
-article case would have been a name comparison against "Computer" — a string
-match that breaks the day the group is renamed. Also rejected: folding a turn's
-*thinking* row into the header too. Thinking annotates one step inside a run and
-several belong to a single message; only the response's own total is a fact
-about the finished message.
-
-**Consequences:** A new group decides its own phrasing, and a group whose name
-is a common noun needs the article written into its verbs. A message can now
-carry `workSummary`, and the header renders it; a surface that shows agent
-messages without that header will drop the total silently.
-
+A new group decides its own phrasing, and a group whose name is a common noun
+needs the article written into its verbs. A message can now carry `workSummary`,
+and the header renders it; a surface that shows agent messages without that
+header will drop the total silently.
 
 ### 2026-08-29 — Marks come from `@thesvg/react`, one subpath at a time
 

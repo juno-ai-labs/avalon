@@ -155,35 +155,13 @@ its abandoned cost grows with message length.
 
 ## Changelog
 
-### 2026-09-10 — Speak says *Speak response*, and the AI disclosure goes with it
+### 2026-09-10 — Speak says *Speak response*, and the AI disclosure leaves with the native title
 
-**What changed:** The control's one string is now *Speak response*. It had been
-*Speak response with an AI-generated voice*, which was its accessible name and,
-from earlier the same day, its tooltip.
-
-**Why:** Asked for directly: the row's five sentences are read together on
-hover, and this was the only one that ran past its neighbours — *Copy response*,
-*Save response as an image*, *Save response as a PDF*, *New substream from this
-message*. The shorter form matches them.
-
-**Considered and rejected:** Splitting name from tooltip, so the tooltip could
-stay short while the name kept the disclosure. `MessageAction` deliberately
-spends one string on both, and two strings for one control is exactly the drift
-that put *Speak response with an AI-generated voice* and *Play with an
-AI-generated voice* on the same button before this.
-
-**Consequences:** Nothing in the transcript now says the voice is synthetic.
-The agent's `generate_audio` tool still discloses its own output, but that is a
-different path and does not cover this one. If the disclosure is wanted back it
-needs somewhere of its own — the speech section of Settings, or a first-play
-note — because the label is now spoken for.
-
-### 2026-09-10 — The voice disclosure moved off the native title
-
-**What changed:** Speak's `title` attribute is gone. Its disclosure is now the
-app's own tooltip, opened by the action row's `MessageAction` from the same
-string as the accessible label — at the time "Speak response with an
-AI-generated voice", and "Stop speaking" while it plays.
+**What changed:** Speak's `title` attribute is gone; its tooltip is now the
+app's own, opened by the action row's `MessageAction` from the same string as
+the accessible label. That one string is now *Speak response* (and *Stop
+speaking* while it plays). It had been *Speak response with an AI-generated
+voice*.
 
 **Why:** The row's other actions gained tooltips, and a native `title` beside
 them would have opened in a different box, after a delay nothing in the app
@@ -191,10 +169,24 @@ sets, and never for a pointer already moving along the row. It also let the
 disclosure exist twice in slightly different words: the label said *Speak
 response with an AI-generated voice* and the title *Play with an AI-generated
 voice*, which is exactly the drift a disclosure invariant should not permit.
+The shortening was asked for directly: the row's five sentences are read
+together on hover, and this was the only one that ran past its neighbours —
+*Copy response*, *Save response as an image*, *Save response as a PDF*, *New
+substream from this message*.
 
-**Consequences:** The disclosure is one string. Changing what Speak says means
+**Considered and rejected:** Splitting name from tooltip, so the tooltip could
+stay short while the name kept the disclosure. `MessageAction` deliberately
+spends one string on both, and two strings for one control is exactly the drift
+that put two different disclosures on the same button before this.
+
+**Consequences:** The disclosure is one string: changing what Speak says means
 changing `description` on its `MessageAction`, and the label and the tooltip
-move together because there is nothing else to move.
+move together because there is nothing else to move. Nothing in the transcript
+now says the voice is synthetic. The agent's `generate_audio` tool still
+discloses its own output, but that is a different path and does not cover this
+one. If the disclosure is wanted back it needs somewhere of its own — the
+speech section of Settings, or a first-play note — because the label is now
+spoken for.
 
 ### 2026-08-31 — Stopped PCM players fail explicit reuse
 

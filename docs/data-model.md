@@ -1117,7 +1117,7 @@ that may be gone. `content` carries no byte `CHECK` yet: its bound is an open
 placeholder in TypeScript until the team sets it, and a `CHECK` is not an inert
 site. [`resident-context.md`](resident-context.md) owns the rows.
 
-### 2026-09-08: Keep child archive separate from creation readiness
+### 2026-09-08 — Keep child archive separate from creation readiness
 
 WorkstreamDO migration 9 adds nullable `conversation_children.archived_at`.
 An additive column preserves preparation and membership rows and allows restore;
@@ -1180,17 +1180,27 @@ WorkspaceDO migrations 34–35 store the per-member journey and connector choice
 Existing accounts are exempted. A second execution store was rejected: first
 work uses ordinary workstream creation and the existing durable agent loop.
 
-### 2026-09-07 — One migration, and the operation row is the register
+### 2026-09-07 — One demo-workspace migration: the operation row is the register, beside its phases and the seeder's receipts
 
 **What changed:** The three demo migrations written on the combined branch —
 the register (`0099`), the seeder's receipts (`0100`) and the operation
 (`0101`) — are folded into one file before any of them ships — `0099` as
 written, `0100_demo_workspaces.sql` once `main` took `0099` for account
-onboarding while this branch was open. `demo_workspaces` is gone: `demo_operations` carries `ready_at` and
-`retired_at`, `workspace_id` is unique with no foreign key to `workspaces`,
-`demo_seed_receipts` references `demo_operations`, and the phase name has no
-`CHECK`. The entries below describe the shape as it was written and are kept
-as the record of why each table exists.
+onboarding while this branch was open. `demo_workspaces` is gone:
+`demo_operations` carries `ready_at` and `retired_at`, `workspace_id` is
+unique with no foreign key to `workspaces`, `demo_seed_receipts` references
+`demo_operations`, and the phase name has no `CHECK`.
+
+The tables as they were written, kept as the record of why each exists:
+
+- `demo_operations` and `demo_operation_phases` in regional D1 (`0101` as
+  written), one migration because they are one thing: the operation and its
+  phases.
+- `demo_seed_receipts` in regional D1 (`0100` as written), keyed by operation
+  and action, referencing the register's `operation_id` and `workspaces(id)`,
+  with `run_outcome` closed to the two outcomes a seeded run may settle in.
+  `runs.execution_context_json` in a seeded room's object gains an optional
+  `seed`.
 
 **Why:** Review found the register duplicating the operation row with two
 extra columns and a reader nothing called, two children of one operation id
@@ -1200,6 +1210,22 @@ workspace row exists, and D1 enforces the constraint on the write, so
 preparation could not pass its second phase. One table is one identity, and
 one migration is what the repository asks of one coherent change.
 
+The operation and its phases exist because the Demos page shows an
+operation's current phase, its completed items and its failure from real
+receipts, and resumes it by id. Those receipts have to outlive a Workflow
+instance and be readable without one, and the operation has to exist before
+the workspace it makes.
+
+The seeder's receipts exist because the seeder plays a pack through write
+paths that do not know they are seeding, so nothing in those paths can say
+which pack action produced which row. A receipt written after confirmation is
+what preparation resumes from and what the barrier will compare the workspace
+against; a receipt written at admission would let a run that failed count as
+seeded. The first row wins on conflict because its ids are the ones already
+handed onward.
+
+All of these rows are owned by [`demo-workspaces.md`](demo-workspaces.md).
+
 **Considered and rejected:** Keeping the register and dropping only the
 foreign key — the duplicate would still have to be kept in step on every field
 a demo gains. A `CHECK` on the phase name — a product decision that will move,
@@ -1208,35 +1234,6 @@ and SQLite cannot widen one in place.
 **Consequences:** Anything that asks which workspaces the demo feature made,
 or whether one is published, reads `demo_operations`. The migration is one
 unshipped file and is the place a further schema change goes until it ships.
-
-### 2026-09-07 — The preparation operation's rows
-
-**What changed:** `demo_operations` and `demo_operation_phases` in regional D1
-(`0101` as written; folded into `0100_demo_workspaces.sql` before release, see
-above), one migration because they are one thing: the operation and its phases.
-
-**Why:** The Demos page shows an operation's current phase, its completed
-items and its failure from real receipts, and resumes it by id. Those receipts
-have to outlive a Workflow instance and be readable without one, and the
-operation has to exist before the workspace it makes. Owned by
-[`demo-workspaces.md`](demo-workspaces.md).
-
-### 2026-09-07 — The seeder's receipts
-
-**What changed:** `demo_seed_receipts` in regional D1 (`0100` as written;
-folded into `0100_demo_workspaces.sql` before release, see above), keyed by
-operation and action,
-referencing the register's `operation_id` and `workspaces(id)`, with `run_outcome` closed to the two outcomes a seeded run
-may settle in. `runs.execution_context_json` in a seeded room's object gains an
-optional `seed`.
-
-**Why:** The seeder plays a pack through write paths that do not know they are
-seeding, so nothing in those paths can say which pack action produced which
-row. A receipt written after confirmation is what preparation resumes from and
-what the barrier will compare the workspace against; a receipt written at
-admission would let a run that failed count as seeded. The first row wins on
-conflict because its ids are the ones already handed onward. Owned by
-[`demo-workspaces.md`](demo-workspaces.md).
 
 ### 2026-09-05 — Two tables for closing a workspace permanently
 
@@ -1285,7 +1282,7 @@ considered; the next admission appends the ones above it and advances the
 column to what its scan covered, never to its own turn. Owned by
 [`workstream-durable-object.md`](workstream-durable-object.md).
 
-### 2026-09-04: Private work-stream children gain parent and local authority tables
+### 2026-09-04 — Private work-stream children gain parent and local authority tables
 
 **What changed:** WorkstreamDO migration 7 adds child readiness/title fields,
 retryable preparation receipts, the authoritative per-child roster, and its
@@ -1304,7 +1301,7 @@ unrelated change to user B would make user A's still-valid receipt appear stale.
 failed membership effects are durable but not alarm-eligible; the readiness RPC
 delivers them to the provisioned child before publishing it.
 
-### 2026-09-03: Automations become conversation parents; the effect legs lose their acknowledgement
+### 2026-09-03 — Automations become conversation parents; the effect legs lose their acknowledgement
 
 **What changed:** `AutomationAgent`'s thirteen-migration database is gone with
 the class; `AutomationDO` starts at one migration holding the automation, its
@@ -2604,27 +2601,7 @@ input event indefinitely. Bounded local cleanup preserves alarm latency and the
 machinery expires. Because the Durable Object schema has not shipped, these
 indexes remain part of its single initial migration.
 
-### 2026-08-18 — Imports and compatibility SQL enforce authority shape
-
-**What changed:** Workspace product imports distinguish JSON-object and
-JSON-array columns, and the runtime database router rejects regional writes
-that reference WorkspaceDO-local tables in a subquery. Migration tests now
-exercise connector-route backfill/triggers, authority phase edges, and every
-workspace-domain drain category.
-
-**Why:** Syntactically valid JSON can still violate the target contract, and
-classifying a mutation from any table name in its SQL can silently send a
-regional audit write into the wrong database.
-
-**Considered and rejected:** Relying only on SQLite `json_valid`, permitting
-implicit cross-authority SQL, and testing only the happy-path maintenance
-transition.
-
-**Consequences:** Import failures surface before activation. Cross-object work
-uses separate durable/idempotent operations, and control-plane migration
-changes must extend the trigger matrix tests.
-
-### 2026-08-18 — Workspace product domains move behind WorkspaceDO authority
+### 2026-08-18 — Workspace product domains move behind WorkspaceDO authority, and imports and compatibility SQL enforce its shape
 
 **What changed:** WorkspaceDO's single initial SQLite schema now owns connector
 connections, connection-scoped webhook replay receipts, OAuth attempt status,
@@ -2634,22 +2611,31 @@ and deliveries, schedules, resources/watches/notes, R2 reference/deletion
 outboxes, memory, mention intents, and external delivery state. Existing
 repositories use an allowlisted D1-compatible port that sends local SQL through
 typed native RPC; a statement batch that names both object-local and D1/control
-tables is rejected. The maintenance campaign imports these tables in foreign-key
-order, verifies them with the rest of the workspace route, scrubs the legacy
-connector-event body rows, and permanently fences their D1 writers.
-Terminal mention shells are retained for 30 days and reaped through the owning
-WorkspaceScheduler, never by a fleet-wide D1 product scan.
+tables is rejected, and the runtime database router also rejects regional
+writes that reference WorkspaceDO-local tables in a subquery. The maintenance
+campaign imports these tables in foreign-key order, verifies them with the rest
+of the workspace route, scrubs the legacy connector-event body rows, and
+permanently fences their D1 writers; the imports distinguish JSON-object and
+JSON-array columns. Terminal mention shells are retained for 30 days and reaped
+through the owning WorkspaceScheduler, never by a fleet-wide D1 product scan.
+Migration tests now exercise connector-route backfill/triggers, authority phase
+edges, and every workspace-domain drain category.
 
 **Why:** Each row belongs to exactly one workspace and is frequently consumed
 with other workspace state. Leaving it in D1 made D1 a product database and
 forced object-owned workflows, sockets, and schedulers back through a second
-authority for every operation.
+authority for every operation. On the import and routing side, syntactically
+valid JSON can still violate the target contract, and classifying a mutation
+from any table name in its SQL can silently send a regional audit write into
+the wrong database.
 
 **Considered and rejected:** D1 serving projections, live dual writes, one
 Durable Object per workspace domain, and cross-object SQL joins. A maintenance
 window permits a clean authority switch; separate domain objects would add
 routing and distributed transactions without improving ownership; SQL cannot
-provide atomicity across Durable Object databases.
+provide atomicity across Durable Object databases. Also rejected: relying only
+on SQLite `json_valid`, permitting implicit cross-authority SQL, and testing
+only the happy-path maintenance transition.
 
 **Consequences:** D1 remains necessary for identities, membership, placement,
 ingress routing before the workspace is known, migration control, and bounded
@@ -2657,9 +2643,11 @@ operational audit/telemetry. WorkspaceScheduler reads due workspace product
 rows from WorkspaceDO. R2 still owns bytes, while WorkspaceDO owns every pointer
 and lifecycle intent. Cross-object resource and Terminal operations perform
 separate, version-fenced reads rather than pretending a join spans
-WorkspaceDO and SubstreamAgent.
+WorkspaceDO and SubstreamAgent; cross-object work in general uses separate
+durable/idempotent operations. Import failures surface before activation, and
+control-plane migration changes must extend the trigger matrix tests.
 
-### 2026-08-18 — Workspace activity and suggested work leave D1 product authority
+### 2026-08-18 — Workspace activity, suggested work, and connector event bodies leave D1 for WorkspaceDO
 
 **What changed:** WorkspaceDO's single initial SQLite schema now owns the
 first-party activity log/targets and the complete work-opportunity lifecycle:
@@ -2672,16 +2660,27 @@ foreign key survive. Opportunity-start RPCs return authorized activity roots
 from the same object so origin resources enter the new SubstreamAgent's initial
 SQL transaction before its first run dispatch.
 
-**Why:** Both datasets belong to exactly one workspace and are consumed beside
-the workspace directory. Keeping them in regional D1 made the nominal control
-plane a product serving plane and forced delayed connector processing to retain a
-second body source.
+The table catalog also makes
+`workspace_connector_events`/`workspace_connector_event_ingress_receipts` the
+normalized provider-event authority. The regional Queue carries the bounded
+normalized event to WorkspaceDO; D1 `activities` is legacy maintenance input
+only and is scrubbed/fenced at activation.
+
+**Why:** All three datasets belong to exactly one workspace. Activity and
+opportunities are consumed beside the workspace directory, and keeping them in
+regional D1 made the nominal control plane a product serving plane and forced
+delayed connector processing to retain a second body source. Persisting a
+connector event's long-lived body in the regional relational control plane
+created a second authority without enabling a valid cross-workspace join.
 
 **Considered and rejected:** Keeping D1 projections for relational convenience,
 dual-writing through rollout, and splitting opportunity provenance from its
 opportunity/user state. The maintenance window makes dual authority unnecessary,
 and splitting the graph loses the atomic boundary that makes a resolved
-suggestion explainable.
+suggestion explainable. For connector events: a provider-delivery row shared by
+multiple workspaces, and an indefinite D1 read projection. The former crosses
+visibility boundaries; the latter keeps D1 authoritative in practice regardless
+of what the object schema says.
 
 **Consequences:** Activity visibility joins the WorkspaceDO directory locally;
 opportunity admission and ranking run in Workflows against fenced WorkspaceDO
@@ -2689,29 +2688,10 @@ leases; dormant rankings create no polling loop; opportunity-origin attachment
 does not race the first agent context read. D1 retains membership and connector
 identity inputs, migration receipts, and opaque opportunity identity anchors,
 but no activity rows, opportunity content/provenance/user state, or active read
-or write path for these products.
-
-### 2026-08-18 — Connector event bodies move into WorkspaceDO
-
-**What changed:** The table catalog now makes
-`workspace_connector_events`/`workspace_connector_event_ingress_receipts` the
-normalized provider-event authority. The regional Queue carries the bounded
-normalized event to WorkspaceDO; D1 `activities` is legacy maintenance input
-only and is scrubbed/fenced at activation.
-
-**Why:** Connector events have exactly one workspace owner. Persisting their
-long-lived body in the regional relational control plane created a second
-authority without enabling a valid cross-workspace join.
-
-**Considered and rejected:** A provider-delivery row shared by multiple
-workspaces, and an indefinite D1 read projection. The former crosses visibility
-boundaries; the latter keeps D1 authoritative in practice regardless of what
-the object schema says.
-
-**Consequences:** Long-lived readers resolve events through WorkspaceDO. Raw
-provider bodies remain in R2, Queue retries converge on object-local provider
-identity/dedupe constraints, and no D1 row is required between verification and
-WorkspaceDO admission.
+or write path for these products. Long-lived readers resolve connector events
+through WorkspaceDO. Raw provider bodies remain in R2, Queue retries converge on
+object-local provider identity/dedupe constraints, and no D1 row is required
+between verification and WorkspaceDO admission.
 
 ### 2026-08-18 — Work-stream projections gain independent state waterlines
 
@@ -2782,123 +2762,107 @@ D1 reaches it through a new forward migration. Tests assert both historical
 migration immutability and the resulting schema. Visible dashboard text still
 says HyperSight and is not derived from storage identifiers.
 
-### 2026-08-18 — Active compaction is operational state, not conversation
+### 2026-08-18 — Active compaction is operational state, and derived block output gains a reconnect-safe checkpoint
 
 **What changed:** The work-stream object map now names
 `active_agent_compaction` separately from immutable compaction jobs/checkpoints
-and from transcript `parts`.
+and from transcript `parts`. Each `BlockDashboardAgent` now stores one full
+active-output checkpoint and its own one-time socket receipts beside the
+existing dispatch ledger; its source transcript and Bind tool rows remain in
+main `SubstreamAgent("0")`, and the checkpoint contains only the block's
+derived output.
 
 **Why:** The desktop needs a durable phase indicator across reconnect, but a
 progress marker has neither the semantics nor the retention of a model message
-or completed context checkpoint.
+or completed context checkpoint. A block loop likewise must resume a visible
+in-progress stream after socket reconnect or object eviction without
+duplicating deltas, losing text, or writing token-sized rows.
 
-**Considered and rejected:** Inferring the phase from missing token deltas and
-authoring synthetic compaction parts. Both confuse presentation with durable
-conversation semantics.
+**Considered and rejected:** Inferring the compaction phase from missing token
+deltas and authoring synthetic compaction parts — both confuse presentation
+with durable conversation semantics. For block output: copying source messages
+into the block object, per-token rows, and transient in-memory text — they
+create a second transcript authority, amplify writes, or lose the recovery
+boundary.
 
-**Consequences:** The singleton may be rebuilt/cleared from ordered lifecycle
-events; a finish must match run, attempt, and index. Completed summaries retain
-their existing immutable fences and canonical messages remain unchanged.
-
-### 2026-08-18 — Derived agent output gains a reconnect-safe SQL checkpoint
-
-**What changed:** Each `BlockDashboardAgent` now stores one full active-output
-checkpoint and its own one-time socket receipts beside the existing dispatch
-ledger. Its source transcript and Bind tool rows remain in main
-`SubstreamAgent("0")`; the checkpoint contains only the block's derived output.
-
-**Why:** A block loop must resume a visible in-progress stream after socket
-reconnect or object eviction without duplicating deltas, losing text, or
-writing token-sized rows.
-
-**Considered and rejected:** Copying source messages into the block object,
-per-token rows, and transient in-memory text. They create a second transcript
-authority, amplify writes, or lose the recovery boundary.
-
-**Consequences:** The agent commits a complete revisioned checkpoint before
+**Consequences:** The compaction singleton may be rebuilt/cleared from ordered
+lifecycle events; a finish must match run, attempt, and index. Completed
+summaries retain their existing immutable fences and canonical messages remain
+unchanged. The block agent commits a complete revisioned checkpoint before
 broadcast, Electron replaces rather than appends on resume, and completion
 collapses the transient checkpoint into the terminal result authority.
 
-### 2026-08-18 — Conversation arrays and operational overlays stay separate
+### 2026-08-18 — Substream-agent cutover: overlays stay out of the transcript, HyperSight splits authority, routes gain immutable affinity, and sockets have three authorities
 
-**What changed:** Object-local `parts` is documented as the provider-neutral
-semantic order, compaction rows retain immutable event identities, and
-`suggested_actions` is explicitly operational state rather than transcript.
-Durable Object timestamps are integer milliseconds even though D1/API values
-remain ISO strings.
+**What changed:**
 
-**Why:** A suggestion may be private or revoked and must not become shared model
-history by storage accident. A derived run also needs a stable lossy prefix and
-exact post-prefix tool pairs, not whichever summary is newest when it starts.
+- Object-local `parts` is documented as the provider-neutral semantic order,
+  compaction rows retain immutable event identities, and `suggested_actions`
+  is explicitly operational state rather than transcript. Durable Object
+  timestamps are integer milliseconds even though D1/API values remain ISO
+  strings.
+- WorkstreamDO now stores configured/published HyperSight state, one
+  `BlockDashboardAgent` stores each stable block's execution ledger, and main
+  `SubstreamAgent("0")` stores the fenced Bind runtime rows used during
+  execution.
+- `workspaces`, the Global `platform_workspace_bindings` route, and
+  `WorkspaceDO.workspace_identity` now carry the same region-compatible
+  `wnam`/`enam`/`weur`/`eeur` affinity. D1 triggers backfill region defaults
+  and reject changes once a compatible value exists.
+- WorkspaceDO gained workspace-scoped socket receipts and a bounded
+  topic-version log; WorkstreamDO gained socket receipts plus a revisioned
+  complete metadata projection. SubstreamAgent remains the transcript/stream
+  authority.
 
-**Considered and rejected:** Treating every UI block as a message and storing
-timestamps in mixed formats inside object SQL. Both make authorization and
-ordering rules implicit at read time.
+**Why:**
 
-**Consequences:** Projectors have one explicit semantic source, operational
-cards require explicit authorship to enter it, and SQL range/order comparisons
-use one timestamp representation.
+- A suggestion may be private or revoked and must not become shared model
+  history by storage accident. A derived run also needs a stable lossy prefix
+  and exact post-prefix tool pairs, not whichever summary is newest when it
+  starts.
+- HyperSight configuration and results are work-stream metadata, execution
+  recovery is block-local, and transcript-related receipts must stay beside
+  the transcript authority they reference.
+- Every child creator needs a cheap regional route to the parent's one-time
+  placement choice. Querying Global on each operation violates the data plane
+  boundary, while recomputing from the current caller can split the object
+  graph.
+- Live multi-client workspace data needs durable change notification, while
+  aggregate work-stream data needs a model-free authoritative snapshot.
+  Neither requirement justifies copying relational workspace rows or token
+  feeds into another database.
 
-### 2026-08-18 — HyperSight separates product and execution authority
+**Considered and rejected:**
 
-**What changed:** WorkstreamDO now stores configured/published HyperSight state,
-one `BlockDashboardAgent` stores each stable block's execution ledger, and main
-`SubstreamAgent("0")` stores the fenced Bind runtime rows used during execution.
+- Treating every UI block as a message and storing timestamps in mixed
+  formats inside object SQL. Both make authorization and ordering rules
+  implicit at read time.
+- Copying the transcript into block objects, putting model execution in
+  WorkstreamDO, and treating a block as a conversation substream. Each either
+  duplicates data, loads the control plane, or invents a false user-visible
+  message authority.
+- Keeping affinity only in WorkspaceDO and treating it as mutable workspace
+  settings. The former makes the parent a read bottleneck; the latter suggests
+  a row update can move Durable Objects when it cannot.
+- Duplicating D1 workspace records in WorkspaceDO and deriving aggregate state
+  from the current token stream. The first splits authority; the second fails
+  whenever no model is running or a nullable field is cleared.
 
-**Why:** Configuration and results are work-stream metadata, execution recovery
-is block-local, and transcript-related receipts must stay beside the transcript
-authority they reference.
+**Consequences:**
 
-**Considered and rejected:** Copying the transcript into block objects, putting
-model execution in WorkstreamDO, and treating a block as a conversation
-substream. Each either duplicates data, loads the control plane, or invents a
-false user-visible message authority.
-
-**Consequences:** Cross-object consistency is explicit: source refresh signal,
-parent dispatch, block-to-source runtime SQL, and block result receipt. The
-complete SQL catalog and failure rules are in
-[`workstream-durable-object.md`](workstream-durable-object.md).
-
-### 2026-08-17 — Workspace routes gain immutable Durable Object affinity
-
-**What changed:** `workspaces`, the Global `platform_workspace_bindings` route,
-and `WorkspaceDO.workspace_identity` now carry the same region-compatible
-`wnam`/`enam`/`weur`/`eeur` affinity. D1 triggers backfill region defaults and
-reject changes once a compatible value exists.
-
-**Why:** Every child creator needs a cheap regional route to the parent's
-one-time placement choice. Querying Global on each operation violates the data
-plane boundary, while recomputing from the current caller can split the object
-graph.
-
-**Considered and rejected:** Keeping affinity only in WorkspaceDO and treating
-it as mutable workspace settings. The former makes the parent a read bottleneck;
-the latter suggests a row update can move Durable Objects when it cannot.
-
-**Consequences:** Regional D1 is an immutable routing projection cached per
-Worker isolate, not a second placement authority. A true affinity change
-requires a maintenance migration of the complete hierarchy.
-
-### 2026-08-17 — Control-plane SQL supports three independent socket authorities
-
-**What changed:** WorkspaceDO gained workspace-scoped socket receipts and a
-bounded topic-version log; WorkstreamDO gained socket receipts plus a revisioned
-complete metadata projection. SubstreamAgent remains the transcript/stream
-authority.
-
-**Why:** Live multi-client workspace data needs durable change notification,
-while aggregate work-stream data needs a model-free authoritative snapshot.
-Neither requirement justifies copying relational workspace rows or token feeds
-into another database.
-
-**Considered and rejected:** Duplicating D1 workspace records in WorkspaceDO and
-deriving aggregate state from the current token stream. The first splits
-authority; the second fails whenever no model is running or a nullable field is
-cleared.
-
-**Consequences:** Workspace mutation paths publish topics after commit,
-WorkstreamDO sends full snapshots by revision, and cross-object updates remain
-typed RPC/outbox operations rather than cross-database SQL.
+- Projectors have one explicit semantic source, operational cards require
+  explicit authorship to enter it, and SQL range/order comparisons use one
+  timestamp representation.
+- HyperSight's cross-object consistency is explicit: source refresh signal,
+  parent dispatch, block-to-source runtime SQL, and block result receipt. The
+  complete SQL catalog and failure rules are in
+  [`workstream-durable-object.md`](workstream-durable-object.md).
+- Regional D1 is an immutable routing projection cached per Worker isolate,
+  not a second placement authority. A true affinity change requires a
+  maintenance migration of the complete hierarchy.
+- Workspace mutation paths publish topics after commit, WorkstreamDO sends
+  full snapshots by revision, and cross-object updates remain typed RPC/outbox
+  operations rather than cross-database SQL.
 
 ### 2026-08-17 — Work-stream authority is split across parent and substream SQL
 
@@ -2954,44 +2918,35 @@ retaining notification bodies after settlement.
 **Consequences:** D1 can serve cross-workstream lists and external delivery
 without becoming work-stream product authority.
 
-### 2026-08-17 — Work-stream product rows acquire an object-local authority boundary
-
-**What changed:** The map now distinguishes workspace/control/projection tables
-that remain in D1 from normalized product tables owned by one WorkstreamDO after
-the maintenance generation opens. D1 migration `0079` records the phase/routes
-and permanently fences the legacy product tables after open.
-
-**Why:** The physical copy and the authority switch are separate facts. Without
-an explicit generation and writer fence, the same logical row could continue to
-accept mutations in both databases.
-
-**Considered and rejected:** Treating all D1 rows with `workstream_id` as one
-ownership class. Pins, schedules, connector delivery, automation, audit, and
-telemetry cross the work-stream boundary for valid workspace/control reasons.
-
-**Consequences:** Code must consult the ownership map, not infer authority from
-an ID column. Object-local schema changes use the object registry; D1 control and
-projection changes use numbered migrations.
-
-### 2026-08-16 — Object-local SQL is named separately from canonical D1
+### 2026-08-17 — Object-local SQL is named separately from canonical D1, and work-stream product rows acquire an authority boundary
 
 **What changed:** The data map now identifies the versioned SQLite schema owned
-by each existing `SubstreamAgent` and points to its module contract. At that
+by each existing `SubstreamAgent` and points to its module contract; at that
 stage, canonical work-stream metadata and completed transcript rows still
-remained in regional D1.
+remained in regional D1. The map then distinguishes workspace/control/projection
+tables that remain in D1 from normalized product tables owned by one
+WorkstreamDO after the maintenance generation opens. D1 migration `0079`, the
+maintenance campaign's separately fenced authority migration, records the
+phase/routes and permanently fences the legacy product tables after open.
 
 **Why:** Cloudflare stores the room's former key/value data inside its SQLite
 database, but hidden storage is still a different authority boundary from D1.
 Leaving it undocumented makes named local tables look like a second canonical
-product database.
+product database. The physical copy and the authority switch are also separate
+facts: without an explicit generation and writer fence, the same logical row
+could continue to accept mutations in both databases.
 
-**Considered and rejected:** Adding the object DDL to `packages/db/migrations`.
-Those migrations run against regional D1 and cannot safely version millions of
-independently activated Durable Object databases.
+**Considered and rejected:** Adding the object DDL to `packages/db/migrations`
+— those migrations run against regional D1 and cannot safely version millions
+of independently activated Durable Object databases. Treating all D1 rows with
+`workstream_id` as one ownership class — pins, schedules, connector delivery,
+automation, audit, and telemetry cross the work-stream boundary for valid
+workspace/control reasons.
 
-**Consequences:** D1 schema changes still use numbered package migrations.
-Room-local schema changes use the Workstream Object registry. The later
-maintenance campaign supplies the separately fenced authority migration.
+**Consequences:** Code must consult the ownership map, not infer authority from
+an ID column. D1 schema changes — control and projection changes included —
+still use numbered package migrations; object-local schema changes use the
+Workstream Object registry.
 
 ### 2026-08-15 — Connector conversations seed the existing work-stream scope
 

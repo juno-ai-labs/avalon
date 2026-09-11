@@ -866,11 +866,7 @@ together with the regional binding; changing only the Cloudflare class would
 strand the operational migration view. Verify existing objects in both regions
 before that release and retain the old export until verification completes.
 
-This records the review fixes because stale effects, overbroad revocation, and
-implicit compatibility assumptions can break otherwise valid delegated work.
-Future changes must retain the separate ownership and execution boundaries.
-
-### 2026-09-03: AutomationDO joins the tracked fleet and AutomationAgent leaves it
+### 2026-09-03 — AutomationDO joins the tracked fleet and AutomationAgent leaves it
 
 **What changed:** `REPORTING_CLASSES`, the consumer's dispatcher map, and the
 set of classes extending `MigratableDurableObject` all name `AutomationDO` and
