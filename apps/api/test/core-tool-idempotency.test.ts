@@ -1,6 +1,7 @@
-import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asAutomationId, asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { Env } from "../src/env";
@@ -112,6 +113,12 @@ function fixture(): {
     PAYLOADS: createCloudflareTestBinding<R2Bucket>(new MemoryBucket()),
     AVALON_REGION: "global",
     APP_ENV: "test",
+    PUBLIC_API_BASE_URL: "https://api.example.test",
+    GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-client",
+    GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-secret",
+    SLACK_CLIENT_ID: "slack-client",
+    SLACK_CLIENT_SECRET: "slack-secret",
+    SLACK_SIGNING_SECRET: "slack-signing-secret",
     // The elicitation tool's replay check reaches the object through the
     // scheduling port rather than the runtime router, so the fixture needs the
     // binding that port dispatches through — over this same object store.
@@ -204,31 +211,19 @@ function context(providerIdempotencyKey?: string) {
   };
 }
 
-describe("Avalon core write-tool idempotency", () => {
-  it("retains the safe connector card identity in the completed transcript fact", () => {
-    expect(__integrationTesting.participantSafeToolCompletion(
-      "core_show_connector_connection",
-      {
-        output: { connectorId: "slack", scope: "personal" },
-        summary: "Presented the slack personal connection card",
-      },
-    )).toEqual({ connectorId: "slack", scope: "personal" });
-    expect(__integrationTesting.participantSafeToolCompletion(
-      "core_current_time",
-      { output: { private: true }, summary: "It is noon" },
-    )).toBe("It is noon");
-  });
-
-  it("offers a trusted connector card only to user runs", async () => {
+describe("Avalon connector connection tools", () => {
+  it("offers a trusted connector card only to interactive user runs", async () => {
     const { env } = fixture();
     const userTool = __integrationTesting.createAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "show_connector_connection");
 
     expect(userTool?.definition).toMatchObject({
       capability: "connector.connection.present",
-      mode: "write",
+      mode: "read",
       idempotency: "safe",
     });
+    expect(userTool!.validateInput?.({ connectorId: "granola", scope: "workspace" }))
+      .toBeInstanceOf(z.ZodError);
     await expect(userTool!.execute({ connectorId: "slack", scope: "personal" }, context()))
       .resolves.toEqual({
         output: { connectorId: "slack", scope: "personal" },
@@ -245,6 +240,18 @@ describe("Avalon core write-tool idempotency", () => {
     expect(__integrationTesting.createAvalonTools(env, workspaceInput)
       .some((candidate) => candidate.definition.name === "get_connector_connection_state"))
       .toBe(false);
+
+    const automationInput = workflowInput();
+    automationInput.automationRun = {
+      schemaVersion: 1,
+      automationId: asAutomationId("00000000-0000-4000-8000-000000000006"),
+      definitionRevision: 1,
+      runId: "00000000-0000-4000-8000-000000000007",
+      trigger: { kind: "manual", requestedByUserId: USER_ID },
+    };
+    expect(__integrationTesting.createAvalonTools(env, automationInput)
+      .some((candidate) => candidate.definition.capability.startsWith("connector.connection.")))
+      .toBe(false);
   });
 
   it("reads the current authorized connector catalog state", async () => {
@@ -257,6 +264,39 @@ describe("Avalon core write-tool idempotency", () => {
       mode: "read",
       idempotency: "safe",
     });
+    await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "personal" }, context()))
+      .resolves.toMatchObject({ output: { state: "not_connected" } });
+    await expect(stateTool!.execute({ connectorId: "github", scope: "personal" }, context()))
+      .resolves.toMatchObject({ output: { state: "unavailable" } });
+
+    objectDatabase.prepare(
+      `INSERT INTO connector_connections
+         (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+          granted_scopes_json, status, created_at, updated_at, model_plugin_id)
+       VALUES (?, ?, 'slack', 'workspace', NULL, 'Workspace Slack',
+          ?, 'healthy', '2026-01-01', '2026-01-01', 'plugin_slack_workspace')`,
+    ).run(
+      "00000000-0000-4000-8000-000000000013",
+      WORKSPACE_ID,
+      JSON.stringify(["slack.agent"]),
+    );
+    await expect(stateTool!.execute({ connectorId: "slack", scope: "workspace" }, context()))
+      .resolves.toMatchObject({ output: { state: "connected" } });
+    await expect(stateTool!.execute({ connectorId: "slack", scope: "personal" }, context()))
+      .resolves.toMatchObject({ output: { state: "not_connected" } });
+
+    objectDatabase.prepare(
+      `INSERT INTO connector_connections
+         (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+          granted_scopes_json, status, created_at, updated_at, model_plugin_id)
+       VALUES (?, ?, 'google', 'personal', ?, 'Someone else Google Drive',
+          ?, 'healthy', '2026-01-01', '2026-01-01', 'plugin_google_other')`,
+    ).run(
+      "00000000-0000-4000-8000-000000000011",
+      WORKSPACE_ID,
+      "00000000-0000-4000-8000-000000000099",
+      JSON.stringify(["drive.read"]),
+    );
     await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "personal" }, context()))
       .resolves.toMatchObject({ output: { state: "not_connected" } });
 
@@ -290,6 +330,25 @@ describe("Avalon core write-tool idempotency", () => {
     ).run();
     await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "personal" }, context()))
       .resolves.toMatchObject({ output: { state: "reconnect_required" } });
+    objectDatabase.prepare(
+      "UPDATE connector_connections SET status = 'error' WHERE model_plugin_id = 'plugin_google'",
+    ).run();
+    await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "personal" }, context()))
+      .resolves.toMatchObject({ output: { state: "reconnect_required" } });
+
+    objectDatabase.prepare(
+      `INSERT INTO connector_connections
+         (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+          granted_scopes_json, status, created_at, updated_at, model_plugin_id)
+       VALUES (?, ?, 'google', 'workspace', NULL, 'Workspace Google Drive',
+          ?, 'healthy', '2026-01-01', '2026-01-01', 'plugin_google_workspace')`,
+    ).run(
+      "00000000-0000-4000-8000-000000000012",
+      WORKSPACE_ID,
+      JSON.stringify(["drive.read"]),
+    );
+    await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "workspace" }, context()))
+      .resolves.toMatchObject({ output: { state: "connected" } });
   });
 
   it("revokes private note access from workspace-principal resource tools", async () => {

@@ -942,6 +942,8 @@ describe("connector tools selected for harness runs", () => {
     expect(childTools.corePlugins.map((plugin) => plugin.canonicalId)).toEqual([
       "rally:core",
     ]);
+    expect(childTools.corePlugins[0]?.systemMessage).not.toContain("connector");
+    expect(childTools.corePlugins[0]?.systemMessage).not.toContain("core_request_elicitation");
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("run_subagent");
     expect(childTools.frozenConnections.has(`connection:${OWNER_CONNECTION_ID}`)).toBe(false);
     expect(childTools.frozenConnections.has(`connection:${WORKSPACE_CONNECTION_ID}`)).toBe(true);

@@ -2886,9 +2886,10 @@ export const AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION = {
   name: "get_connector_connection_state",
   description: [
     "Check Rally's saved connection state for a connector and scope. Call this first.",
-    "Returns connected, reconnect_required, or not_connected.",
+    "Returns connected, reconnect_required, not_connected, or unavailable.",
     "If connected, continue the task and do not show a card.",
     "If reconnect_required or not_connected blocks the task, briefly explain why, then call core_show_connector_connection with the same connectorId and scope.",
+    "If unavailable, explain that this connector is not configured in this Rally region and do not show a card.",
     "This checks Rally's saved state, not the provider directly.",
   ].join(" "),
   capability: "connector.connection.read",
@@ -2914,7 +2915,7 @@ export const AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION = {
     "Never create an authorization URL or ask for credentials.",
   ].join(" "),
   capability: "connector.connection.present",
-  mode: "write",
+  mode: "read",
   idempotency: "safe",
   get inputSchema() {
     return connectorConnectionCardInputJsonSchema();

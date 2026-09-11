@@ -1,11 +1,11 @@
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   ConnectorConnectionCardCatalog,
   connectorConnectionCardInputFromToolEvent,
   type ConnectorConnectionCardInput,
 } from '@rally/contracts';
 import { Check, AlertTriangle, LoaderCircle, Minus } from 'lucide-react';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect } from 'react';
 import { useAppSession } from '../lib/app-session';
 import {
   connectorProviderById,
@@ -67,22 +67,44 @@ export function connectorConnectionCardInput(message: {
   return connectorConnectionCardInputFromToolEvent(message.toolEvent);
 }
 
+export function connectorConnectionCardSelectionKey(request: ConnectorConnectionCardInput): string {
+  return `${request.connectorId}:${request.scope}`;
+}
+
+export function connectorConnectionCardProvider(
+  request: ConnectorConnectionCardInput,
+): OAuthConnectorProviderCatalogEntry | null {
+  const provider = connectorProviderById(request.connectorId);
+  if (!provider || !isOAuthConnectorProvider(provider)) return null;
+  const scope = request.scope === 'personal' ? 'you' : 'workspace';
+  return (provider.scopes as readonly string[]).includes(scope) ? provider : null;
+}
+
 /**
  * Main-feed connector authorization card, shaped from Grok Bot's bundled
  * connector-card primitive while keeping Rally's own tokens and trusted
  * connector catalog.
  */
-export function ConnectorConnectionCard({ request }: {
+export function ConnectorConnectionCard({ latchedConnected = false, onConnected, request }: {
+  latchedConnected?: boolean;
+  onConnected?: (selectionKey: string) => void;
   request: ConnectorConnectionCardInput;
 }): React.JSX.Element | null {
-  const provider = connectorProviderById(request.connectorId);
-  if (!provider || !isOAuthConnectorProvider(provider)) return null;
-  const scope = request.scope === 'personal' ? 'you' : 'workspace';
-  if (!(provider.scopes as readonly string[]).includes(scope)) return null;
-  return <ResolvedConnectorConnectionCard provider={provider} request={request} />;
+  const provider = connectorConnectionCardProvider(request);
+  if (!provider) return null;
+  return (
+    <ResolvedConnectorConnectionCard
+      latchedConnected={latchedConnected}
+      onConnected={onConnected}
+      provider={provider}
+      request={request}
+    />
+  );
 }
 
-function ResolvedConnectorConnectionCard({ provider, request }: {
+function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provider, request }: {
+  latchedConnected: boolean;
+  onConnected?: (selectionKey: string) => void;
   provider: OAuthConnectorProviderCatalogEntry;
   request: ConnectorConnectionCardInput;
 }): React.JSX.Element | null {
@@ -96,19 +118,51 @@ function ResolvedConnectorConnectionCard({ provider, request }: {
     : connectorScopeStates(provider.provider, connections, catalog.capabilityPrefixes)
         .find((candidate) => candidate.scope === scope);
   const reconnect = scopeState?.connections.find((connection) => connection.status === 'reconnect_required');
-  const selectionKey = `${request.connectorId}:${request.scope}`;
+  const availability = useQuery({
+    queryKey: ['connector-catalog'],
+    queryFn: ({ signal }) => api!.getAvailableConnectorTypes(signal),
+    enabled: Boolean(api),
+    staleTime: 30_000,
+  });
+  const selectionKey = connectorConnectionCardSelectionKey(request);
   const liveConnected = scopeState?.status === 'healthy';
-  const [connectedSelection, setConnectedSelection] = useState<string | null>(null);
-  const connected = liveConnected || connectedSelection === selectionKey;
+  const connected = liveConnected || latchedConnected;
   // The workspace socket's `connector_connections` topic refreshes the shared
   // query feeding this context after OAuth commits. Keep believing that live
   // state until it first reports success; a later provider revocation is both
   // unlikely while this historical card remains visible and better handled by
   // a fresh agent state check than by turning an old success back into a CTA.
   useEffect(() => {
-    if (liveConnected) setConnectedSelection(selectionKey);
-  }, [liveConnected, selectionKey]);
-  const awaiting = pendingConnectorOAuth?.provider === provider.provider;
+    if (!liveConnected) return;
+    onConnected?.(selectionKey);
+    if (pendingConnectorOAuth?.source === 'conversation'
+      && pendingConnectorOAuth.connectorId === request.connectorId
+      && pendingConnectorOAuth.scope === request.scope) setPendingConnectorOAuth(null);
+  }, [liveConnected, onConnected, pendingConnectorOAuth, request.connectorId, request.scope, selectionKey, setPendingConnectorOAuth]);
+  const awaiting = pendingConnectorOAuth?.source === 'conversation'
+    && pendingConnectorOAuth.provider === provider.provider
+    && pendingConnectorOAuth.connectorId === request.connectorId
+    && pendingConnectorOAuth.scope === request.scope
+    && pendingConnectorOAuth.workspaceId === session?.workspace?.id
+    && pendingConnectorOAuth.region === session?.workspace?.region;
+  useEffect(() => {
+    if (!awaiting || !api || !pendingConnectorOAuth) return;
+    let cancelled = false;
+    const reconcile = async (): Promise<void> => {
+      try {
+        const attempt = await api.getConnectorOAuthAttempt(pendingConnectorOAuth.attemptId);
+        if (!cancelled && attempt.status !== 'pending') setPendingConnectorOAuth(null);
+      } catch {
+        // The callback or the next focus can still reconcile the same attempt.
+      }
+    };
+    const onFocus = (): void => { void reconcile(); };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [api, awaiting, pendingConnectorOAuth, setPendingConnectorOAuth]);
   const capabilities = scope === 'you' && 'personalCapabilities' in provider
     ? [...provider.personalCapabilities]
     : [...provider.capabilities];
@@ -134,15 +188,24 @@ function ResolvedConnectorConnectionCard({ provider, request }: {
       if (!session?.workspace) return;
       setPendingConnectorOAuth({
         attemptId: authorization.attemptId,
+        connectorId: request.connectorId,
         provider: oauthProvider,
         region: session.workspace.region,
+        scope: request.scope,
+        source: 'conversation',
         workspaceId: session.workspace.id,
       });
     },
   });
   const pending = connect.isPending || awaiting;
+  const adminRequired = request.scope === 'workspace'
+    && session?.workspace?.role !== 'owner'
+    && session?.workspace?.role !== 'admin';
+  const providerAvailable = availability.data?.includes(provider.provider) ?? false;
   return (
     <ConnectorConnectionCardView
+      adminRequired={adminRequired}
+      checkingAvailability={availability.isLoading}
       connected={connected}
       error={connect.error?.message}
       onConnect={() => connect.mutate()}
@@ -150,13 +213,15 @@ function ResolvedConnectorConnectionCard({ provider, request }: {
       provider={provider}
       request={request}
       reconnect={Boolean(reconnect)}
-      unavailable={!api || connections === undefined}
+      unavailable={!api || connections === undefined || availability.isError || !providerAvailable}
     />
   );
 }
 
 /** The card's pure visual primitive; connection authority stays in the wrapper. */
 export function ConnectorConnectionCardView({
+  adminRequired,
+  checkingAvailability,
   connected,
   error,
   onConnect,
@@ -166,6 +231,8 @@ export function ConnectorConnectionCardView({
   request,
   unavailable = false,
 }: {
+  adminRequired?: boolean;
+  checkingAvailability?: boolean;
   connected: boolean;
   error?: string;
   onConnect: () => void;
@@ -176,9 +243,20 @@ export function ConnectorConnectionCardView({
   unavailable?: boolean;
 }): React.JSX.Element {
   const actionLabel = reconnect ? 'Reconnect' : `Connect ${provider.name}`;
+  const buttonLabel = pending
+    ? 'Waiting…'
+    : adminRequired
+      ? 'Admin required'
+      : unavailable
+        ? checkingAvailability ? 'Checking…' : 'Unavailable'
+        : actionLabel;
 
   return (
-    <article className="connector-connection-card" data-connector-id={request.connectorId}>
+    <article
+      aria-label={`${provider.name} ${request.scope} connection`}
+      className="connector-connection-card"
+      data-connector-id={request.connectorId}
+    >
       <div className="connector-connection-card-header">
         {'mark' in provider ? <ConnectorProviderIcon mark={provider.mark} /> : null}
         <div className="connector-connection-card-body">
@@ -187,15 +265,16 @@ export function ConnectorConnectionCardView({
           <small>{request.scope === 'personal' ? 'Personal connection' : 'Workspace connection'}</small>
         </div>
         {connected ? (
-          <span className="connector-connection-card-status"><Check aria-hidden="true" size={14} /> Connected</span>
+          <span aria-live="polite" className="connector-connection-card-status" role="status"><Check aria-hidden="true" size={14} /> Connected</span>
         ) : (
           <Button
             className="connector-connection-card-action button-primary"
-            disabled={unavailable || pending}
+            disabled={adminRequired || unavailable || pending}
             onClick={onConnect}
+            title={adminRequired ? 'Only a workspace owner or admin can connect a workspace account.' : undefined}
           >
             {pending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
-            {pending ? 'Waiting…' : actionLabel}
+            {buttonLabel}
           </Button>
         )}
       </div>

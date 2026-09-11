@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { ConnectorConnectionCardCatalog, ConnectorConnectionCardIds } from '@rally/contracts';
 import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
 import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
@@ -450,10 +451,21 @@ describe('public Rally site', () => {
       /(?:export )?const connectorProviders = \[(?<catalog>[\s\S]*?)\] as const;/u,
     )?.groups?.catalog;
     if (!desktopCatalog) throw new Error('Desktop connector catalog was not found');
-    const desktopProviders = new Set(
+    const literalDesktopProviders = new Set(
       [...desktopCatalog.matchAll(/^\s+provider: '([^']+)' as const,/gmu)]
         .map((match) => match[1]),
     );
+    for (const connectorId of ConnectorConnectionCardIds) {
+      const access = connectorId.includes('-')
+        ? `ConnectorConnectionCardCatalog['${connectorId}']`
+        : `ConnectorConnectionCardCatalog.${connectorId}`;
+      expect(desktopCatalog).toContain(`provider: ${access}.providerType`);
+      expect(desktopCatalog).toContain(`mark: ${access}.iconName`);
+    }
+    const desktopProviders = new Set([
+      ...literalDesktopProviders,
+      ...Object.values(ConnectorConnectionCardCatalog).map(({ providerType }) => providerType),
+    ]);
     expect(desktopProviders).toEqual(
       new Set(supportConnectorPages.map(({ provider }) => provider)),
     );

@@ -983,8 +983,9 @@ future agent tool or plugin, not just this family.
 **What changed:** Added the user-run-only
 `core_get_connector_connection_state` and `core_show_connector_connection`
 tools. Their calls carry only a closed connector catalog id and a
-personal/workspace scope; the first reads the caller-visible durable state and
-the main feed turns the second receipt into an interactive connection card.
+personal/workspace scope; the first reads caller-visible durable state and
+regional availability, and an opted-in conversation feed turns the second
+receipt into an interactive connection card.
 
 **Why:** A connector refusal previously left the agent able to explain the
 problem but unable to put the recovery action beside that explanation. For
@@ -1000,11 +1001,11 @@ person reconstruct the next step.
 **Consequences:** New cards, their provider/capability discriminator, valid
 scopes, and stable icon names are added once to shared non-UI catalog data; the
 model-visible id enum and cross-field validation derive from it, and the
-desktop consumes its icon names. Automation/workspace principals receive
-neither recovery tool. A presentation call records that a card was shown, not
+desktop consumes its icon names. Scheduled automation runs and workspace
+principals receive neither recovery tool. A presentation call records that a card was shown, not
 that authorization completed; only the OAuth callback may establish that. Its
-terminal fact retains the validated catalog selection so that record continues
-to render as a card from durable history. Both definitions state the complete
+terminal fact carries forward the validated catalog selection so that record
+continues to render as a card from durable history. Both definitions state the complete
 check-then-show flow and use short parameter descriptions so a medium model
 does not have to infer ordering, state meanings, or whether the card completed
 OAuth.

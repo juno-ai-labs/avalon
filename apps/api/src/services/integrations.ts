@@ -88,10 +88,10 @@ import {
   type ToolDefinition,
   type WorkstreamWorkflowInput,
   AutomationRunDefinitionV1Schema,
-  CONNECTOR_CONNECTION_CARD_WIRE_NAME,
   ConnectorConnectionCardCatalog,
   ConnectorConnectionCardInputSchema,
   ConnectorConnectionStateResultSchema,
+  connectorConnectionCardSummary,
   MESSAGE_MAX_CHARACTERS,
   type AutomationRunDefinitionV1,
 } from "@rally/contracts";
@@ -3877,7 +3877,7 @@ export async function runWorkstreamHarness(
                 pluginId: event.pluginId,
                 toolName: event.toolName,
                 status: "completed",
-                participantSafeResult: participantSafeToolCompletion(event.toolName, event.result),
+                participantSafeResult: event.result.summary,
                 occurredAtUtc: new Date().toISOString(),
               });
               await orderedTranscript.upsertActivity({
@@ -7491,7 +7491,18 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
           modelId: "rally_core",
           shortWireName: "core",
           description: "Use Rally's universally available core utilities.",
-          systemMessage: "Use core_current_time when exact current time or timezone matters; never infer it from transcript timestamps. Use core_request_elicitation for one structured blocking question that must pause the run for human input. For a connector, call core_get_connector_connection_state first. If it returns connected, continue without a card. If it returns reconnect_required or not_connected and that blocks the task, explain why and call core_show_connector_connection with the same connectorId and scope. Do not invent an authorization URL or claim the connection succeeded.",
+          systemMessage: [
+            ...(coreTools.some((tool) => tool.definition.name === "current_time")
+              ? ["Use core_current_time when exact current time or timezone matters; never infer it from transcript timestamps."]
+              : []),
+            ...(coreTools.some((tool) => tool.definition.name === "request_elicitation")
+              ? ["Use core_request_elicitation for one structured blocking question that must pause the run for human input."]
+              : []),
+            ...(coreTools.some((tool) => tool.definition.name === "get_connector_connection_state")
+              && coreTools.some((tool) => tool.definition.name === "show_connector_connection")
+              ? ["For a connector, call core_get_connector_connection_state first. If it returns connected, continue without a card. If it returns reconnect_required or not_connected and that blocks the task, explain why and call core_show_connector_connection with the same connectorId and scope. If it returns unavailable, explain that the connector is not configured in this Rally region and do not show a card. Do not invent an authorization URL or claim the connection succeeded."]
+              : []),
+          ].join(" "),
           tools: coreTools,
           preload: true,
           explicit: true,
@@ -7622,30 +7633,19 @@ const ScheduleWakeupInputSchema = z.strictObject({
   timezone: z.string().min(1).max(100).optional(),
 });
 
-/**
- * Preserve the card identity on the completed lifecycle fact itself.
- *
- * Most tools expose only their bounded textual summary to participants. This
- * core tool's complete structured output is the already-validated, non-secret
- * catalog selection the client needs to render the card after a reload. The
- * started fact also carries the input, but completion must stand on its own:
- * recovery and historical projection are allowed to observe only the terminal
- * fact.
- */
-function participantSafeToolCompletion(toolName: string, result: HarnessToolResult): unknown {
-  if (toolName !== CONNECTOR_CONNECTION_CARD_WIRE_NAME) return result.summary;
-  const card = ConnectorConnectionCardInputSchema.safeParse(result.output);
-  return card.success ? card.data : result.summary;
-}
-
 async function readConnectorConnectionState(
-  env: Pick<Env, "DB">,
+  env: Env,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "executionPrincipal">,
   raw: unknown,
 ) {
   const request = ConnectorConnectionCardInputSchema.parse(raw);
   if (input.executionPrincipal.type !== "user") throw new Error("connector_connection_state_requires_user");
   const catalog = ConnectorConnectionCardCatalog[request.connectorId];
+  const available = connectorRegistryForEnv(env).list()
+    .some((manifest) => manifest.type === catalog.providerType);
+  if (!available) {
+    return ConnectorConnectionStateResultSchema.parse({ ...request, state: "unavailable" });
+  }
   const result = await env.DB.prepare(
     `SELECT granted_scopes_json, status FROM connector_connections
       WHERE workspace_id = ? AND connector_type = ? AND scope = ?
@@ -7662,9 +7662,9 @@ async function readConnectorConnectionState(
     return capabilities.some((capability) =>
       catalog.capabilityPrefixes.some((prefix) => capability.startsWith(prefix)));
   });
-  const state = matching.some((row) => row.status === "healthy" || row.status === "error")
+  const state = matching.some((row) => row.status === "healthy")
     ? "connected"
-    : matching.some((row) => row.status === "needs_reconnect")
+    : matching.some((row) => row.status === "needs_reconnect" || row.status === "error")
       ? "reconnect_required"
       : "not_connected";
   return ConnectorConnectionStateResultSchema.parse({ ...request, state });
@@ -7690,9 +7690,13 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         return { output: text, summary: text };
       },
     },
-    ...(input.executionPrincipal.type === "user" ? [
+    ...(input.executionPrincipal.type === "user" && !input.automationRun ? [
       {
         definition: AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
+        validateInput: (raw: unknown) => {
+          const parsed = ConnectorConnectionCardInputSchema.safeParse(raw);
+          return parsed.success ? null : parsed.error;
+        },
         execute: async (raw: unknown) => {
           const state = await readConnectorConnectionState(env, input, raw);
           return {
@@ -7703,9 +7707,13 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       } satisfies HarnessTool,
       {
         definition: AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
+        validateInput: (raw: unknown) => {
+          const parsed = ConnectorConnectionCardInputSchema.safeParse(raw);
+          return parsed.success ? null : parsed.error;
+        },
         execute: async (raw: unknown) => {
           const card = ConnectorConnectionCardInputSchema.parse(raw);
-          const summary = `Presented the ${card.connectorId} ${card.scope} connection card`;
+          const summary = connectorConnectionCardSummary(card);
           return { output: card, summary };
         },
       } satisfies HarnessTool,
@@ -8652,7 +8660,6 @@ export const __integrationTesting = {
   createAvalonWorkstreamPlugin,
   createAvalonWebPlugin,
   createAvalonTools,
-  participantSafeToolCompletion,
   createInlineChildHarnessSurface,
   childRunLimits,
   connectorSearchAliases,

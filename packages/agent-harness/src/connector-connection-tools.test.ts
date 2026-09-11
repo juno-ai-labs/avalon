@@ -13,7 +13,7 @@ describe("connector connection tool guidance", () => {
     expect(check.name).toBe("get_connector_connection_state");
     expect(show.name).toBe("show_connector_connection");
     expect(check.description).toContain("Call this first.");
-    expect(check.description).toContain("connected, reconnect_required, or not_connected");
+    expect(check.description).toContain("connected, reconnect_required, not_connected, or unavailable");
     expect(check.description).toContain("core_show_connector_connection with the same connectorId and scope");
     expect(show.description).toContain("Call only after core_get_connector_connection_state returns");
     expect(show.description).toContain("Use the same connectorId and scope.");
@@ -30,9 +30,9 @@ describe("connector connection tool guidance", () => {
     expect(schema.required).toEqual(["connectorId", "scope"]);
     expect(schema.additionalProperties).toBe(false);
     expect(schema.properties?.connectorId?.description)
-      .toBe("Connector to check or show. Use one listed value.");
+      .toContain("Personal only: google-mail-calendar, granola.");
     expect(schema.properties?.scope?.description)
-      .toBe("Use personal for the current user's account. Use workspace for the shared workspace account.");
+      .toBe("Use personal for the current user's account. Use workspace only for an id described as personal or workspace.");
     expect(AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION.inputSchema).toEqual(schema);
   });
 });
