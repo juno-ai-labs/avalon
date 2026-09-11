@@ -1,3 +1,4 @@
+import { stableConnectionWireName, validateDynamicConnectorTools } from "./connector-tool-inventory";
 import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 import {
   CUSTOM_MCP_CONNECTOR_TYPE,
@@ -430,7 +431,14 @@ export class ConnectionService {
       ? await withAuthorizedConnection(
           this.env,
           { connection: await this.context(connection), adapter, signal },
-          (authorized) => dynamic.discover(authorized, signal),
+          async (authorized) => validateDynamicConnectorTools(
+            this.env,
+            adapter,
+            connection.scope,
+            [...granted],
+            stableConnectionWireName(connection.model_plugin_id),
+            await dynamic.discover(authorized, signal),
+          ),
         )
       : adapter.agentPlugin.tools;
     return {

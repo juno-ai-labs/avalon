@@ -148,6 +148,32 @@ describe("custom MCP connections", () => {
       .toEqual({ count: 0 });
   });
 
+  it("refuses a tool count when connection prefixes make remote tool names collide", async () => {
+    const { auth, env } = fixture();
+    const inventory = [READ_TOOL];
+    stubMcpServer(inventory);
+    const service = new ConnectionService(env, auth);
+    const { connection } = await service.createCustomMcp({
+      displayName: "Acme docs",
+      scope: "workspace",
+      serverUrl: SERVER_URL,
+      requestHeaders: { "X-Api-Key": "secret-value" },
+      toolPolicy: "all_tools",
+    });
+    // The provider can change its inventory after connection setup. These names
+    // differ within 64 characters, but collide once Rally prefixes their wire names.
+    inventory.splice(0, inventory.length,
+      { ...READ_TOOL, name: `${"a".repeat(60)}x` },
+      { ...READ_TOOL, name: `${"a".repeat(60)}y` },
+    );
+
+    await expect(service.getToolCount(connection.id, new AbortController().signal))
+      .rejects.toMatchObject({
+        code: "provider_error",
+        message: expect.stringContaining("collide after model-facing normalization"),
+      });
+  });
+
   it("narrows a workspace connection's tools when the policy changes, and refuses the toggle on a personal one", async () => {
     const { auth, database, env } = fixture();
     stubMcpServer([READ_TOOL, WRITE_TOOL]);

@@ -796,6 +796,44 @@ describe('Workspace settings', () => {
     ).toBeVisible());
   });
 
+  it('refreshes the count when a policy save finishes after returning to Connections', async () => {
+    const connectionId = '00000000-0000-7000-8000-000000000030';
+    api.getConnections.mockResolvedValue([{
+      id: connectionId, connectorType: 'custom_mcp', scope: 'workspace',
+      displayName: 'Acme docs', capabilities: ['custom_mcp.tools'],
+      status: 'healthy', settingsKind: 'custom_mcp_tools',
+    }]);
+    const settings = {
+      connectionId, connectionName: 'Acme docs', scope: 'workspace' as const,
+      serverUrl: 'https://mcp.acme.test/mcp', authMode: 'headers' as const,
+      toolPolicy: 'all_tools' as const, toolPolicyEditable: true,
+      tools: [], toolsUnavailable: null,
+    };
+    api.getCustomMcpSettings.mockResolvedValue(settings);
+    let finishPolicySave!: () => void;
+    api.updateCustomMcpToolPolicy.mockImplementationOnce(() => new Promise((resolve) => {
+      finishPolicySave = () => resolve({ ...settings, toolPolicy: 'read_only_tools' });
+    }));
+    api.getConnectionToolCount.mockResolvedValue(2);
+    renderSettings();
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'MCP tools' }));
+    fireEvent.change(await screen.findByLabelText('Tools Rally may use'), {
+      target: { value: 'read_only_tools' },
+    });
+    await waitFor(() => expect(api.updateCustomMcpToolPolicy).toHaveBeenCalledWith(
+      connectionId, 'read_only_tools',
+    ));
+    openSettingsSection('Connections');
+    const table = await screen.findByRole('table', { name: 'Workspace connections' });
+    expect(await within(table).findByRole('cell', { name: '2' })).toBeVisible();
+
+    api.getConnectionToolCount.mockResolvedValue(1);
+    await act(async () => finishPolicySave());
+    expect(await within(table).findByRole('cell', { name: '1' })).toBeVisible();
+    expect(within(table).queryByRole('cell', { name: '2' })).not.toBeInTheDocument();
+  });
+
   it('says why a catalog is missing instead of showing an empty one', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000030',
