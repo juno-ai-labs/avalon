@@ -1025,7 +1025,7 @@ async function invalidateRows(
 
 const filterJsonSchema = {
   $ref: "#/$defs/filterNode",
-  description: "Return only rows matching this condition. One predicate is `{\"column\": \"state\", \"op\": \"eq\", \"value\": \"open\"}`; combine several with `{\"all\": [ … ]}` for and, `{\"any\": [ … ]}` for or, nested as deeply as needed. Omit it for every row. A column name that is not in the table is refused, but a value of the wrong shape for its column — a date written as `\"yesterday\"`, say — simply matches no row, so call table_describe first.",
+  description: "Return only rows matching this condition. One predicate is `{\"column\": \"state\", \"op\": \"eq\", \"value\": \"open\"}`; combine several with `{\"all\": [ … ]}` for and, `{\"any\": [ … ]}` for or, nested as deeply as needed. Omit it for every row. A column the table does not have, and a value whose type its column will not take, are both refused with an error naming the column — so call table_describe first and match each column's declared type. What is silent is a well-formed condition nothing satisfies: that returns an empty page, which is an answer about the rows rather than a fault in the filter.",
 };
 const filterNodeJsonSchema = {
   anyOf: [
@@ -1040,9 +1040,9 @@ const filterNodeJsonSchema = {
             "eq", "neq", "in", "not_in", "gt", "gte", "lt", "lte", "between",
             "contains", "not_contains", "starts_with", "ends_with", "is_null", "is_not_null",
           ],
-          description: "How to compare. `eq` and `neq` test one value; `in` and `not_in` test a list; `gt`, `gte`, `lt`, and `lte` order it; `between` takes exactly two bounds and includes both; `contains`, `not_contains`, `starts_with`, and `ends_with` match text; `is_null` and `is_not_null` take no value at all.",
+          description: "How to compare. `eq` and `neq` test one value; `in` and `not_in` test a list; `gt`, `gte`, `lt`, and `lte` order it; `between` takes a `from` and a `to` and includes both; `contains`, `not_contains`, `starts_with`, and `ends_with` match text; `is_null` and `is_not_null` take no value at all.",
         },
-        value: { description: "What to compare against, shaped by the operator: one value for `eq`, a list for `in`, a two-item list of bounds for `between`, and nothing at all for `is_null` and `is_not_null`. Match the column's own type — a datetime column wants an ISO 8601 timestamp such as `2026-09-10T00:00:00Z`." },
+        value: { description: "What to compare against, shaped by the operator: one value for `eq` and `neq`, a non-empty list for `in` and `not_in`, an object `{\"from\": …, \"to\": …}` for `between` — an array is refused there, and both bounds are required — and nothing at all for `is_null` and `is_not_null`. Match the column's own type: a datetime column wants an ISO 8601 timestamp such as `2026-09-10T00:00:00Z` and a date column a plain `2026-09-10`, and anything else is refused rather than matched against." },
       },
       required: ["column", "op"],
     },

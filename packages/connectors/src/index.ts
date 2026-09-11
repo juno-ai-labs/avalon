@@ -825,7 +825,7 @@ export const googleTools: ToolDefinition[] = [
           minLength: 1,
           description: "The Drive file id of a Google Doc, Sheet, or Slides file, as drive.search returns it, for example `1A2b3C4d5E6f7G8h9I0j`. An uploaded PDF or image is not a Workspace document; read one with drive.download.",
         },
-        mimeType: { type: "string", enum: ["text/plain", "application/pdf"], description: "What to convert the document to: `text/plain` for text the model can read, `application/pdf` for a rendered copy that keeps the layout." }
+        mimeType: { type: "string", enum: ["text/plain", "application/pdf"], description: "What to convert the document to. Use `text/plain`, which returns the document's text. `application/pdf` returns metadata only and no content — binary PDF data is never put in front of the model — so choose it only to confirm a PDF export is possible, never to read the document." }
       },
       required: ["fileId", "mimeType"]
     }
