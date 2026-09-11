@@ -1621,6 +1621,19 @@ describe('Workspace settings', () => {
     expect(within(linearCard!).queryByRole('button', { name: 'Connect workspace' })).not.toBeInTheDocument();
   });
 
+  it('does not request tool inventories for disabled connections', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: 'disabled-tools', modelPluginId: 'plugin_google', connectorType: 'google',
+      scope: 'you', displayName: 'Disabled Google', capabilities: ['gmail.read'], status: 'disabled',
+    }]);
+    renderSettings();
+    openSettingsSection('Connections');
+    const row = (await screen.findByText('Disabled Google')).closest('tr')!;
+    expect(within(row).getByRole('cell', { name: '—' })).toBeVisible();
+    expect(api.getConnectionToolCount).not.toHaveBeenCalled();
+    expect(within(row).queryByText('Unavailable')).not.toBeInTheDocument();
+  });
+
   it('refreshes tool counts on reveal and replaces stale counts when discovery fails', async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },

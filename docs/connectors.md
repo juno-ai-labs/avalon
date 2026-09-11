@@ -87,7 +87,8 @@ provider calls on an immediate reveal, then refresh when Settings regains focus.
 displays “Unavailable”, including after an earlier successful read, never a stale
 count or a fabricated zero. Saving an MCP tool policy invalidates the count,
 including if the user returns to Connections while the save is pending. The Tools
-column remains visible in narrow Settings windows.
+column remains visible in narrow Settings windows. Disabled connections show a dash
+and do not request an inventory.
 
 ### Credential freshness
 
