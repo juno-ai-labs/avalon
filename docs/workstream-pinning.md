@@ -103,9 +103,9 @@ stream the reader left, one they marked unread, the not-found screen's way out,
 the end of onboarding, and the main window's hand-off to the Sidekicks window.
 Only a workspace with nothing in it lands on the composer. The composer is
 otherwise reached by an explicit New action alone: the sidebar's New buttons,
-the menu bar item, a project's plus, and the `workstreams/new` and
-`automations/new` deep links, which are create intents even though the second
-no longer has a builder to open.
+a project's plus, and the `workstreams/new` and `automations/new` deep links,
+which are create intents even though the second no longer has a builder to open.
+The macOS status menu no longer offers one — see [`menu-bar.md`](menu-bar.md).
 
 `useOpenFirstWorkstream` is the one way a screen leaves. It always replaces the
 history entry, so Back cannot return to a screen the API refuses, and it names
@@ -305,9 +305,11 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
 This module owns `WorkspaceDO.workspace_workstream_pins`, the three pin endpoints, `pinPosition` on the
 work-stream contract, `workspace_workstream_access`/`lastAccessedAt`, and the
 Pinned and recent work-stream sections of the sidebar. The macOS menu bar
-item renders a second, read-only view of the same arrangement — its top five —
-and [`menu-bar.md`](menu-bar.md) owns that; it reads `pinPosition` and changes
-nothing. It owns no part of
+item renders a second, read-only view of the same arrangement — its top five,
+above its own recent list — and [`menu-bar.md`](menu-bar.md) owns that; it reads
+`pinPosition` and `lastAccessedAt` and changes neither. The recency grouping the
+two surfaces share lives in `apps/desktop/src/common/recency-groups.ts` so the
+sidebar's headings and the menu's cannot disagree. It owns no part of
 what a work stream *is* or who may read it.
 
 It deliberately does not:

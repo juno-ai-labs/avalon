@@ -4,7 +4,6 @@ import type { ApplicationIconId, DesktopApplicationIconState } from './applicati
 import type { ThemeChoice } from './themes';
 import type { MessageExportRequest, MessageExportResult } from './message-export';
 import type {
-  ClientFeatureFlags,
   TelemetryEventProperties,
   WorkspaceAttention,
   WorkspaceDeparture,
@@ -579,6 +578,4 @@ export interface RallyDesktopBridge {
   sendRealtimeSocket: (input: DesktopRealtimeSocketSendInput) => Promise<void>;
   closeRealtimeSocket: (input: DesktopRealtimeSocketCloseInput) => Promise<void>;
   onRealtimeSocketEvent: (listener: (event: DesktopRealtimeSocketEvent) => void) => () => void;
-  /** Mirrors a signed server answer into main-process-only surfaces such as the menu bar. */
-  observeClientFeatureFlags: (flags: ClientFeatureFlags) => Promise<void>;
 }

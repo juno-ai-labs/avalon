@@ -14,7 +14,6 @@ import {
   WorkspaceDepartureSchema,
   WorkspaceDepartureRequestSchema,
   type Session as WireSession,
-  type ClientFeatureFlags,
   type WorkspaceAttention,
   type WorkspaceDeparture,
 } from '@rally/contracts';
@@ -188,7 +187,11 @@ import { TelemetrySpool } from './telemetry-spool';
 import { TelemetryQuitBarrier } from './telemetry-quit-barrier';
 import { beginTelemetryLaunch, clearTelemetryLaunch, markTelemetryLaunchReady } from './telemetry-launch-marker';
 import { TelemetryBreadcrumbRing, type NewTelemetryBreadcrumb } from './telemetry-breadcrumbs';
-import { supportsSectionHeaders, type MenuBarSuggestion } from './menu-bar-menu';
+import {
+  MENU_BAR_PINNED_LIMIT,
+  MENU_BAR_RECENT_LIMIT,
+  supportsSectionHeaders,
+} from './menu-bar-menu';
 import {
   allowsTrustedAudioCapture,
 } from './media-permission';
@@ -850,10 +853,7 @@ function broadcastSessionChanged(value: WireSession | null): void {
   // account and must not cost an extra poll, and an account swap must not be
   // answered by a request issued as the previous one.
   if (exposed) developerSettingsFlagController.observeSession(flagSessionIdentity(exposed.user.id, exposed.apiBaseUrl));
-  else {
-    developerSettingsFlagController.stop();
-    observeClientFeatureFlags(ClientFeatureFlagsSchema.parse({}));
-  }
+  else developerSettingsFlagController.stop();
   // The menu bar item outlives every window, so it has to be told about a
   // sign-out directly. Leaving the previous account's work-stream titles in the
   // menu would keep them readable to whoever signs in next.
@@ -1236,7 +1236,6 @@ const menuBarContentStore = new MenuBarContentStore({
   requestJson: rallyApiRequest,
   onChange: () => menuBarController.refresh(),
   logWarning: (message, error) => logWarn('rally', message, error),
-  suggestedWorkAvailable: () => suggestedWorkAvailable,
 });
 
 const launchAtLoginController = new LaunchAtLoginController({
@@ -1285,35 +1284,6 @@ function openMainWindowFromMenuBar(): void {
   });
 }
 
-function startSuggestedWorkstreamFromMenuBar(suggestion: MenuBarSuggestion): void {
-  activateFromMenuBar();
-  void menuBarContentStore.startSuggestion(suggestion)
-    .then((workstreamId) => {
-      emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'menu_bar');
-    })
-    .catch((error: unknown) => {
-      // Keep the failed action visible by bringing Rally forward. Suggestions
-      // remain in the native menu bar; the new-chat screen has no suggestion cards.
-      logWarn('rally', 'could not start a suggested work stream from the menu bar', error);
-      openMainWindowFromMenuBar();
-    });
-}
-
-let meetingRecordingAvailable = false;
-let suggestedWorkAvailable = false;
-
-function observeClientFeatureFlags(flags: ClientFeatureFlags): void {
-  const changed = meetingRecordingAvailable !== flags.meetingRecordingEnabled
-    || suggestedWorkAvailable !== flags.suggestedWorkEnabled;
-  meetingRecordingAvailable = flags.meetingRecordingEnabled;
-  suggestedWorkAvailable = flags.suggestedWorkEnabled;
-  if (changed) {
-    // Only the main-process surfaces are projected here. Renderer surfaces
-    // consume the live workspace-socket cache directly.
-    menuBarController.refresh();
-  }
-}
-
 const menuBarController = new MenuBarController({
   supported: process.platform === 'darwin',
   appName: app.name,
@@ -1322,26 +1292,9 @@ const menuBarController = new MenuBarController({
   // The in-memory credential rather than a live session: this is read while the
   // menu is being built, and it only decides which empty state to show.
   signedIn: () => Boolean(inMemoryAuthSet),
-  meetingRecordingAvailable: () => meetingRecordingAvailable,
-  suggestedWorkAvailable: () => suggestedWorkAvailable,
   sectionHeaders: supportsSectionHeaders(process.getSystemVersion()),
   actions: {
     selected: (action) => { void telemetryReporter?.menuBarActionSelected(action); },
-    newMeetingNote: () => {
-      activateFromMenuBar();
-      void createMeetingWindow(undefined, 'menu_bar').catch((error: unknown) => {
-        logError('rally', 'failed to open meeting notes from the menu bar', error);
-      });
-    },
-    newWorkstream: () => {
-      activateFromMenuBar();
-      emitDeepLink(`${customProtocol}://workstreams/new`, 'menu_bar');
-    },
-    newAutomation: () => {
-      activateFromMenuBar();
-      emitDeepLink(`${customProtocol}://automations/new`, 'menu_bar');
-    },
-    startSuggestion: startSuggestedWorkstreamFromMenuBar,
     openWorkstream: (workstreamId) => {
       activateFromMenuBar();
       emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'menu_bar');
@@ -1437,7 +1390,6 @@ async function readDeveloperSettingsFlag(): Promise<boolean> {
   if (!response.ok) throw await responseError(response);
   const parsed = ClientFeatureFlagsSchema.safeParse(await response.json());
   if (!parsed.success) throw new Error('Rally returned an unreadable feature flag response');
-  observeClientFeatureFlags(parsed.data);
   return parsed.data.developerSettings;
 }
 
@@ -3120,11 +3072,6 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     return desktopApplicationSettings(await lockdownModeController.settings());
   });
-  ipcMain.handle('feature-flags:observe', (event, rawFlags: unknown) => {
-    assertTrustedIpcSender(event);
-    const flags = ClientFeatureFlagsSchema.parse(rawFlags);
-    observeClientFeatureFlags(flags);
-  });
   ipcMain.handle('application-settings:set-lockdown-mode', async (event, rawEnabled: unknown) => {
     assertTrustedIpcSender(event);
     const previousEnabled = lockdownModeController.state().lockdownMode;
@@ -3758,37 +3705,32 @@ function createMenuBarTray(): MenuBarTray {
   // pointer reaching the item is roughly a menu's worth of time before it is
   // read. `refreshIfStale` is what keeps a pointer crossing the menu bar from
   // becoming a request.
-  const refreshContent = (): void => {
-    // Signed out there is nothing to ask for, and every attempt would log two
-    // warnings. The menu already says so, and a sign-in refreshes on its own.
+  const prepareMenu = (): void => {
+    // Before the fetch, and unconditionally: the headings are a function of the
+    // clock as well as the content, so they can be wrong with nothing to
+    // re-fetch — and a refresh that fails publishes nothing to rebuild from.
+    // The controller's own guard makes this a no-op unless a boundary passed.
+    menuBarController.refreshIfHeadingsExpired();
+    // Signed out there is nothing to ask for, and every attempt would log a
+    // warning. The menu already says so, and a sign-in refreshes on its own.
     if (!inMemoryAuthSet) return;
     void menuBarContentStore.refreshIfStale(MENU_BAR_CONTENT_MAX_AGE_MS);
   };
-  // Opening the drop-down is the moment its suggestions are seen, and seeing
-  // one and passing over it is what moves the ranking. `mouse-enter` is
-  // deliberately not a trigger: the pointer crossing the menu bar puts nothing
-  // in front of anyone.
-  const recordImpressions = (): void => {
-    void menuBarContentStore.recordImpressions();
-  };
   const openObserver = new MenuBarOpenObserver(() => {
-    recordImpressions();
     const content = menuBarContentStore.content();
     void telemetryReporter?.menuBarOpened({
       signedIn: Boolean(inMemoryAuthSet),
-      suggestionCount: Math.min(content.suggestions.length, 4),
-      recentCount: Math.min(content.recents.length, 5),
-      pinnedCount: Math.min(content.pinned.length, 5),
+      recentCount: Math.min(content.recents.length, MENU_BAR_RECENT_LIMIT),
+      pinnedCount: Math.min(content.pinned.length, MENU_BAR_PINNED_LIMIT),
     });
   });
-  tray.on('mouse-enter', refreshContent);
+  tray.on('mouse-enter', prepareMenu);
   tray.on('click', () => {
-    refreshContent();
+    prepareMenu();
     // Both this and `menu-will-show` observe the open. Which of the two macOS
     // raises for a status item's own menu is not something this repository can
     // check — there is no menu bar in the sandbox — and reporting nothing is
-    // the failure being avoided. The observer coalesces the pair for menu
-    // analytics, while `recordImpressions` separately keys on the suggestion set.
+    // the failure being avoided. The observer coalesces the pair into one event.
     openObserver.opened();
   });
   return {
