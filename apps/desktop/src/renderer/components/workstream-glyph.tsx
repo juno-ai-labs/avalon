@@ -18,6 +18,7 @@ import { PROJECT_COLOR_RING, type ProjectColorKey, type WorkstreamAppearance as 
 import clsx from 'clsx';
 import { useId } from 'react';
 import { glyphInk } from '../lib/project-palette';
+import { Tip } from './primitives';
 import { PROJECT_ICONS } from './project-icons';
 
 const WORKSTREAM_ICONS = [
@@ -179,6 +180,14 @@ export interface HexagonMarker {
   symbol: LucideIcon;
   /** A theme token; see `docs/theming.md`. */
   color: string;
+  /**
+   * What the marker means, in the one place a pointer can ask: the symbol is
+   * the whole of what a reader sees, and a symbol nobody can name is a mark to
+   * be learned rather than read. Part of the marker rather than of the surface
+   * around it for the same reason its geometry is — whoever adds the second
+   * marker states its meaning here or ships an unexplained one.
+   */
+  description: string;
 }
 
 /**
@@ -186,10 +195,20 @@ export interface HexagonMarker {
  * triggers. Green because it is the healthy state, and a play because that is
  * already what the product's own **Resume** and **Run now** controls are drawn
  * with, so the marker and the buttons that produce it say the same thing.
+ *
+ * The description spends its words on the half a play gets wrong. A play reads
+ * as *running right now*, and this marker is on every Sidekick the strip shows
+ * whether or not one has a run in flight: `waiting` is the correction, and the
+ * lifecycle rather than the run is what the mark reports. The wording follows
+ * the work-stream markers' own `statusDescription` — the state named, then one
+ * clause on what it means — so the two families of mark in this window explain
+ * themselves the same way, and it stays short enough to wrap to two lines in
+ * the width `.hexagon-marker-tooltip` holds it to.
  */
 export const SIDEKICK_RUNNING_MARKER: HexagonMarker = {
   symbol: Play,
   color: 'var(--av-sys-color-success-base)',
+  description: 'Active — in service and waiting on its triggers.',
 };
 
 /**
@@ -277,11 +296,46 @@ export function HexagonGlyph({ className, fill, ink, marker, symbol: Icon }: {
       <path className="automation-glyph-shape" d="M43 6C47 3 52 3 57 6L86 23C91 26 94 30 94 36L94 66C94 72 91 76 86 79L57 95C52 98 47 98 42 95L14 78C9 75 6 71 6 65L6 35C6 29 9 25 14 22Z" fill={fill} mask={marker ? `url(#${maskId})` : undefined} />
       <Icon x={25} y={25} size={50} strokeWidth={1.9} />
       {marker && (
-        // Solid rather than stroked: at the rail's 36px the marker is about 7px
-        // across, where a 2-unit outline is most of the symbol and the shape
-        // stops reading as a play at all.
-        <marker.symbol className="automation-glyph-marker" fill={marker.color} size={MARKER_BOX} stroke="none"
-          x={MARKER_ORIGIN} y={MARKER_ORIGIN} />
+        /*
+          Pointer-only, like the sidebar's own public-scope badge and for the
+          same reason: the trigger is a `<g>` inside artwork the surface around
+          it hides from assistive technology, and making it focusable would put
+          a tab stop inside every tile that draws a marker. What the marker says
+          reaches a screen reader through that surface's accessible name
+          instead, which is the rule this hexagon already keeps.
+        */
+        <Tip className="hexagon-marker-tooltip" collisionPadding={8} delayDuration={300} disableHoverableContent
+          label={marker.description} side="bottom" sideOffset={8}>
+          {/*
+            The marker keeps the pointer to itself while it is over it. Radix
+            closes whatever tooltip is open when another opens, so two triggers
+            nested like this resolve by *order*: a surface whose own tooltip is
+            still on its opening delay when the pointer arrives at the marker
+            opens second and takes the answer away again, which is a marker tip
+            that flashes and is replaced by the name of the thing it is on.
+            Stopping the move here is what makes that ordering impossible rather
+            than merely unlikely — the tile's trigger never sees a move while
+            the pointer is on the marker, so it has nothing to open. Radix's own
+            handler is composed onto this same element and still runs; only the
+            surface above stops hearing about it.
+          */}
+          <g onPointerMove={(event) => event.stopPropagation()}>
+            {/*
+              The hover target is the marker's whole box rather than the play
+              inside it. SVG hit-tests what is painted, and the play is about
+              7px across at the rail's 36px — a target a pointer lands on by
+              accident, not one it can be rested on. A transparent fill is still
+              a fill, so the rect answers `visiblePainted` while painting
+              nothing; `fill="none"` would be invisible to the pointer too.
+            */}
+            <rect fill="transparent" height={MARKER_BOX} width={MARKER_BOX} x={MARKER_ORIGIN} y={MARKER_ORIGIN} />
+            {/* Solid rather than stroked: at the rail's 36px the marker is about 7px
+                across, where a 2-unit outline is most of the symbol and the shape
+                stops reading as a play at all. */}
+            <marker.symbol className="automation-glyph-marker" fill={marker.color} size={MARKER_BOX} stroke="none"
+              x={MARKER_ORIGIN} y={MARKER_ORIGIN} />
+          </g>
+        </Tip>
       )}
     </svg>
   );

@@ -106,7 +106,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | Enabled standalone Sidekick tiles above the account menu open library details, and `SidekickStripTile`, the tile shape they and the empty strip's **New Sidekick** action share; the center rail shows the participant facepile and this room's Sidekicks. |
 | `apps/desktop/src/renderer/components/sidekick-section.tsx` | `SidekickSection`, the **Sidekicks** section both of a work stream's rails render, and `workstreamSidekickRows`, the merge of what the room owns with what its conversation loaded — owned first, one row per Sidekick, `undefined` until both answers are in. |
 | `apps/desktop/src/renderer/components/workstream-sidebar.tsx`, `screens/conversation-surface.tsx` | The section's place below **Participants**; the two queries behind it (`workstream-sidekicks` and `attached-sidekicks`), the participant check that decides whether a row may be detached, and the 403 a non-participant viewer's listing is read as none. |
-| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` it cuts out of the fill along that marker's own outline (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen, and the empty strip's tile is the same silhouette outlined around a plus. |
+| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` — a symbol, a colour, and the sentence it means — which it cuts out of the fill along that marker's own outline and gives its own hover target and tooltip (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen, and the empty strip's tile is the same silhouette outlined around a plus. |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksWindow`: the window's routes, and the one place its Escape-to-close gesture is installed. |
 | `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
 
@@ -183,7 +183,20 @@ a **play** in `success-base` at the bottom right, cut out of the hexagon's own
 fill along the play's outline so the gap around it follows the symbol and shows
 whatever the row is painted in. The New Sidekick tile is the same tile and the
 same hexagon, outlined and dashed with a plus in it rather than filled, and
-carries no lifecycle marker. Selecting a tile opens its detail in the singleton Sidekicks library
+carries no lifecycle marker.
+
+Both the tile and that play answer a pointer, through the renderer's own `Tip`
+rather than a native `title`. The tile names the Sidekick, and its scope where
+that is **Workspace** — the caption is ellipsized at 80px and the rail drops it
+outright, so the tooltip is how a tile is read — opening **upward**, because a
+strip tile's neighbour is beside it and above the strip is the work-stream list.
+The play says what it stands for, `Active — in service and waiting on its
+triggers.`, opening **downward** onto the account row rather than across the next
+Sidekick, and wrapped to two lines by `.hexagon-marker-tooltip`. The tile's line
+does not name the state as well: every tile in the strip is active, the play
+reports it, and a screen reader still gets it from the tile's `aria-label`, which
+is unchanged. The play keeps the pointer to itself while it is on it, so only one
+of the two is ever open. Selecting a tile opens its detail in the singleton Sidekicks library
 window. Management and execution controls remain on that authorized detail;
 directory summaries alone do not advertise those capabilities. Search sits
 above the scrolling streams in both layouts, and the rail adds New chat under
@@ -600,6 +613,7 @@ or the memory store the automation scope lives in.
 | `apps/api/test-workers/automation-post-result.test.ts` | `pnpm --filter @rally/api test:workers` | The result tool appending into the owning room's substream `0`, and refused for an archived room and a stale generation. |
 | `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick. |
 | `apps/desktop/src/renderer/screens/automation.test.tsx` | `pnpm --filter @rally/desktop test` | The profile's appearance saving: an older response losing to a newer Sidekick already in the cache, and its own response applied when nothing newer arrived. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx`, `components/workstream-glyph.test.tsx` | `pnpm --filter @rally/desktop test` | The strip: which Sidekicks qualify, the tile's accessible name, the play cut out of the hexagon with its own mask, and the two tooltips — the tile carrying the name and scope through `Tip` rather than a native `title`, the marker carrying its sentence over a hit target the size of its whole box, and one of them open at a time. |
 | `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | The binding half in isolation: the table absent from D1, a recommended plugin bound from the workspace object's connections, a missing one refused, a disabled row skipped for the live one. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and watched work streams; a redelivery admits once. |
 | `apps/api/test-workers/conversation-parent-contract.test.ts`, `conversation-effect-queue.test.ts` | `pnpm --filter @rally/api test:workers` | The parent contract through the real ticket route, and the effect legs an automation's children use, including a child effect producing no `parent_effect` row. Owned by [`workstream-durable-object.md`](workstream-durable-object.md#testing). |
@@ -716,6 +730,54 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-11 — The strip's tile and its play each answer a pointer
+
+**What changed:** `SidekickStripTile` trades its native `title` for the shared
+`Tip`, opening above the tile and carrying the Sidekick's name and, for a
+workspace Sidekick, its scope — no longer the lifecycle. `HexagonMarker` gains a
+`description`, `SIDEKICK_RUNNING_MARKER` fills it with `Active — in service and
+waiting on its triggers.`, and `HexagonGlyph` gives the painted marker a
+transparent hit rect over its whole box, its own `Tip` below it, and a
+`pointermove` that stops at the marker. `.hexagon-marker-tooltip` caps that tip
+at 220px.
+
+**Why:** Neither half of a tile could be read. The caption is ellipsized at 80px
+and the rail drops it, so a `title` was the only way to the name — the platform's
+tooltip, in the platform's type, after its own delay, and never on keyboard
+focus, which the artifact rows had already rejected for the same slot-level
+reason on 2026-09-10. And the play had nothing to say at all: it was introduced
+to replace a mark that had to be learned, and an unnamed symbol is one too. What
+it names is the part a play gets wrong on its own — it reads as *running right
+now*, while the marker is on every active Sidekick, including every one sitting
+idle between triggers.
+
+The description belongs to `HexagonMarker` beside the symbol and the colour,
+for the reason the knockout belongs to the hexagon: whoever adds the second
+marker states what it means or ships an unexplained one, and the primitive is
+where that is unavoidable. The hover target is the marker's whole 26-unit box
+rather than the play, because SVG hit-tests what is painted and the play is
+about 7px across in the rail.
+
+**Considered and rejected:** keeping the lifecycle in the tile's line as the
+`title` had it. Every tile in the strip is active, so it spent the tile's one
+line on the one fact they all share, and it printed **Active** twice a
+centimetre apart the moment a pointer reached the play — which is what the
+public badge on the work-stream rows settled on 2026-08-30. Also rejected: an
+HTML badge positioned over the tile to hang the tooltip on, which would put back
+the containing block the play's knockout deleted.
+
+**What a future change has to respect:** the `pointermove` that stops at the
+marker is load-bearing, not tidying. Radix closes whatever tooltip is open when
+another opens, so two nested triggers resolve by order: with the move reaching
+the tile as well, a pointer arriving straight onto the play opened the marker's
+tip at its 300ms and the tile's at its 450ms, and the tile's — opening second —
+took the answer away again. Confirmed in the window: the play's sentence flashed
+and was replaced by the Sidekick's name. Stopping the move makes that ordering
+impossible rather than unlikely, and Radix's own handler, composed onto the same
+element, still runs. A marker tip therefore also requires a `Tooltip.Provider`
+above any hexagon that draws one; the app has one at its root, and a test
+rendering a hexagon on its own supplies it.
 
 ### 2026-09-11 — One answer to which resources a rule may name
 

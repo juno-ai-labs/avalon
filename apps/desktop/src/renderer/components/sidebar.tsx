@@ -434,7 +434,7 @@ function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
  * "Active" — dead markup, because `aria-label` on the button replaces its
  * contents in the accessible name, and the label already said it.
  */
-function SidekickStripTile({ glyph, label, name, onClick, title }: {
+function SidekickStripTile({ glyph, label, name, onClick, tip }: {
   glyph: React.ReactNode;
   /**
    * What the tile is called to a screen reader, which the caption cannot be: it
@@ -444,20 +444,33 @@ function SidekickStripTile({ glyph, label, name, onClick, title }: {
   label: string;
   name: string;
   onClick: () => void;
-  title: string;
+  /**
+   * What a pointer resting on the tile is told, which is the caption's job
+   * everywhere the caption can do it — and it cannot here: the strip ellipsizes
+   * a name at 80px and the rail drops it outright.
+   */
+  tip: React.ReactNode;
 }): React.JSX.Element {
   return (
     <div className="sidebar-context-target">
-      <button
-        className="sidebar-row automation-row automation-tile"
-        aria-label={label}
-        title={title}
-        onClick={onClick}
-        type="button"
-      >
-        <span className="automation-tile-glyph" aria-hidden="true">{glyph}</span>
-        <span className="automation-tile-name">{name}</span>
-      </button>
+      {/*
+        Upward, where the artifact rail opens its rows to the right. The
+        neighbour a rail row has is below it and the neighbour a strip tile has
+        is beside it, so the side that covers something other than the next
+        Sidekick is the opposite one; above the strip is the work-stream list,
+        which is not what a reader comparing tiles wants to see.
+      */}
+      <Tip label={tip} side="top">
+        <button
+          className="sidebar-row automation-row automation-tile"
+          aria-label={label}
+          onClick={onClick}
+          type="button"
+        >
+          <span className="automation-tile-glyph" aria-hidden="true">{glyph}</span>
+          <span className="automation-tile-name">{name}</span>
+        </button>
+      </Tip>
     </div>
   );
 }
@@ -470,7 +483,14 @@ function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.
       label={`${sidekick.name}, Active${scopeDescription}`}
       name={sidekick.name}
       onClick={() => void desktopBridge().openSidekicks(sidekick.id)}
-      title={`${sidekick.name} · Active${scopeDescription}`}
+      // Which Sidekick, not what state it is in. Every tile in this strip is
+      // active, so a tooltip that said so on each of them would spend its one
+      // line on the one fact they share; the play in the corner reports it, and
+      // resting on the play spells it out. Naming it here as well would print
+      // the same word twice a centimetre apart whenever somebody points at the
+      // marker, which is what the public badge beside these rows settled.
+      // The state still reaches assistive technology, through `label`.
+      tip={`${sidekick.name}${scopeDescription}`}
     />
   );
 }
@@ -492,7 +512,7 @@ function NewSidekickTile(): React.JSX.Element {
       label="New Sidekick"
       name="New Sidekick"
       onClick={() => void desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET)}
-      title="New Sidekick"
+      tip="New Sidekick"
     />
   );
 }
