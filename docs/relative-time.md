@@ -110,6 +110,12 @@ formatted where they are produced.
   sidebar already re-groups itself on `nextRecencyBoundary`; the inspector's
   version list does not, which is a gap in that list rather than in this
   module.
+- **A host's own hover affordance wins over the tooltip.** The sidebar row's
+  timestamp sits inside a row that already shows a preview card on hover, and
+  that card is what a reader gets; the absolute-time tooltip does not also open.
+  That is the better outcome — two popovers on one hover is noise — and it is
+  recorded rather than fixed, because the label's job there is to stay current,
+  which it does.
 - **The tooltip is reachable by pointer, not by keyboard.** `Tooltip.Trigger`
   wraps the `<time>` with `asChild`, and a `<time>` is not focusable, so tabbing
   never reaches it. Making it focusable was rejected: a feed of fifty turns would
@@ -173,6 +179,14 @@ would divorce what a screen reader announces from what is on screen, which is
 the reason the September 9 entry in
 [`conversation-surfaces.md`](conversation-surfaces.md) put the order in the
 markup in the first place.
+
+**Caught in review:** the first cut converted the sidebar's *hover preview*
+timestamp and missed the visible row's, because the sweep grepped for
+`formatRelative` and the sidebar speaks its own vocabulary
+(`formatSidebarActivityTime`). Left alone, a row mounted across midnight would
+have read `11:58 PM` under a preview that said `Yesterday` — the same
+disagreement this change exists to remove, reintroduced by the guard being
+narrower than the idea. The guard now covers that vocabulary too.
 
 **Consequences:** the name no longer resolves through `--person-accent`. That
 variable now paints the dot and nothing else, and its `profile ? text-default`
