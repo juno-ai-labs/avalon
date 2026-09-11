@@ -176,16 +176,37 @@ the key, and wrote down why: *"Schema says min but omit should maybe omit."*
 Prose loses to the machine-readable half, so the schema has to admit the
 answer.
 
-**Declare that alternative as `anyOf`, never as a type array.** Bind's
-sanitizer collapses `type: ["string", "null"]` to `type: "string"` and appends
-"Accepts string or null." to the description — the null branch survives only as
-prose, which is the same two-halves-disagreeing shape the rule above exists to
-remove. `anyOf: [{ type: "string", minLength: 1 }, { type: "null" }]` passes
-through whole. `droppedNullableBranches` reports the difference and
-`apps/api/test/tool-schema-sanitization.test.ts` asserts over it. That assertion
-enumerates the registry, so a new paginated connector tool is enrolled by
-existing rather than by being remembered; what still has to be remembered is a
-cursor named something outside `CURSOR_PARAMETERS`, which no sweep will find.
+**Either spelling reaches the model as a union, and the guard covers every
+parameter.** Since `@juno-ai/bind` 14 the sanitizer rewrites
+`type: ["string", "null"]` to `anyOf: [{ type: "string", minLength: 1 }, { type: "null" }]`
+rather than collapsing it to `type: "string"` with "Accepts string or null."
+appended to the description, which is what Bind 13 did, and which left the
+null branch alive only as prose, the same two-halves-disagreeing shape the rule
+above exists to remove. `anyOf` stays the house spelling for a cursor because it
+says what it means without depending on a dependency's transform, and
+`droppedNullableBranches` still reports a declaration whose authored null does
+not reach the wire. Bind 14 rewrites a nullable *single* type only, and five
+shapes keep the collapse. This is the one list; the other documents and the
+source comments point here rather than restating it:
+
+- a multi-type union such as `["string", "number", "null"]`, collapsed to its
+  first non-null member because no union of scalar branches has been measured
+  on every provider;
+- a nullable type at the parameters root, which every provider requires to be
+  an object;
+- a nullable type in a branch of a root `anyOf`/`oneOf`, where a branch
+  carrying its own union is what xAI rejects;
+- a nullable type in a composition branch whose `required` reaches the
+  enclosing node's `properties`, because the rewrite would put that name two
+  levels from the scope that declares it;
+- a nullable type whose sibling `enum` or `const` excludes `null`, because
+  those keywords are AND-ed with `type` and the node never admitted the value.
+
+`apps/api/test/tool-schema-sanitization.test.ts` asserts that over every
+declaration of every authored tool, nested ones included, not only the cursors,
+so a tool added next year is enrolled by existing; what still has to be
+remembered is a cursor named something outside `CURSOR_PARAMETERS`, which the
+cursor-contract sweep will not find.
 
 If using zod for parsing do not just return the zod error object. Provide natural
 language errors and more importantly provide instructions on how to fix the error.
@@ -413,9 +434,10 @@ Google is the measured case, and it resumes the old search rather than running
 the new one, which reaches the caller as a wrong answer instead of an error.
 
 The description is half of it. Say what to send when there is no cursor, and say
-it in the spelling Principle 1 requires — `anyOf` with a `null` branch, never a
-type array — or the schema goes on forbidding the value the prose recommends,
-and the caller resolves that contradiction in favour of the schema. Two walks in
+it in the spelling Principle 1 prefers, `anyOf` with a `null` branch. Both
+spellings reach the model as a union since Bind 14; `anyOf` is kept because it
+says what it means without depending on the sanitizer's transform, and a
+reader of the declaration sees the value the prose recommends. Two walks in
 `tool-argument-empty-strings.test.ts` and `tool-schema-sanitization.test.ts`
 hold the two halves across every registered connector.
 
@@ -931,6 +953,45 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-09-11 — A nullable parameter survives in either spelling
+
+**What changed:** Principle 1's second half no longer forbids the type-array
+spelling. `@juno-ai/bind` 14 rewrites `type: ["string", "null"]` to the `anyOf`
+union on the way to the wire, so a flat nullable declaration and an `anyOf` one
+now reach the model alike. The `droppedNullableBranches` assertion in
+`apps/api/test/tool-schema-sanitization.test.ts` widens from the connector
+cursors to every declaration of every authored tool, nested ones included, and
+`anyOf` remains the house spelling for a cursor.
+
+**Why:** The 2026-09-03 rule below was written around the collapse and left 28
+parameters on four connectors declared the way the sanitizer broke, each
+waiting for its own conversion. One of them was `slack_send_message.thread_ts`,
+and a scheduled Sidekick handed it as a bare string with "or send null" in the
+prose put `"/"`, `". "` and `".000001"` into it for thousands of Slack-refused
+calls, or the timestamp of its own previous post, which is how a joke Sidekick
+came to reply to itself. Fixing the spelling per parameter would have left the
+next connector free to ship the shape again; fixing the sanitizer fixes every
+consumer at once, and the guard now proves it registry-wide.
+
+**Considered and rejected:** rewriting the type array in Rally's own
+`repairRootSchemaForProviders`, which runs before Bind's sanitizer and would
+have worked for this repository alone. The collapse lives in Bind, every
+consumer of Bind hits it, and the transform belongs beside the code it
+replaces. Also rejected: dropping the `anyOf` preference for cursors now that
+both spellings survive. A declaration that says what it means without
+depending on a dependency's transform is the one a reader can trust.
+
+**Consequences:** the guard is registry-wide and fails on a Bind release that
+collapses again, naming the tool and the dotted path. A declaration in one of
+the five shapes Bind 14 still collapses, listed once under Principle 1, is
+reported the same way and needs a spelling of its own. And this changes what
+the model is shown, not what the executor accepts: `SlackTimestampSchema`
+still takes any non-empty string, so a model that ignores the schema can put
+`"/"` in `thread_ts` past this change. The `pattern` on the string branch and
+the matching executor check are phase 0 of
+[the Sidekick delivery PRD](PRDs/2026-09-11_sidekick-delivery-reliability/prd.md)
+and did not ship with this entry.
 
 ### 2026-09-10 — A parameter with no description is a parameter that gets guessed at
 

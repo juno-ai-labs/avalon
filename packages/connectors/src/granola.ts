@@ -57,11 +57,14 @@ const folderIdJsonSchema = {
   description: "An optional Granola folder ID returned by list_folders.",
 } as const;
 /**
- * Granola's page cursor. `anyOf` rather than `type: ["string", "null"]` because
- * Bind's `sanitizeToolSchema` collapses the flat form to `type: "string"`, so
- * the null branch never reached the model and `minLength: 1` read as a floor a
- * caller with no cursor still had to clear; `GOOGLE_PAGE_TOKEN_SCHEMA` in
- * [`index.ts`](index.ts) has the run that measured what a caller does then.
+ * Granola's page cursor. `anyOf` rather than `type: ["string", "null"]`: the
+ * `anyOf` is the house spelling, kept because it says what it means without
+ * depending on a dependency's transform. Both spellings reach the model as a
+ * union since Bind 14; under Bind 13 the flat form was collapsed to
+ * `type: "string"`, so the null branch never reached the model and
+ * `minLength: 1` read as a floor a caller with no cursor still had to clear;
+ * `GOOGLE_PAGE_TOKEN_SCHEMA` in [`index.ts`](index.ts) has the run that
+ * measured what a caller does then.
  *
  * The producing field and the last-page signal are `cursor` and
  * `hasMore: false`, which is the shape `/v1/notes` and `/v1/folders` return and
