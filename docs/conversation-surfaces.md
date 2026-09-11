@@ -33,6 +33,16 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
 
 - `apps/desktop/src/renderer/components/conversation-follow.tsx` owns the
   **Jump to latest** and transient `ActivityPresence`, sharing retained motion.
+- `apps/desktop/src/renderer/components/agent-work-timing.tsx` owns every row in
+  that 20px-mark column: `AgentWorkTiming`, which counts, and the two that name
+  a state instead — `AgentCompactionIndicator` and `RunStoppingIndicator`, both
+  one call to the `ActivityStatusRow` primitive. A third state goes there, not
+  into a third copy of the row's `role`, live-region attributes and orb props.
+  `conversationActivityRow` in `screens/conversation-surface.tsx` is the single
+  decision about which of them the feed's activity slot shows;
+  `conversationShowsStoppingRow` beside it is the separate question of whether
+  the composer dock acknowledges a pending stop, and the two are separate
+  because only one of them lives inside the scroller.
 - `apps/desktop/src/renderer/components/message-feed.tsx` renders the ordered
   list itself — every row, the unread divider, the oversized-message
   placeholder, and row disclosure — and `workstream-blocks.tsx` renders
@@ -160,12 +170,24 @@ the feed row sat 1,720px past a 900px viewport. The dock is outside the
 scroller, so the acknowledgement holds at any scroll position, and it sits
 beside the control it answers rather than among the rows that describe the run.
 
-The feed's own timing row keeps counting underneath, and both are now on screen
-together rather than one replacing the other. The response really is still
-settling, so silencing the count would only move the overstatement one row down;
-the dock's line is what makes the continued counting legible instead of
-alarming. `conversationActivityRow` therefore decides only between the two feed
-rows, compaction over the elapsed total, and knows nothing about stopping.
+Whatever the feed is already showing keeps showing, and both are now on screen
+together rather than one replacing the other. Usually that is a row still
+counting — the ordered transcript's own, or the slot's elapsed total — though a
+run whose rows the transcript has not anchored yet and whose timing is null
+leaves the feed silent, so the dock's line can be the only thing on screen. The
+response really is still settling either way, so silencing a count would move
+the overstatement one row down rather than remove it; the dock's line is what
+makes the continued counting legible instead of alarming.
+`conversationActivityRow` therefore decides only between the two feed rows,
+compaction over the elapsed total, and knows nothing about stopping.
+
+**The sentence names the work, not the response.** A step is one accepted model
+response plus settlement of every tool call it already emitted, so a tool the
+response asked for runs after the response is done — 3.0 seconds of it in the
+production run above, with its own activity row appearing in the feed while the
+dock's line was up. Copy that named the response promised a boundary that
+arrives while the agent is visibly still working, which is the original defect
+one level down.
 
 Once a member-requested stop settles, the feed renders it as an intentional
 terminal state with a filled stop-square and no recovery action. The stopped
@@ -611,6 +633,11 @@ the reader's own scrolling moves the viewport, and yanking someone out of the
 history they deliberately opened would trade one defect for a ruder one. Moving
 the row to the dock keeps both rules.
 
+Wording: the label names the *work*, not the response. Two independent review
+passes caught that "after the current response…" promised a boundary the step
+does not have, and this PR's own trace is the proof — a tool the response had
+already asked for ran for 3.0s after it finished.
+
 **Consequences:** Feedback that answers a composer control belongs in the dock,
 not in the feed: anything rendered inside `.transcript-scroll` inherits the
 reader's scroll position and can be invisible at the moment it matters most, and
@@ -622,6 +649,8 @@ position — this defect is invisible from the bottom of the transcript, which i
 where the first check was made. If Stop ever does become immediate, this row
 becomes dead weight rather than wrong — delete it with the change that makes the
 wait disappear.
+
+Shipped in #721.
 
 ### 2026-09-11 — An intentional stop does not offer to replay the turn
 

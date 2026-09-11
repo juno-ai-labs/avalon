@@ -505,8 +505,16 @@ export function applyHarnessStatus(
   harnessStatus: HarnessStatus,
   substreamId = '0',
 ): void {
+  // `stopRequested` describes the run this status belonged to, so it is cleared
+  // with the status rather than left for the canonical snapshot that follows.
+  // The window is narrow and self-healing, but it is no longer invisible: the
+  // composer dock now says "stopping" in a full sentence while a live run
+  // carries the flag, so a fresh run inheriting a stale one would open by
+  // announcing a wait nobody asked for.
   queryClient.setQueryData<WorkstreamDetail>(workstreamDetailQueryKey(workstreamId, substreamId), (current) =>
-    current && current.harnessStatus !== harnessStatus ? { ...current, harnessStatus } : current);
+    current && current.harnessStatus !== harnessStatus
+      ? { ...current, harnessStatus, stopRequested: false }
+      : current);
   if (substreamId !== '0') return;
   setCachedWorkstreams(queryClient, (current) =>
     current?.map((workstream) => workstream.id === workstreamId && workstream.harnessStatus !== harnessStatus
