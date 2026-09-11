@@ -218,48 +218,154 @@ const boundedCursor = {
   description: SLACK_CURSOR_DESCRIPTION,
 } as const;
 
+/**
+ * A Slack conversation id, as the model has to spell it.
+ *
+ * Every read below is scoped by one, and the name of the channel is what a
+ * person says out loud, so the description carries the id's shape and where to
+ * get one. `find_channels` is named rather than implied: this connector does
+ * not resolve a name server-side (principle 3), and the id is not derivable
+ * from the name.
+ */
+/**
+ * What a Slack conversation id looks like, said once.
+ *
+ * Every helper below leads with its own complete sentence and then appends this
+ * one, so a call site reads as the sentence the model gets rather than as a
+ * fragment to be re-concatenated in your head.
+ */
+const CONVERSATION_ID_SHAPE =
+  "It is a Slack conversation id, such as `C0123ABCDEF` for a public channel, `G0123ABCDEF` for a private channel or group message, or `D0123ABCDEF` for a direct message; get one from find_channels. A channel name such as `#design` is not an id and is refused.";
+
+const conversationId = (lead: string) => ({
+  ...id,
+  description: `${lead} ${CONVERSATION_ID_SHAPE}`,
+});
+
+/**
+ * The same id as a filter rather than a target.
+ *
+ * Split from `conversationId` rather than copied: the two say the same thing
+ * about the id's shape and differ only in what absence means, and the copy this
+ * replaces had already lost the direct-message example and reworded the
+ * wrong-conversation sentence.
+ */
+const conversationIdFilter = (lead: string) => ({
+  ...optionalId,
+  description: `${lead} ${CONVERSATION_ID_SHAPE} Omit it, or send \`null\`, to search every conversation the credential can see. A well-formed id for a conversation the credential cannot see is not refused — it returns no matches rather than an error.`,
+});
+
+/** A Slack user id, as a filter on who wrote something. */
+const userIdFilter = (lead: string) => ({
+  ...optionalId,
+  description: `${lead} It is a Slack user id such as \`U0123ABCDEF\`; get one from find_users, and a display name or email address is not one. Omit it, or send \`null\`, for any author. A well-formed id for the wrong person is not refused — it returns no matches rather than an error.`,
+});
+
+/**
+ * A Slack message timestamp, which is an id despite reading like a number.
+ *
+ * Slack's `ts` identifies a message within its conversation and must be passed
+ * back byte-for-byte. Rounding it, or re-formatting it as a date, addresses a
+ * message that does not exist — and `conversations.history` answers that with
+ * an empty window rather than an error, so the sentence about a wrong value is
+ * the one that has to be there.
+ */
+const messageTimestamp = (purpose: string) => ({
+  ...id,
+  description: `${purpose} Copy Slack's \`ts\` value exactly as a returned message carries it, for example \`1735689600.123456\`; it is an id, not a date. Trimming its digits or converting it to a date names no message, which reads as an empty result rather than an error.`,
+});
+
 export const slackTools: ToolDefinition[] = [
   tool("search", "Search Slack messages, files, channels, and users visible to the authorized principal. Prefer search_messages when only messages are needed.", SlackCapabilities.search, "read", {
-    query,
-    limit: { type: "integer", minimum: 1, maximum: 20 },
+    query: {
+      ...query,
+      description: "What to look for, in plain words. Slack's own search operators work too, for example `in:#design`, `from:@dana`, `has:link`, and `\"a quoted phrase\"`. A query nothing matches comes back as an empty result rather than an error, so widen the words before concluding the workspace has nothing.",
+    },
+    limit: { type: "integer", minimum: 1, maximum: 20, description: "Maximum results to return across all four kinds. Defaults to 20." },
     cursor: boundedCursor,
   }, ["query"]),
   tool("search_messages", "Search Slack messages relevant to a query. Workspace-bot search is limited by Slack to a user-initiated event and public-channel access.", SlackCapabilities.search, "read", {
-    query,
-    channel_id: optionalId,
-    author_user_id: optionalId,
-    after: { type: ["integer", "null"], minimum: 0 },
-    before: { type: ["integer", "null"], minimum: 0 },
-    sort: { type: "string", enum: ["score", "timestamp"] },
-    sort_dir: { type: "string", enum: ["asc", "desc"] },
-    include_bots: { type: "boolean" },
-    limit: { type: "integer", minimum: 1, maximum: 20 },
+    query: {
+      ...query,
+      description: "What to look for in message text, in plain words. Narrow to one conversation or one author with `channel_id` and `author_user_id` rather than writing `in:` or `from:` operators here.",
+    },
+    channel_id: conversationIdFilter("Return only messages posted in one conversation."),
+    author_user_id: userIdFilter("Return only messages written by one person."),
+    after: {
+      type: ["integer", "null"],
+      minimum: 0,
+      description: "Return only messages posted after this Unix time, in whole seconds — the part of a message `ts` before the dot, so `1767225600` is 2026-01-01. Omit it, or send `null`, for no lower bound. Milliseconds are a date tens of thousands of years out, which matches nothing and reads as an empty result.",
+    },
+    before: {
+      type: ["integer", "null"],
+      minimum: 0,
+      description: "Return only messages posted before this Unix time, in whole seconds — the part of a message `ts` before the dot, so `1767225600` is 2026-01-01. Omit it, or send `null`, for no upper bound. Milliseconds are a date tens of thousands of years out, so every message is before it and the bound does nothing.",
+    },
+    sort: { type: "string", enum: ["score", "timestamp"], description: "Order matches by `score`, which is Slack's relevance ranking, or by `timestamp`, which is when they were posted. Defaults to `score`." },
+    sort_dir: { type: "string", enum: ["asc", "desc"], description: "`desc` puts the best-ranked or most recent match first, `asc` the reverse. Defaults to `desc`." },
+    include_bots: { type: "boolean", description: "Include messages posted by bots and apps. Defaults to false, which returns only what people wrote." },
+    limit: { type: "integer", minimum: 1, maximum: 20, description: "Maximum messages to return. Defaults to 20." },
     cursor: boundedCursor,
   }, ["query"]),
   tool("find_users", "Find Slack users by name, display name, real name, email address, or user ID.", SlackCapabilities.usersRead, "read", {
-    query,
-    include_deleted: { type: "boolean" },
-    limit: { type: "integer", minimum: 1, maximum: 200 },
+    query: {
+      ...query,
+      description: "Part of a name, display name, real name, email address, or user id to match, for example `Dana`, `dana@example.com`, or `U0123ABCDEF`. Matching is case-insensitive and on the stored profile only, so a nickname nobody has typed into Slack finds no one rather than failing.",
+    },
+    include_deleted: { type: "boolean", description: "Include deactivated accounts. Defaults to false." },
+    limit: { type: "integer", minimum: 1, maximum: 200, description: "Maximum users to return. Defaults to 50." },
   }, ["query"]),
   tool("find_channels", "Find Slack conversations by name or conversation ID within the authorized credential's visibility.", SlackCapabilities.usersRead, "read", {
-    query,
-    include_archived: { type: "boolean" },
-    limit: { type: "integer", minimum: 1, maximum: 200 },
+    query: {
+      ...query,
+      description: "Part of a conversation name or a conversation id to match, for example `design` or `C0123ABCDEF`. Match it against the name as Slack stores it, without the leading `#`. Only conversations the credential can already see are searched, so a private channel it was never invited to is absent rather than refused.",
+    },
+    include_archived: { type: "boolean", description: "Include archived conversations. Defaults to false." },
+    limit: { type: "integer", minimum: 1, maximum: 200, description: "Maximum conversations to return. Defaults to 50." },
   }, ["query"]),
   tool("read_message_context", "Read a bounded window around one Slack message timestamp.", SlackCapabilities.messagesRead, "read", {
-    channel_id: id,
-    message_ts: id,
-    before: { type: "integer", minimum: 0, maximum: 50 },
-    after: { type: "integer", minimum: 0, maximum: 50 },
+    channel_id: conversationId("The conversation the message is in."),
+    message_ts: messageTimestamp("The message to center the window on."),
+    before: { type: "integer", minimum: 0, maximum: 50, description: "How many messages posted before the target one to include. Defaults to 10; 0 returns none." },
+    after: { type: "integer", minimum: 0, maximum: 50, description: "How many messages posted after the target one to include. Defaults to 5; 0 returns none." },
   }, ["channel_id", "message_ts"]),
-  tool("read_channel", "Read messages from a Slack conversation.", SlackCapabilities.messagesRead, "read", { channel_id: id, limit: boundedLimit, cursor: unboundedCursor }, ["channel_id"]),
-  tool("read_thread", "Read a Slack message thread.", SlackCapabilities.messagesRead, "read", { channel_id: id, thread_ts: id, limit: boundedLimit, cursor: unboundedCursor }, ["channel_id", "thread_ts"]),
-  tool("read_file", "Read metadata and bounded textual content for a Slack file.", SlackCapabilities.filesRead, "read", { file_id: id }, ["file_id"]),
-  tool("send_message", "Send a Slack message as the connected user or installed workspace bot.", SlackCapabilities.messagesWrite, "write", { channel_id: id, text: { type: "string", minLength: 1, maxLength: 40_000 }, thread_ts: optionalId }, ["channel_id", "text"]),
-  tool("create_conversation", "Create a Slack channel, group DM, or direct message as the connected user or installed workspace bot.", SlackCapabilities.conversationsWrite, "write", { name: { type: ["string", "null"], minLength: 1, maxLength: 80, pattern: "^[a-z0-9_-]+$" }, user_ids: { type: "array", minItems: 1, maxItems: 8, items: id }, is_private: { type: "boolean" } }),
-  tool("add_reaction", "Add an emoji reaction to a Slack message as the connected user or installed workspace bot.", SlackCapabilities.reactionsWrite, "write", { channel_id: id, timestamp: id, name: { type: "string", minLength: 1, maxLength: 100, pattern: "^[a-zA-Z0-9_+-]+$" } }, ["channel_id", "timestamp", "name"]),
-  tool("read_user_profile", "Read a Slack user profile.", SlackCapabilities.usersRead, "read", { user_id: id }, ["user_id"]),
-  tool("list_channel_members", "List members of a Slack conversation.", SlackCapabilities.usersRead, "read", { channel_id: id, limit: { type: "integer", minimum: 1, maximum: 200 }, cursor: unboundedCursor }, ["channel_id"]),
+  tool("read_channel", "Read messages from a Slack conversation.", SlackCapabilities.messagesRead, "read", {
+    channel_id: conversationId("The conversation to read."),
+    limit: { ...boundedLimit, description: "Maximum messages to return, newest first. Defaults to 50; follow `next_cursor` for older ones." },
+    cursor: unboundedCursor,
+  }, ["channel_id"]),
+  tool("read_thread", "Read a Slack message thread.", SlackCapabilities.messagesRead, "read", {
+    channel_id: conversationId("The conversation the thread is in."),
+    thread_ts: messageTimestamp("The thread's parent message, which is the `thread_ts` a reply carries, or the `ts` of the message the thread hangs off."),
+    limit: { ...boundedLimit, description: "Maximum messages to return, including the parent. Defaults to 100." },
+    cursor: unboundedCursor,
+  }, ["channel_id", "thread_ts"]),
+  tool("read_file", "Read metadata and bounded textual content for a Slack file.", SlackCapabilities.filesRead, "read", {
+    file_id: { ...id, description: "The Slack file id, such as `F0123ABCDEF`. Messages that share a file carry it in their `files` entries; it is not a filename or a download URL." },
+  }, ["file_id"]),
+  tool("send_message", "Send a Slack message as the connected user or installed workspace bot.", SlackCapabilities.messagesWrite, "write", {
+    channel_id: conversationId("Where to post the message."),
+    text: { type: "string", minLength: 1, maxLength: 40_000, description: "The message body, in Slack's mrkdwn: `*bold*`, `_italic_`, `` `code` ``, `<https://example.com|a link>`, `<@U0123ABCDEF>` to mention a person, and `<#C0123ABCDEF>` to link a channel. A bare `@dana` posts the literal text and notifies no one." },
+    thread_ts: { ...optionalId, description: "Post as a reply inside an existing thread, as that thread's parent `ts` copied exactly, for example `1735689600.123456`. Omit it, or send `null`, to post a new top-level message in the conversation." },
+  }, ["channel_id", "text"]),
+  tool("create_conversation", "Create a Slack channel, group DM, or direct message as the connected user or installed workspace bot.", SlackCapabilities.conversationsWrite, "write", {
+    name: { type: ["string", "null"], minLength: 1, maxLength: 80, pattern: "^[a-z0-9_-]+$", description: "Create a channel with this name, written without the leading `#` and using only lowercase letters, digits, hyphens, and underscores, for example `launch-oct`. Send `null`, or omit it, and pass `user_ids` instead to open a direct or group message. Send exactly one of the two." },
+    user_ids: { type: "array", minItems: 1, maxItems: 8, items: id, description: "Open a direct or group message with these people, as Slack user ids such as `[\"U0123ABCDEF\"]`; get them from find_users. One id opens a one-to-one direct message and several open a group message. Pass `name` instead to create a channel; send exactly one of the two." },
+    is_private: { type: "boolean", description: "Create the channel private rather than public. Defaults to false. It applies only alongside `name`, and a channel's privacy cannot be changed back through these tools." },
+  }),
+  tool("add_reaction", "Add an emoji reaction to a Slack message as the connected user or installed workspace bot.", SlackCapabilities.reactionsWrite, "write", {
+    channel_id: conversationId("The conversation holding the message to react to."),
+    timestamp: messageTimestamp("The message to react to."),
+    name: { type: "string", minLength: 1, maxLength: 100, pattern: "^[a-zA-Z0-9_+-]+$", description: "The emoji's Slack name without the surrounding colons, for example `white_check_mark` or `tada`. A literal `✅`, or a name this workspace has no emoji for, is refused." },
+  }, ["channel_id", "timestamp", "name"]),
+  tool("read_user_profile", "Read a Slack user profile.", SlackCapabilities.usersRead, "read", {
+    user_id: { ...id, description: "The Slack user id, such as `U0123ABCDEF`; get one from find_users. A display name or email address is not an id and is refused." },
+  }, ["user_id"]),
+  tool("list_channel_members", "List members of a Slack conversation.", SlackCapabilities.usersRead, "read", {
+    channel_id: conversationId("The conversation whose members to list."),
+    limit: { type: "integer", minimum: 1, maximum: 200, description: "Maximum member ids to return in one page. Defaults to 200; follow `next_cursor` for the rest." },
+    cursor: unboundedCursor,
+  }, ["channel_id"]),
 ];
 
 export const SlackAgentPluginDescriptor = defineConnectorAgentPlugin({

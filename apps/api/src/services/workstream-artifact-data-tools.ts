@@ -37,14 +37,21 @@ export class ArtifactDataToolError extends Error {
   }
 }
 
+const RESOURCE_DESCRIPTION =
+  "The site whose stored data to read, as either the `resourceId` or the `slug` list_resources returned for it — call that tool with attachmentKind \"site\" to find one. A site's title is neither.";
+
 const DescribeArgumentsSchema = z.strictObject({
-  resource: z.string().min(1).max(200),
+  resource: z.string().min(1).max(200).describe(RESOURCE_DESCRIPTION),
 });
 
 const QueryArgumentsSchema = z.strictObject({
-  resource: z.string().min(1).max(200),
-  sql: z.string().min(1).max(4_000),
-  params: z.array(z.union([z.string(), z.number(), z.null()])).max(50).optional(),
+  resource: z.string().min(1).max(200).describe(RESOURCE_DESCRIPTION),
+  sql: z.string().min(1).max(4_000).describe(
+    "One SQLite SELECT statement, for example `SELECT choice, COUNT(*) AS votes FROM responses GROUP BY choice`. Name only tables and columns describe_artifact_data reported. Exactly one statement is admitted: anything that writes, a second statement after a semicolon, a PRAGMA, or transaction control is refused. Write `?` where a value goes and send the value in `params` rather than pasting it in.",
+  ),
+  params: z.array(z.union([z.string(), z.number(), z.null()])).max(50).optional().describe(
+    "The values for the `?` placeholders in `sql`, in the order they appear, for example [\"open\", 5]. Omit it for a statement with no placeholders. The count has to match: fewer or more than the statement has is refused.",
+  ),
 });
 
 /**

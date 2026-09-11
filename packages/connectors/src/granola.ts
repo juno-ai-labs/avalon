@@ -99,7 +99,7 @@ export const granolaTools: ToolDefinition[] = [
         updatedAfter: dateFilterJsonSchema,
         folderId: folderIdJsonSchema,
         cursor: cursorJsonSchema,
-        pageSize: { type: "integer", minimum: 1, maximum: 30 },
+        pageSize: { type: "integer", minimum: 1, maximum: 30, description: "Maximum notes to return in one page. Defaults to Granola's own page size; follow the cursor for the rest." },
       },
     },
   },
@@ -130,7 +130,7 @@ export const granolaTools: ToolDefinition[] = [
       additionalProperties: false,
       properties: {
         cursor: cursorJsonSchema,
-        pageSize: { type: "integer", minimum: 1, maximum: 30 },
+        pageSize: { type: "integer", minimum: 1, maximum: 30, description: "Maximum folders to return in one page. Defaults to Granola's own page size; follow the cursor for the rest." },
       },
     },
   },
@@ -143,7 +143,14 @@ export const granolaTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: true,
-      properties: { query: { type: "string", minLength: 1, maxLength: 8_000 } },
+      properties: {
+        query: {
+          type: "string",
+          minLength: 1,
+          maxLength: 8_000,
+          description: "The question to ask, in full sentences, for example \"What did we decide about the pricing page in the last month?\". Granola answers it across the meetings this person can see, so include the names, dates, or topics that narrow it rather than sending bare keywords.",
+        },
+      },
       required: ["query"],
     },
   },
@@ -165,9 +172,24 @@ export const granolaTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: true,
       properties: {
-        folderId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
-        startDate: { type: ["string", "null"], minLength: 1, format: "date-time" },
-        endDate: { type: ["string", "null"], minLength: 1, format: "date-time" },
+        folderId: {
+          type: ["string", "null"],
+          minLength: 1,
+          maxLength: 200,
+          description: "Return only meetings in this folder, as an id from list_meeting_folders. Omit it, or send `null`, for every folder. A folder's name is not its id.",
+        },
+        startDate: {
+          type: ["string", "null"],
+          minLength: 1,
+          format: "date-time",
+          description: "Return only meetings at or after this moment, as an ISO 8601 timestamp, for example 2026-08-01T00:00:00Z. Omit it, or send `null`, for no lower bound.",
+        },
+        endDate: {
+          type: ["string", "null"],
+          minLength: 1,
+          format: "date-time",
+          description: "Return only meetings at or before this moment, as an ISO 8601 timestamp, for example 2026-08-31T23:59:59Z. Omit it, or send `null`, for no upper bound. It pairs with `startDate`, so check that the two bound the window you meant before reading an empty result as an empty calendar.",
+        },
       },
     },
   },
@@ -186,6 +208,7 @@ export const granolaTools: ToolDefinition[] = [
           minItems: 1,
           maxItems: 25,
           items: { type: "string", minLength: 1, maxLength: 200 },
+          description: "The meetings to read, as ids from list_meetings or query_granola_meetings, at most 25 per call. A meeting's title or date is not an id. Check which of the ids you sent came back rather than assuming all of them did.",
         },
       },
       required: ["meetingIds"],
@@ -200,7 +223,14 @@ export const granolaTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: true,
-      properties: { meetingId: { type: "string", minLength: 1, maxLength: 200 } },
+      properties: {
+        meetingId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "The meeting to transcribe, as an id from list_meetings or query_granola_meetings. Not every meeting has a transcript, so read the result before reporting what was said.",
+        },
+      },
       required: ["meetingId"],
     },
   },
