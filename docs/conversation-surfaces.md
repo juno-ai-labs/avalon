@@ -465,6 +465,42 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-11 — The navigation's plus says what it starts
+
+**What changed:** The `+` in the navigation titlebar and its twin in the rail
+are wrapped in `Tip` — below the titlebar's, to the right of the rail's, where
+the tooltip covers the pane instead of the row under it. Both take their name
+from one value, `newStreamLabel`, which is also their `aria-label`: **New chat**
+in the conversation-only shell, **New work stream** in the full navigation, where
+the action row under the search already calls that route a work stream. Both
+links now state `className` as a string, from a `location.pathname` comparison
+the `returnTo` state was already making, instead of `NavLink`'s callback form.
+
+**Why:** The plus is the whole control — an icon with no words beside it, in the
+one place a pointer looks first — and the only thing naming it was an
+`aria-label`, which a reader using a pointer never sees. Every other icon-only
+control in the shell answers a hover through `IconButton`, whose `label` is both
+names at once; these two links could not use `IconButton` and so had gone
+without. The name is derived rather than fixed because the same route is the
+product's New chat in one shell and its New work stream in the other, and a tip
+that disagrees with the row below it is worse than no tip.
+
+**Consequences:** In the full navigation the titlebar's plus and the action row
+share an accessible name, which is honest — they are two ways to one route — but
+a test that reaches for that name now has to scope to the container it means.
+
+**What a future change has to respect:** Radix's `Slot` merges the child's
+`className` into the trigger's, so a `NavLink` whose `className` is a callback
+reaches the DOM as that callback's *source text* and the link renders unstyled —
+the failure is silent, it survives typecheck and a DOM assertion, and only a real
+window shows it. The 2026-09-10 `Tip` entry below answered that with "needs a
+plain wrapper". A wrapper is not the only answer and was not the right one here:
+the rail's plus is a `data-motion-key` row, and an element between it and the
+command bar would hide it from the list-motion planner. Resolving the active
+state in the component and handing `Tip` a plain string keeps the trigger the
+link itself. Prefer that; reach for a wrapper only where nothing reads the DOM
+shape.
+
 ### 2026-09-10 — One identity line, painted once rather than once per speaker
 
 **What changed:** `MessageBlock` renders both of its headers through a new
