@@ -5207,8 +5207,9 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    at the cap any other way than by being handed it. The other two terms of a
    turn's `max-width` stay literal: they are the column's own shape (a share of
    it, and an inset from its far edge), which nothing outside the column asks
-   about. Rule-local rather than a registry token because it is the feed's
-   layout arithmetic and not an appearance either theme has an opinion about.
+   about. It lives in `app.css` rather than in the token registry — on `:root`,
+   beside the spacing scale — because it is the feed's layout arithmetic and not
+   an appearance either theme has an opinion about.
 
    `--composer-width` is what the second reader takes: the field a person types
    a turn into, on the conversation and on both launchers that become one, plus
@@ -6274,10 +6275,11 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
    waste: the field would sit in the middle of a column barely wider than
    itself. It takes the row instead, inside the dock's own gutters, and the
    rows a launcher stacks above it come with it or they stop lining up.
-   568px is a 600px pane less the conversation dock's two 16px gutters — a size
-   query reads the container's content box, which is inside them, and
-   `app.css.node.test.ts` holds those two numbers to that sum. A launcher's dock
-   states wider gutters, so it reaches the same row a little sooner. */
+   568px is a 600px pane less a dock's two 16px gutters — a size query reads the
+   container's content box, which is inside them, and `app.css.node.test.ts`
+   holds those numbers to that sum for every dock that states a gutter, because
+   a dock that states a different one crosses at a different pane and puts the
+   width change back into the hand-off. */
 @container composer-dock (width < 568px) {
   :is(.workstream-screen, .workstream-launch-screen)
   :is(.composer-stack, .substream-launch-banner, .new-workstream-modifiers) { max-width: none; }
@@ -6726,7 +6728,15 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   background: none;
   bottom: auto;
   left: auto;
-  padding: 12px 34px 28px;
+  /* 16px on the sides, which is every dock's, because the narrow-row query
+     below measures the container's content box: a dock with wider gutters
+     reaches that row at a wider *pane*, and the field would then change width
+     on the keystroke that submits it — in a band around 600px, the one thing
+     this whole arrangement exists to stop. The hero's old 34px was sized for a
+     690px column that no longer exists, and the two narrow-width media rules
+     that used to equalise it were already saying this. The vertical values stay
+     the launcher's own. */
+  padding: 12px 16px 28px;
   position: relative;
   right: auto;
 }
@@ -7023,13 +7033,6 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   right: 0;
 }
 
-
-@media (max-width: 760px) {
-  .workstream-launch-screen:not(.is-launching) > .launch-dock {
-    padding-left: 16px;
-    padding-right: 16px;
-  }
-}
 
 /* The conversation retains its shared feed/composer geometry. The profile is a sibling. */
 .workstream-screen.automation-screen { grid-template-rows: auto minmax(0, 1fr) auto; }
