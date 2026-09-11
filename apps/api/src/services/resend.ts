@@ -16,7 +16,16 @@ export interface ResendFailure {
 export interface ResendEmail {
   recipientEmail: string;
   subject: string;
-  html: string;
+  /**
+   * The styled part, omitted for a message that is meant to arrive unformatted.
+   *
+   * Every email here carried both parts because every one of them was a model's
+   * Markdown, which needs elements to read as anything. Authored mail does not:
+   * the access acknowledgement is a person's four paragraphs, and wrapping them
+   * in the app's dark palette made a short note look like a marketing send. The
+   * text part is the message when this is absent, not a fallback for it.
+   */
+  html?: string;
   text: string;
   idempotencyKey: string;
   category: string;
@@ -79,7 +88,8 @@ export async function sendResendEmail(
         from,
         to: [email.recipientEmail],
         subject: email.subject,
-        html: email.html,
+        // Absent, not empty: a text-only message is a message, not a broken one.
+        ...(email.html ? { html: email.html } : {}),
         text: email.text,
         ...(email.replyTo ? { reply_to: email.replyTo } : {}),
         tags: [
