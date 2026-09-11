@@ -135,9 +135,18 @@ row of its own was the surface saying nothing about the thing it was doing, and
 a plus row claiming to be where the reader is says it wrong. The skeleton rather
 than the first line of the message because the title is the server's to derive:
 a second answer here to what a first line is would disagree the moment either
-changed. The row is replaced by the real one at the navigation, in the same
-place and with no gap — readiness broadcasts the parent's directory before
-confirmation answers, so the frame that carries the child has arrived by then.
+changed.
+
+The placeholder yields to the child's own row the moment the parent's directory
+carries it, which is **before** the navigation rather than at it: readiness
+broadcasts from inside the confirmation, so that frame can reach the window
+while the response is still in flight. The rail recognizes the row by the id
+preparation reserved — `prepare` answers with it, the child is provisioned under
+the same one, and `workstream.tsx` holds it for the attempt on screen. Without
+that the two would be drawn side by side, one conversation with two rows. While
+the published row stands in for a creation the route has not caught up with, it
+is the row marked current, because that is the conversation the launch surface
+is showing.
 
 The timer is the one thing the swap does not carry across, and deliberately: a
 work stream's creation writes its run and answers with the id, while a message
@@ -539,10 +548,14 @@ name is therefore screen-reader-only text on the row itself rather than an
 `aria-label` on a control, and it sits outside `.workstream-context-copy`
 because the compact rail hides that element with `visibility: hidden`, which
 takes what is inside it out of the accessibility tree as well as off the screen;
-the skeleton beside it is `aria-hidden`, so the row is named once. The
-swap is seamless only because readiness broadcasts the parent's directory before
-confirmation answers; if that ever inverts, the rail will blink between the
-pending row and the real one and this is where to look.
+the skeleton beside it is `aria-hidden`, so the row is named once.
+
+The rail now depends on the id preparation reserves, not only on the creation
+being in flight: readiness broadcasts the directory from inside the
+confirmation, so the child's real row can arrive before the response does, and a
+placeholder that watched only the in-flight state stood beside it. Anything that
+changes what `prepare` answers with, or provisions the child under a different
+id than it reserved, will show up here as one conversation with two rows.
 
 ### 2026-09-11 — Manage conversations from their center-sidebar rows
 
