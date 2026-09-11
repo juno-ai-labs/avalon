@@ -43,6 +43,14 @@ import { useEffect, useRef } from 'react';
  * Nothing here is timed. A grace period would need a number nobody here can
  * derive, and would answer "recently" when the question is "at all".
  *
+ * Nor does anything here depend on the order the activation's own events arrive
+ * in, which is worth stating because it is load-bearing and invisible: the
+ * window's `blur` arms the guard on the way *out*, so the restored element
+ * focus is judged against a flag that has been up since the window left. It
+ * does not matter whether that focus lands before or after the window's own
+ * `focus` event, and a platform that delivers one without the other changes
+ * nothing.
+ *
  * The tracking is installed rather than implicit, and until it is, the answer is
  * yes — the behaviour every one of these surfaces had before this module
  * existed. `App` installs it for whichever window it is rendering, so a surface

@@ -2549,7 +2549,9 @@ describe('work-stream rows after an application switch', () => {
    * makes the absence mean something.
    */
   async function expectNoPreview(): Promise<void> {
-    await new Promise((resolve) => { setTimeout(resolve, 600); });
+    await act(async () => {
+      await new Promise((resolve) => { setTimeout(resolve, 600); });
+    });
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
   }
 });
