@@ -75,6 +75,24 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
   retired automation-draft adapter kept a row per call, which is the divergence
   that made the collapse a decision worth recording rather than an obvious one.
 
+The connector-connection tool is deliberately an opt-in exception to tool-row
+collapse. `ConversationSurface` enables it for the main message feed, where its
+validated input renders the interactive connector card. `MessageFeed` and
+`MessageBlock` default the feature off, so another transcript host cannot gain
+OAuth controls merely by reusing the renderer. The card follows the installed
+Grok Bot connector-card geometry (column card, 16px radius, 12px padding, 40px
+provider mark, 12px header gap) while resolving color and typography through
+Rally tokens. The connection and pending states come from Rally's live queries
+and app-session OAuth receipt, never from the transcript payload. The card's
+identity does come from the completed tool fact: the server retains the
+validated id and scope as participant-safe output, and the renderer accepts
+that terminal output (plus the exact legacy core-tool summary) so a card that
+has been shown stays in the feed across reload, recovery, and virtualization.
+An uninterrupted run of repeated presentations for the same connector and
+scope collapses to its newest durable row; an intervening conversation row or
+history seam starts a separate occasion. Persistence therefore never produces
+a double-stacked control.
+
 ## Contract
 
 A host that hides a conversation must provide `ConversationVisibilityContext`.
@@ -589,6 +607,32 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-11 — Connector recovery is a first-class conversation-feed card
+
+**What changed:** The live conversation surface opts into rendering validated
+`core_show_connector_connection` tool calls as provider cards with connect,
+reconnect, pending, and connected states. These rows are person-facing and
+therefore remain outside plugin grouping and settled-work accordions.
+
+**Why:** Collapsing the call into “Rally worked” hid the one action that could
+unblock the task. Rendering it as an ordinary tool disclosure exposed a wire
+name and JSON instead of the connector the person recognizes.
+
+**Alternative rejected:** Teaching every `MessageBlock` host to render the
+card automatically. OAuth is a product control of the live feed; a shared
+renderer silently acquiring it would put connection controls into future
+read-only or preview surfaces.
+
+**Consequences:** A new transcript host remains neutral until it opts in. The
+card's height is measured by the existing feed virtualizer, and completion of
+the external OAuth flow refreshes the same global connection query used by
+Settings and connector mentions. The completed tool fact carries forward the
+validated card identity, so reload, paging, recovery, or virtualization cannot
+downgrade an already-shown card into a generic tool disclosure. The first
+Connected observation is held above virtualized rows for the feed's lifetime.
+Adjacent repeats of the same connector and scope keep the first row's stable
+anchor instead of stacking.
 
 ### 2026-09-11 — A pending stop says so in words, where the reader is watching
 

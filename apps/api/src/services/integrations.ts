@@ -8,8 +8,10 @@ import {
   AVALON_CURRENT_TIME_TOOL_DEFINITION,
   AVALON_CORE_PLUGIN_ID,
   AVALON_DISCOVERY_PLUGIN_ID,
+  AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
   AVALON_MEMORY_PLUGIN_ID,
   AVALON_REQUEST_ELICITATION_TOOL_DEFINITION,
+  AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
   AVALON_SKILLS_PLUGIN_ID,
   AVALON_SKILL_TOOL_DEFINITIONS,
   AVALON_TABLES_PLUGIN_ID,
@@ -86,6 +88,10 @@ import {
   type ToolDefinition,
   type WorkstreamWorkflowInput,
   AutomationRunDefinitionV1Schema,
+  ConnectorConnectionCardCatalog,
+  ConnectorConnectionCardInputSchema,
+  ConnectorConnectionStateResultSchema,
+  connectorConnectionCardSummary,
   MESSAGE_MAX_CHARACTERS,
   type AutomationRunDefinitionV1,
 } from "@rally/contracts";
@@ -4340,6 +4346,10 @@ async function createInlineChildHarnessSurface(options: {
     .filter((tool) => tool.definition.mode === "read")
     .filter((tool) => !tool.definition.capability.startsWith("memory."))
     .filter((tool) => !tool.definition.capability.startsWith("table."))
+    // Connection recovery is one paired parent-feed flow. A read-only child
+    // cannot present its write-side card, so exposing only the state check
+    // would teach it a next step its tool surface cannot perform.
+    .filter((tool) => !tool.definition.capability.startsWith("connector.connection."))
     // A sub-agent runs one bounded read-only investigation and cannot schedule
     // anything, so its parent's wake-ups are context it can neither use nor act
     // on. The write half is already excluded by the read-only filter above.
@@ -7469,7 +7479,9 @@ function easyEnglishCurrentTime(
 function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
   const coreTools = tools.filter((tool) =>
     tool.definition.name === "current_time"
-    || tool.definition.name === "request_elicitation");
+    || tool.definition.name === "request_elicitation"
+    || tool.definition.name === "get_connector_connection_state"
+    || tool.definition.name === "show_connector_connection");
   const memoryTools = tools.filter((tool) => tool.definition.capability.startsWith("memory."));
   const tableTools = tools.filter((tool) => tool.definition.capability.startsWith("table."));
   return [
@@ -7479,7 +7491,18 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
           modelId: "rally_core",
           shortWireName: "core",
           description: "Use Rally's universally available core utilities.",
-          systemMessage: "Use core_current_time when exact current time or timezone matters; never infer it from transcript timestamps. Use core_request_elicitation for one structured blocking question that must pause the run for human input.",
+          systemMessage: [
+            ...(coreTools.some((tool) => tool.definition.name === "current_time")
+              ? ["Use core_current_time when exact current time or timezone matters; never infer it from transcript timestamps."]
+              : []),
+            ...(coreTools.some((tool) => tool.definition.name === "request_elicitation")
+              ? ["Use core_request_elicitation for one structured blocking question that must pause the run for human input."]
+              : []),
+            ...(coreTools.some((tool) => tool.definition.name === "get_connector_connection_state")
+              && coreTools.some((tool) => tool.definition.name === "show_connector_connection")
+              ? ["For a connector, call core_get_connector_connection_state first. If it returns connected, continue without a card. If it returns reconnect_required or not_connected and that blocks the task, explain why and call core_show_connector_connection with the same connectorId and scope. If it returns unavailable, explain that the connector is not configured in this Rally region and do not show a card. Do not invent an authorization URL or claim the connection succeeded."]
+              : []),
+          ].join(" "),
           tools: coreTools,
           preload: true,
           explicit: true,
@@ -7610,6 +7633,43 @@ const ScheduleWakeupInputSchema = z.strictObject({
   timezone: z.string().min(1).max(100).optional(),
 });
 
+async function readConnectorConnectionState(
+  env: Env,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "executionPrincipal">,
+  raw: unknown,
+) {
+  const request = ConnectorConnectionCardInputSchema.parse(raw);
+  if (input.executionPrincipal.type !== "user") throw new Error("connector_connection_state_requires_user");
+  const catalog = ConnectorConnectionCardCatalog[request.connectorId];
+  const available = connectorRegistryForEnv(env).list()
+    .some((manifest) => manifest.type === catalog.providerType);
+  if (!available) {
+    return ConnectorConnectionStateResultSchema.parse({ ...request, state: "unavailable" });
+  }
+  const result = await env.DB.prepare(
+    `SELECT granted_scopes_json, status FROM connector_connections
+      WHERE workspace_id = ? AND connector_type = ? AND scope = ?
+        AND (scope = 'workspace' OR owner_user_id = ?)`,
+  ).bind(
+    input.workspaceId,
+    catalog.providerType,
+    request.scope,
+    input.executionPrincipal.userId,
+  ).all<{ granted_scopes_json: string; status: string }>();
+  const matching = (result.results ?? []).filter((row) => {
+    if (catalog.capabilityPrefixes.length === 0) return true;
+    const capabilities = parseJson<string[]>(row.granted_scopes_json, []);
+    return capabilities.some((capability) =>
+      catalog.capabilityPrefixes.some((prefix) => capability.startsWith(prefix)));
+  });
+  const state = matching.some((row) => row.status === "healthy")
+    ? "connected"
+    : matching.some((row) => row.status === "needs_reconnect" || row.status === "error")
+      ? "reconnect_required"
+      : "not_connected";
+  return ConnectorConnectionStateResultSchema.parse({ ...request, state });
+}
+
 function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
   const tools: HarnessTool[] = [
     ...createWorkstreamAttachmentTools(env, input),
@@ -7630,6 +7690,34 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         return { output: text, summary: text };
       },
     },
+    ...(input.executionPrincipal.type === "user" && !input.automationRun ? [
+      {
+        definition: AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
+        validateInput: (raw: unknown) => {
+          const parsed = ConnectorConnectionCardInputSchema.safeParse(raw);
+          return parsed.success ? null : parsed.error;
+        },
+        execute: async (raw: unknown) => {
+          const state = await readConnectorConnectionState(env, input, raw);
+          return {
+            output: state,
+            summary: `${state.connectorId} ${state.scope} connection is ${state.state}`,
+          };
+        },
+      } satisfies HarnessTool,
+      {
+        definition: AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
+        validateInput: (raw: unknown) => {
+          const parsed = ConnectorConnectionCardInputSchema.safeParse(raw);
+          return parsed.success ? null : parsed.error;
+        },
+        execute: async (raw: unknown) => {
+          const card = ConnectorConnectionCardInputSchema.parse(raw);
+          const summary = connectorConnectionCardSummary(card);
+          return { output: card, summary };
+        },
+      } satisfies HarnessTool,
+    ] : []),
     {
       definition: {
         name: "schedule_wakeup",
