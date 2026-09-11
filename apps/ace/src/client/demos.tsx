@@ -220,9 +220,11 @@ function NewDemoForm({ template, onStarted, onFailed, onCancel }: {
   const folded = spoken.map((name) => name.toLowerCase());
   // Shown as the directory has it, not as it was compared.
   const sharedName = twice === '' ? spoken.find((_name, index) => folded.indexOf(folded[index]!) !== index) ?? '' : '';
-  // Enough people to cast is a question about the presenter, not the company:
-  // the page refuses the form when nobody could present, and this is the same
-  // dead end one field further in.
+  // Enough people to cast is a question about the presenter, not the company —
+  // the page's own guard has already refused a company that could not cast this
+  // pack at all. This one is recoverable where that one is not: a presenter who
+  // is themselves a candidate leaves one fewer, and choosing a different
+  // presenter gives them back.
   const tooFew = castable.length < roles.length;
   // The form opens with every part uncast, so this is the state it is in when
   // it appears. Left unsaid, Start is simply dead on arrival with nothing to
@@ -362,6 +364,15 @@ export function DemosView(): React.JSX.Element {
       }
       // A form whose dropdowns cannot be filled can never be submitted, and
       // saying so beats leaving the operator to discover it a part at a time.
+      //
+      // Deliberately the company's count, not the count minus whoever is
+      // presenting: this asks whether *anybody* could cast this pack, which is
+      // the only question answerable before a presenter is chosen. Whether
+      // *this* presenter can is the form's own question (`tooFew`), and it has
+      // an answer this one does not — present as somebody else. Refusing the
+      // form here on `parts + 1` would hide that, in the case where the
+      // template seats a presenter who is not on the cast domain and every
+      // candidate is free.
       const parts = castRolesOf(template).length;
       if (template.castCandidates.length < parts) {
         setTemplate({
