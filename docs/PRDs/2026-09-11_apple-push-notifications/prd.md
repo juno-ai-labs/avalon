@@ -8,7 +8,10 @@
 > into the same backend without a second delivery path. Companions:
 > [`design.md`](design.md) (the primitives, schema, payload, transport, and
 > desktop mechanics), [`plan.md`](plan.md) (phases, deployment checklist, and
-> acceptance gates). Standing contract:
+> acceptance gates). Sequenced after it:
+> [https work-stream links](../2026-09-11_https-work-stream-links/prd.md),
+> which shares the App ID and provisioning profile this PRD creates. Standing
+> contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 > Read alongside [`digests.md`](../../digests.md), which owns the notification
 > intent pipeline this plugs into, and
@@ -255,9 +258,11 @@ before changing that.
 
 ## Provider configuration
 
-Apple Developer account (team `7ZLT6A8W25`): Push Notifications capability on
-App ID `ai.rallywith.desktop`; one APNs authentication key; one Developer ID
-provisioning profile with push for that App ID. GitHub: the profile as a
+Apple Developer account (team `7ZLT6A8W25`): Push Notifications and Associated
+Domains capabilities on App ID `ai.rallywith.desktop` (the second is reserved for
+[https work-stream links](../2026-09-11_https-work-stream-links/prd.md) so the
+profile is generated once); one APNs authentication key; one Developer ID
+provisioning profile carrying both for that App ID. GitHub: the profile as a
 repository secret for the release workflow. Cloudflare: two secrets per region,
 two queues per region with dead-letter queues (created by `deploy-api.yml`),
 one D1 migration per region, and the flag registered in Ace. The exact steps
