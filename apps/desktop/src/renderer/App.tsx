@@ -3,7 +3,7 @@ import { SidekicksWindow, SidekicksWindowRedirect } from './screens/sidekicks-li
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Cable, RefreshCcw } from 'lucide-react';
-import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useRef, useState } from 'react';
+import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useMemo, useRef, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { logError } from '../common/logger';
 import { desktopWorkspaceIdentityKey } from '../common/desktop';
@@ -14,6 +14,8 @@ import { Button, EmptyState, LoadingState } from './components/primitives';
 import { SpeechPlaybackProvider } from './components/speech-playback';
 import { ApiError, isSessionRejection } from './lib/api';
 import { AppSessionProvider, useAppSession, type AppSessionValue, FINISH_SIGN_IN_IN_BROWSER } from './lib/app-session';
+import { desktopBridge } from './lib/platform';
+import { workspaceFromSession } from './lib/session-workspace';
 import {
   abandonPendingWorkstreamFeedOpen,
   abandonWorkstreamFeedOpenOutsideRoute,
@@ -137,11 +139,38 @@ function NotFoundScreen(): React.JSX.Element {
   );
 }
 
-function TelemetryRouteObserver(): null {
+/**
+ * Whether this window is on screen, for a surface that may have been built
+ * before anybody asked to see it.
+ *
+ * Only the settings window is prewarmed, and only main can tell a prewarmed
+ * window from an opened one: the renderer's own `document.visibilityState`
+ * reports `visible` for a `show: false` window on at least one platform, so it
+ * cannot be used for this. Every other surface is on screen the moment it
+ * mounts and starts `true`, which makes this a no-op everywhere else.
+ */
+function useWindowRevealed(prewarmable: boolean): boolean {
+  const [revealed, setRevealed] = useState(!prewarmable);
+  useEffect(() => {
+    if (!prewarmable) return;
+    return desktopBridge().onSettingsWindowRevealed(() => setRevealed(true));
+  }, [prewarmable]);
+  return revealed;
+}
+
+/**
+ * `enabled` is what keeps a prewarmed window out of the numbers. `/settings`
+ * resolves to a *surface*, so this reports `surface_viewed` for it rather than a
+ * screen — and that report both consumes the pending entrypoint and latches
+ * `lastSurfacePath`, so a prewarm firing it would spend the attribution on
+ * nobody and leave the real open reporting nothing at all.
+ */
+function TelemetryRouteObserver({ enabled = true }: { enabled?: boolean }): null {
   const location = useLocation();
   const lastScreen = useRef<ReturnType<typeof telemetryScreenForPath>>(null);
   const lastSurfacePath = useRef<string | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     const screen = telemetryScreenForPath(location.pathname);
     // The automation route has one screen behind it now that the builder is
     // gone, so the path is the whole answer and the draft lookup this used to
@@ -163,7 +192,7 @@ function TelemetryRouteObserver(): null {
         entrypoint: consumeSurfaceEntrypoint(),
       });
     }
-  }, [location.pathname]);
+  }, [enabled, location.pathname]);
   return null;
 }
 
@@ -192,11 +221,20 @@ function endSessionFor(
 
 function WorkspaceApp(): React.JSX.Element {
   const { api, session, signOut, signOutIfCredentialCleared, surrenderActiveWorkspace } = useAppSession();
+  // Every surface used to hold its whole tree behind this one read — the screen
+  // below was `Opening workspace…` until it landed, so a window opened onto
+  // Settings had not mounted the settings screen, let alone started any of its
+  // own reads, until a round trip had returned what the session already knew.
+  // The placeholder ends that: the tree mounts on the session's own copy and
+  // this read replaces it in place. `null` when the session cannot fully
+  // describe the workspace, which is the old behaviour exactly.
+  const placeholderWorkspace = useMemo(() => workspaceFromSession(session) ?? undefined, [session]);
   const workspace = useQuery({
     queryKey: ['workspace', session?.workspace?.id, session?.user.id],
     queryFn: ({ signal }) => api!.getWorkspace(signal),
     enabled: Boolean(api && session),
     staleTime: 30_000,
+    placeholderData: placeholderWorkspace,
   });
   useQuery({
     queryKey: ['workspace-members'],
@@ -257,13 +295,18 @@ function WorkspaceApp(): React.JSX.Element {
   );
 }
 
+/** The settings window's route observer, held until the window is on screen. */
+function SettingsSurfaceTelemetry(): React.JSX.Element {
+  return <TelemetryRouteObserver enabled={useWindowRevealed(true)} />;
+}
+
 function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { api } = useAppSession();
   const settingsSurface = new URLSearchParams(window.location.search).get('surface') === 'settings';
   if (settingsSurface) {
     return (
       <HashRouter>
-        <TelemetryRouteObserver />
+        <SettingsSurfaceTelemetry />
         <Routes>
           <Route element={<WorkspaceSettingsScreen standaloneWindow workspace={workspace} />} path="/settings" />
           <Route element={<Navigate replace to="/settings" />} path="*" />
