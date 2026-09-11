@@ -522,6 +522,8 @@ links would hide the disagreement without making the due predicate accurate.
 between selection and scheduling. The existing retry gate and retention window
 remain unchanged; this fix does not establish a connection to runtime spikes.
 
+Pull request: [#709](https://github.com/juno-ai-labs/avalon/pull/709).
+
 ### 2026-09-08 — Index pending resources and reconcile only affected alarm kinds
 
 WorkspaceDO migration 39 adds partial indexes for expired upload drafts and
