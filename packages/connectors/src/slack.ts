@@ -271,12 +271,12 @@ export const slackTools: ToolDefinition[] = [
     after: {
       type: ["integer", "null"],
       minimum: 0,
-      description: "Return only messages posted after this Unix time, in whole seconds: `1767225600` is 2026-01-01. Omit it, or send `null`, for no lower bound. Milliseconds are a date tens of thousands of years out, which matches nothing and reads as an empty result.",
+      description: "Return only messages posted after this Unix time, in whole seconds — the part of a message `ts` before the dot, so `1767225600` is 2026-01-01. Omit it, or send `null`, for no lower bound. Milliseconds are a date tens of thousands of years out, which matches nothing and reads as an empty result.",
     },
     before: {
       type: ["integer", "null"],
       minimum: 0,
-      description: "Return only messages posted before this Unix time, in whole seconds: `1767225600` is 2026-01-01. Omit it, or send `null`, for no upper bound. Milliseconds are a date tens of thousands of years out, so every message is before it and the bound does nothing.",
+      description: "Return only messages posted before this Unix time, in whole seconds — the part of a message `ts` before the dot, so `1767225600` is 2026-01-01. Omit it, or send `null`, for no upper bound. Milliseconds are a date tens of thousands of years out, so every message is before it and the bound does nothing.",
     },
     sort: { type: "string", enum: ["score", "timestamp"], description: "Order matches by `score`, which is Slack's relevance ranking, or by `timestamp`, which is when they were posted. Defaults to `score`." },
     sort_dir: { type: "string", enum: ["asc", "desc"], description: "`desc` puts the best-ranked or most recent match first, `asc` the reverse. Defaults to `desc`." },

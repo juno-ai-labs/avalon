@@ -2048,8 +2048,8 @@ const automationDraftSubmissionJsonSchema = {
       type: ["string", "null"],
       description: "The id of a Sidekick this conversation already owns, from sidekicks_list, to replace its definition with this draft. Null creates a new Sidekick. In a Sidekick's own conversation the draft always goes to that Sidekick."
     },
-    name: { type: "string", description: "A short name for the automation as it appears in the person's list, for example \"Weekly release notes\"." },
-    description: { type: "string", description: "One sentence saying what the automation does, for the list beside its name." },
+    name: { type: "string", description: "A short name for the Sidekick as it appears in the person's list, for example \"Weekly release notes\"." },
+    description: { type: "string", description: "One sentence saying what the Sidekick does, for the list beside its name." },
     overview: { type: "string", description: "A few sentences for the person approving it: what it watches, what it does each time, and where the result goes. This is what somebody reads to decide whether to accept the draft." },
     instructions: { type: "string", description: "What each run should actually do, written for a run that cannot see this conversation. Name the steps, the tools, and what finishing looks like. A result meant to reach an inbox, a channel, or a document is only sent if a step here says to send it." },
     triggers: {
@@ -2063,7 +2063,7 @@ const automationDraftSubmissionJsonSchema = {
           type: {
             type: "string",
             enum: ["manual", "inbound_email", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook"],
-            description: "What starts a run: `manual` when a person asks, `inbound_email` on mail to the automation's address, `calendar` on a recurrence rule, `interval` every so many seconds, `connector_activity` on a connector event matched by deterministic filters, `semantic_activity` on a connector event that also passes a written condition, `resource_watch` when one named resource changes, `webhook` on an inbound HTTP call."
+            description: "What starts a run: `manual` when a person asks, `inbound_email` on mail to the Sidekick's address, `calendar` on a recurrence rule, `interval` every so many seconds, `connector_activity` on a connector event matched by deterministic filters, `semantic_activity` on a connector event that also passes a written condition, `resource_watch` when one named resource changes, `webhook` on an inbound HTTP call."
           },
           rrule: { type: ["string", "null"], description: "For a `calendar` trigger, the recurrence as an iCalendar RRULE, for example `FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0`. Null for every other type." },
           timezone: {
@@ -2112,7 +2112,7 @@ const automationDraftSubmissionJsonSchema = {
     expectedOutputs: {
       type: "array",
       items: { type: "string" },
-      description: "What each run should produce, one entry per output, for example [\"A summary posted to the work stream\"]. These are what a person checks the automation against, so write observable results rather than steps.",
+      description: "What each run should produce, one entry per output, for example [\"A summary posted to the work stream\"]. These are what a person checks the Sidekick against, so write observable results rather than steps.",
     },
     defaultBehavior: {
       type: "string",
@@ -2120,13 +2120,13 @@ const automationDraftSubmissionJsonSchema = {
     },
     recommendedPlugins: {
       type: "array",
-      description: "The connector plugins each run will need, with why. Inspect a plugin before recommending it; use [] when the automation needs none.",
+      description: "The connector plugins each run will need, with why. Inspect a plugin before recommending it; use [] when the Sidekick needs none.",
       items: {
         type: "object",
         additionalProperties: false,
         properties: {
           pluginId: { type: "string", pattern: "^plugin_[a-z][a-z0-9_]{0,62}$", description: "The plugin, as a `pluginId` from plugins_list or plugins_search, for example `plugin_slack`. A connector's display name is not a plugin id." },
-          recommendedTools: { type: "array", items: { type: "string" }, description: "The tools this automation actually needs from that plugin, named exactly as plugin_inspect reports them. Use [] when the whole plugin is needed rather than particular tools." },
+          recommendedTools: { type: "array", items: { type: "string" }, description: "The tools this Sidekick actually needs from that plugin, named exactly as plugin_inspect reports them. Use [] when the whole plugin is needed rather than particular tools." },
           reason: { type: "string" }
         },
         required: ["pluginId", "recommendedTools", "reason"]
@@ -2140,12 +2140,12 @@ const automationDraftSubmissionJsonSchema = {
         additionalProperties: false,
         properties: {
           name: { type: "string", description: "A short name for the table, for example \"Seen pull requests\"." },
-          description: { type: "string", description: "What the table holds and why the automation needs it across runs." },
+          description: { type: "string", description: "What the table holds and why the Sidekick needs it across runs." },
           usageInstructions: { type: "string", description: "How each run should use the table: when to insert, when to update, and what the unusual columns mean. Write it for a run that has never seen this table." },
           columns: {
             type: "array",
             minItems: 1,
-            description: "The table's columns, at least one. Columns cannot be added or renamed after the automation is accepted.",
+            description: "The table's columns, at least one. Columns cannot be added or renamed after the Sidekick is accepted.",
             items: {
               type: "object",
               additionalProperties: false,
@@ -2907,7 +2907,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
         query: {
           type: "string",
           minLength: 1,
-          description: "What the plugin would let this automation do, in plain words, for example `post a Slack message`. It matches plugin ids, names, aliases, descriptions, and tool names. Nothing matching comes back as an empty list rather than an error.",
+          description: "What the plugin would let this Sidekick do, in plain words, for example `post a Slack message`. It matches plugin ids, names, aliases, descriptions, and tool names. Nothing matching comes back as an empty list rather than an error.",
         },
       },
       required: ["query"],
