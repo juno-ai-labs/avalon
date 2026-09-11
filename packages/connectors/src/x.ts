@@ -43,11 +43,13 @@ const idInputSchema = {
 } as const;
 
 /**
- * X's page cursor. `anyOf` rather than `type: ["string", "null"]` because Bind's
- * `sanitizeToolSchema` collapses the flat form to `type: "string"`, leaving a
- * caller with no cursor a `minLength: 1` floor and no way to say "none";
- * `GOOGLE_PAGE_TOKEN_SCHEMA` in [`index.ts`](index.ts) has what a caller does
- * with that.
+ * X's page cursor. `anyOf` rather than `type: ["string", "null"]`: the `anyOf`
+ * is the house spelling, kept because it says what it means without depending
+ * on a dependency's transform. Both spellings reach the model as a union since
+ * Bind 14; under Bind 13 the flat form was collapsed to `type: "string"`,
+ * leaving a caller with no cursor a `minLength: 1` floor and no way to say
+ * "none"; `GOOGLE_PAGE_TOKEN_SCHEMA` in [`index.ts`](index.ts) has what a
+ * caller does with that.
  *
  * The last page is `next_cursor: null` because these tools normalize X's own
  * `""` to `null` on the way out, which is the repair that stopped a model

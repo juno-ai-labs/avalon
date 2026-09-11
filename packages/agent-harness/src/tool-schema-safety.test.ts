@@ -98,6 +98,32 @@ describe("weakenedCompositionBranches", () => {
     ]);
   });
 
+  it("looks through the nullable rewrite to a composition beneath it", () => {
+    // Bind 14 rewrites `type: ["object", "null"]` into
+    // `anyOf: [<typed branch>, {type: "null"}]` and moves `properties` onto the
+    // typed branch. A walk reading the sanitized node literally found no
+    // `properties` there and reported nothing, so an emptied composition under
+    // a nullable object or array property passed with the check green.
+    expect(weakenedCompositionBranches({
+      type: "object",
+      properties: {
+        filter: {
+          type: ["object", "null"],
+          properties: { a: { type: "string", oneOf: [{}, {}] } },
+        },
+        rows: {
+          type: ["array", "null"],
+          items: { type: "object", properties: { a: { type: "string", oneOf: [{}, {}] } } },
+        },
+      },
+    })).toEqual([
+      "/properties/filter/properties/a/oneOf/0 (constrains nothing)",
+      "/properties/filter/properties/a/oneOf/1 (constrains nothing)",
+      "/properties/rows/items/properties/a/oneOf/0 (constrains nothing)",
+      "/properties/rows/items/properties/a/oneOf/1 (constrains nothing)",
+    ]);
+  });
+
   it("reports nothing for the shapes the sanitizer repairs", () => {
     // Each of these was a finding under bind 11. The sanitizer now resolves a
     // branch's `required` against its parent's `properties` and copies the
