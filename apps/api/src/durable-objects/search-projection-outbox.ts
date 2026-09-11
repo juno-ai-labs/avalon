@@ -143,3 +143,35 @@ export const CONVERSATION_DISPLAY_SEARCH_MIGRATION_STATEMENTS = [
      source_version = MAX(excluded.source_version, durable_outbox.source_version),
      state = 'pending', not_before = 0`,
 ];
+
+/**
+ * Migration 53: the 2026-09-10 deploy dead-lettered document jobs whose
+ * publish intent the outbox had already cleared (docs/text-search.md, "Version
+ * skew between producers and the consumer"). The retry log names no turn, so
+ * the lost rows cannot be listed; every committed turn is re-queued once
+ * instead, the same pass migration 52 ran, at a cost already measured. The
+ * statement is a copy of 52's rather than a shared constant: 52's text is
+ * hashed into a receipt on every migrated object, and an edit to a shared
+ * constant would fail every SubstreamAgent constructor in both regions.
+ *
+ * A delivered reference is recreated as pending; one still waiting keeps the
+ * newer of the two revisions and becomes due now. The consumer rewrites each
+ * lexical row in place and skips the embedding provider for every batch whose
+ * chunk rows already exist; a turn whose document job never wrote them (one
+ * that dead-lettered before its chunks were planned) is embedded as if new.
+ * Only turns still in `participant_transcript_turns` are covered: a deletion
+ * tombstone whose job dead-lettered is not repaired by this pass.
+ */
+export const CONVERSATION_SEARCH_REPROJECTION_MIGRATION_STATEMENTS = [
+  `INSERT INTO durable_outbox
+    (message_id, channel, destination_kind, destination_id, partition_key,
+     source_version, source_epoch, contract_version, payload_json, payload_ref,
+     payload_hash, state, attempts, not_before, created_at, acked_at)
+   SELECT 'search-turn:' || turn_id, 'search_projection_v1', 'queue', 'activity', 'search',
+     revision, 0, 1, json_object('turnId', turn_id), NULL, 'search-turn:' || turn_id,
+     'pending', 0, 0, updated_at, NULL
+   FROM participant_transcript_turns WHERE EXISTS (SELECT 1 FROM workstream WHERE id = 1)
+   ON CONFLICT(message_id) DO UPDATE SET
+     source_version = MAX(excluded.source_version, durable_outbox.source_version),
+     state = 'pending', not_before = 0`,
+];

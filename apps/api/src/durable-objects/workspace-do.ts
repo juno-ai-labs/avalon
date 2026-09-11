@@ -2947,6 +2947,18 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       `DROP TABLE ${table}_v50_hold`,
     ]),
   ],
+}, {
+  version: 51,
+  description: 'mark every resource pending after the 2026-09-10 consumer version skew dead-lettered rewrites',
+  // The deploy that added display and connection attributes ran Durable
+  // Objects on the new build while Queue consumers still ran the old one, and
+  // the old consumer rejected the new document shape into the dead-letter
+  // queue after `publishResourceSearch` had already cleared `pending`. The
+  // retry log carries no resource id, so the stale rows cannot be listed;
+  // this is migration 47's pass again, at its measured cost. A row in backoff
+  // keeps its `not_before`, as in 47. See docs/text-search.md, "Version skew
+  // between producers and the consumer".
+  statements: ['UPDATE resource_search_versions SET pending = 1'],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {

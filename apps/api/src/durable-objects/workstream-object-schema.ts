@@ -1,5 +1,5 @@
 import { CONVERSATION_LINK_SEARCH_SCHEMA } from './conversation-link-search';
-import { CONVERSATION_DISPLAY_SEARCH_MIGRATION_STATEMENTS, TRANSCRIPT_SEARCH_MIGRATION_STATEMENTS } from './search-projection-outbox';
+import { CONVERSATION_DISPLAY_SEARCH_MIGRATION_STATEMENTS, CONVERSATION_SEARCH_REPROJECTION_MIGRATION_STATEMENTS, TRANSCRIPT_SEARCH_MIGRATION_STATEMENTS } from './search-projection-outbox';
 /**
  * Object-local SQL schema for the existing one-room-per-work-stream namespace.
  *
@@ -22,7 +22,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 52;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 53;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2975,6 +2975,11 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     version: 52,
     description: "project conversation title and archive state into the search index",
     statements: CONVERSATION_DISPLAY_SEARCH_MIGRATION_STATEMENTS,
+  },
+  {
+    version: 53,
+    description: "requeue every committed turn after the 2026-09-10 consumer version skew dead-lettered rewrites",
+    statements: CONVERSATION_SEARCH_REPROJECTION_MIGRATION_STATEMENTS,
   },
 ];
 
