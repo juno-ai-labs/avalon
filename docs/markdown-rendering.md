@@ -281,16 +281,16 @@ initial load, reconnect, and while an agent response streams.
 
 A GFM
 footnote whose definition is one paragraph carrying exactly one link becomes an
-inline numbered pill with a hover popover, and its entry is dropped from the
+inline asterisk pill with a hover popover, and its entry is dropped from the
 trailing list; a definition that does not fit that grammar keeps classic
 footnote rendering, and the section renders only what was left. In the common
 all-citations case nothing renders at the bottom at all, which is the vertical
 space the feature exists to reclaim.
 
 **While a turn streams, a reference whose definition has not arrived wears the
-pill's own box with the number not yet in it** — `.citation-pill-pending`, the
+pill's own box with the marker not yet in it** — `.citation-pill-pending`, the
 same tint, border, padding and raise as the pill, holding a shimmering block
-where the digit goes. What is under [Streaming](#streaming) is why it exists:
+where the marker goes. What is under [Streaming](#streaming) is why it exists:
 until the definition lands, remark-gfm reads `[^avalon]` as ordinary text, and
 raw markup in the middle of a paragraph is the one thing a reader of a grounded
 answer should never see. The skeleton is `aria-hidden`, because it names
@@ -738,6 +738,14 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-09-10 — Neutral asterisk citation markers
+
+Citation pills now show an asterisk and use the primary text token for their
+text, tint, border, hover, and pending shimmer. This removes the green emphasis
+requested by design while following light and dark appearances. Source numbers
+remain in accessible labels and in saved cards, where they identify entries in
+the printed source list; saved pills use a neutral palette too.
 
 ### 2026-09-10 — A published site gets its own mark
 

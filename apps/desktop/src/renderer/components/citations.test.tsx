@@ -433,15 +433,15 @@ describe('footnote citations', () => {
       '',
     ].join('\n');
     render(<MarkdownBody citations={context()} collapseHeadings>{markdown}</MarkdownBody>);
-    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['1']);
+    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['*']);
     expect(document.querySelector('.footnotes')).toBeNull();
   });
 
-  it('renders each reference as a numbered inline pill and no trailing list', () => {
+  it('renders each reference as an asterisk inline pill and no trailing list', () => {
     render(<MarkdownBody citations={context()}>{grounded}</MarkdownBody>);
 
     const pills = document.querySelectorAll('.citation-pill');
-    expect([...pills].map((pill) => pill.textContent)).toEqual(['1', '2']);
+    expect([...pills].map((pill) => pill.textContent)).toEqual(['*', '*']);
     // The vertical cost of a source footer is the frustration this replaces.
     expect(document.querySelector('.footnotes')).toBeNull();
     expect(document.body).not.toHaveTextContent('Footnotes');
@@ -473,7 +473,7 @@ describe('footnote citations', () => {
       </MarkdownBody>,
     );
 
-    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['1', '2']);
+    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['*', '*']);
     expect(screen.getByRole('button', { name: /Q3 board deck/u })).toBeInTheDocument();
   });
 
@@ -682,7 +682,7 @@ describe('citations while a turn streams', () => {
     view.rerender(<MarkdownBody citations={context()}>{`${claim}${definition}`}</MarkdownBody>);
 
     expect(document.querySelector('.citation-pill-pending')).toBeNull();
-    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['1']);
+    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['*']);
   });
 
   it('resolves the skeleton mid-stream once a later section defines it', () => {
@@ -700,7 +700,7 @@ describe('citations while a turn streams', () => {
     );
 
     expect(document.querySelector('.citation-pill-pending')).toBeNull();
-    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['1']);
+    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['*']);
   });
 
   it('leaves a settled reference nothing ever defined as ordinary text', () => {

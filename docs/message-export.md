@@ -68,7 +68,7 @@ box over the text with no way to dismiss it.
 
 The chip and the embed keep their shape rather than flattening to text, so a
 reader recognises the thing they clicked in the app. The pill stays a plain
-numbered superscript, which is what a citation degrades to everywhere outside
+numbered superscript with a neutral ink and grey fill, which is what a citation degrades to everywhere outside
 Rally's renderer anyway.
 
 What the card does *not* share with the turn is the footnote lift. The card

@@ -3469,9 +3469,9 @@ pre {
    which fails AA at any size, let alone this one. */
 .markdown-body sup:has(.citation-pill) { font-size: inherit; vertical-align: baseline; }
 .citation-pill,
-.citation-pill-pending { background: color-mix(in srgb, var(--av-sys-color-brand-base) 16%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-brand-base) 30%, transparent); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-brand-ink); display: inline-block; font: inherit; font-size: 0.72em; font-weight: 680; line-height: 1.35; padding: 0 0.42em; text-align: center; vertical-align: 0.32em; }
+.citation-pill-pending { background: color-mix(in srgb, var(--av-sys-color-text-default) 16%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-text-default) 30%, transparent); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-default); display: inline-block; font: inherit; font-size: 0.72em; font-weight: 680; line-height: 1.35; padding: 0 0.42em; text-align: center; vertical-align: 0.32em; }
 .citation-pill { cursor: pointer; }
-.citation-pill:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 30%, transparent); }
+.citation-pill:hover { background: color-mix(in srgb, var(--av-sys-color-text-default) 30%, transparent); }
 /* The pill a streaming turn wears until its definition arrives. The geometry
    is shared with the rule above rather than restated, because the whole point
    is that the line does not move when the number lands — a second copy of the
@@ -3486,7 +3486,7 @@ pre {
    know which number it is waiting for; `1ch` is the zero exactly and reads
    wide under every other digit. Its height stays under the line-height, so the
    strut and not the block decides how tall the pill is. */
-.citation-pill-pending::after { animation: citation-pill-pending-shimmer 1.4s ease-in-out infinite; background: color-mix(in srgb, var(--av-sys-color-brand-ink) 26%, transparent); border-radius: 1px; content: ''; display: inline-block; height: 0.74em; vertical-align: -0.06em; width: 0.55em; }
+.citation-pill-pending::after { animation: citation-pill-pending-shimmer 1.4s ease-in-out infinite; background: color-mix(in srgb, var(--av-sys-color-text-default) 26%, transparent); border-radius: 1px; content: ''; display: inline-block; height: 0.74em; vertical-align: -0.06em; width: 0.55em; }
 @keyframes citation-pill-pending-shimmer {
   0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
