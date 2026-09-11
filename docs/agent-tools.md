@@ -949,9 +949,9 @@ number that shrinks when nobody is looking at it. The sentence that earns the
 work is the one about a wrong value, and it is only writable per parameter:
 Slack answers a well-formed id for a conversation the credential cannot see with
 zero hits, a Docs `find` that matched nothing reports zero replacements, a
-durable-table filter naming a real column with a value of the wrong shape
-matches no row, and a Sidekick trigger naming an event type its plugin never
-declared simply never fires. Each is HTTP 200 and an empty result, which is
+Sidekick trigger naming an event type its plugin never declared
+simply never fires, and a durable-table filter whose condition nothing satisfies
+returns an empty page. Each is HTTP 200 and an empty result, which is
 `head` again on a different provider.
 
 **Alternative rejected:** doing the largest surfaces and leaving the small ones.
