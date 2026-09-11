@@ -722,15 +722,21 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     }
   };
 
-  // Keep a closed rail on screen for exactly as long as its fade lasts.
-  if (!props.lightbox && !railOpen && !props.leaving) return null;
-
-  const headerTitle = resource?.title ?? (inspector ? 'Details' : props.lightbox ? 'Resources' : railTitle[railVariant]);
   // State rather than a ref, because a detail's actions are portalled into this
   // element and a ref's assignment does not re-render the detail that is
   // waiting for it: with a ref the slot stays empty until something else
   // happens to re-render.
+  //
+  // Declared above the early return with the other unconditional hooks: a rail
+  // that closes renders fewer hooks than the render before it, and React throws
+  // rather than closing. Only the lightbox reaches this component today, so the
+  // return is never taken, which is exactly how a hook-order defect waits.
   const [detailActionsTarget, setDetailActionsTarget] = useState<HTMLDivElement | null>(null);
+
+  // Keep a closed rail on screen for exactly as long as its fade lasts.
+  if (!props.lightbox && !railOpen && !props.leaving) return null;
+
+  const headerTitle = resource?.title ?? (inspector ? 'Details' : props.lightbox ? 'Resources' : railTitle[railVariant]);
 
   const content = (
     <>
@@ -750,13 +756,18 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
           {/*
             The detail's own actions, ahead of the rail's: what this resource
             can do belongs beside the resource, and Close stays at the edge.
+
+            Every control in this header opens its tooltip upward. A live
+            artifact composites a native view directly under this strip, and
+            that view paints above all renderer DOM, so a label hanging
+            downward is behind the page with no `z-index` able to reach it.
           */}
           <div className="rail-header-detail-actions" ref={setDetailActionsTarget} />
           {resource && (
             <>
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
-                  <IconButton label="Versions" ref={versionsTriggerRef}>
+                  <IconButton label="Versions" ref={versionsTriggerRef} tooltipSide="top">
                     <History size={15} />
                   </IconButton>
                 </DropdownMenu.Trigger>
@@ -775,6 +786,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
                 <IconButton
                   className="icon-button-danger"
                   label="Archive"
+                  tooltipSide="top"
                   onClick={() => {
                     setArchiveError(null);
                     setArchiveTarget(resource);
@@ -785,7 +797,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
               )}
             </>
           )}
-          <IconButton label={props.lightbox ? 'Close resource preview' : 'Close inspector'} onClick={closeRail} ref={closeInspectorRef}>{props.lightbox ? <X size={20} /> : <ChevronsRight size={16} />}</IconButton>
+          <IconButton label={props.lightbox ? 'Close resource preview' : 'Close inspector'} onClick={closeRail} ref={closeInspectorRef} tooltipSide="top">{props.lightbox ? <X size={20} /> : <ChevronsRight size={16} />}</IconButton>
         </div>
       </header>
       <DetailHeaderActionsHost target={detailActionsTarget}>
