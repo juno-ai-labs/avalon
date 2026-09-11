@@ -1639,10 +1639,15 @@ describe('Workspace settings', () => {
     const table = await screen.findByRole('table', { name: 'Personal connections' });
     expect(await within(table).findByRole('cell', { name: '7' })).toBeVisible();
 
+    const countKey = ['connection-tool-count', 'tool-count-connection', ['gmail.read'], 'healthy'];
+    act(() => revealWindow());
+    expect(api.getConnectionToolCount).toHaveBeenCalledTimes(1);
+    ageCacheEntry(client, countKey, 30_000);
     api.getConnectionToolCount.mockResolvedValue(9);
     act(() => revealWindow());
     expect(await within(table).findByRole('cell', { name: '9' })).toBeVisible();
 
+    ageCacheEntry(client, countKey, 30_000);
     api.getConnectionToolCount.mockRejectedValue(new Error('Provider unavailable'));
     act(() => revealWindow());
     expect(await within(table).findByRole('cell', { name: 'Unavailable' })).toBeVisible();

@@ -2595,9 +2595,9 @@ pre {
   text-transform: none;
 }
 .settings-connection-table th:nth-child(2) { width: 112px; }
-.settings-connection-tools { white-space: nowrap; }
 .settings-connection-table th:nth-child(3) { width: 92px; }
 .settings-connection-table th:last-child { width: 76px; }
+.settings-connection-tools { white-space: nowrap; }
 .settings-connection-table tbody tr { border-top: 1px solid var(--av-sys-color-border-subtle); }
 .settings-connection-table td {
   color: var(--av-sys-color-text-muted);

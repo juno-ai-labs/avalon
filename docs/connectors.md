@@ -80,8 +80,10 @@ The visible-connection authorization check runs before counting. Static connecto
 count agent tools matching the connection's grants and scope; dynamic connectors
 read their live inventory through the normal credential-refresh boundary, including
 any server tool policy and the same connection-prefixed name validation used
-at agent activation. Each row loads independently so a slow provider does not
-hold up the table. Counts refresh when Settings regains focus. A failed inventory
+at agent activation. Tool inventory reads share the existing 20-second Settings MCP
+deadline, composed with the caller’s cancellation signal. Each row loads independently so a slow provider does not
+hold up the table. Counts share the connection list’s five-second freshness window to avoid duplicate
+provider calls on an immediate reveal, then refresh when Settings regains focus. A failed inventory
 displays “Unavailable”, including after an earlier successful read, never a stale
 count or a fabricated zero. Saving an MCP tool policy invalidates the count,
 including if the user returns to Connections while the save is pending. The Tools
