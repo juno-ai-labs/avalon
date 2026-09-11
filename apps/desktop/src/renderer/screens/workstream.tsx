@@ -25,13 +25,13 @@ import { harnessMarkerStatus } from '../lib/format';
 import { isComposingKeyEvent } from '../lib/ime';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
-import { reportTelemetryProductIntent, uuidV7 } from '../lib/telemetry';
+import { reportTelemetryProductIntent, telemetryVisibility, uuidV7 } from '../lib/telemetry';
 import { holdCreationTraceUntilSendReady, startPerfTrace } from '../lib/perf-trace';
 import { useTextClipped } from '../lib/use-text-clipped';
 import { RIGHT_SIDEBAR_ENABLED, type RailVariant, useUiStore } from '../lib/ui-store';
 import type { SocketState } from '../lib/use-workstream-socket';
 import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-socket';
-import type { WorkstreamDetail } from '../lib/types';
+import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { AvatarStack, Badge, Button, IconButton, InlineError, Modal, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
 import { WorkstreamGlyph } from '../components/workstream-glyph';
@@ -548,9 +548,19 @@ export function WorkstreamScreen(): React.JSX.Element {
   }, [children.data, id, selectedSubstreamId, setSearchParams]);
   const routeRef = useRef({ id, selectedSubstreamId, visit: 0 });
   routeRef.current = { id, selectedSubstreamId, visit: routeRef.current.visit + Number(routeRef.current.id !== id || routeRef.current.selectedSubstreamId !== selectedSubstreamId) };
+  const reportParentAction = (workstream: WorkstreamSummary, action: 'rename' | 'archive' | 'make_public'): void => {
+    reportTelemetryProductIntent({
+      kind: 'workstream_action_completed', workstreamId: workstream.id, action,
+      visibility: telemetryVisibility(workstream.scope),
+      origin: workstream.systemKind ? 'system' : 'ad_hoc', pinned: workstream.pinPosition !== null,
+    });
+  };
+  const menuOperation = useRef(0);
   const copyRowLink = (target: SubstreamRowTarget): void => {
     if (!session?.workspace) return;
     const workspace = session.workspace;
+    const visit = routeRef.current.visit;
+    const operation = ++menuOperation.current;
     void (async () => {
       const bridge = desktopBridge();
       const { webBaseUrl } = await bridge.getRuntimeConfig();
@@ -559,14 +569,20 @@ export function WorkstreamScreen(): React.JSX.Element {
         ...(target.substreamId === '0' ? {} : { substreamId: target.substreamId }),
       }));
       reportTelemetryProductIntent({ kind: 'content_copied', contentType: 'workstream_link', resourceType: 'workstream', resourceId: id });
-    })().catch((error: unknown) => setSubstreamMenuError(error instanceof Error ? error.message : 'The link could not be copied.'));
+    })().catch((error: unknown) => {
+      if (routeRef.current.visit === visit && menuOperation.current === operation) {
+        setSubstreamMenuError(error instanceof Error ? error.message : 'The link could not be copied.');
+      }
+    });
   };
   const makePublic = (): void => {
     if (!api || substreamPending) return;
     const visit = routeRef.current.visit;
+    ++menuOperation.current;
     setSubstreamPending(true);
     void api.setWorkstreamScope(id, 'workspace').then((updated) => {
       patchCachedWorkstream(queryClient, id, { scope: updated.scope, updatedAt: updated.updatedAt });
+      reportParentAction(updated, 'make_public');
     }).catch((error: unknown) => {
       if (routeRef.current.visit === visit) setSubstreamMenuError(error instanceof Error ? error.message : 'The work stream could not be made public.');
     }).finally(() => { if (routeRef.current.visit === visit) setSubstreamPending(false); });
@@ -583,12 +599,13 @@ export function WorkstreamScreen(): React.JSX.Element {
       if (target.substreamId === '0') {
         const updated = await api.renameWorkstream(target.parentId, title);
         patchCachedWorkstream(queryClient, target.parentId, { title: updated.title, titleStatus: updated.titleStatus, updatedAt: updated.updatedAt });
+        reportParentAction(updated, 'rename');
       } else await api.renameSubstream(target.parentId, target.substreamId, title);
       if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
       setRenameTarget(null);
     } catch (error) {
       if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
-      setSubstreamMenuError(error instanceof Error ? error.message : 'That substream could not be renamed.');
+      setSubstreamMenuError(error instanceof Error ? error.message : `That ${target.substreamId === '0' ? 'work stream' : 'substream'} could not be renamed.`);
     } finally {
       if (routeRef.current.id === target.parentId && routeRef.current.visit === visit) setSubstreamPending(false);
     }
@@ -601,7 +618,8 @@ export function WorkstreamScreen(): React.JSX.Element {
     setSubstreamMenuError(null);
     try {
       if (target.substreamId === '0') {
-        await api.archiveWorkstream(target.parentId);
+        const updated = await api.archiveWorkstream(target.parentId);
+        reportParentAction(updated, 'archive');
         evictCachedWorkstream(queryClient, target.parentId);
       } else await api.setSubstreamArchived(target.parentId, target.substreamId, true);
       if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
@@ -610,7 +628,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       else if (routeRef.current.selectedSubstreamId === target.substreamId) selectSubstream('0');
     } catch (error) {
       if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
-      setSubstreamMenuError(error instanceof Error ? error.message : 'That substream could not be archived.');
+      setSubstreamMenuError(error instanceof Error ? error.message : `That ${target.substreamId === '0' ? 'work stream' : 'substream'} could not be archived.`);
     } finally {
       if (routeRef.current.id === target.parentId && routeRef.current.visit === visit) setSubstreamPending(false);
     }
@@ -792,13 +810,13 @@ export function WorkstreamScreen(): React.JSX.Element {
             onMakePublic: parent.data?.systemKind ? undefined : makePublic,
             publicDisabled: parent.data.scope === 'workspace' || substreamPending,
             onCopyLink: copyRowLink,
-            onRename: (target) => { setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuError(null); },
-            onArchive: (target) => { setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuError(null); },
+            onRename: (target) => { ++menuOperation.current; setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuError(null); },
+            onArchive: (target) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuError(null); },
           } : undefined}
           substreamActions={{
             onCopyLink: copyRowLink,
-            onRename: (child) => { setRenameTarget({ ...child, parentId: id }); setRenameTitle(child.title); setSubstreamMenuError(null); },
-            onArchive: (child) => { setArchiveTarget({ ...child, parentId: id }); setSubstreamMenuError(null); },
+            onRename: (child) => { ++menuOperation.current; setRenameTarget({ ...child, parentId: id }); setRenameTitle(child.title); setSubstreamMenuError(null); },
+            onArchive: (child) => { ++menuOperation.current; setArchiveTarget({ ...child, parentId: id }); setSubstreamMenuError(null); },
           }}
         />
       )}
