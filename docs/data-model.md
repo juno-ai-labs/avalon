@@ -1060,23 +1060,6 @@ author for it. Promote it to a column when a producer needs something a single
 flag cannot express — that also settles both triggers — and migrate the stored
 key in the same change.
 
-### 2026-09-10 — WorkspaceDO migration 50 stores a Sidekick's memory scope as `sidekick`
-
-**What changed:** `memory_scopes.kind` admits `sidekick` where it admitted
-`automation`, and every existing `automation` row reads `sidekick`. The kind is
-a CHECK vocabulary on a row an immutability trigger refuses to update, so the
-migration replaces the table: it holds the eight dependents in scratch copies,
-rebuilds the parent with its rows mapped, recreates the immutability trigger
-and the workspace identity fences, and restores the dependents parent-first
-with foreign keys enforced, per the recipe in
-[`durable-object-sqlite.md`](durable-object-sqlite.md#schema-and-migrations).
-`workspace-memory-scope-kind-migration.test.ts` is the populated upgrade on
-workerd.
-
-**Why:** [`automation-lifecycle.md`](automation-lifecycle.md#2026-09-10--the-stored-names-follow-the-model-facing-ones)
-records the rename; this entry records that it reached a stored vocabulary and
-how.
-
 ### 2026-09-09 — Bound and recover early-access operations
 
 **What changed:** Added the singleton `access_email_budget`, acknowledgement generations and suppression, per-grant minute counters, and stable paging indexes in the still-undeployed migration 0101. These coordinate budget and recovery without another storage service; generation checks prevent stale send completions from reversing an operator decision.
@@ -1269,19 +1252,6 @@ refusal.
 
 **Consequences:** Canonical stores remain authority; index revisions are projection concurrency controls.
 
-### 2026-09-05 — The loop remembers how far it has read
-
-**What changed:** Conversation-object schema v45 adds
-`substream_loops.transcript_projected_through`, backfilled to the transcript's
-high-water mark.
-
-**Why:** The Bind projection is appended one admission at a time and never
-re-read from the transcript, so a human turn that started no run was invisible
-to the model forever. The column is the record of which turns the projection has
-considered; the next admission appends the ones above it and advances the
-column to what its scan covered, never to its own turn. Owned by
-[`workstream-durable-object.md`](workstream-durable-object.md).
-
 ### 2026-09-04 — Private work-stream children gain parent and local authority tables
 
 **What changed:** WorkstreamDO migration 7 adds child readiness/title fields,
@@ -1366,41 +1336,6 @@ copy this recipe rather than the disabled-foreign-keys mode, and
 `CONNECTOR_CONNECTION_DEPENDENTS` in `workspace-do.ts` is the list it depends on
 — a new table referencing `connector_connections` has to be added there or its
 rows will be lost by the next such rebuild.
-
-### 2026-09-03 — HyperSight storage is retired at every live authority
-
-**What changed:** WorkstreamDO schema v5 and SubstreamAgent schema v38 drop the
-dashboard configuration, run, preference, outbox, and receipt tables and remove
-the pending refresh job.
-
-**Why:** Disabling reads would leave feature data and retry work live inside
-Durable Objects. Complete removal requires a forward cleanup at each authority.
-
-**Consequences:** The older schema steps remain unchanged so existing objects
-can migrate deterministically before the cleanup step runs.
-
-Shipped in #541.
-
-### 2026-09-03 — Stored automation state carries no delivery targets
-
-**What changed:** The automation bullet above no longer describes a frozen
-`deliveryTargets` set. AutomationAgent schema v13 dropped
-`automation_acceptance.delivery_targets_json` and stripped `$.deliveryTargets`
-from `automation_runs.context_json`; work-stream object schema v37 strips
-`$.automationRunContext.deliveryTargets` from `runs.execution_context_json`, the
-child's verbatim copy of the same context.
-
-**Why:** The field left the strict `AutomationRunContextV1Schema`, which both
-tables are read through, so any stored copy still carrying it stopped parsing.
-The automation object's copy was rewritten in the same change that removed the
-field; the child's copy was missed and is never cleared, so an in-flight run
-could not be claimed, recovered or settled, and an older failed one could not be
-retried. Rewriting stored state was chosen over tolerating the key on read
-because a tolerated key is a dead field every future reader has to know to
-ignore. The product reasoning is in
-[`automation-lifecycle.md`](automation-lifecycle.md).
-
-Shipped in #541.
 
 ### 2026-08-31 — Platform identity routes become plural and setup replay becomes durable
 
@@ -1823,37 +1758,6 @@ starting the upgrade, matching a real object waking on a newer deployment. The
 fixture seeds every dependent relation whose omission could hide a cascade or
 failed parent removal.
 
-### 2026-08-27 — Participant removal cannot empty a work stream
-
-**What changed:** The authoritative work-stream transition lets any current
-reader remove themself or another participant, but rejects removal of the final
-active participant. The membership check, active count, and removal are one
-object-local SQLite transaction.
-
-**Why:** The participant picker previously hid people who were already in the
-room, so the existing removal endpoint was unreachable from the product. Making
-that action visible also exposed that the endpoint could remove the only reader,
-leaving a private work stream with no person able to open or repair it.
-
-**Considered and rejected:** Restricting removal of another participant to
-workspace owners and admins. Participation is the room's collaborative audience,
-not workspace administration, and every current reader can already add somebody
-to it. At workspace scope that means every active workspace member; at personal
-scope it means the current participants, including an invitee removing the
-creator. Also rejected a client-only final-participant guard, because an older
-or racing client could still empty the authoritative room.
-
-**Consequences:** Every removal caller must handle
-`workstream_participant_required`. The desktop disables the known-final action
-for immediacy, while the object remains the concurrency-safe enforcement point.
-The one-participant floor applies to both scopes as a stable participant
-lifecycle invariant: a workspace-visible stream stays readable without
-participants, but does not acquire a separate zero-participant state.
-Removing a person from a personal work stream revokes their access, including
-when that person created it. Active-project work streams keep their project
-audience fence at the regional service boundary, and the object closes revoked
-local sockets before fallible realtime publication.
-
 ### 2026-08-27 — Canonical transcript records become the sole payload owner
 
 **What changed:** SubstreamAgent schema v32 verifies the v30 transfer receipt
@@ -1893,63 +1797,6 @@ scale with retained transcript size.
 object transaction before its receipt commits. The next stacked release may
 drop legacy owners only after the fleet receipt is complete and must switch all
 foreign keys/readers to canonical records first.
-
-### 2026-08-27 — Resource relationships derive direction and semantic writes retain versions
-
-**What changed:** SubstreamAgent constrains resource relationships to seven
-stored values and contracts derive `source` or `artifact` per work-stream link.
-WorkspaceDO now owns `resources.current_version` and stable-numbered
-`resource_versions` snapshots with original and model R2 refs.
-
-**Why:** Source versus artifact describes how a shared resource participates in
-one work stream, while edits and external refreshes must not erase the resource
-state a previous run used.
-
-**Considered and rejected:** Storing direction on `resources` would make a
-generated artifact stay an artifact after another work stream imports it.
-Overwriting one canonical R2 pointer would expose only the latest bytes.
-
-**Consequences:** Semantic resource writes and successful hydration observations
-increment version; processing-only derivative state enriches the current version.
-R2 cleanup must treat every retained version as live until the resource is deleted.
-
-### 2026-08-27 — WorkspaceDO gains project authority
-
-**What changed:** WorkspaceDO schema version 14 adds projects, participants,
-per-person project order, and a project-directory waterline with closed
-presentation checks and independent revisions.
-
-**Why:** Project visibility and ordering are workspace product state that must
-commit beside the cross-work-stream directory rather than becoming D1 product
-tables or device-local preferences.
-
-**Considered and rejected:** D1 authority and client-only order. Both split the
-single answer needed by authorization, realtime recovery, and multiple devices.
-
-**Consequences:** Later project memberships and propagation operations must
-reference this authority through typed RPCs and append new migration versions.
-
-Design: `docs/PRDs/2026-08-26_projects/prd.md`.
-
-### 2026-08-26 — Legacy transcript projections preserve single payload ownership
-
-**What changed:** pre-v27 participant and compaction rows can be projected into
-the canonical sequence/checkpoint indexes while their existing object-local
-rows remain the sole payload owners. A v28 receipt makes the source set,
-recovery bookmark, and unavailable Bind-history boundary inspectable.
-
-**Why:** retained participant order and checkpoint arrays are useful canonical
-facts, but copying them would violate the transcript's one-owner invariant and
-aggregate participant rows cannot recreate exact provider order.
-
-**Considered and rejected:** duplicate payload rows in the new substrate and a
-synthetic pre-v27 Bind generation. The first creates competing truth; the second
-claims fidelity the source cannot prove.
-
-**Consequences:** legacy owner rows referenced by a completed receipt are
-immutable history. Readers may join them only through explicit canonical
-reference facts, and future cleanup must first move ownership atomically rather
-than deleting or silently copying those rows.
 
 ### 2026-08-26 — Transcript facts own bytes while two projections own order
 
@@ -2015,54 +1862,6 @@ generation. A pointer behind the authoritative product generation is terminally
 stale and must be acknowledged, not retried toward the DLQ. Remove the legacy
 wire adapter, its `NULL` discriminator compatibility, and rename the physical
 compatibility column only after the Workflow binding is safely retired.
-
-### 2026-08-25 — Automation runs copy the subscription audience
-
-**What changed:** All three automation run producers now provision the generated
-work stream with the subscription's scope. Personal automations remain
-participant-readable; workspace automations create workspace-readable work
-streams. Automation detail also reads run history through its already-authorized
-subscription instead of authorizing the same subscription twice. Its one
-batched WorkspaceDO directory/viewer read preserves the narrower audience of
-pre-change personal run objects without per-run child RPCs.
-
-**Why:** `automation_subscriptions.scope` is the product's declared user/workspace
-boundary. Discarding it at execution made workspace automations shareable while
-their output remained private. The second subscription load added no authority
-because detail had just completed the identical predicate.
-
-**Considered and rejected:** Keeping all outputs personal and teaching every
-consumer a special automation-derived permission. That would make the work
-stream's durable `scope` disagree with its actual readers and duplicate the
-visibility model across detail, directory, sockets, and resources.
-
-**What a future change has to respect:** Each run stores its audience on its own
-work stream at creation. Public run-history routes must authorize the
-subscription; internal reads reached from an already-authorized detail request
-must not repeat that query. Historical personal run objects remain filtered by
-the WorkspaceDO viewer projection until a durable scope migration replaces that
-compatibility boundary.
-
-### 2026-08-25 — Email route identity includes the domain
-
-**What changed:** Migration 0097 replaces `workstream_email_routes.local_part`
-with a case-insensitive full `email_address` primary key and migration provenance.
-An inferred cutover row may be owner-verified once; every allocator- or
-owner-sourced full-address tombstone is immutable.
-
-**Why:** The local-part key reconstructed historical addresses with the Worker's
-current domain, which made an old automation disagree with its WorkspaceDO row.
-It also made future custom domains unable to reuse a local part safely.
-
-**Considered and rejected:** Keeping local part as the key and tolerating a
-legacy-domain mismatch. That changes comparison semantics without making the
-pre-workspace inbound route unambiguous.
-
-**Consequences:** Global D1 can route the same local part to different owners on
-different domains. Regional owner state verifies the one-time cutover inference;
-after that, the full address is a permanent claim.
-
-See [`workstream-email-addresses.md`](workstream-email-addresses.md).
 
 ### 2026-08-24 — Accepted Global telemetry gains a second durable projection
 
@@ -2364,26 +2163,6 @@ under a create key that has already been used with a different audience is
 refused with `workstream_create_idempotency_conflict` rather than replayed;
 `workstream-import-hash.ts` now records what may be added to the hashed value
 and what the addition costs.
-
-### 2026-08-21 — Four reader-less object tables dropped
-
-**What changed:** The SubstreamAgent table inventory loses `compaction_jobs`,
-`terminal_commands`, `_data_migrations`, and `_migration_command_receipts` in
-WorkstreamDO schema migration 11.
-
-**Why:** All four outlived the work they were built for — a claimable
-compaction job, a per-command Terminal receipt, and the retired authority
-cutover campaign's bookkeeping — and none had a reader or a writer. This
-document is the map people trust for what state exists, so a table listed here
-that nothing uses misroutes design work.
-
-**Considered and rejected:** Marking them deprecated in prose and leaving the
-tables. Prose does not stop a query; the drop does.
-
-**Consequences:** `compaction_checkpoints` and `terminal_tasks` are the sole
-authorities in their areas. `content_refs` remains listed and remains unwritten
-— `parts` holds a foreign key to it, so it is retired separately or not at all.
-
 
 ### 2026-08-20 — D1 product state is retired completely
 

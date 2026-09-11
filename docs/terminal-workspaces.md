@@ -1591,32 +1591,6 @@ reads them afterwards. The env var stayed because renaming a variable the
 sandbox image's own scripts read is a coordinated change with that image, not
 with this repository.
 
-### 2026-08-23 — Terminal receipt cleanup acknowledges its terminal-first handoff
-
-**What changed:** Stopped Terminal runs write their authoritative terminal state
-first, settle residual tool receipts under that exact terminal stamp, and then
-write an immutable acknowledgment. A direct stopped retry or the existing
-bounded activation sweep repairs a terminal row missing that marker. The same
-operation and acknowledgment cover stale roots and inline children.
-
-**Why:** The ordering is intentionally fail-safe but crosses two object calls. A
-transient settlement failure or lost response left the run terminal, so the
-direct path returned `already_terminal` and the live-only stale sweep never
-revisited it. The tool receipt and visible card could remain started forever.
-
-**Considered and rejected:** Receipt-first terminalization can corrupt a live or
-successor-owned run. A new alarm, queue, schema column, or second cleanup method
-would duplicate existing authority. The lifecycle ledger and activation sweep
-already provide the durable marker and bounded retry owner; the obsolete
-root-only settlement method was removed.
-
-**Consequences:** A lost settlement response is idempotent: retry writes the
-marker without adding another checkpoint or changing the terminal receipt. A
-BlockDashboard-only sweep excludes ordinary roots because it intentionally has
-no automation database; the fully authorized Substream sweep settles the
-receipt, automation row, and marker together. The injected production error UX
-gate remains open even though the failure-first regressions pass locally.
-
 ### 2026-08-23 — Accepted-command recovery requires a whole-sandbox stop
 
 **What changed:** Foreground and scheduled recovery no longer treat deletion or

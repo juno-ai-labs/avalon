@@ -590,19 +590,6 @@ own because provisioning is not in it.
 `cancelScheduledAlarmKind`; a new trigger kind arms its entry through
 `admitOccurrence` and nothing else.
 
-### 2026-09-03 — HyperSight refresh leaves the alarm scheduler
-
-**What changed:** The dashboard refresh lane, its due-work row, retry state, and
-alarm derivation were removed from WorkstreamDO and SubstreamAgent.
-
-**Why:** A retired feature must not wake objects or compete with agent-loop and
-delivery work.
-
-**Consequences:** Schema migration deletes any pending dashboard refresh; the
-remaining alarm arbitration covers only live lifecycle work.
-
-Shipped in #541.
-
 ### 2026-09-01 — Substream external settlement becomes an independent derived lane
 
 **What changed:** `SubstreamAgent` now derives the oldest externally unsettled

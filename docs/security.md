@@ -973,20 +973,6 @@ and renderer ownership checks remain. All socket receivers ignore unknown types
 and extra fields while validating known data; stored and outgoing contracts are
 unchanged. This supersedes the query allowlist described below.
 
-### 2026-09-08 — Match the control socket capability contract
-
-The main-process socket guard accepts the exact appearance capability query
-already emitted by the control ticket endpoint. A blanket query rejection had
-blocked child discovery entirely. Unknown and duplicate parameters, URL tickets,
-and all feed-socket queries remain forbidden; the broker test proves the boundary.
-
-### 2026-09-08 — Remove the authorization freshness deadline
-
-The user changed five-minute freshness from a hard bound to a design goal after
-production expiry stalls. Global KV authorization caching is inert. Reads no longer enforce evidence age or reuse persisted
-grants; canonical checks and Queue discovery remain separate. Previous five-minute
-lease claims below are historical and superseded. Session and socket rules are unchanged.
-
 ### 2026-09-08 — Sidekick authoring and loading
 
 Conversational publication resolves the current workspace membership role and
@@ -1033,19 +1019,6 @@ it.
 **Consequences:** The renderer CSP no longer admits an appearance frame and the
 main process registers no appearance-document handler. Remote fonts retain the
 existing generated allowlist, size cap, and optional integrity verification.
-
-### 2026-09-03 — HyperSight no longer defines an authority surface
-
-**What changed:** Dashboard ticket claims, object access paths, feature-specific
-model execution, and preference/configuration mutations were removed.
-
-**Why:** Leaving authorization code for a deleted feature creates a shadow
-surface that is harder to audit than either a live feature or no feature.
-
-**Consequences:** The existing workspace, work-stream, and substream authority
-boundaries remain; revocation no longer traverses a dashboard child.
-
-Shipped in #541.
 
 ### 2026-09-03 — An inbound-email run is no longer read-only
 
@@ -1183,48 +1156,6 @@ artifact content.
 contradict the house rule that knowing an identifier grants nothing; and relying
 on single-use redemption alone, which bounds replay but cannot keep a secret out
 of a log.
-
-### 2026-09-01 — External workspace targets cannot rely on local authority
-
-**What changed:** Addressed links use an old-client-rejected `workspace` host,
-always revalidate their exact target through the platform service, and verify
-renewed credentials stay on that target. Connector callbacks persist the
-initiating desktop's supported grammar.
-
-**Why:** Review found three ways local or stale state could weaken the boundary:
-an old parser ignored query targets, main accepted a cached credential without a
-membership round trip, and a one-off target API could not renew an expired bearer.
-
-**Considered and rejected:** Treating stored credentials or target identifiers as
-authority. Both can outlive membership; only the owning services can admit the
-session.
-
-**Consequences:** Explicit links fail closed during outages and tell the member
-to reconnect and reopen the link. The current workspace and route remain intact
-on denial or transport failure.
-
-Shipped in #464.
-
-### 2026-09-01 — Link routing context never becomes authorization
-
-**What changed:** Workspace-scoped connector, Slack, settings, automation, and
-work-stream handoffs carry a region/workspace target. Native activation and an
-exact returned-session check precede navigation or mutation; a refusal leaves
-the current workspace untouched.
-
-**Why:** The server already authorized connector state against its originating
-workspace, but an under-addressed desktop callback could be applied after the
-person switched elsewhere. ID-only resource links had the same ambiguity.
-
-**Considered and rejected:** Treating the target as a capability or resolving a
-resource across stored sessions. Both bypass the existing regional membership
-boundary and turn public identifiers into authority.
-
-**Consequences:** Every target remains safe to expose in paths/query strings;
-tokens remain in fragments. Regional membership and resource authorization are
-still mandatory, and link-open failures never retry against another workspace.
-
-Shipped in #464.
 
 ### 2026-08-31 — Lockdown encrypts the complete account credential set
 
@@ -1628,35 +1559,6 @@ use for the bridge, and adding one would hand the desktop's privileged API to a
 document assembled from model output.
 [`message-export.md`](message-export.md) owns the rest of the design.
 
-### 2026-08-13 — GitHub policy drift fails closed without inventing a new gate
-
-**What changed:** GitHub authorization distinguishes absent legacy policy from
-present malformed policy, resolves immutable repository IDs before applying
-overrides, refuses settings discovery for disabled connections, and commits a
-policy subtree change with Terminal credential invalidation atomically. Disabling
-a GitHub connection atomically revokes its selected Terminal rows and cached
-credential expiry. Repository
-replacement also claims the shared sandbox operation lease and compensates a
-temporary stopped/archive wake on failure.
-
-**Why:** Mutable names, cached health, partial D1 commits, and a command-only busy
-check could each expose authority or bytes different from the administrator's
-current policy. These are enforcement gaps in existing boundaries, not reasons
-to add participant prompts or a bespoke Git proxy.
-
-**Considered and rejected:** A new branch-scoped authorization service, treating
-transient connector errors as revocation, and relying on system-prompt guidance
-for immutable identity. GitHub does not issue branch-scoped tokens; connector
-`disabled`, provider IDs, the D1 batch, and the existing sandbox lease supply the
-enforceable primitives.
-
-**Consequences:** A policy downgrade and credential expiry are indivisible, and
-no later Terminal acquisition may treat a disabled or missing connection as an
-absent permissive policy.
-Malformed present policy denies use until repaired, and every destructive
-workspace replacement must participate in the same mutation lease as ordinary
-Terminal tools.
-
 ### 2026-08-13 — Repository choice is model-driven but policy- and recovery-fenced, and full access uses the native trained CLI path
 
 **What changed:** The model may select an exact GitHub repository through a
@@ -1837,35 +1739,6 @@ region.
 
 Shipped in the pull request for this change. Design:
 [`docs/PRDs/2026-08-12_daytona-terminal-git-github/prd.md`](PRDs/2026-08-12_daytona-terminal-git-github/prd.md).
-
-### 2026-08-12 — Attachment history and checkpoints reauthorize at replay
-
-**What changed:** Raw compaction summaries now live in principal-scoped rows and
-are fenced by a monotonic authorized-inventory revision through the final D1
-write. Historical attachment tool results are recognized from the stored
-execution plan and reauthorized before transcript projection. Attachment-owned
-model objects, cleanup rows, and receipt dependencies also carry `workspace_id`
-through every mutation and lookup.
-
-**Why:** Review demonstrated that a private or detached attachment could remain
-inside a previously completed tool result even after compaction correctly
-invalidated, and that tenant-owned lifecycle tables without an explicit
-workspace key violated the regional tenancy invariant. A shared raw summary had
-the same cross-principal problem because model prose can retain private
-conclusions without a recognizable filename.
-
-**Considered and rejected:** Treating completed receipts or raw summaries as
-principal-neutral, redacting model prose after the fact, and relying on globally
-unique resource or invocation IDs as tenant scope. None proves current
-authorization.
-
-**Consequences:** Every attachment replay has a fail-closed current-authority
-check; principal changes use independent checkpoints; and new attachment
-lifecycle tables and queries must retain explicit workspace predicates even
-when another identifier is unique.
-
-Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
-[context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
 
 ### 2026-08-12 — Compaction resource awareness is current-principal data
 

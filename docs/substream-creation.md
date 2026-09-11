@@ -735,18 +735,6 @@ inference, and creator-only initial membership — is the production path's, and
 a caller that passes a gateway gets all of them. Do not widen it into a seam for
 skipping the capture, the checkpoints, or the recheck.
 
-### 2026-09-09 — Move the message cutoff into the turn's action row
-
-**What changed:** The per-message entry point left the identity line for the
-turn's action row. Nothing about how a substream is created changed — only where
-the control that starts one is drawn.
-
-**Why and how:** The row is shared rendering, which
-[conversation surfaces](conversation-surfaces.md) owns per this document's
-**Boundary**; its entry there carries the reasoning and the constraints a future
-change has to respect.
-
-
 ### 2026-09-08 — Review fixes for lifecycle and command boundaries
 
 **What changed:** Child archive now stops the local agent through durable versioned delivery; title validation uses the 180-character contract. Nonparticipants and final-participant removal have distinct errors (`substream_participant_required` and `substream_last_participant`). Other refusals are `substream_member_needs_workstream_access`, `substream_archived`, and `substream_not_found`.
@@ -815,13 +803,6 @@ versions could strand notifications. The creation dialog locks pending inputs,
 clears failed-attempt state on edit and handles cancellation's empty response;
 inviters update the selected child's roster cache on successful admission.
 Regression tests deliberately remove each backend fix to prove these failures.
-
-### 2026-09-05 — Separate parent sidebar context from child conversation context
-
-Sidebar data, previews and management now use the retained parent snapshot. The
-previous selected-feed wiring made shared chrome change when a child was selected
-and could apply parent API responses to a child cache. Keep the two contexts
-explicit; selecting a child must not change the scope of sidebar actions.
 
 ### 2026-09-05 — Private substreams with replaceable starting context, shown beneath Main
 

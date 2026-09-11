@@ -1104,23 +1104,6 @@ two places if it is meant to apply everywhere. That is the accepted price of the
 two rules having genuinely different failure costs; the alternative was trading
 a transient rendering artifact for a delivery defect.
 
-### 2026-08-28 — The reduction leaves indented code alone too
-
-**What changed:** The shared grammar's three passes read one `codeLines`
-classifier, which recognises indented code blocks as well as fenced ones. A
-destination may also carry one level of balanced parentheses.
-
-**Why:** An indented example is the other ordinary way a model shows this
-syntax, and the reduction was rewriting it — a taught `[the deck](resource://abc)`
-arrived here as `the deck`, editing the sample. The parenthesis half is narrower
-and just as visible: stopping at the first `)` truncated
-`…/Function_(mathematics)` in the delivered source list, naming a URL that goes
-nowhere.
-
-**What a future change has to respect:** What counts as code is `codeLines`'
-decision and nothing else's; a caller that grows its own fence tracking is how
-the transcript and the delivered copy start disagreeing about numbering again.
-
 ### 2026-08-28 — A notification's source list is written in words, not in Markdown
 
 **What changed:** `slack-notification-service.humanReadableMessage` reduces with
@@ -1138,28 +1121,6 @@ bare title; the fixture now carries an external one.
 **What a future change has to respect:** Anything posting agent text outside a
 `markdown` block wants the plain shape. The rule is what the *consumer* renders,
 not which service the call sits in.
-
-### 2026-08-28 — The reduction reads code and titled links the way the parser does
-
-**What changed:** Two corrections in `rewriteCitationsAsPlainText`, both in
-`@rally/contracts/citations` rather than here. A `[^1]` inside an inline code
-span no longer counts as a footnote reference, and the inline-link pattern now
-matches a label carrying balanced brackets, an angle-bracketed target, and a
-trailing title.
-
-**Why:** Both were silent leaks of the kind this reduction exists to close, and
-both are reachable from ordinary model output. A message explaining the citation
-syntax — an ordinary thing to ask Rally for — was delivered with a `Sources`
-list it never claimed, and any real footnote beside it was renumbered, so the
-delivered copy and the transcript disagreed about which source was `[1]`. And a
-link the desktop drew as a chip but this pattern did not match arrived with its
-raw `resource://` target in the text: `[the deck](resource://abc "Q3")` is a
-link to every Markdown parser in the path, including the one Rally renders with.
-
-**What a future change has to respect:** The pattern here is meant to be as wide
-as the renderer's parser, not as wide as the guidance's examples. Anything the
-desktop turns into a chip and this leaves alone becomes raw internal syntax in
-front of a recipient.
 
 ### 2026-08-27 — Agent output reduces its citations before it reaches a channel
 

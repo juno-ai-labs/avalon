@@ -61,19 +61,6 @@ through their callers.
 
 ## Changelog
 
-### 2026-09-03 — HyperSight identifiers leave the live contract
-
-**What changed:** Block, configuration, dashboard-run, and dashboard socket
-identifiers were removed with the feature contracts that consumed them.
-
-**Why:** Keeping brands for entities that cannot be created or addressed makes
-dead product concepts appear valid at API boundaries.
-
-**Consequences:** Previously persisted values remain historical data only; no
-live parser or route admits them as HyperSight entities.
-
-Shipped in #541.
-
 ### 2026-08-29 — Transcript turn identity is explicitly opaque
 
 **What changed:** `TranscriptTurnIdSchema` is the shared contract for canonical

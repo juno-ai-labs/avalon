@@ -2010,15 +2010,6 @@ multi-person room. The backlog a first admission after a long quiet stretch
 appends is unbounded and is a decision the team has not made — a ceiling
 belongs here, as a named constant, when there is a reason to set one.
 
-### 2026-09-08 — Keep access updates local to one directory row
-
-Review exposed unnecessary full-page rebuilding on foreground changes and
-missing Debug-row updates. The access push now selects one authoritative row,
-retains user-only delivery, and uses the directory waterline. The routing guard
-explicitly declares the table private to WorkspaceDO. Directory-read tests now
-own separate workspaces because retained fixtures could fill subsequent pages.
-
-
 ### 2026-09-08 — Sidekick durable boundaries
 
 Substream migration 43 adds `sidekick_attachments` (conversation-owned, deduplicated
@@ -3072,15 +3063,6 @@ still be republished; child inbox receipts deduplicate it. Changes to this
 receipt must retain the real-workerd 100-ID case and must not expand caller IDs
 into individual binds alongside other parameters.
 
-### 2026-08-30 — Person mention Markdown uses `person://`
-
-**What changed:** Composer prepare and related writers emit
-`[@Name](person://<user-id>)`. Readers still accept bare `person:<user-id>`.
-
-**Why:** Aligns person mentions with the URL-style schemes the rest of the
-product teaches (`resource://`), so a model that generalizes does not produce a
-form the chip matcher and notification reducers miss.
-
 ### 2026-08-30 — Suggested context state was retired from every object layer
 
 **What changed:** SubstreamAgent migration 35 drops `suggested_actions` and
@@ -3196,22 +3178,6 @@ everyone who can see the row. Fan-in `IN` lists must use `boundParameterChunks`.
 A control snapshot must not be the authority for ids it does not know,
 including by seeding empty ones that pin the waterline. A workspace-scoped
 row never carries a pile, including leftover ids from when it was personal.
-
-### 2026-08-30 — Sidebar facepile is the existing AvatarStack size
-
-**What changed:** The sidebar trailing slot uses `AvatarStack` at its existing
-24px size. The compact size variant added for that slot is gone. `extraCount`
-remains so a directory list truncated to three ids can still paint `+x`.
-
-**Why:** a second size was a parallel facepile, not reuse of the one the header
-already paints. The Air row is 31px; 24px faces already fit.
-
-**Considered and rejected:** CSS-shrinking only the sidebar stack. That would
-still be a second look. Padding dummy members so native overflow could fire
-would pollute the accessible name.
-
-**What a future change has to respect:** do not add an `Avatar` size for this
-slot. `AvatarStack` with `limit={3}` and `extraCount` is the facepile.
 
 ### 2026-08-30 — Personal sidebar rows carry a bounded participant facepile
 
@@ -6812,44 +6778,6 @@ already answers, and would let the two intervals disagree about who is still
 allowed to listen. A future publisher added here has to join that sweep too;
 the bound is on the object, not on any one path.
 
-### 2026-08-22 — Agent-owned Terminal calls no longer self-RPC
-
-**What changed:** The main `SubstreamAgent` exposes its resident Bind execution
-to the Terminal stack through an in-object Terminal port and resource-link
-attacher. The Terminal port dispatches into the same identity-fenced
-`runTerminalOperation` used by `/internal/terminal`, so transaction rollback,
-directory outbox publication, stable failures, and alarm scheduling remain
-identical while the executing alarm stays the sole request context. Generated
-resource publication and repository backup dispatch into the same
-`WorkstreamObjectProductService.attachRuntimeResource` body used by the resource
-RPC. Repository helpers receive both resident boundaries rather than quietly
-constructing new remote ones.
-The factory forwards its caller-supplied workspace/work-stream identity, and
-both direct mutation bodies independently fence on external substream ID `0`.
-Terminal plugin construction rejects a partial resident boundary rather than
-falling one of the two paths back to same-object RPC.
-
-**Why:** Post-deploy verification of #224 proved the active alarm was the
-original drain owner for the whole 25-second failed run. It never encountered
-the inverse heartbeat ordering covered by the earlier fix. The trace instead
-showed repeated same-object Terminal RPC events during the successful first
-command, followed by a second tool failing before its executor log. The
-resident loop already had an in-object runtime-SQL executor for this reason;
-Terminal authority was the remaining self-call path.
-
-**Considered and rejected:** Treating self-RPC as harmless because Durable
-Objects serialize storage, or bypassing `commitRuntimeMutation` with direct
-storage calls. Serialization does not make promises and I/O portable between
-events, while a raw call would strand directory deadlines and blur the
-pre-/post-commit retry contract.
-
-**Consequences:** Worker-originated and non-main-substream calls still cross the
-RPC boundary to the main child, but a run executing inside that authority never
-leaves and re-enters it for Terminal state or generated-resource links. The
-operation authority stays single-writer without transferring later D1/provider
-work between Durable Object events, and an accidental local port on another
-child fails closed instead of creating split product state.
-
 ### 2026-08-21 — Heartbeats never join a live run's request context
 
 **What changed:** Both agent objects defer an alarm drain request when their
@@ -7061,52 +6989,6 @@ What a future change has to respect: an object's alarm is derived in exactly one
 place. Adding a wake reason means adding an entry or a derived source, never a
 `setAlarm` call — a second writer produces two answers to "what is earliest",
 and the loser is silently never run.
-
-### 2026-08-21 — Terminal addresses its own tables through a typed port
-
-**What changed:** The Terminal services no longer hold a `D1Database`. A new
-`WorkstreamTerminalStorage` inside the SubstreamAgent is the only reader and
-writer of `terminal_workspace`, `terminal_tasks`,
-`terminal_imported_resources`, `terminal_repository`,
-`terminal_publication_grants`, and `repository_publications`; the services
-reach it through `/internal/terminal` and a typed `TerminalObjectPort` whose
-operation list is derived from the storage class. WorkstreamDO schema
-migration 12 promotes the nine fields that lived in `lifecycle_json` to real
-columns and drops the 32 `_runtime_terminal_*` compatibility view and trigger
-statements. The dead pre-cutover branches in `workspace-scheduler.ts` and
-`connection-service.ts` — which queried tables migration `0090` dropped — go
-with them.
-
-**Why:** The vocabulary the code used stopped describing what it did. A
-statement reading `UPDATE workstream_sandboxes` named a table that had not
-existed in D1 since the legacy product schema was retired; it was rewritten
-onto a compatibility view whose INSTEAD OF triggers converted ISO-8601 to unix
-milliseconds and packed nine fields into a JSON blob. That layer existed so one
-body of code could run against both D1 and the object during the cutover, and
-the cutover is over. Its remaining cost was real: `archive_due_at` — a deadline
-the workspace scheduler sorts alarms by — had no type, no CHECK, and no index,
-because it was a JSON key. Worse, a load-then-claim sequence crossed the Worker
-boundary between its two statements, so the operation lease could be decided on
-state that had already moved; the same sequence now runs inside one
-synchronous object call.
-
-**Considered and rejected:** Keeping the SQL and renaming only the handle. That
-removes the misleading signature and nothing else — the blob, the timestamp
-conversion, and the split transactions all survive. Also rejected: converting
-the whole runtime compatibility vocabulary at once. `tool_invocations`,
-`harness_runs`, `resources`, and `notes` are shared by every subsystem, so
-retiring them is a change per subsystem rather than a wider version of this
-one; `runtime.ts` still reaches `tool_invocations` through the routed handle
-and says so.
-
-**Consequences:** Two invariants the blob could not express are now enforced by
-the table: a lease or a claim without its deadline is rejected, because an
-unreleasable lease holds the workspace forever. `authority_epoch` is gone — the
-compatibility triggers set it equal to `version` on every write and nothing
-read it back. Terminal state is now reachable only with the agent binding, so
-three helpers in `repository.ts` that took `Pick<Env, "DB">` take a full `Env`.
-The Node suite keeps its real-SQL coverage through a local-storage seam on the
-port; what the runtime decides belongs in `test-workers/`.
 
 ### 2026-08-21 — Two workspace tables retired with no reader or writer
 

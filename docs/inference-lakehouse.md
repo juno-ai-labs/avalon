@@ -373,27 +373,6 @@ request and terminal attempt by canonical conversation identity.
 **Consequences:** Callers operating on a child must supply its substream ID;
 existing main-only structured callers remain unchanged.
 
-### 2026-09-03 — A failed attempt archives what the provider actually said
-
-**What changed:** nothing in this module, which is the point. The harness's
-`providerError` gained a `detail` field carrying the provider's rejection body,
-and because the `error` column persists that object rather than a hand-picked
-projection of it, the body arrives here on its own. The projection helper that
-used to copy `code` and `providerName` out field by field is deleted. `error` is
-one of the lossless JSON columns, so there is no stream-schema change and no
-replacement design.
-
-**Why:** the archive was the surface most likely to answer "which tool schema
-did the provider reject", and on 2 September it could not, because the sentence
-naming the tool was dropped at the transport before any consumer saw it. The
-same change puts the body in Workers Logs as `provider_error_detail`, so this
-archive is no longer the only place to look for it — which also means an EU
-rejection, archived nowhere, is now diagnosable from its log row.
-[`agent-harness.md`](agent-harness.md) holds the reasoning and the alternatives
-rejected.
-
-Shipped in #541.
-
 ### 2026-09-01 — Application deploys use pinned stream bindings
 
 **What changed:** The two production Pipeline stream IDs now live in their
