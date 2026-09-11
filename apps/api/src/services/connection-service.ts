@@ -1,4 +1,5 @@
-import { stableConnectionWireName, validateDynamicConnectorTools } from "./connector-tool-inventory";
+import { withDeadline } from "../lib/deadline";
+import { dynamicConnectorCapability, stableConnectionWireName, validateDynamicConnectorTools } from "./connector-tool-inventory";
 import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 import {
   CUSTOM_MCP_CONNECTOR_TYPE,
@@ -426,20 +427,19 @@ export class ConnectionService {
     const adapter = this.registry().get(connection.connector_type);
     const granted = new Set(parseJson<string[]>(connection.granted_scopes_json, []));
     const dynamic = adapter.dynamicAgentTools;
-    const definitions = dynamic?.connectionScopes.includes(connection.scope)
-      && dynamic.capabilities.some((capability) => granted.has(capability))
-      ? await withAuthorizedConnection(
+    const definitions = dynamicConnectorCapability(adapter, connection.scope, [...granted])
+      ? await withSettingsInventoryDeadline(async (inventorySignal) => withAuthorizedConnection(
           this.env,
-          { connection: await this.context(connection), adapter, signal },
+          { connection: await this.context(connection), adapter, signal: inventorySignal },
           async (authorized) => validateDynamicConnectorTools(
             this.env,
             adapter,
             connection.scope,
             [...granted],
             stableConnectionWireName(connection.model_plugin_id),
-            await dynamic.discover(authorized, signal),
+            await dynamic!.discover(authorized, inventorySignal),
           ),
-        )
+        ), signal)
       : adapter.agentPlugin.tools;
     return {
       count: definitions.filter((tool) => granted.has(tool.capability)
@@ -2475,11 +2475,11 @@ export class ConnectionService {
   private async readCustomMcpInventory(connection: StoredConnection) {
     const adapter = this.customMcpAdapter();
     const context = await this.context(connection);
-    return withAuthorizedConnection(
+    return withSettingsInventoryDeadline((signal) => withAuthorizedConnection(
       this.env,
-      { connection: context, adapter, signal: AbortSignal.timeout(20_000) },
-      (authorized) => listCustomMcpToolInventory(authorized, AbortSignal.timeout(20_000)),
-    );
+      { connection: context, adapter, signal },
+      (authorized) => listCustomMcpToolInventory(authorized, signal),
+    ));
   }
 
   /**
@@ -3803,3 +3803,11 @@ export const __connectionServiceTesting = {
   oauthAttemptIdValue,
   assertLinearNativeAgentCapabilityEnabled,
 };
+
+/** Reuse the existing Settings MCP inventory budget for every tool inventory read. */
+function withSettingsInventoryDeadline<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  parent?: AbortSignal,
+): Promise<T> {
+  return withDeadline(20_000, (signal) => work(parent ? AbortSignal.any([parent, signal]) : signal));
+}

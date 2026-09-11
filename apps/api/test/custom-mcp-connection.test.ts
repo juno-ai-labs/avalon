@@ -62,6 +62,7 @@ const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("custom MCP connections", () => {
@@ -146,6 +147,61 @@ describe("custom MCP connections", () => {
     // fail every run that loaded it.
     expect(database.prepare("SELECT count(*) AS count FROM connector_connections").get())
       .toEqual({ count: 0 });
+  });
+
+  it("ends a stalled tool count with the existing Settings inventory deadline", async () => {
+    vi.useFakeTimers();
+    const { auth, env } = fixture();
+    stubMcpServer([READ_TOOL]);
+    const providerFetch = globalThis.fetch;
+    let stall = false;
+    let started!: () => void;
+    const providerStarted = new Promise<void>((resolve) => { started = resolve; });
+    vi.stubGlobal("fetch", (target: string | URL | Request, init?: RequestInit) => {
+      if (!stall || init?.method === "DELETE") return providerFetch(target, init);
+      started();
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init!.signal!;
+        if (signal.aborted) reject(signal.reason);
+        else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
+    const service = new ConnectionService(env, auth);
+    const { connection } = await service.createCustomMcp({
+      displayName: "Acme docs", scope: "workspace", serverUrl: SERVER_URL,
+      requestHeaders: { "X-Api-Key": "secret-value" }, toolPolicy: "all_tools",
+    });
+    stall = true;
+    const caller = new AbortController();
+    let outcome: unknown;
+    const pending = service.getToolCount(connection.id, caller.signal)
+      .then((value) => { outcome = value; }, (error: unknown) => { outcome = error; });
+    await providerStarted;
+    await vi.advanceTimersByTimeAsync(20_000);
+    try {
+      expect(outcome).toMatchObject({ name: "TimeoutError" });
+    } finally {
+      caller.abort();
+      await pending;
+    }
+  });
+
+  it.each(["personal", "workspace"] as const)("counts static tools from granted capabilities for a %s connection", async (scope) => {
+    const { auth, env, database } = fixture();
+    env.GOOGLE_CONNECTOR_OAUTH_CLIENT_ID = "test-client";
+    env.GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET = "test-secret";
+    stubMcpServer([READ_TOOL]);
+    const service = new ConnectionService(env, auth);
+    const { connection } = await service.createCustomMcp({
+      displayName: "Google", scope, serverUrl: SERVER_URL,
+      requestHeaders: { "X-Api-Key": "secret-value" }, toolPolicy: "all_tools",
+    });
+    database.prepare("UPDATE connector_connections SET connector_type = 'google', granted_scopes_json = ? WHERE id = ?")
+      .run(JSON.stringify(["gmail.read"]), connection.id);
+    expect(await service.getToolCount(connection.id, new AbortController().signal)).toEqual({ count: 5 });
+    database.prepare("UPDATE connector_connections SET granted_scopes_json = ? WHERE id = ?")
+      .run(JSON.stringify(["gmail.send"]), connection.id);
+    expect(await service.getToolCount(connection.id, new AbortController().signal)).toEqual({ count: 1 });
   });
 
   it("refuses a tool count when connection prefixes make remote tool names collide", async () => {

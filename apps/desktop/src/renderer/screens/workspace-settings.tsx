@@ -494,6 +494,7 @@ export function WorkspaceSettingsScreen({
       queryFn: ({ signal }: { signal: AbortSignal }) => api!.getConnectionToolCount(connection.id, signal),
       enabled: Boolean(api && activeSection === 'connections'),
       refetchOnWindowFocus: true,
+      staleTime: 5_000,
     })),
   });
   const toolCountByConnection = new Map((connections.data ?? []).map((connection, index) => [
