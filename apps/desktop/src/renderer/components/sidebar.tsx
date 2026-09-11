@@ -434,7 +434,27 @@ function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
  * "Active" — dead markup, because `aria-label` on the button replaces its
  * contents in the accessible name, and the label already said it.
  */
-function SidekickStripTile({ glyph, label, name, onClick, title }: {
+/**
+ * What the tile's one tooltip says, and where. A tile has one tooltip slot and
+ * more than one thing under the pointer, so the slot's whole answer travels as
+ * a unit rather than as three props that could disagree.
+ */
+interface SidekickTileTip {
+  label: React.ReactNode;
+  /** Away from whatever the pointer is on, which differs per answer. */
+  side: 'top' | 'bottom';
+}
+
+function SidekickStripTile({ description, glyph, label, name, onClick, tip }: {
+  /**
+   * What the tooltip would say about the tile that its name does not, for a
+   * reader who has no pointer to rest on the thing it is about. The glyph's
+   * lifecycle marker is drawn inside `aria-hidden` artwork, so its sentence
+   * reaches assistive technology only if the surface carries it — the rule this
+   * rail already keeps for the public-scope badge on a work-stream row, which
+   * names itself on the row rather than in its own tooltip.
+   */
+  description?: string | undefined;
   glyph: React.ReactNode;
   /**
    * What the tile is called to a screen reader, which the caption cannot be: it
@@ -444,33 +464,82 @@ function SidekickStripTile({ glyph, label, name, onClick, title }: {
   label: string;
   name: string;
   onClick: () => void;
-  title: string;
+  /**
+   * What a pointer resting on the tile is told, which is the caption's job
+   * everywhere the caption can do it — and it cannot here: the strip ellipsizes
+   * a name at 80px and the rail drops it outright.
+   *
+   * One `Tip` for the whole tile, whichever part of it the pointer is on. A
+   * second Radix root nested inside this one's trigger — the obvious way to
+   * hang an explanation off the glyph's lifecycle marker — cannot share the
+   * slot: a root dispatches a global "close everything else" when it decides to
+   * open, so nested roots resolve to whichever decided last rather than to the
+   * one being pointed at, and a caller that vetoes the outer root gets nothing
+   * at all. One root cannot race itself.
+   */
+  tip: SidekickTileTip;
 }): React.JSX.Element {
   return (
     <div className="sidebar-context-target">
-      <button
-        className="sidebar-row automation-row automation-tile"
-        aria-label={label}
-        title={title}
-        onClick={onClick}
-        type="button"
+      {/*
+        `disableHoverableContent`, like every other tooltip in this rail that
+        hangs off something small: there is nothing in a name or a state to
+        travel into, and the grace area Radix otherwise keeps between a trigger
+        and its content swallows the move onto the tile beside this one.
+      */}
+      <Tip
+        className="sidekick-tile-tooltip"
+        collisionPadding={8}
+        disableHoverableContent
+        label={tip.label}
+        side={tip.side}
       >
-        <span className="automation-tile-glyph" aria-hidden="true">{glyph}</span>
-        <span className="automation-tile-name">{name}</span>
-      </button>
+        <button
+          className="sidebar-row automation-row automation-tile"
+          aria-description={description}
+          aria-label={label}
+          onClick={onClick}
+          type="button"
+        >
+          <span className="automation-tile-glyph" aria-hidden="true">{glyph}</span>
+          <span className="automation-tile-name">{name}</span>
+        </button>
+      </Tip>
     </div>
   );
 }
 
 function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.Element {
   const scopeDescription = sidekick.scope === 'workspace' ? ' · Workspace' : '';
+  // Which part of the tile the pointer is on, which only the hexagon can say:
+  // the play is drawn in its viewBox so it scales with the tile, rather than
+  // positioned by this rail, so there is no element here whose own pointer
+  // events would describe it.
+  const [markerHovered, setMarkerHovered] = useState(false);
   return (
     <SidekickStripTile
-      glyph={<AutomationGlyph {...(sidekick.appearance ? { appearance: sidekick.appearance } : {})} id={sidekick.id} marker={SIDEKICK_RUNNING_MARKER} />}
+      glyph={<AutomationGlyph {...(sidekick.appearance ? { appearance: sidekick.appearance } : {})} id={sidekick.id} marker={SIDEKICK_RUNNING_MARKER} onMarkerHover={setMarkerHovered} />}
       label={`${sidekick.name}, Active${scopeDescription}`}
       name={sidekick.name}
       onClick={() => void desktopBridge().openSidekicks(sidekick.id)}
-      title={`${sidekick.name} · Active${scopeDescription}`}
+      // The tile's line is which Sidekick, not what state it is in: every tile
+      // in this strip is active, so naming the state on each of them would spend
+      // the one line on the one fact they share. The play in the corner reports
+      // it, and pointing at the play is what spells it out — in this same slot,
+      // below the tile rather than above it, because that is the corner it is
+      // answering for. A screen reader gets the state from `label` either way.
+      //
+      // Swapped rather than delayed a second time: moving onto the play while
+      // the name is up changes the answer at once, and moving back changes it
+      // back. That is what one root buys over two — no second delay, no gap,
+      // and no ordering to get right.
+      tip={markerHovered
+        ? { label: SIDEKICK_RUNNING_MARKER.description, side: 'bottom' }
+        : { label: `${sidekick.name}${scopeDescription}`, side: 'top' }}
+      // The same sentence, for a reader with no pointer to rest on the play.
+      // The accessible name above says *which* state; this says what it means,
+      // which is the half the mark gets wrong on its own.
+      description={SIDEKICK_RUNNING_MARKER.description}
     />
   );
 }
@@ -492,7 +561,7 @@ function NewSidekickTile(): React.JSX.Element {
       label="New Sidekick"
       name="New Sidekick"
       onClick={() => void desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET)}
-      title="New Sidekick"
+      tip={{ label: 'New Sidekick', side: 'top' }}
     />
   );
 }
