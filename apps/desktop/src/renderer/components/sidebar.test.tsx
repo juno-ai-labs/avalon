@@ -9,6 +9,7 @@ import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } fro
 import { formatDateTime } from '../lib/format';
 import { useUiStore } from '../lib/ui-store';
 import { REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
+import { installWindowActivationTracking } from '../lib/window-activation';
 
 const copyText = vi.hoisted(() => vi.fn());
 const openSettings = vi.hoisted(() => vi.fn());
@@ -2421,6 +2422,136 @@ describe('private work streams', () => {
       .toBeVisible();
     expect(within(dialog).getByText('The work stream could not be reached.')).toBeVisible();
   });
+});
+
+/**
+ * Switching back into Rally is the one gesture that produces hover and focus
+ * without a hand behind either: the row the reader clicked to get here still
+ * holds focus, and the row the window came forward underneath is entered by a
+ * cursor that never moved. The card is a reading surface the person did not ask
+ * for, drawn over the screen they switched back to read.
+ *
+ * The guard is `lib/window-activation.ts`; these cover what the sidebar does
+ * with the answer.
+ */
+describe('work-stream rows after an application switch', () => {
+  let stopTracking: (() => void) | null = null;
+
+  beforeEach(() => {
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    // The app installs this once per window, in `App`. These render the sidebar
+    // alone, so the tracking is installed alongside it.
+    stopTracking = installWindowActivationTracking();
+  });
+
+  afterEach(() => {
+    stopTracking?.();
+    stopTracking = null;
+  });
+
+  function renderWith(streams: WorkstreamSummary[]): void {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={streams}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+  }
+
+  /** Away and back, with nothing else touched: a Command-Tab in both directions. */
+  function switchAwayAndBack(): void {
+    fireEvent.blur(window);
+    fireEvent.focus(window);
+  }
+
+  it('leaves the focused row alone when the window hands its focus back', async () => {
+    renderWith([workstream('00000000-4000-4000-8000-0000000000f1', 'Launch', 'completed')]);
+    const row = screen.getByRole('link', { name: 'Launch' });
+
+    switchAwayAndBack();
+    act(() => row.focus());
+
+    await expectNoPreview();
+  });
+
+  it('leaves the row the window came forward underneath alone', async () => {
+    renderWith([workstream('00000000-4000-4000-8000-0000000000f2', 'Launch', 'completed')]);
+    const row = screen.getByRole('link', { name: 'Launch' }).closest('[data-workstream-id]')!;
+
+    switchAwayAndBack();
+    fireEvent.pointerOver(row, { clientX: 120, clientY: 260 });
+    fireEvent.pointerEnter(row, { clientX: 120, clientY: 260 });
+    fireEvent.pointerMove(row, { clientX: 120, clientY: 260 });
+
+    await expectNoPreview();
+  });
+
+  it('opens for a pointer that goes on to move over the row it was left on', async () => {
+    renderWith([workstream('00000000-4000-4000-8000-0000000000f3', 'Launch', 'completed')]);
+    const row = screen.getByRole('link', { name: 'Launch' }).closest('[data-workstream-id]')!;
+
+    switchAwayAndBack();
+    fireEvent.pointerOver(row, { clientX: 120, clientY: 260 });
+    fireEvent.pointerEnter(row, { clientX: 120, clientY: 260 });
+
+    // The entry is spent, and a hand that carries on across the row it was
+    // resting on gets no second one — so movement is what has to open the card
+    // the entry declined to.
+    fireEvent.pointerMove(row, { clientX: 124, clientY: 262 });
+
+    expect(await screen.findByRole('tooltip', { name: /Launch/u })).toBeInTheDocument();
+  });
+
+  it('still opens on a hover that has nothing to do with a switch', async () => {
+    renderWith([workstream('00000000-4000-4000-8000-0000000000f4', 'Launch', 'completed')]);
+    const row = screen.getByRole('link', { name: 'Launch' }).closest('[data-workstream-id]')!;
+
+    fireEvent.pointerEnter(row, { clientX: 120, clientY: 260 });
+
+    expect(await screen.findByRole('tooltip', { name: /Launch/u })).toBeInTheDocument();
+  });
+
+  it('still opens for a reader who tabs to a row after switching back', async () => {
+    renderWith([workstream('00000000-4000-4000-8000-0000000000f5', 'Launch', 'completed')]);
+    const row = screen.getByRole('link', { name: 'Launch' });
+
+    switchAwayAndBack();
+    fireEvent.keyDown(window, { key: 'Tab' });
+    act(() => row.focus());
+
+    expect(await screen.findByRole('tooltip', { name: /Launch/u })).toBeInTheDocument();
+  });
+
+  it('takes a card down with the window rather than leaving it up for the return', async () => {
+    renderWith([workstream('00000000-4000-4000-8000-0000000000f6', 'Launch', 'completed')]);
+    const row = screen.getByRole('link', { name: 'Launch' }).closest('[data-workstream-id]')!;
+
+    fireEvent.pointerEnter(row, { clientX: 120, clientY: 260 });
+    expect(await screen.findByRole('tooltip', { name: /Launch/u })).toBeInTheDocument();
+
+    // The pointer never leaves the row, so nothing else in the row is going to
+    // close this: it is up until the person comes back to find it.
+    fireEvent.blur(window);
+
+    await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
+  });
+
+  /**
+   * The card opens on a 300ms timer, so a card that is absent on this tick may
+   * only be a card that has not arrived yet. Waiting past the timer is what
+   * makes the absence mean something.
+   */
+  async function expectNoPreview(): Promise<void> {
+    await new Promise((resolve) => { setTimeout(resolve, 600); });
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  }
 });
 
 describe('pinned work streams', () => {
