@@ -236,17 +236,18 @@ describe('Sidebar work-stream markers', () => {
     const commandbar = document.querySelector('.sidebar-commandbar');
     expect(titlebar).not.toBeNull();
     expect(commandbar).not.toBeNull();
-    expect(titlebar).toContainElement(screen.getByRole('link', { name: 'New chat' }));
+    expect(titlebar).toContainElement(screen.getByRole('link', { name: 'New work stream' }));
     expect(commandbar).toContainElement(screen.getByRole('button', { name: 'Search workspace' }));
     expect(commandbar?.querySelector('.sidebar-new-button')).toBeNull();
   });
 
-  // The plus is the whole of this control in the titlebar and in the rail, and
-  // the thing it starts goes by two names: a work stream in the full
-  // navigation, where the row below the search already says so, and a chat in
-  // the GrokBot shell. The tip is where a pointer reads that, and it is the
-  // link's own name, so it says the same thing to a screen reader.
-  it('names the plus after what it starts, in the titlebar and in the rail', () => {
+  // The plus is the whole of this control in the titlebar and in the rail: an
+  // icon with no words beside it, whose name a pointer can only read from a
+  // tooltip. It is the link's own name as well, so both readers get the same
+  // sentence, and it says work stream in the GrokBot shell too — that shell
+  // presents a conversation as a chat, but the route this opens still starts a
+  // work stream.
+  it('names the plus New work stream in the titlebar, the rail, and the GrokBot shell', () => {
     function Navigation(props: { compact?: boolean; conversationOnly?: boolean }) {
       return <Sidebar {...defaultActions} automations={[]} notes={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} {...props} />;
     }
@@ -266,8 +267,8 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent('New work stream');
 
     rerender(<MemoryRouter><Tooltip.Provider><Navigation conversationOnly /></Tooltip.Provider></MemoryRouter>);
-    fireEvent.focus(screen.getByRole('link', { name: 'New chat' }));
-    expect(screen.getByRole('tooltip')).toHaveTextContent('New chat');
+    fireEvent.focus(screen.getByRole('link', { name: 'New work stream' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('New work stream');
   });
 
   afterEach(() => vi.unstubAllGlobals());
@@ -1367,18 +1368,18 @@ describe('Sidebar work-stream markers', () => {
   });
 
   // Search sits above the scroll box in both layouts, so it is at the top
-  // however far the list is scrolled. The rail's New chat row arrives under it
-  // with the compact toggle and leaves with the expand, and is marked so the
-  // list motion shows it doing so; the titlebar's own New chat is hidden in the
+  // however far the list is scrolled. The rail's New work stream row arrives
+  // under it with the compact toggle and leaves with the expand, and is marked
+  // so the list motion shows it doing so; the titlebar's own is hidden in the
   // rail rather than unmounted, so it can fade with the layout.
-  it('keeps search above the scroll box in both layouts, with the rail\'s New chat row inserted under it', () => {
+  it('keeps search above the scroll box in both layouts, with the rail\'s New work stream row inserted under it', () => {
     const onOpenSearch = vi.fn();
     const view = (compact: boolean): React.JSX.Element => (
       <MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onOpenSearch={onOpenSearch} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>
     );
     const { rerender } = render(view(true));
     const search = screen.getByRole('button', { name: 'Search workspace' });
-    const create = screen.getByRole('link', { name: 'New chat' });
+    const create = screen.getByRole('link', { name: 'New work stream' });
     expect(screen.getByRole('navigation')).not.toContainElement(search);
     const bar = search.closest('.sidebar-commandbar');
     expect(bar).not.toBeNull();
@@ -1392,7 +1393,7 @@ describe('Sidebar work-stream markers', () => {
 
     rerender(view(false));
     expect(screen.getByRole('navigation')).not.toContainElement(screen.getByRole('button', { name: 'Search workspace' }));
-    const [titlebarCreate, ...others] = screen.getAllByRole('link', { name: 'New chat' });
+    const [titlebarCreate, ...others] = screen.getAllByRole('link', { name: 'New work stream' });
     expect(others).toEqual([]);
     expect(titlebarCreate?.closest('.sidebar-titlebar')).not.toBeNull();
     expect(bar?.querySelector('[data-motion-key="action:new"]')).toBeNull();
@@ -3014,7 +3015,7 @@ describe('pinned work streams', () => {
       rerender(view(true, [today, yesterday]));
       const touched = { ...yesterday, lastActivityAt: '2026-08-01T11:00:00.000Z' };
       rerender(view(true, [today, touched]));
-      // The rail's New chat row arriving is the one thing that plays: no row moved.
+      // The rail's New work stream row arriving is the one thing that plays: no row moved.
       expect(animate.mock.calls.map(([element]) => (element as HTMLElement).dataset.motionKey)).toEqual(['action:new']);
       await act(() => new Promise<void>((resolve) => { requestAnimationFrame(() => resolve()); }));
       // The touched row goes back to Yesterday and the other climbs two

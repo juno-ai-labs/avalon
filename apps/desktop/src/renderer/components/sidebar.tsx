@@ -584,6 +584,14 @@ interface PinnedRowDrag {
   position: string;
 }
 
+/**
+ * The name of the `+` in the titlebar and its twin in the rail, read as a
+ * tooltip and as the link's own accessible name. It says **work stream** in
+ * every shell, the conversation-only one included: the route it opens starts a
+ * work stream, and the shell that presents one as a chat elsewhere does not
+ * change what the control makes.
+ */
+const NEW_STREAM_LABEL = 'New work stream';
 
 /**
  * What the globe badge means, at the two granularities the two surfaces want.
@@ -1220,10 +1228,10 @@ export function Sidebar({
   // reason does not scroll the reader again.
   const [reveal, setReveal] = useState<{ id: string; pinned: boolean } | null>(null);
   const scrollRef = useRef<HTMLElement | null>(null);
-  // The search row — and, in the rail, the New chat row under it — sit above
-  // the scroll box rather than in it, so search is at the top of the sidebar
-  // however far the list has been scrolled. The bar has a list motion of its
-  // own: the New chat row is inserted by the compact toggle and removed by the
+  // The search row — and, in the rail, the New work stream row under it — sit
+  // above the scroll box rather than in it, so search is at the top of the
+  // sidebar however far the list has been scrolled. The bar has a list motion of
+  // its own: that row is inserted by the compact toggle and removed by the
   // expand, and is seen arriving and leaving.
   const commandRef = useRef<HTMLDivElement | null>(null);
   // Whether the sidebar's contents are still travelling between its two
@@ -1313,12 +1321,6 @@ export function Sidebar({
   const batchPreviewGeneration = useRef(0);
   const visibleWorkstreams = workstreams;
   const visibleNotes = useMemo(() => conversationOnly ? [] : notes, [conversationOnly, notes]);
-  // One destination under the two names this shell goes by: the conversation-only
-  // client presents it as a chat, and the full navigation calls the same route a
-  // work stream — the name the link below the search row already uses. The icon
-  // is the only form this control takes in the titlebar and the rail, so the name
-  // has to reach a pointer as well as a screen reader, and both read this.
-  const newStreamLabel = conversationOnly ? 'New chat' : 'New work stream';
   // Resolved here rather than through `NavLink`'s function form, because both
   // of these links are tooltip triggers: Radix clones the child and merges its
   // `className`, and a function arrives at the DOM as its own source text with
@@ -1874,8 +1876,8 @@ export function Sidebar({
   // and for the reason given there. The compact toggle relays out every row
   // for a reason that is not a move, so it names the layout, and says for how
   // long the rows are still travelling to it. The command bar above the scroll
-  // box is a list of its own, whose New chat row arrives and leaves with the
-  // same toggle.
+  // box is a list of its own, whose New work stream row arrives and leaves with
+  // the same toggle.
   useListMotion(scrollRef, compact, layoutSettling);
   useListMotion(commandRef, compact, layoutSettling);
 
@@ -1928,11 +1930,11 @@ export function Sidebar({
               fade holds `display` for its length, so the link leaves the
               accessibility tree and the tab order by attribute at once
               rather than when the fade ends, or the rail would offer two New
-              chat links for a quarter of a second. */}
-          <Tip label={newStreamLabel} side="bottom">
+              work stream links for a quarter of a second. */}
+          <Tip label={NEW_STREAM_LABEL} side="bottom">
             <NavLink
               aria-hidden={compact}
-              aria-label={newStreamLabel}
+              aria-label={NEW_STREAM_LABEL}
               className={clsx('sidebar-new-button window-no-drag', onNewStreamRoute && 'is-active')}
               hidden={compact}
               tabIndex={compact ? -1 : undefined}
@@ -1949,7 +1951,7 @@ export function Sidebar({
             however far the list is scrolled. */}
         <div className="sidebar-commandbar window-no-drag" onClick={() => setSidebarOpen(false)} ref={commandRef}>
           <SidebarSearch mode="button" onClick={onOpenSearch} disabled={!onOpenSearch} aria-label="Search workspace" />
-          {/* The rail's New chat row. Inserted by the compact toggle and
+          {/* The rail's New work stream row. Inserted by the compact toggle and
               removed by the expand, and marked so that it is seen arriving and
               leaving rather than appearing in place: it slides in under the
               search row as the bar opens the slot for it, and out to the left
@@ -1958,9 +1960,9 @@ export function Sidebar({
             // `Tip` renders no element of its own, so the row the motion planner
             // keys on is still this link itself; the tip hangs off the rail's
             // right rather than below, where the row under it would be covered.
-            <Tip label={newStreamLabel} side="right">
+            <Tip label={NEW_STREAM_LABEL} side="right">
               <NavLink
-                aria-label={newStreamLabel}
+                aria-label={NEW_STREAM_LABEL}
                 className={clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', onNewStreamRoute && 'is-active')}
                 data-motion-insert=""
                 data-motion-key="action:new"
@@ -1981,11 +1983,11 @@ export function Sidebar({
           ref={scrollRef}
         >
           {conversationOnly && location.pathname === '/workstreams/new' && (
-            <div aria-current="page" aria-label="New chat draft" className="sidebar-new-chat-draft">
+            <div aria-current="page" aria-label={`${NEW_STREAM_LABEL} draft`} className="sidebar-new-chat-draft">
               <span aria-hidden="true" className="sidebar-new-chat-draft-icon">
                 <Plus size={16} strokeWidth={1.7} />
               </span>
-              <span>New chat</span>
+              <span>{NEW_STREAM_LABEL}</span>
             </div>
           )}
 

@@ -465,29 +465,34 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
-### 2026-09-11 — The navigation's plus says what it starts
+### 2026-09-11 — The navigation's plus says what it starts, and it starts a work stream
 
 **What changed:** The `+` in the navigation titlebar and its twin in the rail
 are wrapped in `Tip` — below the titlebar's, to the right of the rail's, where
-the tooltip covers the pane instead of the row under it. Both take their name
-from one value, `newStreamLabel`, which is also their `aria-label`: **New chat**
-in the conversation-only shell, **New work stream** in the full navigation, where
-the action row under the search already calls that route a work stream. Both
-links now state `className` as a string, from a `location.pathname` comparison
-the `returnTo` state was already making, instead of `NavLink`'s callback form.
+the tooltip covers the pane instead of the row under it. Both read
+`NEW_STREAM_LABEL`, one module constant that is also their `aria-label`, and it
+is **New work stream** in every shell. The GrokBot shell's draft row on that
+route, which stood in for the same control while it is open, reads the same
+constant instead of its own **New chat**. Both links now state `className` as a
+string, from a `location.pathname` comparison the `returnTo` state was already
+making, instead of `NavLink`'s callback form.
 
 **Why:** The plus is the whole control — an icon with no words beside it, in the
 one place a pointer looks first — and the only thing naming it was an
 `aria-label`, which a reader using a pointer never sees. Every other icon-only
 control in the shell answers a hover through `IconButton`, whose `label` is both
 names at once; these two links could not use `IconButton` and so had gone
-without. The name is derived rather than fixed because the same route is the
-product's New chat in one shell and its New work stream in the other, and a tip
-that disagrees with the row below it is worse than no tip.
+without. The name is one constant rather than a per-shell choice because the
+route makes one thing: a work stream. The conversation-only shell presents an
+open conversation as a chat, but what this control creates does not change with
+the shell around it, and a plus that opens **Start a new work stream** while
+calling itself New chat had the reader translating between two names for one
+action.
 
 **Consequences:** In the full navigation the titlebar's plus and the action row
-share an accessible name, which is honest — they are two ways to one route — but
-a test that reaches for that name now has to scope to the container it means.
+under the search share an accessible name, which is honest — they are two ways
+to one route — but a test that reaches for that name now has to scope to the
+container it means.
 
 **What a future change has to respect:** Radix's `Slot` merges the child's
 `className` into the trigger's, so a `NavLink` whose `className` is a callback
