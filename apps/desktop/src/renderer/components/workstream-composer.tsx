@@ -151,6 +151,7 @@ export function WorkstreamComposer({
   const [slashDismissed, setSlashDismissed] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingMentionConfirmation | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [deliveryMode, setDeliveryMode] = useState<WorkstreamMessageDeliveryMode>('steer');
   const readyAttachmentCount = attachments.filter((attachment) => attachment.status === 'ready').length;
   const participantIds = useMemo(() => new Set(workstream.participants.map((person) => person.id)), [workstream.participants]);
   const candidates = useMemo<MentionCandidate[]>(() => [{
@@ -345,18 +346,26 @@ export function WorkstreamComposer({
         text: trimmed,
         mentions: submitted.mentions,
         members: nonparticipants,
-        ...(workstream.harnessStatus === 'running' ? { deliveryMode: 'queue' as const } : {}),
+        deliveryMode,
       });
       return;
     }
     const mentions = submitted.mentions;
     const revision = draftRevisionRef.current;
-    const submittedDeliveryMode = workstream.harnessStatus === 'running' ? 'queue' as const : undefined;
+    // The server owns whether a loop is executing by the time this command
+    // commits. Always carry the person's intent: a cached or just-stale
+    // `harnessStatus` must not silently turn one participant's steer into the
+    // default queue mode while another participant is finishing a step.
+    const submittedDeliveryMode = deliveryMode;
     resetDraft();
+    setDeliveryMode('steer');
     try {
       await onSend(trimmed, mentions, undefined, submittedDeliveryMode);
     } catch {
       restoreDraft(trimmed, mentions, revision);
+      if (draftRevisionRef.current === revision && submittedDeliveryMode) {
+        setDeliveryMode(submittedDeliveryMode);
+      }
     }
   };
 
@@ -367,6 +376,7 @@ export function WorkstreamComposer({
     setConfirming(true);
     setPendingConfirmation(null);
     resetDraft();
+    setDeliveryMode('steer');
     try {
       await onSend(
         submitted.text,
@@ -376,6 +386,9 @@ export function WorkstreamComposer({
       );
     } catch {
       restoreDraft(submitted.text, submitted.mentions, revision);
+      if (draftRevisionRef.current === revision && submitted.deliveryMode) {
+        setDeliveryMode(submitted.deliveryMode);
+      }
     } finally {
       setConfirming(false);
     }
@@ -482,20 +495,36 @@ export function WorkstreamComposer({
         placeholder={placeholder}
         ref={textareaRef}
         shouldSubmitOnEnter={() => mentionQuery === null}
-        submitAccessory={workstream.harnessStatus === 'running'
-          ? (
-              <div className="message-delivery-controls">
-                <Button
-                  className="stop-button"
-                  disabled={workstream.stopRequested}
-                  onClick={() => void onStop()}
-                >
-                  <Square fill="currentColor" size={9} />
-                  {workstream.stopRequested ? 'Stopping after this response…' : 'Stop'}
-                </Button>
-              </div>
-            )
-          : undefined}
+        submitAccessory={(
+          <div aria-label="Message delivery" className="message-delivery-controls" role="group">
+            <button
+              aria-pressed={deliveryMode === 'steer'}
+              className="message-delivery-mode"
+              onClick={() => setDeliveryMode('steer')}
+              type="button"
+            >
+              Steer active work
+            </button>
+            <button
+              aria-pressed={deliveryMode === 'queue'}
+              className="message-delivery-mode"
+              onClick={() => setDeliveryMode('queue')}
+              type="button"
+            >
+              Queue for later
+            </button>
+            {workstream.harnessStatus === 'running' && (
+              <Button
+                className="stop-button"
+                disabled={workstream.stopRequested}
+                onClick={() => void onStop()}
+              >
+                <Square fill="currentColor" size={9} />
+                {workstream.stopRequested ? 'Stopping after this response…' : 'Stop'}
+              </Button>
+            )}
+          </div>
+        )}
         submitDisabled={sendBlocked || uploading || (!text.trim() && readyAttachmentCount === 0)}
         submitLabel={sendBlocked ? `${submitLabel}, available once Rally connects` : submitLabel}
         submitting={sending}

@@ -4350,6 +4350,20 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .model-selector-item > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-selector-item > svg { color: var(--av-sys-color-accent-base); flex: 0 0 auto; }
 .message-delivery-controls { align-items: center; display: flex; gap: 2px; }
+.message-delivery-mode {
+  background: transparent;
+  border: 0;
+  border-radius: var(--av-sys-size-radius-md);
+  color: var(--av-sys-color-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10.5px;
+  min-height: 28px;
+  padding: 0 7px;
+}
+.message-delivery-mode[aria-pressed='true'] { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+.message-delivery-mode:hover,
+.message-delivery-mode:focus-visible { color: var(--av-sys-color-text-default); }
 .stop-button { background: transparent; border-color: transparent; color: var(--av-sys-color-text-muted); font-size: 10.5px; }
 .composer-send { align-items: center; background: var(--av-cmp-composer-send-background); border-radius: var(--av-cmp-composer-send-radius); color: var(--av-cmp-composer-send-foreground); display: flex; height: 28px; justify-content: center; width: 28px; }
 .composer-error-slot { padding-top: 7px; }

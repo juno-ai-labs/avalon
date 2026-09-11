@@ -142,7 +142,7 @@ describe('running work-stream message delivery', () => {
     expect(acceptedMessageOverlayDeliveryState('canonical', 'queue')).toBeUndefined();
   });
 
-  it('queues a message for the in-flight loop without a delivery dropdown', async () => {
+  it('lets a participant explicitly queue behind the in-flight loop', async () => {
     const onSend = vi.fn(async () => undefined);
     render(
       <MemoryRouter>
@@ -165,7 +165,7 @@ describe('running work-stream message delivery', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.queryByRole('combobox', { name: 'Message delivery' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Queue for later' }));
     const composer = screen.getByRole('textbox', { name: 'Message the work stream' });
     fireEvent.change(composer, { target: { value: 'Do this after the current loop stops' } });
     fireEvent.keyDown(composer, { key: 'Enter' });

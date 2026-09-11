@@ -836,8 +836,12 @@ persistent loop next becomes idle; promotion wakes that same loop rather than
 creating another one. If failure or stop prevents a steer boundary, the input
 falls forward to the next idle activation and is never lost. Multiple inputs
 remain distinct; no later steer overwrites an earlier one.
-While the loop is executing, Electron always admits a newly composed message
-as `queue`. Slack and other external producers still send `steer` when they
+Electron carries an explicit delivery intent on every newly composed message,
+even when its local run status says the loop is idle: the object owns the actual
+execution state by the time admission commits, so a stale client must not erase
+a participant's steering choice. Each composer defaults independently to
+`steer`; a person may choose `queue`, and either choice resets only after that
+send is accepted. Slack and other external producers also send `steer` when they
 mean a safe-step interruption. The pending set is painted as a list attached
 to the top of the composer — slightly inset, overlapping the input — with the
 author's avatar and a hover drag handle. Reorder is a REST `PUT` of the full
@@ -1703,6 +1707,32 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-11 — A participant's delivery intent reaches the loop unchanged
+
+**What changed:** Every desktop composer now sends an explicit `steer` or
+`queue` intent regardless of its cached run status. `steer` is the independent
+default for each composer; `queue` remains an explicit choice. Confirmation and
+failure preserve the submitted choice, and a successful send resets that
+composer to `steer`. The existing object-owned pending-input order and
+safe-step promotion remain the delivery authority.
+
+**Why:** In a multi-human room, one desktop can observe `running` while another
+still renders an older state. The removed control had made the first client
+hard-code `queue` and the second omit a mode that the server defaulted to
+`queue`, so both participants could unintentionally defer messages while
+external producers still steered. That made delivery behavior depend on a
+client cache instead of the single durable loop.
+
+**Considered and rejected:** Making every message an unconditional steer would
+remove intentional queueing. Inferring intent from the server's current state
+would still conflate two separate questions: whether an execution is active and
+whether this participant wants to join it at the next safe boundary.
+
+**Consequences:** Steering works for every participant and across stale views;
+queueing stays deliberate. The server continues to serialize all pending inputs
+and may fall a steer forward to the next idle activation when no safe step is
+reached.
 
 ### 2026-09-11 — A read is acknowledged by the conversation that was read
 

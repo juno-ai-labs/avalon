@@ -59,7 +59,12 @@ const workstream: WorkstreamDetail = {
 };
 
 function renderComposer(
-  onSend: (text: string, mentions: MentionIdentity[], confirmedParticipantUserIds?: string[]) => Promise<void> = vi.fn(async () => undefined),
+  onSend: (
+    text: string,
+    mentions: MentionIdentity[],
+    confirmedParticipantUserIds?: string[],
+    deliveryMode?: 'steer' | 'queue',
+  ) => Promise<void> = vi.fn(async () => undefined),
   sending = false,
   onAttach: (files: FileList | File[]) => void = vi.fn(),
   detail: WorkstreamDetail = workstream,
@@ -219,7 +224,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
-    await waitFor(() => expect(onSend).toHaveBeenCalledWith('', [], undefined, undefined));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('', [], undefined, 'steer'));
   });
 
   it('clears immediately while a message is still being sent', async () => {
@@ -233,7 +238,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.change(composer, { target: { value: 'Send this now' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
-    expect(onSend).toHaveBeenCalledWith('Send this now', [], undefined, undefined);
+    expect(onSend).toHaveBeenCalledWith('Send this now', [], undefined, 'steer');
     expect(composer).toHaveValue('');
     finishSend?.();
   });
@@ -248,20 +253,32 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.change(composer, { target: { value: 'Second queued message' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
-    expect(onSend).toHaveBeenNthCalledWith(1, 'First queued message', [], undefined, undefined);
-    expect(onSend).toHaveBeenNthCalledWith(2, 'Second queued message', [], undefined, undefined);
+    expect(onSend).toHaveBeenNthCalledWith(1, 'First queued message', [], undefined, 'steer');
+    expect(onSend).toHaveBeenNthCalledWith(2, 'Second queued message', [], undefined, 'steer');
     expect(composer).toHaveValue('');
   });
 
-  it('sends queue while a loop is running and does not offer a delivery dropdown', async () => {
+  it('carries steer intent even from a stale idle view and still permits explicit queueing', async () => {
     const onSend = vi.fn(async () => undefined);
-    renderComposer(onSend, false, vi.fn(), { ...workstream, harnessStatus: 'running' });
+    renderComposer(onSend);
 
-    expect(screen.queryByRole('combobox', { name: 'Message delivery' })).not.toBeInTheDocument();
+    const steer = screen.getByRole('button', { name: 'Steer active work' });
+    const queue = screen.getByRole('button', { name: 'Queue for later' });
     const composer = screen.getByLabelText('Message the work stream');
-    fireEvent.change(composer, { target: { value: 'After this run' } });
+    expect(steer).toHaveAttribute('aria-pressed', 'true');
+
+    fireEvent.change(composer, { target: { value: 'Account for this now' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
-    await waitFor(() => expect(onSend).toHaveBeenCalledWith('After this run', [], undefined, 'queue'));
+    await waitFor(() => expect(onSend)
+      .toHaveBeenNthCalledWith(1, 'Account for this now', [], undefined, 'steer'));
+
+    fireEvent.click(queue);
+    fireEvent.change(composer, { target: { value: 'Handle this after the run' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await waitFor(() => expect(onSend)
+      .toHaveBeenNthCalledWith(2, 'Handle this after the run', [], undefined, 'queue'));
+
+    expect(steer).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('restores a failed message unless the user has started a new draft', async () => {
@@ -381,10 +398,15 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(screen.queryByRole('listbox', { name: 'Composer commands' })).not.toBeInTheDocument();
   });
 
-  it('confirms every mentioned nonparticipant together and sends their IDs without a preliminary add', async () => {
+  it('preserves explicit queue intent while confirming mentioned nonparticipants', async () => {
     const onSend = vi.fn(async () => undefined);
-    renderComposer(onSend, false, undefined, { ...workstream, scope: 'personal' });
+    renderComposer(onSend, false, undefined, {
+      ...workstream,
+      scope: 'personal',
+      harnessStatus: 'running',
+    });
 
+    fireEvent.click(screen.getByRole('button', { name: 'Queue for later' }));
     fireEvent.change(screen.getByLabelText('Message the work stream'), {
       target: { value: 'Please ask @Bob Builder and @Cara Chen to review.' },
     });
@@ -403,9 +425,11 @@ describe('WorkstreamComposer mention confirmation', () => {
       'Please ask @Bob Builder and @Cara Chen to review.',
       [],
       ['user-2', 'user-3'],
-      undefined,
+      'queue',
     ));
     expect(screen.getByLabelText('Message the work stream')).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Steer active work' }))
+      .toHaveAttribute('aria-pressed', 'true');
   });
 
   it.each(['send button', 'Enter'] as const)(
@@ -430,7 +454,7 @@ describe('WorkstreamComposer mention confirmation', () => {
         'Please ask @Bob Builder.',
         [],
         ['user-2'],
-        undefined,
+        'steer',
       ));
     },
   );
@@ -444,7 +468,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
     await waitFor(() => expect(onSend).toHaveBeenCalledWith(
-      'Please ask @Bob Builder.', [], undefined, undefined,
+      'Please ask @Bob Builder.', [], undefined, 'steer',
     ));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
@@ -601,7 +625,7 @@ describe('WorkstreamComposer mention confirmation', () => {
 
     expect(composer).toHaveValue('@Rally ');
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
-    await waitFor(() => expect(onSend).toHaveBeenCalledWith('@Rally', [], undefined, undefined));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('@Rally', [], undefined, 'steer'));
   });
 
   it('wraps to the last candidate when the highlight is walked up off the top', async () => {
@@ -669,7 +693,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
     await waitFor(() => expect(onSend).toHaveBeenCalledWith(
-      '@Adam looks good.', [], undefined, undefined,
+      '@Adam looks good.', [], undefined, 'steer',
     ));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
@@ -745,7 +769,7 @@ describe('WorkstreamComposer draft caching', () => {
     fireEvent.change(textarea, { target: { value: 'Ship it' } });
     fireEvent.keyDown(textarea, { key: 'Enter' });
     await waitFor(() => expect(onSend).toHaveBeenCalledWith(
-      'Ship it', [], undefined, undefined,
+      'Ship it', [], undefined, 'steer',
     ));
     cleanup();
 

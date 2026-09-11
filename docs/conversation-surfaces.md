@@ -186,7 +186,11 @@ control or a bleed derived from something else, and says which in a comment.
 Sharing stops at product semantics. Work streams retain participants, unread,
 resource, run, and steering controls. The in-flight pending queue is one of
 those: it attaches to the work-stream composer, not to the shared
-`ComposerInput`. An automation's page keeps its lifecycle controls (apply,
+`ComposerInput`. The work-stream composer also owns delivery intent. Every
+participant gets an independent `steer` default and may deliberately choose
+`queue`; the choice travels even across a stale local run status because the
+conversation object, not the renderer, owns whether there is active work to
+steer. An automation's page keeps its lifecycle controls (apply,
 pause, resume, delete, run now, the run-history dialog) outside the feed rather than
 inside it. Neither host may smuggle those controls through an optional common
 prop.
@@ -502,6 +506,30 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-11 — Steering is a participant choice, not a cached run-state side effect
+
+**What changed:** The work-stream composer again shows a delivery control. Each
+mounted composer defaults to **Steer active work**, may be changed to **Queue for
+later**, carries that choice through participant confirmation, restores it with
+a failed draft, and resets only its own choice after a successful send. The
+choice is sent even when the local detail says no run is active.
+
+**Why:** Multi-human use exposed two contradictory surfaces over one durable
+loop: a client rendering `running` hard-coded queue, while a stale client omitted
+the field and reached the server's queue default. Human-only messages could
+still appear immediately, making the same Send gesture look random by author
+and wording. Delivery intent belongs to the person composing the message; run
+state belongs to the server.
+
+**Considered and rejected:** Hiding the choice and making queue universal
+preserved the broken behavior. Making steer universal removed the legitimate
+"after this run" operation. Moving the control into `ComposerInput` would leak
+work-stream loop semantics into automation conversations.
+
+**Consequences:** Multiple humans can steer independently without racing their
+local status caches, while deliberate queueing and the shared server-owned order
+remain available. The control stays a work-stream adapter concern.
 
 ### 2026-09-11 — A rail fades what it cannot fit, and only when it cannot fit it
 
