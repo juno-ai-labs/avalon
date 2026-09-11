@@ -131,13 +131,29 @@ describe("tool schema sanitization", () => {
     // `"/"`, `". "` and `".000001"` in it for thousands of refused calls, or
     // the timestamp of its own previous post, which is how it came to reply to
     // itself. Bind 14 rewrites that declaration to `anyOf` with a null branch,
-    // so the whole registry is now asserted, and a bind release that collapsed
-    // again fails here naming the tool and the parameter rather than in a
-    // channel.
+    // so the whole registry is now asserted, nested declarations included
+    // (`droppedNullableBranches` walks `items`, `$defs` and composition
+    // branches and names each finding by its dotted path), and a bind release
+    // that collapsed again fails here naming the tool and the parameter rather
+    // than in a channel.
+    //
+    // The residue is asserted exactly rather than as zero. Bind 14 rewrites a
+    // nullable SINGLE type; a genuine multi-type union with `null` still
+    // collapses, because no union of scalar branches has been measured
+    // accepted by every provider. Three authored declarations are that shape
+    // and are listed by name: a Sheets cell is a string, number, boolean or
+    // null, and an artifact query parameter is a string, number or null. A
+    // new entry here is a new parameter the model cannot say "none" to, and
+    // it needs a spelling of its own or a measured union shape; an entry that
+    // disappears is one Bind started delivering, and the list shrinks with it.
     const dropped = everyAuthoredToolSchema().flatMap(({ name, schema }) =>
       droppedNullableBranches(schema).map((finding) => `${name}: ${finding}`));
 
-    expect(dropped).toEqual([]);
+    expect(dropped).toEqual([
+      "workstream.artifacts.query:query_artifact_data: params.items: authored-null-branch-not-delivered",
+      "google.sheets.update_values: values.items.items: authored-null-branch-not-delivered",
+      "google.sheets.append_values: values.items.items: authored-null-branch-not-delivered",
+    ]);
   });
 
   it("leaves no tool with a composition branch the sanitizer strips a constraint from", () => {

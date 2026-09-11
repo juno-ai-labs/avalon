@@ -3,8 +3,10 @@
 > Created 2026-09-11.
 >
 > A scheduled Sidekick that exists to post something somewhere posts it there,
-> once, every time, or says why it could not. Companion:
-> [`research.md`](research.md), the production investigation this PRD answers.
+> once, every time, or says why it could not. Companions:
+> [`research.md`](research.md), the production investigation this PRD answers,
+> and [`design.md`](design.md), the buildable contract for the widened
+> `sidekick_post_result` tool.
 > Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 > Owning documents: [`automation-lifecycle.md`](../../automation-lifecycle.md),
@@ -246,20 +248,42 @@ the loop is the transport.
 
 The run gains one typed destination on `sidekick_post_result` and loses two
 tools it could never use unattended. The `# Result delivery` prompt section
-lists every configured destination by name and kind and keeps its empty arm
-verbatim for a Sidekick with none. A validation-class refusal now reads as a
-failed argument with the field named and the provider's reason; the model is
+lists every configured destination by key, kind and label and keeps its empty
+arm verbatim for a Sidekick with none. A validation-class refusal now reads as
+a failed argument with the field named and the provider's reason; the model is
 told to correct once and otherwise report. Everything else the run may do is
 unchanged.
 
+The complete contract for the changed tool is [`design.md`](design.md): the
+plugin's id, wire prefix, availability and system message; the tool's
+capability, `write` mode, idempotency class and timeout; the exact input shape
+(`text` required; `destination` optional and nullable, a key copied from the
+task context, refused by name when ambiguous or unknown); the delivered and
+replayed success object with the next-step ids; every failure with its stable
+code, model-visible sentence and forwarded detail keys, and which of them the
+model corrects, retries once, or stops on; what is model choice versus
+host-derived; and the acceptance tests and evaluations that prove a medium
+model can use it. In short: the model chooses the text and, when there is
+more than one, the destination; the host owns the channel, the token, the
+idempotency key and the delivery record, and never resends a delivery whose
+answer was lost.
+
 ## Rollout
 
-- **Flag:** to be confirmed with the product owner before the first
-  implementing change; the question was not answerable while this PRD was
-  written. Recommendation: the schema, classification, ceiling, and failure
-  visibility changes are corrections and ship unflagged; typed Slack channel
-  destinations ship behind `sidekick-typed-destinations-enabled`, default off,
-  registered in Ace in the phase that introduces them.
+- **Flag, phase 0 (answered).** The Bind 14 upgrade and the widened guard are
+  corrections to what the model is shown, not a feature a person can see, and
+  they shipped unflagged on 2026-09-11 at the product owner's direction: the
+  owner asked for the sanitizer change in Bind and for this repository to
+  adopt the release, which is why `state.md` is `in progress` while the rest
+  of the plan is not started. The `thread_ts` pattern and the provider error
+  code log line are corrections of the same kind and ship unflagged.
+- **Flag, phases 1 and 2 (open).** Failure pausing, ceilings and typed Slack
+  channel destinations are behavior a person sees. Whether they ship behind
+  `sidekick-typed-destinations-enabled`, default off and registered in Ace in
+  the phase that introduces them, is the product owner's call and is recorded
+  here as not yet given. No implementing change for those phases lands before
+  it is, and the answer is written into this section, either way, in the
+  change that lands it.
 - **Order.** Phase 0, the same day: pause "Hourly joke in #general"; adopt
   Bind 14 and widen the sweep per decision 3 (shipped alongside this PRD); add
   the `thread_ts` pattern; log `provider_error_code`. Phase 1: decisions 4, 5,

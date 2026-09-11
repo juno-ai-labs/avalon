@@ -993,10 +993,14 @@ fixture table instead, where it is reviewable.
 the wire, so the 28 parameters the entries below counted as "still collapsed"
 (Linear 13, Granola 7, Slack 6, Notion 2) now reach the model with their null
 branch, and the registry-wide assertion in
-`apps/api/test/tool-schema-sanitization.test.ts` reports zero dropped branches
-across every connector. The comments on Slack's `optionalId` and on
-`GOOGLE_PAGE_TOKEN_SCHEMA` say so instead of describing the collapse as
-current.
+`apps/api/test/tool-schema-sanitization.test.ts`, which now walks nested
+declarations too, reports exactly three dropped branches across every
+connector and names them: the cell values of Google's `sheets.update_values`
+and `sheets.append_values`, and the artifact query tool's `params`, each a
+multi-type union with `null` that Bind 14 still collapses because no union of
+scalar branches has been measured on every provider. The comments on Slack's
+`optionalId` and on `GOOGLE_PAGE_TOKEN_SCHEMA` say so instead of describing
+the collapse as current.
 
 **Why:** The backlog was left for per-parameter decisions about what `null`
 means for an id or a filter. That reasoning still belongs in each description,
