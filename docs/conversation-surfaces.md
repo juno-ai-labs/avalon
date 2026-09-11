@@ -372,6 +372,35 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-10 — The capsule shows the model control again, as a pill
+
+**What changed:** The message capsule renders the developer-mode model control
+beside its attachment button, in both of the control's shapes, and its leading
+grid column sizes to its contents instead of a fixed 42px. This reverses the
+model half of the 2026-09-01 capsule entry below, which omitted the control; the
+dedicated mention and microphone-menu controls stay omitted. It also supersedes
+the sentence in the entry directly below saying the model picker is "still the
+menu's second section where it renders": the picker has left that menu, so with
+**Teach a task** gone the plus menu now holds its attachment item alone in a
+debug build too.
+
+**Why:** The control was not removed by that entry so much as relocated — the
+choice moved into the composer-actions menu while the read-only pill stayed in
+the toolbar layout, so one control had two homes and the answer to "which model
+is this?" moved out of the composer at the moment it stopped being a question. A
+substream's composer is capsule-shaped like every conversation, so it had
+nowhere to show a pin at all, and substreams can now carry one.
+
+**Considered and rejected:** Leaving the choice in the actions menu and adding
+the pill only for the locked state. That keeps two homes and makes the read-only
+pill more prominent than the decision it records.
+
+**Consequences:** A capsule with no model control is pixel-identical — the
+attachment button plus its 7px padding either side is exactly the 42px the
+column was fixed at. One with a control spends its label's width out of the text
+column. Both were checked in a real window, on the launcher, an existing work
+stream, and a substream.
+
 ### 2026-09-10 — The dividers say what they are, and what a double-click does
 
 **What changed:** Every resize handle in the shell now shows a two-line tooltip
