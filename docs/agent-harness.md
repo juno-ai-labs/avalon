@@ -1,6 +1,6 @@
 # Agent harness
 
-Rally's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. The owning `SubstreamAgent` Durable Object hosts every work-stream loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite; there is no pre-cutover drain or Workflow fallback for this surface. WorkspaceDO is authoritative for workspace connector/resource/memory/policy state and cross-work-stream products; regional D1 retains identity, membership, routing, migration and operational records, while R2 stores large outputs. Separate non-workstream loops may still use Cloudflare Workflows.
+Rally's production loop is an adapter over `@juno-ai/bind` 14.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. The owning `SubstreamAgent` Durable Object hosts every work-stream loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite; there is no pre-cutover drain or Workflow fallback for this surface. WorkspaceDO is authoritative for workspace connector/resource/memory/policy state and cross-work-stream products; regional D1 retains identity, membership, routing, migration and operational records, while R2 stores large outputs. Separate non-workstream loops may still use Cloudflare Workflows.
 
 Each substream owns one persistent server-side, tool-using loop. A run is a
 subordinate execution receipt for one activation of that loop; it never creates
@@ -1274,6 +1274,49 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-11 — Bind 14: a nullable property reaches the model as a union
+
+**What changed:** `@juno-ai/bind` moves from 13.0.0 to 14.0.0, whose one
+behavioral change is in `sanitizeToolSchema`: a `type` array of exactly one
+scalar type plus `"null"` is rewritten to `anyOf: [{type: T, …}, {type: "null"}]`
+instead of collapsed to `type: T` with "Accepts T or null." appended to the
+description. The type-bearing keywords move onto the typed branch, annotations
+stay on the node, and the branch re-enters the walk so the retype-to-object,
+pattern, enum and `required` transforms still apply to it. The five shapes
+that keep the collapse, a multi-type union the common one, are listed once
+under Principle 1 of [`agent-tools.md`](agent-tools.md). The loop patch this
+repository carries (`acceptMessage`,
+`beforeToolMessageAccepted`, `onStepSettled`) targets files that are
+byte-identical between 13.0.0 and 14.0.0; it was regenerated rather than
+renamed, since pnpm keys a patch by exact version and the old file's hunks were
+inexact (below). The lockfile changes only the Bind entries.
+
+**Why:** The collapse left a caller unable to say "none" in the half of a
+declaration it treats as binding, and it had been measured twice: on a Drive
+cursor, and then on `send_message.thread_ts`, where a scheduled Sidekick
+invented values for thousands of refused calls or replied to its own previous
+post. The `agent-tools.md` entry of the same date and `research.md` in
+[the Sidekick delivery PRD](PRDs/2026-09-11_sidekick-delivery-reliability/research.md)
+hold the record. Every consumer of Bind has the same defect, so the rewrite
+belongs in Bind rather than in this repository's pre-sanitizer corrector, and
+`droppedNullableBranches` becomes the guard that Bind keeps delivering it.
+
+**What a future change has to respect:** `apps/api/test/tool-schema-sanitization.test.ts`
+now asserts the dropped null branches over every declaration of every authored
+tool, nested ones included, as an exact list: three multi-type unions with
+`null` that Bind 14 still collapses (two Sheets cell values and the artifact
+query's `params`) and nothing else, so a Bind upgrade that collapsed again
+fails there naming the tool and the dotted path, and a new multi-type union
+has to be added by name. A Bind upgrade regenerates `patches/@juno-ai__bind@<version>.patch`
+from a `git diff` rather than renaming it. The 13.0.0 file's hunk line counts
+were inexact: GNU `patch` needed fuzz to apply it to 13.0.0 itself, and pnpm's
+applier had been tolerating that. The loop files did not change between 13.0.0
+and 14.0.0, so a rename would have worked by accident; a regenerated diff
+states exact hunks against the version it names, and is what the next upgrade
+should produce too. And the lockfile is edited for the Bind entries alone; a
+non-frozen install re-resolves every `latest` catalog entry and drags unrelated
+majors along.
 
 ### 2026-09-11 — Trigger content carries a source label again
 
