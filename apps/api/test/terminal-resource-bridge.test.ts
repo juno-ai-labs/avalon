@@ -205,6 +205,13 @@ function fixture(
       testTerminalPortFactory(objectStore),
       inObjectResourceAttacher,
     ),
+    /** A bridge whose publications land in `publicationWorkstreamId`. */
+    bridgeFor: (publicationWorkstreamId: string | null) => createTerminalResourceBridge(
+      env,
+      testTerminalPortFactory(objectStore),
+      inObjectResourceAttacher,
+      publicationWorkstreamId,
+    ),
   };
 }
 
@@ -574,6 +581,94 @@ describe("Terminal resource bridge", () => {
       { version: 2, author_kind: "agent", author_run_id: R, author_user_id: null,
         cause: "published", storage_kind: "object" },
     ]);
+  });
+
+  it("refreshes the owning room's document instead of forking a private copy", async () => {
+    // A work-stream-scoped Sidekick runs in its own conversation under the
+    // automation, so its tool context names that conversation and not the room.
+    const SIDEKICK = "10000000-0000-4000-8000-00000000000a";
+    const state = fixture();
+    const roomCopy = await state.bridge.publishResource(
+      context,
+      { filePath: "open-pr-dashboard.html", displayName: "Open PR dashboard" },
+      new TextEncoder().encode("<h1>First</h1>"),
+    );
+    // The Sidekick that room owns refreshes the same path on its schedule.
+    // Without the redirect its identity is `terminal:<sidekick>:<path>`, which
+    // can never collide with the room's, so the refresh silently becomes a
+    // second document at version 1 and the room's copy is never touched again.
+    const refreshed = await state.bridgeFor(S).publishResource(
+      { ...context, workstreamId: SIDEKICK, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: "open-pr-dashboard.html" },
+      new TextEncoder().encode("<h1>Second</h1>"),
+    );
+
+    expect(refreshed.resourceId).toBe(roomCopy.resourceId);
+    expect(state.database.prepare("SELECT COUNT(*) AS count FROM resources").get())
+      .toEqual({ count: 1 });
+    const row = state.database.prepare(
+      "SELECT provider_resource_id, current_version FROM resources WHERE id = ?",
+    ).get(String(roomCopy.resourceId)) as {
+      provider_resource_id: string;
+      current_version: number;
+    };
+    expect(row.provider_resource_id).toBe(`terminal:${S}:open-pr-dashboard.html`);
+    expect(row.current_version).toBe(2);
+  });
+
+  it("links a redirected publication to the producing run as well as the owning room", async () => {
+    // Visibility is resolved from the links the run's own object holds, so a
+    // document linked only to the room is one its own run cannot read back:
+    // publish then import on the id just returned would answer
+    // `resource_not_found`, and "publish a refresh, then diff it against the
+    // last one" is the natural shape of the work these Sidekicks do.
+    const SIDEKICK = "10000000-0000-4000-8000-00000000000b";
+    const produced: string[] = [];
+    const state = fixture(async (input) => { produced.push(input.workstreamId); });
+    const published = await state.bridgeFor(S).publishResource(
+      { ...context, workstreamId: SIDEKICK },
+      { filePath: "open-pr-dashboard.html" },
+      new TextEncoder().encode("<h1>Refreshed</h1>"),
+    );
+
+    // The room owns the identity...
+    const row = state.database.prepare(
+      "SELECT provider_resource_id FROM resources WHERE id = ?",
+    ).get(String(published.resourceId)) as { provider_resource_id: string };
+    expect(row.provider_resource_id).toBe(`terminal:${S}:open-pr-dashboard.html`);
+    // ...and the producing conversation still holds a link, through the
+    // in-object attacher, so the run can resolve what it just wrote.
+    expect(produced).toEqual([SIDEKICK]);
+  });
+
+  it("keeps an internal capture in the run's own conversation when publication is redirected", async () => {
+    // The command-log and checkout-backup captures name their own namespace
+    // rather than deriving one from a path. They are recovery artifacts the run
+    // never chose to deliver, so the redirect must not carry them into the
+    // owning room's resource list along with the documents it did publish.
+    const SIDEKICK = "10000000-0000-4000-8000-00000000000a";
+    const attached: { workstreamId: string; resourceId: string }[] = [];
+    const state = fixture(async (input) => {
+      attached.push({ workstreamId: input.workstreamId, resourceId: input.resourceId });
+    });
+    const sidekickContext = { ...context, workstreamId: SIDEKICK };
+    const capture = await state.bridgeFor(S).publishResource(
+      sidekickContext,
+      {
+        providerResourceId: `terminal-command-log:${I}`,
+        filePath: `.rally/logs/${I}.log`,
+        displayName: "Terminal command log",
+      },
+      new TextEncoder().encode("secret stdout the delivered result left out\n"),
+    );
+
+    const row = state.database.prepare(
+      "SELECT provider_resource_id FROM resources WHERE id = ?",
+    ).get(String(capture.resourceId)) as { provider_resource_id: string };
+    expect(row.provider_resource_id).toBe(`terminal-command-log:${I}`);
+    // Linked to the Sidekick's own conversation. A redirected link would have
+    // gone cross-object to the room and never reached this in-object attacher.
+    expect(attached).toEqual([{ workstreamId: SIDEKICK, resourceId: String(capture.resourceId) }]);
   });
 
   it("republishes the same sandbox path onto the same resource instead of a sibling", async () => {

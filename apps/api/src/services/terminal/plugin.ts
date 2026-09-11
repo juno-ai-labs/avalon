@@ -64,6 +64,12 @@ export async function createAvalonTerminalPlugin(
   options: {
     provider?: TerminalSandboxProvider;
     readGateway?: TerminalGitHubReadGateway;
+    /**
+     * The room a work-stream-scoped Sidekick publishes into. See
+     * `createTerminalResourceBridge`: a Sidekick's sandbox is its own, but its
+     * published documents belong to the room that owns it.
+     */
+    publicationWorkstreamId?: string | null;
   } = {},
 ): Promise<HarnessPlugin | null> {
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
@@ -222,7 +228,7 @@ export async function createAvalonTerminalPlugin(
     terminalPort,
     coordinator,
     provider,
-    createTerminalResourceBridge(env, terminalPort, inObjectResourceAttacher),
+    createTerminalResourceBridge(env, terminalPort, inObjectResourceAttacher, options.publicationWorkstreamId ?? null),
     createRepositoryPublisher(env, createGitHubRestPublicationGateway(env), terminalPort),
     createTerminalRepositorySelector(
       env,
