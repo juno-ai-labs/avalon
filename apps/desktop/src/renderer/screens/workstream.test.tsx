@@ -28,7 +28,7 @@ import {
   resourceVersionsQueryKey,
   workspaceMemberFromSession,
 } from './workstream';
-import { conversationActivityRow } from './conversation-surface';
+import { conversationActivityRow, conversationShowsStoppingRow } from './conversation-surface';
 import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
 import { WorkstreamComposer } from '../components/workstream-composer';
 
@@ -952,45 +952,39 @@ describe('orderedTranscriptOwnsRunTiming', () => {
   });
 });
 
+describe('conversationShowsStoppingRow', () => {
+  it('acknowledges a stop only while the run it would be waiting on is live', () => {
+    expect(conversationShowsStoppingRow('running', true)).toBe(true);
+    expect(conversationShowsStoppingRow('running', false)).toBe(false);
+    expect(conversationShowsStoppingRow('running', undefined)).toBe(false);
+    // The loop clears `stop_requested_at` as it goes idle, but a settled run
+    // can still be read back before the next snapshot lands. A stopping row
+    // over a run that has already stopped promises a wait that is over.
+    expect(conversationShowsStoppingRow('stopped', true)).toBe(false);
+    expect(conversationShowsStoppingRow('completed', true)).toBe(false);
+  });
+});
+
 describe('conversationActivityRow', () => {
   const running = {
     status: 'running' as const,
-    stopRequested: false,
     compactingThisRun: false,
     orderedOwnsRunTiming: false,
     runTiming: { active: true, durationMs: 0, startedAt: Date.parse('2026-08-05T12:00:00.000Z') },
   };
 
-  it('answers a pending stop ahead of every other thing the run is doing', () => {
-    // Stop lands at the loop's next safe step boundary, so the response in
-    // flight and its tools keep going — eleven seconds, in the production run
-    // this came from. Whatever else the slot could say during those seconds,
-    // the one question the reader is holding is whether their click arrived.
-    expect(conversationActivityRow({ ...running, stopRequested: true })).toBe('stopping');
-    expect(conversationActivityRow({
-      ...running, stopRequested: true, compactingThisRun: true,
-    })).toBe('stopping');
-    expect(conversationActivityRow({
-      ...running, stopRequested: true, orderedOwnsRunTiming: true, runTiming: null,
-    })).toBe('stopping');
-  });
-
-  it('keeps a stop that is no longer pending, or was never live, out of the slot', () => {
+  it('prefers compaction over the elapsed total, and only for a live run', () => {
+    expect(conversationActivityRow({ ...running, compactingThisRun: true })).toBe('compacting');
     expect(conversationActivityRow(running)).toBe('timing');
-    expect(conversationActivityRow({ ...running, stopRequested: undefined })).toBe('timing');
-    // The loop clears `stopRequested` as it goes idle, but a settled run can
-    // still be read back before the next snapshot lands. A stopping row over a
-    // run that has already stopped promises a wait that is over.
     expect(conversationActivityRow({
       ...running,
       status: 'completed',
-      stopRequested: true,
+      compactingThisRun: true,
       runTiming: { active: false, durationMs: 83_000 },
     })).toBe('timing');
   });
 
   it('leaves the elapsed total to the feed once the ordered transcript draws it', () => {
-    expect(conversationActivityRow({ ...running, compactingThisRun: true })).toBe('compacting');
     expect(conversationActivityRow({ ...running, orderedOwnsRunTiming: true })).toBeNull();
     expect(conversationActivityRow({ ...running, runTiming: null })).toBeNull();
   });
