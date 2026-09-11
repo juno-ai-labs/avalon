@@ -62,8 +62,16 @@ describe('no colour is written into app.css', () => {
 
   function literalColoursIn(css: string): string[] {
     const found: string[] = [];
-    for (const [, value] of css.replace(/\/\*[\s\S]*?\*\//gu, ' ').matchAll(/:\s*([^;{}]+)[;}]/gu)) {
+    for (const [, property, value] of css.replace(/\/\*[\s\S]*?\*\//gu, ' ').matchAll(/([a-z0-9-]+)\s*:\s*([^;{}]+)[;}]/gu)) {
       if (!value) continue;
+      // A mask is never painted: the compositor samples its alpha channel and
+      // throws the rest away, so a colour written into one cannot render wrong
+      // under another theme — which is the only thing this guard is about. The
+      // rails' clipped-line fade says `#000` to mean "fully opaque here", and
+      // the alternative that would satisfy a blind check, `currentColor`, is
+      // worse: it would couple how much of the line survives the mask to
+      // whatever alpha a text token happens to carry.
+      if (/(?:^|-)mask(?:-image)?$/u.test(property ?? '')) continue;
       // A token's own value is not a literal in this file — `themes.css` is
       // where colours are allowed to be written down.
       const outsideVar = value.replace(/var\([^)]*\)/gu, ' ');
@@ -207,6 +215,11 @@ describe('no colour is written into app.css', () => {
     expect(literalColoursIn('.a { border: 1px solid white; }')).toEqual(['white']);
     expect(literalColoursIn('.a { white-space: nowrap; border-top: 0; }')).toEqual([]);
     expect(literalColoursIn('.a { color: var(--av-sys-color-danger-base); }')).toEqual([]);
+    // Deliberate, per the exemption above — and only for the mask properties.
+    expect(literalColoursIn('.a { mask-image: linear-gradient(#000, transparent); }')).toEqual([]);
+    expect(literalColoursIn('.a { background-image: linear-gradient(#000, transparent); }')).toEqual(['#000']);
+    // A digit in the property name still leaves the declaration in scope.
+    expect(literalColoursIn('.a { --space-1: red; }')).toEqual(['red']);
   });
 });
 
