@@ -19,13 +19,13 @@ platform policies, not controls offered to the user.
 | `packages/contracts/src/substream-creation.ts` | Versioned recipes, frozen captures, context parts and preview contracts. |
 | `apps/api/src/services/substream-context.ts` | Static strategy, selector, transform and membership registries; platform policies; validation and hashes. |
 | `apps/api/src/services/substream-context-summary.ts` | Structured Gemini summary through the shared inference gateway. |
-| `apps/api/src/services/substream-creation-service.ts` | Authenticated prepare, confirm, cancel, archive and participant coordination. |
+| `apps/api/src/services/substream-creation-service.ts` | Authenticated prepare, confirm, cancel, archive and participant coordination, and the model pin confirmation writes onto the child. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Creation receipts, ready-child directory and authoritative private membership. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Frozen source export and immutable inert child seed. |
 | `apps/api/src/durable-objects/substream-context-transfer.ts` | Frame-sized initial-context snapshot transfer. |
 | `apps/api/src/services/substream-initial-context.ts` | Inert seed to model-context conversion. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | Main/child navigation, the creation state machine and its cache seeding, rename and archive dialogs. |
-| `apps/desktop/src/renderer/components/substream-launch.tsx` | The launch surface: branch provenance, the composer that starts a substream, and the optimistic turn while one is being created. |
+| `apps/desktop/src/renderer/components/substream-launch.tsx` | The launch surface: branch provenance, the composer that starts a substream, its model pin, and the optimistic turn while one is being created. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Renders that surface in place of the conversation's own three rows, and `branchProvenance`, which chooses the turns it fades. |
 | `apps/desktop/src/renderer/lib/launched-conversation.ts` | The optimistic opening transcript and the child detail both launchers seed. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Authoritative baseline, initial-context assembly and readiness. |
@@ -78,6 +78,19 @@ What sits above that composer is the difference between the two entry points:
 - **From the sidebar** — nothing, exactly as the work-stream launcher's body is
   empty. A substream started there branches from wherever the conversation has
   reached, so there is no particular moment to be looking at.
+
+The composer itself is the work-stream launcher's, and carries the same one
+control the launcher does: while Application → Developer → **Debug enabled** is
+on, a model pill beside the attachment button pins every run of the substream to
+one model ahead of the `agent-model-workstream` flag. It starts on **Default**
+and does not inherit the parent's pin — a substream is its own conversation with
+its own row, and every substream created before the pill existed follows the
+flag whatever its parent named, so seeding it from the parent would change that
+silently for work nobody was deciding about. The pin travels with the opening
+message on the confirmation, because it is part of the same act, and it cannot be
+changed afterwards: the created child shows the same pill locked, naming what it
+is running on. [`feature-flags.md`](feature-flags.md#a-conversations-own-model)
+owns the pin itself.
 
 Nothing is reserved while the surface is open: no operation, no child id, no
 model call. Leaving it before the first submit is a `setState`, and the draft
@@ -279,6 +292,16 @@ the first model context without becoming executable historical work.
   membership, then whether this work stream admits them — because the answer
   arrives as a sentence about the message ("add this person to the work stream
   first"), and a sentence about the message should not cost a substream.
+- **A substream's model pin is its own row's, written once.** Confirmation
+  writes it onto the child and never onto the parent, and a retry of a
+  confirmation that already reached `ready` replays its answer rather than
+  re-provisioning — so the pin a run resolves is the one the first confirmation
+  carried. A child that names nothing is unpinned and follows the flag, which is
+  what every substream created before the pin existed does. The optimistic seed
+  states it too, rather than letting it arrive with the parent's fields it is
+  built by spreading: a child of a pinned work stream that inherited the pin
+  there would show the parent's model as its own for the frames before the
+  room's snapshot lands, which is the inheritance this rule refuses.
 - Feed and model use the same installed selected parts. The complete source
   capture is preparation provenance, not a second hidden model-context source.
 - Child membership versions fence signed admission and live commands. Removing
@@ -375,7 +398,11 @@ surface has already drawn their turn.
   Main message. Creation-with-a-message covers the provisional title, the
   registry row it converges, the durable turn, the unchanged parent title and
   the replay a retried confirmation gets; its mutation proof addresses the
-  naming pass at the parent, which leaves the child in `naming`.
+  naming pass at the parent, which leaves the child in `naming`. The pin test
+  drives a chosen model all the way to the provider double and asserts the
+  parent's row is untouched; its mutation proofs write `null` in place of the
+  pin, skip the override in `resolveWorkstreamModelRouting`, and drop
+  `modelOverride` from the detail projection.
 - `apps/api/test-workers/demo-seeder.test.ts`: a demo pack opens a substream
   through this service on real workerd — prepare, confirm, and one participant
   add each — with the summary gateway answering from the pack, and asserts the
@@ -385,7 +412,9 @@ surface has already drawn their turn.
   double the suite forbids.
 - `apps/desktop/src/renderer/components/substream-launch.test.tsx`: the branch
   turns above the composer, the words enter hands to creation, the optimistic
-  turn and skeleton while it runs, and the draft coming back on a failure.
+  turn and skeleton while it runs, the draft coming back on a failure, and the
+  model pill — hidden without Debug enabled, carried to creation when a model is
+  chosen, and left on **Default** even when the parent is pinned.
   `workstream-open.test.tsx` covers the flow through the screen — the two
   requests, both halves of the destination's cache, and the error path — and
   `workstream.test.tsx` covers which turns `branchProvenance` chooses.
@@ -402,6 +431,40 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-10 — A substream carries a model pin of its own
+
+**What changed:** The launch composer offers the same developer-mode model
+selector the work-stream launcher does, `POST …/substreams/confirm` accepts a
+`modelOverride` beside its opening message, and confirmation writes it onto the
+child's own row instead of the `null` it always wrote. The created substream
+shows that pin back, locked, in its conversation composer.
+
+**Why:** A pin exists so somebody can ask what a piece of work looks like on
+another model, and a substream is where a piece of work most often gets isolated
+enough to ask that about. Until now the only way to run one somewhere else was
+to start a whole new work stream, losing the branch context the substream exists
+to carry.
+
+**Considered and rejected:** Inheriting the parent's pin when the composer names
+nothing. It would have made the child follow the model the parent was pinned to
+without anybody choosing that, changing what every existing unpinned substream
+of a pinned work stream does — those all follow the flag today — and it would
+have made the composer's **Default** entry, which says it follows the flag, a
+lie. Also rejected: carrying the pin on `prepare` rather than `confirm`.
+Preparation runs before the composer has been submitted, so it would reserve a
+child under a decision the person had not made yet.
+
+**Consequences:** The pin is decided once, at the first confirmation, and a
+retried confirmation replays rather than re-pinning — a pin changed between the
+two is ignored, which is what keeps it fixed for runs that may already have
+started. Nothing reads a parent's pin on the child's behalf, so a substream that
+should run where its parent runs has to name that model itself. That includes
+the client: `launchedSubstreamDetail` takes the pin as a required argument
+rather than an optional one, because the seed it builds spreads the parent's
+detail — which now carries a `modelOverride` — and a caller that omitted it
+would hand the child its parent's pin in the one window somebody is looking at
+the conversation they just created.
 
 ### 2026-09-10 — A substream's row carries the ↳, and the creation row a plus
 

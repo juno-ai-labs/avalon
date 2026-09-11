@@ -5,9 +5,9 @@ through the `FLAGS` binding on both regional Workers. The binding owns two
 things: which OpenRouter model each agent runs on, and which client-visible
 features the desktop is allowed to offer. Read this document before adding a
 flag, changing an agent's models, or changing what happens when a flag cannot be
-evaluated. One thing overrides a flag rather than being one — a work stream
-pinned to a single model — and it has [its own
-section](#a-work-streams-own-model) below.
+evaluated. One thing overrides a flag rather than being one — a conversation,
+a work stream or a substream alike, pinned to a single model — and it has [its
+own section](#a-conversations-own-model) below.
 
 ## Where the code lives
 
@@ -54,8 +54,9 @@ The rest:
 | `apps/api/src/queues/product-feature-flag-consumer.ts`, `WorkspaceDO.notifyProductFeatureFlagChanged` | Regional key-only fan-out and private per-user socket refresh. |
 | `packages/contracts` — `AGENT_MODEL_OVERRIDES`, `CONTROL_TOWER_REFRESH_SECONDS` | The closed set of pinnable models, and the one definition of the cadence both ends read. |
 | `apps/desktop/src/main/developer-settings-flag.ts` | The main-process poll and its interval. |
-| `apps/desktop/src/renderer/lib/agent-models.ts` | How every model id reads on screen — the menu's names and groups, and the shortening the work stream's read-only pill applies to an id the closed set does not admit. |
-| `apps/desktop/src/renderer/components/composer-input.tsx` | The one model control, in both of its shapes: the menu that pins a work stream being started, and the locked pill inside one that already exists. |
+| `apps/desktop/src/renderer/lib/agent-models.ts` | How every model id reads on screen — the menu's names and groups, and the shortening the conversation's read-only pill applies to an id the closed set does not admit. |
+| `apps/desktop/src/renderer/components/composer-input.tsx` | The one model control, in both of its shapes: the menu that pins a work stream or substream being started, and the locked pill inside one that already exists. |
+| `apps/api/src/services/substream-creation-service.ts` | Where a substream's pin is written, on the confirmation that creates it. See [`substream-creation.md`](substream-creation.md). |
 | `packages/db/src/index.ts`, `apps/api/src/durable-objects/workstream-object-product.ts` | Where compatibility reads and authoritative object reads re-validate a stored model pin before it reaches routing. |
 | `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | The `FLAGS` binding on each deployment. |
 
@@ -153,22 +154,34 @@ flags on purpose. A route plan is only meaningful as a whole, so a variation
 change is atomic: an agent can never end up serving a new default model against
 the previous generation's fallbacks.
 
-### A work stream's own model
+### A conversation's own model
 
-One thing sits above the flags: a work stream may be pinned to a single model,
-recorded in `workstreams.model_override`. The pin wins, and the flag is not
+One thing sits above the flags: a conversation may be pinned to a single model,
+recorded in its own `model_override`. The pin wins, and the flag is not
 consulted at all.
 
 The two answer different questions. A flag is a fleet-wide default, rolled out
 per workspace, identical for every work stream in it. A pin is somebody asking
 what *this* piece of work looks like on some other model — decided once, when
-the work stream is created, and not something to stage a rollout for. Precedence
+the conversation is created, and not something to stage a rollout for. Precedence
 follows from that: a rollout reaching the workspace must not quietly take the
-pinned work stream with it.
+pinned conversation with it.
+
+**The row a run reads is its own, not its parent's.** A work stream's main
+conversation and each of its substreams is a separate object with a separate
+`model_override`, and routing resolves the one the run is executing in. So a
+substream is pinned by being created pinned, and a substream that names nothing
+follows the flag even inside a pinned work stream. Nothing copies a pin
+downward: making a child inherit its parent's would move every substream of
+every pinned work stream onto that model, none of which was chosen, and would
+make the selector's **Default** entry — which says it follows the flag — untrue
+in exactly the case somebody is looking at it.
 
 A pin comes from one place — the model selector in the composers that start work,
 which appears only while Application → Developer → **Debug enabled** is on. A new
-work stream carries the choice directly. An automation's pin is the
+work stream carries the choice directly, and so does a new substream, through
+`POST …/substreams/confirm`; [`substream-creation.md`](substream-creation.md)
+owns that half. An automation's pin is the
 `model_override` column on its `AutomationDO` row; there is exactly one path
 that creates a run, the object's `provisionRun`, which serves manual,
 scheduled, connector-event, and inbound-email triggers alike, and it copies
@@ -184,7 +197,7 @@ to the conversation row without going through the definition is a field an
 automation run does not get.
 
 Nothing else writes the column, and choosing nothing writes nothing, so an
-ordinary work stream is unpinned and reads exactly as this document describes
+ordinary conversation is unpinned and reads exactly as this document describes
 above. The selector says so plainly: unpinned is its own menu entry, labelled
 **Default** and described as following this flag, rather than named after a
 model the renderer cannot know is being served.
@@ -212,7 +225,7 @@ is a reviewed product decision rather than whatever string a client sends. The
 Google family is ordered newest first, with 3.8 Flash above 3.7 Flash; the
 OpenAI family is ordered by capability, with Sol above Terra and Luna. The
 API validates it on write and again on read, which is what lets a model be
-retired from the list without a migration: the work streams still naming it log
+retired from the list without a migration: the conversations still naming it log
 `workstream_model_override_unknown` and return to the flag. `resolveWorkstreamModelRouting`
 is the resolver that applies all of this; `resolveAgentModelRouting` stays purely
 about flags.
@@ -227,26 +240,38 @@ and logs `workstream_model_override_unknown` rather than being handed to the
 provider as though it still existed. Retiring a model therefore still needs no
 migration.
 
-#### Reading it back inside the work stream
+#### Reading it back inside the conversation
 
-The composer of a work stream that already exists shows the same control in the
-same place, behind the same **Debug enabled** preference — the identical
-dropdown, trigger and pill and chevron, with the trigger `disabled`. That is what
+The composer of a conversation that already exists — a work stream's, and a
+substream's — shows the same control in the same place, behind the same **Debug
+enabled** preference: the identical dropdown, trigger and pill and chevron, with
+the trigger `disabled`. That is what
 stops it opening, and its menu is left unrendered because a disabled trigger can
 never reach one. Disabled rather than merely quiet is the honest shape here: the
-pin is written once, when the work stream is created, and nothing afterwards
+pin is written once, when the conversation is created, and nothing afterwards
 edits it, so a menu would offer a change the next run would not honour.
 
+**Same place** is load-bearing and was not always true. The single-row message
+capsule the launchers and conversations wear has no room for a pill beside its
+attachment button, so the choice was moved into that button's menu while the
+pill stayed in the toolbar layout — which gave one control two homes, and moved
+the answer to "which model is this?" out of the composer at exactly the moment
+it stopped being a question. The capsule's leading column now sizes to its
+contents (a row holding the attachment button alone still measures the 42px it
+was fixed at) and the pill sits beside it in every layout and both shapes.
+
 The accessible name and the tooltip carry the full model id and say what may
-truthfully be said about it, **which is not the same sentence for every work
-stream**. A pin is fixed: `resolveWorkstreamModelRouting` finds it on the row and
-never reads the flag, so every run uses it. An unpinned work stream re-evaluates
+truthfully be said about it, **which is not the same sentence for every
+conversation**. A pin is fixed: `resolveWorkstreamModelRouting` finds it on the row and
+never reads the flag, so every run uses it. An unpinned conversation re-evaluates
 `agent-model-workstream` on *every* launch, so the id shown is what the latest
 run happened to resolve and a later run may differ. What is immutable there is
 the setting, not the model — an earlier draft of this control said a work stream
 keeps the model it started on, which is a stability guarantee the server does
 not make for the unpinned majority. The renderer therefore takes `pinned`
-alongside the id and picks the claim from it.
+alongside the id and picks the claim from it. It says "conversation" rather than
+"work stream" for the same reason the column is read per row: in a substream,
+naming the parent's kind would describe a row this pill is not showing.
 
 The tooltip survives the disable — checked in a real window rather than assumed,
 because the reverse is the intuitive guess: a disabled button swallows the click
@@ -256,11 +281,11 @@ disabled button, which is why the id has to be in the accessible name and not
 only in the tooltip.
 
 What it names is **`latestHarnessRun.model` first, and the pin only as a
-fallback**. The pin alone would answer for almost nobody: an unpinned work
-stream is nearly all of them, and the flag's served variation is not visible to
+fallback**. The pin alone would answer for almost nobody: an unpinned
+conversation is nearly all of them, and the flag's served variation is not visible to
 a client at all — but every parent run records a model, which is the pin where
 there is one and the flag's answer where there is not. That column is the only
-place a client can see which model a given work stream is actually running. It
+place a client can see which model a given conversation is actually running. It
 follows that the id shown need not be one `AGENT_MODEL_OVERRIDES` admits; the
 pill shortens an unknown id to its model segment and the tooltip carries it
 whole.
@@ -270,12 +295,13 @@ written twice: `launchWorkstreamHarness` records the model it resolved at
 schedule time, and the run host may overwrite it at settle — while its lease is
 live and before terminalization — with the model that actually streamed. A run
 that failed before its first token streams nothing, so that second write puts
-**null** there. On a pinned work stream that is exactly where a run-only pill
+**null** there. On a pinned conversation that is exactly where a run-only pill
 would fall back to **Default** and describe it as following a flag it never
-consults. `WorkstreamDetail` therefore carries `modelOverride`, re-validated
-against the closed set on the way out exactly as `resolveWorkstreamModelRouting`
+consults. `WorkstreamDetail` therefore carries `modelOverride`, projected by the
+object's own summary and re-validated against the closed set on the way out
+exactly as `resolveWorkstreamModelRouting`
 re-validates it, and the pill reads it when the run has nothing to say. Only a
-work stream that is both unpinned and has no recorded model reads **Default**,
+conversation that is both unpinned and has no recorded model reads **Default**,
 for the same reason an untouched composer does.
 
 What the pill still cannot show is a run whose attempts did not agree: the
@@ -636,8 +662,12 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   atomic, so an agent can never serve a new default model against the previous
   generation's fallbacks.
 - **A malformed variation is rejected whole, never merged field by field.**
-- **A work stream's pin wins and the flag is not consulted at all.** A rollout
-  reaching the workspace must not quietly take a pinned work stream with it.
+- **A conversation's pin wins and the flag is not consulted at all.** A rollout
+  reaching the workspace must not quietly take a pinned conversation with it.
+- **A run resolves the pin on the row of the conversation it is executing in.**
+  A work stream's main conversation and each substream is a separate object with
+  a separate column, so nothing inherits: a substream is pinned by being created
+  pinned. Copying a parent's pin downward would move work nobody chose for it.
 - **The one path that creates a run copies `model_override` onto that run's
   conversation.** `AutomationDO.provisionRun` reads it from the automation row.
   The invariant used to read "every path", because there were three and two of
@@ -650,7 +680,7 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   route — see [`agent-harness.md`](agent-harness.md#failure-modes-and-limits).
 - **The set of pinnable ids is closed** (`AGENT_MODEL_OVERRIDES`), validated on
   write *and* on read, which is what lets a model be retired without a migration.
-  A work stream's pin is re-validated by `resolveWorkstreamModelRouting`; an
+  A conversation's pin is re-validated by `resolveWorkstreamModelRouting`; an
   automation's frozen pin by `automationModelOverride` as each run is
   provisioned. A run path that reads the automation's `model_override`
   without that call reintroduces the gap — the context's type is deliberately
@@ -797,7 +827,9 @@ correctly provisioned flag.
 | `apps/desktop/src/main/developer-settings-flag.test.ts` | The poll, the last-answer-standing behavior, and that a stored `debugEnabled` grants nothing while the flag is off. |
 | `apps/desktop/src/renderer/screens/workspace-settings.test.tsx`, `apps/desktop/src/renderer/lib/use-debug-enabled.test.tsx` | Live application-setting broadcasts win over older reads, read failures, and mutation replies, so a poll can reveal or withdraw Developer without a relaunch. |
 | `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | The selector's **Debug enabled** gate, that an untouched control sends no override, and that an explicit pin to the flag's own default is still sent. |
-| `apps/desktop/src/renderer/components/workstream-composer.test.tsx` | The locked pill inside a work stream: the same gate, the run's model ahead of the pin, the pin where a run recorded none, an id outside the closed set, and that it opens no menu. |
+| `apps/desktop/src/renderer/components/workstream-composer.test.tsx` | The locked pill inside a conversation: the same gate, the exact id and the claim each of `pinned`'s two states may make, and that it opens no menu. |
+| `apps/desktop/src/renderer/components/substream-launch.test.tsx` | The substream launcher's selector: the same gate, the chosen pin reaching creation, and that it stays on **Default** under a pinned parent rather than inheriting. |
+| `apps/api/test-workers/substream-creation-runtime.test.ts` | A substream created pinned: the column on the child's row and not the parent's, the pin on the wire in `WorkstreamDetail`, and the run reaching the provider on that model. |
 | `apps/api/test/workstream-row-contracts.test.ts` | That the stored pin is re-validated on read, and that a retired model reads as unpinned rather than failing the response. |
 
 Run one with
@@ -1120,6 +1152,64 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-09-10 — A pin belongs to a conversation, and a substream can carry one
+
+**What changed:** A substream can be pinned to a model when it is created, by
+the same developer-mode selector the work-stream launcher has;
+`POST …/substreams/confirm` carries it and the child's own row records it. The
+object's summary projection now emits `modelOverride`, which
+`WorkstreamDetail` has declared and nothing populated, so the locked pill can
+fall back to the pin when a run recorded no model. This section is written in
+terms of a *conversation* rather than a work stream throughout, because that is
+what the column has always belonged to.
+
+**Why:** Routing already resolved the pin from the row of the conversation a run
+executes in — a substream reads its own row, not its parent's — but nothing
+could ever write a substream's, so the column was permanently null there and the
+one thing a developer wanted to ask ("what does this branch look like on another
+model?") could only be asked by starting a fresh work stream and losing the
+branch. The projection gap was the matching half: this document already claimed
+`WorkstreamDetail` carried the pin, and a pinned work stream whose run failed
+before its first token was being described as following a flag it never
+consults.
+
+**Considered and rejected:** Falling back to the parent's row when a substream's
+is null, and the equivalent copy-at-creation. Both make a pin travel to work
+nobody pinned, and the read-time version adds a second object read to every
+unpinned substream's run. Also rejected: emitting the pin from the directory
+projection as well, which would put it in every sidebar row to serve one pill.
+
+**Consequences:** A substream of a pinned work stream still follows the flag
+unless it names a model itself — that is unchanged behaviour, now deliberate
+rather than incidental. `modelOverride` is on the per-conversation summary, so
+every `get`, create and update response carries it; it is validated with
+`agentModelOverride` on the way out, so a retired model reads as unpinned rather
+than failing the whole response on the schema.
+
+### 2026-09-10 — The model control has one home in every layout
+
+**What changed:** The single-row message capsule shows the model pill beside its
+attachment button instead of hiding the choice inside that button's menu, and
+the capsule's leading grid column sizes to its contents rather than to a fixed
+42px.
+
+**Why:** The control had two homes depending on the layout *and* the state: a
+radio group in the composer-actions menu while a work stream was being started,
+and a pill in the toolbar once it existed. The answer to "which model is this?"
+therefore moved the moment it stopped being a question, and a substream's
+composer — capsule-shaped like every conversation — had nowhere to show a pin at
+all.
+
+**Considered and rejected:** Keeping the menu for the choice and adding the pill
+only for the settled state. That is the same two-homes problem with the seam
+moved, and it makes a read-only pill more prominent than the decision it
+records.
+
+**Consequences:** A row holding only the attachment button still measures 42px,
+so composers with no model control are pixel-identical. A composer that does
+show one gives the pill its label width out of the text column; the names are
+short and never wrap.
 
 ### 2026-09-04 — Frozen substream summaries use their recorded route
 

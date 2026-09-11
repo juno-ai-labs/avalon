@@ -157,7 +157,10 @@ async function openComposerActions(): Promise<void> {
 }
 
 async function openModelMenu(): Promise<void> {
-  await openComposerActions();
+  // The pill in the composer's own toolbar, not the composer-actions menu: the
+  // model control has one home in every layout now.
+  const trigger = await screen.findByRole('button', { name: /^Model:/u });
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
 }
 
 function closeOpenMenus(): void {
@@ -659,7 +662,7 @@ describe('New work-stream home', () => {
     });
   });
 
-  it('carries a pinned model onto the seeded run so the arrival does not read Default', async () => {
+  it('carries a pinned model onto the seeded run and the seeded pin, so the arrival is neither Default nor unpinned', async () => {
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     const queryClient = renderScreen();
 
@@ -678,6 +681,12 @@ describe('New work-stream home', () => {
     // that can answer before the server has recorded a run model.
     await waitFor(() => expect(queryClient.getQueryData(['workstream', 'new-workstream'])).toMatchObject({
       latestHarnessRun: { model: 'deepseek/deepseek-v4-pro' },
+      // The pin beside the run, because they answer different questions and the
+      // pill makes both claims: the run says which model, this says the model
+      // is fixed. `created.workstream` is a summary and does not carry the
+      // column, so without the seed stating it a work stream pinned a moment
+      // ago describes itself as following the flag until the refetch lands.
+      modelOverride: 'deepseek/deepseek-v4-pro',
     }));
   });
 

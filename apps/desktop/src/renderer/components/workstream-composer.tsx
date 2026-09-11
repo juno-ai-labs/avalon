@@ -17,7 +17,7 @@ import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket';
 import type { AttachmentPreview } from './attachments';
 import { ComposerQueue, type ComposerQueueItem } from './composer-queue';
-import { ComposerInput } from './composer-input';
+import { ComposerInput, type ComposerModelControl } from './composer-input';
 import { Avatar, Button, Modal } from './primitives';
 import type { RallyRegion } from '../../common/desktop';
 
@@ -55,6 +55,14 @@ interface WorkstreamComposerProps {
   workspaceRegion?: RallyRegion;
   substreamId?: string;
   members: WorkspaceMember[];
+  /**
+   * The model control, passed straight to the composer that draws it. Both
+   * conversations this composer serves want one: a substream being started
+   * takes the `choice` shape, and a conversation that already exists takes the
+   * locked `settled` one. Hosts that pass nothing show no control at all, and
+   * neither shape appears unless Debug enabled is on.
+   */
+  model?: ComposerModelControl;
   fileInputRef: RefObject<HTMLInputElement | null>;
   sending: boolean;
   uploading: boolean;
@@ -115,6 +123,7 @@ export function WorkstreamComposer({
   workspaceRegion = 'global',
   substreamId = '0',
   members,
+  model,
   fileInputRef,
   sending,
   uploading,
@@ -462,6 +471,7 @@ export function WorkstreamComposer({
         mentionListbox={visibleCandidates.length > 0
           ? { id: 'workstream-mention-listbox', activeOptionId: mentionNavigation.activeOptionId }
           : undefined}
+        {...(model ? { model } : {})}
         onMention={beginMention}
         onOpenAttachment={onOpenAttachment}
         onRemoveAttachment={onRemoveAttachment}

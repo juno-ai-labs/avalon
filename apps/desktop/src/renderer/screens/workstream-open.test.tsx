@@ -364,6 +364,40 @@ describe('socket-first work-stream open', () => {
     });
   }
 
+  it('seeds the child with its own model pin rather than the parent it branched from', async () => {
+    // The seed is built by spreading the parent's own detail, which carries a
+    // pin of its own — so a child of a pinned work stream would open showing
+    // the parent's model as its own until the room's snapshot corrected it,
+    // which is exactly the inheritance creation refuses. The composer here
+    // pins nothing, so the honest seed is null.
+    const childId = '00000000-0000-7000-8000-000000000675';
+    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New substream', context: { parts: [] } });
+    api.confirmSubstream.mockResolvedValue({
+      substreamId: childId,
+      title: 'Check the pricing page',
+      opening: { turnId: 'turn-child-9', clientMessageId: 'client-9', createdAt: '2026-08-26T14:05:00.000Z' },
+    });
+    session.current = {
+      user: { id: '00000000-0000-7000-8000-000000000671', name: 'Creator', email: 'creator@example.test' },
+      workspace: { id: '00000000-0000-7000-8000-000000000672', region: 'global', role: 'member' },
+    };
+    const boot = conversationBoot(2);
+    const client = renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], { ...boot, modelOverride: 'x-ai/grok-4.6' });
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
+    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.change(composer, { target: { value: 'Check the pricing page' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId]))
+      .toMatchObject({ title: 'Check the pricing page' }));
+    expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId])?.modelOverride)
+      .toBeNull();
+  });
+
   it('creates a substream from the launch composer and seeds the conversation it opens', async () => {
     const childId = '00000000-0000-7000-8000-000000000670';
     api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New substream', context: { parts: [] } });

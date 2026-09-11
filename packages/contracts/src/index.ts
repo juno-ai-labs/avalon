@@ -589,15 +589,19 @@ export const WorkstreamSchema = z.object({
    */
   systemKind: z.enum(["digest"]).nullable().default(null),
   /**
-   * The model this work stream is pinned to, ahead of `agent-model-workstream`,
+   * The model this conversation is pinned to, ahead of `agent-model-workstream`,
    * or null for the ordinary unpinned case. Decided once at creation and fixed
-   * for the work stream's life.
+   * for the conversation's life.
    *
-   * On the wire so the composer's model pill can name the model a *pinned* work
-   * stream will run on even when no run has recorded one yet — a run that failed
-   * before its first token leaves `harness_runs.model` null, and a pill that
-   * answered **Default** there would be stating something false about a work
-   * stream that never consults the flag.
+   * Per conversation, not per work stream: a substream is a separate object with
+   * a column of its own, is pinned by being created pinned, and inherits
+   * nothing from its parent. `docs/feature-flags.md` owns the rule.
+   *
+   * On the wire so the composer's model pill can name the model a *pinned*
+   * conversation will run on even when no run has recorded one yet — a run that
+   * failed before its first token leaves `harness_runs.model` null, and a pill
+   * that answered **Default** there would be stating something false about a
+   * conversation that never consults the flag.
    *
    * Re-validated against the closed set on the way out, so a model retired from
    * `AGENT_MODEL_OVERRIDES` reads as null here exactly as it resolves on the

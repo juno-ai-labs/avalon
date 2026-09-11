@@ -6253,7 +6253,12 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   border-radius: 22px;
   box-shadow: var(--av-cmp-composer-shadow);
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto;
+  /* The leading column sizes to the controls in it rather than to the one
+     28px circle it used to hold: with the model pill beside that circle a
+     fixed 42px clipped both against `overflow: hidden`. A row holding the
+     circle alone still measures 42px — 7px of padding either side of it — so
+     this is the same geometry wherever no pill is shown. */
+  grid-template-columns: auto minmax(0, 1fr) auto;
   min-height: 44px;
   overflow: hidden;
 }
@@ -6324,6 +6329,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 
 :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools {
   align-self: end;
+  gap: 4px;
   grid-column: 1;
   grid-row: 2;
   justify-content: center;
@@ -6343,6 +6349,17 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .icon-button:hover:not(:disabled) {
   background: var(--av-ref-color-neutral-4);
   color: var(--av-ref-color-neutral-13);
+}
+
+/* The one control in this row that carries a name rather than a glyph. The
+   rule above rounds every tool into a 28px circle, which would crop a model
+   name to its first letter — so the pill keeps the row's height and its
+   treatment and takes the width its label needs. */
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .model-selector-trigger {
+  border-radius: var(--av-sys-size-radius-pill);
+  gap: 3px;
+  padding: 0 9px;
+  width: auto;
 }
 
 :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-hint { display: none; }
