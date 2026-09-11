@@ -1216,7 +1216,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
             scopeKind: {
               type: "string",
               enum: MEMORY_SCOPE_KINDS,
-              description: "How long the table should outlive this run, narrowest first: `workstream` for this work stream alone, `automation` for future runs of this installed automation, `user` for one person, `workspace` for everyone here. Not every run authorizes every kind; a refusal names the ones this run does have.",
+              description: "How long the table should outlive this run, narrowest first: `workstream` for this work stream alone, `sidekick` for future runs of this installed Sidekick, `user` for one person, `workspace` for everyone here. Not every run authorizes every kind; a refusal names the ones this run does have.",
             },
             name: { type: "string", description: "A short name for the table, for example \"Reviewed repositories\". A table already existing under this name in the chosen scope is reopened rather than duplicated, so reuse the name deliberately." },
             description: { type: "string", description: "What the table holds and why it exists, in a sentence or two. This is what table_search matches, so write the words someone would look for." },
