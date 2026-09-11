@@ -308,6 +308,15 @@ character envelope.
 
 ## Invariants
 
+- **`ResourceService.list`'s `resourceTypes` distinguishes absent from empty.**
+  Omitted means every type, which is what the product's own listing wants; `[]`
+  means *nothing matches* and short-circuits before SQL. The caller that needs
+  the empty case is the Sidekick drafting search, whose set of admissible types
+  is itself empty in a workspace whose connectors declare no resource
+  relationship ([`automation-lifecycle.md`](automation-lifecycle.md)) — handing
+  it the workspace's resources would be offering precisely what it cannot use.
+  Collapsing the two into "falsy means no filter" reads as a tidy-up and
+  silently restores a defect.
 - A verified MIME type outranks a filename extension, so renamed hostile bytes
   cannot choose their converter or model tool.
 - All eight kinds and their descriptions come from one registry, so a smaller
@@ -617,6 +626,19 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-09-11 — `list` can be confined to a set of resource types
+
+**What changed:** `ResourceService.list` takes an optional `resourceTypes`, and
+the invariant above records the one thing about it that is not obvious: absent
+and `[]` mean opposite things.
+
+**Why:** The Sidekick drafting search needs a page confined to the resource
+types an evaluator rule can actually bind, and that set is legitimately empty in
+some workspaces. `docs/automation-lifecycle.md`'s entry of the same date has the
+failure that forced it. It is recorded here because this document owns the
+listing path, and the empty-array branch is exactly the kind a later reader
+removes as dead weight.
 
 ### 2026-09-08 — Align search admission wording
 
