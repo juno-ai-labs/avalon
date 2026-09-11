@@ -164,7 +164,9 @@ describe("custom MCP connections", () => {
       .filter((tool) => tool.available)
       .map((tool) => tool.name)).toEqual(["search_docs", "publish_doc"]);
 
+    expect(await service.getToolCount(workspace.connection.id, new AbortController().signal)).toEqual({ count: 2 });
     const updated = await service.updateCustomMcpToolPolicy(workspace.connection.id, "read_only_tools");
+    expect(await service.getToolCount(workspace.connection.id, new AbortController().signal)).toEqual({ count: 1 });
     expect(updated.toolPolicy).toBe("read_only_tools");
     expect(updated.tools.filter((tool) => tool.available).map((tool) => tool.name)).toEqual(["search_docs"]);
     expect((await service.getCustomMcpSettings(workspace.connection.id)).toolPolicy).toBe("read_only_tools");

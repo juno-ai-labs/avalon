@@ -419,6 +419,26 @@ export class ConnectionService {
     }, userDelivery.get(String(row.id)) ?? null));
   }
 
+  async getToolCount(id: string, signal: AbortSignal): Promise<{ count: number }> {
+    const connection = await this.loadVisible(id);
+    this.assertConnectionEnabled(connection);
+    const adapter = this.registry().get(connection.connector_type);
+    const granted = new Set(parseJson<string[]>(connection.granted_scopes_json, []));
+    const dynamic = adapter.dynamicAgentTools;
+    const definitions = dynamic?.connectionScopes.includes(connection.scope)
+      && dynamic.capabilities.some((capability) => granted.has(capability))
+      ? await withAuthorizedConnection(
+          this.env,
+          { connection: await this.context(connection), adapter, signal },
+          (authorized) => dynamic.discover(authorized, signal),
+        )
+      : adapter.agentPlugin.tools;
+    return {
+      count: definitions.filter((tool) => granted.has(tool.capability)
+        && connectorCapabilitySupportsScope(adapter, tool.capability, connection.scope)).length,
+    };
+  }
+
   async getGitHubRepositoryAccess(id: string): Promise<GitHubRepositoryAccessSettings> {
     const connection = await this.loadVisible(id);
     if (connection.connector_type !== "github") {
@@ -3318,7 +3338,7 @@ export class ConnectionService {
       throw new ApiError(
         409,
         "connection_disabled",
-        "This GitHub connection is disabled. Reconnect it before loading or changing repository access settings.",
+        "This connection is disabled. Reconnect it before loading or changing its settings.",
       );
     }
   }
