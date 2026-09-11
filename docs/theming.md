@@ -195,31 +195,47 @@ one step off it, which is this same entry's bug moved up a layer.
 
 **Why:** `#efe8dc` is a warm beige — hue about 38°, saturation about 37% — and
 the entire reference ramp it sits against is hueless, `R === G === B` at every
-one of its fourteen steps. Pane, sidebar, bubble, composer and keycap all
-resolve to that ramp, so the tooltip was the one surface in the chrome carrying
-a colour cast, which is what made it read as wrong rather than merely light. The
-opposing-surface intent behind the literals was right and is kept; the reasoning
-that it forced a literal was not. The ramp inverts with the appearance, so a
-single alias in both files is already light-on-dark and dark-on-light, and the
-opposition now comes from the palette rather than from two hand-picked colours
-that nothing keeps in step with it. Holding literals is precisely what let this
-drift: the value has been warm for as long as the ramp has been neutral, and no
-gate could see it.
+one of its fourteen steps. The chrome around it is hueless too: pane, sidebar,
+bubble and composer are greys that land on ramp steps, and the keycap is a grey
+`rgba()`. (They are literals that coincide with the ramp rather than aliases of
+it, which is its own untidiness and not this entry's.) So the tooltip was the
+one surface in the chrome carrying a colour cast, which is what made it read as
+wrong rather than merely light. The opposing-surface intent behind the literals
+was right and is kept; the reasoning that it forced a literal was not. The ramp
+inverts with the appearance, so a single alias in both files is already
+light-on-dark and dark-on-light, and the opposition now comes from the palette
+rather than from two hand-picked colours that nothing keeps in step with it.
+
+**Consequences:** the huelessness is now checked, by
+`a surface held to the neutral ramp carries no hue in any appearance` in
+`scripts/build-theme-assets.test.mjs`. It resolves each path in
+`HUELESS_SURFACES` through its aliases and fails on any cast, in either
+appearance. That test exists because the obvious candidate does not do this job:
+the partition guard beside it — `a token every appearance agrees on is a base
+token` — compares the appearance files' raw JSON *text* and only calls a value
+agreed when every alias in it resolves in `base.json`. A per-appearance colour
+is two different literals, so it slips past on the text alone; run against the
+original `#efe8dc`/`#2a241d` that guard stays silent, which is how this survived
+as long as it did. Anything that stops being warm should join `HUELESS_SURFACES`
+in the same change, or the sweep that neutralised it can quietly come undone.
 
 **Considered and rejected:** Picking a fresh neutral literal at the same
-lightness. It fixes today's screenshot and leaves the next palette move to
-rediscover the same bug, because a literal is invisible to the drift checks —
-`build-theme-assets.test.mjs` only catches a token whose appearances *agree*,
-which two different literals never do. The alias is what makes the tooltip move
-with the ramp. Also rejected: sweeping `cmp.toggle.*` and the `sys.color.syntax.*`
-group in the same change. They carry the identical warm cast from the same
-earlier palette and are the remaining instances of it, but a toggle track and
-syntax highlighting are each their own contrast decision rather than a
-find-and-replace, and neither was what the change set out to fix. They are still
-warm on purpose-by-omission, not by argument, and a future change that neutralises
-them should treat this entry as the precedent rather than the constraint. What
-that change has to respect is only this: whatever step it lands on, it names the
-ramp rather than a literal.
+lightness. It renders identically today and puts the value back somewhere
+nothing connects to the ramp, so the next palette move walks away from it again
+— the check above would now catch the hue, but not a neutral literal that later
+drifts. Also rejected: sweeping the other warm groups in the same change.
+`cmp.toggle.*` (two values), `sys.color.syntax.*` (ten per appearance) and
+`sys.color.scrim.*` all carry a cast from the same earlier palette, and the
+scrim is the one that matters most on screen — `scrim.solid` is a warm off-white
+in light, painting the full-window `.attachment-lightbox-overlay` against a
+hueless canvas, where a cast reads more strongly than it does on a tooltip. Each
+is its own contrast decision rather than a rename, and none was what this change
+set out to fix. **Do not read that list as complete**: it is what a scan of the
+appearance files turned up, and the first version of this entry claimed
+`cmp.toggle.*` and `sys.color.syntax.*` were the only survivors, which was wrong
+twice over — the scan matched `#rrggbb` only, so every `rgba()` token, the scrim
+included, was invisible to it. A sweep should re-derive the list over both
+notations rather than trust this sentence.
 
 Also rejected, for the fill: `sys.color.surface.inverse-hover`, which holds
 `#eeeeee`/`#2f2f2f` — the same two values this now resolves to. Pointing at it

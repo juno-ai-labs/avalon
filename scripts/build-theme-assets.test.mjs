@@ -365,6 +365,60 @@ test('keyboard focus contrasts against adjacent surfaces in both appearances', (
   }
 });
 
+/**
+ * Surfaces that must carry no hue, because the neutral ramp they sit against
+ * carries none: `ref.color.neutral.*` is `R === G === B` at every step in both
+ * appearances, and a low-chroma cast on a surface floating over that chrome is
+ * what a reader sees as the wrong colour rather than as a lighter box.
+ *
+ * This list is not every hueless surface in the product — it is the ones whose
+ * huelessness is *checked*. It exists because the tooltip's own fill was a warm
+ * beige for as long as the ramp had been neutral and no gate could see it. Not
+ * the partition guard below, either, which people reach for as the answer here:
+ * that compares the appearance files' raw JSON *text* and only calls a value
+ * agreed when every alias in it resolves in `base.json`, so two different
+ * literals — which is what a per-appearance colour always is — slip past it on
+ * the text alone. It is a base/appearance hygiene check and never was a colour
+ * check.
+ *
+ * Add a path here when a group stops being warm, so the sweep that neutralises
+ * it cannot quietly come undone. `cmp.toggle.*`, `sys.color.syntax.*` and
+ * `sys.color.scrim.*` are deliberately absent: they still carry the same warm
+ * cast from an earlier palette, and each is its own contrast decision rather
+ * than a rename.
+ */
+const HUELESS_SURFACES = ['cmp.tooltip.background', 'cmp.tooltip.foreground'];
+
+test('a surface held to the neutral ramp carries no hue in any appearance', () => {
+  for (const theme of themes) {
+    const tokens = resolvedTokens(theme, base);
+    // `resolvedTokens` merges base under the appearance; it does not follow an
+    // alias, so the value can still be `{ref.color.neutral.13}`. The walk is
+    // bounded because the cycle test above holds every chain acyclic.
+    const colorAt = (path) => {
+      let value = tokens[path];
+      while (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
+        const target = value.slice(1, -1);
+        assert.ok(target in tokens, `${theme.id}: ${path} aliases ${target}, which is not set`);
+        value = tokens[target];
+      }
+      return value;
+    };
+
+    for (const path of HUELESS_SURFACES) {
+      assert.ok(tokens[path] !== undefined, `${theme.id}: ${path} is not set`);
+      const value = String(colorAt(path));
+      // Composited over a hueless backdrop, so a translucent value is judged on
+      // its own cast rather than on whatever it happens to sit over.
+      const [r, g, b] = colorChannels(value);
+      assert.ok(
+        Math.abs(r - g) < 1e-9 && Math.abs(g - b) < 1e-9,
+        `${theme.id}: ${path} resolves to ${value}, which carries a hue — the ramp it sits against does not`,
+      );
+    }
+  }
+});
+
 test('every custom family a theme names is a face the build emits', () => {
   const css = generate({ registry, base, themes });
   const declared = new Set(fontFaces(themes).map((font) => font.family));
