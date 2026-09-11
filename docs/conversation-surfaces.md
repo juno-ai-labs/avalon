@@ -44,6 +44,11 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
   delay and one provider through. A new tooltip comes from there rather than
   from Radix's five parts; eight files still assemble those by hand and predate
   it.
+- `apps/desktop/src/renderer/lib/window-activation.ts` answers the one question
+  every one of those surfaces has to ask before it opens: whether the hover or
+  the focus it is looking at came from the person or from the window being
+  brought to the front. `App` installs it per window; `Tip` and the sidebar's
+  row preview ask it, and anything else that opens on hover or focus should.
 - `apps/desktop/src/renderer/components/expanded-composer.tsx`,
   `use-draft-text.ts`, and `use-file-attachments.ts` provide the common composer
   shell, local text persistence, and staged-file lifecycle.
@@ -465,6 +470,47 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-11 — Coming back to Rally is neither a hover nor a focus
+
+**What changed:** The surfaces that open something on hover or focus now ask
+whether the person has touched this window since it was last brought to the
+front, and stay shut when the answer is no. The work-stream row's preview card
+and every `Tip` ask it. Both also take themselves down when the window goes to
+the back, instead of waiting there for the return.
+
+**Why:** Command-Tab back into Rally raised two preview cards over the
+conversation the person had switched back to read — one for the work stream they
+are in, one for whatever the cursor happened to be resting on. Both are real
+events: the row clicked to get here still holds DOM focus and is focused again
+when the window is activated, and the row the window comes forward underneath is
+entered by a cursor that never moved. Nothing in either event says the window
+manager caused it, so every surface that opens on hover or focus was opening on
+every application switch. The card is a reading surface, so this is not a stray
+pixel — it covers the screen that was the point of switching back, and it does it
+twice.
+
+**Considered and rejected:** Opening only for `:focus-visible`, which would leave
+the pointer half untouched and would change *who* gets the card — a pointer user
+who clicks a row would stop getting one at all — to fix *when*. Suppressing
+everything for a fixed period after an activation, which needs a number nobody
+here can derive and answers "recently" when the question is "at all". Fixing it
+in the sidebar alone, which leaves the identical defect in the shared `Tip` that
+every other surface reaches for.
+
+**Consequences:** `App` installs the guard once per window and the answer is
+permissive until it does, so a surface rendered outside it — a test mounting one
+component — behaves exactly as it did before. Movement is established by
+comparing pointer coordinates rather than by counting events, because the events
+an activation produces are precisely the ones that describe a cursor sitting
+still; a future opener must not read the arrival of a pointer event as a pointer
+having moved. A pointer entry that the guard turns down cannot be replayed, so
+the row opens its card on the first real movement afterwards rather than on the
+entry — which is why the row listens for movement at all. `Tip` now holds its own
+open state so that it has something to put down; a caller that passes `open`
+keeps both that and the deactivation close. The guard is
+`lib/window-activation.ts`, and it is where a third surface with the same
+symptom should go.
+
 ### 2026-09-11 — A substream's unread divider can now be read away
 
 **What changed:** The surface acknowledges reads in whatever conversation it is
@@ -511,7 +557,6 @@ that starts drawing one of them from the parent's detail entry while the others
 read the child's puts the divider back where it was. And the guard above assumes
 its two fields are monotonic at the authority; a server that ever lowers
 `seen_attention_ordinal` would be silently ignored here.
-
 
 ### 2026-09-11 — The navigation's plus says what it starts, and it starts a work stream
 
@@ -562,6 +607,7 @@ fade is written `.sidebar-titlebar > .sidebar-new-button`. Resolving the class
 to a string at the call site keeps the trigger the link itself. Prefer that;
 reach for a wrapper only where nothing lays the child out directly.
 
+
 ### 2026-09-10 — One identity line, painted once rather than once per speaker
 
 **What changed:** `MessageBlock` renders both of its headers through a new
@@ -588,6 +634,7 @@ The header order the [September 9 entry](#2026-09-09--attachments-follow-the-mes
 fixed in markup is now the component's rule rather than each branch's: the parts
 are reversed for a trailing-edge turn, in the DOM, for that entry's reason.
 [`relative-time.md`](relative-time.md) owns the byline and the clock from here.
+
 ### 2026-09-10 — Two of the row's sentences get shorter
 
 **What changed:** *Speak response with an AI-generated voice* is now *Speak
