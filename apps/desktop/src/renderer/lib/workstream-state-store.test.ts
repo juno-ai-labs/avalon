@@ -262,6 +262,54 @@ describe('patchCachedWorkstreamViewerState', () => {
     }
   });
 
+  it('lets a slower acknowledgement for an earlier position lose to the later one', () => {
+    // Two can be in flight: the acknowledgement is debounced at 250ms and keyed
+    // on the sequence it carries, so a round trip slower than the debounce can
+    // land after a later one. Applied in arrival order, the earlier answer puts
+    // the divider back above a message that has been read.
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(['substream-workstream', id, 'child'], summary({
+      latestAttentionSequenceNumber: 9,
+      readThroughSequenceNumber: 9,
+      hasUnread: false,
+      firstUnreadSequenceNumber: null,
+    }));
+
+    patchCachedWorkstreamViewerState(queryClient, id, summary({
+      latestAttentionSequenceNumber: 9,
+      readThroughSequenceNumber: 5,
+    }), 'child');
+
+    const row = queryClient.getQueryData<WorkstreamSummary>(['substream-workstream', id, 'child']);
+    expect(row?.readThroughSequenceNumber).toBe(9);
+    expect(row?.firstUnreadSequenceNumber).toBeNull();
+  });
+
+  it('applies a mark-unread that raises the generation, whatever its read-through says', () => {
+    // The other direction: a manual mark is the newer answer even though it
+    // carries no higher waterline, so ordering on the waterline alone would
+    // drop it and leave the row read.
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(['workstream', id], summary({
+      latestAttentionSequenceNumber: 9,
+      readThroughSequenceNumber: 9,
+      manualUnreadGeneration: 0,
+      hasUnread: false,
+      firstUnreadSequenceNumber: null,
+    }));
+
+    patchCachedWorkstreamViewerState(queryClient, id, summary({
+      latestAttentionSequenceNumber: 9,
+      readThroughSequenceNumber: 9,
+      manualUnreadFromSequenceNumber: 9,
+      manualUnreadGeneration: 1,
+    }));
+
+    const row = queryClient.getQueryData<WorkstreamSummary>(['workstream', id]);
+    expect(row?.hasUnread).toBe(true);
+    expect(row?.firstUnreadSequenceNumber).toBe(9);
+  });
+
   it('writes the addressed child entry without changing Main in the list', () => {
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary({ readThroughSequenceNumber: 1 })]);

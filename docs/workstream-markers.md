@@ -238,8 +238,12 @@ own:
 
 - **What the run's status means** — [`workstream-durable-object.md`](workstream-durable-object.md).
 - **Unread and mention arithmetic** — the attention ordinals, the manual
-  mark-unread generation, and the read acknowledgement are the work-stream
-  object's, described in the same document.
+  mark-unread generation, and the read acknowledgement are the conversation
+  object's, described in the same document. Each conversation keeps its own,
+  Main and every private substream alike, which is why a read is acknowledged
+  against the conversation that was read rather than against the work stream;
+  the dot this module draws is still Main's, because only Main's viewer state
+  reaches the sidebar's projection.
 - **How a colour reaches the screen** — [`theming.md`](theming.md) owns the
   token vocabulary, the theme files, and the generated stylesheet.
 - **Notifications.** Being added to a work stream also produces an activity

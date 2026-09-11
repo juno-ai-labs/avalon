@@ -105,14 +105,6 @@ type CreateMessageInput = z.infer<typeof CreateMessageRequestSchema> & {
   expectedToolInvocationId?: string;
 };
 type AnswerElicitationInput = z.infer<typeof AnswerElicitationRequestSchema>;
-interface AcknowledgeReadInput {
-  readThroughSequenceNumber: number;
-  observedManualUnreadGeneration: number;
-  entrypoint?: ('direct' | 'sidebar_new' | 'sidebar_pinned' | 'sidebar_recent' | 'sidebar_note' | 'sidebar_automation'
-    | 'home_waiting' | 'home_suggested' | 'menu_bar' | 'command_shortcut' | 'deep_link' | 'notification'
-    | 'automation_run_list' | 'in_app_link' | 'settings' | 'unknown') | undefined;
-}
-
 /**
  * How many of a suggestion's connector sources become attachments. A batched
  * opportunity can be built from a run of related events, and the rail is a
@@ -686,10 +678,7 @@ export class WorkstreamService {
     return client.update(input);
   }
 
-  async acknowledgeRead(id: string, input: AcknowledgeReadInput) {
-    return (await this.authoritativeClient(id)).acknowledgeRead(input);
-  }
-
+  /** Main's read state, by hand, from the sidebar, where the row's dot is Main's. */
   async markUnread(id: string) {
     return (await this.authoritativeClient(id)).markUnread();
   }
