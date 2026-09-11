@@ -68,3 +68,14 @@ export function validateDynamicConnectorTools(
   });
 }
 
+
+export function dynamicConnectorCapability(
+  adapter: ResolvedConnectorAdapter,
+  scope: "personal" | "workspace",
+  grantedScopes: readonly string[],
+): string | null {
+  const dynamic = adapter.dynamicAgentTools;
+  if (!dynamic?.connectionScopes.includes(scope)) return null;
+  return dynamic.capabilities.find((capability) => grantedScopes.includes(capability)) ?? null;
+}
+

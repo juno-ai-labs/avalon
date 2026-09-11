@@ -1,4 +1,4 @@
-import { stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools } from "./connector-tool-inventory";
+import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools } from "./connector-tool-inventory";
 import { ApiError } from "../lib/api-error";
 import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef } from "./sidekick-skills";
 import type { SidekickSkillSnapshot } from "@rally/contracts";
@@ -6522,15 +6522,6 @@ interface RunAuthoritySnapshot {
   triggerType: string | null;
 }
 
-function dynamicConnectorCapability(
-  adapter: ResolvedConnectorAdapter,
-  scope: "personal" | "workspace",
-  grantedScopes: readonly string[],
-): string | null {
-  const dynamic = adapter.dynamicAgentTools;
-  if (!dynamic?.connectionScopes.includes(scope)) return null;
-  return dynamic.capabilities.find((capability) => grantedScopes.includes(capability)) ?? null;
-}
 
 function installDynamicPluginTools(
   hostTools: HarnessTool[],
