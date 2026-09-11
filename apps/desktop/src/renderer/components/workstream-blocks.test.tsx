@@ -1415,7 +1415,7 @@ describe('MessageBlock export actions', () => {
   it('sends the same markdown the feed rendered, under a name taken from the message', async () => {
     render(<MessageBlock {...actions} message={agentMessage} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Download response as an image' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save response as an image' }));
 
     await waitFor(() => expect(exportMessage).toHaveBeenCalledTimes(1));
     const request = exportMessage.mock.calls[0]?.[0];
@@ -1444,7 +1444,7 @@ describe('MessageBlock export actions', () => {
     });
     render(<MessageBlock {...actions} message={agentMessage} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Download response as an image' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save response as an image' }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save response as a PDF' })).toBeDisabled());
     await act(async () => { finish(); });
@@ -1455,7 +1455,7 @@ describe('MessageBlock export actions', () => {
     exportMessage.mockRejectedValueOnce(new Error('no surface'));
     const { rerender } = render(<MessageBlock {...actions} message={agentMessage} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Download response as an image' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save response as an image' }));
     await waitFor(() => expect(screen.getByText('Image failed')).toBeVisible());
 
     exportMessage.mockResolvedValueOnce({ saved: false });
@@ -1469,13 +1469,13 @@ describe('MessageBlock export actions', () => {
     exportMessage.mockRejectedValueOnce(new Error('no surface'));
     const { container } = render(<MessageBlock {...actions} message={agentMessage} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Download response as an image' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save response as an image' }));
     await waitFor(() => expect(screen.getByText('Image failed')).toBeVisible());
 
     fireEvent.pointerLeave(container.querySelector('.agent-message-actions')!);
 
     expect(screen.queryByText('Image failed')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Download response as an image' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Save response as an image' })).toBeEnabled();
   });
 
   it('offers nothing to save where there is no desktop to save it with', () => {
@@ -1484,7 +1484,7 @@ describe('MessageBlock export actions', () => {
     render(<MessageBlock {...actions} message={agentMessage} />);
 
     expect(screen.getByRole('button', { name: 'Copy response' })).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Download response as an image' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save response as an image' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save response as a PDF' })).not.toBeInTheDocument();
   });
 });
@@ -1514,7 +1514,7 @@ describe('MessageBlock speech action', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Collapse all sections' }));
     expect(document.querySelectorAll('.markdown-collapse.is-collapsed')).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Speak response with an AI-generated voice' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Speak response' }));
 
     await waitFor(() => expect(streamMessageSpeech).toHaveBeenCalledWith(markdown, expect.any(AbortSignal)));
     const stopButton = screen.getByRole('button', { name: 'Stop speaking' });
@@ -1524,7 +1524,74 @@ describe('MessageBlock speech action', () => {
     fireEvent.click(stopButton);
 
     expect(stop).toHaveBeenCalledOnce();
-    expect(screen.getByRole('button', { name: 'Speak response with an AI-generated voice' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Speak response' })).toBeVisible();
+  });
+});
+
+describe('MessageBlock action tooltips', () => {
+  /** Radix positions a tooltip with a ResizeObserver, which jsdom does not implement. */
+  beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+  });
+
+  /**
+   * Hover one control and read the box that opens. Radix keeps one tooltip open
+   * at a time, so the next control's box replaces this one; nothing has to be
+   * dismissed between them.
+   */
+  async function hoverTooltip(control: HTMLElement): Promise<HTMLElement> {
+    fireEvent.pointerMove(control, { pointerType: 'mouse' });
+    return screen.findByRole('tooltip');
+  }
+
+  it('gives every action in the agent’s row the sentence it is named by', async () => {
+    const player: SpeechPlayer = {
+      prepare: vi.fn(async () => undefined),
+      play: vi.fn(async () => new Promise<void>(() => undefined)),
+      stop: vi.fn(),
+    };
+    const { container } = render(
+      <SpeechPlaybackProvider api={{ streamMessageSpeech: vi.fn(async () => new ReadableStream<Uint8Array>()) } satisfies SpeechApi} createPlayer={() => player}>
+        <MessageBlock
+          {...actions}
+          message={{ ...baseMessage, id: 'message-agent-tips', authorType: 'agent', author: undefined, text: 'The settled answer.', transcriptTurnId: 'turn-7' }}
+          onStartSubstream={vi.fn()}
+        />
+      </SpeechPlaybackProvider>,
+    );
+
+    const row = container.querySelector('.agent-message-actions');
+    const controls = [...row!.querySelectorAll('button')];
+    expect(controls.map((control) => control.textContent?.trim()))
+      .toEqual(['Copy', 'Speak', 'Image', 'PDF', '↳ New substream']);
+
+    for (const control of controls) {
+      const sentence = control.getAttribute('aria-label');
+      expect(await hoverTooltip(control)).toHaveTextContent(sentence!);
+      // The words the pointer waits for are the words a screen reader is given —
+      // as the control's name, and only as its name. An open tooltip that also
+      // described the control would have it read the same sentence twice.
+      expect(control).toHaveAccessibleName(sentence!);
+      expect(control).not.toHaveAccessibleDescription();
+    }
+  });
+
+  it('gives the one action under a person’s bubble the same', async () => {
+    render(
+      <MessageBlock
+        {...actions}
+        message={{ ...baseMessage, transcriptTurnId: 'turn-4' }}
+        onStartSubstream={vi.fn()}
+      />,
+    );
+
+    const control = screen.getByRole('button', { name: 'New substream from this message' });
+
+    expect(await hoverTooltip(control)).toHaveTextContent('New substream from this message');
   });
 });
 

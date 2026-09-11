@@ -10,7 +10,9 @@ import { Check, ChevronDown, LoaderCircle, X } from 'lucide-react';
 import { ThinkingOrb, type OrbSize, type OrbState } from 'thinking-orbs';
 import {
   Fragment,
+  cloneElement,
   forwardRef,
+  isValidElement,
   type ButtonHTMLAttributes,
   type HTMLAttributes,
   type PropsWithChildren,
@@ -70,8 +72,9 @@ export function Tip({
   align,
   children,
   className,
-  collisionPadding,
+  collisionPadding = 12,
   delayDuration = 450,
+  describesTrigger = true,
   disableHoverableContent,
   label,
   onOpenChange,
@@ -85,10 +88,23 @@ export function Tip({
   className?: string;
   /**
    * How close to the viewport edge the popper may sit. Radix allows zero, which
-   * reads as clipped for a tip explaining something at the edge of a pane.
+   * reads as clipped for a tip explaining something at the edge of a pane — so
+   * the default here is a gutter rather than Radix's none, and a caller states
+   * its own only to want something else.
    */
   collisionPadding?: number;
   delayDuration?: number;
+  /**
+   * Whether the open tooltip is also the trigger's accessible *description*,
+   * which is what Radix does by default.
+   *
+   * Set false when the trigger's accessible name is already this same string:
+   * a name and a description that read alike are announced one after the other,
+   * so a screen reader says the sentence twice for a control that only ever had
+   * one. The words are not lost — they are still the name — and the box is then
+   * purely what a pointer needs.
+   */
+  describesTrigger?: boolean;
   /**
    * Whether the pointer may travel into the tooltip and keep it open. Off for a
    * tooltip hanging off something small that the pointer is aiming at rather
@@ -106,6 +122,13 @@ export function Tip({
   side?: 'top' | 'right' | 'bottom' | 'left';
   sideOffset?: number;
 }): React.JSX.Element {
+  // Radix puts `aria-describedby` on whatever the trigger renders; a prop the
+  // child states itself wins that merge, so an explicit `undefined` is how the
+  // description comes back off. The child has to forward the props it is given
+  // for that to reach the DOM, which is the same thing `asChild` already needs.
+  const trigger = describesTrigger || !isValidElement(children)
+    ? children
+    : cloneElement(children, { 'aria-describedby': undefined } as Record<string, unknown>);
   return (
     <Tooltip.Root
       delayDuration={delayDuration}
@@ -113,7 +136,7 @@ export function Tip({
       onOpenChange={onOpenChange}
       open={open}
     >
-      <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
+      <Tooltip.Trigger asChild>{trigger}</Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content
           align={align}
@@ -127,6 +150,28 @@ export function Tip({
         </Tooltip.Content>
       </Tooltip.Portal>
     </Tooltip.Root>
+  );
+}
+
+/**
+ * A set of controls that explain themselves as one: the first tip pays the
+ * delay, and moving along the rest of the row opens them immediately.
+ *
+ * It renders no element of its own, so it can wrap a row without joining its
+ * layout. Mount one around any cluster of tips a pointer travels along — and
+ * around any tip whose surface may be rendered outside `App`, which is the
+ * other thing Radix needs a provider for.
+ *
+ * A tip in a group closes the moment the pointer leaves its control, the same
+ * thing `disableHoverableContent` says one at a time: there is nothing inside
+ * one of these to hover, and on a row that appears on hover, Radix's default of
+ * keeping a box open while the pointer is over *it* outlives the row itself.
+ */
+export function TipGroup({ children }: PropsWithChildren): React.JSX.Element {
+  return (
+    <Tooltip.Provider delayDuration={450} disableHoverableContent>
+      {children}
+    </Tooltip.Provider>
   );
 }
 
