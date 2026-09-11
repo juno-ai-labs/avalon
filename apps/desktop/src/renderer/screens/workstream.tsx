@@ -457,6 +457,31 @@ export function WorkstreamScreen(): React.JSX.Element {
   const children = useQuery<WorkstreamChildDirectory | undefined>({
     queryKey: ['workstream-children', id], queryFn: async () => undefined, enabled: false,
   });
+  // The open substream's own detail, for its row in the rail below. Its title
+  // and the header's are then one value rather than two that agree eventually.
+  const openChild = useQuery<WorkstreamDetail | undefined>({
+    queryKey: workstreamDetailQueryKey(id, selectedSubstreamId),
+    queryFn: async () => undefined,
+    enabled: false,
+  });
+  /**
+   * The rail's rows, with the open substream's own name on its own row.
+   *
+   * Every row here is the parent's copy, which converges a Queue round trip
+   * after a child is renamed — long enough, on the naming pass that follows
+   * every creation, that the row for the conversation on screen disagreed with
+   * the header above it. A child is the authority on its own name and this
+   * window holds that answer for the child it has open: the same detail the
+   * header renders, so the two cannot say different things.
+   *
+   * Read here rather than written back into the directory, and only for the
+   * open child. `docs/substream-creation.md` holds why each of those is so, and
+   * what writing it back cost when it was tried.
+   */
+  const railChildren = children.data?.privateChildren?.map((child) =>
+    child.substreamId === selectedSubstreamId && openChild.data?.title
+      ? { ...child, title: openChild.data.title }
+      : child);
   // One target per dialog rather than one shared "menu target": both can be
   // open in sequence on different rows, and a single slot would make cancelling
   // one clear the other's subject out from under it.
@@ -721,7 +746,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         <WorkstreamSidebar
           sidekicks={context.sidekicks}
           sidekicksError={context.sidekicksError}
-          workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, appearance: rowAppearance ?? parent.data?.appearance, privateChildren: children.data?.privateChildren }}
+          workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, appearance: rowAppearance ?? parent.data?.appearance, privateChildren: railChildren }}
           presentUserIds={context.presentUserIds}
           onParticipants={context.openParticipantDialog}
           selectedSubstreamId={creation?.parentId === id ? PENDING_SUBSTREAM_DRAFT_ID : selectedSubstreamId}
