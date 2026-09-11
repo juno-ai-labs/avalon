@@ -67,14 +67,7 @@ export function JumpToLatestButton({ onJump, visible = true }: { onJump: () => v
   );
 }
 
-/**
- * What a conversation says after somebody stopped it.
- *
- * Shared by the work-stream feed and the automation builder rather than
- * imported from one screen into the other: a screen that re-exports a
- * component becomes a second import path for it, and the next reader
- * cannot tell which one is the real home.
- */
+/** What a conversation says after somebody stopped it. */
 export function RunStoppedNotice(): React.JSX.Element {
   return (
     <section aria-label="Run stopped" className="run-stopped-notice" role="status">
