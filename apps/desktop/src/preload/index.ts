@@ -28,6 +28,8 @@ const deepLinkListeners = new Set<(navigation: DesktopDeepLinkNavigation) => voi
 const queuedDeepLinks: DesktopDeepLinkNavigation[] = [];
 const settingsSectionListeners = new Set<(section: DesktopSettingsSection) => void>();
 let queuedSettingsSection: DesktopSettingsSection | null = null;
+const settingsRevealedListeners = new Set<() => void>();
+let settingsWindowRevealed = false;
 const meetingCloseListeners = new Set<(reason: MeetingCloseReason) => void>();
 const deepLinkErrorListeners = new Set<(notice: DesktopDeepLinkErrorNotice | null) => void>();
 
@@ -86,6 +88,15 @@ ipcRenderer.on('settings:section-requested', (_event, rawSection: unknown) => {
     return;
   }
   for (const listener of settingsSectionListeners) listener(section);
+});
+
+// Latched rather than queued, and the distinction matters: a reveal is a state
+// the window is in from then on, not an event that can be missed. A prewarmed
+// window is revealed while React is mounted and listening; a cold one can be
+// revealed before that, and a listener arriving afterwards still needs to know.
+ipcRenderer.on('settings:revealed', () => {
+  settingsWindowRevealed = true;
+  for (const listener of settingsRevealedListeners) listener();
 });
 
 // The failure window reads the current message once it has mounted, so unlike
@@ -217,6 +228,15 @@ const bridge: RallyDesktopBridge = {
       });
     }
     return () => meetingCloseListeners.delete(listener);
+  },
+  onSettingsWindowRevealed: (listener) => {
+    settingsRevealedListeners.add(listener);
+    if (settingsWindowRevealed) {
+      queueMicrotask(() => {
+        if (settingsRevealedListeners.has(listener)) listener();
+      });
+    }
+    return () => settingsRevealedListeners.delete(listener);
   },
   onSettingsSectionRequested: (listener) => {
     settingsSectionListeners.add(listener);

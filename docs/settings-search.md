@@ -20,6 +20,9 @@ without maintaining a second list of section keywords.
 | `apps/desktop/src/renderer/components/sidebar-search.tsx` | Search control shared by the main and Settings sidebars. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Existing settings bindings, authorized connection providers, section selection and availability. |
 
+The window these panes are drawn in, and what the screen may render before its
+workspace read returns, belong to [`settings-window.md`](settings-window.md).
+
 ## How it works
 
 Define a setting with a stable ID, section, label, description and kind. The

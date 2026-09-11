@@ -149,6 +149,25 @@ function renderSettings(
   );
 }
 
+/** Push a cached entry back in time, so an observer's `staleTime` has passed. */
+function ageCacheEntry(client: QueryClient, queryKey: readonly unknown[], byMs: number): void {
+  const entry = client.getQueryCache().find({ queryKey });
+  if (!entry) throw new Error(`no cache entry for ${JSON.stringify(queryKey)}`);
+  entry.state.dataUpdatedAt -= byMs;
+}
+
+/**
+ * What a window being shown looks like to React Query's focus manager.
+ *
+ * Dispatched on `window`, which is where the manager listens (`focusManager`
+ * in `@tanstack/query-core`): the specification fires `visibilitychange` at the
+ * document and lets it bubble, and a non-bubbling event on the document here
+ * would reach no listener and quietly prove nothing.
+ */
+function revealWindow(): void {
+  window.dispatchEvent(new Event('visibilitychange'));
+}
+
 function openSettingsSection(
   name: 'Account' | 'Digest' | 'Workspace' | 'Internet access' | 'Connections' | 'GitHub' | 'MCP tools' | 'Application',
 ): void {
@@ -342,6 +361,48 @@ describe('Workspace settings', () => {
       supported: true,
     }));
     resetApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
+  });
+
+  it('opens on the member list the application already holds', async () => {
+    const client = createTestQueryClient();
+    // What the boot around this screen leaves behind: `App.tsx` reads the roster
+    // for the shell and holds it at `staleTime: Infinity`, so by the time
+    // Settings mounts the list is already there and seconds old at most.
+    client.setQueryData(['workspace-members'], [owner, member]);
+    renderSettings(workspace, client);
+
+    await waitFor(() => expect(api.getConnections).toHaveBeenCalled());
+    expect(api.getWorkspaceMembers).not.toHaveBeenCalled();
+    expect(await screen.findByText('adam@example.com')).toBeVisible();
+  });
+
+  it('does not read connections twice when the window is revealed right after mounting', async () => {
+    renderSettings();
+    await waitFor(() => expect(api.getConnections).toHaveBeenCalledTimes(1));
+
+    // What showing a window raises — a prewarmed one at its reveal, and a cold
+    // one moments after its own first read.
+    act(() => revealWindow());
+
+    await waitFor(() => expect(api.getWorkspaceInvitations).toHaveBeenCalled());
+    expect(api.getConnections).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads connections again when the window is revealed after a trip out to a provider', async () => {
+    const client = createTestQueryClient();
+    renderSettings(workspace, client);
+    // Waited on the landed answer, not the call: a read that has started has no
+    // `dataUpdatedAt` to age yet, and would overwrite one on the way in.
+    await waitFor(() => expect(client.getQueryState(['connections'])?.dataUpdatedAt).toBeGreaterThan(0));
+    expect(api.getConnections).toHaveBeenCalledTimes(1);
+
+    // Authorizing a connector happens in a browser, and coming back here is the
+    // moment the answer exists. Aged rather than timer-driven: the subject is
+    // the staleness the reveal is measured against, not a schedule.
+    ageCacheEntry(client, ['connections'], 30_000);
+    act(() => revealWindow());
+
+    await waitFor(() => expect(api.getConnections).toHaveBeenCalledTimes(2));
   });
 
   it('indexes provider actions only for their available scopes and preserves IME Escape', async () => {
@@ -864,9 +925,14 @@ describe('Workspace settings', () => {
     expect(screen.queryByText(/participant explicitly requested/iu)).not.toBeInTheDocument();
   });
 
-  it('refreshes members whenever settings opens even when the cached list is fresh', async () => {
+  it('refreshes members when the list settings opened onto could have gone stale', async () => {
     const client = createTestQueryClient();
     client.setQueryData(['workspace-members'], [owner]);
+    // Older than this observer's 30 seconds, which every list that has been sat
+    // on long enough for somebody to have joined or left is. It used to be
+    // refetched unconditionally; the premise this test needed all along is that
+    // the copy on hand is old, not merely that one exists.
+    ageCacheEntry(client, ['workspace-members'], 60_000);
 
     renderSettings(workspace, client);
     openSettingsSection('Workspace');
