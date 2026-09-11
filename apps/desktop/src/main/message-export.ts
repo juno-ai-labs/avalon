@@ -467,10 +467,10 @@ ${syntax}
      turn, saved — the marker has to be the same marker. */
   .markdown-body sup:has(.citation-pill) { font-size: inherit; vertical-align: baseline; }
   .citation-pill {
-    background: #e4e6c8;
-    border: 1px solid #ccd4a0;
+    background: #ededed;
+    border: 1px solid #b5b5b5;
     border-radius: 999px;
-    color: #4a6a12;
+    color: #070707;
     display: inline-block;
     font: inherit;
     font-size: 0.72em;
