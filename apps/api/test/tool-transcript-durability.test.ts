@@ -107,11 +107,24 @@ describe("tool invocation attribution", () => {
     // table — not a join, which is no longer expressible across the boundary.
     expect(lookup.sql).toContain("FROM connector_connections WHERE id = ?");
     expect(loaded?.plugin).toEqual({
+      canonicalId: `connection:${CONNECTION_ID}`,
+      connectorType: "google",
       pluginId: "plugin_google_2",
       displayName: "Google Drive · Work",
       icon: "brand-google-drive",
     });
     expect(loaded?.activityName).toBe("Searched Google Drive · Work");
+  });
+
+  it("projects a custom server name with canonical identity and an unbranded icon", async () => {
+    const { loaded } = await project({ connectionId: CONNECTION_ID }, {
+      connector_type: "custom_mcp", display_name: "Slack\u202e\u2028👩‍💻",
+      model_plugin_id: "plugin_custom_mcp",
+    });
+    expect(loaded?.plugin).toEqual({
+      canonicalId: `connection:${CONNECTION_ID}`, connectorType: "custom_mcp",
+      pluginId: "plugin_custom_mcp", displayName: "Slack 👩‍💻", icon: "plug",
+    });
   });
 
   it("leaves an Avalon-owned tool unattributed", async () => {
