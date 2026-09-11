@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 /**
  * Bringing a window to the front is not a gesture at anything inside it.
@@ -159,11 +159,20 @@ export function hasUserInputSinceWindowActivation(): boolean {
  * raised. Transient UI that opens on hover or focus should take itself down
  * here rather than wait for a pointer that has left the window.
  *
- * `onDeactivated` is a dependency, so pass one that is stable across renders.
+ * The listener is mounted once and reads the latest `onDeactivated` through a
+ * ref, so a caller may pass an inline closure over current state — which is
+ * what a surface deciding *whether* it has anything to close needs. Making the
+ * callback a dependency instead would re-subscribe on every render of every
+ * caller that does.
  */
 export function useWindowDeactivated(onDeactivated: () => void): void {
+  const latest = useRef(onDeactivated);
   useEffect(() => {
-    window.addEventListener('blur', onDeactivated);
-    return () => window.removeEventListener('blur', onDeactivated);
-  }, [onDeactivated]);
+    latest.current = onDeactivated;
+  });
+  useEffect(() => {
+    const deactivated = (): void => latest.current();
+    window.addEventListener('blur', deactivated);
+    return () => window.removeEventListener('blur', deactivated);
+  }, []);
 }

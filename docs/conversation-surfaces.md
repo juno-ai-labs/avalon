@@ -506,8 +506,10 @@ still; a future opener must not read the arrival of a pointer event as a pointer
 having moved. A pointer entry that the guard turns down cannot be replayed, so
 the row opens its card on the first real movement afterwards rather than on the
 entry — which is why the row listens for movement at all. `Tip` now holds its own
-open state so that it has something to put down; a caller that passes `open`
-keeps both that and the deactivation close. The guard is
+open state so that it has something to put down, and reports that close through
+`onOpenChange` as well: a caller rendering `open` — `DragHint` is the one —
+would otherwise draw its hint straight back over the returning window, which is
+the defect this entry is about wearing a different hat. The guard is
 `lib/window-activation.ts`, and it is where a third surface with the same
 symptom should go.
 

@@ -3,7 +3,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEVICE_PREFERENCES_STORAGE_KEY } from '../lib/device-preferences';
 import { installWindowActivationTracking } from '../lib/window-activation';
-import { AvatarStack, RallyMark, DropdownSelect, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
+import { AvatarStack, DragHint, RallyMark, DropdownSelect, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state, theme }: { size: number; state: string; theme?: string }) => (
@@ -299,6 +299,28 @@ describe('Tip across an application switch', () => {
     fireEvent.focus(copy);
 
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Copy response');
+  });
+
+  it('takes a caller-controlled hint down with the window as well', async () => {
+    // `DragHint` renders `open` itself, so dropping the tip's own state cannot
+    // close it — and a resize handle's hint is the one most likely to still be
+    // up at a switch, because the pointer that opened it is resting on a 12px
+    // divider it has no reason to leave.
+    render(
+      <Tooltip.Provider delayDuration={0}>
+        <DragHint action="Drag to resize" shortcut="Double-click to reset">
+          <button type="button">Divider</button>
+        </DragHint>
+      </Tooltip.Provider>,
+    );
+    const divider = screen.getByRole('button', { name: 'Divider' });
+
+    fireEvent.pointerMove(divider, { pointerType: 'mouse', clientX: 300, clientY: 200 });
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Drag to resize');
+
+    fireEvent.blur(window);
+
+    await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
   });
 
   it('goes down with the window instead of waiting over the screen behind it', async () => {
