@@ -204,8 +204,7 @@ export interface HexagonMarker {
  * the work-stream markers' own `statusDescription` — the state named, then one
  * clause on what it means — so the two families of mark in this window explain
  * themselves the same way, and it stays short enough to wrap to two lines in
- * the width `.hexagon-marker-tooltip` holds the tile's tooltip to while it is
- * saying this.
+ * the width `.sidekick-tile-tooltip` holds a tile's tooltip to.
  */
 export const SIDEKICK_RUNNING_MARKER: HexagonMarker = {
   symbol: Play,
