@@ -97,6 +97,51 @@ grows; that edge is the composer's own only while the dock states no padding
 above it, which `app.css.node.test.ts` holds for every rule naming either
 class.
 
+Every surface with a composer renders the same one, dressed the same way: the
+message capsule, keyed on `:is(.workstream-screen, .workstream-launch-screen)
+.workstream-composer.is-message-capsule` — one 44px pill on a 22px corner, a
+42px-tall field, the plus in the left column and the send or dictation control
+in the right. `ComposerInput` takes `layout: 'message-capsule'` on all four
+surfaces (the conversation, the new-substream dock, a workspace-level new chat
+and a project-owned one), and no surface states a treatment of its own. Wrapped
+text and staged attachments span the controls' own grid row, so the reserve at
+the foot of the field is what holds the two apart: the 28px control, the 7px of
+row padding under it, and 4px of air between the last line and the top of the
+plus. A
+launcher that dressed its field differently made the element a person types
+their first message into the odd one out on a screen already showing the
+conversation it becomes, and it made the hand-off a costume change.
+
+The composer's width is the conversation's, not the pane's, and it is one width
+across every surface that has a composer. A turn is capped at `--turn-width-cap`
+(640px, in `app.css`); `--composer-width` is three quarters of that, and the
+field is centred on it, so the field and the bubbles it produces read as one
+column rather than as a full-width row under a narrow transcript. Four rules read
+that property: the composer stack under `:is(.workstream-screen,
+.workstream-launch-screen)` — which is the settled conversation, the new-chat
+screen and the new-substream dock, because a launcher is a conversation that has
+not happened yet — plus the two rows a launcher stacks over its field, the
+substream banner and the participant chips, which are centred siblings of the
+stack rather than children of it and so each state the measure for themselves.
+The draft moves from a launcher to the conversation on one keystroke without the
+element unmounting, so a width that differs across that handoff is a width that
+moves under the person typing. The cap is declared once for the same reason in
+the other direction: the composer cannot read it off the turns, sitting as it
+does outside the scroller, in a box the transcript column's percentages never
+reach.
+
+Below a 600px pane the field gives the inset up and takes the whole row inside
+the dock's gutters, and those two rows come with it. The dock is an inline-size
+container named `composer-dock`, so that threshold follows the *pane*, which
+narrows when a sidebar expands and widens when one collapses, where a viewport
+media query would have answered for a width nobody is looking at. A size query
+measures the container's content box, so the number in the query is that pane
+width less a dock's two 16px gutters. Every dock states the same gutter, because
+a dock that states a different one crosses at a different *pane* — and a launcher
+that crosses somewhere else puts the width change back into the hand-off, in a
+band of pane widths either side of the threshold. `app.css.node.test.ts` holds
+the threshold and every dock's gutter to that one sum.
+
 The feed's vertical rhythm is one primitive: a row owns the space above it,
 chosen by what precedes it, and no row sets a bottom margin. `MessageFeed`
 decides the gap from the message list (`feedRowGap`, over `feedRowKind`) and
@@ -389,6 +434,168 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-11 — Every dock crosses the narrow row at the same pane
+
+**What changed:** The substream and project launchers' dock states `padding: 12px
+16px 28px` rather than `12px 34px 28px`, so its horizontal gutter is the 16px
+every other dock states, and the `@media (max-width: 760px)` rule that existed
+only to equalise those gutters at narrow widths is gone. The vertical values are
+untouched. `app.css.node.test.ts` now reads every rule that pads a dock and holds
+each one's side value to the same `threshold + 2 × gutter = 600px` sum.
+
+**Why:** A size query measures the container's content box, so a dock's own
+gutters decide which *pane* width the narrow-row branch starts at: 16px sides put
+it at a 600px pane, 34px sides at 636px. Between those two the launcher was on
+the narrow branch while the conversation it becomes was not, so the field
+changed width on the keystroke that submits it — 552px to 480px at a 620px pane,
+and 522px to 558px at 590px — which is the exact defect the one-width change was
+made to remove, surviving inside it in a 36px band. Raised by an automated review
+on the pull request; it had been recorded as an accepted residue in the entry
+below, which was the wrong call: the residue was the bug. The hero's 34px was
+sized for a 690px column that no longer exists, and the two narrow-width media
+rules that already equalised it were saying so.
+
+**Consequences:** On a pane narrow enough for the full-row branch, a launcher's
+field, banner and participant row sit 16px from the pane's edges rather than
+34px, which is where the conversation's field already sat. Nothing moves at any
+wider pane, where the field is 480px centred and the dock's gutters are not what
+positions it. The dock padding still transitions across `.is-launching`, with
+only the vertical values left to travel.
+
+**Also in this change, because the test that should have caught it did not:**
+the gutter scan reads rules out of the stylesheet rather than looking each
+selector up with `rule()`, which returns the *first* match for a name — and this
+launcher dock's selector is written twice, once in a narrow-width media block and
+once as the rule itself, so the lookup answered for the wrong one and the scan
+passed over the only dock it exists for. It also strips comments before reading a
+declaration, having been fooled once by a comment sitting between the brace and
+the `padding` it documents.
+
+### 2026-09-10 — Wrapped text clears the controls by 4px
+
+**What changed:** The reserve at the foot of a capsule's field, on the two
+states where the text spans the controls' row — wrapped text and staged
+attachments — is 39px rather than 34px: the 28px control, the 7px of row padding
+under it, and 4px between the last line and the top of the plus. The field is
+5px taller in those states and unchanged at 44px while it holds one line.
+
+**Why:** At 34px the text ended flush with the controls' top edge. Nothing
+overlapped and nothing was illegible, which is why it survived; it just read as
+one block of text with buttons stuck to the bottom of it rather than as a field
+with its controls under it. The number is the design's.
+
+### 2026-09-10 — One composer, dressed one way
+
+**What changed:** The message capsule is now every conversation surface's, and
+the launchers state no composer treatment of their own. The capsule's 29 rules
+key on `:is(.workstream-screen, .workstream-launch-screen)` instead of
+`:is(.workstream-screen, .new-chat-screen)`, which reaches the new-substream dock
+and project-owned creation as well; `new-workstream.tsx` passes
+`layout="message-capsule"` unconditionally rather than only for a workspace-level
+new chat; and all eleven `.launch-composer` rules are gone, along with the
+`className` that carried them. Two of those were the treatment itself — a
+raised box on `--av-sys-size-radius-xl` with an 84px field under
+`elevation-shadow-md`, and the new-chat screen's restatement of the capsule it
+was already sitting beside — and two were the transitions that travelled between
+the treatments at `.is-launching`, which now have nothing to travel.
+
+**Why:** The new-substream field was 86px tall on an 8px corner while the
+conversation's, six inches above it on the same screen, was a 44px pill on a
+22px corner; a person starting a substream saw both at once. Three dressings of
+one component is also three places to keep in step, and they had already drifted:
+the launcher's placeholder ink, its hint ink, and its toolbar padding were each
+stated once and read nowhere else.
+
+**Consequences:** Project-owned creation loses the toolbar layout the
+2026-09-04 entry in [`workstream-creation.md`](workstream-creation.md) gave it —
+that entry's reasoning (the launcher should not look different from the
+conversation entry point) is the same reasoning applied to the surface it had
+left out. Its developer-only model override moves from the toolbar pill into the
+plus menu, where the capsule has carried it since that entry; its footer hint
+("Enter to create") is not rendered at all, because the capsule hides
+`.composer-hint`, so both launchers now state the keystroke nowhere. The prop is
+still passed, and one rule is all that stands between it and being shown again. The new-substream field is a single 42px row until it wraps
+rather than an 84px box, so its first impression is smaller; the banner above it
+is unchanged. Checked in a real window on both appearances, wrapped and empty.
+
+### 2026-09-10 — One composer width, launchers included
+
+**What changed:** The width the entry below gave the work stream's composer is
+now every composer's. `--composer-width` names it once —
+`calc(var(--turn-width-cap) * .75)`, 480px — and the composer stack rule takes
+`:is(.workstream-screen, .workstream-launch-screen)`, which covers the settled
+conversation, the new-chat screen and the new-substream dock. The launcher's own
+690px column is gone from all three places it was written out: its stack, the
+`.substream-launch-banner`, and the `.new-workstream-modifiers` participant row.
+The last two read `--composer-width` and join the field in the narrow-row
+branch, because they are centred siblings of the stack, not children of it, and
+a row that keeps a wider cap stops lining up on exactly the width where the
+field gave its inset up. Two rules the entry below added are gone with the
+divergence they existed for: `.new-chat-screen:not(.is-launching)
+.composer-stack`, which stated the full row, and the `max-width` transition on
+`.workstream-launch-screen .composer-stack`, which travelled the field from the
+launcher's width to the conversation's. Nothing travels now, because nothing
+moves.
+
+**Why:** The entry below sized one of the three fields a person types a first
+message into and left the other two — a new work stream at full width, a new
+substream at 690px — so the same draft was three widths depending on where it
+was written, and the handoff into the conversation resized the field under the
+person mid-sentence. A launcher is not a different surface with its own
+proportions; it is the conversation before it exists, which is exactly why the
+element is never unmounted across the handoff.
+
+**Consequences:** The substream banner's note truncates earlier than it did at
+690px, which is the behaviour that row already states for itself — the label
+names the surface and the note only explains it, so the note is the first thing
+to go. The narrow-row threshold is stated once, as a content-box width, so the
+two launcher docks — 34px gutters against the conversation's 16px — reach it at
+a pane about 36px wider. And every consumer of `--composer-width` is now one
+edit away from moving together, which is the property the three copies of 690px
+did not have.
+
+### 2026-09-10 — The composer is three quarters of the widest turn
+
+**What changed:** The work stream's composer stack is
+`max-width: calc(var(--turn-width-cap) * .75)` — 480px — centred over the
+transcript, instead of running the full width of the pane. `--turn-width-cap` is
+new: the 640px that was written out in each of the three rules capping a turn is
+now declared once and read by all of them and by the composer. Under a 600px
+pane the field takes the whole row again, through an inline-size container on
+`.workstream-screen .composer-dock` and a `@container` query at 568px, that pane
+less the dock's two 16px gutters. The new-chat launcher's own rule states the
+full row as `max-width: 100%` rather than `none` so the width can travel into
+the conversation's measure at launch instead of cutting to it; that screen
+already carries `.workstream-launch-screen`, whose stack transitions
+`max-width`, so nothing else was needed for it.
+
+**Why:** The field ran to both edges of the pane while every message in it
+stopped well short of them, so the one element a person types into was the widest
+thing on screen and belonged to no column. Three quarters of the cap rather than
+the cap itself keeps the field visibly narrower than the turn it becomes; the
+number is the design's, not a derivation. The cap is what both ends read, so it
+is named — the composer cannot arrive at it any other way, sitting as it does
+outside the scroller where the column's percentages do not reach.
+
+**Considered and rejected:** Reconstructing the transcript's *measure* in the
+composer — the pane, less the scrollbar gutter `.transcript-scroll` reserves,
+capped at the feed width, less the column's own padding — and taking three
+quarters of the full `min(88%, cap, 100% - 82px)` over it. It agrees with the
+shipped rule at every pane over ~800px, differing only where the column is
+narrow enough that a turn is capped by the column instead of by 640px, and it
+buys that agreement with an equation nobody can read a width off and a
+dependency on two lengths (the scrollbar gutter, and a column padding that
+changes at another breakpoint) that would drift silently. A viewport media query
+for the narrow branch was rejected outright: the pane is not the viewport here.
+
+**Consequences:** Between a 600 and roughly an 800px pane the field can be a few
+pixels wider than the widest turn, because a turn is capped by the column there
+and the field is not; the narrow branch below 600px is deliberately wider still.
+The composer is centred on the pane while the transcript column is centred
+inside the scroller's gutter, so the two centres differ by half a scrollbar —
+4.5px, as they already did. Every conversation on the shared surface moves with
+this, a Sidekick's included, which is the point: it is one surface.
 
 ### 2026-09-10 — One Sidekicks section, under the people, in both of a room's rails
 
