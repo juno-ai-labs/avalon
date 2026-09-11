@@ -647,6 +647,8 @@ that adds it. Both new migrations are lazy until the fleet is force-migrated,
 like 47 and 52. `pending` still clears on publish; a dead letter still needs a
 redrive or a re-projection until the open question is taken up.
 
+Shipped in #691.
+
 ### 2026-09-10 — Hold the search modal at one size, and unlabel row shortcuts
 
 The modal grew and shrank under the reader: the "Loading more" line and the
