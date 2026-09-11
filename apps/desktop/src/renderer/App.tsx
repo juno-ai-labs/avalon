@@ -29,6 +29,7 @@ import {
   uuidV7,
 } from './lib/telemetry';
 import { watchSystemAppearance, watchThemeBroadcast } from './lib/theme';
+import { useWindowActivationTracking } from './lib/window-activation';
 import { useEscapeClosesWindow } from './lib/window-escape';
 import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
 import { localCacheScope } from './lib/local-cache';
@@ -465,6 +466,10 @@ export function SessionGate(): React.JSX.Element {
 
 export default function App(): React.JSX.Element {
   useEffect(() => installRendererErrorTelemetry(), []);
+  // Above the deep-link branch below, so every window this renderer draws —
+  // including the ones that return before the providers — can tell an app
+  // switch from a person. See `lib/window-activation.ts`.
+  useWindowActivationTracking();
   // Only a `system` choice follows the Mac; the watcher decides that for itself
   // so that a later change of choice does not need to re-subscribe.
   useEffect(() => watchSystemAppearance(), []);

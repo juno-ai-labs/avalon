@@ -769,6 +769,15 @@ pointer-only by design — it is a badge inside the row's link, and giving it a
 tab stop would add one to every public row. Tab to a private row and confirm its
 card carries no scope line at all.
 
+Switch applications and come back, which no sandbox can stand in for: leave the
+pointer resting over a work-stream row, click a different row first so the
+window has a focused row to hand back, then Command-Tab away and Command-Tab in.
+No preview card and no tooltip may appear — not for the row under the cursor,
+and not for the row that holds focus — until the pointer actually moves or a key
+goes down. Move the pointer a little without leaving the row and confirm the
+card the switch withheld opens then. Repeat with a card already open when you
+switch away, and confirm it is gone rather than waiting there on your return.
+
 When a narrow window forces navigation into compact mode, its Expand control
 is disabled and double-clicking the edge must preserve the saved expanded
 preference. Widening the window restores expansion. Clicking either separator
