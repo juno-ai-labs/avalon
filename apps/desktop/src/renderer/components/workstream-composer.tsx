@@ -495,7 +495,9 @@ export function WorkstreamComposer({
               onClick={() => { if (!workstream.stopRequested) void onStop(); }}
               tooltipSide="top"
             >
-              <Square aria-hidden="true" fill="currentColor" size={10} />
+              {workstream.stopRequested
+                ? <LoaderCircle aria-hidden="true" className="spin" size={12} />
+                : <Square aria-hidden="true" fill="currentColor" size={10} />}
             </IconButton>
           </div>
         )}

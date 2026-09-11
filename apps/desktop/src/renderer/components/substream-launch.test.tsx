@@ -193,7 +193,9 @@ describe('substream launch surface', () => {
 
   it('offers no stop control for the parent run it is standing in front of', () => {
     renderSurface();
-    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+    const slot = document.querySelector('.composer-stop-slot');
+    expect(slot).toHaveAttribute('inert');
+    expect(slot).toHaveAttribute('data-visible', 'false');
   });
 
   it('draws the typed turn and the work timer while the substream is being created', () => {
