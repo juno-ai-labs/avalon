@@ -1313,6 +1313,18 @@ export function Sidebar({
   const batchPreviewGeneration = useRef(0);
   const visibleWorkstreams = workstreams;
   const visibleNotes = useMemo(() => conversationOnly ? [] : notes, [conversationOnly, notes]);
+  // One destination under the two names this shell goes by: the conversation-only
+  // client presents it as a chat, and the full navigation calls the same route a
+  // work stream — the name the link below the search row already uses. The icon
+  // is the only form this control takes in the titlebar and the rail, so the name
+  // has to reach a pointer as well as a screen reader, and both read this.
+  const newStreamLabel = conversationOnly ? 'New chat' : 'New work stream';
+  // Resolved here rather than through `NavLink`'s function form, because both
+  // of these links are tooltip triggers: Radix clones the child and merges its
+  // `className`, and a function arrives at the DOM as its own source text with
+  // the link unstyled. It is the same comparison the `returnTo` state below
+  // makes, so the two cannot disagree about which route this is.
+  const onNewStreamRoute = location.pathname === '/workstreams/new';
   const standaloneSidekicks = useMemo(() => (automations ?? []).filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'active'), [automations]);
   // Never had a Sidekick, rather than none running right now. A draft, a paused
   // one, and a work-stream's own all mean this person has met the concept, and
@@ -1917,18 +1929,20 @@ export function Sidebar({
               accessibility tree and the tab order by attribute at once
               rather than when the fade ends, or the rail would offer two New
               chat links for a quarter of a second. */}
-          <NavLink
-            aria-hidden={compact}
-            aria-label="New chat"
-            className={({ isActive }) => clsx('sidebar-new-button window-no-drag', isActive && 'is-active')}
-            hidden={compact}
-            tabIndex={compact ? -1 : undefined}
-            onClick={() => markSurfaceEntrypoint('sidebar_new')}
-            state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
-            to="/workstreams/new"
-          >
-            <Plus aria-hidden="true" size={16} />
-          </NavLink>
+          <Tip label={newStreamLabel} side="bottom">
+            <NavLink
+              aria-hidden={compact}
+              aria-label={newStreamLabel}
+              className={clsx('sidebar-new-button window-no-drag', onNewStreamRoute && 'is-active')}
+              hidden={compact}
+              tabIndex={compact ? -1 : undefined}
+              onClick={() => markSurfaceEntrypoint('sidebar_new')}
+              state={onNewStreamRoute ? undefined : { returnTo: location.pathname }}
+              to="/workstreams/new"
+            >
+              <Plus aria-hidden="true" size={16} />
+            </NavLink>
+          </Tip>
         </div>
 
         {/* Above the scroll box in both layouts, so search stays at the top
@@ -1941,17 +1955,22 @@ export function Sidebar({
               search row as the bar opens the slot for it, and out to the left
               as the slot closes. See `useListMotion`. */}
           {compact && (
-            <NavLink
-              aria-label="New chat"
-              className={({ isActive }) => clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', isActive && 'is-active')}
-              data-motion-insert=""
-              data-motion-key="action:new"
-              onClick={() => markSurfaceEntrypoint('sidebar_new')}
-              state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
-              to="/workstreams/new"
-            >
-              <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
-            </NavLink>
+            // `Tip` renders no element of its own, so the row the motion planner
+            // keys on is still this link itself; the tip hangs off the rail's
+            // right rather than below, where the row under it would be covered.
+            <Tip label={newStreamLabel} side="right">
+              <NavLink
+                aria-label={newStreamLabel}
+                className={clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', onNewStreamRoute && 'is-active')}
+                data-motion-insert=""
+                data-motion-key="action:new"
+                onClick={() => markSurfaceEntrypoint('sidebar_new')}
+                state={onNewStreamRoute ? undefined : { returnTo: location.pathname }}
+                to="/workstreams/new"
+              >
+                <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
+              </NavLink>
+            </Tip>
           )}
         </div>
 

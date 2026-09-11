@@ -241,6 +241,35 @@ describe('Sidebar work-stream markers', () => {
     expect(commandbar?.querySelector('.sidebar-new-button')).toBeNull();
   });
 
+  // The plus is the whole of this control in the titlebar and in the rail, and
+  // the thing it starts goes by two names: a work stream in the full
+  // navigation, where the row below the search already says so, and a chat in
+  // the GrokBot shell. The tip is where a pointer reads that, and it is the
+  // link's own name, so it says the same thing to a screen reader.
+  it('names the plus after what it starts, in the titlebar and in the rail', () => {
+    function Navigation(props: { compact?: boolean; conversationOnly?: boolean }) {
+      return <Sidebar {...defaultActions} automations={[]} notes={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} {...props} />;
+    }
+    const { rerender } = render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
+
+    const titlebar = document.querySelector('.sidebar-titlebar');
+    expect(titlebar).not.toBeNull();
+    const create = within(titlebar as HTMLElement).getByRole('link', { name: 'New work stream' });
+    fireEvent.focus(create);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('New work stream');
+
+    rerender(<MemoryRouter><Tooltip.Provider><Navigation compact /></Tooltip.Provider></MemoryRouter>);
+    const commandbar = document.querySelector('.sidebar-commandbar');
+    expect(commandbar).not.toBeNull();
+    const rail = within(commandbar as HTMLElement).getByRole('link', { name: 'New work stream' });
+    fireEvent.focus(rail);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('New work stream');
+
+    rerender(<MemoryRouter><Tooltip.Provider><Navigation conversationOnly /></Tooltip.Provider></MemoryRouter>);
+    fireEvent.focus(screen.getByRole('link', { name: 'New chat' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('New chat');
+  });
+
   afterEach(() => vi.unstubAllGlobals());
 
   it('resizes from the keyboard and exposes its constrained width', () => {
@@ -1590,7 +1619,11 @@ describe('Sidebar work-stream markers', () => {
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[automation]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     expect(screen.queryByRole('region', { name: 'Automations' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'New automation' })).toBeNull();
-    expect(screen.getByRole('link', { name: 'New work stream' })).toHaveAttribute('href', '/workstreams/new');
+    // Scoped to the actions row: the titlebar's plus is a second way to the
+    // same place and now carries the same name.
+    const actions = document.querySelector('.sidebar-primary-actions');
+    expect(actions).not.toBeNull();
+    expect(within(actions as HTMLElement).getByRole('link', { name: 'New work stream' })).toHaveAttribute('href', '/workstreams/new');
   });
 
   it('opens meeting notes from the primary actions', async () => {
