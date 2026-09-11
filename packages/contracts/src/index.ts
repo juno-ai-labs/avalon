@@ -79,6 +79,8 @@ export {
   TELEMETRY_ENVELOPE_SCHEMA,
   telemetryEventNames,
   TELEMETRY_CONNECTOR_TYPES,
+  TELEMETRY_MENU_BAR_ACTIONS,
+  type TelemetryMenuBarAction,
   type TelemetryBatch,
   type TelemetryApplicationIconId,
   type TelemetryBreadcrumb,
