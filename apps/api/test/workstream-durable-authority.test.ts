@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext, Env } from "../src/env";
 import { activateWorkstreamLoop } from "../src/services/integrations";
+import { ConversationService } from "../src/services/conversation-service";
 import { launchWorkstreamHarness, WorkstreamService } from "../src/services/workstream-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -88,12 +89,17 @@ describe("a stack that never opened the durable-object authority", () => {
     const calls: Array<Promise<unknown>> = [
       service.get(workstreamId),
       service.update(workstreamId, { title: "Renamed" }),
-      service.acknowledgeRead(workstreamId, {
-        readThroughSequenceNumber: 0,
-        observedManualUnreadGeneration: 0,
-        entrypoint: undefined,
-      }),
       service.markUnread(workstreamId),
+      // A read is acknowledged through the conversation that was read rather
+      // than through the work stream, so the fence has to hold on that path
+      // too. It holds before the parent is asked anything, which is why no
+      // object is opened below.
+      new ConversationService(env, auth).client(workstreamId, false, "0"),
+      new ConversationService(env, auth).client(
+        workstreamId,
+        false,
+        "00000000-0000-7000-8000-0000000000c1",
+      ),
       service.createMessage(workstreamId, {
         text: "hello",
         clientMessageId: "client-1",

@@ -552,6 +552,55 @@ export function highestVisibleAttentionSequence(
   }, 0);
 }
 
+/**
+ * The acknowledgement one conversation owes, addressed to itself, or nothing.
+ *
+ * Every conversation keeps its own read waterline: a `SubstreamAgent` per
+ * substream, each with its own attention ordinals and its own
+ * `member_attention` row. So the conversation on screen is always the one to
+ * acknowledge, whether it is Main or a private child. This used to be a work
+ * stream's fact, and a child's read therefore went unrecorded: the divider it
+ * had already drawn from that child's own unread waterline stayed above the
+ * reply the person was reading, through reopens and reconnects alike, because
+ * nothing but sending another message could move `seen_attention_ordinal`
+ * there.
+ *
+ * Nothing to send when no message that asks for attention is on screen, or
+ * when the room already knows everything visible has been read, unless a
+ * manual mark is standing, which this acknowledgement is what retires.
+ *
+ * `key` is the identity of the one request allowed in flight. It carries the
+ * substream because the acknowledgement does: two children of one work stream
+ * are two waterlines, and a key naming only the work stream would call them
+ * the same read.
+ */
+export function conversationReadAcknowledgement(input: {
+  parentId: string;
+  substreamId: string;
+  highestVisibleSequence: number;
+  viewer: Pick<WorkstreamDetail,
+    'readThroughSequenceNumber' | 'manualUnreadFromSequenceNumber' | 'manualUnreadGeneration'>;
+}): {
+  parentId: string;
+  substreamId: string;
+  readThroughSequenceNumber: number;
+  observedManualUnreadGeneration: number;
+  key: string;
+} | null {
+  if (input.highestVisibleSequence === 0) return null;
+  if (
+    input.highestVisibleSequence <= input.viewer.readThroughSequenceNumber
+    && input.viewer.manualUnreadFromSequenceNumber === null
+  ) return null;
+  return {
+    parentId: input.parentId,
+    substreamId: input.substreamId,
+    readThroughSequenceNumber: input.highestVisibleSequence,
+    observedManualUnreadGeneration: input.viewer.manualUnreadGeneration,
+    key: `${input.parentId}:${input.substreamId}:${input.highestVisibleSequence}:${input.viewer.manualUnreadGeneration}`,
+  };
+}
+
 export function RunFailureNotice({
   code,
   message,
@@ -1852,8 +1901,6 @@ export function ConversationSurface({
   }, [id, routedDetail, transcript, transcriptVirtualizer]);
 
   const acknowledgeVisibleMessages = useCallback((): void => {
-    // This endpoint owns Main attention; child ordinals are a separate sequence.
-    if (substreamId !== '0') return;
     // A seed's waterlines are what the room said some launches ago; an
     // acknowledgement built on them could read past a mark made since.
     if (feedFromLocalCache) return;
@@ -1866,23 +1913,26 @@ export function ConversationSurface({
     const visibleIndexes = transcriptVirtualizer.getVirtualItems()
       .filter((item) => item.start < viewportBottom && item.end > viewportTop)
       .map((item) => item.index);
-    const highestVisibleSequence = highestVisibleAttentionSequence(
-      transcript,
-      visibleIndexes,
-      detail.latestAttentionSequenceNumber,
-    );
-    if (highestVisibleSequence === 0) return;
-    if (
-      highestVisibleSequence <= detail.readThroughSequenceNumber
-      && detail.manualUnreadFromSequenceNumber === null
-    ) return;
-    const ackKey = `${id}:${highestVisibleSequence}:${detail.manualUnreadGeneration}`;
-    if (readAckInFlightRef.current === ackKey) return;
-    readAckInFlightRef.current = ackKey;
-    void api.acknowledgeWorkstreamRead(
-      id,
-      highestVisibleSequence,
-      detail.manualUnreadGeneration,
+    // The addressed conversation's own detail entry, so its own waterlines and
+    // its own ordinals decide this. A child's are not Main's.
+    const pending = conversationReadAcknowledgement({
+      parentId: id,
+      substreamId,
+      highestVisibleSequence: highestVisibleAttentionSequence(
+        transcript,
+        visibleIndexes,
+        detail.latestAttentionSequenceNumber,
+      ),
+      viewer: detail,
+    });
+    if (!pending) return;
+    if (readAckInFlightRef.current === pending.key) return;
+    readAckInFlightRef.current = pending.key;
+    void api.acknowledgeConversationRead(
+      pending.parentId,
+      pending.substreamId,
+      pending.readThroughSequenceNumber,
+      pending.observedManualUnreadGeneration,
       currentSurfaceEntrypoint(),
     ).then((updated) => {
       if (activeConversationAddressRef.current !== conversationAddress) return;
@@ -1892,7 +1942,7 @@ export function ConversationSurface({
     }).catch(() => {
       requestSocketSnapshot();
     }).finally(() => {
-      if (readAckInFlightRef.current === ackKey) readAckInFlightRef.current = null;
+      if (readAckInFlightRef.current === pending.key) readAckInFlightRef.current = null;
     });
   }, [api, conversationAddress, detailQueryKey, feedFromLocalCache, id, queryClient, requestSocketSnapshot, substreamId, transcript, transcriptVirtualizer]);
 
