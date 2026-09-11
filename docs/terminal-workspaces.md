@@ -718,6 +718,15 @@ miss the one a person had open. *Redirecting `context.workstreamId` wholesale*,
 which would also move the sandbox and the readable-resource set into the room
 and is a much larger change than the defect needs.
 
+**The carve-out:** an internal capture is not redirected. A command log
+(`terminal-command-log:<effect-intent>`) and a checkout backup name their own
+namespace through `providerResourceId` rather than deriving one from a path, and
+they are recovery artifacts a run never chose to deliver. Redirecting them would
+put raw command output — the output the Sidekick's delivered result deliberately
+left out — in the owning room's resource list. The redirect therefore keys on the
+same condition the identity does: a publication that supplies its own
+`providerResourceId` stays in the conversation that produced it.
+
 **What a future change has to respect:** the redirect is publication only. A
 Sidekick and its owning room now share one publish namespace, so two Sidekicks
 owned by the same room that publish the same path share a document — that is

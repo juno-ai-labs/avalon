@@ -216,6 +216,16 @@ rendered through the digest, semantic-trigger, naming, description and addressin
 renderers and asserted to reach the user-role message and never the system one. A
 new renderer that carries outside content belongs in that test.
 
+The five ingress paths whose renderers were deleted — Slack surrounding context,
+inbound email, the external event, a Sidekick result, a trigger activity — build
+their content at the call site now rather than in a renderer, so the same rule is
+enforced where the content is assembled: `model-protocol-transcript.test.ts`
+("keeps injection text in the three ingress rows out of any system message")
+covers the three that pass through the transcript projection. Content built
+inline is still content that carries a stranger's text, and the role guarantee is
+the only control left on it, so a new inline path belongs in that test the way a
+new renderer belongs in this one.
+
 There is one deliberate exception to the third rule, and it is narrow. A
 resident context block of the kind `repository_instructions`
 ([`resident-context.md`](resident-context.md)), a
