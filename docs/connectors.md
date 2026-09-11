@@ -352,6 +352,34 @@ the model can switch to tree mode. Directory/tree `offset` and `limit`, like
 every numeric tool field, inherit the exact numeric-string normalization in
 [`agent-tools.md`](agent-tools.md).
 
+Every GitHub list tool answers in that same envelope: the named collection
+(`pullRequests`, `issues`, `commits`, `files`, `reviews`, `workflowRuns`,
+`checkRuns`), `count`, `page`, `perPage`, `hasMore`, and — where the tool takes
+filters — an `appliedFilters` echo of exactly what narrowed the query. The echo
+is the load-bearing part. GitHub's `head` filter wants `owner:branch` and
+answers anything else with HTTP 200 and an empty array, so a bare `[]` cannot be
+told apart from a repository with nothing in it, and a run that hit that
+reported twenty-five open pull requests as none. `hasMore` is a full page, read
+conservatively: a page that comes back exactly full may or may not be the last
+one, and saying `true` costs one empty page where saying `false` loses whatever
+followed it. Do not try to sharpen it by asking GitHub for one item past the
+page — `page` is indexed in units of the `per_page` actually sent, so requesting
+31 to show 30 makes page 2 begin at item 32 and drops item 31 on every boundary.
+The `Link` header answers it exactly without moving the boundaries, at the cost
+of threading response headers through every request in this adapter, and is the
+move if something ever needs `hasMore` exact. The two endpoints that answer with
+GitHub's own `total_count` — `actions.list_workflow_runs` and
+`checks.list_for_ref` — are the exception, and take `hasMore` from that total
+exactly; when the total is missing they fall back to the same conservative
+reading rather than standing the page's own length in for it, which would report
+`hasMore: false` for an exactly-full first page, and they omit `totalCount`
+rather than inventing one a caller cannot tell from a real total.
+`issues.list` pages on what GitHub served rather than what survives its
+pull-request filter, or a repository whose issue numbers are mostly pull
+requests ends its list early. Parameter descriptions are principle 13 in
+[`agent-tools.md`](agent-tools.md), and
+`apps/api/test/tool-schema-descriptions.test.ts` holds them.
+
 The GitHub plugin prompt treats metadata and code evidence as different things.
 When a repository is not named, the model searches the authorized set and
 chooses the best match from the request, work-stream context, pinned status,
@@ -920,6 +948,42 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-10 — GitHub list tools answer in an envelope, and every parameter is described
+
+**What changed:** All 112 GitHub tool parameters carry a `description`; the
+adapter converts its schemas with `z.toJSONSchema(schema, { io: "input" })`; and
+`pull_requests.list`, `issues.list`, `commits.list`, `pull_requests.list_files`,
+`pull_requests.list_reviews`, `actions.list_workflow_runs`, and
+`checks.list_for_ref` return the `repositories.list` envelope — the named
+collection, `count`, `page`, `perPage`, `hasMore`, and `appliedFilters` — rather
+than a bare array or a `{ totalCount, items }` pair.
+
+**Why:** A recorded run (2026-09-10) reported `juno-ai-labs/avalon` as having no
+open pull requests when it had twenty-five. The call carried an invented `head`
+filter, which GitHub answers with HTTP 200 and `[]`; the connector returned that
+array under the summary "Listed pull requests", and nothing in the result let
+the model attribute the emptiness to its own argument. It repeated the call and
+then abandoned the connector for a terminal credential and `git`. `head` was
+undescribed, as every GitHub parameter was, and output-mode schema conversion
+had advertised the five defaulted parameters beside it as required.
+
+**Considered and rejected:** describing `head` and `base` alone and leaving the
+bare array. The description stops the model sending a filter it did not mean;
+it does not tell a model reading an empty page why the page is empty, and a
+filter can be meant and still match nothing. Also rejected: asking GitHub for
+one item past the page to make `hasMore` exact, which shipped into review and
+was caught there — `page` counts in units of the `per_page` sent, so the
+peeked-at item falls before the next page's first and is skipped rather than
+returned. `hasMore` is the conservative full-page reading instead, and the exact
+answer, if one is ever needed, is the `Link` header rather than a wider
+request.
+
+**Consequences:** Anything reading a GitHub list tool's `output` as an array now
+reads the named collection on it. `head` and `base` are sent only when the
+caller supplied them, which `github.test.ts` asserts directly — a default
+quietly reintroduced there is the original failure again.
+
 
 ### 2026-09-08 — Skip unchanged discovered resources
 
