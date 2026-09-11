@@ -218,7 +218,11 @@ sidebar's work-stream row — borderless, one 36px leading slot, the same title
 and the same idle/hover/current fills — and only the mark in that slot says
 which conversation it is: the work stream's own icon tinted with its appearance
 colour for the main conversation, a Tabler `corner-down-right` arrow for a
-substream, and a Tabler `plus` for **New substream**. That arrow is the same
+substream, and a Tabler `plus` for **New substream**. A substream being created has a row
+of its own in that list, drawn with the arrow and carrying a title skeleton
+until the child exists; it is the one conversation row that is not a button,
+because the reader is already on the surface it stands for. See
+[`substream-creation.md`](substream-creation.md#the-launch-surface). That arrow is the same
 shape the feed's control draws as a text `↳`, and the two deliberately no
 longer mean the same thing: in this rail the arrow says a row *is* a substream,
 while on a settled turn it says *start* one. Compact shows the first character of a substream's

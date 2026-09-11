@@ -2955,6 +2955,13 @@ pre {
    read as a smudge beside a title drawn in full ink. */
 .workstream-substream-arrow { color: var(--av-sys-color-text-muted); transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
 .workstream-new-substream { color: var(--av-sys-color-text-muted); }
+/* The row of a substream that does not exist yet: a place held, not a
+   destination. It takes the selected background like the conversation it
+   is about to be, and none of the pointer affordances, because there is
+   nothing behind it to click through to. */
+.workstream-pending-substream { cursor: default; }
+.workstream-pending-substream:hover { background: transparent; }
+.workstream-pending-substream.is-current:hover { background: var(--av-cmp-row-background-selected); }
 .workstream-context-row:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
 .workstream-context-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; overflow: hidden; transition: flex-grow var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
 /* The navigation sidebar's row title, so the two rails read as one list. */
