@@ -507,31 +507,6 @@ suggested-work endpoints. Its draft, attachments, mentions, and optimistic
 creation path are unchanged; the workspace-level participant interaction was
 later replaced by the recipient-first launcher recorded above.
 
-### 2026-08-30 — A personal project's participant row uses one Radix tooltip
-
-**What changed:** The personal-project participant modifier no longer uses a
-native `title`. It wraps the whole row in the standard Radix tooltip
-("Participants are managed by the project") and passes `nameTooltip={false}`
-into `AvatarStack` so a face does not also open a name tooltip on the same
-hover.
-
-**Why:** `AvatarStack` started opening a Radix name tooltip on every face so
-the rest of Rally could drop native `title`. The personal-project row still
-had `title="Participants are managed by the project"`, so hovering a face
-opened both — Chromium's inherited title and the name tooltip — which is the
-double-tooltip this change was meant to remove.
-
-**Considered and rejected:** Leaving the native title and suppressing only the
-name tooltip. That would keep two tooltip languages on one dock. Dropping the
-explanation entirely would leave a row that looks like the workspace picker
-but does nothing on click. Making `currentUserId` required on `AvatarStack`
-does not address this; the project row does not pass presence.
-
-**Consequences:** Callers that wrap `AvatarStack` in another explanation must
-pass `nameTooltip={false}`. Presence still opens a tooltip even then. The
-workspace-scoped picker is unchanged: its faces keep their name tooltips,
-and it has no ancestor title.
-
 ### 2026-08-27 — The reduced-motion cut now zeroes delay, not only duration
 
 **What changed:** The global `*, *::before, *::after` rule of the
@@ -826,33 +801,6 @@ on its entry path, making totals and funnels structurally incorrect.
 fail creation. Any new API or ingress that commits a user-visible work stream
 must register its closed source with the server telemetry helper; hidden system
 work streams remain excluded.
-
-### 2026-08-12 — The participant picker opens on its first option without stretching its checkboxes
-
-**What changed:** Opening Add people initially focuses the first available
-member, falling back to Done for an empty list. Each native checkbox's visual
-indicator is fixed at 16px instead of participating in the row's flexible copy
-layout, and exposes keyboard-visible focus from the transparent native input.
-
-**Why:** The dialog's first focusable control was its header Close button, whose
-focus-accessible tooltip therefore appeared every time the picker opened even
-when the pointer was elsewhere. The selector intended to grow the member's name
-and email also matched the decorative checkbox span, turning each unchecked
-square into a long outlined bar. Because the native control is transparent,
-moving focus to it without mirroring `:focus-visible` also left keyboard users
-with no visible indication of their position.
-
-**Considered and rejected:** Disabling focus-triggered tooltips would remove
-their keyboard-accessible labels from every icon button. Changing the shared
-modal's default focus would also override dialogs that deliberately autofocus a
-form field, so the picker supplies its own meaningful target instead.
-
-**Consequences:** Picker options remain native checkboxes for interaction and
-accessibility; the trailing span must stay decorative, excluded from flexible
-copy styling, and reflect the native input's focus state. Dialogs without an
-explicit initial-focus target keep Radix's default focus behavior.
-
-Shipped in #138.
 
 ### 2026-08-12 — A started suggestion opens with the member's own turn, not Rally's
 

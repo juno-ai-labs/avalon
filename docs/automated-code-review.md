@@ -217,24 +217,6 @@ Neither preserves the requested deliberate separation.
 GitHub Actions can keep the job alive for setup, authentication, checkout,
 publication, and any overrun until the 30-minute ceiling.
 
-### 2026-08-28 — Grok reviewer upgraded to Grok 4.6
-
-**What changed:** The Grok Cline reviewer now authenticates against the
-`grok-4.6` Azure AI Foundry deployment. Its job and concurrency identifiers are
-`review-grok-46-azure-cline`, and the review prompt identifies the model as
-Grok 4.6. The workflow contract test follows the renamed job and deployment.
-
-**Why:** The code-review Foundry resource now serves Grok 4.6, so the dedicated
-Grok reviewer should use the newer coding and long-horizon reasoning model.
-
-**Considered and rejected:** Keeping Grok 4.3 as a sixth reviewer. This request
-is a replacement, and another job would spend an additional model call while
-leaving two reviewers from the same model family in the five-reviewer set.
-
-**Consequences:** Existing pull requests use Grok 4.6 on their next trusted
-`/cline review` round. The workflow still has five independent reviewers and
-uses the same Azure endpoint and credential boundary.
-
 ### 2026-08-13 — GPT-5.6 Sol and GPT-5.6 Terra added as reviewers
 
 **What changed:** Two more Azure Cline reviewers, `review-gpt-56-sol-cline`

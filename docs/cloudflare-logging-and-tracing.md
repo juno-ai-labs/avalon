@@ -324,14 +324,6 @@ depending on real nesting or export belongs in `apps/api/test-workers/` — see
 
 ## Changelog
 
-### 2026-09-09 — Separate observations from platform guarantees
-
-Qualified the #607 invocation pattern as incident evidence, because zero-call
-RPC logs alone do not prove activation and constructor time belongs to the
-caller's wait too. The investigation guide owns the correlation procedure.
-
-PR #607.
-
 ### 2026-09-08 — A Durable Object invocation's wall time includes its activation
 
 **What changed:** Recorded, dated, that a Durable Object invocation log's

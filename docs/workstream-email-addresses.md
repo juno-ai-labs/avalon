@@ -459,13 +459,6 @@ hashes remain; changing the words after them is not.
 
 ## Changelog
 
-### 2026-09-07 — Explicit Sidekick email triggers
-
-New version-2 Sidekick definitions receive email only when inbound_email is configured. Disabling that trigger leaves its permanent address reserved but rejects new mail admission. Legacy definitions retain implicit email behavior. Instruction-only Sidekicks do not reserve addresses.
-
-This composes knowledge with existing execution machinery while keeping one Sidekick identity and preserving authorization boundaries.
-
-
 ### 2026-09-03 — One admission call, no screen, no window
 
 **What changed:** Automation mail is admitted by one `AutomationDO.admitInboundEmail`

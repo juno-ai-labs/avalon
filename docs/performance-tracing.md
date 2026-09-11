@@ -1132,20 +1132,6 @@ store. A dedicated outcome value would duplicate `replay_plan = snapshot`.
 `workstream_open` now represent `sequence_ahead` plus failed or overflowed
 `history_unavailable` snapshot fallbacks, not ordinary replay-cache loss.
 
-### 2026-08-25 — Span attributes are namespaced rally.*
-
-**What changed:** Every product-owned span attribute moved from `avalon.` to
-`rally.` — `rally.workspace.id`, `rally.workstream.id`, `rally.request.id`,
-`rally.flow`, `rally.component`, and the rest.
-
-**Why:** The rename, and a split that had already opened: the renderer's
-`perf-trace` documented `rally.request.id` while the Worker emitted
-`avalon.request.id`, so a filter written from either side missed half the trace.
-One prefix is the point of the namespace. Saved queries filtering `avalon.*`
-stop matching; traces are short-lived, so this ages out rather than needing a
-backfill. A future change adding an attribute uses `rally.` — the namespace is
-what makes a dashboard filter work across components.
-
 ### 2026-08-21 — The renderer half can say whether it was waiting or busy
 
 **What changed:** Every `[perf] <flow>` line now carries `blockedMs` and

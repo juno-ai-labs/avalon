@@ -260,26 +260,6 @@ work-stream identifier enters a site event.
 
 Shipped in #464.
 
-### 2026-08-27 — The homepage is the hero alone, so landing reports fewer actions
-
-**What changed:** The homepage sections below the Convergence hero (principles
-ticker, problem, method, product mock, connections, FAQ, download) were removed,
-and the hero's download button became the release-rendered installer link.
-`landing.ts` no longer wires FAQ toggles or classifies connections-grid clicks,
-so `faq_opened` and `connector_setup` are no longer emitted from the homepage
-and the `connector` placement has no emitter. The `site_action_selected`
-contract still accepts both, so historical events remain valid.
-
-**Why:** The marketing sections were the pre-hero site kept below the new hero;
-the page now states its case once and offers the download directly. Emitters
-for surfaces that no longer exist would be dead code that reads as live
-coverage.
-
-**Consequences:** Download clicks from the header and hero keep reporting with
-their placements. Dashboards querying `faq_opened` or `connector_setup` from
-the site will show the series ending at this deploy, not an instrumentation
-break.
-
 ### 2026-08-25 — The public acquisition journey speaks Rally only, Cloudflare owns the EU classification, and PostHog stays off the page
 
 **What changed:** The landing page now has one Rally art direction and one

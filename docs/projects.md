@@ -267,7 +267,7 @@ only other candidate for a neutral — is reserved for account accents and never
 offered for a project. Both call sites now read one `PROJECT_COLOR_DEFAULT`
 constant instead of repeating the literal.
 
-**Why:** The 2026-08-31 entry below chose gray deliberately — a neutral start
+**Why:** The earlier default, gray, was chosen deliberately — a neutral start
 that does not imply the creator picked a colour. That option no longer exists:
 the palette is fourteen hues, and the one achromatic key belongs to accounts. So
 the default is now a hue like any other, chosen for being the quietest rather
@@ -351,57 +351,6 @@ that is a member before its first projection lands still counts. Existing rows
 need no migration: the join is evaluated per read, so the projects in this
 state correct themselves on the next list.
 
-### 2026-09-02 — The Projects sidebar section waits with skeleton rows
-
-**What changed:** While the first answer is in flight, the Projects section
-shows three row-shaped placeholders instead of the line "Loading projects…".
-`SidebarSkeletonRow`, `SidebarSkeletonRows`, and `SidebarSkeletonGroup` moved
-out of `sidebar.tsx` into `components/sidebar-skeleton.tsx` so both the sidebar
-and `project-sidebar-section.tsx` can render them; importing them from
-`sidebar.tsx` would close an import cycle, since that file renders the Projects
-section. The one live region for the wait now names projects alongside the work
-streams, automations, and notes it already announced.
-
-**Why:** Projects load from the same answer as the two lists below them, which
-have shown placeholder rows since they arrived together. A sentence sat among
-them as a third kind of wait — a different shape, a different height, and prose
-that collapsed into rows the moment it resolved. The
-[2026-08-26 projects PRD](PRDs/2026-08-26_projects/prd.md) had asked for
-skeleton rows here from the start; the prose was the placeholder that shipped.
-
-**Considered and rejected:** A dense variant of the skeleton row to match
-`--av-cmp-row-height-dense` on a project row. The difference is one or two
-pixels per theme, the automations section has stood on the same non-dense
-placeholder since it was written, and a second row geometry would have to be
-kept in step with both. Announcing the Projects section separately: the wait is
-one round trip, and a second live region would say the same thing twice.
-
-**Consequences:** A section that is genuinely empty still says **No projects
-yet** or **No active projects** — the skeletons are only shown while nothing has
-arrived. `loading` is still the sidebar's one flag, derived from the work-stream
-list rather than the projects query, so a projects answer that lands first ends
-the skeleton only once a project is in it.
-
-### 2026-08-30 — Archived project-space empty copy no longer points at a disabled plus
-
-**What changed:** An empty Work streams section now says "Start one with the plus button in this section." only while the project is active. An archived empty project says "This archived project has no work streams." The start helper documents that caller origin resources precede project defaults and are deduplicated, and the tests lock both the copy and the overlap case.
-
-**Why:** Review of the heading-plus change found that the new empty copy pointed at a plus that is disabled on archived projects. The previous sidebar-pointing sentence had the same problem, but this version sat next to a visible dead control. The overlap test was missing even though the `Set` union already dropped duplicates.
-
-**Considered and rejected:** Telling people to restore the project from the empty state. Restore is already a labeled header button, so a second instruction would compete with it. Aligning the heading plus on Tabler `IconPlus` to match the sidebar: this file is already lucide, and the mismatch is not worth a second icon import.
-
-**Consequences:** Keyboard and screen-reader users on an archived empty project still find the disabled plus (same pattern as **Add resource**); they are no longer told to use it.
-
-### 2026-08-30 — Project space starts a work stream from its Work streams heading
-
-**What changed:** The project-space **Work streams** heading now carries a right-justified plus that opens `/projects/:id/workstreams/new`, the same **New project work stream** page as the plus on that project's sidebar row. Starting there still seats every active personal-project participant and attaches the project's current default resources in the initialize transaction that admits the first run.
-
-**Why:** The empty table told people to use the sidebar plus, so starting a work stream from the dashboard they were already looking at required leaving the page. The inheritance path was already the project-start create; this change only makes that path reachable from the section that lists the members.
-
-**Considered and rejected:** A labeled **New work stream** button matching **Add resource** on the section below. The request was specifically the compact plus used on the sidebar row, including its accessible name, so a second labeled control would have been a different object next to the one people already know.
-
-**Consequences:** An archived project's plus is disabled, matching the other mutations on that space. The empty-state copy now points at this heading rather than the sidebar.
-
 ### 2026-08-30 — Nested project work streams use the sidebar's own row
 
 **What changed:** Expanding a project now renders each member through the same
@@ -473,24 +422,6 @@ without depending on which optional children render.
 does not navigate on a rejected mutation. Every Needs attention row renders an
 empty project slot when it has no memberships so conditional content cannot
 renumber the remaining tracks.
-
-### 2026-08-27 — New projects start neutral
-
-**What changed:** The New project dialog now selects gray for the initial icon
-color and restores gray whenever the dialog is closed and reopened.
-
-**Why:** A neutral default leaves color as an intentional project choice rather
-than suggesting that every new project begins in the blue category.
-
-**Considered and rejected:** Keeping blue as the historical implementation
-default. It remained valid in the palette, but no longer matched the intended
-starting presentation.
-
-**Consequences:** Creation-flow behavior checks must treat gray as selected and
-render every icon preview with the gray project color until the person chooses
-another swatch. Projects whose creators leave the palette untouched share the
-same gray icon, trading automatic color distinction for a neutral starting
-point.
 
 ### 2026-08-27 — Project editing moves onto the owning surfaces, reads become socket-owned state, and review closes audience and delivery gaps
 

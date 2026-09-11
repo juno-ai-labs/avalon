@@ -1261,28 +1261,6 @@ deployments absorb an already-absent key without recreating it.
 
 Shipped in #541.
 
-### 2026-09-02 — Gemini 3.8 Flash joins with the same access as 3.7 Flash
-
-**What changed:** `google/gemini-3.8-flash` was added above 3.7 Flash in the
-shared pinnable-model contract and gained its desktop presentation. The
-contract-derived developer selector and Ace suggestions expose it for every
-managed role, and the pricing inventory now refreshes its OpenRouter key.
-
-**Why:** Google released 3.8 Flash as the new strongest Flash model. Its stable
-OpenRouter identity is already served across Google Vertex and AI Studio with
-the multimodal, tool-calling, structured-output, and reasoning capabilities
-Rally expects from 3.7 Flash, so it should have the same unrestricted access.
-
-**Considered and rejected:** Adding separate Ace or pricing-cron registrations.
-Both surfaces derive from `AGENT_MODEL_OVERRIDES`; duplicating the ID would
-create catalogs that can drift instead of proving the shared contract reaches
-each consumer.
-
-**Consequences:** A developer can pin a new work stream to 3.8 Flash, every Ace
-model role can select it, and the hourly pricing job writes its canonical KV
-record. It remains OpenRouter-routed like 3.7 Flash and has no Azure binding or
-provider restriction.
-
 ### 2026-09-02 — GPT-5.6 Sol joins the closed pin list above Terra and Luna
 
 **What changed:** `openai/gpt-5.6-sol` was added to the shared pinnable-model
@@ -1705,22 +1683,6 @@ client.
 explicit reads: product state from WorkstreamDO, then optional creator identity
 from regional D1. Cache behavior and the three-read evaluation budget are
 unchanged.
-
-### 2026-08-18 — The HyperSight model flag adopts its BlockDashboard role
-
-**What changed:** The HyperSight block runtime now evaluates the
-`block_dashboard` role through `agent-model-block-dashboard`, with
-`BLOCK_DASHBOARD_MODEL` as its no-fallback default.
-
-**Why:** Flag identity is operational, so it must match the internal agent,
-telemetry source, and SQL origin rather than the product label.
-
-**Considered and rejected:** Retaining `agent-model-hypersight` as an alias.
-This flag surface has not shipped, and an alias would make targeting and audit
-history ambiguous.
-
-**Consequences:** Internal dogfood environments must provision the renamed flag.
-The user-facing feature and any product copy continue to say HyperSight.
 
 Entries before the one below were never written. This document predates the
 changelog rule in [`module-documents.md`](module-documents.md#starting-one), and
