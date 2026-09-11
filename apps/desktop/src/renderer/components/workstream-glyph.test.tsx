@@ -1,4 +1,5 @@
-import { render } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
+import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it } from 'vitest';
 import { PROJECT_COLOR_RING, type WorkstreamAppearance } from '@rally/contracts';
 import { glyphInk } from '../lib/project-palette';
@@ -136,6 +137,16 @@ describe('HexagonGlyph', () => {
   });
 });
 
+/**
+ * Every surface that draws a hexagon draws it inside the app's tooltip
+ * provider, and a marker's words are shown by that surface's own tooltip, so a
+ * test renders one the same way rather than in a bare tree the product never
+ * has.
+ */
+function renderGlyph(ui: React.ReactNode): ReturnType<typeof render> {
+  return render(<Tooltip.Provider>{ui}</Tooltip.Provider>);
+}
+
 describe('HexagonGlyph markers', () => {
   it('cuts the marker out of the fill it sits on rather than painting over it', () => {
     // `launch-room` draws `lime`, and the running marker is `success-base`. Two
@@ -144,7 +155,7 @@ describe('HexagonGlyph markers', () => {
     // no edge at all. The knockout is what makes the separation independent of
     // which of the fifteen fills this Sidekick happens to have, so the hexagon
     // being masked *by the marker* is the behaviour, not decoration.
-    const { container } = render(<AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />);
+    const { container } = renderGlyph(<AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />);
     const shape = container.querySelector('.automation-glyph-shape');
     const mask = container.querySelector('mask');
 
@@ -167,7 +178,7 @@ describe('HexagonGlyph markers', () => {
   });
 
   it('paints the marker in its own colour, over the hole and not stroked', () => {
-    const { container } = render(<AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />);
+    const { container } = renderGlyph(<AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />);
     const marker = container.querySelector('.automation-glyph-marker');
 
     expect(marker).toHaveClass('lucide-play');
@@ -183,7 +194,7 @@ describe('HexagonGlyph markers', () => {
   it('gives every hexagon on the page its own mask, because SVG ids are document-global', () => {
     // One id shared by the strip's tiles would point all of them at the first
     // Sidekick's mask. It would look right until a second marker differed.
-    const { container } = render(<div>
+    const { container } = renderGlyph(<div>
       <AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />
       <AutomationGlyph id="another-room" marker={SIDEKICK_RUNNING_MARKER} />
     </div>);
@@ -196,14 +207,58 @@ describe('HexagonGlyph markers', () => {
       .toEqual(ids.map((id) => `url(#${id})`));
   });
 
+  it('reports the pointer arriving on the marker, and leaving it', () => {
+    // The hexagon does not draw the explanation — a tile has one tooltip slot
+    // and the surface owns it — so what it owes the surface is this: the play
+    // is drawn in the viewBox rather than positioned by the rail, so nothing
+    // out there has an element to watch.
+    const hovered: boolean[] = [];
+    const { container } = renderGlyph(
+      <AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} onMarkerHover={(over) => hovered.push(over)} />,
+    );
+    const target = container.querySelector('.automation-glyph-marker')!.parentElement!;
+
+    fireEvent.pointerMove(target, { pointerType: 'mouse' });
+    fireEvent.pointerLeave(target);
+
+    expect(hovered).toEqual([true, false]);
+  });
+
+  it('carries the words the surface shows, so a marker cannot ship unexplained', () => {
+    // A play reads as *running right now*, and the marker is on every active
+    // Sidekick including the ones idle between triggers, so `waiting` is the
+    // correction the sentence exists to make.
+    expect(SIDEKICK_RUNNING_MARKER.description)
+      .toBe('Active — in service and waiting on its triggers.');
+  });
+
+  it('takes the pointer on the whole marker box rather than on the play inside it', () => {
+    const { container } = renderGlyph(<AutomationGlyph id="launch-room" marker={SIDEKICK_RUNNING_MARKER} />);
+    const marker = container.querySelector('.automation-glyph-marker');
+    const target = marker!.parentElement!.querySelector('rect');
+
+    // Measured against the marker itself rather than against numbers copied
+    // from the component, so moving the marker moves its target with it. Why it
+    // is the box rather than the paint is in `HexagonGlyph`.
+    expect(target).toHaveAttribute('x', marker!.getAttribute('x'));
+    expect(target).toHaveAttribute('y', marker!.getAttribute('y'));
+    expect(target).toHaveAttribute('width', marker!.getAttribute('width'));
+    expect(target).toHaveAttribute('height', marker!.getAttribute('height'));
+    // Transparent rather than `none`: `visiblePainted` ignores a shape with no
+    // fill, so `fill="none"` would leave the box invisible to the pointer too.
+    expect(target).toHaveAttribute('fill', 'transparent');
+  });
+
   it('leaves the fill whole where there is no state to mark', () => {
     // The new-Sidekick slot and the library's rows draw the same hexagon with no
     // lifecycle behind it; a mask with nothing cut out of it is a hole waiting
     // to be one.
-    const { container } = render(<HexagonGlyph fill="none" ink="var(--av-sys-color-text-muted)" symbol={Plus} />);
+    const { container } = renderGlyph(<HexagonGlyph fill="none" ink="var(--av-sys-color-text-muted)" symbol={Plus} />);
 
     expect(container.querySelector('mask')).toBeNull();
     expect(container.querySelector('.automation-glyph-shape')).not.toHaveAttribute('mask');
     expect(container.querySelector('.automation-glyph-marker')).toBeNull();
+    // And no hover target either: there is no state here to explain.
+    expect(container.querySelector('rect')).toBeNull();
   });
 });
