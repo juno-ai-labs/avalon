@@ -64,8 +64,15 @@ export interface ListResourcesInput {
    * empty array is deliberately not the same thing: it is a caller whose set
    * of admissible types came out empty, and handing it the workspace's
    * resources would be offering precisely what it cannot use. The caller that
-   * needs this is `automation_resources_search`, whose admissible set is
-   * `automationBindableResourceTypes`.
+   * needs this is the Sidekick drafting search, `resources_search`, whose
+   * admissible set is `automationBindableResourceTypes`.
+   *
+   * The rows live in WorkspaceDO's SQLite, reached through
+   * `withWorkspaceRuntimeDatabase`, so each type here is one more bound
+   * parameter on that statement. Eleven types are declared across every
+   * shipped connector today and the list is authored in code rather than by a
+   * caller, so no bound is set on it; a future source of types that a person
+   * or a model can lengthen is the point at which that stops being true.
    */
   resourceTypes?: readonly string[] | undefined;
 }
