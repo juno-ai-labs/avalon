@@ -454,9 +454,14 @@
   --av-cmp-markdown-article-heading-margin: 48px 0 18px;
 
   /* A surface that deliberately opposes the theme: light on a dark theme and
-   * dark on a light one, so it cannot be a ramp step in either. */
-  --av-cmp-tooltip-background: #2a241d;
-  --av-cmp-tooltip-foreground: #f7f3ec;
+   * dark on a light one. That does not take it off the ramp — the ramp inverts
+   * with the appearance, so `ref.color.neutral.13` is a near-white in dark and
+   * a near-black in light, and one alias in both appearance files gives the
+   * opposition for free. Holding literals instead is what let it drift warm
+   * while the ramp was hueless; keep it on the ramp so the only tooltip
+   * decision left is which step, and the hue follows the palette. */
+  --av-cmp-tooltip-background: var(--av-ref-color-neutral-13);
+  --av-cmp-tooltip-foreground: var(--av-ref-color-neutral-1);
 
   /* The track behind an exclusive-choice strip. Its one value is the recess
    * the chosen pill sits in, and the pill is `sys.color.surface.raised`, so
@@ -771,8 +776,8 @@
   --av-cmp-markdown-article-heading-3: 19px;
   --av-cmp-markdown-article-heading-margin: 48px 0 18px;
 
-  --av-cmp-tooltip-background: #efe8dc;
-  --av-cmp-tooltip-foreground: #17130d;
+  --av-cmp-tooltip-background: var(--av-ref-color-neutral-13);
+  --av-cmp-tooltip-foreground: var(--av-ref-color-neutral-1);
 
   --av-cmp-segmented-track: #111111;
 

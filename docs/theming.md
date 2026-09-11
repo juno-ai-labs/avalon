@@ -175,6 +175,46 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-09-11 — The tooltip rejoins the neutral ramp and stops reading warm
+
+**What changed:** Four values in the two appearance files.
+`cmp.tooltip.background` and `cmp.tooltip.foreground` were literals —
+`#efe8dc`/`#17130d` in dark and `#2a241d`/`#f7f3ec` in light — and are now
+`{ref.color.neutral.13}` and `{ref.color.neutral.1}` in both. They resolve to
+`#eeeeee` on `#070707` in dark and `#2f2f2f` under `#fcfcfc` in light, so the
+lightness barely moves and only the hue goes. `.tooltip-arrow` already filled
+from the background token and follows for free. The registry's `cmp.tooltip`
+note, which asserted the surface "cannot be a ramp step in either", is rewritten
+because that premise was wrong and was the reason the literals were there.
+
+**Why:** `#efe8dc` is a warm beige — hue about 38°, saturation about 37% — and
+the entire reference ramp it sits against is hueless, `R === G === B` at every
+one of its fourteen steps. Pane, sidebar, bubble, composer and keycap all
+resolve to that ramp, so the tooltip was the one surface in the chrome carrying
+a colour cast, which is what made it read as wrong rather than merely light. The
+opposing-surface intent behind the literals was right and is kept; the reasoning
+that it forced a literal was not. The ramp inverts with the appearance, so a
+single alias in both files is already light-on-dark and dark-on-light, and the
+opposition now comes from the palette rather than from two hand-picked colours
+that nothing keeps in step with it. Holding literals is precisely what let this
+drift: the value has been warm for as long as the ramp has been neutral, and no
+gate could see it.
+
+**Considered and rejected:** Picking a fresh neutral literal at the same
+lightness. It fixes today's screenshot and leaves the next palette move to
+rediscover the same bug, because a literal is invisible to the drift checks —
+`build-theme-assets.test.mjs` only catches a token whose appearances *agree*,
+which two different literals never do. The alias is what makes the tooltip move
+with the ramp. Also rejected: sweeping `cmp.toggle.*` and the `sys.color.syntax.*`
+group in the same change. They carry the identical warm cast from the same
+earlier palette and are the remaining instances of it, but a toggle track and
+syntax highlighting are each their own contrast decision rather than a
+find-and-replace, and neither was what the change set out to fix. They are still
+warm on purpose-by-omission, not by argument, and a future change that neutralises
+them should treat this entry as the precedent rather than the constraint. What
+that change has to respect is only this: whatever step it lands on, it names the
+ramp rather than a literal.
+
 ### 2026-09-10 — The feed's byline is one size and two weights
 
 **What changed:** `cmp.feed.author.font-size` and `cmp.feed.author.font-weight`
