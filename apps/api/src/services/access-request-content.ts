@@ -1,4 +1,10 @@
-/** Copy can change without changing intake or delivery logic. Stored requests freeze it for retries. */
+/**
+ * Copy can change without changing intake or delivery logic. Stored requests freeze it for retries.
+ *
+ * Delivered as plain text: Markdown here is reduced to prose, never rendered.
+ * Emphasis is dropped and a link arrives as its label followed by the bare URL
+ * in parentheses. Write what the reader should see.
+ */
 export const accessAcknowledgementContent = {
   from: 'Adam @ Rally <hi@rallywith.ai>',
   subject: 'We got your Rally request',

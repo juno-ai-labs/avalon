@@ -13,7 +13,7 @@ ready for a coordinated deployment, not deployed by this change.
 | --- | --- |
 | `apps/site/src/access-copy.ts` | Replaceable landing copy and escaped build rendering. |
 | `apps/site/src/landing.ts`, `access.css`, `index.html` | Email form and its pending/success/error states. |
-| `apps/api/src/services/access-request-content.ts` | Replaceable acknowledgement subject and Markdown. |
+| `apps/api/src/services/access-request-content.ts` | Replaceable acknowledgement subject and body, delivered as plain text. |
 | `apps/api/src/services/access-request-service.ts` | Persist-before-send acknowledgement, deduplication and explicit retry. |
 | `apps/api/src/routes/private-access.ts` | Global public intake and explicit POST download redemption. |
 | `packages/contracts/src/private-access.ts` | Runtime-validated public and Ace contracts. |
@@ -27,8 +27,8 @@ ready for a coordinated deployment, not deployed by this change.
 The static site obtains a Turnstile token and posts it with an email to Global `POST /access/requests`. Validation trims
 and lowercases it. D1 has a unique normalized email: repeated submissions preserve
 the original row, request time, and frozen acknowledgement sender/subject/body. A new or
-failed request sends through the existing Resend service and shared Markdown
-renderer. Success records provider acceptance; development records `skipped` and
+failed request sends through the existing Resend service, reduced to plain text
+by the shared renderer and sent with no HTML part. Success records provider acceptance; development records `skipped` and
 never calls the provider. An acknowledged duplicate returns the same accepted
 response without sending another message. The widget runs invisibly: Cloudflare
 shows its checkbox only to a visitor it decides has to interact, so most visitors
@@ -67,6 +67,8 @@ the same stable alias the release publisher promotes.
 - D1 persistence precedes provider I/O; otherwise a mail failure loses the lead.
 - The acknowledgement sender, content and idempotency key stay fixed per request;
   otherwise retrying after a copy change conflicts at Resend.
+- The acknowledgement carries no HTML part; otherwise an authored note arrives
+  styled as a campaign.
 - Successful acknowledgement is never downgraded by a concurrent failure;
   otherwise subsequent submissions can resend an already accepted email.
 - Token possession is the authority. No recipient identity guarantee exists, as
@@ -363,6 +365,38 @@ procedure is not a substitute for those controls. Future EU workspace-grant
 privacy operations stay in the owning region; the current slice creates none.
 
 ## Changelog
+
+### 2026-09-10 — Send the acknowledgement as plain text
+
+**What changed:** The acknowledgement sends no HTML part. The stored copy is
+still reduced by `markdownToEmailText` rather than sent verbatim. Carrying that
+required relaxing the shared Resend caller ([digests](digests.md)), where `html`
+was mandatory and is now optional and omitted rather than sent empty.
+
+**Why:** A person's four-paragraph reply arrived in the app's dark palette,
+which reads as a marketing send rather than mail from a founder. Every other
+email through that sender is a model's Markdown, which needs elements to read as
+anything; authored prose does not, and the requirement was the renderer's
+assumption rather than the provider's. Styling this one lighter instead would
+have answered the light-palette question `email-markdown.ts` has deliberately
+left open, on behalf of a surface that wants no palette at all.
+
+**Considered and rejected:** Rewriting the copy as literal plain text and
+sending it verbatim. Content is frozen per request, so rows stored before this
+change would retry as visible `**` and `<br/>`; reducing keeps old and new rows
+identical.
+
+**Consequences:** A request whose first provider attempt is under 24 hours old
+retries with a different payload under the same idempotency key, which Resend
+answers 409 and this records as `review_required` — reconcile those in Ace
+rather than reading them as delivery failures. Copy edits are now written as the
+reader will see them: emphasis is dropped and a link arrives as its label
+followed by the bare URL. A caller that omits
+`html` no longer fails to typecheck, so text-only has to be a deliberate choice;
+`text` stays required, since Resend rejects a message with neither part.
+
+Shipped in [#659](https://github.com/juno-ai-labs/avalon/pull/659).
+
 
 ### 2026-09-10 — Hide the landing-page challenge unless a visitor must interact
 
