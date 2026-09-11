@@ -1,6 +1,10 @@
 import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
 import type { MentionIdentity } from './api';
 import type { ElicitationData, Message, MessageMention, PluginActivityData, ThoughtEventData, ToolEventData, WorkSpan, WorkTotal, WorkspaceMember } from './types';
+import {
+  CONNECTOR_CONNECTION_CARD_WIRE_NAME,
+  connectorConnectionCardInputFromToolEvent,
+} from '@rally/contracts';
 import { pluginGroup } from './plugin-groups';
 import {
   AutomationActivationV1Schema,
@@ -990,6 +994,35 @@ export function composeTranscript(
 }
 
 /**
+ * A repeated presentation call beside the card it just presented is one
+ * product control, not two transcript rows. Collapse only an uninterrupted run
+ * of the same validated connector and scope, keeping the newest durable fact.
+ * Any intervening conversation row or transcript seam starts a new occasion.
+ */
+export function dedupeAdjacentConnectorConnectionCards(messages: readonly Message[]): Message[] {
+  const rows: Message[] = [];
+  for (const message of messages) {
+    const card = connectorConnectionCardInputFromToolEvent(message.toolEvent);
+    const previous = rows.at(-1);
+    const previousCard = connectorConnectionCardInputFromToolEvent(previous?.toolEvent);
+    if (card && previous && previousCard
+      && message.precededByTranscriptGap !== true
+      && card.connectorId === previousCard.connectorId
+      && card.scope === previousCard.scope) {
+      rows[rows.length - 1] = {
+        ...message,
+        ...(previous.precededByTranscriptGap ? { precededByTranscriptGap: true } : {}),
+        attentionSequenceNumber: message.attentionSequenceNumber
+          ?? previous.attentionSequenceNumber,
+      };
+      continue;
+    }
+    rows.push(message);
+  }
+  return rows;
+}
+
+/**
  * What one row contributes to its plugin's group, or null when the row is not
  * plugin activity at all.
  */
@@ -1043,6 +1076,7 @@ function pluginGroupContribution(message: Message): {
  * checks `precededByTranscriptGap` itself — see `Message`.
  */
 function continuesPluginActivityRun(message: Message): boolean {
+  if (message.toolEvent?.name === CONNECTOR_CONNECTION_CARD_WIRE_NAME) return false;
   return message.messageType === 'tool_event'
     || message.messageType === 'plugin_activity'
     || message.messageType === 'thought';

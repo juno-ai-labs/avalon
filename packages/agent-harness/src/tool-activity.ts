@@ -37,6 +37,11 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Asked for a decision",
     failed: "Could not ask for a decision",
   },
+  core_show_connector_connection: {
+    started: "Preparing a connector",
+    settled: "Prepared a connector",
+    failed: "Could not prepare a connector",
+  },
   workstream_read_resource: {
     started: "Reading an attached resource",
     settled: "Read an attached resource",

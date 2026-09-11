@@ -3,6 +3,7 @@ import type { WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import type { Message, ThoughtEventData } from './types';
 import {
   collapseSettledWorkIntoAccordion,
+  dedupeAdjacentConnectorConnectionCards,
   foldSettledWorkIntoMessages,
   createElicitationMessage,
   adjacentTranscriptRange,
@@ -44,6 +45,52 @@ const base = {
 };
 
 describe('transcript messages', () => {
+  it('collapses only adjacent repeats of the same connector card', () => {
+    const first = createToolEventMessage({
+      ...base,
+      id: 'card-first',
+      toolEvent: {
+        id: 'card-first',
+        name: 'core_show_connector_connection',
+        status: 'completed',
+        input: { connectorId: 'slack', scope: 'personal' },
+      },
+    });
+    const repeated = createToolEventMessage({
+      ...base,
+      id: 'card-repeated',
+      toolEvent: {
+        id: 'card-repeated',
+        name: 'core_show_connector_connection',
+        status: 'completed',
+        summary: 'Presented the slack personal connection card',
+      },
+    });
+    const answer = createTextMessage({ ...base, id: 'answer', text: 'Try again later.' });
+    const later = createToolEventMessage({ ...repeated, id: 'card-later', toolEvent: {
+      ...repeated.toolEvent!, id: 'card-later',
+    } });
+
+    expect(dedupeAdjacentConnectorConnectionCards([first, repeated, answer, later])
+      .map((message) => message.id)).toEqual(['card-repeated', 'answer', 'card-later']);
+  });
+
+  it('keeps a connector connection card out of collapsed plugin machinery', () => {
+    const card = createToolEventMessage({
+      ...base,
+      toolEvent: {
+        id: 'connector-card',
+        name: 'core_show_connector_connection',
+        status: 'completed',
+        pluginId: 'rally:core',
+        pluginName: 'Rally',
+        input: { connectorId: 'slack', scope: 'personal' },
+      },
+    });
+
+    expect(groupPluginToolMessages([card])).toEqual([card]);
+  });
+
   it.each([false, true])('keeps custom MCP identity through transcript projection (activity fallback=%s)', (fallback) => {
     const turn = {
       transcriptSequence: 1, turnId: 'turn-custom', entryKind: 'conversation' as const,
