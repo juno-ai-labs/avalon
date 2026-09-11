@@ -1359,6 +1359,11 @@ export function ConversationSurface({
     onSuccess: (updated, { target, member }) => {
       if (updated) queryClient.setQueryData(workstreamDetailQueryKey(id, target), updated);
       else cacheAddedParticipant(target, member);
+      // Participation is what decides whether the room's own Sidekicks may be
+      // listed at all, and it is not in this query's key: somebody who joins
+      // the main room would otherwise keep the empty list their refusal
+      // cached, and somebody who leaves would keep the names it held.
+      if (target === '0') void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks', id] });
       setParticipantDialogOpen(false);
     },
   });
@@ -1375,6 +1380,7 @@ export function ConversationSurface({
         participants: current.participants.filter((participant) => participant.id !== member.id),
       } : current);
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+      if (target === '0') void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks', id] });
       if (member.id === session?.user.id && (target !== '0' || previous?.scope === 'personal')) {
         setParticipantDialogOpen(false);
         if (target !== '0') {
@@ -1938,7 +1944,10 @@ export function ConversationSurface({
   // conversation's attachments are two answers about the same objects, and
   // only a participant may detach one.
   const sidekickRows = workstreamSidekickRows({
-    owned: ownedSidekicks.data,
+    // A failed owned read is not a pending one: the attachments answered, and
+    // hiding them because the other half failed takes down a list that worked.
+    // The error still travels beside the rows that did arrive.
+    owned: ownedSidekicks.isError ? [] : ownedSidekicks.data,
     attached: attachedSidekicks.data,
     ...(sidebarDetail.participants.some((person) => person.id === session?.user.id)
       ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate(sidekickId) }

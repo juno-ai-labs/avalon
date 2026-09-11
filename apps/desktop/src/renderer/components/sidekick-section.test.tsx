@@ -46,6 +46,18 @@ describe('SidekickSection', () => {
     rerender(<Tooltip.Provider><SidekickSection items={[]} error="Could not load Sidekicks" /></Tooltip.Provider>);
     expect(screen.getByText('Could not load Sidekicks')).toBeVisible();
   });
+
+  it('keeps the rows that arrived beside a failure rather than replacing them', () => {
+    // A detach that failed, or one of the two reads behind this section: the
+    // Sidekicks it did not take down are still the room's, and blanking them
+    // loses a list that worked to report a failure about something else.
+    renderSection({
+      items: [{ id: 'one', name: 'Editor', description: 'Review wording' }],
+      error: 'That Sidekick could not be removed.',
+    });
+    expect(screen.getByText('That Sidekick could not be removed.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Editor' })).toBeVisible();
+  });
 });
 
 describe('workstreamSidekickRows', () => {
@@ -63,6 +75,19 @@ describe('workstreamSidekickRows', () => {
     expect(rows?.map((row) => [row.id, row.note])).toEqual([
       ['owned-1', undefined], ['owned-2', 'Paused'], ['attached-1', 'Unavailable'],
     ]);
+  });
+
+  it('keeps the attachment\u2019s own answer about availability on a merged row', () => {
+    // Publishing a triggered revision over an instruction-only one clears
+    // `loadable` while the room's conversation keeps the attachment: the
+    // Sidekick is active, so the lifecycle has nothing to say, and only the
+    // attachment knows the next run will not load it.
+    const rows = workstreamSidekickRows({
+      owned: [owned],
+      attached: [{ id: owned.id, name: owned.name, description: owned.description, available: false }],
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows?.[0]?.note).toBe('Unavailable');
   });
 
   it('draws one row for a Sidekick the room owns and has also loaded', () => {

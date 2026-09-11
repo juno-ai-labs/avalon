@@ -55,8 +55,11 @@ refuses a caller who is not a participant — together with the attachments its
 main conversation has loaded, folded into one list keyed by Sidekick id. A row
 opens that Sidekick in the library window; the removal on a row is the
 attachment's, and a room's own Sidekick that has never been loaded carries none.
-The section is absent entirely — heading included — for a room with none and
-while the answer is still on its way, as the artifact section beside it is.
+A merged row takes its lifecycle from the owned summary and its availability
+from the attachment, because each list knows one of them. The section is absent
+entirely — heading included — for a room with none and while the answer is
+still on its way, as the artifact section beside it is; a failure is the one
+thing it shows beside whichever rows did arrive rather than instead of them.
 
 The Sidekicks library opens in its own window from the account popup, immediately
 above Settings. It lists accessible personal, workspace, and room Sidekicks.
@@ -709,7 +712,9 @@ Sidekick loaded in its main conversation appears in both answers and is one
 object. Where it does, the owned summary wins the row: it carries the chosen
 appearance and the live lifecycle, which an attachment record does not, and the
 attachment contributes only its **Remove**, which is the one thing it alone can
-say. A future change here has to keep three things: `undefined` and `[]` stay
+say — availability is the attachment's, the way appearance and lifecycle are the
+owned summary's, so a merged row reads `Unavailable` from it when the lifecycle
+has nothing to add. A future change here has to keep three things: `undefined` and `[]` stay
 apart in the caller even though this rail draws neither, because the day a
 surface here does speak about emptiness it may only do so for `[]`; a
 non-participant's 403 is an answer about the viewer and is read as an empty list

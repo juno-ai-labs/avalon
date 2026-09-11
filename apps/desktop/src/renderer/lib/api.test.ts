@@ -296,6 +296,28 @@ describe('Rally API wire adapter', () => {
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`https://api.rally.test/sidekicks/${automationId}/runs`);
   });
 
+  it('lists a work stream\u2019s own Sidekicks from the Sidekick surface, not the legacy prefix', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      void init;
+      return json({ items: [{
+        id: automationId, name: 'Release notes', description: 'Draft the notes.', loadable: true,
+        emailAddress: null, status: 'active', nextRunAt: null, lastRunAt: null,
+        updatedAt: '2026-09-09T16:00:00.000Z',
+      }] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.getWorkstreamSidekicks(workstreamId))
+      .resolves.toEqual([expect.objectContaining({ id: automationId, name: 'Release notes' })]);
+
+    // The path is the whole behaviour of this method: its one caller renders
+    // the refusal of a wrong route as an error where a room's list belongs.
+    expect(String(fetchMock.mock.calls[0]?.[0]))
+      .toBe(`https://api.rally.test/sidekicks/workstream/${workstreamId}`);
+  });
+
   it('tells the person to restart Rally when a plain response does not match its schema', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: [{ notAnAutomation: true }] })));
     const api = new RallyApi('https://api.rally.test', session);
