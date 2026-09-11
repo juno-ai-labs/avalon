@@ -4,6 +4,12 @@ import { ThinkingOrb } from 'thinking-orbs';
 import { formatDuration } from '../lib/format';
 import { useAppearance } from '../lib/theme';
 
+/**
+ * One sentence for one state, so the row above the composer and the tooltip on
+ * the Stop button inside it cannot describe the same pending stop two ways.
+ */
+export const STOPPING_LABEL = 'Stopping after the current response…';
+
 export interface AgentWorkTimingProps {
   active: boolean;
   /**
@@ -67,6 +73,46 @@ export function AgentCompactionIndicator(): React.JSX.Element {
       <span aria-hidden="true" className="agent-work-timing-label">
         Compacting conversation context…
       </span>
+    </div>
+  );
+}
+
+/**
+ * What the activity row says between a Stop request and the run ending.
+ *
+ * Stop is observed only at the loop's next safe step boundary: the response in
+ * flight and every tool it already asked for settle first, and no further
+ * provider request begins — `docs/workstream-durable-object.md` owns that
+ * contract. A production run measured eleven seconds between the click and the
+ * terminal commit. For all of it, the only sign the request had landed was a
+ * spinner inside the composer's 28px Stop button and a tooltip nobody hovers,
+ * while the row above went on counting "Rally is working for 42s" — so a Stop
+ * that was working read as a Stop that was ignored.
+ *
+ * This is the acknowledgement, in the place the reader is already watching. It
+ * names what is being waited on rather than a duration: the only number worth
+ * printing is how much longer, and nothing here can know it.
+ */
+export function RunStoppingIndicator(): React.JSX.Element {
+  const appearance = useAppearance();
+
+  return (
+    <div
+      aria-atomic="true"
+      aria-label={STOPPING_LABEL}
+      aria-live="polite"
+      className="agent-work-timing agent-work-timing-active"
+      role="status"
+    >
+      <ThinkingOrb
+        aria-hidden="true"
+        className="agent-work-timing-orb"
+        size={20}
+        speed={1}
+        state="solving"
+        theme={appearance}
+      />
+      <span aria-hidden="true" className="agent-work-timing-label">{STOPPING_LABEL}</span>
     </div>
   );
 }
