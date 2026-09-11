@@ -721,15 +721,17 @@ signals, never by weakening policy or deadline tests.
 
 **What changed:** `menu_bar_opened` no longer carries `suggestionCount` and its
 `recentCount` bound moved from 5 to 10. `menu_bar_action_selected` stops
-emitting `new_workstream`, `new_automation`, and `suggested_work`, and its enum
+emitting `new_workstream`, `new_automation`, `suggested_work`, and
+`new_meeting_note`, and its enum
 moved into an exported `TELEMETRY_MENU_BAR_ACTIONS` that
 `TelemetryReporter.menuBarActionSelected` now types itself from —
 with `open_rally` and `quit_rally` added to the admitted set.
 [`menu-bar.md`](menu-bar.md) owns the product change behind it.
 
-**Why:** two separate things. The menu dropped its Suggestions section and both
-New rows, so those properties and values describe a surface that no longer
-exists. Separately, the producer's union and the registry's enum were hand-copied
+**Why:** two separate things. The menu dropped its Suggestions section and every
+New row, so those properties and values describe a surface that no longer
+exists. The `menu_bar` value in `surfaceEntrypoint` stays: a meeting window can
+still be told it was opened from there, and older clients still say so. Separately, the producer's union and the registry's enum were hand-copied
 and had drifted: the desktop sent `open_rally`/`quit_rally` against an enum
 admitting only the `avalon` spelling, and every one of those envelopes was
 refused at ingestion with nothing failing loudly on the client.

@@ -278,7 +278,6 @@ const bridge: RallyDesktopBridge = {
     realtimeSocketListeners.add(listener);
     return () => realtimeSocketListeners.delete(listener);
   },
-  observeClientFeatureFlags: (flags) => ipcRenderer.invoke('feature-flags:observe', flags) as Promise<void>,
 };
 
 contextBridge.exposeInMainWorld('rally', bridge);

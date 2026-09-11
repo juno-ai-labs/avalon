@@ -18,7 +18,6 @@ export interface MenuBarContent {
 export const emptyMenuBarContent: MenuBarContent = { recents: [], pinned: [] };
 
 export type MenuBarAction =
-  | 'new_meeting_note'
   | 'recent_workstream'
   | 'pinned_workstream'
   | 'open_rally'
@@ -27,7 +26,6 @@ export type MenuBarAction =
 export interface MenuBarActions {
   /** Observational only: a reporting failure must not block the selected row. */
   readonly selected: (action: MenuBarAction) => void;
-  readonly newMeetingNote: () => void;
   readonly openWorkstream: (workstreamId: string) => void;
   readonly openRally: () => void;
   readonly quit: () => void;
@@ -37,7 +35,6 @@ export interface MenuBarMenuOptions {
   readonly appName: string;
   readonly content: MenuBarContent;
   readonly signedIn: boolean;
-  readonly meetingRecordingAvailable: boolean;
   /** Whether this macOS draws real section headers. See
    * {@link supportsSectionHeaders}. */
   readonly sectionHeaders: boolean;
@@ -144,16 +141,19 @@ const RECENT_EMPTY_HEADER = 'Recent';
  * Builds the status item's drop-down as a plain Electron template, so the whole
  * mapping from content to menu is testable without a display server.
  *
- * The order is the product contract: starting a meeting or note, then a rule,
- * then **Pinned** with the top of the reader's own arrangement, then a rule and
- * the recent work streams under the same recency headings the sidebar uses.
- * Pinned sits above Recent because a pin is a standing choice and belongs where
- * it can be found without reading past whatever moved today — the recent list is
- * ten rows now, and a section underneath a list that long is a section nobody
- * scans to. Both sections render whether or not they have anything in them; an
- * empty one says how it fills. The trailing group is not part of that contract
- * but is what makes the item usable at all — Rally can be launched hidden at
- * login, and then this menu is the only way to open a window or quit.
+ * The order is the product contract: **Pinned** with the top of the reader's own
+ * arrangement, then a rule and the recent work streams under the same recency
+ * headings the sidebar uses. Pinned sits above Recent because a pin is a
+ * standing choice and belongs where it can be found without reading past
+ * whatever moved today — the recent list is ten rows now, and a section
+ * underneath a list that long is a section nobody scans to. Both sections render
+ * whether or not they have anything in them; an empty one says how it fills.
+ *
+ * Nothing above them starts anything. Every row here reopens something that
+ * already exists, which is the one thing this surface can do that no window can
+ * — Rally can be launched hidden at login, and then the menu is the whole
+ * application. The trailing group is not part of the contract but is what makes
+ * the item usable at all: it is the only way to open a window or quit.
  */
 export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstructorOptions[] {
   const { actions, content } = options;
@@ -165,9 +165,7 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     }
     invoke();
   };
-  const template: MenuItemConstructorOptions[] = options.meetingRecordingAvailable
-    ? [{ label: 'New Meeting/Note', click: tracked('new_meeting_note', actions.newMeetingNote) }]
-    : [];
+  const template: MenuItemConstructorOptions[] = [];
 
   const openWorkstreamRow = (
     workstream: MenuBarWorkstream,
@@ -177,9 +175,8 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     click: tracked(action, () => actions.openWorkstream(workstream.id)),
   });
 
-  // Only between rows. Without the meeting action and signed out there is
-  // nothing above the first section, and a menu that opens on a rule looks like
-  // it failed to draw its first item.
+  // Only between rows. The first section is always the top of the menu now, and
+  // a menu that opens on a rule looks like it failed to draw its first item.
   const pushSeparator = (): void => {
     if (template.length > 0) template.push({ type: 'separator' });
   };
