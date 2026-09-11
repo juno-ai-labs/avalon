@@ -779,6 +779,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           sidekicks={context.sidekicks}
           sidekicksError={context.sidekicksError}
           workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, appearance: rowAppearance ?? parent.data?.appearance, privateChildren: railChildren }}
+          creatingSubstream={creation?.parentId === id && launching !== null}
           presentUserIds={context.presentUserIds}
           onParticipants={context.openParticipantDialog}
           selectedSubstreamId={creation?.parentId === id ? PENDING_SUBSTREAM_DRAFT_ID : selectedSubstreamId}

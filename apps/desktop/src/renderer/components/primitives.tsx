@@ -602,10 +602,19 @@ export function Badge({ children, className, ...props }: PropsWithChildren<HTMLA
  * arriving name is worth announcing — the header of the work stream someone is
  * reading — the title line around it is the live region.
  */
-export function TitleSkeleton({ className }: { className?: string }): React.JSX.Element {
+export function TitleSkeleton({ className, label = 'Rally is naming this work stream' }: {
+  className?: string;
+  /**
+   * What the wait is, for a reader who cannot see the pulse. It has a default
+   * because naming is what nearly every one of these is waiting on; the row a
+   * substream is being created under is waiting on the creation itself, and
+   * saying it is being named would name a conversation that does not exist.
+   */
+  label?: string;
+}): React.JSX.Element {
   return (
     <span className={clsx('title-skeleton', className)}>
-      <span className="sr-only">Rally is naming this work stream</span>
+      <span className="sr-only">{label}</span>
     </span>
   );
 }

@@ -7,7 +7,7 @@ import clsx from 'clsx';
 import type { WorkstreamDetail } from '../lib/types';
 import type { WorkstreamChildDirectory } from '../lib/use-workstream-control-socket';
 import { COLLAPSED_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '../lib/ui-store';
-import { AvatarStack, DragHint, IconButton, Tip } from './primitives';
+import { AvatarStack, DragHint, IconButton, Tip, TitleSkeleton } from './primitives';
 import { PENDING_SUBSTREAM_DRAFT_ID } from './substream-launch';
 import { ResourceIcon } from './markdown-citations';
 import { WorkstreamMark } from './workstream-glyph';
@@ -53,8 +53,15 @@ function ConversationRowMenu({ actions, children, target }: {
 }
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekicksError, substreamActions, mainActions }: {
+export function WorkstreamSidebar({ workstream, creatingSubstream = false, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekicksError, substreamActions, mainActions }: {
   workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'appearance' | 'resources' | 'participants'> & Pick<WorkstreamChildDirectory, 'privateChildren'>;
+  /**
+   * A substream is being created in this work stream: the composer has been
+   * submitted and creation is in flight. The rail draws the row it is about to
+   * have, so the conversation on screen is one the rail shows — the same
+   * promise every other conversation in it keeps.
+   */
+  creatingSubstream?: boolean;
   presentUserIds: readonly string[];
   /**
    * This work stream's Sidekicks — the ones it owns and the ones its
@@ -177,16 +184,41 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
               ? <ConversationRowMenu actions={substreamActions} key={child.substreamId} target={{ substreamId: child.substreamId, title: child.title }}>{row}</ConversationRowMenu>
               : <Fragment key={child.substreamId}>{row}</Fragment>;
           })}
+          {creatingSubstream && (
+            /* The substream being created, in the place the directory will
+               put it: last, because children are listed oldest first. It is
+               not a button — there is nowhere to go, the reader is already on
+               the surface this row stands for — and it carries the skeleton
+               rather than the first line of the message, because the title is
+               the server's to derive and a second answer to what a first line
+               is would disagree the moment either changed. */
+            <div
+              aria-current={selectedSubstreamId === PENDING_SUBSTREAM_DRAFT_ID ? 'page' : undefined}
+              className={clsx(
+                'workstream-context-row workstream-conversation-row workstream-pending-substream',
+                selectedSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && 'is-current',
+              )}
+            >
+              <span aria-hidden="true" className="workstream-context-mark">
+                <IconCornerDownRight className="workstream-substream-arrow" size={22} stroke={1.5} />
+              </span>
+              <span className="workstream-context-copy">
+                <TitleSkeleton label="Rally is creating this substream" />
+              </span>
+            </div>
+          )}
           {onNewSubstream && (
             // Current while a substream is being written, because that surface
             // is where the reader is: the row it was opened from is the one
-            // thing on screen that still says so.
+            // thing on screen that still says so. Once it has been submitted
+            // the row above says it instead — this one is back to being what
+            // starts the next substream.
             <button
-              aria-current={selectedSubstreamId === PENDING_SUBSTREAM_DRAFT_ID ? 'page' : undefined}
+              aria-current={selectedSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && !creatingSubstream ? 'page' : undefined}
               aria-label="New substream"
               className={clsx(
                 'workstream-context-row workstream-new-substream',
-                selectedSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && 'is-current',
+                selectedSubstreamId === PENDING_SUBSTREAM_DRAFT_ID && !creatingSubstream && 'is-current',
               )}
               onClick={onNewSubstream}
               title="New substream"
