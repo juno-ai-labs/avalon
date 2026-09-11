@@ -59,6 +59,51 @@ describe("resource listing", () => {
     expect(literal.items.map((resource) => resource.id)).toEqual([firstResourceId]);
   });
 
+  it("confines a page to the named resource types, and reads an empty list as nothing rather than everything", async ({ onTestFinished }) => {
+    const regional = new DatabaseSync(':memory:');
+    const workspace = createTestWorkspaceDO({ workspaceId, regionalDatabase: regional });
+    seedMember(regional);
+    onTestFinished(() => { workspace.objectDatabase.close(); regional.close(); });
+    const insert = workspace.objectDatabase.prepare(`INSERT INTO resources
+      (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+      VALUES (?, ?, ?, 'fixture', ?, '{}', 'attached', ?, ?)`);
+    for (const [id, type, title, at] of [
+      [firstResourceId, 'github_repository', 'juno-ai-labs/avalon', '2026-08-01T10:00:00.000Z'],
+      [secondResourceId, 'github_file', 'juno-ai-labs/avalon README', '2026-08-01T12:00:00.000Z'],
+      [thirdResourceId, 'drive_file', 'avalon planning', '2026-08-01T11:00:00.000Z'],
+    ]) insert.run(id!, workspaceId, type!, title!, at!, at!);
+    const service = new ResourceService(createTestEnv({
+      DB: sqliteD1(regional), APP_ENV: 'test', AVALON_REGION: 'global',
+      WORKSPACE_DOS: testWorkspaceObjectBinding(workspace.instance, ['executeRuntimeSql', 'readAuthorizationSnapshots', 'writeAuthorizationSnapshots', 'authorizationResourceFacts']),
+    }), auth);
+
+    // Two types at once, against the schema the object really runs: the `IN`
+    // list has to bind in the same order its placeholders sit in, between the
+    // query patterns before it and the cursor after it. A binding slipped by
+    // one here reads as a filter that silently matches the wrong thing.
+    const both = await service.list({ query: 'avalon', limit: 10, resourceTypes: ['github_repository', 'drive_file'] });
+    expect(both.items.map((resource) => resource.id)).toEqual([thirdResourceId, firstResourceId]);
+
+    // The `github_file` is the newest row and matches the query; confining the
+    // page is what keeps it out, and the repository in.
+    const one = await service.list({ query: 'avalon', limit: 10, resourceTypes: ['github_repository'] });
+    expect(one.items.map((resource) => resource.id)).toEqual([firstResourceId]);
+
+    // Absent is every type. An empty array is not that.
+    const every = await service.list({ query: 'avalon', limit: 10 });
+    expect(every.items).toHaveLength(3);
+    const none = await service.list({ query: 'avalon', limit: 10, resourceTypes: [] });
+    expect(none.items).toEqual([]);
+    expect(none.nextCursor).toBeNull();
+
+    // The cursor keeps its meaning under the filter: page two of a confined
+    // list is the rest of that list, not the rest of the workspace.
+    const firstPage = await service.list({ limit: 1, resourceTypes: ['github_repository', 'drive_file'] });
+    expect(firstPage.items.map((resource) => resource.id)).toEqual([thirdResourceId]);
+    const secondPage = await service.list({ limit: 1, cursor: firstPage.nextCursor!, resourceTypes: ['github_repository', 'drive_file'] });
+    expect(secondPage.items.map((resource) => resource.id)).toEqual([firstResourceId]);
+  });
+
   it("rejects malformed cursors before querying storage", async () => {
     let prepared = false;
     const database = createTestD1Database({
