@@ -183,7 +183,10 @@ describe('workspace account menu', () => {
     renderMenu({ staleAt: '2026-08-31T20:00:00.000Z' });
     openMenu();
 
-    expect(screen.getByText('Counts last updated 7 minutes ago')).toBeVisible();
+    // The relative label is its own <time> element so that it keeps ticking,
+    // so the sentence is read off the row rather than matched as one text node.
+    expect(screen.getByText(/Counts last updated/u).closest('.workspace-counts-stale'))
+      .toHaveTextContent('Counts last updated 7 minutes ago');
     expect(screen.getByLabelText('3 mentions waiting for you')).toBeVisible();
   });
 

@@ -70,6 +70,7 @@ import { layoutRowAt } from '../lib/list-motion';
 import { useListMotion } from '../lib/use-list-motion';
 import { Avatar, Button, DragHint, IconButton, InlineError, Modal, StatusDot, Tip, TitleSkeleton } from './primitives';
 import { ProjectSidebarSection } from './project-sidebar-section';
+import { RelativeTime } from './relative-time';
 import { SidebarSkeletonGroup } from './sidebar-skeleton';
 import { AutomationGlyph, HexagonGlyph, SIDEKICK_RUNNING_MARKER, WorkstreamGlyph } from './workstream-glyph';
 
@@ -560,9 +561,7 @@ function WorkstreamHoverPreview({
           <WorkstreamGlyph appearance={workstream.appearance} id={workstream.id} size={16} />
           <span className="sidebar-workstream-preview-name">{workstream.title}</span>
         </span>
-        {workstream.hasUnread && <time dateTime={workstream.lastActivityAt}>
-          {formatSidebarActivityTime(workstream.lastActivityAt)}
-        </time>}
+        {workstream.hasUnread && <RelativeTime format={formatSidebarActivityTime} value={workstream.lastActivityAt} />}
       </div>
       {workstream.scope === 'workspace' && (
         <p className="sidebar-workstream-preview-scope">{PUBLIC_SCOPE_LABEL}</p>
@@ -806,7 +805,7 @@ function WorkstreamRow({
                   {naming ? <TitleSkeleton /> : workstream.title}
                 </span>
               </span>
-              {workstream.hasUnread && <time className="sidebar-row-activity" dateTime={workstream.lastActivityAt}>{formatSidebarActivityTime(workstream.lastActivityAt)}</time>}
+              {workstream.hasUnread && <RelativeTime className="sidebar-row-activity" format={formatSidebarActivityTime} value={workstream.lastActivityAt} />}
             </span>
             {/* The manual order is the whole point of the section, and a
                 pointer-only affordance leaves it unreadable to anyone not
