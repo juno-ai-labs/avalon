@@ -393,11 +393,13 @@ const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKind; sql
     // The sweep loads a link only through a connection that is not disabled
     // (`loadDurableObjectStaleUnfurls`), so a disabled connection's links are
     // not counted here either: a row the sweep never loads never advances.
+    // Match the sweep's ISO cutoff, including milliseconds: datetime's space
+    // sorts before 'T' and would include expired links for the entire UTC day.
     scoped: false,
     sql: `SELECT 'slack_unfurls' AS id,
                  strftime('%Y-%m-%dT%H:%M:%SZ', MIN(link.refreshed_at), '+5 minutes', '+1 second') AS due_at
             FROM slack_unfurled_links link
-           WHERE link.shared_at >= datetime('now', '-30 days')
+           WHERE link.shared_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')
              AND EXISTS (SELECT 1 FROM connector_connections connection
                           WHERE connection.id = link.connection_id AND connection.status <> 'disabled')
            HAVING COUNT(*) > 0`,

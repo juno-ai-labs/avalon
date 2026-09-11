@@ -214,6 +214,39 @@ describe("the resource-alias backfill", () => {
 });
 
 describe("the Slack unfurl sweep's due time", () => {
+  it("excludes expired links on the cutoff day without dropping links at the exact cutoff", async () => {
+    const database = workspaceObjectDatabase();
+    const clockDatabase = new DatabaseSync(":memory:");
+    databases.push(clockDatabase);
+    // Pin only SQLite's clock; keep its real date arithmetic and formatting.
+    // Both functions are covered so restoring the old datetime predicate
+    // exercises the same instant rather than the machine's wall clock.
+    for (const name of ["datetime", "strftime"] as const) {
+      database.function(name, { varargs: true }, (...args) => {
+        const values = args.map((value) => value === "now" ? "2026-09-11T15:42:20.028Z" : value);
+        const row = clockDatabase.prepare(
+          `SELECT ${name}(${values.map(() => "?").join(", ")}) AS value`,
+        ).get(...values);
+        return typeof row?.value === "string" ? row.value : null;
+      });
+    }
+    const connectionId = "00000000-0000-7000-8000-0000000000c3";
+    seedSlackConnection(database, connectionId, "healthy");
+    seedUnfurledLink(database, connectionId, "2026-09-11T00:05:02.139Z");
+    database.prepare("UPDATE slack_unfurled_links SET shared_at = ?")
+      .run("2026-08-12T15:42:20.027Z");
+
+    expect(maintenance(await workspaceScheduleTargets(scheduleContext(database)), "slack_unfurls"))
+      .toEqual([]);
+
+    seedUnfurledLink(database, connectionId, "2026-09-11T15:26:04.712Z");
+    database.prepare("UPDATE slack_unfurled_links SET shared_at = ? WHERE refreshed_at = ?")
+      .run("2026-08-12T15:42:20.028Z", "2026-09-11T15:26:04.712Z");
+
+    expect(maintenance(await workspaceScheduleTargets(scheduleContext(database)), "slack_unfurls"))
+      .toEqual([{ kind: "maintenance", id: "slack_unfurls", dueAt: "2026-09-11T15:31:05Z" }]);
+  });
+
   it("counts only links the sweep will load, so a disabled connection cannot pin the pass", async () => {
     // The sweep loads a link through a connection that is not disabled. A link
     // on a disabled connection is never loaded, never advanced, and never
