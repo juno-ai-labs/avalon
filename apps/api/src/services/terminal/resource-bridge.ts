@@ -305,8 +305,23 @@ export function createTerminalResourceBridge(
   const workspace = env.DB;
   const attachResource = inObjectResourceAttacher
     ?? ((input) => attachWorkstreamRuntimeResource(env, input));
-  const publicationWorkstream = (context: { workstreamId: string }) =>
-    publicationWorkstreamId ?? context.workstreamId;
+  /**
+   * Where a publication belongs.
+   *
+   * Redirected only for a document the model published from a path. An
+   * internal capture names its own namespace instead — a command log
+   * (`terminal-command-log:…`) or a checkout backup — and those are recovery
+   * artifacts the run never chose to deliver. Redirecting one would put raw
+   * command output in the owning room's resource list, disclosure the Sidekick
+   * did not ask for and its delivered result deliberately excluded, so an
+   * internal capture stays in the conversation that produced it.
+   */
+  const publicationWorkstream = (
+    context: { workstreamId: string },
+    internalProviderResourceId?: string | undefined,
+  ) => (internalProviderResourceId === undefined
+    ? publicationWorkstreamId ?? context.workstreamId
+    : context.workstreamId);
   /**
    * Link a published document to the work stream that owns it.
    *
@@ -318,8 +333,9 @@ export function createTerminalResourceBridge(
   const attachPublication = (
     context: { workspaceId: string; workstreamId: string },
     input: { resourceId: string; attachedByUserId: string | null },
+    internalProviderResourceId?: string | undefined,
   ) => {
-    const workstreamId = publicationWorkstream(context);
+    const workstreamId = publicationWorkstream(context, internalProviderResourceId);
     const args = { workspaceId: context.workspaceId, workstreamId, ...input };
     return workstreamId === context.workstreamId
       ? attachResource(args)
@@ -525,7 +541,7 @@ export function createTerminalResourceBridge(
       // unique per call, which recognized a replay of that one call and nothing
       // else, so a second draft of the same file became a second document.
       const providerResourceId = input.providerResourceId
-        ?? await publishedResourceIdentity(publicationWorkstream(context), input.filePath);
+        ?? await publishedResourceIdentity(publicationWorkstream(context, undefined), input.filePath);
       const select = `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
                 model_content_status, created_at
            FROM resources
@@ -551,7 +567,7 @@ export function createTerminalResourceBridge(
           const linked = await createResourceObjectPort(
             env,
             context.workspaceId,
-            publicationWorkstream(context),
+            publicationWorkstream(context, input.providerResourceId),
           ).isAttached({ resourceId: settled.id });
           if (linked) return;
           await attachPublication(context, {
@@ -559,7 +575,7 @@ export function createTerminalResourceBridge(
             attachedByUserId: context.executionPrincipal.type === "user"
               ? context.executionPrincipal.userId
               : null,
-          });
+          }, input.providerResourceId);
         };
         // Equal content covers both a crash-replay of a settled call and a
         // republish that changed nothing: the stored bytes are already these
@@ -646,7 +662,7 @@ export function createTerminalResourceBridge(
           attachedByUserId: context.executionPrincipal.type === "user"
             ? context.executionPrincipal.userId
             : null,
-        });
+        }, input.providerResourceId);
       } catch {
         // The resource insert may have committed before its response was lost.
         // Keep both the stable resource identity and staging fence intact so a

@@ -616,6 +616,36 @@ describe("Terminal resource bridge", () => {
     expect(row.current_version).toBe(2);
   });
 
+  it("keeps an internal capture in the run's own conversation when publication is redirected", async () => {
+    // The command-log and checkout-backup captures name their own namespace
+    // rather than deriving one from a path. They are recovery artifacts the run
+    // never chose to deliver, so the redirect must not carry them into the
+    // owning room's resource list along with the documents it did publish.
+    const SIDEKICK = "10000000-0000-4000-8000-00000000000a";
+    const attached: { workstreamId: string; resourceId: string }[] = [];
+    const state = fixture(async (input) => {
+      attached.push({ workstreamId: input.workstreamId, resourceId: input.resourceId });
+    });
+    const sidekickContext = { ...context, workstreamId: SIDEKICK };
+    const capture = await state.bridgeFor(S).publishResource(
+      sidekickContext,
+      {
+        providerResourceId: `terminal-command-log:${I}`,
+        filePath: `.rally/logs/${I}.log`,
+        displayName: "Terminal command log",
+      },
+      new TextEncoder().encode("secret stdout the delivered result left out\n"),
+    );
+
+    const row = state.database.prepare(
+      "SELECT provider_resource_id FROM resources WHERE id = ?",
+    ).get(String(capture.resourceId)) as { provider_resource_id: string };
+    expect(row.provider_resource_id).toBe(`terminal-command-log:${I}`);
+    // Linked to the Sidekick's own conversation. A redirected link would have
+    // gone cross-object to the room and never reached this in-object attacher.
+    expect(attached).toEqual([{ workstreamId: SIDEKICK, resourceId: String(capture.resourceId) }]);
+  });
+
   it("republishes the same sandbox path onto the same resource instead of a sibling", async () => {
     const { database, objects, put, bridge } = fixture();
     const first = await bridge.publishResource(
