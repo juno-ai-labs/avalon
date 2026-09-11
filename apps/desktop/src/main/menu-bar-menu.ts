@@ -181,12 +181,32 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     if (template.length > 0) template.push({ type: 'separator' });
   };
 
+  /**
+   * Draws one titled section, and owns the rule above it.
+   *
+   * The two failures this exists to make unrepresentable are a header with
+   * nothing under it and a rule with nothing on one side of it, both of which
+   * read as a menu that failed to draw rather than as an answer. So a group
+   * that would be empty is not drawn at all — header and rule together — and a
+   * section that must survive being empty says so by passing `emptyLabel`,
+   * which is the line shown in place of no rows.
+   *
+   * Three outcomes, and no fourth: rows, the caller's empty line, or nothing.
+   * A caller cannot get a bare header by passing an empty array, which is what
+   * the earlier shape of this helper allowed once its empty line stopped being
+   * a required argument.
+   */
   const pushGroup = (
     title: RecencyGroup | string,
     rows: MenuItemConstructorOptions[],
+    emptyLabel?: string,
   ): void => {
-    template.push(sectionHeader(title, options.sectionHeaders));
-    template.push(...rows);
+    const body = rows.length > 0
+      ? rows
+      : emptyLabel === undefined ? [] : [{ label: emptyLabel, enabled: false }];
+    if (body.length === 0) return;
+    pushSeparator();
+    template.push(sectionHeader(title, options.sectionHeaders), ...body);
   };
 
   // Pinned is dropped whole when nobody is signed in: it has nothing to say to
@@ -195,13 +215,11 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
   // how it fills instead of disappearing, because the people it is empty for are
   // exactly the ones who have not found pinning yet.
   if (options.signedIn) {
-    pushSeparator();
     pushGroup(
       'Pinned',
-      content.pinned.length > 0
-        ? content.pinned.slice(0, MENU_BAR_PINNED_LIMIT)
-            .map((workstream) => openWorkstreamRow(workstream, 'pinned_workstream'))
-        : [{ label: 'Pin a work stream to see it here', enabled: false }],
+      content.pinned.slice(0, MENU_BAR_PINNED_LIMIT)
+        .map((workstream) => openWorkstreamRow(workstream, 'pinned_workstream')),
+      'Pin a work stream to see it here',
     );
   }
 
@@ -212,21 +230,23 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
   // touched, and the refresh the pointer triggers is what corrects it.
   const recents = content.recents.slice(0, MENU_BAR_RECENT_LIMIT);
   if (recents.length > 0) {
+    // Each group arrives non-empty — `groupActivityItems` drops a heading with
+    // nothing under it — so none of these needs an empty line, and a group that
+    // somehow had none would correctly not be drawn.
     for (const group of groupActivityItems(recents, options.now ?? new Date())) {
-      pushSeparator();
       pushGroup(
         group.label,
         group.streams.map((workstream) => openWorkstreamRow(workstream, 'recent_workstream')),
       );
     }
   } else {
-    pushSeparator();
-    pushGroup(RECENT_EMPTY_HEADER, [{
+    pushGroup(
+      RECENT_EMPTY_HEADER,
+      [],
       // A menu that silently loses its lower half reads as broken. Say which of
       // the two reasons it is: nothing to show, or nobody to show it to.
-      label: options.signedIn ? 'No recent work streams' : 'Sign in to Rally',
-      enabled: false,
-    }]);
+      options.signedIn ? 'No recent work streams' : 'Sign in to Rally',
+    );
   }
 
   pushSeparator();

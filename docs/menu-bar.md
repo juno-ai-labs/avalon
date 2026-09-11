@@ -285,11 +285,20 @@ destination, so the hidden state is not sticky.
 - **`menuBarEnabled` reads as on when it is missing or unreadable.** The item
   ships on, and any other reading would silently withdraw it from every device
   that upgraded.
-- **Every group renders, and an empty one says how it fills.** All three go
-  through `pushGroup`, which takes the rows and the line to show instead of
-  none, so a group cannot be added that renders a bare header or vanishes
-  silently. Signing out is the only thing that removes a group, and only
-  **Suggestions** and **Pinned**.
+- **A header is never drawn with nothing under it, and a rule never with
+  nothing on one side.** Every section goes through `pushGroup`, which owns the
+  rule above it and has exactly three outcomes: the rows, the caller's
+  `emptyLabel` line, or nothing at all — header and rule together. A section
+  that must survive being empty says so by passing `emptyLabel`; **Pinned** and
+  the **Recent** fallback both do. The recency groups pass none because
+  `groupActivityItems` never returns an empty one, and a group that somehow had
+  no rows would correctly not be drawn rather than leaving a bare header. Break
+  this and the menu grows a heading with a gap under it, which reads as a menu
+  that failed to draw rather than as an answer.
+- **An empty section that a person can act on says how it fills.** **Pinned**
+  and **Recent** are empty for exactly the people who have not found the
+  feature yet, so they name what to do instead of disappearing. Signing out is
+  the only thing that removes a section outright, and only **Pinned**.
 - **The menu never renders state the operating system can change behind it.**
   It is rebuilt on content changes, not on open, so anything macOS owns
   independently — the login item is the case that came up — belongs in Settings,
@@ -431,6 +440,34 @@ is reported before `app.focus`, so the application-open coalescer suppresses the
 generic Electron activation callback rather than also counting a Dock open.
 
 ## Changelog
+
+### 2026-09-11 — `pushGroup` makes a bare header unrepresentable
+
+**What changed:** `pushGroup` took back the empty-state guarantee it lost
+earlier in this change, in a stronger form: it owns the separator above its
+section, takes an optional `emptyLabel`, and draws one of exactly three things —
+the rows, that line, or nothing at all. Call sites no longer push their own rule
+or assemble their own fallback row.
+
+**Why:** review caught that the refactor had quietly dropped a structural
+guarantee. The original helper took the empty line as a *required* argument, so
+a section could not be added without saying what to draw when it had no rows.
+Moving the fallback out to the callers turned that into a convention, and a
+convention is what the next section added through this helper would have
+ignored: pass an empty array, get a header with a rule on either side and
+nothing between them.
+
+**Considered and rejected:** restoring the required `emptyLabel`. The recency
+groups cannot be empty — `groupActivityItems` drops a heading with nothing under
+it — so requiring a line for them would mean inventing copy no one can ever see,
+which is worse than the hole it closes. Dropping the group entirely is the
+honest answer for a section with nothing to say and no message about it.
+
+**Consequences:** the separator moved inside the helper, so the "never a leading
+rule, never two in a row, never a trailing one" property now falls out of the
+same three outcomes rather than being maintained at each call site. A section
+added here that needs its own rule placement has to change this helper rather
+than work around it.
 
 ### 2026-09-11 — A heading that expires is rebuilt before it is read
 
