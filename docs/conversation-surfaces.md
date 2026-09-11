@@ -27,7 +27,7 @@ and availability changes visible without navigation.
 
 ## Sidekick conversations and attachments
 
-Sidekick authoring uses the shared conversation surface in a separate library window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and lists actually attached Sidekicks, with access-checked removal affecting future executions.
+Sidekick authoring uses the shared conversation surface in a separate library window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and, below them, lists this work stream's Sidekicks: the ones it owns and the ones its main conversation has loaded, in one section, with access-checked removal of an attachment affecting future executions. `ConversationSurface` owns both queries and hands the merged rows to the sidebar and the inspector rail, so the two rails cannot disagree about what a room has.
 
 ## Where the code lives
 
@@ -389,6 +389,38 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-10 — One Sidekicks section, under the people, in both of a room's rails
+
+**What changed:** `ConversationSurface` fetches a work stream's own Sidekicks
+alongside its conversation's attachments and passes one merged list to both
+rails. The center sidebar renders it as a **Sidekicks** section below
+**Participants**; the inspector rail renders the same rows. `SidekickSection`
+replaces the attachments-only component, and each row carries the hexagon the
+library draws it with and the rail's own `Tip` — labelled with the note as well
+as the name, since compact hides the copy and the tooltip is then the only way
+to read that a Sidekick is paused — rather than a platform `title`. Adding or
+removing a main-room participant invalidates the owned list, which participation
+gates and the query key does not carry.
+
+**Why:** The section the sidebar had listed only attachments, so a Sidekick
+created in the room — the kind whose managers are that room's participants —
+appeared nowhere in it. Merging the two lists rather than adding a second
+section keeps one heading and one question ("which Sidekicks are in this
+room?"), and the surface composes the rows once so the sidebar and the rail
+cannot drift. The rows moved onto the sidebar's own 54px row shape for a reason
+the DOM does not show: compact drops every title in that rail, and the previous
+attachment rows had no mark, so a collapsed sidebar showed blank squares where
+Sidekicks were. The section drops itself — heading included — for an empty list
+and for a pending one, which is what the artifact section beside it had settled
+hours earlier for the same rail; an empty state written here would have been a
+second answer to a question this rail had just answered. Whoever changes this
+next: **Remove** sits at the end of the row
+rather than on a line of its own, so that a Sidekick that can be detached and one
+that cannot occupy rows of the same height — the earlier arrangement left a
+ragged gap between otherwise identical rows — and it is clipped rather than
+`display: none`d in compact so it travels with the edge like everything else in
+that rail.
 
 ### 2026-09-10 — Send during dictation stops it and sends what it heard
 

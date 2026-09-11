@@ -7205,10 +7205,22 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   .sidekick-navigation { padding-inline: 12px; }
 }
 
-.sidekick-attachments-list { list-style: none; margin: 0; padding: 0; }
-.sidekick-attachments-list > li { padding-bottom: 8px; }
-.sidekick-attachments-list > li > small { display: block; color: var(--av-sys-color-text-muted); padding-inline: 8px; }
-.sidekick-attachments-list > li > .sidekick-attachment-remove { font-size: 11px; color: var(--av-sys-color-text-muted); margin-left: 8px; }
+.sidekick-section-list { list-style: none; margin: 0; padding: 0; }
+/* The hexagon in the 36px slot every other row in this rail marks itself with,
+   drawn a little inside it so the shape's own points are not the row's edge. */
+.workstream-context-sidekick-glyph { display: block; height: 28px; width: 28px; }
+/* Beside the row rather than under it, so every Sidekick occupies one row of
+   the same height whether or not it can be detached — a control on its own
+   line put a ragged gap between rows that are otherwise identical. It travels
+   the compact interval and is clipped to nothing rather than `display: none`,
+   so it fades with the copy it sits next to instead of vanishing a frame
+   ahead of the edge. */
+.sidekick-section-list > li { align-items: center; display: flex; }
+.sidekick-section-list > li > .workstream-context-row { min-width: 0; }
+.sidekick-section-remove { background: transparent; border: 0; border-radius: 6px; color: var(--av-sys-color-text-muted); flex: 0 0 auto; font: inherit; font-size: 11px; overflow: hidden; padding: 4px 6px; transition: opacity var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion), width var(--sidebar-layout-motion); }
+.sidekick-section-remove:hover { color: var(--av-sys-color-text-default); }
+.sidekick-section-remove:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
+.workstream-context-sidebar.is-compact .sidekick-section-remove { opacity: 0; padding: 0; visibility: hidden; width: 0; }
 
 /* The two navigation rails share square controls and symmetric gutters. */
 .workstream-context-sidebar.is-compact .workstream-context-scroll { padding-left: 20.5px; padding-right: 20.5px; }

@@ -1,6 +1,5 @@
-import type { SidekickAttachment } from '@rally/contracts';
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import { AttachedSidekicks } from './attached-sidekicks';
+import { SidekickSection, type SidekickRow } from './sidekick-section';
 import { Archive, GripVertical, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
 import { IconCornerDownRight, IconPlus } from '@tabler/icons-react';
 import { Fragment, useLayoutEffect, useRef, useState } from 'react';
@@ -42,12 +41,17 @@ function SubstreamRowMenu({ actions, children, target }: {
 }
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, attachedSidekicks, attachedSidekicksError, onRemoveSidekick, substreamActions }: {
+export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekicksError, substreamActions }: {
   workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'appearance' | 'resources' | 'participants'> & Pick<WorkstreamChildDirectory, 'privateChildren'>;
   presentUserIds: readonly string[];
-  attachedSidekicks?: SidekickAttachment[] | undefined;
-  attachedSidekicksError?: string | undefined;
-  onRemoveSidekick?: ((id: string) => void) | undefined;
+  /**
+   * This work stream's Sidekicks — the ones it owns and the ones its
+   * conversation has loaded — or `undefined` while that answer is still on its
+   * way. The section says nothing at all for either, the way the artifact
+   * section above it does.
+   */
+  sidekicks?: SidekickRow[] | undefined;
+  sidekicksError?: string | undefined;
   selectedSubstreamId?: string;
   onSelectSubstream?: (substreamId: string) => void;
   onNewSubstream?: () => void;
@@ -207,7 +211,9 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
             {workstream.participants.length ? <AvatarStack members={workstream.participants} limit={compact ? 2 : 4} presentUserIds={presentUserIds} /> : <UserPlus aria-hidden="true" size={18} />}
           </button>
         </section>
-        <AttachedSidekicks items={attachedSidekicks} error={attachedSidekicksError} onRemove={onRemoveSidekick} />
+        {/* Below the people, because a Sidekick is the other kind of thing
+            working in this room. */}
+        <SidekickSection items={sidekicks} error={sidekicksError} />
       </div>
       <div className="sidebar-collapse-footer">
         <IconButton
