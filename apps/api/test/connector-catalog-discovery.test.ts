@@ -158,28 +158,26 @@ describe("the Google presentation, which is rebuilt rather than passed through",
 
 
 describe("custom MCP connection names", () => {
-  const fallback = {
-    displayName: "Custom MCP server",
-    description: "Static catalog description",
-    searchAliases: ["custom_mcp"],
-    systemMessage: "Static policy",
-  };
-
   it.each(["Engineering", "Customer research"])("names the server %s", (name) => {
-    expect(__integrationTesting.connectorPluginPresentation(
-      "custom_mcp", [], "custom_mcp", fallback, name,
-    )).toEqual({ ...fallback, displayName: name });
+    expect(__integrationTesting.customMcpActivityName(name)).toBe(name);
   });
 
   it("removes control and direction characters from the visible name", () => {
-    expect(__integrationTesting.connectorPluginPresentation(
-      "custom_mcp", [], "custom_mcp", fallback, "  Engineering\n\u202eMCP  ",
-    ).displayName).toBe("Engineering MCP");
+    expect(__integrationTesting.customMcpActivityName("  Engineering\n\u202eMCP  "))
+      .toBe("Engineering MCP");
   });
 
   it.each([undefined, "", " \u202e "])("falls back for an absent name %s", (name) => {
-    expect(__integrationTesting.connectorPluginPresentation(
-      "custom_mcp", [], "custom_mcp", fallback, name,
-    )).toEqual(fallback);
+    expect(__integrationTesting.customMcpActivityName(name)).toBe("Custom MCP server");
+  });
+
+  it("uses the participant label and connector identity for transcript activity", () => {
+    const plugin = {
+      canonicalId: "connection:custom", modelId: "plugin_custom_mcp", shortWireName: "custom_mcp",
+      displayName: "Custom MCP server", activityDisplayName: "Slack", connectorType: "custom_mcp",
+      description: "Static description", tools: [], preload: false,
+    };
+    expect(__integrationTesting.transcriptPluginPresentation({ corePlugins: [], plugins: [plugin] }, plugin.canonicalId))
+      .toEqual({ label: "Slack", connectorType: "custom_mcp" });
   });
 });

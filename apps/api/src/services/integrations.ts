@@ -2111,18 +2111,16 @@ async function loadAutomationCreatorPluginCatalog(
       shortWireName: stableConnectionWireName(modelPluginId),
     };
     const wirePrefix = stableConnectionWireName(modelPluginId);
-    // Two connections of one connector differ only by what a person named
-    // them, so the name a person chose is what the model is shown.
     const connectionName = typeof row.display_name === "string" && row.display_name.trim() !== ""
       && row.display_name.trim() !== adapter.manifest.displayName
       ? `${adapter.manifest.displayName}: ${row.display_name.trim()}`
       : adapter.manifest.displayName;
     const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, wirePrefix, {
-      displayName: connectionName,
+      displayName: row.connector_type === "custom_mcp" ? adapter.manifest.displayName : connectionName,
       description: adapter.agentPlugin.description,
       searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
-    }, typeof row.display_name === "string" ? row.display_name : undefined);
+    });
     let definitions = staticDefinitions;
     if (dynamicCapability) {
       try {
@@ -2936,15 +2934,14 @@ export async function runWorkstreamHarness(
     const plugin = transcriptPluginActivity(event.toolCallId, event.pluginId);
     if (!pluginActivityRevisions.has(plugin.revisionKey)) {
       pluginActivityRevisions.set(plugin.revisionKey, 1);
-      const pluginLabel = [...harnessTools.corePlugins, ...harnessTools.plugins]
-        .find((candidate) => candidate.canonicalId === event.pluginId)?.displayName ?? event.pluginId;
+      const pluginPresentation = transcriptPluginPresentation(harnessTools, event.pluginId);
       await orderedTranscript.upsertActivity({
         activityId: plugin.activityId,
         parentActivityId: plugin.parentActivityId,
         scope: "plugin",
         subjectId: event.pluginId,
         callIndex: position.callIndex,
-        label: pluginLabel,
+        ...pluginPresentation,
         action: "start",
         revision: 1,
         occurredAtUtc: new Date().toISOString(),
@@ -2967,8 +2964,7 @@ export async function runWorkstreamHarness(
   }): Promise<void> => {
     const position = transcriptToolPosition(event.toolCallId);
     const plugin = transcriptPluginActivity(event.toolCallId, event.pluginId);
-    const pluginLabel = [...harnessTools.corePlugins, ...harnessTools.plugins]
-      .find((candidate) => candidate.canonicalId === event.pluginId)?.displayName ?? event.pluginId;
+    const pluginPresentation = transcriptPluginPresentation(harnessTools, event.pluginId);
     await orderedTranscript.upsertActivity({
       activityId: `${event.toolCallId}:activity`,
       parentActivityId: plugin.activityId,
@@ -2992,7 +2988,7 @@ export async function runWorkstreamHarness(
         scope: "plugin",
         subjectId: event.pluginId,
         callIndex: position.callIndex,
-        label: pluginLabel,
+        ...pluginPresentation,
         action: "fail",
         revision: pluginRevision,
         occurredAtUtc: new Date().toISOString(),
@@ -3868,8 +3864,7 @@ export async function runWorkstreamHarness(
               const position = transcriptToolPosition(event.toolCallId);
               const plugin = transcriptPluginActivity(event.toolCallId, event.pluginId);
               const pluginActivityId = plugin.activityId;
-              const pluginLabel = [...harnessTools.corePlugins, ...harnessTools.plugins]
-                .find((plugin) => plugin.canonicalId === event.pluginId)?.displayName ?? event.pluginId;
+              const pluginPresentation = transcriptPluginPresentation(harnessTools, event.pluginId);
               await ensureTranscriptToolParents(event);
               await orderedTranscript.upsertToolLifecycle({
                 toolCallId: event.toolCallId,
@@ -3901,7 +3896,7 @@ export async function runWorkstreamHarness(
                   scope: "plugin",
                   subjectId: event.pluginId,
                   callIndex: position.callIndex,
-                  label: pluginLabel,
+                  ...pluginPresentation,
                   action: failedPluginActivities.has(plugin.revisionKey) ? "fail" : "complete",
                   revision: pluginRevision,
                   occurredAtUtc: new Date().toISOString(),
@@ -3994,8 +3989,7 @@ export async function runWorkstreamHarness(
             const position = transcriptToolPosition(event.toolCallId);
             const plugin = transcriptPluginActivity(event.toolCallId, event.pluginId);
             const pluginActivityId = plugin.activityId;
-            const pluginLabel = [...harnessTools.corePlugins, ...harnessTools.plugins]
-              .find((plugin) => plugin.canonicalId === event.pluginId)?.displayName ?? event.pluginId;
+            const pluginPresentation = transcriptPluginPresentation(harnessTools, event.pluginId);
             await ensureTranscriptToolParents(event);
             await orderedTranscript.upsertToolLifecycle({
               toolCallId: event.toolCallId,
@@ -4028,7 +4022,7 @@ export async function runWorkstreamHarness(
                 scope: "plugin",
                 subjectId: event.pluginId,
                 callIndex: position.callIndex,
-                label: pluginLabel,
+                ...pluginPresentation,
                 action: "fail",
                 revision: pluginRevision,
                 occurredAtUtc: new Date().toISOString(),
@@ -6012,7 +6006,7 @@ async function loadHarnessTools(
       description: adapter.agentPlugin.description,
       searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
-    }, typeof row.display_name === "string" ? row.display_name : undefined);
+    });
     const dynamicCapability = dynamicConnectorCapability(adapter, scope, grantedScopes);
     const staticDefinitions = dynamicCapability
       ? []
@@ -6165,6 +6159,10 @@ async function loadHarnessTools(
       modelId: modelPluginId,
       shortWireName,
       displayName: presentation.displayName,
+      connectorType: String(row.connector_type),
+      ...(row.connector_type === "custom_mcp"
+        ? { activityDisplayName: customMcpActivityName(row.display_name) }
+        : {}),
       searchAliases: presentation.searchAliases,
       description: presentation.description,
       systemMessage: presentation.systemMessage,
@@ -6342,18 +6340,30 @@ function catalogAliases(
   return [...new Set([connectorType, wirePrefix, ...scoped])];
 }
 
+function customMcpActivityName(name: unknown): string {
+  return (typeof name === "string" ? name.replace(/[\p{Cc}\p{Cf}]+/gu, " ").trim() : "")
+    || "Custom MCP server";
+}
+
+/** Participant-only metadata; never passed to Bind's prompt catalog. */
+function transcriptPluginPresentation(
+  harnessTools: Pick<LoadedHarnessTools, "corePlugins" | "plugins">,
+  pluginId: string,
+): { label: string; connectorType?: string } {
+  const plugin = [...harnessTools.corePlugins, ...harnessTools.plugins]
+    .find((candidate) => candidate.canonicalId === pluginId);
+  return {
+    label: plugin?.activityDisplayName ?? plugin?.displayName ?? pluginId,
+    ...(plugin?.connectorType ? { connectorType: plugin.connectorType } : {}),
+  };
+}
+
 function connectorPluginPresentation(
   connectorType: string,
   grantedScopes: readonly string[],
   wirePrefix: string,
   fallback: { displayName: string; description: string; searchAliases: string[]; systemMessage: string },
-  connectionDisplayName?: string,
 ): { displayName: string; description: string; searchAliases: string[]; systemMessage: string } {
-  if (connectorType === "custom_mcp") {
-    // A configured name identifies the server; it is never instruction prose.
-    const name = connectionDisplayName?.replace(/[\p{Cc}\p{Cf}]+/gu, " ").trim();
-    return { ...fallback, displayName: name || "Custom MCP server" };
-  }
   if (connectorType !== "google") return fallback;
 
   const granted = new Set(grantedScopes);
@@ -8475,7 +8485,9 @@ function toolInvocationOwningPlugin(row: Record<string, unknown>): AutomationPlu
   if (!displayName) return null;
   return {
     pluginId: pluginId.data,
-    displayName,
+    canonicalId: `connection:${String(row.connection_id)}`,
+    connectorType: String(row.owner_connector_type ?? ""),
+    displayName: row.owner_connector_type === "custom_mcp" ? customMcpActivityName(displayName) : displayName,
     icon: connectorAutomationPluginIcon(String(row.owner_connector_type ?? ""), displayName),
   };
 }
@@ -8637,6 +8649,8 @@ export const __integrationTesting = {
   childRunLimits,
   connectorSearchAliases,
   connectorPluginPresentation,
+  customMcpActivityName,
+  transcriptPluginPresentation,
   installInlineChildAgentTool,
   installDynamicPluginTools,
   createWorkstreamCorePlugins,
