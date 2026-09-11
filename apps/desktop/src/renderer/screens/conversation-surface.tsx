@@ -204,33 +204,56 @@ export function orderedTranscriptOwnsRunTiming(
 }
 
 /**
- * Which row the one activity slot above the composer shows, if any.
+ * Which row the transcript's activity slot shows, if any.
  *
- * A pending stop outranks the other two. Compaction and the elapsed total both
- * answer "what is Rally doing"; once somebody has pressed Stop, the question
- * they are waiting on is whether it landed, and this slot is the only place
- * that can answer it. Stop is observed at the loop's next safe step boundary,
- * so the response in flight and every tool it already asked for settle first —
- * a production run took eleven seconds — and for all of it the sole
- * acknowledgement was a spinner in a 28px button and a tooltip nobody hovers.
+ * Both answers describe the run, so both belong in the feed, in reading order,
+ * with the turns they are about. The pending-stop acknowledgement deliberately
+ * is not one of them — see `conversationShowsStoppingRow`.
  *
  * `timing` is left to the feed whenever the ordered transcript already draws
  * the run's own rows, which is why it is the one answer that can be `null`
- * while a run is plainly going. That stays true under a pending stop: the feed
- * keeps counting because the response really is still settling, and the row
- * this slot adds says why it is allowed to.
+ * while a run is plainly going.
  */
 export function conversationActivityRow(input: {
   status: HarnessStatus;
-  stopRequested: boolean | undefined;
   compactingThisRun: boolean;
   orderedOwnsRunTiming: boolean;
   runTiming: AgentWorkTimingProps | null;
-}): 'stopping' | 'compacting' | 'timing' | null {
-  if (input.status === 'running' && input.stopRequested === true) return 'stopping';
+}): 'compacting' | 'timing' | null {
   if (input.compactingThisRun && input.status === 'running') return 'compacting';
   if (!input.orderedOwnsRunTiming && input.runTiming) return 'timing';
   return null;
+}
+
+/**
+ * Whether to acknowledge a pending stop above the composer.
+ *
+ * Stop is observed at the loop's next safe step boundary: the response in
+ * flight and every tool it already asked for settle first, and no further
+ * provider request begins. A production run took 11.2 seconds to get there, and
+ * for all of it the only sign the click had landed was a spinner in a 28px
+ * button and a tooltip nobody hovers.
+ *
+ * Drawn in the composer dock rather than in the transcript's activity slot,
+ * which is inside the scroller. `useTranscriptFollow` hands the viewport to the
+ * reader the moment they scroll up and nothing about pressing Stop takes it
+ * back — correctly, since only the reader's own scrolling may move it — so a
+ * row appended to the feed lands below the fold for exactly the person most
+ * likely to be reading history while a run is going. The dock sits outside the
+ * scroller, so this is visible at any scroll position. It also puts the
+ * acknowledgement beside the control it answers: the two rows in the feed
+ * describe the run, and this one answers a button press.
+ *
+ * Gated on a live run, not on the flag alone. The loop clears
+ * `stop_requested_at` as it goes idle, but a settled run can still be read back
+ * before the next snapshot lands, and a stopping row over an already-stopped
+ * run promises a wait that is over.
+ */
+export function conversationShowsStoppingRow(
+  status: HarnessStatus,
+  stopRequested: boolean | undefined,
+): boolean {
+  return status === 'running' && stopRequested === true;
 }
 
 /**
@@ -2005,9 +2028,12 @@ export function ConversationSurface({
     orderedTranscript.data,
     detail.latestHarnessRunId ?? detail.latestHarnessRun?.id,
   );
+  const showsStoppingRow = conversationShowsStoppingRow(
+    detail.harnessStatus,
+    detail.stopRequested,
+  );
   const activityRow = conversationActivityRow({
     status: detail.harnessStatus,
-    stopRequested: detail.stopRequested,
     // A compaction has to be running AND belong to the run on screen. Reading
     // the id straight off `activeCompaction` would compare `undefined` with the
     // id of a run that has none either, and a room with no run at all would
@@ -2241,12 +2267,10 @@ export function ConversationSurface({
               virtualizer={transcriptVirtualizer}
             />
           )}
-          <ActivityPresence>{activityRow === 'stopping'
-            ? <RunStoppingIndicator />
-            : activityRow === 'compacting'
-              ? <AgentCompactionIndicator />
-              : activityRow === 'timing'
-                && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming!} />}</ActivityPresence>
+          <ActivityPresence>{activityRow === 'compacting'
+            ? <AgentCompactionIndicator />
+            : activityRow === 'timing'
+              && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming!} />}</ActivityPresence>
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
@@ -2266,6 +2290,10 @@ export function ConversationSurface({
       <div className="composer-dock">
         <JumpToLatestButton onJump={() => void jumpToLatest()} visible={!transcriptAtEnd} />
         <div className="composer-stack">
+          {/* First in the stack, so it reads as a line above the field rather
+              than as something the field is sitting on. The stack is a grid
+              with its own gap, so it needs no spacing of its own. */}
+          {showsStoppingRow && <RunStoppingIndicator />}
           <WorkstreamComposer
             api={api ?? undefined}
             placeholder={parentKind === 'automation' ? 'Ask your Sidekick…' : 'Message the work stream…'}
