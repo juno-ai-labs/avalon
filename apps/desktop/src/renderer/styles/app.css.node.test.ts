@@ -207,21 +207,50 @@ describe('composer width', () => {
   });
 
   it('gives the row back to the field below a 600px pane', () => {
-    const dock = rule('.workstream-screen .composer-dock');
-
     // The query below resolves against the nearest named container, so it is
     // inert — silently, and only at narrow widths — without this. The launchers
     // reach it through the same rule, which is why it names both screens.
     expect(rule(':is(.workstream-screen, .workstream-launch-screen) .composer-dock'))
       .toContain('container: composer-dock / inline-size;');
 
-    const gutter = Number(dock?.match(/padding: 0 (\d+)px \d+px;/u)?.[1]);
     const threshold = Number(stylesheet.match(/@container composer-dock \(width < (\d+)px\)/u)?.[1]);
 
     // A size query reads the container's content box, which is inside the
-    // dock's gutters; the pane is those two gutters wider.
-    expect(gutter).toBeGreaterThan(0);
-    expect(threshold + 2 * gutter).toBe(NARROW_PANE);
+    // dock's gutters, so the pane is those two gutters wider — and every dock
+    // has to state the same gutter or it crosses at a different pane. That is
+    // not cosmetic: a launcher whose field changes width on the keystroke that
+    // submits it is the defect this arrangement exists to remove, and it hid in
+    // a 36px band of pane widths behind a dock that stated 34px sides.
+    // Every rule that pads a dock, read from the stylesheet rather than looked
+    // up by selector: `rule()` returns the *first* match for a name, and
+    // `.workstream-launch-screen:not(.is-launching) > .launch-dock` is written
+    // twice — once in a narrow-width media block and once as the rule itself —
+    // so a lookup answers for the wrong one and this scan passed over the one
+    // dock it exists for. Comments come out too, for the same reason in
+    // miniature: a padding preceded by one reads as no padding at all.
+    const paddedDocks = [...stylesheet.replace(/\/\*[\s\S]*?\*\//gu, ' ').matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
+      .map(([, prelude, declarations]) => ({ prelude: prelude!.trim().replace(/\s+/gu, ' '), declarations: declarations! }))
+      .filter(({ prelude }) => /(?:composer|launch)-dock(?![\w-])/u.test(prelude))
+      .filter(({ declarations }) => /(?:^|;|\s)padding(?:-[a-z-]+)?\s*:/u.test(declarations));
+
+    // The side value of a `padding` shorthand — index 1 in every form but the
+    // one-value one — plus any longhand that states a side on its own.
+    const sideValues = (declarations: string): string[] => [
+      ...[...declarations.matchAll(/(?:^|;|\s)padding:\s*([^;]+)/gu)]
+        .map(([, declared]) => declared!.trim().split(/\s+/u))
+        .map((values) => values[values.length === 1 ? 0 : 1]!),
+      ...[...declarations.matchAll(/padding-(?:left|right|inline[a-z-]*):\s*([^;]+)/gu)].map(([, value]) => value!.trim()),
+    ];
+
+    const gutter = `${(NARROW_PANE - threshold) / 2}px`;
+    const stated = paddedDocks.flatMap(({ prelude, declarations }) => sideValues(declarations)
+      .map((value) => `${prelude} { padding-inline: ${value} }`));
+
+    // A rule this scan cannot parse fails here rather than passing unexamined.
+    expect(paddedDocks.filter(({ declarations }) => sideValues(declarations).length === 0).map(({ prelude }) => prelude))
+      .toEqual([]);
+    expect(stated.length).toBeGreaterThan(2);
+    expect(stated.filter((entry) => !entry.endsWith(`${gutter} }`))).toEqual([]);
 
     // And the rows above the field come with it, or they stop lining up on the
     // one width where the field is not the box it was centred in.
