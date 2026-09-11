@@ -104,7 +104,6 @@ import { queueAuthorMember, type ComposerQueueItem } from '../components/compose
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import { ConnectorConnectionsProvider } from '../components/connector-mentions';
 import { WorkstreamComposer } from '../components/workstream-composer';
-import { SubstreamContext } from '../components/substream-context';
 import { useRailExitFade } from '../components/rail-surface';
 
 /**
@@ -228,8 +227,8 @@ export function workstreamPayloadBelongsToRoute(
  * Enough to recognize what is being branched out of at a glance, and few
  * enough that the composer stays where the eye left it. What the substream
  * actually inherits is not this: the platform freezes a summary of the
- * conversation through the branch point, and the child's own feed shows it
- * under **Context from the main conversation** once it exists.
+ * conversation through the branch point, and these turns are the only part of
+ * it anybody is shown — the frozen summary itself is the child's runs' to read.
  */
 const BRANCH_PROVENANCE_TURNS = 5;
 
@@ -810,7 +809,14 @@ export function ConversationSurface({
     enabled: false,
     staleTime: Number.POSITIVE_INFINITY,
   });
-  const initialContext = useQuery<SubstreamInitialContext | null>({
+  // Subscribed to, never read: nothing on this surface draws a substream's
+  // starting context. The observer is what keeps the socket-owned entry in the
+  // cache, and two things that never render it read it by key — `sendReady`,
+  // which will not let a substream send until its context has arrived, and the
+  // local-cache mirror, which declines to write a conversation whose context it
+  // cannot find. An entry nobody observes is garbage-collected out from under
+  // both of them five minutes after it lands.
+  useQuery<SubstreamInitialContext | null>({
     queryKey: substreamInitialContextQueryKey(id, substreamId),
     queryFn: async () => null,
     enabled: false,
@@ -2100,10 +2106,8 @@ export function ConversationSurface({
           )}
           {olderMessagesError && <InlineError>{olderMessagesError}</InlineError>}
           {otherHistoryError && <InlineError>{otherHistoryError}</InlineError>}
-          {substreamId !== '0' && initialContext.data && <section className="substream-initial-context" aria-label="Initial context">
-            <strong>Context from the main conversation</strong>
-            <SubstreamContext context={initialContext.data} />
-          </section>}
+          {/* No starting context here: it is what the child's runs read, not a
+              turn anybody said. `docs/substream-creation.md` has why. */}
           {/* Not while a run is going. A work stream opened the instant it was
               created has an empty transcript and an agent already working on
               it, and inviting the person to start it is both wrong and the

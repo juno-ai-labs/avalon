@@ -24,7 +24,7 @@ platform policies, not controls offered to the user.
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Frozen source export and immutable inert child seed. |
 | `apps/api/src/durable-objects/substream-context-transfer.ts` | Frame-sized initial-context snapshot transfer. |
 | `apps/api/src/services/substream-initial-context.ts` | Inert seed to model-context conversion. |
-| `apps/desktop/src/renderer/screens/workstream.tsx` | Main/child navigation, the creation state machine and its cache seeding, rename and archive dialogs. |
+| `apps/desktop/src/renderer/screens/workstream.tsx` | Main/child navigation, the creation state machine and its cache seeding, rename and archive dialogs, and `railChildren`, which draws the open substream's row under its own name. |
 | `apps/desktop/src/renderer/components/substream-launch.tsx` | The launch surface: branch provenance, the composer that starts a substream, its model pin, and the optimistic turn while one is being created. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Renders that surface in place of the conversation's own three rows, and `branchProvenance`, which chooses the turns it fades. |
 | `apps/desktop/src/renderer/lib/launched-conversation.ts` | The optimistic opening transcript and the child detail both launchers seed. |
@@ -77,7 +77,7 @@ What sits above that composer is the difference between the two entry points:
   faded out upward under a gradient mask and inert to the pointer. They say what
   is being branched out of. They are not what the substream inherits: the
   platform still freezes a summary of the conversation through that cutoff, and
-  the created child shows it under **Context from the main conversation**.
+  those turns are the only part of it anybody is shown.
 - **From the sidebar** — nothing, exactly as the work-stream launcher's body is
   empty. A substream started there branches from wherever the conversation has
   reached, so there is no particular moment to be looking at.
@@ -160,7 +160,9 @@ or replace the child's creator-only conversation membership.
    admitted rather than saying it twice.
 7. The parent's existing control socket publishes viewer-filtered ready
    children. The child's socket supplies its own transcript and initial context.
-   Nothing else is sent on the creator's behalf: the substream is working on the
+   The context is carried, not drawn: it is what the child's runs read, and no
+   surface renders it — see **What the reader is shown of it** below. Nothing
+   else is sent on the creator's behalf: the substream is working on the
    instruction it was created with, and on nothing else.
 
 Confirmation still answers without an opening message, and creates the idle
@@ -180,11 +182,52 @@ the rename event published into the child's own room. The child's rename reaches
 the parent's registry through the ordinary common projection, which is what
 converges every sidebar's row.
 
+That projection is the authority and it is not quick: the child's directory
+effect goes to the Queue and back before the parent knows, about fourteen
+seconds after a substream is created — which is exactly when its naming pass
+renames it. The child knows its new name at once and the parent does not, so a
+window opened in which the header carried the name Rally chose and the rail
+beside it still carried the first line of the message. A window in which one
+conversation has two names is a defect whichever name is right.
+
+The rail closes it by reading rather than writing. Every row it draws comes from
+the parent's directory, except the row for the substream that is **open**, whose
+title comes from that child's own detail — the same entry the header renders, so
+the two cannot say different things (`railChildren` in `workstream.tsx`). It
+follows whatever moves that detail, which is every way a child states its own
+name: the rename event its room publishes, and the title its socket's snapshot
+carries when a substream is opened after its naming pass already ran and there
+is no event left to hear.
+
+Only the open child, and read-time rather than written back into the directory,
+and both restrictions are the same decision. The parent's projection stays the
+only writer of that cache: a patch into it is replaced wholesale by the next
+parent frame, which inside the window still carries the old name, so whether the
+rail was right would come down to which socket spoke last — measured in a real
+window, the parent's frame on a cold open usually speaks second and wins. And
+no other row has a better answer available: nothing in the window subscribes to
+a substream it is not showing, so for every child but the open one the parent's
+copy is the best there is.
+
 Before this, children were provisioned `settled` and no pass ever ran on one; a
 run settling in a child called the refresh pass with the parent's address and
 its own dropped, which found the parent's own title and, in the overwhelming
 case of a settled work stream, did nothing. That is fixed rather than preserved:
 `settleAgentRun` passes the substream it ran in.
+
+### What the reader is shown of it
+
+Nothing. The frozen starting context is model-facing: the child's runs read it,
+`sendReady` waits for it to arrive before a substream can send, and the local
+cache declines to mirror a conversation whose context it cannot find — but no
+surface draws it. It was drawn once, under a **Context from the main
+conversation** heading at the top of the child's feed, and in a conversation a
+person had just started it was the first and largest thing they saw: a summary
+of the work stream they had branched out of moments earlier, restated to them
+unasked, above their own opening message. The turns the launch surface fades in
+above the composer already say what is being branched out of, and they say it
+where the decision is being made.
+
 
 ### Membership, rename, archive and notifications
 
@@ -196,8 +239,10 @@ somebody outside the child adds them through that API before sending.
 A child row's context menu offers **Rename** and **Archive substream**.
 `PATCH /conversations/:parentId/substreams/:substreamId` changes either `title`
 or `archived` per request. Rename writes the child's own title; its common
-projection updates the parent-owned child registry. The desktop applies child
-rename events only to the child detail, never the workspace's parent row.
+projection updates the parent-owned child registry. The desktop applies a child
+rename event to the child's detail and to nothing else — never the workspace's
+parent row, whose name a child cannot change — and the rail draws the open
+child's row from that same detail, per **The name a substream is given** above.
 Archive stores `conversation_children.archived_at`, removes the row from every
 member's child directory, and refuses messages, membership changes and new
 socket tickets. A durable, versioned delivery mirrors archive state into the child; it commits the agent stop request with the local archive. Already-open sockets check that local state without a parent RPC.
@@ -305,8 +350,9 @@ the first model context without becoming executable historical work.
   built by spreading: a child of a pinned work stream that inherited the pin
   there would show the parent's model as its own for the frames before the
   room's snapshot lands, which is the inheritance this rule refuses.
-- Feed and model use the same installed selected parts. The complete source
-  capture is preparation provenance, not a second hidden model-context source.
+- The installed selected parts are the model's context and nobody else's. No
+  surface renders them, and the complete source capture is preparation
+  provenance rather than a second hidden model-context source.
 - Child membership versions fence signed admission and live commands. Removing
   a participant must invalidate an existing socket as well as future tickets.
   Re-adding them does not revive an old ticket: its version must match exactly.
@@ -434,6 +480,69 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-11 — The starting context is not drawn, and one substream has one name
+
+**What changed:** Two things a person saw when they opened a substream, both
+reported from a real window on the same screen.
+
+The child's feed no longer renders its frozen starting context. The
+**Context from the main conversation** section and the `SubstreamContext`
+component that drew it are gone; nothing else about the context moved. It is
+still frozen at creation, still installed into the child, still carried over the
+child's socket, and still what `sendReady` and the local-cache mirror wait for —
+so the observer that holds it in the query cache stays, subscribed and never
+read, with the reason written at it.
+
+And the rail now draws the row for the **open** substream from that child's own
+detail rather than from the parent's copy of it (`railChildren` in
+`workstream.tsx`) — the same entry the header renders, so the two cannot
+disagree. Every other row still comes from the parent's directory.
+
+**Why:** The context section was the first and largest thing in a conversation
+somebody had just started — a summary of the work stream they had branched out
+of moments earlier, restated to them unasked, above their own opening message,
+and unstyled, because no stylesheet ever claimed `.substream-initial-context`.
+The launch surface already shows what is being branched out of, at the moment
+that matters. Rejected: styling it, or collapsing it behind a disclosure. Both
+keep a model-facing artifact in the reader's transcript and only argue about how
+much room it takes; the reader is not the audience for it. Also rejected:
+removing the client's context plumbing along with the section. It gates sending
+and the offline mirror, so removing it would have been a readiness change
+wearing a rendering change's clothes.
+
+The two names were one fact arriving from two objects with very different
+clocks. The child knows its new name at once — its room publishes the rename,
+and its snapshot carries the title — while the parent's registry, which the rail
+reads, only converges after the child's directory effect has been through the
+Queue and back. Measured in a real window: header at 4.1s, rail at 18.1s,
+fourteen seconds in which the substream had two names.
+
+**Considered and rejected, in this order.** Having the naming pass write the
+parent's registry directly: the parent deliberately believes the child about
+what the child is called, through the ordinary projection, and a second writer
+into that row would be a second authority for it. Then — and this one was built,
+pushed, and taken back out — patching the child's title into the *cached*
+directory from the rename event and the snapshot. It reads as the obvious fix
+and it loses a race: `applyMetadata` replaces `privateChildren` wholesale for
+any frame whose waterline is not lower, a frame generated inside the window
+still carries the provisional title, and nothing advances that waterline while
+the projection is in flight. Staged in a real window it lost the race on the
+ordinary path — a cold open inside the window has the parent's frame arriving
+after the child's snapshot, so the rail went back to the provisional name — and
+closing *that* would have needed either a forged waterline, which would make the
+client reject the parent's real frames including membership changes, or a
+client-side ledger of not-yet-projected titles, which is the second authority
+again in a smaller box. Reading the child's detail at render time has no race to
+lose: there is one value, and both the header and the row show it.
+
+**What a future change has to respect:** the starting context stays reachable to
+the runs and the readiness gate and unreachable to the reader; the parent's
+projection stays the only writer of the cached child directory; and a surface
+that shows a conversation's name beside another view of the same conversation
+resolves both from one value rather than keeping two that agree eventually.
+
+Shipped in #689.
 
 ### 2026-09-10 — The launch banner carries the substream arrow
 
