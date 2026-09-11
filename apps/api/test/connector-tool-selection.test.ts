@@ -836,11 +836,17 @@ describe("connector tools selected for harness runs", () => {
       "rally:tables",
       "rally:memory",
     ]);
-    expect(selected.corePlugins.find((plugin) => plugin.canonicalId === "rally:core")
-      ?.tools.map(({ definition }) => definition.name)).toEqual([
+    const corePlugin = selected.corePlugins.find((plugin) => plugin.canonicalId === "rally:core");
+    expect(corePlugin?.tools.map(({ definition }) => definition.name)).toEqual([
         "current_time",
+        "get_connector_connection_state",
+        "show_connector_connection",
         "request_elicitation",
       ]);
+    expect(corePlugin?.systemMessage).toContain("call core_get_connector_connection_state first");
+    expect(corePlugin?.systemMessage).toContain(
+      "call core_show_connector_connection with the same connectorId and scope",
+    );
     expect(selected.plugins.find((plugin) =>
       plugin.canonicalId === "rally:workstream"
     )?.tools.filter(({ definition }) => definition.name === "run_subagent")).toHaveLength(1);
