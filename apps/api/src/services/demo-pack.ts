@@ -374,6 +374,69 @@ export function visibleSidekicksFor(
 }
 
 /**
+ * What one viewer's `expect` block has to say, for a viewer who never acts.
+ *
+ * `expect` exists because the per-viewer flags depend on who opened what, and
+ * the seeder opens a room for whoever acted in it. For a viewer who acts in no
+ * room that dependency is gone and every flag follows from the steps, so this
+ * derives the block rather than leaving an author to reason it out — a wrong
+ * flag is not a test failure, it is a demo that sits in **Waiting for
+ * workspace** until the operator gives up, because the barrier is comparing
+ * against something the platform will never produce.
+ *
+ * The three flags and the count are the directory's and the home screen's own
+ * rules, read back for a viewer with nothing seen:
+ *
+ * - **unseen** is "in the room and never opened it", so for this viewer it is
+ *   exactly whether the pack seats them.
+ * - **hasUnread** is activity above what they have seen, and they have seen
+ *   nothing, so every room they are offered is unread. A room always carries a
+ *   message — creating one is a message — so there is no empty-room case.
+ * - **mentioned** is a mention above what they have seen, so it is whether any
+ *   step in the room's *main* conversation names them.
+ * - **waitingForYou** counts the rooms they are *in* — a workspace room nobody
+ *   seated them in never counts, however it ends — and every such room counts,
+ *   because being seated and never opening it is already `unseen`. The reason
+ *   is the strongest one across those rooms: a mention beats an unanswered
+ *   question beats merely never having opened it.
+ *
+ * A substream is invisible here for the same reason it is invisible to
+ * `packRoomFacts`: it takes no directory row, and being in one seats nobody in
+ * its parent.
+ *
+ * Refused for a viewer who authors a step in a room's main conversation,
+ * because acting there opened it and the flags are then a fact about the
+ * seeding order rather than about the pack. Authoring a substream step or a
+ * Sidekick is not acting in a room and does not refuse: neither touches the
+ * directory row this reads.
+ */
+export function demoIdleViewerExpectation(
+  steps: readonly DemoPackStep[],
+  viewer: DemoPackRole,
+): DemoViewerExpectation {
+  const acted = steps.some((step) => isRoomStep(step) && isMainConversationStep(step) && step.as === viewer);
+  if (acted) throw new Error(`demo_pack_viewer_is_not_idle:${viewer}`);
+  const visible = visibleRoomsFor(viewer, packRoomFacts(steps).values());
+  const seated = visible.filter((room) => room.seated.includes(viewer));
+  return {
+    viewer,
+    attention: {
+      waitingForYou: seated.length,
+      waitingReason: seated.some((room) => room.mentioned.includes(viewer))
+        ? "mentioned"
+        : seated.some((room) => room.finalState === "needs_input")
+          ? "needs_input"
+          : seated.length > 0 ? "unseen" : null,
+    },
+    rooms: Object.fromEntries(visible.map((room) => [room.room, {
+      unseen: seated.includes(room),
+      hasUnread: true,
+      mentioned: room.mentioned.includes(viewer),
+    }])),
+  };
+}
+
+/**
  * The rules a pack has to satisfy to be playable at all, checked at parse time
  * so a bad pack stops preparation before the first write rather than after
  * the third.
