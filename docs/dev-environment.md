@@ -324,6 +324,18 @@ workspace with its work streams, automations, and onboarding checklist.
   Worker-variable fallback they resolve to can.
 - **Real OAuth callbacks.** Providers require a public HTTPS redirect; a local
   Worker has none unless a tunnel is configured.
+- **Dictation past the button press.** The capture half works — Electron takes
+  `use-fake-device-for-media-stream` and `use-fake-ui-for-media-stream`, and
+  `getUserMedia` then hands back a `Fake Default Audio Input` with no prompt —
+  but `GET /realtime/transcription/socket` answers 503 *Dictation is not
+  configured for this Rally region* without provider credentials, and the attempt
+  ends in `error` rather than reaching `listening`. So `requesting` is as far as
+  a real run gets: no live transcript, no finalization, no stop-and-send. The
+  composer's dictation states are covered by
+  `components/workstream-composer-dictation.test.tsx`, which drives the hook
+  through a double; a real-window check of how one of those states *looks* means
+  putting the rendered composer into it from the CDP side, the way the streaming
+  turn above is played in.
 - **A real streaming turn.** A local run has no provider credentials, so a run
   fails with `harness_execution_failed` rather than streaming, and anything that
   depends on tokens arriving over time cannot be exercised the ordinary way. A
