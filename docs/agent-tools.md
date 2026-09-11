@@ -938,9 +938,10 @@ future agent tool or plugin, not just this family.
 now carry a description: Google's 60, Slack's 39, the durable tables' 26,
 Linear's 24, Notion's 19, the work-stream resource and artifact-data tools' 19,
 the Sidekick creator and discovery tools' 18, memory's 12, Granola's 8, and the
-web tools' 2. Eleven surfaces move to 0 in
-`tool-schema-descriptions.test.ts`. `multimodal`'s 12 are the remainder and stay
-recorded.
+web tools' 2. Ten surfaces move to 0 in
+`tool-schema-descriptions.test.ts`, and its named assertion — GitHub's alone
+while the debt was spread — now covers every surface recorded at 0.
+`multimodal`'s 12 are the remainder and stay recorded.
 
 **Why:** The entry below states the rule and pays GitHub, which is the surface
 the failure happened on. The rest were recorded rather than written because each
@@ -961,8 +962,9 @@ parameters include the URL every fetched page comes from.
 
 **Consequences:** `multimodal` is the only surface still carrying debt, and it
 is the one the entry below says reached the walk only after a review noticed the
-plugin was never built. Nothing else can be paid down without a new tool first
-adding some.
+plugin was never built. Its twelve parameters need the same per-parameter
+treatment the other ten surfaces got; every other surface is at 0, so the next
+entry in this map moves only when a new tool arrives undescribed.
 
 ### 2026-09-10 — A parameter with no description is a parameter that gets guessed at
 

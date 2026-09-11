@@ -227,9 +227,38 @@ const boundedCursor = {
  * not resolve a name server-side (principle 3), and the id is not derivable
  * from the name.
  */
-const conversationId = (purpose: string) => ({
+/**
+ * What a Slack conversation id looks like, said once.
+ *
+ * Every helper below leads with its own complete sentence and then appends this
+ * one, so a call site reads as the sentence the model gets rather than as a
+ * fragment to be re-concatenated in your head.
+ */
+const CONVERSATION_ID_SHAPE =
+  "It is a Slack conversation id, such as `C0123ABCDEF` for a public channel, `G0123ABCDEF` for a private channel or group message, or `D0123ABCDEF` for a direct message; get one from find_channels. A channel name such as `#design` is not an id and is refused.";
+
+const conversationId = (lead: string) => ({
   ...id,
-  description: `${purpose} Slack conversation id, such as \`C0123ABCDEF\` for a channel or \`D0123ABCDEF\` for a direct message; get one from find_channels. A channel name such as \`#design\` is not an id and is refused.`,
+  description: `${lead} ${CONVERSATION_ID_SHAPE}`,
+});
+
+/**
+ * The same id as a filter rather than a target.
+ *
+ * Split from `conversationId` rather than copied: the two say the same thing
+ * about the id's shape and differ only in what absence means, and the copy this
+ * replaces had already lost the direct-message example and reworded the
+ * wrong-conversation sentence.
+ */
+const conversationIdFilter = (lead: string) => ({
+  ...optionalId,
+  description: `${lead} ${CONVERSATION_ID_SHAPE} Omit it, or send \`null\`, to search every conversation the credential can see. A well-formed id for a conversation the credential cannot see is not refused — it returns no matches rather than an error.`,
+});
+
+/** A Slack user id, as a filter on who wrote something. */
+const userIdFilter = (lead: string) => ({
+  ...optionalId,
+  description: `${lead} It is a Slack user id such as \`U0123ABCDEF\`; get one from find_users, and a display name or email address is not one. Omit it, or send \`null\`, for any author. A well-formed id for the wrong person is not refused — it returns no matches rather than an error.`,
 });
 
 /**
@@ -260,14 +289,8 @@ export const slackTools: ToolDefinition[] = [
       ...query,
       description: "What to look for in message text, in plain words. Narrow to one conversation or one author with `channel_id` and `author_user_id` rather than writing `in:` or `from:` operators here.",
     },
-    channel_id: {
-      ...optionalId,
-      description: "Return only messages in this conversation, as a Slack conversation id such as `C0123ABCDEF`; get one from find_channels. Omit it, or send `null`, to search every conversation the credential can see. A name such as `#design` is refused, but a well-formed id for the wrong conversation is not — that returns no matches rather than an error.",
-    },
-    author_user_id: {
-      ...optionalId,
-      description: "Return only messages written by this person, as a Slack user id such as `U0123ABCDEF`; get one from find_users. Omit it, or send `null`, for any author. A display name or email address is refused, but a well-formed id for the wrong person is not — that returns no matches rather than an error.",
-    },
+    channel_id: conversationIdFilter("Return only messages posted in one conversation."),
+    author_user_id: userIdFilter("Return only messages written by one person."),
     after: {
       type: ["integer", "null"],
       minimum: 0,
@@ -301,18 +324,18 @@ export const slackTools: ToolDefinition[] = [
     limit: { type: "integer", minimum: 1, maximum: 200, description: "Maximum conversations to return. Defaults to 50." },
   }, ["query"]),
   tool("read_message_context", "Read a bounded window around one Slack message timestamp.", SlackCapabilities.messagesRead, "read", {
-    channel_id: conversationId("The"),
-    message_ts: messageTimestamp("The message to centre the window on."),
+    channel_id: conversationId("The conversation the message is in."),
+    message_ts: messageTimestamp("The message to center the window on."),
     before: { type: "integer", minimum: 0, maximum: 50, description: "How many messages posted before the target one to include. Defaults to 10; 0 returns none." },
     after: { type: "integer", minimum: 0, maximum: 50, description: "How many messages posted after the target one to include. Defaults to 5; 0 returns none." },
   }, ["channel_id", "message_ts"]),
   tool("read_channel", "Read messages from a Slack conversation.", SlackCapabilities.messagesRead, "read", {
-    channel_id: conversationId("The"),
+    channel_id: conversationId("The conversation to read."),
     limit: { ...boundedLimit, description: "Maximum messages to return, newest first. Defaults to 50; follow `next_cursor` for older ones." },
     cursor: unboundedCursor,
   }, ["channel_id"]),
   tool("read_thread", "Read a Slack message thread.", SlackCapabilities.messagesRead, "read", {
-    channel_id: conversationId("The conversation the thread is in, as a"),
+    channel_id: conversationId("The conversation the thread is in."),
     thread_ts: messageTimestamp("The thread's parent message, which is the `thread_ts` a reply carries, or the `ts` of the message the thread hangs off."),
     limit: { ...boundedLimit, description: "Maximum messages to return, including the parent. Defaults to 100." },
     cursor: unboundedCursor,
@@ -321,7 +344,7 @@ export const slackTools: ToolDefinition[] = [
     file_id: { ...id, description: "The Slack file id, such as `F0123ABCDEF`. Messages that share a file carry it in their `files` entries; it is not a filename or a download URL." },
   }, ["file_id"]),
   tool("send_message", "Send a Slack message as the connected user or installed workspace bot.", SlackCapabilities.messagesWrite, "write", {
-    channel_id: conversationId("Where to post, as a"),
+    channel_id: conversationId("Where to post the message."),
     text: { type: "string", minLength: 1, maxLength: 40_000, description: "The message body, in Slack's mrkdwn: `*bold*`, `_italic_`, `` `code` ``, `<https://example.com|a link>`, `<@U0123ABCDEF>` to mention a person, and `<#C0123ABCDEF>` to link a channel. A bare `@dana` posts the literal text and notifies no one." },
     thread_ts: { ...optionalId, description: "Post as a reply inside an existing thread, as that thread's parent `ts` copied exactly, for example `1735689600.123456`. Omit it, or send `null`, to post a new top-level message in the conversation." },
   }, ["channel_id", "text"]),
@@ -331,15 +354,15 @@ export const slackTools: ToolDefinition[] = [
     is_private: { type: "boolean", description: "Create the channel private rather than public. Defaults to false. It applies only alongside `name`, and a channel's privacy cannot be changed back through these tools." },
   }),
   tool("add_reaction", "Add an emoji reaction to a Slack message as the connected user or installed workspace bot.", SlackCapabilities.reactionsWrite, "write", {
-    channel_id: conversationId("The conversation holding the message, as a"),
+    channel_id: conversationId("The conversation holding the message to react to."),
     timestamp: messageTimestamp("The message to react to."),
     name: { type: "string", minLength: 1, maxLength: 100, pattern: "^[a-zA-Z0-9_+-]+$", description: "The emoji's Slack name without the surrounding colons, for example `white_check_mark` or `tada`. A literal `✅`, or a name this workspace has no emoji for, is refused." },
   }, ["channel_id", "timestamp", "name"]),
   tool("read_user_profile", "Read a Slack user profile.", SlackCapabilities.usersRead, "read", {
-    user_id: { ...id, description: "The Slack user id, such as `U0123ABCDEF`; get one from find_users. A display name or email address is refused." },
+    user_id: { ...id, description: "The Slack user id, such as `U0123ABCDEF`; get one from find_users. A display name or email address is not an id and is refused." },
   }, ["user_id"]),
   tool("list_channel_members", "List members of a Slack conversation.", SlackCapabilities.usersRead, "read", {
-    channel_id: conversationId("The"),
+    channel_id: conversationId("The conversation whose members to list."),
     limit: { type: "integer", minimum: 1, maximum: 200, description: "Maximum member ids to return in one page. Defaults to 200; follow `next_cursor` for the rest." },
     cursor: unboundedCursor,
   }, ["channel_id"]),

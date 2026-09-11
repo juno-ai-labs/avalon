@@ -124,7 +124,7 @@ const linearTools: ToolDefinition[] = [
     idempotency: "safe",
     inputSchema: idInputSchema(
       "issueId",
-      "The issue's Linear id, which is the UUID search_issues returns as `id`, for example `a1b2c3d4-e5f6-4789-a012-3456789abcde`. The human-readable key such as `ENG-142` is the `identifier` field and is not accepted here.",
+      "The issue, as either the UUID search_issues returns as `id` (`a1b2c3d4-e5f6-4789-a012-3456789abcde`) or the team-prefixed key it returns as `identifier` (`ENG-142`) — Linear accepts both here. Prefer the UUID when a tool result already carries one; the key is what a person quotes.",
     ),
   },
   {
@@ -230,7 +230,7 @@ const linearTools: ToolDefinition[] = [
           type: "string",
           minLength: 1,
           maxLength: 200,
-          description: "The issue to change, as the UUID search_issues returns as `id`. The key such as `ENG-142` is not accepted here.",
+          description: "The issue to change, as either the UUID search_issues returns as `id` or the team-prefixed key it returns as `identifier` (`ENG-142`). Linear accepts both.",
         },
         title: { type: "string", minLength: 1, maxLength: 500, description: "Replace the title with this one line. Omit it to leave the title alone." },
         description: { type: ["string", "null"], maxLength: 40_000, description: "Replace the whole issue body with this Markdown; it is not appended, so read the issue first and send the full new text. Send `null` to clear it, or omit it to leave it alone." },
@@ -273,7 +273,7 @@ const linearTools: ToolDefinition[] = [
           type: "string",
           minLength: 1,
           maxLength: 200,
-          description: "The issue to comment on, as the UUID search_issues returns as `id`. The key such as `ENG-142` is not accepted here.",
+          description: "The issue to comment on, as either the UUID search_issues returns as `id` or the team-prefixed key it returns as `identifier` (`ENG-142`). Linear accepts both.",
         },
         body: { type: "string", minLength: 1, maxLength: 40_000, description: "The comment text, in Markdown. It is posted as the authorized Linear identity and notifies the issue's subscribers." },
       },

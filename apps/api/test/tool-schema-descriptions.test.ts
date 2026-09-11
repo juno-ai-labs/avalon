@@ -31,11 +31,13 @@ import { everyAuthoredToolSchema, toolSurface } from "./helpers/authored-tool-sc
  *   is how the two undescribed filters beside them came to be filled in too.
  *
  * The second is a mechanical defect with one right answer, so it is asserted at
- * zero. The first is prose somebody has to write, and 239 parameters across
- * eleven surfaces are still owed it — so it is asserted per surface, exactly. A
- * ratchet rather than a floor: a surface at 0 can never regress, a surface with
- * debt can only pay it down, and a new tool has to state which it is. Both are
- * `docs/agent-tools.md` rules; this is where they are held.
+ * zero. The first is prose somebody has to write, and it was 239 parameters
+ * across eleven surfaces when this guard was written — so it is asserted per
+ * surface, exactly. Ten of those surfaces have since been paid off, leaving
+ * `multimodal`'s twelve. A ratchet rather than a floor: a surface at 0 can
+ * never regress, a surface with debt can only pay it down, and a new tool has
+ * to state which it is. Both are `docs/agent-tools.md` rules; this is where
+ * they are held.
  *
  * The map is also what makes a *missing* surface visible. `multimodal` reached
  * it only after a review noticed the walk never built the plugin — it returns
@@ -57,18 +59,20 @@ describe("tool schema parameter descriptions", () => {
     expect(demanded).toEqual([]);
   });
 
-  it("leaves no GitHub parameter for a model to guess at", () => {
-    // Named on its own as well as counted below, because this is the surface
-    // the failure happened on and a regression here should say so directly
-    // rather than as a number that moved.
+  it("leaves no parameter for a model to guess at, on a surface that owes none", () => {
+    // Named rather than counted, for every surface the map records at zero.
+    // This was GitHub's assertion alone while eleven surfaces still carried
+    // debt; a paid-off surface tolerates regressions exactly as narrowly as
+    // GitHub does, and a count that moves from 0 to 1 is the least useful way
+    // to say which parameter did it. The names are computed either way.
     const undescribed = everyAuthoredToolSchema()
-      .filter(({ name }) => toolSurface(name) === "github")
+      .filter(({ name }) => RECORDED_DEBT[toolSurface(name)] === 0)
       .flatMap(({ name, schema }) => undescribedParameters(schema).map((finding) => `${name}.${finding}`));
 
     expect(undescribed).toEqual([]);
   });
 
-  it("holds every other surface at its recorded count, so the debt can only shrink", () => {
+  it("holds every surface at its recorded count, so the debt can only shrink", () => {
     const walked = everyAuthoredToolSchema();
     const counts: Record<string, number> = {};
     for (const { name, schema } of walked) {
@@ -76,27 +80,34 @@ describe("tool schema parameter descriptions", () => {
       counts[surface] = (counts[surface] ?? 0) + undescribedParameters(schema).length;
     }
 
-    // Every surface Rally serves, with what it still owes. Lower a number when
-    // you describe a parameter; a new surface has to appear here deliberately.
-    // Terminal, X, and the time tool describe everything already, and are the
-    // shape the rest are being brought to.
-    expect(counts).toEqual({
-      elicitation: 0,
-      github: 0,
-      google: 0,
-      granola: 0,
-      linear: 0,
-      memory: 0,
-      multimodal: 12,
-      notion: 0,
-      rally: 0,
-      slack: 0,
-      table: 0,
-      terminal: 0,
-      time: 0,
-      web: 0,
-      workstream: 0,
-      x: 0,
-    });
+    expect(counts).toEqual(RECORDED_DEBT);
   });
 });
+
+/**
+ * Every surface Rally serves, with what it still owes.
+ *
+ * Lower a number when you describe a parameter; a new surface has to appear
+ * here deliberately. A surface at zero is also what the named assertion above
+ * reads, so zeroing one buys a failure that says which parameter regressed.
+ * Terminal, X, and the time tool describe everything already, and are the shape
+ * the rest were brought to.
+ */
+const RECORDED_DEBT: Record<string, number> = {
+  elicitation: 0,
+  github: 0,
+  google: 0,
+  granola: 0,
+  linear: 0,
+  memory: 0,
+  multimodal: 12,
+  notion: 0,
+  rally: 0,
+  slack: 0,
+  table: 0,
+  terminal: 0,
+  time: 0,
+  web: 0,
+  workstream: 0,
+  x: 0,
+};
