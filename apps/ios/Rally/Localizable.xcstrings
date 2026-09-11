@@ -1,0 +1,24 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Ask Rally anything" : {},
+    "Continue with Google" : {},
+    "Copy" : {},
+    "Copied" : {},
+    "Delete account on this device" : {},
+    "Get started" : {},
+    "History" : {},
+    "Leave this workspace" : {},
+    "New chat" : {},
+    "Privacy" : {},
+    "Send message" : {},
+    "Settings" : {},
+    "Sign out" : {},
+    "Speak a message" : {},
+    "Stop generating" : {},
+    "Terms" : {},
+    "Workspaces" : {},
+    "Workspace and settings" : {}
+  },
+  "version" : "1.0"
+}
