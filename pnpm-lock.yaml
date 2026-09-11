@@ -21,7 +21,7 @@ overrides:
   undici@>=7.0.0 <7.29.0: 7.29.0
 
 patchedDependencies:
-  '@juno-ai/bind@13.0.0': 181faab7ed9d5cee782ab64b4f28d9bb49bbf6c4e7c6d14a1b1e8ea908376ff6
+  '@juno-ai/bind@14.0.0': dc94702bc714b0ebfa7e39346999cedcaf78aa11a736cd51cbf3501105ee715c
 
 importers:
 
@@ -426,8 +426,8 @@ importers:
   packages/agent-harness:
     dependencies:
       '@juno-ai/bind':
-        specifier: 13.0.0
-        version: 13.0.0(patch_hash=181faab7ed9d5cee782ab64b4f28d9bb49bbf6c4e7c6d14a1b1e8ea908376ff6)(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/signature-v4@5.7.0)(ws@8.21.0)(zod@4.5.4))(zod@4.5.4)
+        specifier: 14.0.0
+        version: 14.0.0(patch_hash=dc94702bc714b0ebfa7e39346999cedcaf78aa11a736cd51cbf3501105ee715c)(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/signature-v4@5.7.0)(ws@8.21.0)(zod@4.5.4))(zod@4.5.4)
       '@openrouter/sdk':
         specifier: 1.2.54
         version: 1.2.54
@@ -1579,8 +1579,8 @@ packages:
   '@js-sdsl/ordered-map@4.4.2':
     resolution: {integrity: sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw==}
 
-  '@juno-ai/bind@13.0.0':
-    resolution: {integrity: sha512-JwVEFIl2Vi7uTdbmlMxFyRw2ny6mms3HaYdK9BHWKbMjWNJ83plk2dPM88ZWTHsobGJ70F5WR69SDKtSyEBaow==}
+  '@juno-ai/bind@14.0.0':
+    resolution: {integrity: sha512-0sIe53ptk0gn1rAPq3CFxgK5xDgd2Y4EnwT/2efKXdSqJyxObN49zHfJw6VX7IfyK6Ut0qCmvy9iymVYcY3SiQ==}
     peerDependencies:
       openai: ^6.0.0
       zod: ^4.0.0
@@ -7371,7 +7371,7 @@ snapshots:
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
-  '@juno-ai/bind@13.0.0(patch_hash=181faab7ed9d5cee782ab64b4f28d9bb49bbf6c4e7c6d14a1b1e8ea908376ff6)(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/signature-v4@5.7.0)(ws@8.21.0)(zod@4.5.4))(zod@4.5.4)':
+  '@juno-ai/bind@14.0.0(patch_hash=dc94702bc714b0ebfa7e39346999cedcaf78aa11a736cd51cbf3501105ee715c)(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/signature-v4@5.7.0)(ws@8.21.0)(zod@4.5.4))(zod@4.5.4)':
     dependencies:
       zod: 4.5.4
     optionalDependencies:

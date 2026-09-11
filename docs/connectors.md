@@ -769,7 +769,7 @@ configuration that was actually established.
 
 Every rule below was learned from a defect in production or in review, and each names the failure that produced it. A new adapter is expected to satisfy all of them; several are enforced by the compiler or by `apps/api/test/connector-credential-freshness.test.ts`, which enumerates the registry so a connector is enrolled by existing rather than by someone remembering it.
 
-**A pagination cursor says what to send when there is none, and spells that value `anyOf`.** Every cursor names the result field it is copied from, states that it is opaque and never constructed, and declares `anyOf: [{string, minLength: 1}, {null}]`, which is the only spelling Bind's sanitizer delivers intact. Both halves are enforced by `apps/api/test/tool-argument-empty-strings.test.ts` and `apps/api/test/tool-schema-sanitization.test.ts`, which enumerate the registry through `apps/api/test/helpers/connector-cursors.ts` so a connector is enrolled by existing; a cursor named outside `CURSOR_PARAMETERS` is the one case still enrolled by someone remembering. *A run told to read a shared Drive folder invented `"/"`, `"1"`, and `"next"` for `pageToken` across eight calls, each rejected whole by Google, and then answered from public web search instead; the description added first did not stop it, because `minLength: 1` reads as a floor to clear when nothing says absence is expressible.*
+**A pagination cursor says what to send when there is none, and spells that value `anyOf`.** Every cursor names the result field it is copied from, states that it is opaque and never constructed, and declares `anyOf: [{string, minLength: 1}, {null}]`, the spelling that says so without depending on the sanitizer; since `@juno-ai/bind` 14 the flat `type: ["string", "null"]` reaches the model as the same union, and `apps/api/test/tool-schema-sanitization.test.ts` asserts the delivered null branch for every property of every tool rather than only the cursors. Both halves are enforced by `apps/api/test/tool-argument-empty-strings.test.ts` and `apps/api/test/tool-schema-sanitization.test.ts`, which enumerate the registry through `apps/api/test/helpers/connector-cursors.ts` so a connector is enrolled by existing; a cursor named outside `CURSOR_PARAMETERS` is the one case still enrolled by someone remembering. *A run told to read a shared Drive folder invented `"/"`, `"1"`, and `"next"` for `pageToken` across eight calls, each rejected whole by Google, and then answered from public web search instead; the description added first did not stop it, because `minLength: 1` reads as a floor to clear when nothing says absence is expressible.*
 
 **Never refuse an incoming request because a stored status says the connection is unhealthy.** Gate on `disabled` — a person's decision — and on nothing else; see [Stored status is a belief, not a gate](#stored-status-is-a-belief-not-a-gate). *A Slack installation refused sixteen hours of events, unfurls, identity links and automation deliveries without once asking Slack whether the grant still worked, and overwrote the accurate diagnosis of its own failure while doing so.*
 
@@ -985,6 +985,32 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-11 — The collapsed null-branch backlog is retired by Bind 14
+
+**What changed:** Nothing in the adapters. `@juno-ai/bind` 14 rewrites a flat
+`type: [T, "null"]` to `anyOf: [{type: T, …}, {type: "null"}]` on the way to
+the wire, so the 28 parameters the entries below counted as "still collapsed"
+(Linear 13, Granola 7, Slack 6, Notion 2) now reach the model with their null
+branch, and the registry-wide assertion in
+`apps/api/test/tool-schema-sanitization.test.ts` reports zero dropped branches
+across every connector. The comments on Slack's `optionalId` and on
+`GOOGLE_PAGE_TOKEN_SCHEMA` say so instead of describing the collapse as
+current.
+
+**Why:** The backlog was left for per-parameter decisions about what `null`
+means for an id or a filter. That reasoning still belongs in each description,
+but the wire was forbidding the value regardless of what the prose decided, and
+one of the six Slack parameters was `send_message.thread_ts`: a scheduled
+Sidekick could not spell "no thread" and invented `"/"`, `". "` and
+`".000001"` for thousands of refused calls, or replied to its own previous post.
+[`agent-tools.md`](agent-tools.md) records the rule change and the alternative
+that was rejected.
+
+**Consequences:** a new connector cannot ship the collapsed shape, because the
+guard now covers every property; a parameter Bind 14 still collapses (a
+multi-type union with `null`) is reported by name. Descriptions still owe the
+reader what `null` requests.
 
 ### 2026-09-11 — Connections report tool counts
 

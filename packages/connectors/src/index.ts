@@ -492,12 +492,15 @@ export const GoogleFileWriteAuthorizationGuidance =
  * convention the strict structured-output dialects settle on for the same
  * reason: every property present, absence spelled as a value.
  *
- * Spelled `anyOf` rather than the flat `type: ["string", "null"]`, and that is
- * not a style preference. Bind's `sanitizeToolSchema` collapses the flat form
- * to `type: "string"` and appends "Accepts string or null." to the description
- * — so the caller is shown a schema that forbids the value while prose beside
- * it says the value is fine, which is the exact conflict this change exists to
- * end. The union survives the sanitizer whole.
+ * Spelled `anyOf` rather than the flat `type: ["string", "null"]`. When this
+ * was written that was not a style preference: Bind 13's `sanitizeToolSchema`
+ * collapsed the flat form to `type: "string"` and appended "Accepts string or
+ * null." to the description, so the caller was shown a schema that forbids
+ * the value while prose beside it said the value is fine, which is the exact
+ * conflict this change exists to end. Since Bind 14 the flat form is rewritten
+ * to this same union, so the two spellings reach the model alike; `anyOf` stays
+ * the house spelling for a cursor because it says what it means without
+ * depending on a dependency's transform.
  *
  * Every connector cursor is spelled this way now. When this was written only
  * Google's were, and it told anyone wanting the two to match to change Slack's

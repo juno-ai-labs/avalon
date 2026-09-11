@@ -1275,6 +1275,41 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-09-11 — Bind 14: a nullable property reaches the model as a union
+
+**What changed:** `@juno-ai/bind` moves from 13.0.0 to 14.0.0, whose one
+behavioral change is in `sanitizeToolSchema`: a `type` array of exactly one
+scalar type plus `"null"` is rewritten to `anyOf: [{type: T, …}, {type: "null"}]`
+instead of collapsed to `type: T` with "Accepts T or null." appended to the
+description. The type-bearing keywords move onto the typed branch, annotations
+stay on the node, and the branch re-enters the walk so the retype-to-object,
+pattern, enum and `required` transforms still apply to it. A genuine multi-type
+union still collapses, and so does a nullable type at the parameters root, in a
+branch of a root union, or in a composition branch whose `required` reaches
+the enclosing node. The loop patch this repository carries (`acceptMessage`,
+`beforeToolMessageAccepted`, `onStepSettled`) is unchanged upstream and was
+regenerated against 14.0.0, since pnpm keys a patch by exact version. The
+lockfile changes only the Bind entries.
+
+**Why:** The collapse left a caller unable to say "none" in the half of a
+declaration it treats as binding. Measured twice: a Drive cursor took `"x"`,
+`" "`, `"undefined"`, `"null"` and `"/"`, and then a scheduled Sidekick posting
+to Slack was handed `send_message.thread_ts` the same way and put `"/"`,
+`". "` and `".000001"` into it for thousands of refused calls, about four
+thousand a day for a week, or used the timestamp of its own previous post and
+replied to itself. Every consumer of Bind has the same defect, so the rewrite
+belongs in Bind rather than in this repository's pre-sanitizer corrector, and
+`droppedNullableBranches` becomes the guard that Bind keeps delivering it.
+
+**What a future change has to respect:** `apps/api/test/tool-schema-sanitization.test.ts`
+now asserts zero dropped null branches over every property of every authored
+tool, so a Bind upgrade that collapsed again fails there naming the tool and the
+parameter. A Bind upgrade regenerates `patches/@juno-ai__bind@<version>.patch`
+rather than renaming it: the hunks apply to 14.0.0 only with fuzz, which pnpm
+does not tolerate. And the lockfile is edited for the Bind entries alone; a
+non-frozen install re-resolves every `latest` catalog entry and drags unrelated
+majors along.
+
 ### 2026-09-11 — Trigger content carries a source label again
 
 **What changed:** The three paths that lost all framing when the trust labels
