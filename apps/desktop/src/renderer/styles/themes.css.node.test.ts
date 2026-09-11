@@ -10,6 +10,11 @@ import { resolvedThemes, themeWindowBackground } from '../../common/themes';
 // is typed by `tsconfig.node.json` so that `node:fs` stays out of the renderer
 // program.
 const app = readFileSync(resolve(process.cwd(), 'src/renderer/styles/app.css'), 'utf8');
+// `app.css` imports this one globally rather than lazily for the onboarding
+// screens, so a property it defines is defined everywhere `app.css` is. The
+// rule-local guard below reads both, or a name the account accent resolves
+// there would read as undefined.
+const onboarding = readFileSync(resolve(process.cwd(), 'src/renderer/styles/onboarding.css'), 'utf8');
 
 /**
  * The design-token JSON, two directories up at the repository root. It is the
@@ -377,7 +382,7 @@ describe('token references', () => {
 
   it('defines every rule-local property it names', () => {
     for (const name of RULE_LOCAL) {
-      expect(app.includes(`${name}:`), `${name} is never defined`).toBe(true);
+      expect(`${app}${onboarding}`.includes(`${name}:`), `${name} is never defined`).toBe(true);
     }
   });
 });

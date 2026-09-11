@@ -17,7 +17,6 @@ import {
   useAppSession,
   WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY,
 } from '../lib/app-session';
-import { usePersonalAccent } from '../lib/personal-accent';
 import { desktopBridge } from '../lib/platform';
 import { uuidV7 } from '../lib/telemetry';
 import {
@@ -213,10 +212,6 @@ export function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryRes
 
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
   const personalPresentation = useContext(MemberPresentationContext).get(workspace.currentUser.id);
-  // The shell is the one place that knows who is signed in, so it is the one
-  // writer of their accent. Everything that draws in it — today the citation
-  // markers in an answer — reads the custom property and never the profile.
-  usePersonalAccent(personalPresentation?.color);
   const {
     acceptInvitation,
     activateWorkspace,
