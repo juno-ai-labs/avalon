@@ -568,7 +568,7 @@ describe('GrokBot sidebar header geometry', () => {
     expect(scroll).not.toBeNull();
     expect(scrollbar).not.toBeNull();
     expect(titlebar).toContain('height: 44px;');
-    // Two numeric tracks — the search row and the rail's New chat slot — so
+    // Two numeric tracks — the search row and the rail's New work stream slot — so
     // the slot can open and close over the layout motion.
     expect(commandbar).toContain('display: grid;');
     expect(commandbar).toContain('grid-template-rows: 32px 0px;');
