@@ -18,7 +18,7 @@ import type { WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket
 import type { AttachmentPreview } from './attachments';
 import { ComposerQueue, type ComposerQueueItem } from './composer-queue';
 import { ComposerInput, type ComposerModelControl } from './composer-input';
-import { Avatar, Button, Modal } from './primitives';
+import { Avatar, Button, IconButton, Modal } from './primitives';
 import type { RallyRegion } from '../../common/desktop';
 
 /**
@@ -482,20 +482,23 @@ export function WorkstreamComposer({
         placeholder={placeholder}
         ref={textareaRef}
         shouldSubmitOnEnter={() => mentionQuery === null}
-        submitAccessory={workstream.harnessStatus === 'running'
-          ? (
-              <div className="message-delivery-controls">
-                <Button
-                  className="stop-button"
-                  disabled={workstream.stopRequested}
-                  onClick={() => void onStop()}
-                >
-                  <Square fill="currentColor" size={9} />
-                  {workstream.stopRequested ? 'Stopping after this response…' : 'Stop'}
-                </Button>
-              </div>
-            )
-          : undefined}
+        submitAccessory={(
+          <div
+            className="composer-stop-slot"
+            data-visible={workstream.harnessStatus === 'running'}
+            inert={workstream.harnessStatus !== 'running'}
+          >
+            <IconButton
+              className="stop-button"
+              aria-disabled={workstream.stopRequested}
+              label={workstream.stopRequested ? 'Stopping after this response…' : 'Stop the current run'}
+              onClick={() => { if (!workstream.stopRequested) void onStop(); }}
+              tooltipSide="top"
+            >
+              <Square aria-hidden="true" fill="currentColor" size={10} />
+            </IconButton>
+          </div>
+        )}
         submitDisabled={sendBlocked || uploading || (!text.trim() && readyAttachmentCount === 0)}
         submitLabel={sendBlocked ? `${submitLabel}, available once Rally connects` : submitLabel}
         submitting={sending}
