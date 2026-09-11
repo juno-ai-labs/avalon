@@ -46,6 +46,7 @@ or remounting Settings does not orphan reconciliation.
 | `apps/api/src/services/connector-credential-refresh.ts` | The refresh coordinator and its WorkspaceDO-local lease. |
 | `apps/api/src/services/connector-actor-identity.ts` | `resolveConnectorActorIdentity` over `external_user_identities`. |
 | `apps/api/src/services/user-delivery.ts` | Whether a connection is a personal delivery destination for a given user. |
+| `apps/api/src/services/connector-tool-inventory.ts` | Shared dynamic inventory validation and model-facing tool names for activation and Settings counts. |
 | `apps/api/src/lib/connector-registry.ts` | Which connectors this region registers. |
 | `apps/api/src/queues/activity-consumer.ts` | Regional Queue admission into WorkspaceDO, native connector-event retry, and the reusable routing processor, including `activityIsDigestible`. |
 | `apps/api/src/workflows/connector-poll.ts` | `pollCheckpointedActivityStreams` and the shared checkpoint runner. |
@@ -71,6 +72,23 @@ reauthorizes the connection. Annotations never downgrade Rally tool policy,
 and Rally never copies that response into source. The shared
 mechanism and provider recipe are in
 [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
+
+### Settings tool counts
+
+The Connections tables show numeric counts under the Tools heading using `GET /connections/:id/tool-count`.
+The visible-connection authorization check runs before counting. Static connectors
+count agent tools matching the connection's grants and scope; dynamic connectors
+read their live inventory through the normal credential-refresh boundary, including
+any server tool policy and the same connection-prefixed name validation used
+at agent activation. Tool inventory reads share the existing 20-second Settings MCP
+deadline, composed with the caller’s cancellation signal. Each row loads independently so a slow provider does not
+hold up the table. Counts share the connection list’s five-second freshness window to avoid duplicate
+provider calls on an immediate reveal, then refresh when Settings regains focus. A failed inventory
+displays “Unavailable”, including after an earlier successful read, never a stale
+count or a fabricated zero. Saving an MCP tool policy invalidates the count,
+including if the user returns to Connections while the save is pending. The Tools
+column remains visible in narrow Settings windows. Disabled connections show a dash
+and do not request an inventory.
 
 ### Credential freshness
 
@@ -962,6 +980,18 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-11 — Connections report tool counts
+
+Settings now counts the tools granted to each connection, including live MCP
+inventory and its tool policy. Counting permission capabilities understated what
+one connection exposes. Counts load separately from the connection list so a
+provider outage cannot block Settings; an unreadable inventory remains unavailable
+rather than being reported as zero. Future connectors must use their agent tool
+surface for this count, not a separately maintained number. The shared validator
+also rejects names that collide only after the connection prefix is added; counting
+the adapter inventory alone would claim tools that activation refuses. Policy saves
+invalidate counts even when navigation races the pending save.
 
 ### 2026-09-11 — Google, Slack, Linear, Notion, and Granola describe their parameters
 

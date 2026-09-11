@@ -2594,6 +2594,7 @@ pre {
 .settings-connection-table th:nth-child(2) { width: 112px; }
 .settings-connection-table th:nth-child(3) { width: 92px; }
 .settings-connection-table th:last-child { width: 76px; }
+.settings-connection-tools { white-space: nowrap; }
 .settings-connection-table tbody tr { border-top: 1px solid var(--av-sys-color-border-subtle); }
 .settings-connection-table td {
   color: var(--av-sys-color-text-muted);
@@ -2768,7 +2769,6 @@ pre {
   .invite-form { grid-template-columns: 1fr 120px; }
   .invite-form .button { grid-column: 1 / -1; }
   .settings-connection-table { min-width: 450px; }
-  .settings-connection-capabilities { display: none; }
   .settings-github-policy .settings-preference-row,
   .settings-custom-mcp-pane .settings-preference-row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .settings-github-repository-heading,

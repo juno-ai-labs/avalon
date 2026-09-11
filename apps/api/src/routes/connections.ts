@@ -3,6 +3,7 @@ import { Hono, type Context } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
   ConnectionSchema,
+  ConnectionToolCountSchema,
   ConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema,
   CreateCustomMcpConnectionRequestSchema,
@@ -262,6 +263,11 @@ connectionRoutes.post("/custom-mcp/start", zValidator("json", StartCustomMcpConn
     }),
   )));
 });
+connectionRoutes.get("/:id/tool-count", zValidator("param", idParam), async (c) =>
+  c.json(ConnectionToolCountSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).getToolCount(c.req.valid("param").id, c.req.raw.signal),
+  )),
+);
 connectionRoutes.get("/:id/custom-mcp/tools", zValidator("param", idParam), async (c) =>
   c.json(CustomMcpConnectionSettingsSchema.parse(
     await new ConnectionService(c.env, getAuth(c)).getCustomMcpSettings(c.req.valid("param").id),
