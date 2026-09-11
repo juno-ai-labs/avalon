@@ -105,6 +105,11 @@ light/dark art that would fix it. One contrasting neutral is legible in both
 appearances, needs no appearance-specific artwork, and needs no component that
 knows which appearance is on — which [`theming.md`](theming.md) forbids anyway.
 
+Connector icon badges (`.provider-icon`) use the neutral raised surface, default
+border, and default text tokens. Standard theme colors were requested in place of Rally’s lime branding on
+third-party connectors. The badge identifies a provider rather than acting as a
+control; the same policy covers generic connector glyphs.
+
 ### Sizing
 
 `.connector-mark` carries a default size and sits low in `app.css`, so a

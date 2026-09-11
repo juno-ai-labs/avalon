@@ -1,6 +1,8 @@
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
 import { ServerCog, Webhook } from 'lucide-react';
+export const PERSONAL_CONNECT_LABEL = 'Connect only for me';
+
 export const connectorProviders = [
   {
     id: 'google-mail-calendar' as const,
