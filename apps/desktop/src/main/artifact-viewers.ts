@@ -56,23 +56,6 @@ export interface ArtifactViewHandle {
 }
 
 
-/**
- * The corner the preview is composited with, in CSS pixels.
- *
- * It mirrors the lightbox's own radius, because the view reaches that dialog's
- * bottom corners: square there, the page squares off a frame that is round, and
- * the curve reads as a gap around the page rather than as the page's edge.
- *
- * Electron takes one radius for all four corners, so the top two are rounded
- * as well, where the view meets the header rather than an outside edge. The
- * renderer's own pane rounds only the bottom pair, which is what this would be
- * if the platform allowed it.
- *
- * Pinned to the stylesheet by a renderer test rather than by a shared constant,
- * since CSS cannot be imported into the main process.
- */
-export const PREVIEW_CORNER_RADIUS = 16;
-
 export interface ArtifactHostWindow {
   /** Whether the window is gone; see `ArtifactViewHandle.destroyed`. */
   destroyed(): boolean;
@@ -93,6 +76,12 @@ export interface ArtifactPresentation {
   /** The one-shot access URL; its code lives in the fragment. */
   url: string;
   bounds: PreviewBounds;
+  /**
+   * The corner the renderer drew on the pane this view covers, in CSS pixels.
+   * Nothing here decides it: the surface hosting the pane is the only thing
+   * that knows whether the page meets a rounded edge or a square one.
+   */
+  cornerRadius: number;
 }
 
 /**
@@ -315,7 +304,7 @@ export class ArtifactPreviewController {
       // Once, at creation: the corner belongs to the surface rather than to any
       // one layout, so it must not ride along with the bounds a scroll
       // recomputes many times a second.
-      created.setBorderRadius(PREVIEW_CORNER_RADIUS);
+      created.setBorderRadius(request.cornerRadius);
       this.applyBounds();
       const result = loadArtifactInitialUrl(() => created.loadURL(request.url)).then((loaded) => {
         // DNS, TLS, and terminal navigation failures should not leave an empty

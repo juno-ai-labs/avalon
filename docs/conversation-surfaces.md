@@ -625,13 +625,16 @@ caught it in the same change.
 to avoid the interaction, which trades a real defect for an unnamed control.
 Also rejected: converting those buttons to `IconButton`. They carry their own
 absolute positions and sizes over the image, and `.icon-button`'s geometry
-fights them; `WithTooltip` wraps them and adds nothing but the label.
+fights them; `Tip` wraps them and adds nothing but the label.
 
 **Consequences:** Any future dialog whose first focusable is an icon button
-needs the same `onOpenAutoFocus`, and the two that already tame it
-(`Modal`, the search modal) are why neither showed this. A test that asserts a
-dialog closes on one Escape is the cheap way to catch it: that is what failed
-here.
+needs the same `onOpenAutoFocus`. The search modal already tames it the same
+way, for its own reason (the query field takes the focus); `Modal` never showed
+this by a different route, since its close button passes
+`showTooltip={false}` and so has no tooltip to open. Copying that instead would
+leave the control unlabelled, which is the trade this change exists to refuse.
+A test that asserts a dialog closes on one Escape is the cheap way to catch the
+defect: that is what failed here.
 ### 2026-09-10 — Wrapped text clears the controls by 4px
 
 **What changed:** The reserve at the foot of a capsule's field, on the two

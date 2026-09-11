@@ -54,6 +54,7 @@ export interface SiteResourceDetailProps {
       artifactId: string;
       url: string;
       bounds: { x: number; y: number; width: number; height: number };
+      cornerRadius: number;
     }) => Promise<boolean>;
     setBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
     close: () => Promise<void>;
@@ -154,6 +155,22 @@ export function SiteResourceDetail({
     };
   }, []);
 
+  /**
+   * The corner this pane draws, for the view that covers it.
+   *
+   * Read back off the element rather than stated twice: the stylesheet decides
+   * whether this pane meets a rounded outside edge (the lightbox) or nothing
+   * of the kind (the plain rail), and a number kept in the main process beside
+   * it would be a second answer to that question, wrong on whichever host it
+   * was not written for.
+   */
+  const paneCorner = React.useCallback((): number => {
+    const pane = paneRef.current;
+    if (!pane) return 0;
+    const drawn = Number.parseFloat(window.getComputedStyle(pane).borderBottomLeftRadius);
+    return Number.isFinite(drawn) ? drawn : 0;
+  }, []);
+
   // Present when the artifact and its pane are both ready, and tear down when
   // the detail closes or the artifact changes — one live preview at a time.
   React.useEffect(() => {
@@ -171,6 +188,7 @@ export function SiteResourceDetail({
           artifactId: navigation.artifactId,
           url: navigation.openUrl,
           bounds: measure() ?? bounds,
+          cornerRadius: paneCorner(),
         });
       })
       .then((shown) => { if (!cancelled) setPreviewShown(shown); })
@@ -182,12 +200,15 @@ export function SiteResourceDetail({
       cancelled = true;
       void surface.close();
     };
-  }, [access, measure, mintAccess, showingData, surface]);
+  }, [access, measure, mintAccess, paneCorner, showingData, surface]);
 
   // Native content must remain clipped to its owning scroll viewport and
   // disappear behind nested DOM dialogs; Electron cannot infer either.
   React.useEffect(() => {
-    if (previewShown !== true) return undefined;
+    // Nothing to track while the data view has the pane: the composited view is
+    // already torn down, and this effect would go on re-querying the document
+    // on every scroll and mutation to move something that is not there.
+    if (previewShown !== true || showingData) return undefined;
     const update = (): void => {
       const bounds = measure();
       if (bounds) void surface.setBounds(bounds);
@@ -205,7 +226,7 @@ export function SiteResourceDetail({
       observer.disconnect();
       overlays.disconnect();
     };
-  }, [measure, previewShown, surface]);
+  }, [measure, previewShown, showingData, surface]);
 
   return (
     <div className="site-detail">
@@ -227,7 +248,10 @@ export function SiteResourceDetail({
             aria-pressed={showingData}
             className="icon-button-toggle"
             tooltipSide="top"
-            label={showingData ? 'Hide stored data' : 'Show stored data'}
+            // The name stays the same in both states: `aria-pressed` is what
+            // says which one it is in, and a name that changes with it makes a
+            // screen reader announce the state twice.
+            label="Stored data"
             onClick={() => setShowingData((showing) => !showing)}
           >
             <Database size={15} />
