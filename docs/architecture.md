@@ -709,6 +709,8 @@ would be a second product pipeline for the same API.
 contracts still land in `packages/contracts` and must be implementable from
 Swift without a Node process. Details live in [`ios-client.md`](ios-client.md).
 
+Shipped in #725.
+
 ### 2026-09-10 — Escape closes the Sidekicks window, through a gesture Settings no longer owns
 
 **What changed:** The Escape-closes-this-window gesture is now the shared
