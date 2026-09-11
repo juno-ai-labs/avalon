@@ -555,6 +555,29 @@ execution epoch after the old lease expires, and resumes from persisted Bind
 state. Compaction generation is a separate Bind projection value and never
 changes the loop cycle or makes a pending steer stale.
 
+Every projected human turn carries its author, as a `<rally_author>` trailer
+holding the member's canonical `person_id` and display name — the same
+vocabulary `<rally_mentions>` uses for the people a turn points at, so a run
+resolves "send it to me" and "send it to @Sarah" through one shape. Attribution
+and addressing are separate facts: the `SAID TO THE ROOM, NOT TO RALLY` header
+says whether the turn was meant for Rally, and the trailer says who said it.
+Both a request and an aside carry the trailer; only an aside carries the header.
+An external turn keeps its own header instead, because a provider display name
+is a claim the model must weigh rather than a member id the workspace vouches
+for. A turn whose `author_user_id` is somehow absent renders unattributed: the
+alternatives are inventing a person id a run could write into a durable
+evaluator rule, or dropping somebody's words to punish a corrupt column.
+
+Both tags are neutralized wherever they appear in text a person typed, so the
+only `<rally_author>` in a projected turn is the one the host wrote. What is
+matched is the opening bracket of anything that *looks like* it opens one —
+whitespace, a closing slash, and attributes included — because the reader being
+defended against is a language model rather than an XML parser, and
+`<rally_author >` reads as the block to one. The bracket is escaped rather than
+the run deleted, which leaves the words visible and visibly not a block. This is impersonation cover, not an authority
+boundary: a run's authority is its execution principal, and no rendered text
+moves it.
+
 `runs` remains as a subordinate execution receipt. A linked non-terminal row
 stores the exact execution context needed to restart one provider/tool attempt,
 but its run ID is never the loop ID. Alarms derive recovery from the executing
@@ -1677,6 +1700,45 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-11 — A human turn tells the model who sent it
+
+**What changed:** `ParticipantModelAuthor`'s human arm carries `userId` and
+`displayName` where it carried nothing, and every projected human turn — a
+request, an aside, an attachment-only message, an elicitation answer — ends with
+a `<rally_author>` trailer naming the member's canonical `person_id`. The
+`overheard` parameter drops to a boolean: it said `SAID TO THE ROOM` *and*
+`Author:`, and now says only the first. An attachment-only turn gains a text
+part it did not have, holding the attribution. Both `<rally_author>` and
+`<rally_mentions>` are escaped wherever a person typed them, so the host writes
+the only attribution in a turn.
+
+**Why:** Attribution had ridden inside the overheard header since that header
+was written, which left the one turn actually addressed to Rally as the only one
+the model could not attribute. A run asked to DM the person asking searched the
+member directory for the literal string `me`, matched nobody, and stopped to ask
+which person that was — while the host held that id on the turn it was reading,
+on the run scope, and in the column two statements above the call. The header
+had been built to answer *addressing*, and a name came along with it, so the
+product got attribution on exactly the turns Rally is meant to ignore.
+
+**Considered and rejected:** Naming the actor once in the system prompt instead
+— a work stream has more than one participant, so "the user" is not a run-level
+fact and would have been wrong for every turn from the other person. Folding
+the author into `<rally_mentions>` — a mention is a span its author typed, with
+offsets into their own text, and a speaker is not something they wrote. A prose
+header like the external arm's, which reads as part of the request and would
+have put the ordinary case in the vocabulary reserved for words from outside
+Rally.
+
+**What a future change has to respect:** attribution belongs on every human
+turn regardless of who it was addressed to; if a new arm of this projection
+renders a human turn, it renders the trailer. `userId` is nullable and never
+optional, so a new call site has to say it has no author rather than omit one.
+Any further tag this module wraps a trusted fact in joins
+`RESERVED_ATTRIBUTION_TAGS`, or a member can type it themselves — the escape
+was added with the author block because a forgeable "who is speaking" is worth
+less than none, where a forgeable "who they pointed at" had cost little.
 
 ### 2026-09-10 — The public globe answers for itself
 

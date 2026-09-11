@@ -8,13 +8,39 @@ import {
   type ModelAttachmentSource,
 } from "./attachment-model-content";
 
+/**
+ * Who produced a participant turn, as the model is told it.
+ *
+ * The human arm carries an identity for the same reason the external one
+ * always has: a turn the model cannot attribute is a turn whose "me", "my", and
+ * "I" resolve to nobody. It was the external actor alone that carried one until
+ * a run was asked to send something to the person asking, searched the member
+ * directory for the literal string `me`, and had to stop and ask — while the
+ * host held that person's id on the turn, on the run scope, and in the column
+ * the display name was read from two statements earlier.
+ *
+ * `userId` is nullable but never optional. A human turn is written with an
+ * `author_user_id` or not written at all — `normalizedAuthorSnapshot` throws
+ * `participant_message_author_snapshot_required` rather than persisting one
+ * without it — so null here is unreachable for a row this transcript wrote.
+ * It is still the honest shape for the read: the column is shared with actors
+ * that have no member behind them, and the two alternatives are both worse
+ * than rendering a turn unattributed. Inventing a placeholder id would put a
+ * person id the model may write into a durable evaluator rule into its hands,
+ * and dropping the turn would take a person's words out of the conversation to
+ * punish a corrupt column. Requiring the *key* is what keeps a call site from
+ * quietly reintroducing the anonymous turn this replaced: it has to write
+ * `userId`, even to say it has none.
+ */
+export type ParticipantModelAuthor =
+  | { type: "human"; userId: string | null; displayName: string | null }
+  | {
+      type: "external";
+      actor: { provider: string; displayName: string; providerUserId: string };
+    };
+
 export interface ParticipantModelProjectionInput {
-  author:
-    | { type: "human" }
-    | {
-        type: "external";
-        actor: { provider: string; displayName: string; providerUserId: string };
-      };
+  author: ParticipantModelAuthor;
   messageType: string;
   text: string;
   structuredContent: unknown;
@@ -40,10 +66,43 @@ export function canonicalModelMessageJson(message: ModelMessage): string {
   return JSON.stringify(sort(message));
 }
 
+/**
+ * The tags this module wraps trusted facts in, neutralized wherever they occur
+ * in text a person typed.
+ *
+ * `<rally_mentions>` has always sat next to author-supplied text and has always
+ * been forgeable; it was worth little, because forging one claims the author
+ * pointed at somebody, which they could do by pointing at them. `<rally_author>`
+ * is a different proposition: it says who is *speaking*, a run reads it to
+ * decide who to send things to, and a member who can type it into their own
+ * message could make Rally act on a colleague's behalf.
+ *
+ * That is impersonation, not privilege: the run's authority is its execution
+ * principal and no rendered text moves it, so a forger gains nothing they could
+ * not already do themselves. It is still a claim the transcript should not let
+ * anyone but the host make, and one substitution is cheaper than reasoning
+ * about it again. Escaping the angle bracket rather than deleting the run keeps
+ * the words a person wrote in front of the model, visibly not a block.
+ *
+ * It matches the *opening bracket* by lookahead rather than a whole well-formed
+ * tag, because the reader being defended against is a language model and not an
+ * XML parser: `<rally_author >`, `< /rally_author>`, and `<rally_author id="x">`
+ * all read as the block to a model, and a pattern anchored on `>` immediately
+ * after the name let every one of them through. Escaping the `<` is what makes
+ * the span stop looking like a tag at all, whatever follows the name; the
+ * trailing `>` is left alone because a `>` with no `<` opens nothing.
+ */
+const RESERVED_ATTRIBUTION_TAGS = /<(?=\s*\/?\s*(?:rally_author|rally_mentions)\b)/giu;
+
+function withoutForgedAttribution(text: string): string {
+  return text.replace(RESERVED_ATTRIBUTION_TAGS, "&lt;");
+}
+
 export function participantModelMessageContent(
-  text: string,
+  rawText: string,
   mentions: ParticipantModelProjectionInput["mentions"],
 ): string {
+  const text = withoutForgedAttribution(rawText);
   const people = mentions.flatMap((mention) =>
     mention.type === "person" && mention.userId
       ? [{
@@ -55,6 +114,33 @@ export function participantModelMessageContent(
   return people.length === 0
     ? text
     : `${text}\n\n<rally_mentions>${JSON.stringify(people)}</rally_mentions>`;
+}
+
+/**
+ * The author of a human turn, in the vocabulary a mention already uses.
+ *
+ * A structured trailer rather than a prose header, and deliberately: the
+ * external arm's header is a *label* the model must weigh — those words came
+ * from outside Rally — while this is the plain fact of who is speaking, and
+ * every admitted human turn carries it. Prose would also make the author read
+ * like part of the request; `person_id` beside `<rally_mentions>`'s `person_id`
+ * is the same key the model already spends on the people a turn points at, so
+ * "send it to me" and "send it to @Sarah" resolve through one shape.
+ *
+ * It is not a mention and does not join that block: a mention is a span the
+ * author typed, with offsets into their text, and folding a speaker into that
+ * list would claim they wrote their own name.
+ */
+function withAuthorAttribution(
+  content: string,
+  author: { userId: string | null; displayName: string | null },
+): string {
+  if (!author.userId) return content;
+  const attribution = `<rally_author>${JSON.stringify({
+    person_id: author.userId,
+    ...(author.displayName ? { display_name: author.displayName } : {}),
+  })}</rally_author>`;
+  return content.trim().length === 0 ? attribution : `${content}\n\n${attribution}`;
 }
 
 /**
@@ -71,32 +157,35 @@ export function participantModelMessageContent(
  *
  * `overheard` is the one difference, and it is deliberate: a turn the room's
  * addressing classifier judged to be conversation between people is rendered
- * as that — said to the room, by a named author, not a request to Rally — so
- * the model reads it as context and never as an instruction it was handed. An
- * admitted request carries no such header.
+ * as that — said to the room, not to Rally — so the model reads it as context
+ * and never as an instruction it was handed. An admitted request carries no
+ * such header.
+ *
+ * It carries the *author* either way. Attribution used to ride inside the
+ * overheard header, which left the one turn actually addressed to Rally as the
+ * only one it could not attribute — the accident that made "DM me" impossible
+ * to resolve while "DM @Sarah" was fine. The two facts are now separate
+ * because they answer separate questions: the header says whether this was
+ * meant for Rally, and the trailer says who said it. A boolean is all
+ * `overheard` needs as a result; the name it used to carry comes off the
+ * author.
  */
 export function projectParticipantTextMessage(input: Pick<
   ParticipantModelProjectionInput,
   "author" | "text" | "mentions"
 > & {
-  overheard?: { authorDisplayName: string | null };
+  overheard?: boolean;
 }): ModelMessage | null {
   const content = participantModelMessageContent(input.text, input.mentions);
   if (content.trim().length === 0) return null;
   if (input.author.type === "external") {
-    return externalAttributedMessage(input.author.actor, content, input.overheard !== undefined);
+    return externalAttributedMessage(input.author.actor, content, input.overheard ?? false);
   }
+  const attributed = withAuthorAttribution(content, input.author);
   if (input.overheard) {
-    return {
-      role: "user",
-      content: [
-        OVERHEARD_HEADER,
-        `Author: ${input.overheard.authorDisplayName ?? "a workspace member"}`,
-        content,
-      ].join("\n"),
-    };
+    return { role: "user", content: [OVERHEARD_HEADER, attributed].join("\n") };
   }
-  return { role: "user", content };
+  return { role: "user", content: attributed };
 }
 
 /** Deterministic, and decidable by a small model: this is not a request. */
@@ -124,7 +213,10 @@ export async function projectParticipantModelMessage(
   input: ParticipantModelProjectionInput,
 ): Promise<ModelMessage | null> {
   if (input.messageType === "elicitation") {
-    return projectElicitationResponseMessage(input.structuredContent);
+    return projectElicitationResponseMessage(
+      input.structuredContent,
+      input.author.type === "human" ? input.author : null,
+    );
   }
   if (input.messageType !== "text") return null;
   const content = participantModelMessageContent(input.text, input.mentions);
@@ -142,10 +234,15 @@ export async function projectParticipantModelMessage(
         documentProcessor: env.DOCUMENT_PROCESSOR,
       })
     : [buildAttachmentManifestPart(sources)];
+  // An attachment-only turn now carries a text part holding just the
+  // attribution — it is exactly the turn whose author the model could least
+  // afford to guess, and it used to arrive as parts with no words at all. The
+  // emptiness check stays for the unattributable row above.
+  const attributed = withAuthorAttribution(content, input.author);
   return {
     role: "user",
     content: [
-      ...(content.trim().length > 0 ? [{ type: "text" as const, text: content }] : []),
+      ...(attributed.trim().length > 0 ? [{ type: "text" as const, text: attributed }] : []),
       ...parts,
     ],
   };
@@ -187,7 +284,17 @@ export function renderElicitationResponseMessage(row: {
   };
 }
 
-export function projectElicitationResponseMessage(structuredContent: unknown): ModelMessage | null {
+/**
+ * `author` is optional because {@link renderElicitationResponseMessage} has
+ * none to give it: that path replays a stored elicitation row and knows the
+ * question and the answer, not who typed it. Here the answering member is in
+ * hand, and a room with two people in it is a room where "the person
+ * responded" does not say which one.
+ */
+export function projectElicitationResponseMessage(
+  structuredContent: unknown,
+  author: { userId: string | null; displayName: string | null } | null = null,
+): ModelMessage | null {
   const parsed = z.object({
     kind: z.literal("elicitation_response"),
     // The model projection depends only on the answered question and response.
@@ -212,10 +319,15 @@ export function projectElicitationResponseMessage(structuredContent: unknown): M
   }).safeParse(structuredContent);
   if (!parsed.success || parsed.data.elicitation.status !== "answered") return null;
   const elicitation = parsed.data.elicitation;
-  return renderElicitationResponseMessage({
+  const message = renderElicitationResponseMessage({
     prompt: elicitation.prompt,
     response_type: elicitation.responseType,
     options_json: JSON.stringify(elicitation.options),
     answer_json: elicitation.answer == null ? null : JSON.stringify(elicitation.answer),
   });
+  // The renderer above builds its content as one joined string. The narrowing
+  // is what says so at the type level rather than asserting it, and leaves an
+  // answer that ever grows parts rendered exactly as it is today.
+  if (!author || typeof message.content !== "string") return message;
+  return { ...message, content: withAuthorAttribution(message.content, author) };
 }
