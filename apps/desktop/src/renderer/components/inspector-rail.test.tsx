@@ -167,6 +167,20 @@ describe('InspectorRail details', () => {
     expect(useUiStore.getState().railOpen).toBe(false);
   });
 
+  it('opens without a tooltip nobody asked for, and closes on the first Escape', () => {
+    // Radix opens a tooltip on focus, and a dialog hands focus to its first
+    // control, which here is always an icon button. The tooltip that pops is
+    // then the topmost dismissable layer, so it is what Escape closes: the
+    // preview stayed open and a label appeared over it on every open.
+    useUiStore.setState({ railOpen: false });
+    const onClose = vi.fn();
+    render(<Tooltip.Provider><InspectorRail workstream={{ ...workstream, resources: [watched] }} lightbox={{ resourceId: watched.id, returnFocus: document.body, onClose }} /></Tooltip.Provider>);
+
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    fireEvent.keyDown(screen.getByRole('dialog', { name: watched.title }), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalled();
+  });
+
   it('shows bounded harness-run metadata while debugging is on', async () => {
     render(
       <Tooltip.Provider>
@@ -766,7 +780,6 @@ describe('resource detail content preview', () => {
       })),
       describeData: vi.fn(async () => ({ tables: [] })),
       loadTable: vi.fn(async () => ({ rows: [], csv: '' })),
-      loadErrors: vi.fn(async () => []),
       surface: {
         present: vi.fn(async () => true),
         setBounds: vi.fn(async () => undefined),

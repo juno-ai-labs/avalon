@@ -1646,22 +1646,6 @@ export class RallyApi {
     return response.json();
   }
 
-  /** What the artifact's own server code threw, for the rail's error log. */
-  async readArtifactErrors(resourceId: string): Promise<{
-    occurredAt: number;
-    version: number;
-    requestPath: string;
-    message: string;
-    stack: string | null;
-  }[]> {
-    const response = await this.execute(
-      `/resources/${encodeURIComponent(resourceId)}/artifact/errors`,
-      { method: 'GET' },
-    );
-    if (!response.ok) return this.throwResponseError(response);
-    return response.json();
-  }
-
   async listResources(input: {
     query?: string;
     cursor?: string;

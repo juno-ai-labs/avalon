@@ -370,6 +370,15 @@ export interface DesktopArtifactPreviewRequest {
   /** The one-shot access URL. Its code is the fragment. */
   url: string;
   bounds: DesktopArtifactPreviewBounds;
+  /**
+   * The corner the renderer drew on the pane this view covers, in CSS pixels.
+   *
+   * Sent rather than assumed because it belongs to the surface hosting the
+   * pane: the lightbox rounds where the page meets its outside edge, and a
+   * pane in the plain rail rounds nothing. A view rounded on a host that drew
+   * no corner shows four notches against a square pane.
+   */
+  cornerRadius: number;
 }
 
 export interface DesktopArtifactWindowRequest {

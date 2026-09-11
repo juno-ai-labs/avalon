@@ -44,9 +44,17 @@ export interface ArtifactViewHandle {
    */
   destroyed(): boolean;
   setBounds(bounds: PreviewBounds): void;
+  /**
+   * Round the view's own corners.
+   *
+   * Part of the contract because CSS cannot reach a native view, and the view
+   * is what reaches the bottom corners of the surface holding it.
+   */
+  setBorderRadius(radius: number): void;
   loadURL(url: string): Promise<void>;
   close(): void;
 }
+
 
 export interface ArtifactHostWindow {
   /** Whether the window is gone; see `ArtifactViewHandle.destroyed`. */
@@ -68,6 +76,12 @@ export interface ArtifactPresentation {
   /** The one-shot access URL; its code lives in the fragment. */
   url: string;
   bounds: PreviewBounds;
+  /**
+   * The corner the renderer drew on the pane this view covers, in CSS pixels.
+   * Nothing here decides it: the surface hosting the pane is the only thing
+   * that knows whether the page meets a rounded edge or a square one.
+   */
+  cornerRadius: number;
 }
 
 /**
@@ -287,6 +301,10 @@ export class ArtifactPreviewController {
       this.view = this.createView(request);
       this.artifactId = request.artifactId;
       const created = this.view;
+      // Once, at creation: the corner belongs to the surface rather than to any
+      // one layout, so it must not ride along with the bounds a scroll
+      // recomputes many times a second.
+      created.setBorderRadius(request.cornerRadius);
       this.applyBounds();
       const result = loadArtifactInitialUrl(() => created.loadURL(request.url)).then((loaded) => {
         // DNS, TLS, and terminal navigation failures should not leave an empty

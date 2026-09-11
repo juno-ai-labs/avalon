@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { classifyAttachmentKind } from '@rally/contracts';
+import { DetailHeaderActionsHost } from './detail-header-actions';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { formatDateTime, formatSparseRelativeDate } from '../lib/format';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../lib/resource-preview';
@@ -66,7 +67,6 @@ interface InspectorRailProps {
     openArtifact: SiteResourceDetailProps['openArtifact'];
     describeData: SiteResourceDetailProps['describeData'];
     loadTable: SiteResourceDetailProps['loadTable'];
-    loadErrors: SiteResourceDetailProps['loadErrors'];
     surface: SiteResourceDetailProps['surface'];
   };
   workstream?: WorkstreamDetail;
@@ -613,7 +613,6 @@ function InspectorDetail({
       return (
         <SiteResourceDetail
           describeData={siteArtifacts.describeData}
-          loadErrors={siteArtifacts.loadErrors}
           loadTable={siteArtifacts.loadTable}
           openArtifact={siteArtifacts.openArtifact}
           resourceId={resource.id}
@@ -723,6 +722,17 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     }
   };
 
+  // State rather than a ref, because a detail's actions are portalled into this
+  // element and a ref's assignment does not re-render the detail that is
+  // waiting for it: with a ref the slot stays empty until something else
+  // happens to re-render.
+  //
+  // Declared above the early return with the other unconditional hooks: a rail
+  // that closes renders fewer hooks than the render before it, and React throws
+  // rather than closing. Only the lightbox reaches this component today, so the
+  // return is never taken, which is exactly how a hook-order defect waits.
+  const [detailActionsTarget, setDetailActionsTarget] = useState<HTMLDivElement | null>(null);
+
   // Keep a closed rail on screen for exactly as long as its fade lasts.
   if (!props.lightbox && !railOpen && !props.leaving) return null;
 
@@ -743,11 +753,21 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
           <h2 title={headerTitle}>{headerTitle}</h2>
         </div>
         <div className="rail-header-actions window-no-drag">
+          {/*
+            The detail's own actions, ahead of the rail's: what this resource
+            can do belongs beside the resource, and Close stays at the edge.
+
+            Every control in this header opens its tooltip upward. A live
+            artifact composites a native view directly under this strip, and
+            that view paints above all renderer DOM, so a label hanging
+            downward is behind the page with no `z-index` able to reach it.
+          */}
+          <div className="rail-header-detail-actions" ref={setDetailActionsTarget} />
           {resource && (
             <>
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
-                  <IconButton label="Versions" ref={versionsTriggerRef}>
+                  <IconButton label="Versions" ref={versionsTriggerRef} tooltipSide="top">
                     <History size={15} />
                   </IconButton>
                 </DropdownMenu.Trigger>
@@ -766,6 +786,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
                 <IconButton
                   className="icon-button-danger"
                   label="Archive"
+                  tooltipSide="top"
                   onClick={() => {
                     setArchiveError(null);
                     setArchiveTarget(resource);
@@ -776,9 +797,10 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
               )}
             </>
           )}
-          <IconButton label={props.lightbox ? 'Close resource preview' : 'Close inspector'} onClick={closeRail} ref={closeInspectorRef}>{props.lightbox ? <X size={20} /> : <ChevronsRight size={16} />}</IconButton>
+          <IconButton label={props.lightbox ? 'Close resource preview' : 'Close inspector'} onClick={closeRail} ref={closeInspectorRef} tooltipSide="top">{props.lightbox ? <X size={20} /> : <ChevronsRight size={16} />}</IconButton>
         </div>
       </header>
+      <DetailHeaderActionsHost target={detailActionsTarget}>
       <div className="rail-scroll">
         {props.error && <div className="rail-inline-error"><InlineError>{props.error}</InlineError></div>}
         {inspector ? (
@@ -794,6 +816,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
           <ContextContent {...props} />
         )}
       </div>
+      </DetailHeaderActionsHost>
       <Modal
         description={`${archiveTarget?.title ?? 'This resource'} will leave this work stream. Rally has no way to bring it back yet.`}
         footer={(
@@ -824,10 +847,28 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       <Dialog.Root open onOpenChange={(open) => { if (!open) lightbox.onClose(); }}>
         <Dialog.Portal>
           <Dialog.Overlay className="attachment-lightbox-overlay" />
-          <Dialog.Content aria-describedby={undefined} className="attachment-lightbox is-document-viewer resource-lightbox" onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            if (lightbox.returnFocus.isConnected) lightbox.returnFocus.focus();
-          }}>
+          <Dialog.Content
+            aria-describedby={undefined}
+            className="attachment-lightbox is-document-viewer resource-lightbox"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              if (lightbox.returnFocus.isConnected) lightbox.returnFocus.focus();
+            }}
+            /*
+              Keep the dialog's own focus rather than handing it to the first
+              control. Every control in this chrome is an icon with a tooltip,
+              and Radix opens a tooltip on focus: the preview would open with a
+              tooltip nobody asked for, and that tooltip is then the topmost
+              dismissable layer, so it, not the preview, is what the first
+              Escape closes. `preventDefault` leaves focus on this element, which
+              Radix gives `tabindex="-1"`, so the focus trap still has its entry
+              point.
+            */
+            onOpenAutoFocus={(event) => {
+              event.preventDefault();
+              (event.currentTarget as HTMLElement | null)?.focus();
+            }}
+          >
             <Dialog.Title className="attachment-lightbox-a11y-title">{headerTitle}</Dialog.Title>
             {content}
           </Dialog.Content>

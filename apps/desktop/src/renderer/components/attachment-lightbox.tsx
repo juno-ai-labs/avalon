@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AttachmentPreview } from './attachments';
 import { MarkdownBody } from './workstream-blocks';
 import { attachmentMime, hasGenericAttachmentMime, isVideoAttachment } from '../lib/attachment-media';
+import { Tip } from './primitives';
 
 type PreviewMode = 'audio' | 'html' | 'image' | 'markdown' | 'text' | 'video';
 
@@ -151,6 +152,20 @@ export function AttachmentLightbox({ preview, onClose }: {
             event.preventDefault();
             preview.returnFocus.focus();
           }}
+          /*
+            Keep the dialog's own focus rather than handing it to the first
+            control. Every control in this chrome is an icon with a tooltip,
+            and Radix opens a tooltip on focus: the preview would open with a
+            tooltip nobody asked for, and that tooltip is then the topmost
+            dismissable layer, so it, not the preview, is what the first
+            Escape closes. `preventDefault` leaves focus on this element, which
+            Radix gives `tabindex="-1"`, so the focus trap still has its entry
+            point.
+          */
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            (event.currentTarget as HTMLElement | null)?.focus();
+          }}
         >
           <Dialog.Title className="attachment-lightbox-a11y-title">
             {preview.superseded ? `Preview of ${active.name} — ${preview.superseded.label}` : `Preview of ${active.name}`}
@@ -164,33 +179,57 @@ export function AttachmentLightbox({ preview, onClose }: {
                   <button onClick={preview.superseded.onReturnToCurrent} type="button">Return to current</button>
                 </span>
               )}
-              {active.onDetails && <button aria-label="Resource details" className="attachment-lightbox-action" onClick={active.onDetails} type="button"><Info size={18} /></button>}
-              {!error && (src || active.loadContent) && <button aria-label={`Download ${active.name}`} className="attachment-lightbox-action" onClick={() => {
-                setDownloadError(null);
-                void downloadPreview(active, src).catch(() => setDownloadError('Download failed. Please try again.'));
-              }} type="button"><Download size={18} /></button>}
-              <Dialog.Close asChild>
-                <button aria-label="Close preview" className="attachment-lightbox-close" type="button"><X size={20} /></button>
-              </Dialog.Close>
+              {active.onDetails && (
+                <Tip label="Resource details">
+                  <button aria-label="Resource details" className="attachment-lightbox-action" onClick={active.onDetails} type="button"><Info size={18} /></button>
+                </Tip>
+              )}
+              {!error && (src || active.loadContent) && (
+                <Tip label={`Download ${active.name}`}>
+                  <button aria-label={`Download ${active.name}`} className="attachment-lightbox-action" onClick={() => {
+                    setDownloadError(null);
+                    void downloadPreview(active, src).catch(() => setDownloadError('Download failed. Please try again.'));
+                  }} type="button"><Download size={18} /></button>
+                </Tip>
+              )}
+              <Tip label="Close preview">
+                <Dialog.Close asChild>
+                  <button aria-label="Close preview" className="attachment-lightbox-close" type="button"><X size={20} /></button>
+                </Dialog.Close>
+              </Tip>
             </header>
           )}
           {isMedia && (
             <>
-              <button aria-label="Download attachment" className="attachment-media-download attachment-lightbox-action" onClick={() => { void downloadPreview(active, src).catch(() => setDownloadError('Download failed. Please try again.')); }} type="button"><Download size={18} /></button>
-              <Dialog.Close asChild><button aria-label="Close preview" className="attachment-media-close attachment-lightbox-action" type="button"><X size={20} /></button></Dialog.Close>
-              {active.onDetails && <button aria-label="Resource details" className="attachment-media-details attachment-lightbox-action" onClick={active.onDetails} type="button"><Info size={18} /></button>}
-              <button
-                aria-label={expanded ? 'Fit preview to window' : 'Show preview at full size'}
-                className="attachment-media-expand"
-                onClick={() => setExpanded((value) => !value)}
-                type="button"
-              >
-                {expanded ? <Minimize2 size={19} /> : <Maximize2 size={19} />}
-              </button>
+              <Tip label="Download attachment">
+                <button aria-label="Download attachment" className="attachment-media-download attachment-lightbox-action" onClick={() => { void downloadPreview(active, src).catch(() => setDownloadError('Download failed. Please try again.')); }} type="button"><Download size={18} /></button>
+              </Tip>
+              <Tip label="Close preview">
+                <Dialog.Close asChild><button aria-label="Close preview" className="attachment-media-close attachment-lightbox-action" type="button"><X size={20} /></button></Dialog.Close>
+              </Tip>
+              {active.onDetails && (
+                <Tip label="Resource details">
+                  <button aria-label="Resource details" className="attachment-media-details attachment-lightbox-action" onClick={active.onDetails} type="button"><Info size={18} /></button>
+                </Tip>
+              )}
+              <Tip label={expanded ? 'Fit preview to window' : 'Show preview at full size'}>
+                <button
+                  aria-label={expanded ? 'Fit preview to window' : 'Show preview at full size'}
+                  className="attachment-media-expand"
+                  onClick={() => setExpanded((value) => !value)}
+                  type="button"
+                >
+                  {expanded ? <Minimize2 size={19} /> : <Maximize2 size={19} />}
+                </button>
+              </Tip>
               {gallery.length > 1 && (
                 <>
-                  <button aria-label="Previous attachment" className="attachment-gallery-arrow is-previous" onClick={() => setActiveIndex((index) => (index - 1 + gallery.length) % gallery.length)} type="button"><ChevronLeft size={25} /></button>
-                  <button aria-label="Next attachment" className="attachment-gallery-arrow is-next" onClick={() => setActiveIndex((index) => (index + 1) % gallery.length)} type="button"><ChevronRight size={25} /></button>
+                  <Tip label="Previous attachment">
+                    <button aria-label="Previous attachment" className="attachment-gallery-arrow is-previous" onClick={() => setActiveIndex((index) => (index - 1 + gallery.length) % gallery.length)} type="button"><ChevronLeft size={25} /></button>
+                  </Tip>
+                  <Tip label="Next attachment">
+                    <button aria-label="Next attachment" className="attachment-gallery-arrow is-next" onClick={() => setActiveIndex((index) => (index + 1) % gallery.length)} type="button"><ChevronRight size={25} /></button>
+                  </Tip>
                 </>
               )}
             </>
