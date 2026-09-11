@@ -26,6 +26,24 @@ describe('artifact preview wiring', () => {
     expect(handler).not.toContain('artifactPreviews.delete');
   });
 
+  it('confines both artifact surfaces with a handoff built from their own contents', () => {
+    // Activation is per surface. A handoff shared between the rail preview and
+    // a pop-out would let a press in one send the other's page to the browser,
+    // and those two are showing different documents.
+    const text = source();
+
+    expect(text).toContain(
+      'confineToArtifactOrigin(contents, new URL(request.url).origin, artifactLinkHandoff(contents))',
+    );
+    expect(text).toContain(
+      'confineToArtifactOrigin(window.webContents, new URL(request.url).origin, artifactLinkHandoff(window.webContents))',
+    );
+    // The activation can only be reconstructed from the surface's own input
+    // stream; nothing else in this process is told when a person presses
+    // something inside model-authored content.
+    expect(text).toContain("contents.on('input-event', (_event, input) => activation.record(input.type))");
+  });
+
   it('removes the entry only when the window that owns it closes', () => {
     const factory = source().match(/function artifactPreviewFor\([\s\S]*?\n\}/u)?.[0];
 
