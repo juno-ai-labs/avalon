@@ -284,8 +284,7 @@ files accepted by the previous build. The cap is restored to ten; presentation
 does not change admission or erase existing drafts. A cache/drop race test
 preserves all nine cached files before admitting one newly dropped file.
 
-
-### 2026-09-03: New automation stops caching a draft
+### 2026-09-03 — New automation stops caching a draft
 
 **What changed:** The **New automation** surface no longer exists as a
 composer: `/automations/new` creates the automation over `POST /automations`

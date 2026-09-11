@@ -1231,51 +1231,42 @@ now one receipt identity. The X connector additionally maps its own provider's
 `next_cursor: ""` to absence inside the executor, since that empty cursor
 originates at the API rather than at the model.
 
-### 2026-08-30 — One multimodal plugin also creates durable audio
-
-**What changed:** Added `multimodal_generation_generate_audio`, backed by the
-main Azure `gpt-4o-mini-tts` deployment. The strict call accepts bounded text,
-one of the provider's advertised voices, optional speaking instructions and an
-optional title; output is fixed to one MP3 and defaults to `marin`. The verified
-bytes become a replay-safe durable audio resource with native desktop playback.
-
-**Why:** Speech generation belongs beside image generation as hosted media work:
-it needs the same Bind discovery, receipt, timeout, Azure credentials and
-resource-publication boundary, without introducing a second plugin whose only
-difference is media type.
-
-**Considered and rejected:** Returning the MP3 through `contentParts`, which
-would pay to send an output artifact back into the model and would misstate it
-as model-readable input. Also rejected: denying the call or guessing a token
-charge when Azure omits usage and OpenRouter has no endpoint price for this
-model. Rally logs the missing billing evidence and records no charge.
-
-**Consequences:** The attachment registry includes `audio`; current and
-historical MP3 resources open in a native player but remain unsupported by the
-agent content tools. Speech text and instructions must remain absent from logs,
-receipts and resource metadata, and user-facing summaries must identify the
-voice as AI-generated.
-
-### 2026-08-30 — Image generation and editing are one dedicated plugin
+### 2026-08-30 — Image generation, editing and speech are one dedicated multimodal plugin
 
 **What changed:** Added the two strict `multimodal_generation` image tools,
 their fixed Azure request policy, durable generated-resource publication and
-same-resource edit versioning,
-effect-intent replay identity, ephemeral visual results, and best-effort
-OpenRouter-average cost calculation.
+same-resource edit versioning, effect-intent replay identity, ephemeral visual
+results, and best-effort OpenRouter-average cost calculation. Beside them,
+`multimodal_generation_generate_audio`, backed by the main Azure
+`gpt-4o-mini-tts` deployment: the strict call accepts bounded text, one of the
+provider's advertised voices, optional speaking instructions and an optional
+title; output is fixed to one MP3 and defaults to `marin`. The verified bytes
+become a replay-safe durable audio resource with native desktop playback.
 
 **Why:** Image creation is a distinct capability that should be discoverable
 without loading Terminal and should return a reusable workstream resource, not
 an opaque provider payload. The provider controls that should not vary between
 agent calls are locked in code so the small public schema remains honest.
+Speech generation belongs beside image generation as hosted media work: it
+needs the same Bind discovery, receipt, timeout, Azure credentials and
+resource-publication boundary, without introducing a second plugin whose only
+difference is media type.
 
 **Considered and rejected:** Denying generation when cached pricing is absent.
 That prevents an unpriced charge but turns a pricing-observability outage into a
 product outage. Rally instead continues, records no image charge, and logs the
-missing pricing for repair. Also rejected: storing prompt text in resource
-metadata; it is not needed to display or replay the resource and would expand
-the durable sensitive-data surface.
+missing pricing for repair. Likewise for audio: denying the call or guessing a
+token charge when Azure omits usage and OpenRouter has no endpoint price for
+this model; Rally logs the missing billing evidence and records no charge. Also
+rejected: storing prompt text in resource metadata; it is not needed to display
+or replay the resource and would expand the durable sensitive-data surface. And
+returning the MP3 through `contentParts`, which would pay to send an output
+artifact back into the model and would misstate it as model-readable input.
 
 **Consequences:** Changes to size choices, fixed moderation/quality/background,
 output count, pricing semantics, or edit input formats must update this registry
-and its exact request-contract tests in the same change.
+and its exact request-contract tests in the same change. The attachment
+registry includes `audio`; current and historical MP3 resources open in a
+native player but remain unsupported by the agent content tools. Speech text
+and instructions must remain absent from logs, receipts and resource metadata,
+and user-facing summaries must identify the voice as AI-generated.

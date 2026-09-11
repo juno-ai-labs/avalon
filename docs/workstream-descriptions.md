@@ -420,9 +420,3 @@ to race and overwrite a person's edit.
 
 **Consequences:** Existing refresh logic keeps its guards and rest windows, but
 all reads and conditional writes use object-local SQL.
-
-No entries yet. This document predates the changelog rule in
-[`module-documents.md`](module-documents.md#starting-one). The reasoning behind each
-gate and guard is recorded inline above, but it was not kept as dated entries and
-was not reconstructed into them. The next substantial change to the loop starts the
-record, and that entry is that change, written in full.

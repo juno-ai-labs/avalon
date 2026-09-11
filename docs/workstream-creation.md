@@ -826,6 +826,7 @@ on its entry path, making totals and funnels structurally incorrect.
 fail creation. Any new API or ingress that commits a user-visible work stream
 must register its closed source with the server telemetry helper; hidden system
 work streams remain excluded.
+
 ### 2026-08-12 — The participant picker opens on its first option without stretching its checkboxes
 
 **What changed:** Opening Add people initially focuses the first available

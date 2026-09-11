@@ -1249,7 +1249,7 @@ activity cursor into D1. Either makes the control plane authoritative again.
 unchanged, but their transaction boundary is local to WorkspaceDO. An object
 outage fails closed rather than reading or writing legacy D1 rows.
 
-### 2026-08-18 — The first-party activity log moves into WorkspaceDO
+### 2026-08-18 — The first-party activity log moves into WorkspaceDO, and digest projection starts from a WorkspaceDO-owned connector event
 
 **What changed:** `workspace_activity_events` and target edges now live in the
 owning WorkspaceDO. The same object resolves work-stream audience against its
@@ -1257,38 +1257,32 @@ directory, maintains the monotonic cursor, and reaps retention by alarm. The
 maintenance importer preserves existing D1 cursor values before writer fences
 make the source immutable.
 
+Connector ingest authority is also the owning WorkspaceDO, and the
+connector-event Workflow performs the projection into that insertion-ordered
+first-party activity log. D1 `activities` is documented as a 24-hour handoff,
+not provider history.
+
 **Why:** Every event belongs to one workspace, and its only non-membership
 visibility join is already WorkspaceDO-owned. Keeping the log in D1 made digest
 serving depend on two product authorities and retained a regional serving table
-solely for a join the object could execute locally.
+solely for a join the object could execute locally. On the ingest side, the
+normalized provider event belongs to one workspace, while the derived log has
+separate audience/cursor semantics; conflating either with a long-lived regional
+staging row preserved an unnecessary second authority.
 
-**Considered and rejected:** Copying directory visibility back into D1, fanning
-out one event per recipient, and keeping a D1 read projection. Those alternatives
-either restore split authority or freeze a mutable audience at write time.
+**Considered and rejected:** For the log: copying directory visibility back into
+D1, fanning out one event per recipient, and keeping a D1 read projection. Those
+alternatives either restore split authority or freeze a mutable audience at
+write time. For projection: reading raw provider deliveries during a digest and
+keeping D1 activity bodies indefinitely for convenience. The former cannot
+reproduce normalized visibility; the latter defeats WorkspaceDO ownership.
 
 **Consequences:** D1 still owns schedules, delivery destinations, active
 membership, and notification transport state. Digest windows and user-facing
 activity reads are WorkspaceDO RPCs; a WorkspaceDO outage fails closed and never
-falls back to frozen D1 rows.
-
-### 2026-08-18 — Digest projection starts from a WorkspaceDO-owned connector event
-
-**What changed:** Connector ingest authority is now the owning WorkspaceDO and
-the connector-event Workflow performs the projection into the existing
-insertion-ordered first-party activity log. D1 `activities` is documented as a
-24-hour handoff, not provider history.
-
-**Why:** The normalized provider event belongs to one workspace, while the
-derived log has separate audience/cursor semantics. Conflating either with a
-long-lived regional staging row preserved an unnecessary second authority.
-
-**Considered and rejected:** Reading raw provider deliveries during a digest
-and keeping D1 activity bodies indefinitely for convenience. The former cannot
-reproduce normalized visibility; the latter defeats WorkspaceDO ownership.
-
-**Consequences:** Digest projection retries from the durable Workflow claim.
-The activity log remains a derived first-party product and never becomes the
-source for reconstructing the normalized provider event.
+falls back to frozen D1 rows. Digest projection retries from the durable
+Workflow claim. The activity log remains a derived first-party product and never
+becomes the source for reconstructing the normalized provider event.
 
 ### 2026-08-18 — Activity audience and system-work-stream lists use WorkspaceDO
 

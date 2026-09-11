@@ -980,12 +980,6 @@ already emitted by the control ticket endpoint. A blanket query rejection had
 blocked child discovery entirely. Unknown and duplicate parameters, URL tickets,
 and all feed-socket queries remain forbidden; the broker test proves the boundary.
 
-### 2026-09-08 — Locate the member search metadata contract
-
-Recorded the observable substring/continuation inference in this overview as well
-as the owning authorization document, so the security summary does not imply a
-stronger concealment property than the approved member search API provides.
-
 ### 2026-09-08 — Remove the authorization freshness deadline
 
 The user changed five-minute freshness from a hard bound to a design goal after
@@ -1022,16 +1016,6 @@ window. Its trusted renderer may open broker sockets; each socket remains scoped
 to the requesting webContents and validated regional routes. Settings and external
 content still cannot open sockets. The window uses the existing workspace/session
 broadcasts and closes on logout.
-
-
-### 2026-09-04 — Fail visibly when isolated release-smoke processes cannot exit
-
-**What changed and why:** Packaging cleanup sends SIGTERM and then SIGKILL to
-only its discovered marker/profile-scoped processes. Surviving processes and
-permission failures now fail packaging instead of retrying SIGTERM forever.
-The existing settle delay remains between stages, and a launch failure is
-preserved alongside a cleanup failure. No production process or profile is
-included in the cleanup scope.
 
 
 ### 2026-09-04 — Appearance files can no longer execute code
@@ -1267,48 +1251,42 @@ it never exposes refresh tokens or the encrypted set.
 
 Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
-### 2026-08-30 — Spoken messages keep Azure authority in the regional Worker
+### 2026-08-30 — Spoken messages keep Azure authority in the regional Worker, and renderer media is limited to owned and in-memory URLs
 
 **What changed:** The renderer can stream message PCM only through the
 authenticated regional `/speech` route. The Worker owns the Azure inference
 endpoint and key; the renderer validates Rally's fixed PCM format and plays the
 in-memory stream without changing CSP.
 
+The desktop renderer CSP now declares `media-src 'self' blob:` in both the
+checked-in HTML policy and the runtime response-header policy. Generated audio
+is fetched through Rally's authorized resource route, converted to an in-memory
+object URL, and played by the native audio element; no remote or data-URL media
+origin was added.
+
 **Why:** Direct provider playback would put production inference authority in an
 untrusted renderer. A provider URL or preload audio bridge would widen a second
 trust boundary when the existing authenticated HTTP boundary already supports a
 streaming body.
 
+The renderer already allowed `blob:` images, but an audio element fell back to
+`default-src 'self'` and Electron blocked its object URL after the resource had
+loaded successfully. Visible controls therefore looked usable while playback
+could never begin.
+
 **Considered and rejected:** Exposing an Azure key, minting provider URLs, and
 adding an Electron IPC/media bridge. Each grants more authority than reading one
-already-authorized Rally response.
-
-**Consequences:** Speech stays region-scoped and content-free in logs. Future
-audio playback must not treat `media-src`, preload, or direct provider access as
-a shortcut around the regional API.
-
-### 2026-08-30 — Renderer media is limited to owned and in-memory URLs
-
-**What changed:** The desktop renderer CSP now declares
-`media-src 'self' blob:` in both the checked-in HTML policy and the runtime
-response-header policy. Generated audio is fetched through Rally's authorized
-resource route, converted to an in-memory object URL, and played by the native
-audio element; no remote or data-URL media origin was added.
-
-**Why:** The renderer already allowed `blob:` images, but an audio element fell
-back to `default-src 'self'` and Electron blocked its object URL after the
-resource had loaded successfully. Visible controls therefore looked usable
-while playback could never begin.
-
-**Considered and rejected:** Adding `https:` to `media-src` or pointing the
-element at an authenticated API URL. The former lets document-authored remote
-media bypass Rally's resource boundary; the latter cannot carry the main
+already-authorized Rally response. Adding `https:` to `media-src` or pointing
+the element at an authenticated API URL. The former lets document-authored
+remote media bypass Rally's resource boundary; the latter cannot carry the main
 process-owned session and complicates revocation. A short-lived object URL keeps
 the existing authorized fetch and cleanup lifecycle.
 
-**Consequences:** Any future media player must use same-origin or revocable
-`blob:` content. The HTML and runtime policies are an intentional duplicate and
-their invariant test must keep them aligned.
+**Consequences:** Speech stays region-scoped and content-free in logs. Future
+audio playback must not treat `media-src`, preload, or direct provider access as
+a shortcut around the regional API. Any future media player must use same-origin
+or revocable `blob:` content. The HTML and runtime policies are an intentional
+duplicate and their invariant test must keep them aligned.
 
 ### 2026-08-30 — Separate operator OAuth from product identity
 
@@ -1679,29 +1657,7 @@ Malformed present policy denies use until repaired, and every destructive
 workspace replacement must participate in the same mutation lease as ordinary
 Terminal tools.
 
-### 2026-08-13 — Full repository access uses the native trained CLI path
-
-**What changed:** A connector's `full_access` setting now gives the Daytona
-sandbox a short-lived single-repository GitHub App credential for standard Git
-and GitHub CLI writes. Rally creates/restores and checks out the persisted
-word-based work-stream branch first; read-only continues to be enforced by
-token permissions.
-
-**Why:** GitHub has no branch-scoped installation token, and building a Git/API
-proxy plus a prose-derived single-use publication gate would over-architect the
-feature and prevent normal multi-commit PR workflows.
-
-**Considered and rejected:** Claiming the repository token was branch-scoped,
-blocking `git push` in favor of only a typed publisher, and parsing participant
-messages for a separate publish authorization. The explicit connector policy is
-the durable user choice.
-
-**Consequences:** Full access is genuinely repository-wide at GitHub. The model
-is told to push only `AVALON_GIT_BRANCH`, while repository rulesets may provide a
-provider-side backstop. New code must preserve credential rotation on policy
-changes and must not expose token plaintext in commands, output, or logs.
-
-### 2026-08-13 — Repository choice is model-driven but policy- and recovery-fenced
+### 2026-08-13 — Repository choice is model-driven but policy- and recovery-fenced, and full access uses the native trained CLI path
 
 **What changed:** The model may select an exact GitHub repository through a
 typed Terminal tool. Connector settings bind repository IDs to read-only or full
@@ -1709,58 +1665,67 @@ remote access, every read/publish boundary rechecks that policy, and Rally must
 store a verified recovery resource before destroying sandbox state for another
 selection.
 
+A connector's `full_access` setting gives the Daytona sandbox a short-lived
+single-repository GitHub App credential for standard Git and GitHub CLI writes.
+Rally creates/restores and checks out the persisted word-based work-stream
+branch first; read-only continues to be enforced by token permissions.
+
 **Why:** Removing the participant chooser avoids an unnecessary interruption,
 but moving choice into an untrusted model cannot give it authority to broaden
-the GitHub App grant or silently discard persistent workspace bytes.
+the GitHub App grant or silently discard persistent workspace bytes. GitHub has
+no branch-scoped installation token, and building a Git/API proxy plus a
+prose-derived single-use publication gate would over-architect the feature and
+prevent normal multi-commit PR workflows.
 
 **Considered and rejected:** Authorizing by mutable `owner/name`, treating
 read-only as a prohibition on local edits, and deleting after only a tracked Git
 diff. Those respectively permit replacement-repository confusion, remove safe
-local capability, and lose untracked files and generated artifacts.
+local capability, and lose untracked files and generated artifacts. Claiming
+the repository token was branch-scoped, blocking `git push` in favor of only a
+typed publisher, and parsing participant messages for a separate publish
+authorization. The explicit connector policy is the durable user choice.
 
 **Consequences:** Repository listings must disclose effective remote access,
 configured entries must be revalidated by provider ID, and remote-write tools
 must fail closed after policy drift. Repository replacement has bounded R2 and
 latency cost and refuses workspaces whose compressed recovery state exceeds the
-limit.
+limit. Full access is genuinely repository-wide at GitHub. The model is told to
+push only `AVALON_GIT_BRANCH`, while repository rulesets may provide a
+provider-side backstop. New code must preserve credential rotation on policy
+changes and must not expose token plaintext in commands, output, or logs.
 
-### 2026-08-13 — Public-site telemetry gains no provider or handoff authority
+### 2026-08-13 — Public-site and Lockdown telemetry observe without gaining provider, handoff, or transition authority
 
 **What changed:** The exact API origin allowlist now includes Rally's two
 production site origins. The site can obtain a content-free route and a signed
 anonymous capability, then send only registered site events. EU identity remains
 in memory; Global may retain a first-party random epoch.
 
+The main process contributes Lockdown enabled/available state to the bounded
+settings snapshot and reports previous, requested, and applied booleans only
+after an in-app transition succeeds.
+
 **Why:** Measuring acquisition through a provider browser SDK would put
 destination credentials and a generic capture surface into pages that also
 handle OAuth, invitation, Slack, and resource handoffs.
 
+Product analysis needs current Lockdown adoption and change intent, while the
+security boundary must continue treating migration and preference
+persistence — not the renderer click — as the authoritative transition.
+
 **Considered and rejected:** A PostHog token in the site bundle, wildcard CORS,
 query/fragment capture, and sharing one persistent epoch across regions. Each
 turns an anonymous measurement surface into destination, credential, or
-cross-region authority.
+cross-region authority. For Lockdown: renderer autocapture, credential/keystore
+details, and failure payloads. None are needed to answer adoption, and each
+would widen the least-privilege telemetry contract.
 
 **Consequences:** CORS still grants no API authorization. New site events must
-fit the pre-authentication allowlist and prove their negative space; handoff pages
-continue to erase or locally validate secrets independently of telemetry.
+fit the pre-authentication allowlist and prove their negative space; handoff
+pages continue to erase or locally validate secrets independently of telemetry.
+Lockdown telemetry remains subject to Product analytics opt-out, uses a closed
+setting enum, and cannot influence migration, rollback, or session recovery.
 
-### 2026-08-13 — Lockdown telemetry observes state without widening authority
-
-**What changed:** The main process contributes Lockdown enabled/available state
-to the bounded settings snapshot and reports previous, requested, and applied
-booleans only after an in-app transition succeeds.
-
-**Why:** Product analysis needs current adoption and change intent, while the
-security boundary must continue treating migration and preference persistence—not
-the renderer click—as the authoritative transition.
-
-**Considered and rejected:** Renderer autocapture, credential/keystore details,
-and failure payloads. None are needed to answer adoption, and each would widen
-the least-privilege telemetry contract.
-
-**Consequences:** Lockdown telemetry remains subject to Product analytics opt-out,
-uses a closed setting enum, and cannot influence migration, rollback, or session
-recovery.
 ### 2026-08-13 — Desktop mutation headers are proven at the CORS boundary
 
 **What changed:** The regional API admits `X-Rally-Operation-Id` in its explicit
@@ -1787,27 +1752,61 @@ failed product actions; bounded diagnostic telemetry observes them without
 changing or replaying the request or misclassifying them as process-health
 transitions, and EU diagnostics do not cross regions.
 
-### 2026-08-13 — Telemetry operator roles and capability signing are server-owned
+### 2026-08-13 — Telemetry keeps provider, operator, and raw-crash authority in main and the regional Worker
 
-**What changed:** Restricted telemetry HTTP operations now authenticate a
-per-region bearer token to a fixed operator UUID and `support`/`security` role.
-EU no longer holds the onboarding capability-signing key; it asks the narrow
-Global control RPC to authorize or close a route-bound journey.
+**What changed:** Added a closed validated telemetry IPC surface, owner-only
+bounded local spools, fail-closed account preference, route-bound upload
+capabilities, dedicated regional crash storage, no-egress private
+symbolication, sanitized Global exception delivery, and reason-coded
+support/replay audits.
 
-**Why:** An internal helper is not an authorization boundary, and request fields
-cannot prove an operator's identity or role. Sharing the signing key across
-regions also widened a one-direction capability into authority held by both data
+Main creates an owner-only route-final parent around the Crashpad database,
+stores only sparse lifecycle metadata beside it, invalidates the whole
+generation without touching the live database, and deletes malformed or expired
+generations instead of inferring policy.
+
+Restricted telemetry HTTP operations authenticate a per-region bearer token to
+a fixed operator UUID and `support`/`security` role. EU does not hold the
+onboarding capability-signing key; it asks the narrow Global control RPC to
+authorize or close a route-bound journey.
+
+**Why:** Electron crash dumps can contain memory and customer content, while a
+renderer can be compromised independently of main. Product analytics also needs
+identifiable Global profiles without making every event a copy of account data
+or giving renderer code a destination credential.
+
+A minidump may contain memory fragments and customer content, while Crashpad
+cannot be stopped after start. Treating its active database as opaque avoids
+corruption races; treating missing route/deadline metadata as ineligible
+prevents a filesystem failure from expanding collection.
+
+An internal helper is not an authorization boundary, and request fields cannot
+prove an operator's identity or role. Sharing the signing key across regions
+also widened a one-direction capability into authority held by both data
 planes.
 
-**Considered and rejected:** Reusing desktop sessions, accepting operator metadata
-from the request, a public internal-debug route, and provisioning the same key in
-both regions. None gives the regional, auditable, least-authority boundary raw
-crash access requires.
+**Considered and rejected:** Direct PostHog/Sentry SDKs in the renderer, a
+token or dump path in preload, Crashpad URL upload, reading the live crash
+database, shared product/telemetry R2, and an EU fallback to US infrastructure.
+Each widens an untrusted boundary or makes region/opt-out/deletion
+unenforceable. For operator access: reusing desktop sessions, accepting
+operator metadata from the request, a public internal-debug route, and
+provisioning the same key in both regions. None gives the regional, auditable,
+least-authority boundary raw crash access requires.
 
-**Consequences:** Operator tokens are independent regional secrets, raw access
-reasons are role-bound, and audit rows derive their principal server-side. Future
-EU journey operations receive only route/epoch control results from Global and
-must never receive key material or destination identity.
+**Consequences:** Main and the regional Worker are the only telemetry
+authorities; raw bytes require audited regional access and never reach logs or
+PostHog. PostHog-side governance remains operational configuration outside
+Rally's internal retention lifecycle. Operator tokens are independent regional
+secrets, raw access reasons are role-bound, and audit rows derive their
+principal server-side. Future EU journey operations receive only route/epoch
+control results from Global and must never receive key material or destination
+identity.
+
+**Future changes must preserve:** No credential enters a Crashpad URL or local
+generation, no renderer learns a dump path, invalidation remains durable and
+generation-wide, and private symbolication compute receives only scoped objects
+for one opaque work item.
 
 Shipped in the pull request for this change. Design: [regional telemetry
 PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
@@ -1916,51 +1915,6 @@ remain excluded from logs.
 
 Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
 [context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
-
-### 2026-08-12 — Telemetry keeps provider and raw-crash authority out of renderer
-
-**What changed:** Added a closed validated telemetry IPC surface, owner-only
-bounded local spools, fail-closed account preference, route-bound upload
-capabilities, dedicated regional crash storage, no-egress private symbolication,
-sanitized Global exception delivery, and reason-coded support/replay audits.
-
-**Why:** Electron crash dumps can contain memory and customer content, while a
-renderer can be compromised independently of main. Product analytics also needs
-identifiable Global profiles without making every event a copy of account data or
-giving renderer code a destination credential.
-
-**Considered and rejected:** Direct PostHog/Sentry SDKs in the renderer, a token or
-dump path in preload, Crashpad URL upload, reading the live crash database, shared
-product/telemetry R2, and an EU fallback to US infrastructure. Each widens an
-untrusted boundary or makes region/opt-out/deletion unenforceable.
-
-**Consequences:** Main and the regional Worker are the only telemetry authorities;
-raw bytes require audited regional access and never reach logs or PostHog.
-PostHog-side governance remains operational configuration outside Rally's
-internal retention lifecycle.
-
-Shipped in the pull request for this change. Design: [regional telemetry
-PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
-
-### 2026-08-12 — Native crash bytes stay behind a generation boundary
-
-**What changed:** Main now creates an owner-only route-final parent around the
-Crashpad database, stores only sparse lifecycle metadata beside it, invalidates
-the whole generation without touching the live database, and deletes malformed
-or expired generations instead of inferring policy.
-
-**Why:** A minidump may contain memory fragments and customer content, while
-Crashpad cannot be stopped after start. Treating its active database as opaque
-avoids corruption races; treating missing route/deadline metadata as ineligible
-prevents a filesystem failure from expanding collection.
-
-**Future changes must preserve:** No credential enters a Crashpad URL or local
-generation, no renderer learns a dump path, invalidation remains durable and
-generation-wide, and private symbolication compute receives only scoped objects
-for one opaque work item.
-
-Shipped in the pull request for this change. Design: [regional telemetry
-PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 ### 2026-08-12 — The unsigned-challenge boundary applies by protocol shape
 

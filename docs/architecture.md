@@ -846,7 +846,7 @@ never be armed together, because the higher one nominates no scope and would
 close Settings over a half-written invitation the screen's pane guard had just
 refused.
 
-### 2026-09-03: An automation is a conversation parent, not a sibling authority
+### 2026-09-03 — An automation is a conversation parent, not a sibling authority
 
 **What changed:** `AutomationAgent` is replaced by `AutomationDO`, which sits
 beside `WorkstreamDO` as the second kind of conversation parent over one shared
@@ -1399,24 +1399,6 @@ control state. D1 is smaller but not empty: membership, connector/automation/
 activity modules, migration routing, and external destinations remain regional
 relational authorities until separately re-architected.
 
-### 2026-08-18 — BlockDashboard names the internal HyperSight subsystem
-
-**What changed:** The per-block agent class, binding, deterministic address,
-SQLite/D1 schema, HTTP/WebSocket routes, contracts, model role, and desktop
-implementation now use BlockDashboard. The visible product remains HyperSight.
-
-**Why:** HyperSight is a product concept; the implementation is a dashboard of
-independently owned blocks. Separating those names makes object ownership and
-operational data legible while preserving the established language in the UI.
-
-**Considered and rejected:** Keeping HyperSight in transport/storage for
-compatibility. These surfaces have not shipped, and internal dogfooding can use
-the coordinated cutover without permanent aliases.
-
-**Consequences:** Worker and Electron must use the new contracts together.
-Future internal symbols use BlockDashboard, and future user-visible copy uses
-HyperSight unless product naming itself changes.
-
 ### 2026-08-18 — Every agent owns a direct resumable output socket
 
 **What changed:** `BlockDashboardAgent` joins `SubstreamAgent` as a direct
@@ -1440,68 +1422,65 @@ User commands enter WorkspaceDO, while the SubstreamAgent and block-agent
 sockets are read-only data-plane feeds rather than remnants of the legacy
 single-room mutation protocol.
 
-### 2026-08-18 — HyperSight execution shards by stable block
+### 2026-08-18 — HyperSight shards by block, workspaces pin hierarchy affinity, and Electron connects at all three authority levels
 
-**What changed:** WorkstreamDO now owns HyperSight configuration and durable
-fan-out, while each block ID resolves to a `BlockDashboardAgent`. The block
-agent executes Bind, directly uses main `SubstreamAgent("0")` for fenced source
-runtime SQL, and settles versioned results into WorkstreamDO for its socket.
+**What changed:** *HyperSight sharding.* WorkstreamDO now owns HyperSight
+configuration and durable fan-out, while each block ID resolves to a
+`BlockDashboardAgent`. The block agent executes Bind, directly uses main
+`SubstreamAgent("0")` for fenced source runtime SQL, and settles versioned
+results into WorkstreamDO for its socket.
+
+*Placement affinity.* The Global onboarding reservation, regional workspace row,
+and WorkspaceDO SQL now persist one immutable affinity. Every workspace-scoped
+object resolver reads that projection and combines it with the existing US/EU
+jurisdiction lock.
+
+*Electron sockets.* Each authenticated renderer for the active workspace has one
+persistent WorkspaceDO synchronization/command socket. Each selected or running
+work stream has a WorkstreamDO complete-metadata socket and a SubstreamAgent
+transcript/stream socket. Workspace changes invalidate typed D1 query surfaces;
+work-stream snapshots update aggregate/sidebar caches directly.
 
 **Why:** Dashboard blocks need independent long-running recovery but are not
 independent conversations. Keeping configuration/publication in the parent and
 source data in the transcript agent preserves both authorities while allowing
 blocks to run in parallel.
 
-**Considered and rejected:** Model execution in WorkstreamDO, fan-out owned by
-the source agent, using substreams for derived blocks, one shared HyperSight
-agent, Workflows, and replacing Bind with the Agents SDK.
+Fixed western placement made eastern users pay avoidable latency, but using each
+caller's current location would scatter a single workspace's parent and
+children. First placement is a one-time decision, so it belongs to the workspace
+routing record.
+
+Workspace settings/directories, aggregate work-stream metadata, and ordered
+agent output are independent consistency domains. A lazy command-only workspace
+connection and token-only child feed left the first two without a live
+multi-client synchronization path.
+
+**Considered and rejected:** For HyperSight: model execution in WorkstreamDO,
+fan-out owned by the source agent, using substreams for derived blocks, one
+shared HyperSight agent, Workflows, and replacing Bind with the Agents SDK.
+
+For placement: per-request child placement and a mandatory WorkspaceDO
+provisioning hop. The former breaks colocation; the latter puts a parent on
+every child-creation path.
+
+For the sockets: multiplexing all tokens through WorkspaceDO, polling REST for
+metadata, and copying authoritative D1 workspace rows into the object. Those
+choices create a throughput hotspot, background request churn, or a split
+authority.
 
 **Consequences:** The hierarchy has two agent child types with shared lifecycle
 primitives. Operators must distinguish low-volume parent dispatch/result RPCs
 from direct block-to-source runtime SQL, and Electron needs no fourth socket.
 
-### 2026-08-17 — Workspace creation pins west/east hierarchy affinity
+Global hierarchies use `wnam` or `enam`; EU hierarchies use `weur` or `eeur`.
+Selecting the western cell solely from jurisdiction is a fallback only; affinity
+is cached per Worker isolate because it is immutable, and changing it requires a
+fleet move.
 
-**What changed:** The Global onboarding reservation, regional workspace row,
-and WorkspaceDO SQL now persist one immutable affinity. Every workspace-scoped
-object resolver reads that projection and combines it with the existing US/EU
-jurisdiction lock.
-
-**Why:** Fixed western placement made eastern users pay avoidable latency, but
-using each caller's current location would scatter a single workspace's parent
-and children. First placement is a one-time decision, so it belongs to the
-workspace routing record.
-
-**Considered and rejected:** Per-request child placement and a mandatory
-WorkspaceDO provisioning hop. The former breaks colocation; the latter puts a
-parent on every child-creation path.
-
-**Consequences:** Global hierarchies use `wnam` or `enam`; EU hierarchies use
-`weur` or `eeur`. Selecting the western cell solely from jurisdiction is a
-fallback only; affinity is cached per Worker isolate because it is immutable,
-and changing it requires a fleet move.
-
-### 2026-08-17 — Electron connects to all three authority levels
-
-**What changed:** Each authenticated renderer for the active workspace has one persistent WorkspaceDO
-synchronization/command socket. Each selected or running work stream has a
-WorkstreamDO complete-metadata socket and a SubstreamAgent transcript/stream
-socket. Workspace changes invalidate typed D1 query surfaces; work-stream
-snapshots update aggregate/sidebar caches directly.
-
-**Why:** Workspace settings/directories, aggregate work-stream metadata, and
-ordered agent output are independent consistency domains. A lazy command-only
-workspace connection and token-only child feed left the first two without a
-live multi-client synchronization path.
-
-**Considered and rejected:** Multiplexing all tokens through WorkspaceDO,
-polling REST for metadata, and copying authoritative D1 workspace rows into the
-object. Those choices create a throughput hotspot, background request churn, or
-a split authority.
-
-**Consequences:** New workspace surfaces need a typed invalidation topic; new
-aggregate fields need complete WorkstreamDO snapshots; and user writes remain
-exclusive to WorkspaceDO while both child-scoped sockets stay read-only.
+New workspace surfaces need a typed invalidation topic; new aggregate fields
+need complete WorkstreamDO snapshots; and user writes remain exclusive to
+WorkspaceDO while both child-scoped sockets stay read-only.
 
 ### 2026-08-17 — Durable Object routing becomes a locked placement boundary
 
@@ -1600,106 +1579,84 @@ regional/external availability.
 **Consequences:** Regional effects are eventually consistent, at-least-once,
 hash-checked, version-ordered, and acknowledged back to their source object.
 
-### 2026-08-17 — Work-stream authority gains a maintenance-fenced cutover
-
-**What changed:** The existing one-workstream-per-DO namespace gains the
-normalized product schema and a regional campaign that drains runs, imports and
-verifies every object, seeds directory projections, activates one generation,
-and fences legacy D1 product writers.
-
-**Why:** Named local tables without a writer switch are only a shadow copy. The
-approved maintenance window removes live tailing and dual-write conflicts while
-still requiring fleet-wide evidence before authority opens.
-
-**Considered and rejected:** A new namespace and a live migration. The former
-changes object identity without changing placement; the latter requires holding
-queues, tail reconciliation, and conflict policy.
-
-**Consequences:** D1 remains workspace/control authority and the directory query
-plane. Each opened WorkstreamDO becomes product authority, quarantine never
-falls back, and the final regional open is an explicit operator action.
-
-### 2026-08-16 — Work-stream rooms expose their existing SQLite storage
+### 2026-08-17 — Work-stream rooms expose their SQLite storage and gain a maintenance-fenced cutover
 
 **What changed:** `SubstreamAgent` keeps its namespace and product boundary but
 replaces free-form Durable Object key/value records with an explicit local SQL
 schema. The room imports identity, sequence, active output, pending HyperSight
-work, and ticket receipts in place before accepting an event or socket.
+work, and ticket receipts in place before accepting an event or socket. The
+existing one-workstream-per-DO namespace then gains the normalized product
+schema and a regional campaign that drains runs, imports and verifies every
+object, seeds directory projections, activates one generation, and fences legacy
+D1 product writers.
 
 **Why:** The namespace was already SQLite-backed, so a second class and an
 object-fleet copy would add risk without changing placement. Named relational
-owners make recovery and schema evolution inspectable before the later
-authority campaign imports regional product rows.
+owners make recovery and schema evolution inspectable before the authority
+campaign imports regional product rows. Named local tables without a writer
+switch are only a shadow copy, though: the approved maintenance window removes
+live tailing and dual-write conflicts while still requiring fleet-wide evidence
+before authority opens.
 
-**Considered and rejected:** A new Durable Object namespace and an unfenced
-authority flip. The later maintenance campaign supplies the missing fence.
+**Considered and rejected:** A new Durable Object namespace, which changes
+object identity without changing placement; a live migration, which requires
+holding queues, tail reconciliation, and conflict policy; and an unfenced
+authority flip, for which the maintenance campaign supplies the missing fence.
 
 **Consequences:** An old room pays one lazy local migration on its first wake.
 Room code must use `WorkstreamObjectStore`; future DDL uses a new immutable
-schema version. Authority remains phase-dependent until the regional campaign
-opens.
+schema version. D1 remains workspace/control authority and the directory query
+plane. Each opened WorkstreamDO becomes product authority, quarantine never
+falls back, and the final regional open is an explicit operator action;
+authority remains phase-dependent until that open.
 
 Shipped in the pull request for this change.
 
-### 2026-08-13 — Telemetry separates data projection from control authority
+### 2026-08-13 — Regional telemetry joins client intent to server truth, separates projection from control, and gives main the crash generations
 
-**What changed:** The architecture now names two directional telemetry RPC
-surfaces: validated event/outcome projection from Global to EU and opaque
-preference/journey control from EU to Global. Restricted regional telemetry
-operations are mounted separately from the product-session API.
+**What changed:** *Reporter and destinations.* Electron main now owns a typed,
+durable regional reporter and Crashpad lifecycle; APIs accept the same closed
+contract, add authoritative outcomes, and route to an internal EU sink or
+idiomatic Global PostHog adapter. Anonymous onboarding receives an immediate
+coarse route and later same-region person link.
 
-**Why:** EU onboarding needs both an immediate regional event path and a way to
-verify Global-issued journey authority, but combining them or sharing the signing
-key would turn a narrow region bridge into a general cross-region data plane.
+*Two directional RPC surfaces.* The architecture now names validated
+event/outcome projection from Global to EU and opaque preference/journey control
+from EU to Global. Restricted regional telemetry operations are mounted
+separately from the product-session API.
 
-**Considered and rejected:** One bidirectional telemetry bridge, a shared
-capability key, and leaving replay/raw-access helpers without a deployed
-authorization boundary.
-
-**Consequences:** Event payloads cross only Global-to-EU; EU-to-Global commands
-carry no event, dump, regional analytics identity, or destination key. Operator
-access remains independently authenticated in the owning region.
-
-Shipped in the pull request for this change. Design: [regional telemetry
-PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
-
-### 2026-08-12 — Regional telemetry joins client intent to server truth
-
-**What changed:** Electron main now owns a typed, durable regional reporter and
-Crashpad lifecycle; APIs accept the same closed contract, add authoritative
-outcomes, and route to an internal EU sink or idiomatic Global PostHog adapter.
-Anonymous onboarding receives an immediate coarse route and later same-region
-person link.
-
-**Why:** Product funnels need the intent visible only in the client and the result
-known only by the service, while crash reporting must survive renderer and process
-failure without placing provider authority in that renderer.
-
-**Considered and rejected:** A PostHog SDK in Electron, automatic DOM/network
-capture, a Global region-pending queue, Segment as a second destination layer, and
-using analytics as canonical state. Those shapes either weaken the trust/region
-boundary or lose the semantic server outcome.
-
-**Consequences:** Telemetry remains observational and independently fallible.
-Every new event enters the shared registry and receives tests at producer,
-regional acceptance, and destination boundaries; EU and Global resources are
-operated independently.
-
-Shipped in the pull request for this change. Design: [regional telemetry
-PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
-
-### 2026-08-12 — Main owns route-final native crash generations
-
-**What changed:** Added the first regional telemetry module boundary in Electron
-main: Crashpad writes only inside an active route-final generation, and a later
+*Native crashes.* The first regional telemetry module boundary in Electron main:
+Crashpad writes only inside an active route-final generation, and a later
 process rotates or purges that whole generation before starting another handler.
 The detailed lifecycle and future regional pipeline live in
 [`telemetry.md`](telemetry.md).
 
-**Why:** Crashpad cannot be stopped after startup and cannot use Rally's required
+**Why:** Product funnels need the intent visible only in the client and the
+result known only by the service, while crash reporting must survive renderer
+and process failure without placing provider authority in that renderer.
+
+EU onboarding needs both an immediate regional event path and a way to verify
+Global-issued journey authority, but combining them or sharing the signing key
+would turn a narrow region bridge into a general cross-region data plane.
+
+Crashpad cannot be stopped after startup and cannot use Rally's required
 authenticated-header uploader. Giving main ownership of the directory above the
 live database preserves Electron's supported boundary while allowing policy,
 region, and absolute retention to be enforced between launches.
+
+**Considered and rejected:** A PostHog SDK in Electron, automatic DOM/network
+capture, a Global region-pending queue, Segment as a second destination layer,
+and using analytics as canonical state. Those shapes either weaken the
+trust/region boundary or lose the semantic server outcome. Also one
+bidirectional telemetry bridge, a shared capability key, and leaving
+replay/raw-access helpers without a deployed authorization boundary.
+
+**Consequences:** Telemetry remains observational and independently fallible.
+Every new event enters the shared registry and receives tests at producer,
+regional acceptance, and destination boundaries; EU and Global resources are
+operated independently. Event payloads cross only Global-to-EU; EU-to-Global
+commands carry no event, dump, regional analytics identity, or destination key.
+Operator access remains independently authenticated in the owning region.
 
 **Future changes must preserve:** Renderer code never owns crash paths or
 transport, and main never reads or mutates a database while its Crashpad handler
