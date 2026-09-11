@@ -99,15 +99,19 @@ read until the next read succeeds, and **Refresh** asks now. There is no
 per-operation read: the list is the read, and selecting a row selects from
 it. The template is read before the page judges it: "reading" first, then
 either the form, the regional API's own reason it could not be read, or — when
-the template seats nobody to present — a sentence saying so rather than a form
-that cannot be submitted. **New demo** takes a company name, the presenter
-(the one real person, chosen from the template's members), and a name for
-every other pack role: text fields labelled **User 1** onwards, opening on the
-pack's own default names, so a demo is cast for the company being presented to
-rather than staffed by whoever is in the Google workspace
-([`demo-workspaces.md`](demo-workspaces.md#casting-a-demo)). It refuses to
-start while two of them are called the same thing or one is blank, and mints
-one operation id per form so a second click resolves to the same preparation.
+the template seats nobody to present, or the company has fewer people than the
+pack has parts — a sentence saying so rather than a form that cannot be
+submitted. **New demo** takes a company name, the presenter (chosen from the
+template's members, because they are handed its connections), and a colleague
+for every other pack role: one dropdown per part, labelled with what that part
+is — **Product**, **Sales**, **Legal** for the pack in service — listing
+everyone with a `@rallywith.ai` account who has signed in, by name and address
+([`demo-workspaces.md`](demo-workspaces.md#casting-a-demo)). They open uncast: a
+default here would seat a real person because nobody looked, and the form says
+how many parts are still empty rather than leaving **Start preparation** dead
+with nothing to read. It refuses to start while a part is uncast, one person is
+in two parts, or two of them share a display name, and mints one operation id
+per form so a second click resolves to the same preparation.
 **Retry** is offered while a preparation is failed and disabled while it is
 running; a running one that has stopped moving is abandoned rather than raced. A Ready demo names the workspace and where
 the presenter finds it — the account menu at the foot of Rally's sidebar,
@@ -447,6 +451,32 @@ contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only change
 do not publish a new Ace bundle.
 
 ## Changelog
+
+### 2026-09-10 — New demo casts colleagues from a dropdown
+
+**What changed:** The cast fields are dropdowns of the company's own people —
+everyone with a `@rallywith.ai` account who has signed in — and the page sends
+user ids rather than names. They open uncast rather than pre-filled, Start is
+refused while a part is uncast, one person is in two parts, or two of them
+share a display name, and the page says so when there are fewer colleagues than
+the pack has parts, instead of a form that cannot be submitted.
+
+**Why:** The team asked for the real addresses: the invented cast was not being
+used. A default was dropped with it — yesterday's form opened on the pack's
+suggested names because a name is a thing you type over, but a pre-selected
+colleague is a real person seated in a demo workspace because nobody looked at
+the field.
+
+**Consequences:** The presenter's list and the cast's are now different lists
+from the same response, and the page names the domain when it says the second
+one is too short — so it reads the domain from the template rather than
+carrying a copy of it. A template that reads fine but has nobody to cast is its
+own state rather than the "could not be read" one, because Refresh is not the
+remedy for it. What the page refuses, the regional API refuses again: the
+dropdown is a convenience, not the boundary
+([`demo-workspaces.md`](demo-workspaces.md#casting-a-demo)).
+
+Shipped in #664.
 
 ### 2026-09-09 — Bound and recover early-access operations
 

@@ -23,26 +23,18 @@ export const DemoOperationStatusValueSchema = z.enum(["running", "ready", "faile
 const RoleSchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u);
 
 /**
- * The name one role is played under. The operator types it and the demo's
- * directory carries it, so it is one line of ordinary text: a control
- * character would reach a mention's visible text, which the room validates
- * against the person it names.
- */
-export const DemoCastNameSchema = z.string().trim().min(1).max(80).regex(/^[^\p{Cc}]+$/u);
-
-/**
  * What the operator submits. The pack is the regional API's; the cast is the
- * operator's — a name per role, not an account. Only the presenter is a real
- * person, because only the presenter signs in; everyone else is played by a
- * persona the region mints for this operation, so a demo is not limited to
- * the people who happen to be in the template.
+ * operator's — an account per role, chosen from the people on the company's
+ * own email domain. Everybody in a demo is a real colleague: the presenter
+ * signs in and shows it, and the rest are the teammates whose names and
+ * addresses the presenter is content to have on screen.
  */
 export const DemoOperationStartRequestSchema = z.strictObject({
   operationId: IdSchema,
   companyName: z.string().trim().min(1).max(80),
   presenterUserId: IdSchema,
-  /** The name each pack role but the presenter's is played under. */
-  cast: z.record(RoleSchema, DemoCastNameSchema),
+  /** The account playing each pack role but the presenter's. */
+  cast: z.record(RoleSchema, IdSchema),
 });
 export type DemoOperationStartRequest = z.infer<typeof DemoOperationStartRequestSchema>;
 
@@ -89,7 +81,7 @@ export const DemoOperationStatusSchema = z.strictObject({
   presenterUserId: IdSchema,
   presenterName: z.string().min(1).max(255).nullable(),
   packVersion: z.string().min(1).max(80),
-  /** Who plays each role, by user id: the presenter, and this operation's personas. */
+  /** Who plays each role, by user id: the presenter, and the colleagues cast with them. */
   cast: z.record(RoleSchema, IdSchema),
   /** The name each of those carries in the demo's directory, for the page to show. */
   castNames: z.record(RoleSchema, z.string().min(1).max(255)),
@@ -117,10 +109,20 @@ export const DemoOperationListSchema = z.strictObject({
   operations: z.array(DemoOperationStatusSchema),
 });
 
+/** One person a role can be played by, as the form lists them. */
+export const DemoCastCandidateSchema = z.strictObject({
+  userId: IdSchema,
+  name: z.string().min(1).max(255),
+  email: z.string().max(254),
+});
+export type DemoCastCandidate = z.infer<typeof DemoCastCandidateSchema>;
+
 /**
- * What the New demo form is built from: the pack's roles with the name each
- * is offered under, and the template's members, who the presenter is chosen
- * from. Only the presenter comes from that list.
+ * What the New demo form is built from: the pack's roles, the template's
+ * members, who the presenter is chosen from, and the accounts every other
+ * role can be played by. The two lists are different questions — a presenter
+ * is handed the template's connections, a cast member is only seated — so
+ * they are answered separately rather than filtered from one.
  */
 export const DemoTemplateSchema = z.strictObject({
   workspaceId: IdSchema,
@@ -129,8 +131,8 @@ export const DemoTemplateSchema = z.strictObject({
     roles: z.array(RoleSchema),
     /** The role the presenter plays, which is cast from the template's members. */
     presenterRole: RoleSchema.nullable(),
-    /** The name each other role is offered under before the operator changes it. */
-    castDefaults: z.record(RoleSchema, DemoCastNameSchema),
+    /** What each other role is — the part the operator casts somebody into, which labels its field. */
+    roleLabels: z.record(RoleSchema, z.string().min(1).max(40)),
   }),
   members: z.array(z.strictObject({
     userId: IdSchema,
@@ -138,6 +140,10 @@ export const DemoTemplateSchema = z.strictObject({
     email: z.string().max(254),
     role: z.enum(["owner", "admin", "member"]),
   })),
+  /** Everyone on the company's email domain who has signed in to this region. */
+  castCandidates: z.array(DemoCastCandidateSchema),
+  /** The domain those were drawn from, so the page can say whose list it is showing. */
+  castEmailDomain: z.string().min(1).max(253),
 });
 export type DemoTemplate = z.infer<typeof DemoTemplateSchema>;
 
