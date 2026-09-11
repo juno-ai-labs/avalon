@@ -2090,11 +2090,20 @@ async function loadAutomationCreatorPluginCatalog(
           granted.has(definition.capability)
           && connectorCapabilitySupportsScope(adapter, definition.capability, scope)
         ));
+    // What this connection can be triggered by, which is not what the connector
+    // declares: a scope the connector cannot deliver activity on has none. Read
+    // once here so the entry the model inspects and the capability test below
+    // are the same answer.
+    const activityTriggersForConnection = connectorActivityTriggerDescriptors(
+      adapter,
+      row.config_json == null ? null : String(row.config_json),
+      scope,
+    );
     // A connection earns its catalog entry by what an automation can do with
     // it: call its tools, or be started by its events. A generic webhook has
     // no tools by design and exists only to be a trigger, so a filter on
     // tools alone made every webhook automation impossible to draft.
-    const eventCapable = adapter.manifest.activityTriggers.length > 0 || Boolean(adapter.webhookActivity);
+    const eventCapable = activityTriggersForConnection.length > 0;
     if (!dynamicCapability && !staticDefinitions.length && !eventCapable) continue;
     const frozen: FrozenConnectorPlugin = {
       pluginId: `connection:${connectionId}`,
@@ -2165,7 +2174,7 @@ async function loadAutomationCreatorPluginCatalog(
       scope,
       searchAliases: presentation.searchAliases,
       systemMessage: presentation.systemMessage,
-      activityTriggers: connectorActivityTriggerDescriptors(adapter, row.config_json == null ? null : String(row.config_json)),
+      activityTriggers: activityTriggersForConnection,
       tools: definitions.map((definition) => ({
           name: stableWireToolName(wirePrefix, definition.name),
           canonicalName: definition.name,

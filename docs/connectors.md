@@ -571,6 +571,38 @@ Connectors expose one of two provider-facing activity facets while sharing the s
 - `webhookActivity.verify` verifies exact raw bytes and returns a provider-neutral delivery envelope; `normalize` applies connection scope and provider-specific semantics. GitHub, Granola, Linear, Notion, and generic webhook use this facet.
 - `pollingActivity` declares named streams and polls each from an opaque provider-native high-watermark. Its required `normalizeHighWatermark` hook canonicalizes sequences, dates, cursors, legacy values, or composite provider state both when checkpoints are loaded and before they are committed. The shared checkpoint runner bounds retries and backlog scheduling while leaving provider hooks in control of checkpoint semantics, pagination, reset/reconciliation rules, and activity normalization. Google currently supplies Gmail, Calendar, and Drive streams.
 
+#### Declaring which scopes activity is delivered on
+
+**A connector whose events do not arrive on every scope it supports says so in
+its manifest**, with `activityConnectionScopes`. Omitting it means every scope
+in `supportedScopes` — the same default `capabilityConnectionScopes` gives a
+capability — so this is opt-in, and only Granola narrows it today:
+
+```ts
+supportedScopes: ["personal", "workspace"],
+activityConnectionScopes: ["workspace"],
+```
+
+`connectorActivitySupportsScope` is the one predicate that reads it, and
+`connectorActivityTriggerDescriptors` is the one place that applies it: a
+connection on a scope outside the set has **no triggers at all**, whatever the
+manifest declares. Both surfaces that decide what may become a Sidekick rule
+read through that function — the drafting catalog that shows a model what it
+can bind, and the apply that turns a bound rule into a registration — so an
+undeliverable rule is unwritable in the first and refused by the second with
+`sidekick_connection_delivers_no_events`.
+
+The rule exists because the fact used to live only in the adapter's
+`normalize`, which runs on a delivery. For a connection that receives none,
+that code is never reached, so nothing upstream could see the problem: a
+personal Granola connection was offered as a trigger source, a `note.generated`
+rule bound to it, and the Sidekick published as active. It then sat through
+every meeting its author had, because Granola registers its webhook endpoint
+against the workspace API key and had never been told this Rally workspace
+existed. **Ask it when adding an adapter: is this connector's subscription
+bought per person, or once for the account?** A scope that cannot answer yes to
+the second is not an event source.
+
 #### Declaring what a digest may read
 
 **Every activity type a connector declares must say whether a person should be told about it in a digest, and there is no default.** `ConnectorActivityTriggerDescriptor` carries a required `digestible`, and `defineConnectorActivityTriggers` takes the event types as two lists rather than one:
@@ -941,6 +973,7 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 | `apps/api/test/connector-oauth-error.test.ts` | `isRevokedGrantError` and the three-answer classification. |
 | `apps/api/test/connector-actor-identity.test.ts` | The three tiers, the monotonic write, and that only `verified_email` is recorded. |
 | `apps/api/test/connector-catalog-discovery.test.ts` | `searchAliases`, the catalog wording, and the load sentence. |
+| `apps/api/test/connector-activity-triggers.test.ts` | That a connection has no triggers on a scope its connector does not deliver activity on, that a connector declaring no narrower set answers the same on either, and that a generic webhook still reads its configured event types. |
 | `apps/api/test/connector-tool-selection.test.ts` | Capability intersection and the `connectorCapabilityRefused` shape. |
 | `apps/api/test/connector-poll-reliability.test.ts` | `normalizeHighWatermark` on both load and commit, the bounded retries, and backlog scheduling. |
 | `apps/api/test/connector-event-authority.test.ts` | WorkspaceDO event admission/replay and frozen pre-cutover activity rows ignored once object authority is open. |
@@ -962,6 +995,42 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-11 — A manifest declares which scopes its activity is delivered on
+
+**What changed:** `ConnectorManifest` gained an optional
+`activityConnectionScopes`, defaulting to `supportedScopes`; Granola declares
+`["workspace"]`. `connectorActivityTriggerDescriptors` now takes the
+connection's scope and returns no triggers for one outside that set.
+
+**Why:** Granola supports both connection scopes but delivers events on only
+one — the webhook endpoint is registered against the workspace API key, and a
+personal connection is MCP OAuth that subscribes to nothing. That fact was
+stated only inside `webhookActivity.normalize`, which throws `unauthorized` for
+a non-workspace connection. It is the wrong place for it to be the only
+statement: `normalize` runs on a delivery, and the whole failure is that no
+delivery ever comes. So nothing upstream could see it. A Sidekick drafted
+against a personal Granola connection was offered the `note.generated` trigger,
+bound a rule to it, published as active, and never ran — through every meeting
+its author had, with no error anywhere, because each individual step had
+succeeded.
+
+The alternative considered was checking the scope at each surface that treats a
+connection as an event source. Rejected: that is two checks today and a third
+whenever a surface is added, and the one that gets forgotten fails exactly this
+silently again. Declaring it on the manifest puts the fact where the connector
+author knows it and where `supportedScopes` already lives, and subtracting it
+inside `connectorActivityTriggerDescriptors` puts the subtraction at the one
+function both deciding surfaces already read through — so a surface added later
+inherits the rule rather than having to remember it.
+
+**What a future change has to respect:** an empty trigger list means *this
+connection* cannot be an event source, which is not the same as the connector
+having no triggers; do not reintroduce a caller that reads
+`manifest.activityTriggers` directly to answer whether something can be
+triggered. A connector added with a per-account subscription must declare its
+narrower set, and the manifest refuses a set that is empty, outside
+`supportedScopes`, or narrows activity the connector never declared.
 
 ### 2026-09-11 — Google, Slack, Linear, Notion, and Granola describe their parameters
 

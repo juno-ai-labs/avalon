@@ -576,10 +576,20 @@ or the memory store the automation scope lives in.
   `sidekick_definition_not_ready`, `sidekick_plugin_unavailable`,
   `sidekick_workspace_connection_required`,
   `sidekick_personal_connection_access_denied`, `sidekick_person_not_found`,
-  `sidekick_resource_not_found`, `sidekick_recurrence_has_no_future`,
+  `sidekick_resource_not_found`, `sidekick_connection_delivers_no_events`,
+  `sidekick_recurrence_has_no_future`,
   `sidekick_timezone_invalid`, and the evaluator blocker codes. An identity
   mismatch is a bare `Error`, deliberately, because it is a wiring fault and not
   a refusal.
+- **A rule names a connection that receives nothing.** Apply refuses with
+  `sidekick_connection_delivers_no_events` when a selected activity source is a
+  connection on a scope its connector cannot deliver activity on — a personal
+  Granola connection is the case that exists, since the webhook endpoint is
+  bought against the workspace API key. The connector manifest is what says so,
+  through `activityConnectionScopes`; [`connectors.md`](connectors.md) owns the
+  declaration. This is a refusal rather than a warning because the alternative
+  is a registration nothing can match, which presents to a person as a Sidekick
+  that is active, has no error, and never runs.
 - **Apply fails part-way.** The transaction either committed or did not; the
   alarm re-arming and the registration replacement after it are idempotent, so
   the durable publication alarm retries and converges. Registration replacements
@@ -730,6 +740,41 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-11 — Apply refuses a rule on a connection that cannot receive events
+
+**What changed:** `prepareApplication` asks
+`connectorActivityTriggerDescriptors` for the selected connection's triggers
+with that connection's *scope*, and refuses with
+`sidekick_connection_delivers_no_events` when it comes back empty and the
+definition has an external-event trigger. The drafting catalog reads the same
+function, so a connection that receives nothing is no longer offered as a
+trigger source at all.
+
+**Why:** A Sidekick published as active that never runs, with no error on any
+surface, because each step in the chain succeeded on its own terms. Granola
+supports personal and workspace connections but delivers events on only the
+workspace one; the catalog's `eventCapable` test asked whether the *connector*
+had triggers, which it does, and apply checked only that the connection's scope
+was allowed for the Sidekick's own scope, which it was. So a `note.generated`
+rule was bound to a personal connection and registered, and the workspace
+matcher then had nothing to match it against — for every meeting its author had.
+
+Refusal rather than a warning, because a warning has to be read by whoever is
+looking at the moment it is written, and this failure's whole character is that
+nobody looks: there is no run, no error, and no row anywhere to notice. The
+narrower alternative — special-casing Granola here — was rejected because the
+question ("can this connection receive events") is the same question every
+future connector with a per-account subscription will pose, and the answer
+belongs in its manifest. [`connectors.md`](connectors.md) owns that declaration.
+
+**What a future change has to respect:** the refusal is conditional on the
+definition actually having an external-event trigger, because evaluator rules
+on a definition without one are never registered and refusing them would break
+drafts that are merely incomplete. A surface added later that treats a
+connection as an event source must go through
+`connectorActivityTriggerDescriptors` rather than reading
+`manifest.activityTriggers`, or it reintroduces exactly this gap.
 
 ### 2026-09-11 — A Sidekick's result names the Sidekick, and its documents land in the room
 
