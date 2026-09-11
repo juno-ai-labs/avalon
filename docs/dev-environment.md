@@ -41,6 +41,38 @@ node node_modules/.pnpm/electron@*/node_modules/electron/install.js
 ls node_modules/.pnpm/electron@*/node_modules/electron/dist/electron   # exists once it worked
 ```
 
+**That installer can fail behind the sandbox proxy, and retrying does not help.**
+Its downloader is undici, and the 125 MB transfer dies partway through on an
+internal assertion rather than a network error:
+
+```
+AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  assert(!this.paused)
+    at Parser.finish (.../undici/lib/dispatcher/client-h1.js:368:5)
+```
+
+`recentRelayFailures` in the proxy status stays empty, because nothing on the
+proxy side refused anything — this is the client mishandling the paused receive
+the proxy uses for large downloads. `curl` handles the same download fine, so
+fetch the release archive yourself and place it where `electron/index.js` looks:
+`path.txt` names the executable inside `dist/`, and both together are the whole
+of what the installer would have produced.
+
+```bash
+d=$(ls -d node_modules/.pnpm/electron@*/node_modules/electron)
+version=$(node -p "require('./$d/package.json').version")
+curl -fSL --retry 3 -o /tmp/electron.zip \
+  "https://github.com/electron/electron/releases/download/v$version/electron-v$version-linux-x64.zip"
+mkdir -p "$d/dist" && unzip -q -o /tmp/electron.zip -d "$d/dist"
+printf 'electron' > "$d/path.txt" && chmod +x "$d/dist/electron"
+rm /tmp/electron.zip
+"$d/dist/electron" --version   # prints the FATAL root/sandbox notice, which is expected here
+```
+
+That last line is the check: as root with no `--no-sandbox` the binary aborts
+with `Running as root without --no-sandbox is not supported`, which means it ran.
+`electron-vite dev --noSandbox` passes the flag for real runs.
+
 ```bash
 cp .env.example .env.local   # optional for the API, required for the desktop client
 pnpm env:sync
