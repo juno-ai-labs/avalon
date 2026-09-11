@@ -84,22 +84,18 @@ defined in [`docs/sandbox.md`](docs/sandbox.md).
 
 ## Quality gates
 
-Every change must leave `pnpm lint` (zero warnings), `pnpm typecheck`, and
-`pnpm test` green in CI. Run lint and typecheck locally as well — both cache, so
-a warm run is seconds and there is nothing to scope. Tests are the one to scope:
+Run lint and typecheck locally as well — both cache, so a warm run is seconds
+and there is nothing to scope. Tests are the one to scope:
 run the ones that cover what you touched, and
 [`docs/testing.md`](docs/testing.md#how-much-to-run) says when a full run is
-worth the minutes and when it is waste. CI additionally runs `pnpm test:scripts`,
-both Wrangler dry-run builds, the desktop release invariants, and a Gitleaks scan
-over the full history.
+worth the minutes and when it is waste.
 
-`pnpm test:scripts` covers only the repository's own `scripts/`. The release
-tooling under `apps/desktop/scripts/` — the planner and the workflow invariants —
-is a separate suite that CI runs as `pnpm --filter @rally/desktop test:release`.
-Run that one too when touching a release script, or its tests will not execute
-locally and the name of the other gate will suggest they did.
+`pnpm test:scripts` covers the repository's own `scripts/`. The release
+tooling under `apps/desktop/scripts/` is a separate suite that CI runs as
+`pnpm --filter @rally/desktop test:release`. Run that **only** when touching
+a release script.
 
-Both gates cache; warm runs take seconds. **After changing a rule in
+Both gates cache; warm runs take seconds. **_Only_ after changing a rule in
 `scripts/eslint-rules/`, run `pnpm lint:fresh`** — ESLint's cache keys on file
 contents alone, so it clears the rest of the tree against the _old_ rule. CI
 runs cold; limits in
@@ -218,7 +214,9 @@ sections, and the one thing that is non-negotiable: each such document ends with
 a **running changelog**, newest entry first, appended **in the same change as the
 code**. An entry records what changed _and why it changed_ — the pressure that
 forced it, the alternative that was rejected, and what a future change has to
-respect. The code says what the module does and the diff says what moved; only
+respect. **Only add meaningful and material entries.**
+
+The code says what the module does and the diff says what moved; only
 that section says why, and it is written for whoever changes this module a year
 from now without you to ask. "Refactor" and "cleanup" are not a why. Never invent
 one you do not know — say the earlier reasoning was not recorded.
@@ -230,6 +228,8 @@ one you do not know — say the earlier reasoning was not recorded.
 description sections, the repository's merge style, and its rule that pull
 requests are opened ready for review, never as drafts. Do not open a PR unless
 you were asked to.
+
+**Only rebase a branch in a PR if there is a conflict and not as a pre-merge ritual.**
 
 ## Security
 
