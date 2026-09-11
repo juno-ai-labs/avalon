@@ -197,7 +197,7 @@ describe('WorkstreamSidebar', () => {
         substreamId: asSubstreamId('00000000-0000-7000-8000-000000000097'), title: 'Launch risks', createdByUserId: asUserId(person.id),
         createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
       }] }}
-      creatingSubstream
+      creatingSubstream={{ reservedSubstreamId: null }}
       presentUserIds={[]}
       selectedSubstreamId="new"
       onSelectSubstream={vi.fn()}
@@ -240,6 +240,36 @@ describe('WorkstreamSidebar', () => {
     expect(name.closest('.workstream-pending-substream')).toBe(pending);
     expect(name.closest('.workstream-context-copy')).toBeNull();
     expect(pending?.querySelector('.workstream-context-copy')).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('yields the creating row the moment the child it reserved is published', () => {
+    // The child is published to the parent's directory from inside the
+    // confirmation, so its real row can arrive before the response that
+    // navigates. Two rows for one conversation is the thing this list must
+    // never show, and the reserved id is what tells them apart.
+    const reserved = asSubstreamId('00000000-0000-7000-8000-000000000096');
+    render(<Tooltip.Provider><WorkstreamSidebar
+      workstream={{ ...workstream, privateChildren: [{
+        substreamId: reserved, title: 'Retry budget failures', createdByUserId: asUserId(person.id),
+        createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
+      }] }}
+      creatingSubstream={{ reservedSubstreamId: reserved }}
+      presentUserIds={[]}
+      selectedSubstreamId="new"
+      onSelectSubstream={vi.fn()}
+      onNewSubstream={vi.fn()}
+      onOpenArtifact={vi.fn()}
+      onParticipants={vi.fn()}
+      onFocusTranscript={vi.fn()}
+    /></Tooltip.Provider>);
+    const sidebar = screen.getByRole('complementary');
+    expect(sidebar.querySelector('.workstream-pending-substream')).toBeNull();
+    // Current on the published row rather than on nothing: the route still says
+    // `new` for the tick before the response navigates, and the reader is in
+    // that conversation either way.
+    expect(screen.getByRole('button', { name: 'Go to substream: Retry budget failures' }))
+      .toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('button', { name: 'New substream' })).not.toHaveAttribute('aria-current');
   });
 
   it('keeps the arrow for a substream whose title has no first character', () => {
