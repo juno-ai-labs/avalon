@@ -5,6 +5,8 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
+  renameSubstream: vi.fn(),
+  setSubstreamArchived: vi.fn(),
   renameWorkstream: vi.fn(),
   archiveWorkstream: vi.fn(),
   setWorkstreamScope: vi.fn(),
@@ -198,6 +200,42 @@ describe('socket-first work-stream open', () => {
       kind: 'workstream_action_completed', workstreamId, action, origin: 'ad_hoc', pinned: false,
     })));
     expect(mutation.mock.calls.every(([id]) => id === workstreamId)).toBe(true);
+  });
+
+  it.each(['rename', 'archive'] as const)('keeps Main and child %s targets separate while a child is selected', async (action) => {
+    const childId = '00000000-0000-7000-8000-00000000066a';
+    const parent = recoveryBoot();
+    const child = recoveryBoot({ title: 'Private investigation' });
+    api.renameWorkstream.mockResolvedValue(parent);
+    api.archiveWorkstream.mockResolvedValue(parent);
+    api.renameSubstream.mockResolvedValue(undefined);
+    api.setSubstreamArchived.mockResolvedValue(undefined);
+    renderScreen(cache => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [
+        { substreamId: childId, title: child.title, createdByUserId: null, createdAt: child.createdAt, updatedAt: child.updatedAt },
+      ] });
+    }, childId);
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Go to substream: Private investigation' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: action === 'rename' ? 'Rename' : 'Archive substream' }));
+    if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed child' } });
+    fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
+    await waitFor(() => expect(action === 'rename' ? api.renameSubstream : api.setSubstreamArchived)
+      .toHaveBeenCalledWith(workstreamId, childId, action === 'rename' ? 'Renamed child' : true));
+    expect(api.renameWorkstream).not.toHaveBeenCalled();
+    expect(api.archiveWorkstream).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    // Re-enter the child after archiving it: the directory fixture remains so
+    // this isolates the row target from the currently selected conversation.
+    act(() => navigateInTest(`/workstreams/${workstreamId}?substream=${childId}`));
+    await mainMenu(action === 'rename' ? 'Rename' : 'Archive work stream');
+    if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed parent' } });
+    fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
+    await waitFor(() => expect(action === 'rename' ? api.renameWorkstream : api.archiveWorkstream)
+      .toHaveBeenCalledWith(...(action === 'rename' ? [workstreamId, 'Renamed parent'] : [workstreamId])));
+    expect(action === 'rename' ? api.renameSubstream : api.setSubstreamArchived).toHaveBeenCalledOnce();
   });
 
   it.each(['navigate', 'rename'] as const)('discards a delayed copy failure after %s', async (next) => {

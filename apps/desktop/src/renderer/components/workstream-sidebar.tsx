@@ -16,23 +16,25 @@ const COLLAPSED_KEY = 'rally.workstream-sidebar-collapsed';
 const WIDTH_KEY = 'rally.workstream-sidebar-width';
 const clampWidth = (width: number): number => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
 
-export interface SubstreamRowTarget { substreamId: string; title: string }
-export interface SubstreamRowActions {
-  onCopyLink?: ((target: SubstreamRowTarget) => void) | undefined;
-  onRename: (target: SubstreamRowTarget) => void;
-  onArchive: (target: SubstreamRowTarget) => void;
+export interface ConversationRowTarget { substreamId: string; title: string }
+export interface ConversationRowActions {
+  onMakePublic?: (() => void) | undefined;
+  publicDisabled?: boolean | undefined;
+  onCopyLink?: ((target: ConversationRowTarget) => void) | undefined;
+  onRename: (target: ConversationRowTarget) => void;
+  onArchive: (target: ConversationRowTarget) => void;
 }
 
-function ConversationRowMenu({ actions, children, target, main = false, onMakePublic, publicDisabled }: {
-  actions: SubstreamRowActions | undefined; children: React.ReactNode; target: SubstreamRowTarget;
-  main?: boolean; onMakePublic?: (() => void) | undefined; publicDisabled?: boolean | undefined;
+function ConversationRowMenu({ actions, children, target }: {
+  actions: ConversationRowActions | undefined; children: React.ReactNode; target: ConversationRowTarget;
 }): React.JSX.Element {
   if (!actions) return <>{children}</>;
+  const main = target.substreamId === '0';
   return <ContextMenu.Root>
     <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
     <ContextMenu.Portal>
       <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
-        {onMakePublic && <ContextMenu.Item className="menu-item" disabled={publicDisabled} onSelect={onMakePublic}>
+        {actions.onMakePublic && <ContextMenu.Item className="menu-item" disabled={actions.publicDisabled} onSelect={actions.onMakePublic}>
           <Globe2 aria-hidden="true" size={16} /> Make public to workspace
         </ContextMenu.Item>}
         <ContextMenu.Item className="menu-item" onSelect={() => actions.onRename(target)}>
@@ -68,8 +70,8 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
   onOpenArtifact: (id: string, returnFocus: HTMLElement) => void;
   onParticipants: () => void;
   onFocusTranscript: () => void;
-  substreamActions?: SubstreamRowActions | undefined;
-  mainActions?: (SubstreamRowActions & { onMakePublic?: (() => void) | undefined; publicDisabled: boolean }) | undefined;
+  substreamActions?: ConversationRowActions | undefined;
+  mainActions?: ConversationRowActions | undefined;
 }): React.JSX.Element {
   const sidebar = useRef<HTMLElement>(null);
   const [collapsed, setCollapsed] = useState(() => {
@@ -132,8 +134,7 @@ export function WorkstreamSidebar({ workstream, presentUserIds, selectedSubstrea
       <div className="workstream-context-toolbar window-drag" />
       <div className="workstream-context-scroll">
         <ConversationRowMenu actions={mainActions}
-          main target={{ substreamId: '0', title: workstream.title }}
-          onMakePublic={mainActions?.onMakePublic} publicDisabled={mainActions?.publicDisabled}>
+          target={{ substreamId: '0', title: workstream.title }}>
           <button
             className={clsx('workstream-context-row workstream-conversation-row', selectedSubstreamId === '0' && 'is-current')}
             aria-current={selectedSubstreamId === '0' ? 'page' : undefined}
