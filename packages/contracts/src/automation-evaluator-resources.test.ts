@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  automationBindableResourceTypes,
+  automationTriggersAdmitResourceType,
   isSentinelAutomationResourceId,
   withoutUnusableAutomationResourceIds,
 } from "./automation-evaluators";
@@ -11,6 +13,9 @@ const triggers = {
   ],
   plugin_webhook: [
     { eventType: "deploy.finished", eventFamilies: [], resourceRelationships: [] },
+  ],
+  plugin_malformed: [
+    { eventType: "thing.happened", eventFamilies: [], resourceRelationships: [{ relationship: "page" }] },
   ],
 } as const;
 const lookup = (pluginId: string) => (triggers as Record<string, readonly unknown[]>)[pluginId] as never;
@@ -84,6 +89,19 @@ describe("dropping a resource id a rule cannot use", () => {
     expect(sourceOf(kept)).toHaveProperty("resourceId", "3d1f8c2a-5b6e-4c7d-8e9f-0a1b2c3d4e5f");
   });
 
+  it("drops an id on a relationship that names no resource type, which no resource can match", () => {
+    // Narrower than the length test this replaced, and deliberately so: a
+    // relationship with no `resourceType` cannot equal any resource's type, so
+    // acceptance would refuse every id written against it. Unreachable through
+    // a parsed descriptor — the schema requires both fields — and this path
+    // runs before that parse.
+    const stripped = withoutUnusableAutomationResourceIds(
+      rule("plugin_malformed", { kind: "event_type", eventType: "thing.happened" }, "3d1f8c2a-5b6e-4c7d-8e9f-0a1b2c3d4e5f"),
+      lookup,
+    );
+    expect(sourceOf(stripped)).not.toHaveProperty("resourceId");
+  });
+
   it("leaves an unknown plugin or event alone for the validator to describe", () => {
     const unknownPlugin = rule("plugin_nowhere", { kind: "event_type", eventType: "x" }, "3d1f8c2a-5b6e-4c7d-8e9f-0a1b2c3d4e5f");
     expect(sourceOf(withoutUnusableAutomationResourceIds(unknownPlugin, lookup))).toHaveProperty("resourceId");
@@ -91,6 +109,60 @@ describe("dropping a resource id a rule cannot use", () => {
     expect(sourceOf(withoutUnusableAutomationResourceIds(unknownEvent, lookup))).toHaveProperty("resourceId");
     expect(withoutUnusableAutomationResourceIds("not rules", lookup)).toBe("not rules");
     expect(withoutUnusableAutomationResourceIds({ evaluators: "nope" }, lookup)).toEqual({ evaluators: "nope" });
+  });
+});
+
+describe("the resource types a rule may name", () => {
+  const githubTriggers = [
+    {
+      eventType: "github.pull_request.opened",
+      eventFamilies: [],
+      resourceRelationships: [{ relationship: "repository", resourceType: "github_repository" }],
+    },
+    {
+      eventType: "github.release.published",
+      eventFamilies: [],
+      resourceRelationships: [
+        { relationship: "repository", resourceType: "github_repository" },
+        { relationship: "application", resourceType: "github_repository" },
+      ],
+    },
+    { eventType: "github.check_run.completed", eventFamilies: [], resourceRelationships: [] },
+  ];
+
+  it("is the containers the triggers declare, each named once with every way it is reached", () => {
+    expect(automationBindableResourceTypes(githubTriggers)).toEqual([
+      { resourceType: "github_repository", relationships: ["repository", "application"] },
+    ]);
+  });
+
+  it("is empty for triggers that declare no relationship, so nothing is offered that cannot be bound", () => {
+    expect(automationBindableResourceTypes([githubTriggers[2]!])).toEqual([]);
+    expect(automationBindableResourceTypes([])).toEqual([]);
+  });
+
+  it("admits only a declared type, which is the question both validators ask", () => {
+    expect(automationTriggersAdmitResourceType(githubTriggers, "github_repository")).toBe(true);
+    // The events themselves produce these, in their tens of thousands. None is
+    // a container a rule can narrow itself to.
+    for (const produced of ["github_pull_request", "github_file", "github_check_run", "uploaded_file"]) {
+      expect(automationTriggersAdmitResourceType(githubTriggers, produced), produced).toBe(false);
+    }
+  });
+
+  it("leaves out a relationship it cannot read, because it runs before the schema parse too", () => {
+    // One shape per assertion: a single bundled `toEqual` says something broke
+    // without saying which shape did.
+    for (const unreadable of [null, "repository", { relationship: "repository" }, { resourceType: "" }, { resourceType: 7 }]) {
+      expect(
+        automationBindableResourceTypes([{ eventType: "e", resourceRelationships: [unreadable] }]),
+        JSON.stringify(unreadable) ?? "undefined",
+      ).toEqual([]);
+    }
+    // A readable entry beside an unreadable one still counts.
+    expect(automationBindableResourceTypes([
+      { eventType: "e", resourceRelationships: [null, { resourceType: "slack_channel" }] },
+    ])).toEqual([{ resourceType: "slack_channel", relationships: [] }]);
   });
 });
 

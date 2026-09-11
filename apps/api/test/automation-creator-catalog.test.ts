@@ -289,7 +289,7 @@ describe("automation-creator plugin catalog", () => {
     expect(result.output).toEqual({ people: [] });
   });
 
-  it("returns resources visible to the run's user with the connection's model plugin id", async () => {
+  it("returns only the containers an event can be narrowed to, with the plugin and relationship each is reached through", async () => {
     const localDb = localDatabase();
     localDb.prepare(
       `INSERT INTO workspace_members (workspace_id, user_id, role, status)
@@ -308,13 +308,35 @@ describe("automation-creator plugin catalog", () => {
       ownerUserId: null,
       modelPluginId: "plugin_granola",
     });
-    localDb.prepare(
+    // Granola's `note.generated` declares a relationship to a folder and to
+    // nothing else, so the folder is a rule's to name and the notes it produced
+    // are not. The notes are `granola_note`, the type the connector actually
+    // writes, and every one of them is newer than the folder.
+    //
+    // The count is the point. The page is fetched with `limit: 10`, so seeding
+    // more than ten fresher notes is what separates the fix from a filter
+    // applied after the fetch: post-filtering ten notes leaves an empty answer
+    // and the folder still unreachable, which is the original defect exactly.
+    // Two rows would let either implementation pass.
+    const insertResource = localDb.prepare(
       `INSERT INTO resources
          (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
           title, created_at, updated_at)
-       VALUES (?, ?, ?, 'meeting_note', 'granola', 'note-1',
-               'Automation catalog kickoff notes', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z')`,
-    ).run("00000000-0000-4000-8000-000000000402", WORKSPACE_ID, "00000000-0000-4000-8000-000000000401");
+       VALUES (?, ?, ?, ?, 'granola', ?, ?, ?, ?)`,
+    );
+    insertResource.run(
+      "00000000-0000-4000-8000-000000000402", WORKSPACE_ID, "00000000-0000-4000-8000-000000000401",
+      "granola_folder", "folder-1", "Automation catalog folder",
+      "2026-08-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z",
+    );
+    for (let index = 0; index < 14; index += 1) {
+      insertResource.run(
+        `00000000-0000-4000-8000-0000000005${String(index).padStart(2, "0")}`,
+        WORKSPACE_ID, "00000000-0000-4000-8000-000000000401",
+        "granola_note", `note-${index}`, `Automation catalog kickoff notes ${index}`,
+        "2026-08-02T00:00:00.000Z", `2026-08-02T00:00:${String(index).padStart(2, "0")}.000Z`,
+      );
+    }
 
     const resourcesSearch = await automationCreatorTool(localDb, workflowInput(), "resources_search");
     const result = await resourcesSearch.execute(
@@ -322,15 +344,89 @@ describe("automation-creator plugin catalog", () => {
       { toolCallId: "resources-1" } as never,
     );
 
-    expect(result.output).toMatchObject({
+    expect(result.output).toEqual({
+      searchableResourceTypes: ["granola_folder"],
       resources: [{
         id: "00000000-0000-4000-8000-000000000402",
-        title: "Automation catalog kickoff notes",
-        resourceType: "meeting_note",
+        title: "Automation catalog folder",
+        resourceType: "granola_folder",
         provider: "granola",
         pluginId: "plugin_granola",
+        relationships: ["folder"],
         sourceBindingKeys: [],
       }],
     });
+  });
+
+  it("returns nothing rather than everything when the workspace's connectors declare no bindable resource", async () => {
+    const localDb = localDatabase();
+    localDb.prepare(
+      `INSERT INTO workspace_members (workspace_id, user_id, role, status)
+       VALUES (?, ?, 'member', 'active')`,
+    ).run(WORKSPACE_ID, USER_ID);
+    // A generic webhook's events reach no container at all. Its resources are
+    // therefore offerable to nobody, and an empty answer is the honest one:
+    // the tool's own description tells the model to write the rule with a
+    // filter field instead of hunting for an id that cannot exist.
+    insertConnection(localDb, {
+      id: "00000000-0000-4000-8000-000000000501",
+      connectorType: "generic_webhook",
+      scope: "workspace",
+      ownerUserId: null,
+      modelPluginId: "plugin_webhook",
+      configJson: JSON.stringify({ eventTypes: ["order.created"] }),
+    });
+    localDb.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
+          title, created_at, updated_at)
+       VALUES (?, ?, ?, 'webhook_payload', 'generic_webhook', 'order-1',
+               'Automation catalog order', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z')`,
+    ).run("00000000-0000-4000-8000-000000000502", WORKSPACE_ID, "00000000-0000-4000-8000-000000000501");
+
+    const resourcesSearch = await automationCreatorTool(localDb, workflowInput(), "resources_search");
+    const result = await resourcesSearch.execute(
+      { query: "automation catalog" },
+      { toolCallId: "resources-2" } as never,
+    );
+
+    // Both halves matter to the model: nothing came back, and nothing could
+    // have. An empty `searchableResourceTypes` is the only case in which
+    // abandoning `resourceId` is the right read of an empty page.
+    expect(result.output).toEqual({ searchableResourceTypes: [], resources: [] });
+  });
+
+  it("separates a query that matched nothing from a workspace where nothing could match", async () => {
+    const localDb = localDatabase();
+    localDb.prepare(
+      `INSERT INTO workspace_members (workspace_id, user_id, role, status)
+       VALUES (?, ?, 'member', 'active')`,
+    ).run(WORKSPACE_ID, USER_ID);
+    insertConnection(localDb, {
+      id: "00000000-0000-4000-8000-000000000601",
+      connectorType: "granola",
+      scope: "workspace",
+      ownerUserId: null,
+      modelPluginId: "plugin_granola",
+    });
+    localDb.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
+          title, created_at, updated_at)
+       VALUES (?, ?, ?, 'granola_folder', 'granola', 'folder-1',
+               'Design review folder', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z')`,
+    ).run("00000000-0000-4000-8000-000000000602", WORKSPACE_ID, "00000000-0000-4000-8000-000000000601");
+
+    const resourcesSearch = await automationCreatorTool(localDb, workflowInput(), "resources_search");
+    const result = await resourcesSearch.execute(
+      { query: "quarterly planning" },
+      { toolCallId: "resources-3" } as never,
+    );
+
+    // The folder the model wanted is one wording away. Answering this the same
+    // as the webhook case above is how a search miss reaches a person as "the
+    // automation system cannot bind this" — the sentence that produced the
+    // incident this whole path exists to stop repeating.
+    expect(result.output).toEqual({ searchableResourceTypes: ["granola_folder"], resources: [] });
   });
 });

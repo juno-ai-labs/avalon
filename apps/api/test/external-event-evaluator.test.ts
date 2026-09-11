@@ -101,5 +101,20 @@ describe("external event evaluator", () => {
         }] },
       }],
     }, { inspectedPlugins, resources, personIds: new Set() })).toThrow("sidekick_evaluator_invalid");
+
+    // The resource half of the same boundary, and the branch every other
+    // caller of `automationTriggersAdmitResourceType` defers to. A Slack
+    // message is *about* a channel and nothing else, so an id resolved to a
+    // message — the thing the event produced — is refused rather than admitted
+    // as a narrower rule that would never match.
+    expect(() => validateDraftEvaluatorRules(rules, {
+      inspectedPlugins,
+      resources: new Map([["22222222-2222-4222-8222-222222222222", {
+        pluginId: "plugin_slack",
+        sourceBindingKey: "slack",
+        resourceType: "slack_message",
+      }]]),
+      personIds: new Set(),
+    })).toThrow("sidekick_evaluator_resource_relationship_invalid");
   });
 });

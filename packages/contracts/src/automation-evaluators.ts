@@ -359,6 +359,70 @@ export interface AutomationRuleTriggerShape {
   resourceRelationships?: readonly unknown[] | undefined;
 }
 
+/**
+ * One resource type an evaluator rule may name, and the relationships through
+ * which the triggers reach it.
+ */
+export interface AutomationBindableResourceType {
+  resourceType: string;
+  relationships: readonly string[];
+}
+
+/**
+ * The resource types a rule may narrow itself to, given the triggers it could
+ * match.
+ *
+ * The one answer to "may this rule name that resource": a `resourceId` is
+ * admitted only where the event's own descriptor declares a relationship to
+ * that resource's type, so every type outside this set is a refusal the
+ * validators are certain to reach. Every caller asks it here rather than
+ * walking `resourceRelationships` again — the normalizer, both validators, the
+ * watched-resource reconciler, and the search that decides what to offer at
+ * all. Why that last one forced the extraction is in
+ * `docs/automation-lifecycle.md`'s changelog.
+ *
+ * Shape-tolerant in the way {@link withoutUnusableAutomationResourceIds} is:
+ * it reads descriptors both before and after their schema parse, so a
+ * relationship it cannot read is one it leaves out rather than throws on.
+ */
+export function automationBindableResourceTypes(
+  triggers: readonly AutomationRuleTriggerShape[],
+): readonly AutomationBindableResourceType[] {
+  const relationshipsByResourceType = new Map<string, string[]>();
+  for (const trigger of triggers) {
+    for (const declared of trigger.resourceRelationships ?? []) {
+      if (!declared || typeof declared !== "object" || Array.isArray(declared)) continue;
+      const { relationship, resourceType } = declared as Record<string, unknown>;
+      if (typeof resourceType !== "string" || resourceType.length === 0) continue;
+      const relationships = relationshipsByResourceType.get(resourceType) ?? [];
+      if (typeof relationship === "string" && relationship.length > 0 && !relationships.includes(relationship)) {
+        relationships.push(relationship);
+      }
+      relationshipsByResourceType.set(resourceType, relationships);
+    }
+  }
+  return [...relationshipsByResourceType].map(([resourceType, relationships]) => ({
+    resourceType,
+    relationships,
+  }));
+}
+
+/**
+ * Whether a rule matching these triggers may name a resource of this type.
+ *
+ * The predicate every validator asks, kept beside the set rather than rederived
+ * at each call site: search offering a type acceptance would refuse, or
+ * refusing one it would admit, is the single defect this pair exists to make
+ * unrepresentable.
+ */
+export function automationTriggersAdmitResourceType(
+  triggers: readonly AutomationRuleTriggerShape[],
+  resourceType: string,
+): boolean {
+  return automationBindableResourceTypes(triggers)
+    .some((bindable) => bindable.resourceType === resourceType);
+}
+
 const ZERO_PAYLOAD_ID = /^0{8}-0{4}-[0-9a-f]0{3}-[0-9a-f]0{3}-0{12}$/u;
 const FULL_PAYLOAD_ID = /^f{8}-f{4}-[0-9a-f]f{3}-[0-9a-f]f{3}-f{12}$/u;
 
@@ -434,5 +498,5 @@ function ruleTriggersCanNameAResource(
       ? triggers.filter((trigger) => (trigger.eventFamilies ?? []).includes(eventFamily))
       : [];
   if (named.length === 0) return true;
-  return named.some((trigger) => (trigger.resourceRelationships ?? []).length > 0);
+  return automationBindableResourceTypes(named).length > 0;
 }
