@@ -37,6 +37,8 @@ import {
   ConversationParentAuthorityResultSchema,
   ConversationParentAuthorizeViewerRequestSchema,
   ConversationParentAuthorizeViewerResultSchema,
+  ConversationParentResolveViewerResultSchema,
+  type ConversationParentResolveViewerResult,
   ConversationParentReserveChildRequestSchema,
   ConversationParentReserveChildResultSchema,
   BeginPrivateChildPreparationRequestSchema,
@@ -878,13 +880,23 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   // are inherited; the three below need this object's own row.
   // ---------------------------------------------------------------------------
 
-  async authorizeViewer(
+  async authorizeViewer(input: ConversationParentAuthorizeViewerRequest): Promise<ConversationParentAuthorizeViewerResult> {
+    const decision = await this.resolveViewer(input);
+    return ConversationParentAuthorizeViewerResultSchema.parse({
+      authorized: decision.authorized,
+      archived: decision.archived,
+      ...(decision.childStatus === undefined ? {} : { childStatus: decision.childStatus }),
+      ...(decision.membershipVersion === undefined ? {} : { membershipVersion: decision.membershipVersion }),
+    });
+  }
+
+  async resolveViewer(
     input: ConversationParentAuthorizeViewerRequest,
-  ): Promise<ConversationParentAuthorizeViewerResult> {
+  ): Promise<ConversationParentResolveViewerResult> {
     await this.initialized;
     const request = ConversationParentAuthorizeViewerRequestSchema.parse(input);
     const row = this.metadataRow();
-    if (!row) return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: false });
+    if (!row) return ConversationParentResolveViewerResultSchema.parse({ exists: false, authorityGeneration: 0, authorized: false, archived: false });
     this.assertParent(request.workspaceId, request.parentId);
     const substreamId = request.substreamId ?? "0";
     if (substreamId !== "0") {
@@ -898,7 +910,9 @@ export class WorkstreamDO extends ConversationParentDurableObject {
           WHERE child.substream_id = ? AND child.kind = 'child'`,
         request.userId, substreamId,
       ));
-      return ConversationParentAuthorizeViewerResultSchema.parse({
+      return ConversationParentResolveViewerResultSchema.parse({
+        exists: true,
+        authorityGeneration: row.authority_generation,
         authorized: (row.scope === "workspace" || this.isParticipant(request.userId))
           && child?.status === "ready" && child.version !== null,
         // Either archive reaches this conversation: the work stream's, which
@@ -913,7 +927,9 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     // Archive is reported, not folded into the answer: an archived work stream
     // is still readable by the people who could read it, only not writable.
     const authorized = row.scope === "workspace" || this.isParticipant(request.userId);
-    return ConversationParentAuthorizeViewerResultSchema.parse({
+    return ConversationParentResolveViewerResultSchema.parse({
+      exists: true,
+      authorityGeneration: row.authority_generation,
       authorized,
       archived: row.archived_at !== null,
     });

@@ -49,6 +49,15 @@ connection lifecycle around that admission protocol.
 
 ## How it works
 
+Conversation ticket authorization uses the parent's `resolveViewer` operation:
+existence, generation, archive state, and the requested child's visibility arrive
+in one RPC. An existing but inaccessible workstream is refused immediately;
+automation discovery is attempted only when the workstream parent is absent.
+The later socket admission still checks its own authority fences. The full
+opening snapshot overlaps viewer-profile and product-detail loading rather than
+serializing those independent reads.
+
+
 A client cannot authenticate a WebSocket handshake the way it authenticates a
 request: a browser sets no headers on one, so `Authorization` is unavailable. So
 admission is split in two.
@@ -715,6 +724,20 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
+
+## Changelog
+
+### 2026-09-12 — Resolve conversation opening authority in one parent call
+
+Opening previously read parent authority and then requested viewer authorization
+in a second RPC, paying two network round trips to the same owner. `resolveViewer`
+returns the combined decision, including private-child membership version and
+archive state. The legacy methods remain for callers that need only one fact.
+Snapshot assembly also overlaps independent viewer and detail reads. Speculative
+prewarming and stale authorization caches were rejected because they do not
+remove the repeated work and complicate revocation. Full snapshot contents and
+fresh upgrade checks are preserved.
+
 
 ### 2026-09-08 — Make socket evolution independent of URL capabilities
 

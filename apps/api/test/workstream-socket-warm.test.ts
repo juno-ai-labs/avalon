@@ -31,15 +31,14 @@ const auth: AuthContext = {
 };
 
 /**
- * The parent's two answers the ticket path depends on: that this id names a
+ * The parent's combined answer the ticket path depends on: that this id names a
  * work stream, and whether this person may read its conversations. Both are
  * the real `WorkstreamDO`'s in `test-workers/conversation-parent-contract`;
  * here they are the seam, so the Worker-side sequence is what is under test.
  */
 function parentDecisions(authorized = true, archived = false, membershipVersion = 0) {
   return {
-    authority: vi.fn(async () => ({ exists: true, authorityGeneration: 7, archived })),
-    authorizeViewer: vi.fn(async () => ({ authorized, archived, membershipVersion })),
+    resolveViewer: vi.fn(async () => ({ exists: true, authorityGeneration: 7, authorized, archived, membershipVersion })),
   };
 }
 
@@ -107,7 +106,7 @@ describe("conversation socket ticket preparation", () => {
     });
     // The parent decided before anything was issued, and it was asked about
     // this person, not merely whether the work stream exists.
-    expect(parent.authorizeViewer).toHaveBeenCalledWith({
+    expect(parent.resolveViewer).toHaveBeenCalledWith({
       workspaceId, parentId: workstreamId, substreamId: "0", userId,
     });
     expect(deferred).toHaveLength(1);
@@ -191,7 +190,7 @@ describe("conversation socket ticket preparation", () => {
       substreamId,
       admission: { membershipVersion: 3 },
     });
-    expect(parent.authorizeViewer).toHaveBeenCalledWith({
+    expect(parent.resolveViewer).toHaveBeenCalledWith({
       workspaceId, parentId: workstreamId, substreamId, userId,
     });
     expect(deferred).toEqual([]);
@@ -218,7 +217,7 @@ describe("conversation socket ticket preparation", () => {
       status: 404,
       code: "conversation_not_found",
     });
-    expect(parent.authorizeViewer).toHaveBeenCalledWith({
+    expect(parent.resolveViewer).toHaveBeenCalledWith({
       workspaceId, parentId: workstreamId, substreamId: "0", userId,
     });
     expect(deferred).toEqual([]);

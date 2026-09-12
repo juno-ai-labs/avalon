@@ -53,6 +53,13 @@ export const ConversationParentAuthorityResultSchema = z.strictObject({
   archived: z.boolean(),
 });
 
+/** One authoritative answer for conversation opening, without a second parent RPC. */
+export const ConversationParentResolveViewerResultSchema = ConversationParentAuthorizeViewerResultSchema.extend({
+  exists: z.boolean(),
+  authorityGeneration: z.number().int().nonnegative(),
+});
+export type ConversationParentResolveViewerResult = z.infer<typeof ConversationParentResolveViewerResultSchema>;
+
 /**
  * Record a child before it is addressed.
  *

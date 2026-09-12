@@ -1724,6 +1724,16 @@ queue rather than in Bind, because Bind is right to refuse the shape and only
 the object knows which pending row would fix it. A room wedged before this
 shipped recovers on its own: the answer is still in the queue, and the next wake
 promotes it.
+### 2026-09-12 — Remove the second parent round trip from opening
+
+The Worker now calls `resolveViewer` to receive existence, generation, archive
+state, and child visibility together. The prior authority-then-viewer sequence
+asked one owner twice before issuing a ticket. Legacy narrow methods delegate
+to the same visibility implementation, preserving their response shapes. The
+conversation snapshot also overlaps independent viewer and detail reads; it
+continues to carry the complete authorized baseline. A prewarming expansion was
+rejected because it leaves the duplicate network dependency in every cold open.
+
 
 ### 2026-09-11 — A read is acknowledged by the conversation that was read
 
