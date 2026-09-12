@@ -119,6 +119,14 @@ export class ArtifactOpenService {
     return { row, host };
   }
 
+  /**
+   * Authorize a navigation and mint its single-use viewer grant.
+   *
+   * Inspection callers use `resolveAuthorized` alone because they neither need
+   * a migrated hostname nor a viewer session. Keeping those effects here
+   * prevents a read of artifact data or errors from creating a grant nobody
+   * will redeem.
+   */
   async open(resourceId: string): Promise<ArtifactOpenResult> {
     const { row, host } = await this.resolveAuthorized(resourceId);
     const workspaceId = this.auth.workspaceId;
