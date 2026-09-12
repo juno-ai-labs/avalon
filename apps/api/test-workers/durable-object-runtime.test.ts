@@ -43,9 +43,11 @@ import { enqueueSemanticRealtimeReference } from "../src/durable-objects/workstr
 import {
   insertPreparedTranscriptFact,
   prepareTranscriptFact,
+  WorkstreamTranscriptStorage,
 } from "../src/durable-objects/workstream-transcript-storage";
 import type { Env } from "../src/env";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
+import { canonicalModelMessageJson } from "../src/services/workstream-participant-model-message";
 import {
   admitFixturePendingInput,
   seedParticipantMessage,
@@ -5922,6 +5924,143 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(event).toMatchObject({
         type: "loop_input_removed", sequence: 1, inputId, outcome: "delivered",
       });
+    });
+  });
+
+  it("keeps the bootstrap model waterline below a second canonical input still in flight", async () => {
+    await seedOpenAuthority();
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      parentKind: "workstream",
+      parentId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const transcript = (instance as unknown as { transcript: WorkstreamTranscriptStorage }).transcript;
+      const loopId = substreamLoopId(WORKSTREAM_ID);
+      const loops = new SubstreamLoopStorage(state.storage);
+      loops.ensureLoop({ loopId, bindStateRevision: 0, now: 1_000 });
+      await transcript.commitBindTransition({
+        kind: "state_initialized",
+        loopId,
+        generation: 1,
+        stateRevision: 1,
+        systemProjection: {
+          revision: 1,
+          rendererVersion: "workstream-system-v1",
+          inputHash: "waterline-system",
+          message: { role: "system", content: "System" },
+        },
+        nonSystemMessages: [],
+        nonSystemMessageOrigins: [],
+      }, 1_000);
+      state.storage.sql.exec(
+        `UPDATE substream_loops SET bind_state_revision = 1 WHERE id = 1`,
+      );
+      const admitEarlyCanonical = async (inputId: string, text: string, now: number) => {
+        const prepared = await transcript.prepareParticipantMessage({
+          turnId: inputId,
+          actor: "human",
+          authorUserId: USER_ID,
+          authorSnapshot: { displayName: "Test user", avatarUrl: null },
+          clientMessageId: `waterline-${inputId}`,
+          messageType: "text",
+          text,
+          structuredContentJson: null,
+          externalActorJson: null,
+          producedByRunId: null,
+          messageSequenceNumber: 1,
+          createdAtUtc: new Date(now).toISOString(),
+          attentionOrdinal: 1,
+        });
+        transcript.appendPreparedParticipantMessage(prepared);
+        loops.reserveInputPreparation({
+          inputId,
+          loopId,
+          clientMessageId: `waterline-${inputId}`,
+          preparationKind: "human_message",
+          envelopeJson: "{}",
+          now,
+        });
+        loops.completeInputPreparation({
+          inputId,
+          preparedTurnId: inputId,
+          mode: "queue",
+          actor: "human",
+          authorUserId: USER_ID,
+          authorNameSnapshot: "Test user",
+          authorAvatarUrlSnapshot: null,
+          clientMessageId: `waterline-${inputId}`,
+          externalActorJson: null,
+          messageType: "text",
+          preparedPayloadId: prepared.fact.payloadId,
+          preparedFactId: prepared.fact.factId,
+          preparedPayloadAudience: prepared.fact.audience,
+          preparedPayloadMediaType: "application/json",
+          preparedPayloadJson: prepared.fact.canonical,
+          bindPayloadJson: canonicalModelMessageJson({ role: "user", content: text }),
+          preparedPayloadSha256: prepared.fact.hash,
+          preparedPayloadByteLength: new TextEncoder().encode(prepared.fact.canonical).byteLength,
+          provenanceJson: JSON.stringify({
+            factKind: prepared.fact.factKind,
+            originKind: prepared.fact.origin.originKind,
+            sourceKind: prepared.fact.origin.sourceKind,
+            sourceId: prepared.fact.origin.sourceId,
+            sourceRevision: prepared.fact.origin.sourceRevision,
+            runId: prepared.fact.runId,
+            toolCallId: prepared.fact.toolCallId,
+          }),
+          authorizationJson: JSON.stringify({
+            workspaceId: WORKSPACE_ID,
+            workstreamId: WORKSTREAM_ID,
+            executionPrincipal: { type: "user", userId: USER_ID },
+            confirmedParticipantUserIds: [],
+            participantEpochs: { [USER_ID]: null },
+            reason: "human_message",
+            deliveredBeforeAgentPreparation: true,
+          }),
+          attachmentsJson: "[]",
+          mentionsJson: "[]",
+          now,
+        });
+      };
+      const firstInputId = "00000000-0000-7000-8000-00000000014e";
+      const secondInputId = "00000000-0000-7000-8000-00000000014f";
+      await admitEarlyCanonical(firstInputId, "first canonical input", 1_001);
+      await admitEarlyCanonical(secondInputId, "second canonical input", 1_002);
+      const loop = loops.loop()!;
+
+      await transcript.activatePendingInput({
+        loopId,
+        expectedInputId: firstInputId,
+        expectedLoopRevision: loop.revision,
+        expectedBindGeneration: 1,
+        expectedBindStateRevision: 1,
+        receipt: {
+          runId: "00000000-0000-7000-8000-000000000150",
+          substreamId: "0",
+          executionEpoch: 1,
+          leaseOwner: "waterline-lease",
+          leaseExpiresAt: 100_000,
+          executionContextJson: JSON.stringify({ kind: "waterline-test" }),
+          executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }),
+          origin: "human_message",
+          model: null,
+        },
+        enqueueRegionalEffectsInTransaction: () => undefined,
+        now: 1_003,
+      });
+
+      // The activated input is now model-visible, so it is excluded; the later
+      // canonical input remains in flight and fences the durable watermark.
+      expect(loops.loop()).toMatchObject({ transcript_projected_through: 1 });
+      expect(state.storage.sql.exec(
+        `SELECT prepared_turn_id FROM pending_loop_inputs WHERE input_id = ?`, secondInputId,
+      ).one()).toEqual({ prepared_turn_id: secondInputId });
     });
   });
 
