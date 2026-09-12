@@ -34,10 +34,12 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-obje
 import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
 import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
+import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
 import { WorkstreamDO } from "../src/durable-objects/workstream-do";
 import { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import type { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-message-storage";
+import { enqueueSemanticRealtimeReference } from "../src/durable-objects/workstream-semantic-realtime-outbox";
 import {
   insertPreparedTranscriptFact,
   prepareTranscriptFact,
@@ -5808,6 +5810,108 @@ describe("Durable Objects in the Workers runtime", () => {
         producedByRunId: null,
         now: Date.parse("2026-08-26T20:00:00.000Z"),
       });
+      // The stale input reference is durable before the later activation has
+      // written its minimal delivery receipt. Its drain must not block the room
+      // cursor behind an overlay that canonical delivery never created.
+      enqueueSemanticRealtimeReference(
+        state.storage.sql,
+        { kind: "loop_input_upserted", inputId },
+        Date.parse("2026-08-26T20:00:00.001Z"),
+      );
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM delivered_loop_inputs WHERE input_id = ?`,
+        inputId,
+      ).one()).toEqual({ count: 0 });
+
+      const testable = instance as unknown as TestableSubstreamAgent;
+      const delivered: Record<string, unknown>[] = [];
+      vi.spyOn(testable, "deliverCommittedRealtimeEvent").mockImplementation(async (event) => {
+        delivered.push(event);
+      });
+      await testable.drainSemanticRealtimeOutbox();
+      expect(delivered).toHaveLength(2);
+      expect(delivered[0]).toEqual(expect.objectContaining({
+        type: "transcript_turn_upserted",
+        sequence: 1,
+        turn: expect.objectContaining({ turnId: inputId }),
+      }));
+      expect(delivered[1]).toEqual(expect.objectContaining({
+        type: "loop_input_removed",
+        sequence: 2,
+        inputId,
+        outcome: "delivered",
+      }));
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM durable_outbox WHERE channel = 'semantic_realtime_v1'`,
+      ).one()).toEqual({ count: 0 });
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM delivered_loop_inputs WHERE input_id = ?`,
+        inputId,
+      ).one()).toEqual({ count: 0 });
+
+      // The recovered removal must acknowledge its reference, allowing a later
+      // semantic frame to flow instead of leaving the room cursor stuck here.
+      enqueueSemanticRealtimeReference(
+        state.storage.sql,
+        { kind: "transcript_turn", turnId: inputId },
+        Date.parse("2026-08-26T20:00:00.002Z"),
+      );
+      await testable.drainSemanticRealtimeOutbox();
+      expect(delivered).toHaveLength(3);
+      expect(delivered[2]).toEqual(expect.objectContaining({
+        type: "transcript_turn_upserted",
+        sequence: 3,
+        turn: expect.objectContaining({ turnId: inputId }),
+      }));
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM durable_outbox WHERE channel = 'semantic_realtime_v1'`,
+      ).one()).toEqual({ count: 0 });
+    });
+  });
+
+  it("hydrates an overtaken pending upsert as a delivered removal from the minimal receipt", async () => {
+    await seedOpenAuthority();
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      parentKind: "workstream",
+      parentId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const inputId = "00000000-0000-7000-8000-00000000014c";
+      await new WorkstreamMessageStorage(state.storage).appendMessage({
+        messageId: inputId,
+        clientMessageId: "semantic-overtaken-receipted",
+        authorType: "external",
+        authorUserId: null,
+        externalActorJson: JSON.stringify({ provider: "slack", displayName: "Release bot" }),
+        messageType: "text",
+        text: "Canonical after the pending overlay was activated",
+        structuredContentJson: null,
+        producedByRunId: null,
+        now: Date.parse("2026-08-26T20:00:00.000Z"),
+      });
+      const turn = state.storage.sql.exec<{ attention_ordinal: number }>(
+        `SELECT attention_ordinal FROM participant_transcript_turns WHERE turn_id = ?`, inputId,
+      ).one();
+      const loops = new SubstreamLoopStorage(state.storage);
+      const loop = loops.loop() ?? loops.ensureLoop({
+        loopId: substreamLoopId(WORKSTREAM_ID),
+        bindStateRevision: 0,
+        now: Date.parse("2026-08-26T20:00:00.001Z"),
+      });
+      state.storage.sql.exec(
+        `INSERT INTO delivered_loop_inputs
+           (input_id, loop_id, input_sequence, delivered_turn_id,
+            delivered_attention_ordinal, delivered_at)
+         VALUES (?, ?, 1, ?, ?, ?)`,
+        inputId, loop.loop_id, inputId, turn.attention_ordinal,
+        Date.parse("2026-08-26T20:00:00.001Z"),
+      );
       const event = (instance as unknown as TestableSubstreamAgent).semanticRealtimeEvent({
         messageId: "semantic-realtime:1",
         sequence: 1,
@@ -5815,10 +5919,7 @@ describe("Durable Objects in the Workers runtime", () => {
         reference: { kind: "loop_input_upserted", inputId },
       });
       expect(event).toMatchObject({
-        type: "loop_input_removed",
-        sequence: 1,
-        inputId,
-        outcome: "delivered",
+        type: "loop_input_removed", sequence: 1, inputId, outcome: "delivered",
       });
     });
   });
