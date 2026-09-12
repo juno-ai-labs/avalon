@@ -117,7 +117,7 @@ flowchart LR
   C --> D
   C --> S["WorkspaceDO alarm"]
   S --> SA
-  SA --> A["Rally Bind 14 adapter"]
+  SA --> A["Rally Bind 15 adapter"]
   A --> O["OpenRouter"]
   A --> T["Authorized connection plugins"]
   A --> X["Deferred Terminal plugin"]
