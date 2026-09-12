@@ -1,8 +1,11 @@
 import { SignJWT } from "jose";
 import type { DatabaseSync } from "node:sqlite";
+import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app";
+import type { HonoAppEnv } from "../src/env";
+import { requireAuth } from "../src/middleware/auth";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -95,5 +98,18 @@ describe("authentication in the complete application router", () => {
     }, env());
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({ error: { code: "workspace_setup_required" } });
+  });
+
+  it("authenticates when workspace middleware is mounted without identity middleware", async () => {
+    const app = new Hono<HonoAppEnv>();
+    app.use("*", requireAuth);
+    app.get("/protected", (c) => c.json({ ok: true }));
+    const bindings = env();
+    const prepare = vi.spyOn(bindings.DB, "prepare");
+    const response = await app.request("/protected", {
+      headers: { authorization: `Bearer ${await bearer()}` },
+    }, bindings);
+    expect(response.status).toBe(200);
+    expect(prepare.mock.calls.filter(([sql]) => sql.includes("FROM sessions s"))).toHaveLength(1);
   });
 });
