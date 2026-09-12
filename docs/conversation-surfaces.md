@@ -65,9 +65,8 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
 - `apps/desktop/src/renderer/lib/markdown-lists.ts` owns list editing in a
   draft: what Enter, Tab, Shift+Tab and the two list toggles do to a bulleted or
   numbered list, as pure functions over `(text, selectionStart, selectionEnd)`.
-  `composer-input.tsx` binds the keys, applies the returned edit through the
-  field's own `execCommand` so the change stays on its undo stack, and offers
-  the two toggles in the plus menu. A second text surface that wants the same
+  `composer-input.tsx` binds the keys and applies the returned edit through the
+  field's own `execCommand`, so the change stays on its undo stack. A second text surface that wants the same
   keys takes these rather than growing its own; the file's own header states the
   rules and why each is what it is.
 - `apps/desktop/src/renderer/screens/conversation-surface.tsx` is the one feed
@@ -623,8 +622,8 @@ because they are the same draft.
 
 `lib/markdown-lists.ts` is new and owns list editing as three pure functions
 over a draft and its selection: `continueListAtCaret` (the newline key),
-`shiftListAtCaret` (Tab and Shift+Tab), and `toggleListAtSelection` (⌘/Ctrl+⇧8,
-⌘/Ctrl+⇧7, and the two new items in the composer's plus menu). So a `- ` or
+`shiftListAtCaret` (Tab and Shift+Tab), and `toggleListAtSelection` (⌘/Ctrl+⇧8
+and ⌘/Ctrl+⇧7). So a `- ` or
 `1. ` carries itself to the next line, a numbered list counts, Tab nests onto
 the column the item above puts its own content in, Enter on an empty item walks
 back out a level and then leaves the list, and a task item's continuation gets
@@ -653,6 +652,16 @@ the moment a draft outgrew the field every line under the caret ran beneath the
 plus button — which is exactly the state somebody writing a long list is in.
 A row the controls own cannot be scrolled into, and it needs no number to be
 chosen.
+
+**A list is started by typing one, and only by typing one.** The plus menu
+briefly carried **Bulleted list** and **Numbered list** items, on the reasoning
+that a behaviour nobody can see is a behaviour nobody uses. They are not there:
+a `- ` or a `1. ` *is* the affordance, the menu command was a second way to say
+the same thing that could drift from what the keys do, and the composer's
+bottom-left row is the one piece of chrome this change was also making less
+crowded. `toggleListAtSelection` stays for the two shortcuts, which are what
+turns lines somebody has *already written* into a list — the one thing typing a
+marker cannot do.
 
 **Consequences:** Tab now has a meaning inside the composer, which is a
 keyboard-accessibility hazard if it is unconditional, so every operation returns

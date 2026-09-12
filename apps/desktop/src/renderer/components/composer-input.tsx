@@ -1,6 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
-import { ArrowUp, AtSign, Check, ChevronDown, List, ListOrdered, LoaderCircle, Mic, Paperclip, Plus } from 'lucide-react';
+import { ArrowUp, AtSign, Check, ChevronDown, LoaderCircle, Mic, Paperclip, Plus } from 'lucide-react';
 import {
   forwardRef,
   Fragment,
@@ -516,23 +516,6 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
     return kind !== null && runListEdit(toggleListAtSelection(live, selectionStart, selectionEnd, kind));
   };
 
-  /**
-   * The same toggle from the composer's menu. The menu took focus to open, so
-   * the field has to have it back before `execCommand` can edit it — a frame
-   * later, once Radix has finished closing and `onCloseAutoFocus` has handed
-   * focus here rather than to the trigger.
-   */
-  const toggleListFromMenu = (kind: ListMarkerKind): void => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    const { selectionStart, selectionEnd } = textarea;
-    requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(selectionStart, selectionEnd);
-      runListEdit(toggleListAtSelection(textarea.value, selectionStart, selectionEnd, kind));
-    });
-  };
-
   const dictationButton = (idleLabel: string): React.JSX.Element => (
     <IconButton
       aria-pressed={dictationActive}
@@ -686,15 +669,6 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                     align="start"
                     className="menu-content composer-action-menu"
                     collisionPadding={8}
-                    /* Back to the draft rather than to the trigger. Every item
-                       here acts on the message being written, so the place to
-                       be once the menu is gone is the sentence, not the button
-                       that opened it — and the list toggles need the field
-                       focused before they can edit it at all. */
-                    onCloseAutoFocus={(event) => {
-                      event.preventDefault();
-                      textareaRef.current?.focus();
-                    }}
                     side="top"
                     sideOffset={8}
                   >
@@ -704,20 +678,6 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                     >
                       <Paperclip aria-hidden="true" />
                       <span>Attach files</span>
-                    </DropdownMenu.Item>
-                    <DropdownMenu.Item
-                      className="menu-item composer-action-menu-item"
-                      onSelect={() => toggleListFromMenu('bulleted')}
-                    >
-                      <List aria-hidden="true" />
-                      <span>Bulleted list</span>
-                    </DropdownMenu.Item>
-                    <DropdownMenu.Item
-                      className="menu-item composer-action-menu-item"
-                      onSelect={() => toggleListFromMenu('numbered')}
-                    >
-                      <ListOrdered aria-hidden="true" />
-                      <span>Numbered list</span>
                     </DropdownMenu.Item>
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
