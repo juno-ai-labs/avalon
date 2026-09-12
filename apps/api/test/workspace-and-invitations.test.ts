@@ -35,6 +35,7 @@ class StubDatabase {
   constructor(
     private readonly resolveFirst: FirstResolver,
     private readonly resolveAll?: (statement: RecordedStatement) => unknown[] | undefined,
+    private readonly resolveRun?: (statement: RecordedStatement) => void,
   ) {}
 
   readonly binding = createTestD1Database({
@@ -61,6 +62,10 @@ class StubDatabase {
     if (value === undefined) throw new Error(`Unexpected all() query: ${statement.sql}`);
     return value;
   }
+
+  run(statement: RecordedStatement): void {
+    this.resolveRun?.(statement);
+  }
 }
 
 class StubStatement {
@@ -81,6 +86,7 @@ class StubStatement {
   }
 
   async run<T>(): Promise<D1Result<T>> {
+    this.database.run(this.record());
     this.database.runs.push(this.record());
     return createTestD1Result<T>({ success: true, results: [], meta: { changes: 1 } });
   }
@@ -526,6 +532,34 @@ describe("workspace invitation lifecycle", () => {
       RESEND_API_KEY: "re_test_send_only",
     }), ownerAuth).createInvitation(invitationRow.email, "member"))
       .rejects.toMatchObject({ status: 502, code: "invitation_email_failed" });
+    const revocation = database.runs.find(({ sql }) => sql.includes("UPDATE workspace_invitations SET revoked_at = ?"));
+    expect(revocation?.values.slice(1)).toEqual([invitationRow.id, ownerAuth.workspaceId]);
+  });
+
+  it("revokes a newly persisted invitation when issuing its download grant fails", async () => {
+    const database = new StubDatabase(
+      ({ sql }) => {
+        if (sql.includes("SELECT 1 AS present")) return null;
+        if (sql.includes("WHERE i.id = ?")) return invitationRow;
+        return undefined;
+      },
+      undefined,
+      ({ sql }) => {
+        // A D1 failure while writing the grant (a partial migration, a
+        // transient error) must not leave the just-persisted invitation
+        // orphaned: the exact lockout this feature exists to prevent.
+        if (sql.includes("INSERT INTO download_grants")) throw new Error("D1 unavailable");
+      },
+    );
+    const resend = vi.fn();
+    vi.stubGlobal("fetch", resend);
+
+    await expect(new WorkspaceService(environment(database, {
+      APP_ENV: "production",
+      RESEND_API_KEY: "re_test_send_only",
+    }), ownerAuth).createInvitation(invitationRow.email, "member"))
+      .rejects.toThrow("D1 unavailable");
+    expect(resend).not.toHaveBeenCalled();
     const revocation = database.runs.find(({ sql }) => sql.includes("UPDATE workspace_invitations SET revoked_at = ?"));
     expect(revocation?.values.slice(1)).toEqual([invitationRow.id, ownerAuth.workspaceId]);
   });
