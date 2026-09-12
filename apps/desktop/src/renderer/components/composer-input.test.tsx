@@ -1,7 +1,7 @@
 import { createRef, type ComponentProps } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ComposerInput } from './composer-input';
 
 function renderInput(props: Partial<ComponentProps<typeof ComposerInput>> = {}): ReturnType<typeof render> {
@@ -194,6 +194,65 @@ describe('ComposerInput markdown lists', () => {
     // `*` is what Shift+8 reports; `Digit8` is what was pressed.
     expect(fireEvent.keyDown(textarea, { key: '*', code: 'Digit8', shiftKey: true, metaKey: true })).toBe(false);
     expect(onValueChange).toHaveBeenCalledWith('- write it up');
+  });
+
+  /**
+   * The tests above take the fallback, because jsdom defines no `execCommand`.
+   * This one stands one in, so the branch that actually runs in Electron is
+   * covered: the contiguous span the prefix rewrites collapse to, and the
+   * choice of command when that span is a deletion. Everything the undo-stack
+   * claim rests on is in those three lines, and an error in the head/tail
+   * arithmetic would corrupt a draft rather than fail loudly.
+   */
+  interface EditCommand { command: string; text: string; start: number; end: number }
+
+  function withExecCommand(): EditCommand[] {
+    const commands: EditCommand[] = [];
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: (command: string, _ui: boolean, text?: string) => {
+        const field = document.activeElement as HTMLTextAreaElement;
+        // Recorded before the edit: the selection is the span `applyDraftEdit`
+        // chose, and it is the thing under test. The field's own value is not —
+        // these are controlled textareas whose `value` prop the test holds
+        // fixed, so React writes it back on the render that follows.
+        commands.push({ command, text: text ?? '', start: field.selectionStart, end: field.selectionEnd });
+        field.setRangeText(text ?? '', field.selectionStart, field.selectionEnd, 'end');
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      },
+    });
+    onTestFinished(() => { Reflect.deleteProperty(document, 'execCommand'); });
+    return commands;
+  }
+
+  it('collapses a continuation and the renumber below it to one span', () => {
+    const commands = withExecCommand();
+    // An item with another below it, so the edit is a continuation *and* a
+    // renumber of a line further down — the case where the span is neither the
+    // caret nor the rest of the draft, and where getting either end of it wrong
+    // would eat text rather than fail loudly.
+    const { onValueChange, textarea } = composeAt('1. first\n1. third', 8, { shouldSubmitOnEnter: () => false });
+    textarea.focus();
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+
+    // Offsets 9 to 10 is the `1` of the third item — everything either side of
+    // it is untouched, so that one character is what the undo stack records.
+    expect(commands).toEqual([{ command: 'insertText', text: '2. \n3', start: 9, end: 10 }]);
+    // And the command's own input event is what carries the draft to the host.
+    expect(onValueChange).toHaveBeenCalledWith('1. first\n2. \n3. third');
+  });
+
+  it('removes a marker with the command that deletes, not an empty insert', () => {
+    const commands = withExecCommand();
+    const { onValueChange, textarea } = composeAt('- a\n- ', 6, { shouldSubmitOnEnter: () => false });
+    textarea.focus();
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+
+    // `insertText` with nothing to insert is not a delete in every engine. The
+    // span is the marker the draft is losing — offsets 4 to 6, not 4 to 4.
+    expect(commands).toEqual([{ command: 'delete', text: '', start: 4, end: 6 }]);
+    expect(onValueChange).toHaveBeenCalledWith('- a\n');
   });
 
   it('leaves the composer menu to attachments alone', () => {
