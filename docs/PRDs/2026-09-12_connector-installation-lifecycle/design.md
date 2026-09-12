@@ -1,8 +1,9 @@
-# Ashby personal MCP tool contract
+# Ashby connector and MCP contracts
 
 Companion to the [PRD](prd.md). This is the proposed adapter contract, not an
-implementation plan or a captured Ashby catalog. It specifies only the personal
-query/tool facet; the PRD owns workspace events and shared maintenance. It follows
+implementation plan or a captured Ashby catalog. The personal MCP sections below
+preserve the live provider contract; the final sections define workspace events
+and the registration points required by Rally's existing connector framework. It follows
 [agent tools](../../agent-tools.md) and the existing
 [hosted-MCP contract](../../hosted-mcp-connectors.md).
 
@@ -20,7 +21,7 @@ query/tool facet; the PRD owns workspace events and shared maintenance. It follo
 | Static tools | Empty; all executable tools come from authenticated live discovery |
 | Transport | Shared Streamable HTTP hosted-MCP adapter |
 | Endpoint | `https://mcp.ashbyhq.com/mcp/v1` |
-| Initial activation | Deferred; catalog discovery precedes `load_plugin` |
+| Initial activation | Deferred; `load_plugin` reauthorizes and discovers the live catalog before exposing tools |
 | Preload / restoration | Existing eligible activation hints only; reauthorize, rediscover, and hash before exposing tools |
 | Authority | Active owner membership, correct workspace, personal execution principal, enabled connection, granted capability, and current host policy |
 
@@ -202,7 +203,7 @@ distinguishes domain cases that share an existing connector error code.
 | `invalid_payload` / known argument validation | “These arguments do not match the Ashby tool's current requirements. Read its schema and correct the arguments before retrying.” | `field`, `expected`, `reason`; use the shared `kind: validation` failure shape for harness input validation. |
 | `unsupported_capability` / tool removed | “Ashby no longer exposes this tool. Start a new attempt to discover the current tools before continuing.” | `reason`; no repeat in the current cached surface. |
 | `provider_error` / known domain conflict | “The Ashby record changed or the requested value is no longer valid. Read the record and available values again before rebuilding the change.” | `reason`; inspect first, then obtain confirmation for a changed plan. |
-| `provider_error` / provider refused before execution | “Ashby is rate limited. Wait for the supplied retry delay before trying again; if no delay is supplied, pause and try later.” | `retryAfterMs` when verified, `reason: rate_limited`; no tight retry loop. |
+| `provider_error` / verified provider rate-limit refusal before execution | “Ashby is rate limited. Wait for the supplied retry delay before trying again; if no delay is supplied, pause and try later.” | `retryAfterMs` when verified, `reason: rate_limited`; no tight retry loop. |
 | `payload_too_large` / oversized discovery or read | “The Ashby response is too large. Narrow the request, or test the connection if tool discovery failed.” | `reason`; never parse truncated protocol JSON as success. |
 | `provider_error` / definitive failure with no more specific mapping | “Ashby could not complete this operation. Check the record or connection before trying again.” | `reason`; sanitized domain detail only. |
 | `ambiguous_external_write` / a dispatched call lost its outcome | “This Ashby operation may have completed. Do not repeat it; inspect Ashby to determine what happened.” | `reason`; reconcile first, never auto-repeat. |
@@ -260,3 +261,110 @@ PRD's model evaluations using that observed catalog, including confirmation
 and ambiguous-outcome handling on the configured medium fallback model.
 Rally's existing transport being tested is necessary but does not prove Ashby's
 live authorization or recruiting workflows work.
+
+## Workspace adapter and event contract
+
+The following are Rally-authored declarations, not names inferred from MCP tools.
+Use the existing `ConnectorManifestSchema`, `ConnectorRegistry` cross-validation,
+`defineConnectorAgentPlugin`, and `defineConnectorActivityTriggers`. Define one
+Ashby adapter; select the protocol from the authorized connection scope.
+
+| Declaration | Required value or behavior |
+| --- | --- |
+| Type and scopes | `ashby`; `supportedScopes: ["personal", "workspace"]` |
+| Personal capability | `ashby.personal.mcp`, `kind: "tool"`, narrowed to `personal` through `capabilityConnectionScopes` |
+| Workspace capability | `ashby.workspace.events`, `kind: "host"`, narrowed to `workspace`; permits only the selected event installation and ingestion |
+| Static tools | `manifest.tools` and `agentPlugin.tools` both empty; neither webhook management nor workspace recruiting reads become tools |
+| Dynamic tools | The existing `createHostedMcpPassthrough` facet accepts only `ashby.personal.mcp` on personal connections |
+| OAuth | `oauthRequired: true` for the personal mode; workspace setup uses the separate API-key route, as Granola does |
+| Activity facets | `supportsWebhooks: true` with `webhookActivity.verify/normalize`; `supportsPolling: false` with no polling facet |
+| Watches and hydration | `supportsWatches: false`; no `hydrateResource` until workspace REST reads are specified and granted |
+| Resource types | `ashby_application`, `ashby_candidate`, `ashby_job`; these are Rally resource identities, not a claim that all are watchable |
+| Other surfaces | Default resource surface; no native agent, messaging agent, or user-delivery capability |
+
+The administrator grants `ashby.workspace.events` together with a nonempty
+selected subset of the two event types below. Store the selection on the
+connection and installation; enforce it at setup, ingress, and authoring.
+Ashby's `apiKeysRead` and `apiKeysWrite` remain provider API permissions, not
+Rally tool capabilities. Reject scope/capability mismatches rather than exposing
+a personal tool through a workspace connection with the same provider type.
+
+| Provider action / Rally eventType | Trigger label | Digestible | Initial custom filters |
+| --- | --- | --- | --- |
+| `applicationSubmit` | Application submitted | `false` | None |
+| `candidateStageChange` | Application stage changed | `false` | None |
+
+Declare both in the operational partition of `defineConnectorActivityTriggers`.
+Use their exact event types in automation registration; initially expose neither
+an event-family alias nor open payload-key filtering (`openFilterFields: false`).
+Rules can select the authorized connection and event type through the existing
+authoring catalog. Additional candidate/job/stage filters require a verified
+payload mapping and typed descriptors; arbitrary `data` fields are not filter
+contracts. Do not copy the generic webhook's open-filter behavior. These events
+support future explicit automations without adding a recruiting digest or promising
+a candidate's complete history. Record these classifications and their rationale
+in `connector-digestibility.md` when implementation lands.
+
+Normalization uses `NormalizedActivitySchema` and preserves these invariants:
+
+- Resolve workspace ID, region, connection ID, scope, and owner from the routed
+  connection. A provider actor or candidate email never grants Rally authority.
+- Preserve `webhookActionId` as `providerEventId`, preserve the verified `action`
+  as `eventType`, and derive an unambiguous composite `dedupeKey` from both. Existing
+  connection-scoped uniqueness must preserve related actions with a shared ID.
+- Bind payload storage to region, workspace, connection, event identity, and
+  content hash. A retry with different bytes cannot overwrite the payload of an
+  accepted event; let existing collision handling surface the conflict.
+- Populate the application's resource/subject ID only from a verified application
+  field, and candidate/job relationships only from their own verified ID families.
+  If no stable resource ID is present, use the schema's nullable resource fields;
+  never substitute `webhookActionId` or a candidate ID for an application ID.
+  Use `connectorOriginFromActivity` for source attachment when the event supplies
+  a valid origin. Do not add an origin facet or fabricate provider URLs.
+- Set `receivedAt` from the host. Use a verified provider occurrence timestamp for
+  `occurredAt` when available. If the payload has none, preserve a first-observed
+  timestamp through the existing receipt path and mark its meaning in metadata;
+  retries must not change the canonical event hash by minting a new occurrence
+  time. Exact timestamp mapping and receipt support are live-payload acceptance
+  requirements, not an assumption that the webhook has a timestamp field.
+- Emit only the approved normalized field allowlist and bounded text. Preserve
+  the raw verified body behind regional `payloadRef`; never inline it into
+  processing pointers, logs, or model tool descriptions. Final payload/visibility
+  mapping remains the PRD's explicit release gate. Candidate confidentiality is
+  not resolved by assigning `visibility.scope = "workspace"` indiscriminately.
+- Do not produce verified `externalPeople` identity bindings or target members
+  from provider claims. Apply the existing event audience and authorization
+  rules. Workspace event access is never evidence of personal MCP access.
+
+The shared event engine remains authoritative for matching, activity-log
+projection, and any existing Suggested Work policy. Installation creates no
+new consumer, watch, automation, or provider hydration path. An operational event
+remains eligible for an explicitly bound automation; zero model tools does not
+make an event-only connection ineligible as an event source.
+
+## Rally registration and lifecycle checklist
+
+This is the concrete integration surface for implementation, checked against the
+PR branch's connector framework. It supplements the PRD acceptance criteria;
+adding a provider name to Settings alone is insufficient.
+
+| Area | Required integration and verification |
+| --- | --- |
+| Package and regional registry | Export the Ashby adapter/config/capabilities through `packages/connectors/src/index.ts`; register through `apps/api/src/lib/connector-registry.ts` in both regions. Use the existing environment-owned registry cache and origin validation. |
+| Connection lifecycle | Add strict personal start/callback and workspace setup input schemas in the existing connection routes; connect personal reconnect dispatch, sealed OAuth state, WorkspaceDO attempt receipt, versioned workspace-addressed desktop handoff, disablement, and route synchronization. Preserve connection identity on reconnect. |
+| Credential access | Authenticated management, test, refresh, revoke, and tool calls use the host's branded authorization boundary and caller cancellation. Use provider-specific credential-refusal classification and the shared rotation coordinator; an API key with no refresh mechanism cannot be repaired by inventing OAuth refresh. The proposed cleanup-only extension must not grant ordinary access to a disabled row. |
+| Webhook ingress | Reuse connection-addressed regional routing, `webhookActivity`, regional payload storage, and `persistNormalizedActivity`. No Global fan-out for an Ashby connection-specific URL, new provider host, activity table, or second event-processing runner. Preserve Granola's existing URLs and grouped event registration. |
+| Test and health | Keep `ConnectionService.test` → `adapter.repair` → `healthCheck`. Route repair through the shared installation runner; automatic health/inventory calls never mutate provider subscriptions. Failures and delivery warnings remain visible without suppressing usable tools. |
+| Event authoring | Include event-only workspace connections with their selected registered triggers in the existing authoring catalog. Exact rules bind connection, provider, event type, and activation boundary; do not introduce Ashby-specific automation routing or a raw-JSON evaluator. |
+| Desktop catalog and search | Add Ashby to `connectorProviders`, connector presentation/icon mapping, and registry-backed setup/search metadata. Use existing personal/workspace scope controls and authorized connection snapshots. Keep secrets out of the search index. |
+| Conversation setup cards | Add Ashby's personal OAuth mode to `ConnectorConnectionCardCatalog`, using the existing card/state tool schemas, durable card facts, and completion reconciliation. As with Granola, the current OAuth card must not advertise API-key workspace setup; direct administrators to Settings unless the shared card gains a supported manual-setup mode. No provider URL or API key is model-authored. |
+| Settings tool counts | Use `GET /connections/:id/tool-count` and shared dynamic inventory for personal MCP; failure shows Unavailable and disabled shows a dash. Workspace events expose zero tools, not the personal MCP count. Use existing deadlines/freshness policy rather than adding a provider-specific one. |
+| UI refresh and scope | Publish the existing `connector_connections` workspace topic after durable connection changes; invalidate the corresponding list, state card, and inventory. Reconcile the initiating workspace even if Settings unmounts or the active workspace changes. Installation status needs the same invalidation, not fleet polling. |
+| Retirement | New object methods inherit the shared retirement gate; consumers recognize retirement refusal as terminal. No wakeup, in-flight completion, credential write, or cleanup receipt may resurrect a retired workspace. |
+| Documentation and support | Update connectors, hosted-MCP, provider-apps, digestibility, security, data model, Settings guidance, and public connector support content with both modes and their actual limitations. Document the new lifecycle subsystem when its code ships. |
+| Existing conformance suites | Enroll Ashby in registry-driven credential freshness/refusal, plugin discovery, schema/name validation, and provider fixtures as needed. Add real workerd coverage for regional event admission, replay, lifecycle concurrency, retirement, and cleanup; prove integration assertions can fail under a representative production break. |
+
+The shared maintenance state, provider-management facet, operator command, and
+post-disable cleanup authorization are intentional new infrastructure in this
+proposal. They must be implemented through the existing typed regional boundaries;
+they are not capabilities the current connector framework already supplies.

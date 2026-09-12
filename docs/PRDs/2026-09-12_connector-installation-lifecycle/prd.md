@@ -4,7 +4,7 @@
 >
 > Query Ashby through personal MCP and ingest workspace events through webhooks,
 > with a shared installation and maintenance lifecycle adopted by Granola.
-> Companion: [MCP tool contract](design.md).
+> Companion: [connector and MCP contracts](design.md).
 > Standing contract: [Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 > Replaces the [personal-only Ashby proposal](../2026-09-10_ashby-connector/prd.md).
 > Owners of the existing behavior: [connectors](../../connectors.md),
@@ -27,7 +27,7 @@ workspace connections adopt it without changing credentials or URLs. Operators
 can preview and resume changes across connections, with each unresolved result
 visible. Future providers reuse that lifecycle through the existing adapter
 registry. This PRD owns the complete Ashby launch and its shared infrastructure;
-the companion contains only the detailed MCP contract.
+the companion contains the detailed adapter, event, and MCP contracts.
 
 ## Motivation
 
@@ -257,10 +257,15 @@ API key through a password field. It is submitted to the selected workspace's
 regional backend and is not saved in desktop preferences or returned by the API.
 Personal OAuth modes retain their existing browser authorization flow.
 
-Setup creates a durable attempt and a stable connection identity before any
-provider mutation. Repeating the same setup request returns that attempt rather
-than creating another installation. Where a provider already has a product rule
-allowing one enabled workspace connection, that rule remains; this PRD does not
+Setup accepts a client-generated idempotency key and creates a durable attempt
+and stable connection identity before any provider mutation. Bind the key to the
+workspace, initiating administrator, provider, scope, and normalized configuration
+(including a protected credential fingerprint). The same key and inputs return
+the same attempt; changed inputs under that key return an explicit conflict.
+Persist the intended configuration and encrypted credential reference before
+dispatch. Settings retains the key across network retries and reconciles the
+server's pending attempt on reopen rather than starting over. Where a provider
+already has a product rule allowing one enabled workspace connection, that rule remains; this PRD does not
 make connection cardinality universal.
 
 The sequence is: validate credentials and permissions, prepare the receiving
@@ -299,11 +304,21 @@ show loading state rather than an empty result. Offline views can show the last
 known state with its timestamp, but cannot imply a fresh test or silently queue
 a provider mutation. Detailed errors never reveal credentials or provider content.
 
-**Test connection** reads authorization and installation state. **Repair** is an
-explicit administrator action whose proposed changes are shown first. Granola's
-current repair-on-test behavior moves to this explicit control, so a test has
-the same read-only meaning across providers. A provider-disabled subscription
-is reported; an ordinary check never silently re-enables it.
+Preserve Rally's existing **Test connection** behavior: an explicit test invokes
+`adapter.repair`, then reads `healthCheck`. Repair may restore a registration's
+already-approved configuration, but never expands event scope, resolves an unknown
+create by creating again, or bypasses the lifecycle generation. The shared runner
+records that repair; a repair failure appears alongside the authorization result
+and does not make working credentials unusable. Explain the possible repair in
+the test control's description. Personal MCP has no webhook repair facet.
+
+`healthCheck` itself remains read-only and reports delivery degradation through
+`warning`; plugin activation and Settings inventory must never repair webhooks.
+Pass the caller's cancellation signal, classify credential refusal separately
+from an indeterminate provider failure, and gate ordinary use on current authority
+and `disabled`, never on a stored unhealthy diagnosis. No separate Repair button
+or cross-provider change to Test semantics is required.
+[Connector freshness and repair](../../connectors.md#credential-freshness).
 
 ### Stable webhook routing and admission
 
@@ -323,18 +338,33 @@ become recruiting or meeting activity.
 flowchart LR
   P[Customer provider account] --> I[Shared regional ingress]
   I --> R[Resolve connection and verify request]
-  R --> A[Durable event admission]
-  A --> Q[Existing regional processing queue]
-  Q --> W[Owning WorkspaceDO and authorized consumers]
+  R --> N[Normalize and store raw payload in regional R2]
+  N --> Q[Regional ACTIVITY_QUEUE ingress]
+  Q --> W[WorkspaceDO canonical event admission]
+  W --> P2[Same Queue: ID-only processing pointer]
+  P2 --> F[Existing deterministic destination matching]
 ```
 
 A new installation's route must be ready for an immediate provider ping. If
 real events arrive during partial provisioning, verified deliveries are admitted
 durably under the approved connection configuration. Already accepted deliveries
 are not discarded merely because another registration is still being created.
-Provider acknowledgement follows durable acceptance, not completion of downstream
-processing. A durable outbox or the existing admission mechanism closes the gap
-between committing acceptance and scheduling processing.
+Use `persistNormalizedActivity` / `enqueueWorkspaceConnectorEvent` for the
+existing self-contained regional Queue ingress. The receiver acknowledges only
+after that durable send succeeds; a raw R2 write or receipt claim alone is not
+acceptance. Ashby expects HTTP 200 for successful receipt, so do not copy the
+generic webhook's HTTP 202 response.
+[Application receipt](https://developers.ashbyhq.com/reference/applicationsubmitwebhook),
+[stage-change receipt](https://developers.ashbyhq.com/reference/candidatestagechangewebhook).
+
+The Queue consumer calls `WorkspaceDO.ingestConnectorEvent`, sends the existing
+ID-only `connector_event_process` pointer, and only then acknowledges ingress.
+A failed send replays ingress and deduplicates against WorkspaceDO. Reuse the
+existing claim/lease/settlement path, `matchExternalEventDestinations`, and
+`AutomationDO.admitExternalEvent`; add no synchronous canonical-admission hop,
+new activity body table, per-provider Workflow, or second delivery ledger.
+An early duplicate receipt still performs the required durable handoff.
+[Activity ingestion](../../connectors.md#activity-ingestion).
 
 Provider adapters define delivery identity and related-event semantics. Duplicate
 deliveries create no second normalized activity. Distinct legitimate events
@@ -403,10 +433,16 @@ new active installation. Revocation is rechecked when queued events are consumed
 An isolated cleanup operation may use the encrypted credential solely to remove
 the exact recorded resources after disconnect; it cannot read business data,
 create subscriptions, or restore tool access. Reuse the shared credential door
-with this explicit cleanup purpose rather than bypassing it. Remove the retained
-credential once cleanup finishes. If cleanup is unsupported or credentials are
-revoked, show the provider's manual removal steps. The administrator can remove
-the local credential without falsely marking remote cleanup complete.
+with this explicit cleanup purpose rather than bypassing it. This purpose is a
+new host authorization contract: today's `withAuthorizedConnection` does not
+provide post-disable cleanup access. Keep a separately owned encrypted cleanup
+snapshot; remove credentials from the ordinary disabled connection immediately.
+The host authorizes only the recorded deletion steps, fences credential writes
+and reconnect/status recovery, and never mints ordinary tool authority from that
+snapshot. Document and test this extension with the credential door before using
+it. Remove the retained cleanup credential once cleanup finishes. If cleanup is
+unsupported or credentials are revoked, show the provider's manual removal steps.
+The administrator can remove the local credential without falsely marking remote cleanup complete.
 
 ### Repeatable provider onboarding
 
@@ -466,7 +502,8 @@ None yet.
 5. **Manual work is a typed result.** Lack of a provider endpoint is a product
    constraint. Browser automation or a generic HTTP escape hatch would hide it.
 6. **Keep URLs stable and health checks read-only.** Most releases then change
-   only Rally code; a connection test never becomes a fleet mutation mechanism.
+   only Rally code. Preserve the existing explicit Test/repair path for one
+   connection; fleet updates use the reviewed maintenance operation.
 7. **Separate customer grants from the software version.** A new manifest can
    describe more events without authorizing them for existing customers.
 8. **One PRD and one launch, with two authorization modes.** Product scope follows
@@ -526,6 +563,14 @@ requires a committed response, per [Queues or RPC](../../choosing-queues-or-rpc.
 If routing a new job kind requires queue configuration changes, both regions and
 their dead-letter destinations must be registered together. No queue or Worker
 is created per customer.
+
+New WorkspaceDO methods, Queue consumers, and maintenance wakeups obey the shared
+workspace retirement gate. Recheck retirement before external dispatch, record
+already-in-flight calls without reopening the workspace, and treat retirement
+refusals as terminal rather than retrying into the DLQ. A connection generation
+alone does not cover retirement. No cleanup or maintenance exception to a retired
+object's gate is implied; resources needing manual removal remain explicit.
+[Workspace retirement](../../workspace-retirement.md).
 
 ## Security and trust model
 
@@ -627,10 +672,14 @@ second reports stage changes, including those triggered by hiring. Do not label
 the first as an exhaustive candidate-created feed.
 [Application submission](https://developers.ashbyhq.com/reference/applicationsubmitwebhook),
 [stage changes](https://developers.ashbyhq.com/reference/candidatestagechangewebhook).
-Each selected event has its own remote registration. Normalization declares the
-corresponding activity descriptor, identity, permitted payload fields, and
-digestibility explicitly in the adapter before exposing it to consumers; no
-new digest or automation subscription is enabled by connection setup.
+Each selected event has its own remote registration. The
+[companion's adapter and event contract](design.md#workspace-adapter-and-event-contract)
+specifies the Rally capability, exact event types, resource identity, initial
+filter surface, and digestibility. Both initial event types are operational
+(`digestible: false`): they are available for explicitly authored automation
+rules, while a personal recruiting digest is outside this launch. They still
+follow ordinary event matching and activity-log projection. No new digest or
+automation subscription is enabled by connection setup.
 
 The signed route exists before registration because Ashby sends a ping on
 creation or update. A failed ping can leave the registration disabled, so verify
@@ -700,7 +749,10 @@ of deploying older code. Disablement and manual disconnect remain usable.
 Implementation updates `connectors.md`, `hosted-mcp-connectors.md`,
 `provider-apps.md`, `data-model.md`, `security.md`, regional
 and provider configuration, Settings discovery, and operational/manual acceptance
-guidance. Add a durable `connector-installation-lifecycle.md` module document with
+guidance. Follow the companion's concrete registration checklist for the shared
+connection-card catalog, live Settings tool counts, reconnect routing, public
+support content, digestibility declarations, and socket cache invalidation.
+Add a durable `connector-installation-lifecycle.md` module document with
 its running changelog and register it in the documentation index when the shared
 subsystem ships. A phased `plan.md` is written only after PRD approval.
 
@@ -715,7 +767,7 @@ subsystem ships. A phased `plan.md` is written only after PRD approval.
 | Live tool contract | Fully paginated discovery, schema changes, removed tools, collisions, malformed schemas, uncertain writes, and clipped results follow the companion contract. |
 | Model usability | On the configured medium fallback model, cover discovery, a successful multi-tool query, ambiguous names, wrong ID families, changed stages, missing modification fields, confirmation, and recovery without loops. |
 | Shared implementation | Ashby and Granola use the same setup/maintenance state machine; provider-specific branches are limited to declared protocol facets. |
-| Installation | Repeated setup and interrupted setup return the same attempt; immediate ping succeeds; partial registration failure remains visible. |
+| Installation | Same-key retries return the same attempt; changed-input key reuse conflicts; interrupted setup is reconciled; immediate ping succeeds; partial registration failure remains visible. |
 | Granola adoption | Existing IDs, secrets, URLs, and events survive; no create/delete is performed during import; delivery continues. |
 | Regional ownership | Global and EU setup, events, and maintenance remain regional; forged provider or connection coordinates cannot cross tenants. |
 | Durable admission | A crash between event acceptance and processing dispatch loses no accepted event; repeated delivery has one normalized effect. |
@@ -723,13 +775,16 @@ subsystem ships. A phased `plan.md` is written only after PRD approval.
 | Bulk updates | Preview shows exact intended changes; interrupted apply resumes; completed steps are skipped; every target has an explicit result. |
 | Ambiguous creation | Losing the provider response does not create a second subscription; unsupported reconciliation becomes action required. |
 | Concurrent changes | Disconnect or newer settings fence old jobs; an in-flight stale creation becomes cleanup work and cannot restore access. |
-| Test versus repair | Testing performs no provider mutations; explicit repair changes only the previewed approved configuration. |
+| Test versus health check | Explicit Test invokes generation-fenced repair of approved configuration and reports its outcome. Activation, health checks, and inventory perform no repair; failed repair leaves usable authorization intact. |
 | Manual capability | A synthetic provider lacking update/list/delete produces exact manual steps and never reports an unverified installation as current. |
 | Permission expansion | New event/data scope cannot be applied before the administrator authorizes it, even through fleet maintenance. |
 | Cleanup | Revoked credentials, unsupported deletion, and failed removal remain visible; local disablement succeeds immediately. |
 | Rotation and cutover | Pending verification material is available before a provider switch; failed/unknown rotation preserves a recoverable state and never clears signing protection. |
 | User surfaces | Real desktop inspection covers setup, loading, partial success, repair, denied access, offline state, and cleanup pending. |
-| Maintainability | A developer can run the same contract suite against both providers and follow one documented onboarding checklist. |
+| Maintainability | A developer can run the same contract suite against both providers and follow the companion's registration checklist. |
+| Registry and events | Validate both scope-specific capabilities, the empty static tool list, live personal tools, operational trigger descriptors, normalized IDs, and closed filter metadata through existing registry/schema checks. |
+| Retirement and cleanup | Retirement stops new maintenance dispatch and is terminal on redelivery. Post-disable cleanup can only delete recorded resources; neither credentials nor ordinary tool authority are restored. |
+| Settings and discovery | Ashby appears in the authorized setup catalog and search; personal MCP counts use shared inventory, workspace event connections show zero tools, and completion invalidates the owning workspace's connection query. |
 
 Use provider-boundary doubles for remote protocol variations and the real
 Cloudflare runtime for installation persistence, concurrency, durable admission,
