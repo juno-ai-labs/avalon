@@ -507,11 +507,23 @@ rather than workspace authority.
 
 ### 2026-09-12 — Inspect artifacts without creating navigation grants
 
-Data and error reads previously ran the complete navigation flow, paying for a
-profile read, hostname migration, and a single-use code they never redeemed.
-A shared authorized resolver retains the registry and parent visibility checks
-while reserving those operations for navigation. Skipping authorization or
-caching visibility was rejected; each inspection still asks the current parent.
+**What changed:** Data and error reads now use a shared authorized resolver
+instead of the complete navigation flow. The resolver retains the registry and
+parent visibility checks, while navigation alone performs the profile read,
+hostname migration, and single-use-code creation.
+
+**Why:** Inspection was paying for those navigation-only operations despite
+never redeeming the resulting code; this showed up on the artifact data and
+error-read path as avoidable latency and unused viewer grants.
+
+**Considered and rejected:** Skipping authorization or caching visibility was
+rejected because each inspection must ask the current parent authority.
+
+**Consequences:** Only `open` may create a viewer session or migrate a hostname.
+Any future operation that needs either effect must go through `open`; inspection
+callers must stay on `resolveAuthorized`.
+
+Shipped in #731.
 
 
 ### 2026-09-11 — A link in a site preview leaves through the person who clicked it
