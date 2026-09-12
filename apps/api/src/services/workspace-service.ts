@@ -9,6 +9,7 @@ import {
   type WorkspaceInvitationRole,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
+import { downloadGrantUrl, issueDownloadGrant, revokeDownloadGrant, revokeDownloadGrantsForInvitation } from "@rally/db/private-access";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { randomToken, sha256 } from "../lib/crypto";
@@ -305,6 +306,7 @@ export async function declineInvitationForUser(
   if (Number(result.meta.changes ?? 0) !== 1) {
     throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
   }
+  await revokeDownloadGrantsForInvitation(env.DB, invitationId);
   await notifyInvitationResolution(env, invitation, user, "declined");
   await emitInvitationTerminal(env, invitation, {
     userId: asUserId(user.id),
@@ -549,6 +551,16 @@ export class WorkspaceService {
              WHERE id = ? AND abandoned_at = ?
            )`,
       ).bind(at, this.auth.workspaceId, this.auth.workspaceId, at),
+      // A closed workspace's invitations no longer authorize a download either.
+      this.env.DB.prepare(
+        `UPDATE download_grants SET revoked_at = COALESCE(revoked_at, ?)
+         WHERE source = 'workspace_invitation' AND revoked_at IS NULL
+           AND source_id IN (SELECT id FROM workspace_invitations WHERE workspace_id = ?)
+           AND EXISTS (
+             SELECT 1 FROM workspaces
+             WHERE id = ? AND abandoned_at = ?
+           )`,
+      ).bind(at, this.auth.workspaceId, this.auth.workspaceId, at),
       ]);
       const abandoned = Number(abandonment[0]?.meta?.changes ?? 0) === 1;
       if (abandoned) {
@@ -685,11 +697,12 @@ export class WorkspaceService {
     const id = newId();
     const createdAt = nowIso();
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString();
-    await this.env.DB.batch([
+    const [supersedeResult] = await this.env.DB.batch([
       this.env.DB.prepare(
         `UPDATE workspace_invitations SET revoked_at = ?
          WHERE workspace_id = ? AND email = ? COLLATE NOCASE
-           AND accepted_at IS NULL AND revoked_at IS NULL`,
+           AND accepted_at IS NULL AND revoked_at IS NULL
+         RETURNING id`,
       ).bind(createdAt, this.auth.workspaceId, normalizedEmail),
       this.env.DB.prepare(
         `INSERT INTO workspace_invitations
@@ -706,12 +719,39 @@ export class WorkspaceService {
         createdAt,
       ),
     ]);
+    // A superseded invitation's own download grant must not outlive it: the
+    // partial unique index on (workspace_id, email) means this is 0 or 1 row,
+    // but a loop makes no assumption about that.
+    for (const superseded of (supersedeResult?.results ?? []) as Array<{ id: string }>) {
+      await revokeDownloadGrantsForInvitation(this.env.DB, superseded.id).catch((error: unknown) => {
+        logWarn(this.env, "superseded_invitation_grant_revoke_failed", {
+          workspace_id: this.auth.workspaceId,
+          invitation_id: superseded.id,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      });
+    }
     const row = await loadInvitationById(this.env, id);
     if (!row) throw new ApiError(500, "invitation_persistence_failed", "Could not create the invitation");
     const inviteUrl = new URL("/invite/", this.env.PUBLIC_WEB_BASE_URL);
     inviteUrl.hash = new URLSearchParams({ region: this.env.AVALON_REGION, token }).toString();
+    let downloadGrant: { id: string; token: string; expiresAt: string | null } | null = null;
     let emailDelivery: InvitationEmailDelivery;
     try {
+      // Download redemption only exists on the Global Worker today (see
+      // docs/private-access.md#regional-impact); an EU workspace invitation gets
+      // no download link until regional redemption is wired. Issuance stays
+      // inside this try so a grant failure rolls back the invitation exactly
+      // like an email failure does, rather than orphaning it.
+      downloadGrant = row.workspace_region === "global"
+        ? await issueDownloadGrant(this.env.DB, {
+            source: "workspace_invitation",
+            sourceId: row.id,
+            createdBy: this.auth.userId,
+            expiresAt,
+          })
+        : null;
+      const downloadUrl = downloadGrant ? downloadGrantUrl(downloadGrant.token, this.env.PUBLIC_WEB_BASE_URL) : undefined;
       emailDelivery = await sendWorkspaceInvitationEmail(this.env, {
         id: row.id,
         recipientEmail: row.email,
@@ -721,8 +761,10 @@ export class WorkspaceService {
         region: row.workspace_region,
         expiresAt: row.expires_at,
         inviteUrl: inviteUrl.toString(),
+        ...(downloadUrl ? { downloadUrl } : {}),
       });
     } catch (error) {
+      if (downloadGrant) await revokeDownloadGrant(this.env.DB, downloadGrant.id).catch(() => undefined);
       await this.env.DB.prepare(
         `UPDATE workspace_invitations SET revoked_at = ?
          WHERE id = ? AND workspace_id = ? AND accepted_at IS NULL AND revoked_at IS NULL`,
@@ -756,6 +798,7 @@ export class WorkspaceService {
     if (Number(result.meta.changes ?? 0) === 0) {
       throw new ApiError(404, "invitation_not_found", "No pending invitation was found");
     }
+    await revokeDownloadGrantsForInvitation(this.env.DB, id);
     if (invitation) {
       await emitInvitationTerminal(this.env, invitation, {
         userId: this.auth.userId,
