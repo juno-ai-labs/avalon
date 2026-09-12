@@ -124,16 +124,25 @@ export async function writeArtifactVersion(
     // https://developers.cloudflare.com/workers/platform/limits/#simultaneous-open-connections
     const simultaneousConnections = 6;
     const files = storedFiles.values();
+    let uploadFailed = false;
     const uploads = Array.from({ length: Math.min(storedFiles.length, simultaneousConnections) }, async () => {
       for (const file of files) {
-        await env.PAYLOADS.put(
-          artifactAssetKey(artifactId, input.version, file.path),
-          file.bytes,
-          {
-            httpMetadata: { contentType: assetContentType(file.path) },
-            customMetadata: { source: "artifact", artifactId, version: String(input.version) },
-          },
-        );
+        // A failed version will never publish, so drain writes already begun
+        // by sibling workers but do not start another asset after a failure.
+        if (uploadFailed) return;
+        try {
+          await env.PAYLOADS.put(
+            artifactAssetKey(artifactId, input.version, file.path),
+            file.bytes,
+            {
+              httpMetadata: { contentType: assetContentType(file.path) },
+              customMetadata: { source: "artifact", artifactId, version: String(input.version) },
+            },
+          );
+        } catch (error) {
+          uploadFailed = true;
+          throw error;
+        }
       }
     });
     // Drain every writer even on failure: no upload outlives this attempt, and

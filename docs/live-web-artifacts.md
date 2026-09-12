@@ -508,11 +508,23 @@ rather than workspace authority.
 
 ### 2026-09-12 — Overlap independent artifact asset writes
 
-Serial R2 writes made multi-file publication pay every asset's network latency
-in succession. Asset writers now share the platform's six-connection ceiling and
-all settle before the manifest is written. Unbounded fan-out and early manifest
-publication were rejected: the former only queues inside the platform, and the
-latter can expose incomplete versions. Any asset failure still fails publication.
+**What changed:** Asset writers now share the platform's six-connection ceiling,
+stop claiming new assets after a failed write, and all settle before the manifest
+is written.
+
+**Why:** Serial R2 writes made multi-file publication pay every asset's network
+latency in succession. Independent versioned asset keys do not need that
+serialization.
+
+**Considered and rejected:** Unbounded fan-out was rejected because it would
+only queue inside the platform; early manifest publication was rejected because
+it could expose an incomplete version.
+
+**Consequences:** Six transcribes Cloudflare's simultaneous-connections ceiling,
+not an application policy. Any writer added to this path runs beside five
+siblings and must settle before the assets-before-manifest barrier can continue.
+
+Shipped in #732.
 
 
 ### 2026-09-11 — A link in a site preview leaves through the person who clicked it
