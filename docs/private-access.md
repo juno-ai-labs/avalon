@@ -237,7 +237,7 @@ and rejection of past, current or ambiguous expiries; site tests retain
 legacy release-renderer coverage separately from the new form template.
 `apps/api/test/workspace-and-invitations.test.ts` covers the invitation-email
 caller: a Global invitation's email carries a download link whose token differs
-from the accept token and never appears in a database write, a EU invitation
+from the accept token and never appears in a database write, an EU invitation
 issues no grant and mentions no download link, and a failure writing the grant
 itself revokes the invitation exactly like a failed email send does.
 
@@ -256,7 +256,7 @@ Requests are pre-workspace Global data, disclosed in the privacy policy. Migrati
 migration chain. The issuer is database-parameterized, which is what let the
 Global workspace invitation caller reuse it directly. The browser redemption
 endpoint is still Global only; `createInvitation` gates on the invitation's own
-`workspace_region` and issues nothing for a EU workspace, since a grant written
+`workspace_region` and issues nothing for an EU workspace, since a grant written
 to EU's `download_grants` table would 404 at redemption with no regional route to
 serve it. EU workspace invitees remain without a download link until regional
 redemption and regional links are wired together.
@@ -399,7 +399,7 @@ privacy operations stay in the owning region; the current slice creates none.
 **What changed:** `WorkspaceService.createInvitation` now issues a
 `workspace_invitation` grant, timed to the invitation's own 7-day expiry, for a
 Global workspace and passes its URL to `sendWorkspaceInvitationEmail`, which
-renders it as a second link/button alongside "Accept invitation". A EU
+renders it as a second link/button alongside "Accept invitation". An EU
 invitation issues no grant. Issuance runs inside the same `try` that sends the
 email, so a grant-issuance failure or an email-send failure both revoke the
 grant (if one was issued) and the invitation row through the one existing
@@ -414,9 +414,9 @@ The `workspace_invitation` source and the database-parameterized issuer already
 existed for exactly this caller; nothing about the grant primitive needed to
 change.
 
-**Considered and rejected:** Also issuing a EU grant against the EU database.
+**Considered and rejected:** Also issuing an EU grant against the EU database.
 The browser redemption route 404s outside the Global Worker
-(`private-access.ts`'s region guard), so a EU-issued grant would produce a link
+(`private-access.ts`'s region guard), so an EU-issued grant would produce a link
 that can never be redeemed — worse than no link, since it looks like it should
 work. Building the regional handoff the PRD describes (a URL carrying a
 non-secret owning-region locator, redeemed through that region's API) is
