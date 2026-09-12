@@ -62,6 +62,14 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
 - `apps/desktop/src/renderer/components/expanded-composer.tsx`,
   `use-draft-text.ts`, and `use-file-attachments.ts` provide the common composer
   shell, local text persistence, and staged-file lifecycle.
+- `apps/desktop/src/renderer/lib/markdown-lists.ts` owns list editing in a
+  draft: what Enter, Tab, Shift+Tab and the two list toggles do to a bulleted or
+  numbered list, as pure functions over `(text, selectionStart, selectionEnd)`.
+  `composer-input.tsx` binds the keys, applies the returned edit through the
+  field's own `execCommand` so the change stays on its undo stack, and offers
+  the two toggles in the plus menu. A second text surface that wants the same
+  keys takes these rather than growing its own; the file's own header states the
+  rules and why each is what it is.
 - `apps/desktop/src/renderer/screens/conversation-surface.tsx` is the one feed
   composition: `ConversationSurface({parentKind, parentId, substreamId,
   renderHeader})` owns the transcript, composer, attachments, and the socket
@@ -607,6 +615,73 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-12 — The composer writes lists, and stops hiding text behind the plus
+
+**What changed:** Two things about a multi-line draft, delivered together
+because they are the same draft.
+
+`lib/markdown-lists.ts` is new and owns list editing as three pure functions
+over a draft and its selection: `continueListAtCaret` (the newline key),
+`shiftListAtCaret` (Tab and Shift+Tab), and `toggleListAtSelection` (⌘/Ctrl+⇧8,
+⌘/Ctrl+⇧7, and the two new items in the composer's plus menu). So a `- ` or
+`1. ` carries itself to the next line, a numbered list counts, Tab nests onto
+the column the item above puts its own content in, Enter on an empty item walks
+back out a level and then leaves the list, and a task item's continuation gets
+an *unchecked* box. Every operation ends by renumbering every ordered run in the
+draft, so inserting into the middle of 1–4 gives 1–5 rather than 1, 2, 3, 3, 4.
+`composer-input.tsx` binds the keys after the host's own handler and after
+sending, so Enter still sends and only the keystroke that was going to insert a
+newline reaches a list.
+
+The capsule composer's controls now take a grid row of their own whenever the
+field spans the full width — wrapped text, or an attachment row above it —
+instead of sharing row 2 with the text. The 39px of bottom padding that used to
+hold them apart is gone, back to 4px.
+
+**Why:** A Rally message is Markdown and always has been, so a list was already
+something a person could send; what was missing was every editing behaviour
+people arrive from Slack, Claude Code and every note app expecting, which made
+writing one a chore of retyping dashes and renumbering by hand.
+
+The plus overlapped the draft's own text, which is what prompted the layout
+half. The 2026-09-10 entry below ("Multiline composer text spans above its
+controls") put the wrapped field in the controls' row and reserved a
+control's height of bottom padding to keep them apart. Padding inside a
+scroller scrolls: it holds on the *last* line of the draft and nowhere else, so
+the moment a draft outgrew the field every line under the caret ran beneath the
+plus button — which is exactly the state somebody writing a long list is in.
+A row the controls own cannot be scrolled into, and it needs no number to be
+chosen.
+
+**Consequences:** Tab now has a meaning inside the composer, which is a
+keyboard-accessibility hazard if it is unconditional, so every operation returns
+`null` when it has nothing to do and the composer then leaves the keystroke
+alone: Tab only indents an item that has something above it to nest under, and
+Shift+Tab only outdents one that is already nested, so there is always a Tab or
+a Shift+Tab out of the field. That `null`-means-fallthrough contract is the
+thing to preserve when adding a fourth operation.
+
+Edits are applied with `document.execCommand`, not by handing the parent a new
+string. That is what keeps them on the textarea's undo stack — ⌘Z after Enter
+lifts one marker rather than clearing the draft — and it means each one arrives
+at `onValueChange`, the draft cache and the mention rebase as one ordinary
+input event. The composer falls back to replacing the draft where the command is
+unavailable, which is how the jsdom tests exercise it.
+
+Ordered runs are renumbered wholesale rather than each operation patching up
+what it disturbed: continuing, nesting and unnesting all shift numbering below
+the caret, and three separate corrections would be three chances to disagree. A
+run at the margin keeps its first ordinal, so a list deliberately started at
+`5.` stays started at 5; a nested run always restarts at 1, because a sublist
+starting at 11 only ever means somebody nested the eleventh item above it.
+
+The stacking context the old layout needed — `position: relative; z-index: 1` on
+both control groups, so the spanning textarea could not intercept their clicks —
+is gone with the overlap that required it. `app.css.node.test.ts` guards the two
+grid declarations that replaced it instead. Checked in a real window in both
+appearances: typing, nesting, unnesting, the menu, the shortcut, undo, and a
+draft scrolled with its middle lines beside the controls.
 
 ### 2026-09-11 — Connector recovery is a first-class conversation-feed card
 
