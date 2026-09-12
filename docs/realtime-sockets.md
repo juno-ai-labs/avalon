@@ -51,8 +51,8 @@ connection lifecycle around that admission protocol.
 
 Conversation ticket authorization uses the parent's `resolveViewer` operation:
 existence, generation, archive state, and the requested child's visibility arrive
-in one RPC. An existing but inaccessible workstream is refused immediately;
-automation discovery is attempted only when the workstream parent is absent.
+in one RPC. A workstream decision is terminal; automation discovery is attempted
+only when the workstream parent is absent.
 The later socket admission still checks its own authority fences. The full
 opening snapshot overlaps viewer-profile and product-detail loading rather than
 serializing those independent reads.
@@ -86,10 +86,10 @@ admission is split in two.
    the ticket's transit and client handshake,
    while a failed, revoked, evicted, stale-generation, or unfinished preparation
    leaves the ordinary regional upgrade checks as the fallback. Before any of
-   that, the Worker resolves which kind of parent the id names
-   (`WorkstreamDO.authority` first, then `AutomationDO.authority`, else 404),
-   asks that parent's `authorizeViewer`, and for an automation seats the reader
-   on the conversation, because the parent's rule is wider than the
+   that, the Worker asks `WorkstreamDO.resolveViewer` for parent existence and
+   the viewer decision in one call. Only an absent workstream causes an
+   `AutomationDO.resolveViewer` call; an admitted automation reader is seated
+   on the conversation because the parent's rule is wider than the
    conversation's participant list.
    A non-main UUID is not warmed merely because its parent is visible; the
    parent must first have reserved that child.
@@ -729,15 +729,17 @@ Child archive admission uses the same `parent_archived` ticket field as parent a
 
 ### 2026-09-12 — Resolve conversation opening authority in one parent call
 
-Opening previously read parent authority and then requested viewer authorization
-in a second RPC, paying two network round trips to the same owner. `resolveViewer`
-returns the combined decision, including private-child membership version and
-archive state. The legacy methods remain for callers that need only one fact.
-Snapshot assembly also overlaps independent viewer and detail reads. Speculative
-prewarming and stale authorization caches were rejected because they do not
-remove the repeated work and complicate revocation. Full snapshot contents and
-fresh upgrade checks are preserved.
+**What changed:** Opening now calls `resolveViewer` once for parent existence,
+authority generation, archive state, and the viewer decision. It still probes an
+automation only after a workstream reports absent; existing authorization
+behavior is unchanged. Legacy narrow methods remain for callers that need one
+fact.
 
+**Why:** the old authority-then-viewer path made two serial RPCs to the same
+parent before a ticket could be issued.
+
+**Consequences:** ticket admission keeps private-child membership and archive
+state, and later socket admission keeps its independent authority fences.
 
 ### 2026-09-08 — Make socket evolution independent of URL capabilities
 
