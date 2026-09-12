@@ -3298,6 +3298,42 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
+  it("keeps an ordinary socket send and queued follow-up visible during an active run", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    await runInDurableObject(stub, (_instance, state) => {
+      holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+    });
+    const { socket } = await openSubscribedSocket(stub, "00000000-0000-7000-8000-0000000007b1");
+    const receipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      type: "create_message",
+      operationId: "00000000-0000-7000-8000-0000000007b2",
+      payload: {
+        text: "ordinary during the active run",
+        clientMessageId: "active-run-ordinary",
+        mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
+      },
+    }));
+    expect(await receipt).toMatchObject({ deliveryState: "pending" });
+    const queued = await product(stub, {
+      operation: "create_message", auth: AUTH,
+      input: {
+        text: "queued after ordinary", clientMessageId: "active-run-queued",
+        mentions: [], confirmedParticipantUserIds: [], attachmentIds: [], runMode: "queue",
+      },
+    });
+    expect(queued.body).toMatchObject({ deliveryState: "pending" });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(new SubstreamLoopStorage(state.storage).pendingInputs()
+        .map((input) => input.client_message_id)).toEqual([
+          "active-run-ordinary", "active-run-queued",
+        ]);
+    });
+    socket.close(1000, "done");
+  });
+
   it("acknowledges durable admission when the eager loop wake-up fails", async () => {
     const stub = agentStub();
     const opened = await initializeWorkstream(stub, "first message");
