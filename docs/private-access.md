@@ -431,7 +431,7 @@ live until its 7-day expiry. Installing does not grant workspace membership
 regardless, so the exposure is a teammate's-eyes-only download of the public
 installer, not access to the workspace.
 
-Shipped in juno-ai-labs/avalon#TBD.
+Shipped in [#728](https://github.com/juno-ai-labs/avalon/pull/728).
 
 ### 2026-09-10 — Send the acknowledgement as plain text
 
