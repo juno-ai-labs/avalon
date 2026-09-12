@@ -81,14 +81,31 @@ export class ConversationService {
    * conversation's list, and this is what carries the parent's decision down.
    */
   async authorizeViewer(parentId: string, substreamId = "0"): Promise<ResolvedConversationParent> {
-    const parent = await this.resolveParent(parentId);
-    const decision = await this.parentStub(parent).then((stub) => stub.authorizeViewer({
-      workspaceId: this.auth.workspaceId,
-      parentId,
-      userId: this.auth.userId,
+    const request = {
+      workspaceId: this.auth.workspaceId, parentId, userId: this.auth.userId,
       substreamId: asSubstreamId(substreamId),
-    }));
-    if (!decision.authorized) throw new ApiError(404, "conversation_not_found", "Conversation not found");
+    };
+    const workstream = await durableObjectStubForWorkspace(
+      this.env, this.env.WORKSTREAM_DOS, this.auth.workspaceId,
+      workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(parentId)),
+    );
+    let kind: ConversationParentKind = "workstream";
+    let decision = await workstream.resolveViewer(request);
+    if (!decision.exists) {
+      const automation = await durableObjectStubForWorkspace(
+        this.env, this.env.AUTOMATION_DOS, this.auth.workspaceId,
+        automationDOName(this.env.AVALON_REGION, this.auth.workspaceId, asAutomationId(parentId)),
+      );
+      kind = "automation";
+      decision = await automation.resolveViewer(request);
+    }
+    if (!decision.exists || !decision.authorized) {
+      throw new ApiError(404, "conversation_not_found", "Conversation not found");
+    }
+    const parent: ResolvedConversationParent = {
+      kind, id: parentId, authorityGeneration: decision.authorityGeneration,
+      archived: decision.archived, membershipVersion: decision.membershipVersion ?? 0,
+    };
     if (parent.kind === "automation") {
       try {
         await createIdentityObjectPort(this.env, this.auth.workspaceId, parentId, undefined, substreamId)
@@ -108,11 +125,7 @@ export class ConversationService {
         throw error;
       }
     }
-    return {
-      ...parent,
-      archived: decision.archived || parent.archived,
-      membershipVersion: decision.membershipVersion ?? 0,
-    };
+    return parent;
   }
 
   /**

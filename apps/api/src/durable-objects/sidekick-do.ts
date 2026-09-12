@@ -42,6 +42,8 @@ import {
   ConversationParentAuthorityResultSchema,
   ConversationParentAuthorizeViewerRequestSchema,
   ConversationParentAuthorizeViewerResultSchema,
+  ConversationParentResolveViewerResultSchema,
+  type ConversationParentResolveViewerResult,
   ConversationParentReserveChildRequestSchema,
   ConversationParentReserveChildResultSchema,
   type ConversationParentAuthorityRequest,
@@ -1200,14 +1202,24 @@ export class SidekickDO extends ConversationParentDurableObject {
   // are inherited.
   // ---------------------------------------------------------------------------
 
-  async authorizeViewer(
+  async authorizeViewer(input: ConversationParentAuthorizeViewerRequest): Promise<ConversationParentAuthorizeViewerResult> {
+    const decision = await this.resolveViewer(input);
+    return ConversationParentAuthorizeViewerResultSchema.parse({
+      authorized: decision.authorized,
+      archived: decision.archived,
+      ...(decision.childStatus === undefined ? {} : { childStatus: decision.childStatus }),
+      ...(decision.membershipVersion === undefined ? {} : { membershipVersion: decision.membershipVersion }),
+    });
+  }
+
+  async resolveViewer(
     input: ConversationParentAuthorizeViewerRequest,
-  ): Promise<ConversationParentAuthorizeViewerResult> {
+  ): Promise<ConversationParentResolveViewerResult> {
     await this.initialized;
     const request = parseRpcInput(ConversationParentAuthorizeViewerRequestSchema, input, "authorize_viewer");
     const row = this.row();
     if (!row || row.lifecycle === "deleted") {
-      return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: true });
+      return ConversationParentResolveViewerResultSchema.parse({ exists: false, authorityGeneration: 0, authorized: false, archived: true });
     }
     this.assertAutomation(request.workspaceId, request.parentId);
     let authorized = row.scope === "workspace"
@@ -1226,7 +1238,9 @@ export class SidekickDO extends ConversationParentDurableObject {
         userId: request.userId,
       })).participant;
     }
-    return ConversationParentAuthorizeViewerResultSchema.parse({
+    return ConversationParentResolveViewerResultSchema.parse({
+      exists: true,
+      authorityGeneration: row.authority_generation,
       authorized,
       archived: row.owning_room_archived_at !== null,
     });

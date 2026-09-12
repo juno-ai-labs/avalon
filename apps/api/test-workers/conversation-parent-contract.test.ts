@@ -3,7 +3,7 @@ import { pushSearchAuthorization } from '../src/services/search-authorization';
 import { WorkstreamDirectoryService } from '../src/services/workstream-directory-service';
 import { createResourceObjectPort } from '../src/runtime/resource-port';
 import { ResourceService } from '../src/services/resource-service';
-import type { WorkstreamDO } from '../src/durable-objects/workstream-do';
+import { WorkstreamDO } from '../src/durable-objects/workstream-do';
 import { WorkstreamIdentityStorage } from '../src/durable-objects/workstream-identity-storage';
 import { WorkspaceDO } from '../src/durable-objects/workspace-do';
 import { SubstreamAgent } from '../src/durable-objects/substream-agent';
@@ -356,6 +356,22 @@ describe("conversation parent contract", () => {
     await service.setSidekickRecommendation(WORKSPACE_ROOM_ID, shared, false);
     expect((await service.recommendedSidekicks(WORKSPACE_ROOM_ID)).items).toEqual([]);
   });
+  it("opens through one combined parent decision and retains archive and visibility", async () => {
+    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID]);
+    const legacyAuthority = vi.spyOn(WorkstreamDO.prototype, "authority");
+    const legacyViewer = vi.spyOn(WorkstreamDO.prototype, "authorizeViewer");
+    const service = new ConversationService(TEST_ENV, AUTH);
+    expect(await service.authorizeViewer(PERSONAL_ROOM_ID)).toMatchObject({
+      kind: "workstream", id: PERSONAL_ROOM_ID, authorityGeneration: 1, archived: false,
+    });
+    await expect(new ConversationService(TEST_ENV, { ...AUTH, userId: MEMBER_ID })
+      .authorizeViewer(PERSONAL_ROOM_ID)).rejects.toMatchObject({ status: 404 });
+    await archiveRoom(PERSONAL_ROOM_ID);
+    expect(await service.authorizeViewer(PERSONAL_ROOM_ID)).toMatchObject({ archived: true });
+    expect(legacyAuthority).not.toHaveBeenCalled();
+    expect(legacyViewer).not.toHaveBeenCalled();
+  });
+
   it('checks workspace membership when refreshing authority from a previously authenticated context', async () => {
     await seedRoom(WORKSPACE_ROOM_ID, 'workspace', [AUTHOR_ID]);
     await env.DB.prepare("UPDATE workspace_members SET status = 'removed' WHERE workspace_id = ? AND user_id = ?")

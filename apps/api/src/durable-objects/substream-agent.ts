@@ -6884,12 +6884,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     sequence: number,
     markOpened: boolean,
   ): Promise<PreparedSocketSnapshot> {
-    const viewers = await this.loadViewers(workspaceId, workstreamId);
-    const loadedWorkstream = await this.product.getAdmitted(
-      auth,
-      viewers,
-      markOpened && !speculative,
-    );
+    // Viewer profiles and product detail are independent reads. Neither should
+    // add its network latency in front of the other's baseline preparation.
+    const [viewers, detail] = await Promise.all([
+      this.loadViewers(workspaceId, workstreamId),
+      this.product.getAdmitted(auth, [], markOpened && !speculative),
+    ]);
+    const loadedWorkstream = { ...detail, viewers };
     // Preparation must not settle unseen state before a socket actually opens,
     // but the frame it prepares is the post-open view the accepted socket will
     // receive. The accept path performs the real idempotent settlement before
