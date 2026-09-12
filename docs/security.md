@@ -72,14 +72,6 @@ checked instead of carrying a local lint suppression.
 
 ## How it works
 
-### Request authentication
-
-Identity and workspace middleware share one authenticated context within a single
-HTTP request. Workspace middleware still requires a workspace and role; an
-identity-only session cannot enter protected routes. Each new request verifies
-its token and reads current regional session/membership state again. This is not
-a cross-request cache and does not change revocation or regional isolation.
-
 ### Trust boundaries
 
 The renderer, inbound internet, connector providers, monitored URLs, model
@@ -303,6 +295,12 @@ membership leaves its session row alive and only the platform refuses that link
 before the window moves. The regional middleware resolves active membership and
 workspace scope on every request under either path. A failed activation cannot
 fall back to the currently active workspace or search other stored credentials.
+
+Identity and workspace middleware share one authenticated context within a single
+HTTP request. Workspace middleware still requires a workspace and role; an
+identity-only session cannot enter protected routes. Each new request verifies
+its token and reads current regional session/membership state again. This is not
+a cross-request cache and does not change revocation or regional isolation.
 
 Addressed native links use the distinct `workspace` host rather than routing
 query parameters. A pre-addressing desktop therefore rejects them instead of
@@ -834,6 +832,7 @@ no unit test standing in for them.
 | `apps/desktop/src/main/*.test.ts` | Session encryption and the envelope versions, Lockdown migration, the settings write queue, the developer-settings flag suppression, launch-at-login, the menu bar's content fetch. |
 | `apps/api/test/connector-credential-envelope.test.ts` | The AES-GCM envelope, its connection-bound additional authenticated data, and key-version rotation reads. |
 | `apps/api/test/auth-session-lifecycle.test.ts` | Session minting, revocation, and single-use consumption. |
+| `apps/api/test/auth-router.test.ts` | Root-mounted identity/workspace middleware reuse, standalone workspace-middleware authentication, and next-request revocation. |
 | `apps/api/test/security-and-config.test.ts` | Exact desktop CORS origin/method/header preflights and environment guardrails. |
 | `apps/api/test/validation-errors.test.ts` | Generic public 400 envelopes plus operator-only request target, field paths, issue codes, and recursively masked JSON body shape with rejected values absent. |
 | `apps/api/test/rpc-contracts.test.ts` | That a cross-region rejection names field paths and never values. |
@@ -865,11 +864,21 @@ incident response that may prompt it.
 
 ### 2026-09-12 — Authenticate once within each HTTP request
 
-Protected routes pass through both root-mounted identity and workspace
-middleware. Reusing the identity decision removes a duplicate token verification
-and session query from every such request. Persistent caching was rejected
-because it would introduce stale revocation decisions; only the request-local
-context is reused, and workspace/role refinement remains mandatory.
+**What changed:** Protected routes reuse the identity middleware's request-local
+decision in workspace middleware, removing their duplicate token verification
+and session query.
+
+**Why:** Both middleware stacks are root-mounted, so a protected route passes
+through both in one request while requiring only one current identity decision.
+
+**Considered and rejected:** Persistent caching was rejected because it would
+introduce stale revocation decisions.
+
+**Consequences:** Only the current request shares the decision; every later
+request still reads current session, membership, workspace, and role state, and
+workspace middleware still rejects identity-only sessions.
+
+Shipped in #730.
 
 
 ### 2026-09-11 — The five prompt trust labels are gone
