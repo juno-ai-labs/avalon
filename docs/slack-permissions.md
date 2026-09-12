@@ -82,7 +82,7 @@ Slack membership and visibility.
 | `add_reaction` | `reactions.add` | `reactions:write` | Adds a bot reaction. Slack's `already_reacted` response is treated as a successful retry. |
 | `create_conversation` | `conversations.create` or `conversations.open` | `channels:manage`, `groups:write`, `im:write`, `mpim:write` | Accepts exactly one of a channel name or one to eight user IDs, then creates a public/private channel or opens a DM/MPIM. |
 
-These tools use Rally's normal external-write confirmation, authorization, audit,
+These tools use Rally's normal external-write execution, authorization, audit,
 and durable-receipt policies. A workspace Slack task can use them without the
 initiating member creating a personal Slack connection, but only through the
 installation belonging to the same Slack team and Rally workspace.
@@ -332,7 +332,7 @@ for every requested permission even though the remote tool catalog is dynamic.
 **Consequences:** A scope addition still requires review here, in code, and at
 Slack. A tool addition on Slack's server does not require a Rally change unless
 it needs a provider OAuth scope Rally has not requested. Remote annotations do
-not relax confirmation or receipt policy; every live MCP operation is treated as
+not relax execution or receipt policy; every live MCP operation is treated as
 a write until Rally has an independent trusted classifier.
 
 Shipped in the pull request for this change.

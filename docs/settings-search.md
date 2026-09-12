@@ -126,6 +126,16 @@ scrolling and both appearances.
 
 ## Changelog
 
+### 2026-09-12 — Separate Ashby personal setup from shared event installation
+
+Manage events includes password-only API-key replacement, explicit Test, cleanup
+retry and exact-ID reconciliation. Exact searches for either Connect label filter
+by the available scope; fuzzy matches on “me” must not expose workspace-only
+results. Personal owners can refresh their own grant without workspace admin
+status. These controls preserve personal/workspace authority separately.
+
+The catalog includes Ashby and searchable API-key/event controls. Personal sign-in uses the existing OAuth handoff; workspace setup asks an administrator for a key and the approved event selection. Installed workspace rows expose registration status and explicit recovery controls. Tool counts remain on the existing inventory route; displaying status never repairs provider configuration.
+
 ### 2026-09-10 — Internet access becomes its own page, and one strip draws every exclusive choice
 
 **What changed:** The Terminal outbound-access policy moved out of Workspace

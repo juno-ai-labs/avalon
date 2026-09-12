@@ -123,6 +123,7 @@ jobs:
               pnpm --filter @rally/api build:terminal:eu &&
               pnpm --filter @rally/api build:telemetry &&
               pnpm --filter @rally/api check:telemetry-startup-boundary &&
+              pnpm --filter @rally/api build:ashby &&
               pnpm --filter @rally/api build:pricing &&
               pnpm --filter @rally/api build:artifacts &&
               pnpm --filter @rally/api build:artifacts:eu &&
@@ -657,6 +658,10 @@ jobs:
           if [ "$DEPLOY_EU" = "true" ]; then regions="$regions eu"; fi
           if [ "$DEPLOY_GLOBAL" = "true" ]; then regions="$regions global"; fi
           node scripts/check-regional-health.mjs $regions
+
+      - name: Deploy dedicated Ashby ingress after both regional entrypoints
+        if: env.DEPLOY_EU == 'true' && env.DEPLOY_GLOBAL == 'true'
+        run: pnpm --filter @rally/api exec wrangler deploy --config wrangler.ashby.global.jsonc
 
       # The MCP binds both regional API entrypoints. It is deliberately last:
       # a first release cannot make its caller live until both named targets

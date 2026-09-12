@@ -2,7 +2,7 @@ import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
-import { decryptString, encryptString } from "../src/lib/crypto";
+import { encryptString } from "../src/lib/crypto";
 import { ConnectionService } from "../src/services/connection-service";
 import { __integrationTesting } from "../src/services/integrations";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
@@ -50,104 +50,17 @@ afterEach(() => {
 });
 
 describe("Granola workspace connection", () => {
-  it("registers a workspace webhook and stores both secrets only in the encrypted connection envelope", async () => {
-    const { auth, database, env } = fixture();
-    const requests: Array<{ url: URL; body: unknown; authorization: string | null }> = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
-      requests.push({
-        url,
-        body: init?.body ? JSON.parse(String(init.body)) : null,
-        authorization: new Headers(init?.headers).get("authorization"),
-      });
-      return new Response(JSON.stringify({
-        id: "whe_1234567890abcd",
-        signing_secret: `whsec_${btoa("webhook-signing-secret")}`,
-      }), { status: 201, headers: { "content-type": "application/json" } });
-    }));
-
-    const result = await new ConnectionService(env, auth).createGranolaWorkspace({
-      apiKey: API_KEY,
-      capabilities: ["granola.workspace.read"],
-    });
-    expect(result.connection).toMatchObject({
-      connectorType: "granola",
-      scope: "workspace",
-      displayName: "Granola workspace",
-      grantedCapabilities: ["granola.workspace.read"],
-    });
-    expect(JSON.stringify(result)).not.toContain(API_KEY);
-    expect(JSON.stringify(result)).not.toContain("webhook-signing-secret");
-    expect(requests).toEqual([expect.objectContaining({
-      url: new URL("https://public-api.granola.ai/v1/webhook-endpoints"),
-      authorization: `Bearer ${API_KEY}`,
-      body: {
-        url: expect.stringMatching(/^https:\/\/api\.example\.test\/ingest\/granola\//u),
-        scopes: ["workspace"],
-        events: ["note.access_granted", "note.edited", "note.generated", "note.regenerated"],
-      },
-    })]);
-
-    const row = database.prepare(
-      `SELECT id, encrypted_credentials, credential_iv, provider_account_id, config_json
-       FROM connector_connections WHERE connector_type = 'granola'`,
-    ).get() as Record<string, unknown>;
-    expect(String(row.encrypted_credentials)).not.toContain(API_KEY);
-    expect(row.provider_account_id).not.toContain(API_KEY);
-    expect(row.config_json).toBe("{}");
-    const decrypted = JSON.parse(await decryptString(
-      String(row.encrypted_credentials),
-      String(row.credential_iv),
-      CREDENTIAL_KEY,
-      String(row.id),
-    ));
-    expect(decrypted).toEqual({
-      apiKey: API_KEY,
-      webhookEndpointId: "whe_1234567890abcd",
-      webhookSigningSecret: `whsec_${btoa("webhook-signing-secret")}`,
-    });
-    expect(database.prepare(
-      "SELECT metadata_json FROM audit_events WHERE target_id = ?",
-    ).get(String(row.id))).toEqual({
-      metadata_json: JSON.stringify({
-        provider: "granola",
-        scope: "workspace",
-        capabilities: ["granola.workspace.read"],
-      }),
-    });
-  });
-
-  it("rejects a second active workspace key before contacting Granola", async () => {
-    const { auth, database, env } = fixture();
-    database.prepare(
-      `INSERT INTO connector_connections
-       (id, workspace_id, connector_type, scope, owner_user_id, display_name,
-        granted_scopes_json, model_plugin_id, status, cursor_json, config_json,
-        created_at, updated_at)
-       VALUES ('existing', ?, 'granola', 'workspace', NULL, 'Granola workspace',
-               '["granola.workspace.read"]', 'plugin_granola', 'healthy', '{}', '{}',
-               '2026-01-01', '2026-01-01')`,
-    ).run(WORKSPACE_ID);
-    const providerFetch = vi.fn();
-    vi.stubGlobal("fetch", providerFetch);
-    await expect(new ConnectionService(env, auth).createGranolaWorkspace({
-      apiKey: API_KEY,
-      capabilities: ["granola.workspace.read"],
-    })).rejects.toMatchObject({ status: 409, code: "granola_workspace_connection_exists" });
-    expect(providerFetch).not.toHaveBeenCalled();
-  });
-
+  // Workspace setup moved to the real workerd installation suite.
   it("accepts an offset webhook timestamp and re-enqueues its canonical activity on provider retry", async () => {
     const { auth, database, env, payloadPut, queueSend } = fixture();
     const secretBytes = new TextEncoder().encode("webhook-signing-secret");
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-      id: "whe_1234567890abcd",
-      signing_secret: `whsec_${base64(secretBytes)}`,
-    }), { status: 201, headers: { "content-type": "application/json" } })));
-    const created = await new ConnectionService(env, auth).createGranolaWorkspace({
-      apiKey: API_KEY,
-      capabilities: ["granola.workspace.read"],
-    });
+    const connectionId = crypto.randomUUID();
+    const encrypted = await encryptString(JSON.stringify({ apiKey: API_KEY, webhookEndpointId: "whe_1234567890abcd", webhookSigningSecret: `whsec_${base64(secretBytes)}` }), CREDENTIAL_KEY, connectionId);
+    database.prepare(`INSERT INTO connector_connections
+      (id, workspace_id, connector_type, scope, owner_user_id, display_name, encrypted_credentials, credential_iv,
+       granted_scopes_json, model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+      VALUES (?, ?, 'granola', 'workspace', NULL, 'Granola workspace', ?, ?, '["granola.workspace.read"]', 'plugin_granola_fixture', 'healthy', '{}', '{}', ?, ?)`)
+      .run(connectionId, auth.workspaceId, encrypted.ciphertext, encrypted.iv, new Date().toISOString(), new Date().toISOString());
     const event = {
       event_id: "11111111-1111-4111-8111-111111111111",
       event_type: "note.generated",
@@ -168,8 +81,8 @@ describe("Granola workspace connection", () => {
     };
     const service = new ConnectionService(env);
 
-    const first = await service.ingestGranolaWebhook(created.connection.id, rawBody, headers);
-    const retry = await service.ingestGranolaWebhook(created.connection.id, rawBody, headers);
+    const first = await service.ingestGranolaWebhook(connectionId, rawBody, headers);
+    const retry = await service.ingestGranolaWebhook(connectionId, rawBody, headers);
 
     expect(first).toMatchObject({ duplicate: false });
     expect(retry).toEqual({ duplicate: true, activityId: first.activityId });

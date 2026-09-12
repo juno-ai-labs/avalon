@@ -1015,6 +1015,10 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-09-12 — Ashby and shared workspace installation ownership
+
+Ashby adds personal hosted MCP and independently authorized workspace events. Only `applicationSubmit` and `candidateStageChange` are declared, both operational. Workspace tools remain empty. Shared installation state now reserves identity before provider create and retains cleanup authority after disablement. Granola adopts the same lifecycle without replacing its existing subscription. See [installation lifecycle](connector-installation-lifecycle.md) for invariants and outstanding acceptance; the confidential-payload review still blocks workspace automation launch.
+
 ### 2026-09-11 — Agent-presented connection cards reuse the one OAuth authority
 
 **What changed:** An opted-in conversation-feed card can initiate or reconnect a trusted native
@@ -2554,7 +2558,7 @@ that its public integration acts as a bot. That correctly describes the public
 API connection but leaves no member-attributed path; the official hosted MCP
 server is that separate path and should not be conflated with the bot install.
 Keeping static tool allowlists as a safety boundary was also rejected because
-Rally's capability grant, principal checks, confirmation policy, and receipts
+Rally's capability grant, principal checks, execution policy, and receipts
 already provide that boundary without inventing a provider catalog.
 
 Reusing Notion's `owner=user` parameter as Rally's scope signal was rejected

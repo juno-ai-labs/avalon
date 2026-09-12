@@ -18,7 +18,7 @@ membership. It sends no invitation email yet. [Private access](private-access.md
 owns that lifecycle and the remaining distribution work.
 
 Timed links use an operator-chosen local date/time and permit repeat downloads
-until that deadline. Both generation actions share the current lifetime choice, defaulting to timed mode. Requests and grant history are searched server-side and paged in groups of 50. Access-protected same-origin actions revoke grants and relay acknowledgement recovery to the Global operator API. The existing `demos` role also authorizes these acquisition recovery actions; it does not authorize telemetry administration.
+until that deadline. Both generation actions share the current lifetime choice, defaulting to timed mode. Requests and grant history are searched server-side and paged in groups of 50. Access-protected same-origin actions revoke grants and relay acknowledgement recovery to the Global operator API. The existing `demos` role also authorizes these acquisition recovery actions; it does not authorize telemetry administration. The same regional credential also authorizes the reviewed connector-maintenance command described in [connector installation lifecycle](connector-installation-lifecycle.md#operator-maintenance); telemetry and read-only engineering credentials cannot use it.
 
 ## Where the code lives
 
@@ -451,6 +451,16 @@ contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only change
 do not publish a new Ace bundle.
 
 ## Changelog
+
+### 2026-09-12 — Use the existing operator identity for connector maintenance
+
+The regional connector maintenance routes explicitly admit Ace's existing
+`DEMO_OPERATORS_JSON` credential and `demos` role, as selected by the product
+owner. The command previews a fixed regional provider/version/workspace selection
+before apply, and provides status, resume and cancel. This avoids adding a
+permanent administrative secret or treating read-only inspection as write
+authority. It adds no Ace UI, arbitrary provider request or SQL execution path;
+deployment and a real maintenance run remain separate actions.
 
 ### 2026-09-10 — New demo casts colleagues from a dropdown
 

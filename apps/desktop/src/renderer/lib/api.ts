@@ -1,3 +1,4 @@
+import { ConnectorInstallationSchema } from '@rally/contracts';
 import { SidekickAttachmentsSchema, type SidekickAttachment } from '@rally/contracts';
 import { SearchResponseSchema, type SearchRequest, type SearchResponse } from '@rally/contracts/search';
 import { OnboardingJourneySchema, type UpdateOnboardingJourney } from '@rally/contracts';
@@ -1963,7 +1964,7 @@ export class RallyApi {
   }
 
   async startProviderConnection(
-    provider: 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack',
+    provider: 'ashby' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack',
     scope: 'you' | 'workspace',
     capabilities: string[],
   ): Promise<ConnectorOAuthStart> {
@@ -2072,14 +2073,41 @@ export class RallyApi {
     return mapConnection(response.connection);
   }
 
-  async createGranolaWorkspaceConnection(apiKey: string): Promise<WorkstreamConnection> {
+  async replaceInstallationApiKey(connectionId: string, apiKey: string) {
+    return this.request(`/connections/${connectionId}/installation/api-key`, {
+      method: 'POST', body: { apiKey }, schema: z.object({ installation: ConnectorInstallationSchema }),
+    });
+  }
+
+  async createAshbyWorkspaceConnection(apiKey: string, events: string[], idempotencyKey: string) {
+    return this.request('/connections/ashby/workspace', {
+      method: 'POST', body: { apiKey, events, idempotencyKey },
+      schema: z.object({ installation: ConnectorInstallationSchema }),
+    });
+  }
+
+  async connectorInstallation(connectionId: string) {
+    return this.request(`/connections/${connectionId}/installation`, {
+      schema: z.object({ installation: ConnectorInstallationSchema.nullable() }),
+    });
+  }
+
+  async changeConnectorInstallation(connectionId: string, input: {
+    action: 'repair' | 'disconnect' | 'forget_cleanup' | 'reconcile' | 'rotate'; key?: string; providerId?: string;
+  }) {
+    return this.request(`/connections/${connectionId}/installation`, {
+      method: 'POST', body: input, schema: z.object({ installation: ConnectorInstallationSchema }),
+    });
+  }
+
+  async createGranolaWorkspaceConnection(apiKey: string, idempotencyKey: string): Promise<WorkstreamConnection> {
     reportTelemetryProductIntent({
       kind: 'connector_setup_requested_v2', connector: 'granola', scope: 'workspace',
       method: 'api_key', capabilityCount: telemetryCountBucket(1),
     });
     const response = await this.request('/connections/granola/workspace', {
       method: 'POST',
-      body: { apiKey, capabilities: ['granola.workspace.read'] },
+      body: { apiKey, idempotencyKey, capabilities: ['granola.workspace.read'] },
       schema: z.object({ connection: WireConnectionSchema }),
     });
     return mapConnection(response.connection);
@@ -2135,7 +2163,7 @@ export class RallyApi {
 
   async reconnectConnection(
     id: string,
-    provider?: 'google' | 'github' | 'linear' | 'notion' | 'slack',
+    provider?: 'ashby' | 'google' | 'github' | 'linear' | 'notion' | 'slack',
     scope: 'you' | 'workspace' = 'you',
     capabilityCount = 0,
   ): Promise<ConnectorOAuthStart> {
@@ -2162,6 +2190,12 @@ export class RallyApi {
     return this.request(`/connections/oauth-attempts/${encodeURIComponent(attemptId)}`, {
       schema: WireConnectorOAuthAttemptSchema,
       signal,
+    });
+  }
+
+  async testConnection(id: string) {
+    return this.request(`/connections/${encodeURIComponent(id)}/test`, {
+      method: 'POST', schema: z.object({ ok: z.boolean(), message: z.string(), reconnectRequired: z.boolean().optional() }),
     });
   }
 
