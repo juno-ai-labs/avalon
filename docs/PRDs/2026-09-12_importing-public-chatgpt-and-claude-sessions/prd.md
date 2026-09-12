@@ -158,8 +158,7 @@ control in its own header and imports into the substream.
 
 The control is shown to any workspace member who can open the conversation.
 Importing is posting: an importer who was not yet a participant becomes one
-with reason `message`, exactly as sending a message would make them. The flag
-in **Rollout** hides the icon and the menu item for anyone it is not on for.
+with reason `message`, exactly as sending a message would make them.
 
 ### Reading the link
 
@@ -553,25 +552,22 @@ requires does not apply. What changes is what the agent *reads*:
 
 ## Rollout
 
-**Proposed: behind a flag, `conversation-import-enabled`, default off for
-everyone.** The question [`prds.md`](../../prds.md#optional-sections) requires
-— whether the product owner wants this behind a flag — could not be put to them
-while this PRD was written, and the proposal is recorded here pending their
-answer in **Open questions**. If yes, the flag is a product Boolean and follows
-[`feature-flags.md`](../../feature-flags.md#adding-a-flag) in full: served from
-`client-feature-flags.ts`, which fails closed; registered in Ace in all three
-places — `ProductFeatureFlagKeySchema`, `MANAGED_FLAGS`, and the deploy
-script's `ensureFlag` — with identical description and default, in the phase
-that introduces the icon; audiences reached by targeting rules, none in code.
-Rally's managed flags are presentation-only by definition: the flag hides the
-icon, the menu item, and the dialog, and does not remove the API routes, which
-stay behind conversation authorization.
+**No flag: the import ships enabled for everyone.** That is the product owner's
+answer to the question [`prds.md`](../../prds.md#optional-sections) requires,
+given on 2026-09-12, and the reason is the feature's shape: it is a control
+inside a conversation the member can already open, it writes only into that
+conversation, and it grants nothing — no new access, no new tool, no new
+identity. There is no audience to stage it to. Rally's managed flags are
+presentation-only by definition, so a flag would have hidden an icon and left
+the routes in place regardless; withdrawing the surface, if it ever comes to
+that, is a deploy that removes the control, and existing blocks and artifacts
+are ordinary transcript and resources that stay either way.
 
 Phases, each shippable on its own:
 
 1. **ChatGPT.** The fetcher primitive, the ChatGPT adapter, the room's batch
    writer, the external-actor label and mark registry, the dialog, the block,
-   the artifact, and the flag. Images best-effort from the rendered page.
+   and the artifact. Images best-effort from the rendered page.
 2. **Claude.** Gated on the spike in **Open questions**: the two Claude
    adapters, and whichever fetcher passes the challenge. If neither does, this
    phase ships as a named refusal in the dialog rather than not at all, and the
@@ -579,16 +575,13 @@ Phases, each shippable on its own:
 3. **Substream import and re-import versioning**, if phase 1 shipped them as
    main-feed-only to land sooner.
 
-Turning it off is turning the flag off: no new imports; existing blocks and
-artifacts are ordinary transcript and resources and stay. The implementing
-changes add a module document for the import subsystem, written to
+The implementing changes add a module document for the import subsystem, written to
 [`module-documents.md`](../../module-documents.md) and registered in
 [`docs/README.md`](../../README.md), and update the owners of the areas touched:
 [`demo-workspaces.md`](../../demo-workspaces.md) (the generalized statement of
 addressing), [`agent-attachments.md`](../../agent-attachments.md),
-[`conversation-surfaces.md`](../../conversation-surfaces.md),
-[`text-search.md`](../../text-search.md) if Browser Run is used, and
-[`feature-flags.md`](../../feature-flags.md).
+[`conversation-surfaces.md`](../../conversation-surfaces.md), and
+[`text-search.md`](../../text-search.md) if Browser Run is used.
 
 ## Acceptance
 
@@ -628,6 +621,8 @@ the durable checks land in [`e2e.md`](../../e2e.md).
    text.
 9. **Every new limit is open**: `rg -n "LIMIT UNSET"` outside `docs/` lists
    each one this feature added.
+10. **No flag stands between a member and the control.** A fresh workspace's
+    member sees the import control with no operator action anywhere.
 
 ## Open questions
 
@@ -639,9 +634,6 @@ the durable checks land in [`e2e.md`](../../e2e.md).
   the example session and a classic share, run by someone with the production
   Firecrawl key and a remote Worker; its answer picks the fetcher for phase 2
   and is recorded in the decision log.
-- **Does this ship behind a flag? — the product owner's answer is pending.**
-  The proposal above assumes yes. A no is recorded in **Rollout** with its
-  reason, per [`prds.md`](../../prds.md#optional-sections).
 - **Are ChatGPT's images fetchable from the rendered page? — best effort, does
   not block.** The share carries images as `sediment://` pointers the hydrated
   client resolves; the rendered DOM's image URLs are the expected route and are
