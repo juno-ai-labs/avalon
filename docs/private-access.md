@@ -82,6 +82,19 @@ download capability behind. An EU workspace invitation gets no grant: the
 redemption route 404s outside the Global Worker, and issuing one anyway would
 create a link that can never be redeemed.
 
+The shared `revokeDownloadGrantsForInvitation(db, invitationId)` primitive
+invalidates any still-live grant tied to one invitation, keyed on the
+`download_grants_source` index over `(source, source_id)`. Every place a
+workspace invitation can end calls it: `revokeInvitation`'s explicit admin
+revoke, `declineInvitationForUser`'s invitee decline, the duplicate-invitation
+path in `createInvitation` that supersedes an existing pending invitation to
+the same email (via `RETURNING id` on that `UPDATE`, since the superseded row's
+id is otherwise not known to the caller), and `leaveWorkspace("abandoned")`'s
+bulk revoke of every pending invitation in a closing workspace (a fourth batch
+statement matching `source_id` against that workspace's invitations). A grant
+issued for an invitation later invalidated through any of these paths does not
+outlive it.
+
 ## Invariants
 
 - D1 persistence precedes provider I/O; otherwise a mail failure loses the lead.
@@ -102,8 +115,9 @@ create a link that can never be redeemed.
   afterwards; the server does not interrupt active transfers.
 - Email scanners and page previews must not consume grants; therefore consumption
   stays behind an explicit POST, with no auto-submit in the browser.
-- Installing does not grant workspace membership. The future workspace-email
-  caller must keep the existing authenticated invitation acceptance checks.
+- Installing does not grant workspace membership. The workspace-invitation
+  caller keeps the existing authenticated invitation acceptance checks; a grant
+  never bypasses them.
 - The `Rally early access` widget stays in Managed mode in the Cloudflare
   dashboard; otherwise the landing page's `interaction-only` appearance never
   reveals a checkbox and a flagged visitor cannot pass.
@@ -241,8 +255,14 @@ the new form template.
 `apps/api/test/workspace-and-invitations.test.ts` covers the invitation-email
 caller: a Global invitation's email carries a download link whose token differs
 from the accept token and never appears in a database write, an EU invitation
-issues no grant and mentions no download link, and a failure writing the grant
-itself revokes the invitation exactly like a failed email send does.
+issues no grant and mentions no download link, a failure writing the grant
+itself revokes the invitation exactly like a failed email send does, an
+administrator's explicit revoke and an invitee's decline each revoke the
+matching grant, and superseding a pending invitation with a duplicate revokes
+the superseded one's grant. `apps/api/test/access-revocation.test.ts` proves
+the fourth cascade site against real migrated SQLite: abandoning a workspace
+revokes a live grant tied to one of its pending invitations in the same batch
+that revokes the invitations themselves.
 
 Mutation checks prove the write, token admission, forced concurrent claim,
 origin, expiry, rate/body guards and sender/idempotency paths fail when their
@@ -390,10 +410,14 @@ when its associated purpose ends. Delete expired/used/revoked grants after their
 related delivery/support investigation is complete. No automatic age-based sweep
 or numerical retention period is configured.
 
-Future invitation sending must implement the PRD's durable suppression,
-cancellation and sender/erasure race handling before it is enabled. This manual
-procedure is not a substitute for those controls. Future EU workspace-grant
-privacy operations stay in the owning region; the current slice creates none.
+The still-unbuilt bulk `access_invitation` campaign sender must implement the
+PRD's durable suppression, cancellation and sender/erasure race handling before
+it is enabled; this manual procedure is not a substitute for those controls.
+The shipped workspace-invitation caller is a different case — a single,
+synchronous send inside an existing authenticated admin action, not a bulk
+campaign — and does not need that suppression/cancellation machinery. Future EU
+workspace-grant privacy operations stay in the owning region; the current slice
+creates none.
 
 ## Changelog
 
@@ -402,13 +426,21 @@ privacy operations stay in the owning region; the current slice creates none.
 **What changed:** `WorkspaceService.createInvitation` now issues a
 `workspace_invitation` grant, timed to the invitation's own 7-day expiry, for a
 Global workspace and passes its URL to `sendWorkspaceInvitationEmail`, which
-renders it as a second link/button alongside "Accept invitation". An EU
-invitation issues no grant. Issuance runs inside the same `try` that sends the
-email, so a grant-issuance failure or an email-send failure both revoke the
-grant (if one was issued) and the invitation row through the one existing
-rollback path. `listDownloadGrants` now also joins `workspace_invitations` on
-`source_id` so these grants are attributed and searchable by the invitee's
-email in Ace, the same as request-sourced grants already were.
+renders it as a second link/button alongside "Accept invitation". Issuance runs
+inside the same `try` that sends the email, so a grant-issuance failure or an
+email-send failure both revoke the grant (if one was issued) and the invitation
+row through the one existing rollback path. Per the PRD's own invariant that
+revocation or supersession must invalidate a linked grant, the other three
+places a workspace invitation can end — an administrator's explicit
+`revokeInvitation`, a duplicate invitation to the same email superseding a
+pending one, an invitee's `declineInvitationForUser`, and a workspace closing
+via `leaveWorkspace("abandoned")` — now revoke any grant tied to that
+invitation too, via a shared `revokeDownloadGrantsForInvitation` primitive
+keyed on the existing `(source, source_id)` index. `listDownloadGrants` also
+joins `workspace_invitations` on `source_id` so these grants are attributed and
+searchable by the invitee's email in Ace, the same as request-sourced grants
+already were — the fallback of an operator revoking one by hand doesn't work on
+a row Ace can't find.
 
 **Why:** The invitation email's only link opens `/invite/`, whose "Open Rally"
 button is a `rallywithai://` deep link that does nothing when the app is not
@@ -417,34 +449,28 @@ invited teammate with no existing install had no way to get Rally from the
 invitation email at all — reported as a real lockout, not a hypothetical gap.
 The `workspace_invitation` source and the database-parameterized issuer already
 existed for exactly this caller; nothing about the grant primitive needed to
-change.
+change. The revocation cascade and the Ace attribution join were not part of
+the first cut of this change; independent review found both — the cascade gap
+against the PRD's own stated invariant, the attribution gap by four of six
+reviewers in one pass — cheaply enough (an existing index makes each cascade
+site a one-statement addition) that fixing them outright was worth it over
+documenting four more places where a stale grant can outlive its invitation.
 
-**Considered and rejected:** Also issuing an EU grant against the EU database.
-The browser redemption route 404s outside the Global Worker
-(`private-access.ts`'s region guard), so an EU-issued grant would produce a link
-that can never be redeemed — worse than no link, since it looks like it should
-work. Building the regional handoff the PRD describes (a URL carrying a
+**Considered and rejected:** Issuing an EU grant against the EU database. The
+browser redemption route 404s outside the Global Worker, so an EU-issued grant
+would produce a link that can never be redeemed — worse than no link, since it
+looks like it should work. The PRD's full regional handoff (a URL carrying a
 non-secret owning-region locator, redeemed through that region's API) is
-separate, larger work with its own EU data-residency review; gating on
-`workspace_region` instead ships the Global fix now without guessing at that
-design.
+separate, larger work with its own data-residency review; gating on the
+invitation's own `workspace_region` ships the Global fix now without guessing
+at that design.
 
-**Consequences:** EU workspace invitees remain without a download link — this
-was already true before this change and is unchanged by it, but it is now the
-one remaining gap rather than the only case. Picking it up requires the regional
-redemption route and locator described in the PRD's Regional impact section,
-which nothing in this change built. Revocation on email-send failure covers only
-the grant just issued in the same call; `revokeInvitation`, the duplicate-invite
-supersede path, and workspace abandonment do not yet revoke a linked grant, so a
-grant issued for an invitation later revoked through one of those paths stays
-live until its 7-day expiry. Installing does not grant workspace membership
-regardless, so the exposure is a teammate's-eyes-only download of the public
-installer, not access to the workspace. That deferred cascade leans on an
-operator revoking the grant by hand in Ace as the fallback; review caught that
-`listDownloadGrants`' existing `LEFT JOIN access_requests` left every
-workspace-invitation grant showing as an unattributed `Standalone` link with no
-way to find it by the invitee's email, which would have made that fallback
-unreachable. Fixed in the same change by also joining `workspace_invitations`.
+**Consequences:** EU workspace invitees still get no download link from this
+email; closing that gap needs the regional redemption route and locator the
+PRD describes, which this change does not build. Everywhere else, a revoked,
+declined, superseded, or abandoned workspace invitation now reliably takes its
+download grant down with it — installing was never workspace access on its
+own, but a live link nobody meant to leave open is no longer the quiet default.
 
 Shipped in [#728](https://github.com/juno-ai-labs/avalon/pull/728).
 
