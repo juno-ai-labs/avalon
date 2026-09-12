@@ -25,6 +25,23 @@ Global additionally binds the existing `avalon-desktop-releases` R2 bucket as
 regional migration 0101 before releasing the Global API, then Ace and the site.
 EU has no installer binding or public intake route in this first slice. Global requires the Turnstile secret and a finite approved rate-limit binding before production acquisition opens; the four application limits must also be finite. See [private-access operations](private-access.md#operations).
 
+## Dedicated Ashby ingress
+
+`ashby.rallywith.ai` belongs to `avalon-connector-ashby-global`, a separate static
+entry point. `build:ashby` profiles its emitted artifact and rejects accidental
+imports of the API application, connector registry, or agent runtime. The public
+entry point forwards signed bytes to `AshbyRegionalBridge` in the owning region;
+credentials, verification, and canonical Queue admission remain regional. This
+isolates ingress startup, while shared provider/lifecycle code remains in the API
+artifact and must not be described as removed from it.
+
+The deployment workflow deploys Ashby ingress only after both regional APIs pass
+health, so both named bridge targets exist on first creation. Partial regional
+recovery leaves the shared ingress deployment unchanged. No new stored secret or
+per-customer deployment is involved. Existing Granola webhook URLs stay on their
+original regional receivers. Local UI work can use regional ingestion directly;
+shared-host acceptance uses the dedicated Worker and its configured bindings.
+
 ## Sidekick staged deployment
 
 PR #583 deploys both class exports while retaining `AutomationDO` at v9. After
@@ -39,6 +56,7 @@ See [the lifecycle rollout](automation-lifecycle.md#class-rename-deployment).
 
 | Surface | Entrypoint and config | Responsibility |
 | --- | --- | --- |
+| Ashby ingress | `src/ashby-ingress-worker.ts`, `wrangler.ashby.global.jsonc` | Dedicated public connector domain; opaque regional lookup and exact signed-byte forwarding. |
 | Regional API | `src/index.ts`, `wrangler.{eu,global}.jsonc` | HTTP, events, Durable Objects, Workflows, routing bridges, and product authority. |
 | Document processor | `src/document-processing-worker.ts`, `wrangler.documents.{eu,global}.jsonc` | PDF.js text extraction, animated-GIF storyboards, and TIFF decoding. |
 | Terminal provider | `src/terminal-provider-worker.ts`, `wrangler.terminal.{eu,global}.jsonc` | Daytona SDK calls behind the `TerminalSandboxProvider` contract. |
@@ -308,6 +326,17 @@ catalog reads plus sixteen small KV writes; inference performs only the KV reads
 for Azure-bound models in its route plan.
 
 ## Changelog
+
+### 2026-09-12 — Give Ashby public ingress its own startup graph
+
+The user requested a Worker per connector after API startup/bundle growth had
+already cost an engineering day. Ashby therefore owns a dedicated domain and
+entry point, with a build assertion against accidentally pulling the API graph
+back in. A domain alias on the Global API was rejected because it would evaluate
+the same graph. Regional credentials and event authority remain shared; this
+first ingress boundary makes no claim of reducing the shared API artifact.
+
+
 
 ### 2026-09-09 — Bound and recover early-access operations
 

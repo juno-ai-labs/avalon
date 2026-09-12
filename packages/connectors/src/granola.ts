@@ -1,3 +1,5 @@
+import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
+import type { ConnectorInstallationManagement } from "./installation";
 import type { ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 import {
@@ -517,7 +519,39 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
     );
   }
 
+  const installationManagement: ConnectorInstallationManagement = {
+    version: 1, capability: GranolaCapabilities.workspaceRead, grouping: "grouped",
+    events: ["note.access_granted", "note.edited", "note.generated", "note.regenerated"],
+    signingSecretSource: "provider", canUpdateDestination: false,
+    support: { create: "automatic", inspect: "automatic", update: "automatic", remove: "automatic", rotate: "manual", reconcileCreate: "manual" },
+    manualInstructions: "Inspect the exact Rally endpoint in Granola's webhook settings. Preserve its destination, signing secret, and four note events. Supply its recorded ID to reconcile; remove that endpoint manually if API removal is unavailable. Automatic secret rotation is not verified.",
+    async validate(connection, signal) {
+      await granolaApi(fetcher, apiBaseUrl, requireWorkspaceApiKey(connection), "/v1/webhook-endpoints", {}, signal);
+    },
+    async create(connection, registration, _secret, signal) {
+      const endpoint = await createGranolaWebhookEndpoint(requireWorkspaceApiKey(connection), registration.destination, signal, fetcher, apiBaseUrl);
+      return { providerId: endpoint.id, signingSecret: endpoint.signingSecret };
+    },
+    async inspect(connection, registration, signal) {
+      const endpoints = await granolaApi(fetcher, apiBaseUrl, requireWorkspaceApiKey(connection), "/v1/webhook-endpoints", {}, signal);
+      const endpoint = recordArray(endpoints, "webhook_endpoints").find((item) => item.id === registration.providerId);
+      if (!endpoint) return null;
+      const parsed = z.object({ id: z.string(), url: HttpsUrlSchema, events: z.array(z.string()), enabled: z.boolean() }).parse(endpoint);
+      return { ...registration, providerId: parsed.id, destination: parsed.url, events: parsed.events, enabled: parsed.enabled };
+    },
+    async update(connection, registration, signal) {
+      // Only enabled is verified by the existing adapter. Do not guess patch fields.
+      await providerJson(fetcher, new URL(`/v1/webhook-endpoints/${encodeURIComponent(registration.providerId!)}`, apiBaseUrl), {
+        method: "PATCH", headers: jsonHeaders(requireWorkspaceApiKey(connection)), body: JSON.stringify({ enabled: true }), signal,
+      }, GRANOLA_RESPONSE_BYTES);
+    },
+    async remove(connection, providerId, signal) {
+      await deleteGranolaWebhookEndpoint(requireWorkspaceApiKey(connection), providerId, signal, fetcher, apiBaseUrl);
+    },
+  };
+
   return {
+    installationManagement,
     agentPlugin: GranolaAgentPluginDescriptor,
     dynamicAgentTools: personalMcp.dynamicAgentTools,
     webhookActivity: {
@@ -684,7 +718,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
     },
     refreshCredentials,
     async revoke(connection, signal) {
-      if (connection.scope !== "workspace") return;
+      if (connection.scope !== "workspace" || connection.config.installationLifecycle === 1) return;
       const apiKey = requireWorkspaceApiKey(connection);
       const webhookEndpointId = stringValue(connection.credentials, "webhookEndpointId");
       if (webhookEndpointId) {
@@ -748,7 +782,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       // explicit connection test, never from a health check: reauthorization
       // calls that on every activation, and a read-shaped check must not
       // repeatedly mutate provider state as a side effect.
-      if (connection.scope !== "workspace") return { repaired: false };
+      if (connection.scope !== "workspace" || connection.config.installationLifecycle === 1) return { repaired: false };
       const apiKey = requireWorkspaceApiKey(connection);
       const webhookEndpointId = stringValue(connection.credentials, "webhookEndpointId");
       if (!webhookEndpointId) return { repaired: false };

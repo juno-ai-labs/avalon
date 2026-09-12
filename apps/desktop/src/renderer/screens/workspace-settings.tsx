@@ -1,3 +1,4 @@
+import { AshbyWorkspaceSetup, ConnectorInstallationDetails } from '../components/connector-installation';
 import { ServerCog } from 'lucide-react';
 import { connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 import { PersonalSetup } from './guided-onboarding';
@@ -71,6 +72,7 @@ type SettingsSection = DesktopSettingsSection;
 type ConnectionFilter = 'all' | 'connected' | 'not_connected';
 
 const reconnectableConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
+  'ashby',
   'google',
   'github',
   'granola',
@@ -224,7 +226,7 @@ function providerSetting(provider: { id: string; name: string; description: stri
     label: provider.name, description: provider.description,
     options: [
       ...(provider.scopes.includes('you') ? [PERSONAL_CONNECT_LABEL] : []),
-      ...(admin && provider.scopes.includes('workspace') ? ['Connect workspace'] : []),
+      ...(admin && provider.scopes.includes('workspace') ? ['Connect for workspace'] : []),
       'Setup', 'Authorization',
     ],
   });
@@ -235,7 +237,7 @@ function connectionSetting(connection: WorkstreamConnection, admin: boolean) {
     label: connection.displayName, description: 'Manage this installed connection.',
     options: [
       ...(admin && reconnectableConnectorTypes.has(connection.connectorType)
-        && !(connection.connectorType === 'granola' && connection.scope === 'workspace') ? ['Refresh', 'Reconnect'] : []),
+        && !(['ashby', 'granola'].includes(connection.connectorType) && connection.scope === 'workspace') ? ['Refresh', 'Reconnect'] : []),
       ...(connection.scope === 'you' || admin ? ['Delete', 'Disconnect'] : []),
       ...(admin && connection.connectorType === 'generic_webhook' ? ['Refresh', 'Webhook signing secret'] : []),
     ],
@@ -333,7 +335,7 @@ function providerHasActivePersonalConnection(
   provider: (typeof connectorProviders)[number],
   connections: WorkstreamConnection[],
 ): boolean {
-  return (provider.provider === 'x' || provider.provider === 'granola') && connections.some((connection) =>
+  return (provider.provider === 'x' || provider.provider === 'ashby' || provider.provider === 'granola') && connections.some((connection) =>
     connection.connectorType === provider.provider &&
     connection.scope === 'you' &&
     connection.status !== 'disabled',
@@ -409,6 +411,10 @@ export function WorkspaceSettingsScreen({
   const [reconnectTarget, setReconnectTarget] = useState<WorkstreamConnection | null>(null);
   const [disconnectTarget, setDisconnectTarget] = useState<WorkstreamConnection | null>(null);
   const [granolaWorkspaceModalOpen, setGranolaWorkspaceModalOpen] = useState(false);
+  const [ashbySetupKey, setAshbySetupKey] = useState(() => crypto.randomUUID());
+  const [ashbyWorkspaceOpen, setAshbyWorkspaceOpen] = useState(false);
+  const [installationTarget, setInstallationTarget] = useState<string | null>(null);
+  const [granolaSetupKey, setGranolaSetupKey] = useState(() => crypto.randomUUID());
   const [granolaWorkspaceApiKey, setGranolaWorkspaceApiKey] = useState('');
   const [webhookModalScope, setWebhookModalScope] = useState<'you' | 'workspace' | null>(null);
   const [webhookDisplayName, setWebhookDisplayName] = useState('Inbound webhook');
@@ -632,7 +638,7 @@ export function WorkspaceSettingsScreen({
     staleTime: 30_000,
   });
   const connectProvider = useMutation({
-    mutationFn: async (input: { provider: 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+    mutationFn: async (input: { provider: 'ashby' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
       if (input.provider === 'x') {
         await api!.createXConnection(input.capabilities);
         return { kind: 'direct' as const };
@@ -655,9 +661,10 @@ export function WorkspaceSettingsScreen({
     },
   });
   const createGranolaWorkspaceConnection = useMutation({
-    mutationFn: () => api!.createGranolaWorkspaceConnection(granolaWorkspaceApiKey.trim()),
+    mutationFn: () => api!.createGranolaWorkspaceConnection(granolaWorkspaceApiKey.trim(), granolaSetupKey),
     onSuccess: () => {
       setGranolaWorkspaceApiKey('');
+      setGranolaSetupKey(crypto.randomUUID());
       setGranolaWorkspaceModalOpen(false);
       void queryClient.invalidateQueries({ queryKey: ['connections'] });
     },
@@ -899,7 +906,13 @@ export function WorkspaceSettingsScreen({
         })),
     },
   ], settingsContext), [connections.data, githubSettingsConnections, customMcpSettingsConnections, isAdmin, settingsContext]);
-  const searchResults = useMemo(() => searchSettings(searchEntries, navigationQuery), [searchEntries, navigationQuery]);
+  const searchResults = useMemo(() => {
+    const action = navigationQuery.trim().toLowerCase();
+    const exactConnectAction = [PERSONAL_CONNECT_LABEL, 'Connect for workspace'].some((label) => label.toLowerCase() === action);
+    return searchSettings(searchEntries, navigationQuery).filter((entry) =>
+      !exactConnectAction || !entry.key.startsWith('provider:')
+      || entry.definition.options?.some((option) => option.toLowerCase() === action));
+  }, [searchEntries, navigationQuery]);
   const selectSearchResult = (result: SettingSearchResult): void => {
     if (!searchEntries.some((entry) => entry.key === result.key)) return;
     if (result.definition.section === 'github' && result.instanceId) {
@@ -1508,8 +1521,11 @@ export function WorkspaceSettingsScreen({
                                   : toolCountByConnection.get(connection.id)?.data ?? 'Loading…'}</td>
                                 <td>
                                   <span className="settings-connection-actions">
-                                    {isAdmin && reconnectableConnectorTypes.has(connection.connectorType)
-                                      && !(connection.connectorType === 'granola' && connection.scope === 'workspace') && (
+                                    {isAdmin && connection.scope === 'workspace' && ['ashby', 'granola'].includes(connection.connectorType) && (
+                                      <Button onClick={() => setInstallationTarget(connection.id)}>Manage events</Button>
+                                    )}
+                                    {(isAdmin || connection.scope === 'you') && reconnectableConnectorTypes.has(connection.connectorType)
+                                      && !(['ashby', 'granola'].includes(connection.connectorType) && connection.scope === 'workspace') && (
                                       <ConnectionIconAction
                                         disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
                                         icon={<RefreshCcw aria-hidden="true" size={14} />}
@@ -1589,7 +1605,7 @@ export function WorkspaceSettingsScreen({
                         && providerHasActivePersonalConnection(provider, connections.data ?? []);
                       const hasActiveWorkspaceConnection = provider.provider !== 'generic_webhook'
                         && providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
-                      const personalConnectionStateUnavailable = provider.provider === 'granola' && (connections.isLoading || connections.isError);
+                      const personalConnectionStateUnavailable = ['ashby', 'granola'].includes(provider.provider) && (connections.isLoading || connections.isError);
                       const personalConnectDisabled = !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
                       const personalConnectTitle = hasActivePersonalConnection
                         ? `A ${provider.name} personal connection is already installed. Manage it above.`
@@ -1621,6 +1637,7 @@ export function WorkspaceSettingsScreen({
                             <div><strong><SettingLabel setting={providerSetting(provider, isAdmin)} /></strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
                           </div>
                           <p>{provider.description}</p>
+                          {provider.provider === 'ashby' && <p>Personal account: {hasActivePersonalConnection ? 'Connected' : 'Not connected'}. Workspace events: {hasActiveWorkspaceConnection ? 'Configured — manage delivery above' : 'Not configured'}.</p>}
                           {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (
                             <p className="settings-search-guidance" role="status">
                               {searchTarget.definition.label} is part of setup. Choose the appropriate connection scope below.
@@ -1654,10 +1671,14 @@ export function WorkspaceSettingsScreen({
                             {provider.scopes.includes('workspace' as never) && isAdmin && (
                               <ConnectorButton
                                 disabled={workspaceConnectDisabled}
-                                label="Connect workspace"
+                                label={'Connect for workspace'}
                                 onClick={() => {
                                   if (provider.provider === 'custom_mcp') {
                                     openCustomMcpModal('workspace');
+                                    return;
+                                  }
+                                  if (provider.provider === 'ashby') {
+                                    setAshbyWorkspaceOpen(true);
                                     return;
                                   }
                                   if (provider.provider === 'granola') {
@@ -1678,7 +1699,7 @@ export function WorkspaceSettingsScreen({
                                 }}
                                 tooltip={`Everyone in this workspace can use this connection; it acts for the workspace.${workspaceConnectTitle ? ` ${workspaceConnectTitle}` : ''}`}
                               >
-                                Connect workspace
+                                {'Connect for workspace'}
                               </ConnectorButton>
                             )}
                           </div>
@@ -2337,6 +2358,8 @@ export function WorkspaceSettingsScreen({
           )}
           {connectCustomMcp.error && <InlineError>{connectCustomMcp.error.message}</InlineError>}
         </Modal>
+        {api && ashbyWorkspaceOpen && <AshbyWorkspaceSetup api={api} attemptId={ashbySetupKey} onSuccess={() => setAshbySetupKey(crypto.randomUUID())} onClose={() => setAshbyWorkspaceOpen(false)} />}
+        {api && installationTarget && <ConnectorInstallationDetails api={api} connectionId={installationTarget} onClose={() => setInstallationTarget(null)} />}
         <Modal
           description="A workspace-wide Granola connection requires a Workspace API key. Personal Granola connections use browser sign-in and do not need a key."
           footer={(
@@ -2348,7 +2371,7 @@ export function WorkspaceSettingsScreen({
                 onClick={() => createGranolaWorkspaceConnection.mutate()}
               >
                 {createGranolaWorkspaceConnection.isPending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <LockKeyhole aria-hidden="true" size={14} />}
-                Connect workspace
+                Connect for workspace
               </Button>
             </>
           )}

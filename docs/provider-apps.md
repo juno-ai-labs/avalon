@@ -442,6 +442,10 @@ repository. What can be:
 
 ## Changelog
 
+### 2026-09-12 — Ashby metadata and independent webhook management
+
+Verified public metadata advertises resource `https://mcp.ashbyhq.com/mcp/v1`, issuer `https://mcp-auth.ashbyhq.com/oidc`, registration `/oidc/reg`, authorization `/oidc/auth`, token `/oidc/token`, PKCE S256 and scopes `openid`, `mcp`, `offline_access`. Regional callbacks are `https://api.rallywith.ai/connections/ashby/callback` and `https://eu.api.rallywith.ai/connections/ashby/callback`. These are metadata observations, not successful DCR or live login verification. Ashby MCP is beta, requires administrator opt-in and eligible elevated account access. Workspace setup separately uses administrator-provided API-key Basic authentication against documented `apiKey.info` and `webhook.create/info/update/delete`; provider permissions are `apiKeysRead` and `apiKeysWrite`. No OAuth subscription setup is performed. See [official authentication](https://developers.ashbyhq.com/docs/authentication) and [API key information](https://developers.ashbyhq.com/reference/apikeyinfo).
+
 ### 2026-09-01 — Google preset grants stopped inheriting earlier scopes
 
 **What changed:** Google connector authorization now explicitly disables

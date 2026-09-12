@@ -80,7 +80,7 @@ declare precisely which operations are supported.
    with their own permissions, and receives sourced answers with honest coverage.
 9. Personal queries and workspace event delivery are independently testable and
    revocable; neither can borrow the other's credentials to recover missing access.
-10. Explicitly requested recruiting updates retain the existing confirmation and
+10. Explicitly requested recruiting updates retain the existing authorization and
     receipt contract, including clear handling of uncertain outcomes.
 
 ## Non-goals
@@ -93,7 +93,7 @@ declare precisely which operations are supported.
    regional queues, admission receipts, and existing automation matching.
 4. **A second recruiting tool implementation over REST or a new MCP safety
    policy.** Deferred: live personal queries use the official MCP server and
-   Rally's existing confirmation rules. REST manages workspace webhooks in
+   Rally's existing execution and receipt rules. REST manages workspace webhooks in
    this release; it is not a silent fallback for denied or unsupported queries.
 5. **A background polling or bulk synchronization framework.** Deferred:
    webhook setup does not imply historical import, missed-event backfill, or
@@ -124,8 +124,8 @@ declare precisely which operations are supported.
 | Personal queries | Each eligible member | Ashby hosted MCP with personal OAuth | Authorization and live tool discovery succeed for that member. |
 | Workspace events | Workspace administrator | API key for management and signed incoming webhooks | Every selected registration is verified; last received activity is shown separately. |
 
-Either option can be connected first. Show **Connect your account** and
-**Set up workspace events** independently, along with who can perform each action.
+Either option can be connected first. Show **Connect for me** and
+**Connect for workspace** independently, along with who can perform each action.
 Never collapse both states into one “Ashby connected” badge. Disconnecting personal
 queries leaves the workspace's authorized event subscriptions in place; disconnecting
 workspace events leaves members' personal OAuth connections in place.
@@ -140,7 +140,7 @@ and return results to the work stream without passing through the webhook queue.
 The **Personal queries** option within Ashby is searchable by Ashby, recruiting,
 hiring, candidates, interviews, and applicant tracking. The entry says: “Use your
 Ashby account for recruiting work. Access follows your Ashby permissions.” It also identifies the provider
-service as beta and explains that tool calls use Rally's confirmation flow.
+service as beta and explains that tool calls use Rally's execution and receipt policy.
 
 The setup surface explains the provider prerequisites in this PRD and opens Ashby
 authorization in the browser. This option has no API-key field or editable
@@ -176,7 +176,7 @@ Priority acceptance workflows are:
 | “How is the pipeline for our backend role looking?” | Resolve the intended job, distinguish similarly named jobs, and report the scope and freshness of the returned pipeline information. |
 | “Help me prepare for my upcoming interview.” | Resolve the interview and relevant candidate before preparing a factual brief with source references. Ask for a disambiguating detail when necessary. |
 | “Find Jordan Lee's application for this role.” | Resolve candidate and application separately; show alternatives when the name is ambiguous. |
-| “Add this note to the candidate.” | Identify the exact candidate and note text, use the existing confirmation flow, and distinguish a provider draft from a saved note. |
+| “Add this note to the candidate.” | Identify the exact candidate and note text, use the existing execution policy without per-tool confirmation prompts, and distinguish a provider draft from a saved note. |
 | “Move this application to the next stage.” | Discover the actual application and valid destination stage; make the exact target and change reviewable before execution. |
 
 These are product acceptance scenarios, not hard-coded remote operation names.
@@ -196,7 +196,7 @@ fully traversed result set with its filters stated. A current read is not a
 transactionally consistent snapshot across several calls. Historical transcript
 content is not represented as a fresh Ashby lookup.
 
-### Authority, visibility, and confirmations
+### Authority, visibility, and tool execution
 
 Only an eligible run under the connection owner's authority uses the personal
 connection. Another participant needs their own connection for a new provider
@@ -210,12 +210,13 @@ can use a private work stream for sensitive recruiting work. This proposal
 does not add field-level transcript access control or automatically widen a
 work stream's audience.
 
-All hosted-MCP calls retain the existing confirmed-write classification,
-including operations Ashby describes as reads. The confirmation identifies the
-Ashby connection, operation, and concrete arguments. A declined confirmation
-causes no provider call. Loading a plugin or receiving tool results is never
-blanket consent for subsequent changes. Provider-required draft/confirmation
-steps are honored as well; a draft is not reported as a completed mutation.
+All hosted-MCP calls retain the existing conservative write classification,
+including operations Ashby describes as reads. This controls execution ordering,
+receipts, and uncertain-outcome handling. **Rally must never ask users to confirm
+individual tool calls, whether reads or writes.** There is no tool-confirmation
+UI or approval gate to reuse or add. Connection authorization does not expand
+beyond its granted capabilities. Follow provider draft-to-save protocols within
+the authorized request and report drafts separately from saved changes.
 
 Feedback submission to Ashby and communication to third parties require an
 explicit user request. An agent encountering an error does not volunteer
@@ -321,11 +322,13 @@ or cross-provider change to Test semantics is required.
 
 ### Stable webhook routing and admission
 
-New customer-specific ingress follows `/ingest/{provider}/{connectionId}` on
-the owning region's existing API host. A route maps to exactly one connection
-and its workspace. The provider segment must agree with the stored connection.
-Existing Granola URLs keep working unchanged; no new per-provider host or
-per-customer deployment is required.
+Ashby event ingress uses `https://ashby.rallywith.ai/ingest/ashby/{connectionId}`
+on a dedicated Ashby connector Worker with its own bundle and startup graph. An opaque connection-to-region
+route selects the owning regional Worker through a named service binding.
+Only that region accesses installation secrets, verifies signed bytes, persists
+payloads and admits events. The provider segment must agree with the stored
+connection. Existing Granola URLs remain unchanged. A provider domain adds no
+per-customer deployment. Personal OAuth callbacks remain regional, as with GitHub.
 
 The connection identifier is routing metadata, not authentication. The adapter
 verifies the raw request under the installation's current verification policy
@@ -762,10 +765,10 @@ of deploying older code. Disablement and manual disconnect remain usable.
 Provider-side MCP catalog changes have a separate recovery path from deployment
 rollback. A removed operation, incompatible schema, or invalid catalog produces
 the companion's typed failure; Rally does not repeat the call under a guessed
-replacement or reuse confirmation for changed arguments. A new user attempt
+replacement or reuse an execution receipt for changed arguments. A new user attempt
 reauthorizes and rediscovers the live catalog through `load_plugin`, rebuilds the
-query or requested update against the available tools, and obtains the existing
-confirmation where required. An incomplete or invalid catalog leaves that personal
+query or requested update against the available tools, and executes within the
+authorized request without per-tool confirmation. An incomplete or invalid catalog leaves that personal
 tool surface unavailable; a missing operation does not imply that the user's
 OAuth grant is revoked. Reconnect is requested only for a verified authorization
 failure. If rediscovery cannot recover compatibility, report that Rally's connector
@@ -794,9 +797,9 @@ subsystem ships. A phased `plan.md` is written only after PRD approval.
 | Complete Ashby launch | Personal MCP queries and workspace events both pass; Settings shows their independent readiness and disconnecting either leaves the other authorized path intact. |
 | Personal OAuth | Both regional callbacks handle consent, denial, replay, workspace switching, refresh, reconnect, and disconnect without exposing credentials. |
 | Personal authority | Members with different Ashby permissions cannot spend one another's grants; workspace automation and read-only child paths cannot inherit personal tool authority. |
-| Recruiting workflows | Complete the personal query/update scenarios with test records; hired answers state application filters and scope; unsupported profile history produces an explicit limitation. Verify confirmed writes in Ashby and no writes after denial. |
-| Live tool contract | Fully paginated discovery, schema changes, removed tools, collisions, malformed schemas, uncertain writes, and clipped results follow the companion contract. Catalog failure and recovery leave workspace webhooks delivering; changed calls require fresh confirmation and do not trigger OAuth reconnect unless authorization actually failed. |
-| Model usability | On the configured medium fallback model, cover discovery, a successful multi-tool query, ambiguous names, wrong ID families, changed stages, missing modification fields, confirmation, and recovery without loops. |
+| Recruiting workflows | Complete the personal query/update scenarios with test records; hired answers state application filters and scope; unsupported profile history produces an explicit limitation. Verify requested writes in Ashby and no writes outside granted authority. |
+| Live tool contract | Fully paginated discovery, schema changes, removed tools, collisions, malformed schemas, uncertain writes, and clipped results follow the companion contract. Catalog failure and recovery leave workspace webhooks delivering; changed calls require fresh authorization and receipt validation and do not trigger OAuth reconnect unless authorization actually failed. |
+| Model usability | On the configured medium fallback model, cover discovery, a successful multi-tool query, ambiguous names, wrong ID families, changed stages, missing modification fields, execution without confirmation prompts, and recovery without loops. |
 | Shared implementation | Ashby and Granola use the same setup/maintenance state machine; provider-specific branches are limited to declared protocol facets. |
 | Installation | Same-key retries return the same attempt; changed-input key reuse conflicts; interrupted setup is reconciled; immediate ping succeeds; partial registration failure remains visible. |
 | Granola adoption | Existing IDs, secrets, URLs, and events survive; no create/delete is performed during import; delivery continues. |

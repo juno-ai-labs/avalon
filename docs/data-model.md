@@ -1030,6 +1030,16 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-09-12 — WorkspaceDO owns connector installations and dispatch receipts
+
+Regional `connector_maintenance_operations` stores frozen selections, planned
+registration intents and independently updated target outcomes. Installation
+registrations record replacement dependencies; deletion claims require verified
+successors. Credential replacement and operator cancellation increment lifecycle
+generations so older receipts cannot restore access or overwrite newer keys.
+
+Migrations 53 and 54 widen the connector/OAuth discriminators for Ashby while preserving dependent rows, then add typed-only installation and step tables. Installation generation and recorded dispatch decide lifecycle outcomes; D1 remains only an ingress routing projection. Partial unique indexes reserve one active Ashby personal connection per owner/workspace and one active workspace connection. Cleanup ciphertext is stored separately from ordinary connection credentials and erased on verified removal or explicit forgetting.
+
 ### 2026-09-11 — A resource can be reachable without being enumerated
 
 **What changed:** `metadata_json.listing` carries one value, `unlisted`. Every

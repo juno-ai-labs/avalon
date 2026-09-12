@@ -855,6 +855,17 @@ incident response that may prompt it.
 
 ## Changelog
 
+### 2026-09-12 — Separate workspace installation cleanup from personal access
+
+Workspace API-key replacement validates the supplied key through the authorized
+provider facet and commits only against the still-enabled installation generation.
+It preserves signing secrets and unknown provider receipts. Bulk configuration
+intersects reviewed event declarations with existing customer selection; operator
+maintenance cannot grant itself a new event category. Signed Ashby bytes are
+forwarded unchanged and authenticated as bytes, including their content hash.
+
+Workspace event setup reserves and encrypts provider authority before remote side effects. Ashby verifies raw-body HMAC SHA-256 signatures before parsing event fields. Disablement atomically removes ordinary credentials while a separate encrypted snapshot authorizes only exact recorded webhook removal; it cannot refresh, create, update, discover or execute tools. Generation checks fence stale work. Confidential Ashby webhook payload scope has not been verified against an authorized account, so the normalized audience remains restricted pending the approved release review. See [installation lifecycle](connector-installation-lifecycle.md).
+
 ### 2026-09-11 — The five prompt trust labels are gone
 
 **What changed:** `renderUntrustedSlackOriginMessage`,

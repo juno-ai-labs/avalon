@@ -1,3 +1,4 @@
+import type { ConnectorInstallationManagement } from "./installation";
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ConnectorActivityTriggerDescriptorSchema,
@@ -718,6 +719,7 @@ export function defineConnectorAgentPlugin(
 }
 
 export interface ConnectorAdapter {
+  installationManagement?: ConnectorInstallationManagement;
   manifest: ConnectorManifestInput;
   agentPlugin: ConnectorAgentPluginDescriptor;
   /** Live provider-authored tools, resolved only when this plugin activates. */

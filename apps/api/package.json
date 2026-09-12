@@ -41,7 +41,8 @@
     "db:seed": "node ../../scripts/seed-local-region.mjs global",
     "db:seed:eu": "node ../../scripts/seed-local-region.mjs eu",
     "deploy:global": "node ../../scripts/ensure-cloudflare-inference-lakehouse.mjs --materialize-bindings && wrangler deploy --config wrangler.documents.global.jsonc && wrangler deploy --config wrangler.terminal.global.jsonc && wrangler deploy --config wrangler.telemetry.global.jsonc && wrangler deploy --config wrangler.pricing.global.jsonc && wrangler deploy --config .wrangler.lakehouses.global.json",
-    "deploy:eu": "node ../../scripts/ensure-cloudflare-inference-lakehouse.mjs --materialize-bindings && wrangler deploy --config wrangler.documents.eu.jsonc && wrangler deploy --config wrangler.terminal.eu.jsonc && wrangler deploy --config .wrangler.lakehouses.eu.json"
+    "deploy:eu": "node ../../scripts/ensure-cloudflare-inference-lakehouse.mjs --materialize-bindings && wrangler deploy --config wrangler.documents.eu.jsonc && wrangler deploy --config wrangler.terminal.eu.jsonc && wrangler deploy --config .wrangler.lakehouses.eu.json",
+    "build:ashby": "wrangler deploy --dry-run --config wrangler.ashby.global.jsonc --outfile dist-ashby/worker.bundle && wrangler check startup --worker dist-ashby/worker.bundle --outfile dist-ashby/startup.cpuprofile && node ../../scripts/check-connector-startup-boundary.mjs"
   },
   "dependencies": {
     "@rally/agent-harness": "workspace:*",

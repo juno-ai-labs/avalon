@@ -74,7 +74,7 @@ Raw Slack APIs are the workspace Agent and workspace-tool plane:
 - bounded conversation, thread, message-context, file, user, and member reads
 - bot-authored message, reaction, and conversation writes
 
-Slack's hosted MCP server is the user tool plane. Rally initializes a JSON-RPC 2.0 Streamable HTTP session at `https://mcp.slack.com/mcp`, sends `notifications/initialized`, follows all `tools/list` cursors, validates the discovered surface, invokes the exact live name through `tools/call`, and closes the session when Slack assigns one. The server's current names, descriptions, and JSON Schemas are passed through at plugin activation rather than copied into the connector. Provider annotations remain untrusted hints: every live tool keeps Rally's confirmed-write and record-before-execute policy. Rally's `slack.personal.mcp` grant and personal owner check constrain the surface without pretending to own its catalog. MCP calls are never used to host the Agent surface or to bypass a frozen automation delivery target. The reusable mechanism is in [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
+Slack's hosted MCP server is the user tool plane. Rally initializes a JSON-RPC 2.0 Streamable HTTP session at `https://mcp.slack.com/mcp`, sends `notifications/initialized`, follows all `tools/list` cursors, validates the discovered surface, invokes the exact live name through `tools/call`, and closes the session when Slack assigns one. The server's current names, descriptions, and JSON Schemas are passed through at plugin activation rather than copied into the connector. Provider annotations remain untrusted hints: every live tool keeps Rally's conservative-write and record-before-execute policy. Rally's `slack.personal.mcp` grant and personal owner check constrain the surface without pretending to own its catalog. MCP calls are never used to host the Agent surface or to bypass a frozen automation delivery target. The reusable mechanism is in [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
 Personal authorization requests one `slack.personal.mcp` Rally capability whose
 provider scope set covers Slack's hosted user-tool plane. Existing personal rows
@@ -437,7 +437,7 @@ From a user-initiated Slack DM or app mention, I can ask Rally to search public-
 
 #### Act in Slack
 
-With the workspace installation, I can ask Rally to send a bot-authored message, create or open a conversation, or add a bot reaction. A personal connection continues to support user-attributed actions and canvas writes. Existing confirmation and external-write receipt policies still apply.
+With the workspace installation, I can ask Rally to send a bot-authored message, create or open a conversation, or add a bot reaction. A personal connection continues to support user-attributed actions and canvas writes. Existing authorization and external-write receipt policies still apply.
 
 #### Connect several Slack workspaces
 

@@ -396,6 +396,10 @@ resident.
 
 ## Changelog
 
+### 2026-09-12 — Dedicated Ashby ingress preserves regional authority
+
+Ashby uses `ashby.rallywith.ai/ingest/ashby/:id` on a separate connector Worker. A content-free Global directory chooses a named regional service binding; the regional ingress directory then resolves WorkspaceDO before credential or payload access. The dedicated entry point excludes API application and agent imports because startup/bundle growth already caused an engineering incident. A domain alias on the API Worker would not establish that boundary. Existing Granola URLs stay on their regional API hosts. HMAC verification, R2 storage, Queue admission and canonical event identity stay in that region. Personal MCP requests and workspace API-key requests reach Ashby’s external service; choosing EU Rally storage does not represent an Ashby processing residency guarantee.
+
 ### 2026-09-07 — Ace relays workspace retirement to the region that owns the workspace
 
 **What changed:** Ace calls the owning region's public API over HTTPS with
