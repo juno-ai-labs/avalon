@@ -194,6 +194,11 @@ become unreachable from later opens. Artifacts currently use Rally's server-side
 data surface for durable state, so preserving that browser-local state was not
 worth retaining UUID origins for newly opened sessions.
 
+Data-table and error-log inspection use the same registry and current parent
+visibility checks as navigation, but do not load a viewer profile or mint a
+browser bootstrap code. Only actual navigation calls `openForViewer`. Inspection
+also does not migrate legacy hostnames: it addresses the artifact object by ID.
+
 ### Stateful artifacts
 
 A site whose `index.js` exports `class SiteData extends DurableObject` gets its
@@ -499,6 +504,15 @@ compromise of the serving Worker exposes artifact content and viewer sessions
 rather than workspace authority.
 
 ## Changelog
+
+### 2026-09-12 — Inspect artifacts without creating navigation grants
+
+Data and error reads previously ran the complete navigation flow, paying for a
+profile read, hostname migration, and a single-use code they never redeemed.
+A shared authorized resolver retains the registry and parent visibility checks
+while reserving those operations for navigation. Skipping authorization or
+caching visibility was rejected; each inspection still asks the current parent.
+
 
 ### 2026-09-11 — A link in a site preview leaves through the person who clicked it
 
