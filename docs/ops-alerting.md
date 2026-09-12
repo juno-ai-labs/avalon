@@ -20,6 +20,7 @@ contain, or changing how the channel is reached.
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `reportScheduledAlarmAttempt`: the one policy for a gated alarm entry — which attempt warns, errors, and notifies — and `scheduledAlarmErrorCode`, which reduces a thrown error to what may leave. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workstream-do.ts`, `substream-agent.ts` | The failure and stall hooks, each reporting through that policy with its own identity fields. |
 | `apps/api/src/services/slack-agent-service.ts` | The exhausted-ingress-job notice, in `processQueuedIngress`. |
+| `apps/api/src/durable-objects/workstream-object-product.ts` | The terminal failure notice for an already-delivered message's deferred preparation. |
 | `apps/api/src/routes/health.ts` | `opsNotifications` — configured, half configured, or not, never required. |
 | `scripts/sync-dev-env.mjs`, `.env.example` | How the secret reaches a local `.dev.vars.*` file. |
 
@@ -55,6 +56,7 @@ The events that notify today:
 
 | `event` | Posted from | When |
 | --- | --- | --- |
+| `delivered_message_agent_preparation_failed` | `WorkstreamObjectProductService.terminalizePreparationFailure` | An already-delivered ordinary message's preparation transitions from `preparing` to `failed`. The terminal mailbox row prevents another notice on recovery; the awaited notification contains only the opaque input id and terminal code. |
 | `workspace_scheduled_alarm_failed`, `workspace_scheduled_alarm_stalled`, and the `workstream_object_` and `substream_` forms | the three objects' `onScheduledAlarmFailure` and `onScheduledAlarmStalled` hooks, through `reportScheduledAlarmAttempt` | An alarm entry is on its third consecutive attempt without progress — it threw, or ran and came back due at the same instant, and the gate in [`durable-object-alarms.md`](durable-object-alarms.md) has held it across a couple of minutes of growing backoff. The counter is shared, so the notice fires at exactly attempt three whichever hook sees it: once per episode. Every attempt writes a log row, at `warn` for the first two and `error` from the third. |
 | `slack_ingress_job_exhausted` | `SlackAgentService.processQueuedIngress` | A Slack ingress job has reached the 20-attempt ceiling, by a non-retryable error or by its twentieth attempt. The claim refuses a job at the ceiling, so a Queue redelivery cannot run, pin, or report it again; only the reauthorization re-drive, which resets the count, brings it back. The `error` row of the same name is written for every job; the notice is one per installation and error code within an hour, because a broken installation fails every event the same way and a notice per job would track the channel's message volume. |
 
@@ -143,6 +145,10 @@ Cloudflare administration credentials never become Worker variables
 
 ## Testing
 
+- `apps/api/test-workers/message-to-output-pipeline.test.ts` — an admitted socket
+  message remains canonical when later profile hydration or local authorization
+  fails. The real alarm terminalizes the mailbox and posts one intercepted notice;
+  repeated recovery posts nothing and the notice contains no message text.
 - `apps/api/test/ops-slack-notifier.test.ts` — the notifier in the Node suite
   with an injected `fetch`: skipped without either secret or outside a
   deployed region, the token in the header and in no log row, the message
@@ -210,6 +216,20 @@ it posts once.
 
 ## Changelog
 
+### 2026-09-12 — Report preparation failures after human delivery
+
+**What changed:** A failed deferred preparation records its terminal mailbox
+state, logs the failure, and awaits one bounded notice using the existing notifier.
+
+**Why:** Chat delivery now succeeds before agent preparation. A failure after that
+receipt would otherwise leave an unanswered message visible only in logs.
+
+**Considered and rejected:** A new notification table or cooldown. The existing
+preparing-to-failed transition already defines the single notice episode.
+
+**Consequences:** Notification remains best effort after the durable failure;
+recovery cannot repeat it. Only opaque input ids and terminal codes leave Rally.
+
 ### 2026-08-22 — Created
 
 **What changed:** `notifyOps`, posting as a small internal Slack app with the
@@ -244,11 +264,3 @@ that already logs it, under the one-notice-per-episode rule. The secrets are
 optional in every region, so nothing about a deployment changes until an
 operator sets both. Setting up the channel means creating one more Slack app,
 which is the price of keeping the credential out of every URL.
-
-### Delivered-message preparation failures
-
-`delivered_message_agent_preparation_failed` is emitted by deferred ordinary
-socket-message recovery after its mailbox row makes the single `preparing` to
-`failed` transition. It contains only the opaque input id and terminal code.
-A subsequent alarm sees a terminal row and cannot emit another notice for that
-input; notification remains best effort after the durable failure is recorded.

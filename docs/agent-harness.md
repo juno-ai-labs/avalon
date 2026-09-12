@@ -1285,15 +1285,19 @@ silently return every test to the shared key while each still passes alone.
 
 ### 2026-09-12 — Separate chat delivery from addressing inference
 
-**What changed:** Ordinary socket messages become canonical before inference;
+**What changed:** Ordinary socket messages admitted without an executing loop become canonical before inference;
 agent preparation and activation consume their existing identity afterward.
 Bootstrap and incremental context distinguish delivered human turns from inputs
 still awaiting agent preparation.
 
 **Why:** Classifier and attachment latency must not hold up human conversation.
-Reusing the durable mailbox avoids an unreliable in-memory handoff. The model
-must still see each input once, and a pending turn must not be included first as
-overheard context and then again as a request.
+
+**Considered and rejected:** An in-memory handoff; the existing mailbox survives
+restart. The full admission rationale is in [the workstream owner](workstream-durable-object.md#2026-09-12--deliver-ordinary-socket-messages-before-agent-preparation).
+
+**Consequences:** Bind still owns AI processing. The host must feed each input
+once and preserve order; a pending turn cannot enter first as overheard context
+and then again as a request.
 
 ### 2026-09-12 — Bind 15 carries the loop patch, and this repository stops patching
 

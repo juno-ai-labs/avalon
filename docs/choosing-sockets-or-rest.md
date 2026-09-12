@@ -860,13 +860,17 @@ surface. This is event-driven revalidation, not polling and not a second socket.
 
 ### 2026-09-12 — Acknowledge human delivery independently of model preparation
 
-**What changed:** Ordinary socket sends publish canonical human state before
-agent preparation. Explicit queue controls retain their pending semantics.
+**What changed:** Ordinary socket sends admitted without an executing loop publish
+canonical human state before agent preparation. Active-run sends and explicit
+queue/steer controls retain their pending semantics.
 
 **Why:** Human chat latency inherited classifier and attachment-model latency.
-The existing durable mailbox provides recovery without putting inference back
-on the socket command's critical path. Receipts remain private acknowledgements;
-the canonical transcript event remains the shared delivery authority.
+
+**Considered and rejected:** Socket warming cannot remove that dependency.
+The durable handoff is owned by [the workstream object](workstream-durable-object.md#2026-09-12--deliver-ordinary-socket-messages-before-agent-preparation).
+
+**Consequences:** Receipts remain private acknowledgements; the canonical
+transcript event remains the shared delivery authority.
 
 ### 2026-09-11 — Connector recovery follows the existing workspace socket
 

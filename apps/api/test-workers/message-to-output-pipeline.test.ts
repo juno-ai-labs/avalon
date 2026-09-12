@@ -3213,6 +3213,82 @@ describe("a member's message travels the whole pipeline", () => {
     }))).toEqual({ claim: null, runStatus: "admitted", loopStatus: "idle" });
   });
 
+
+  it("fences deferred classifier context before its canonical turn and later sends", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "opening context", null, [OTHER_USER_ID]);
+    await settledRun(stub, opened.body.harnessRunId as string);
+    await waitForLoopRelease(stub);
+    await installScriptedProvider(stub, ["refuse"], {
+      primaryModel: "openai/gpt-4.1-mini", fallbackModels: [],
+      structuredReply: { classification: "human_only", confidence: 0.95, rationaleCode: "human_coordination" },
+    });
+    type RecoveryProbe = WorkstreamObjectProductService & { releaseRecovery: () => void; restoreRecovery: () => void };
+    await runInDurableObject(stub, (instance) => {
+      const product = (instance as unknown as { product: RecoveryProbe }).product;
+      const originalEnv = Reflect.get(product, "env");
+      Object.defineProperty(product, "env", { value: Reflect.get(instance, "env") });
+      const original = product.resumeOldestInputPreparation;
+      let release = () => undefined as void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      product.resumeOldestInputPreparation = async () => {
+        await gate;
+        return original.call(product);
+      };
+      product.releaseRecovery = release;
+      product.restoreRecovery = () => {
+        release();
+        product.resumeOldestInputPreparation = original;
+        Object.defineProperty(product, "env", { value: originalEnv });
+      };
+    });
+    const first = await openSubscribedSocket(stub, "00000000-0000-7000-8000-0000000007d1");
+    const later = await openSubscribedSocket(stub, "00000000-0000-7000-8000-0000000007d2");
+    try {
+      const firstReceipt = nextSocketCommandOutcome(first.socket);
+      first.socket.send(JSON.stringify({
+        type: "create_message", operationId: "00000000-0000-7000-8000-0000000007d3",
+        payload: { text: "The revised launch timeline is in the shared notes", clientMessageId: "classifier-fence-first", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] },
+      }));
+      expect(await firstReceipt).toMatchObject({ deliveryState: "canonical" });
+      const laterReceipt = nextSocketCommandOutcome(later.socket);
+      later.socket.send(JSON.stringify({
+        type: "create_message", operationId: "00000000-0000-7000-8000-0000000007d4",
+        payload: { text: "later canonical turn", clientMessageId: "classifier-fence-later", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] },
+      }));
+      expect(await laterReceipt).toMatchObject({ deliveryState: "canonical" });
+      await runInDurableObject(stub, (instance) => {
+        (instance as unknown as { product: RecoveryProbe }).product.releaseRecovery();
+      });
+      await expect.poll(async () => (await capturedProviderRequests(stub))
+        .filter((request) => request.body.stream !== true).length, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBeGreaterThan(0);
+      const contexts = (await capturedProviderRequests(stub))
+        .filter((request) => request.body.stream !== true)
+        .map((request) => {
+          const messages = request.body.messages;
+          if (!Array.isArray(messages)) throw new Error("classifier_messages_missing");
+          const last = messages.at(-1) as { content?: unknown } | undefined;
+          if (typeof last?.content !== "string") throw new Error("classifier_context_missing");
+          return JSON.parse(last.content.split("\n\n")[0]!) as {
+            currentMessage: string;
+            recentMessages: Array<{ message: string }>;
+          };
+        });
+      const context = contexts.find((candidate) =>
+        candidate.currentMessage === "The revised launch timeline is in the shared notes");
+      expect(context).toBeDefined();
+      expect(context!.recentMessages.map((message) => message.message)).toContain("opening context");
+      expect(context!.recentMessages.map((message) => message.message)).not.toContain("The revised launch timeline is in the shared notes");
+      expect(context!.recentMessages.map((message) => message.message)).not.toContain("later canonical turn");
+    } finally {
+      await runInDurableObject(stub, (instance) => {
+        (instance as unknown as { product: RecoveryProbe }).product.restoreRecovery();
+      });
+      await restoreProviderFetch(stub);
+      first.socket.close(1000, "done"); later.socket.close(1000, "done");
+    }
+  });
+
   it.each(["human_only", "agent_action"] as const)("delivers to subscribed readers while %s classification is held", async (classification) => {
     const stub = agentStub();
     const opened = await initializeWorkstream(stub, "first message", null, [OTHER_USER_ID]);
@@ -3663,4 +3739,118 @@ describe("a member's message travels the whole pipeline", () => {
     ].includes(item.turnId)).map((item) => item.attentionOrdinal ?? null))
       .toEqual([null, 2]);
   });
+});
+
+describe("deferred message preparation failures", () => {
+  it.each(["inner preparation", "before preparation guard"] as const)(
+    "terminalizes and notifies once when access changes %s",
+    async (failurePoint) => {
+      const stub = agentStub();
+      const opened = await initializeWorkstream(stub, "opening before recovery failure");
+      await settledRun(stub, opened.body.harnessRunId as string);
+      const { socket } = await openSubscribedSocket(stub, "00000000-0000-7000-8000-0000000007d1");
+      type RecoveryProbe = WorkstreamObjectProductService & {
+        releaseRecovery: () => void;
+        restoreRecovery: () => void;
+        opsNotices: string[];
+      };
+      await runInDurableObject(stub, (instance) => {
+        const product = (instance as unknown as { product: RecoveryProbe }).product;
+        const originalResume = product.resumeOldestInputPreparation;
+        const originalFetch = globalThis.fetch;
+        const environment = product as unknown as { env: Env };
+        const originalEnv = environment.env;
+        let release = () => undefined as void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        // Hold only scheduling: all admission, authorization, mailbox writes,
+        // failure handling, and the eventual alarm remain the production path.
+        product.resumeOldestInputPreparation = async () => {
+          await gate;
+          return originalResume.call(product);
+        };
+        product.opsNotices = [];
+        environment.env = {
+          ...originalEnv,
+          APP_ENV: "staging",
+          OPS_SLACK_BOT_TOKEN: "xoxb-ops-test",
+          OPS_SLACK_CHANNEL_ID: "recovery-test-ops",
+        };
+        globalThis.fetch = async (input, init) => {
+          const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+          if (url !== "https://slack.com/api/chat.postMessage") return originalFetch(input, init);
+          product.opsNotices.push(String(init?.body));
+          return Response.json({ ok: true });
+        };
+        product.releaseRecovery = release;
+        product.restoreRecovery = () => {
+          release();
+          product.resumeOldestInputPreparation = originalResume;
+          environment.env = originalEnv;
+          globalThis.fetch = originalFetch;
+        };
+      });
+
+      try {
+        const receipt = nextSocketCommandOutcome(socket);
+        socket.send(JSON.stringify({
+          type: "create_message",
+          operationId: "00000000-0000-7000-8000-0000000007d2",
+          payload: {
+            text: "human text must not leave in an ops notice",
+            clientMessageId: "canonical-before-preparation-failure",
+            mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
+          },
+        }));
+        expect(await receipt).toMatchObject({ deliveryState: "canonical" });
+        if (failurePoint === "inner preparation") {
+          // Membership authorization still succeeds, but profile hydration
+          // fails inside runInputPreparation's guarded work.
+          await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(USER_ID).run();
+        } else {
+          // Local authorization fails before runInputPreparation is entered.
+          await runInDurableObject(stub, (_instance, state) => {
+            state.storage.sql.exec(
+              "UPDATE participants SET status = 'removed', removed_at = ?, updated_at = ? WHERE user_id = ?",
+              Date.now(), Date.now(), USER_ID,
+            );
+          });
+        }
+        await runInDurableObject(stub, (instance) => {
+          (instance as unknown as { product: RecoveryProbe }).product.releaseRecovery();
+        });
+        await runDurableObjectAlarm(stub);
+        await expect.poll(() => runInDurableObject(stub, (instance, state) => ({
+          mailbox: state.storage.sql.exec<{ state: string; terminal_code: string }>(
+            "SELECT state, terminal_code FROM pending_loop_input_mailbox WHERE client_message_id = ?",
+            "canonical-before-preparation-failure",
+          ).one(),
+          noticeCount: (instance as unknown as { product: RecoveryProbe }).product.opsNotices.length,
+        })), { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual({
+          mailbox: {
+            state: "failed",
+            terminal_code: failurePoint === "inner preparation" ? "invalid_workspace_member" : "workstream_not_found",
+          },
+          noticeCount: 1,
+        });
+        await runInDurableObject(stub, async (instance, state) => {
+          const product = (instance as unknown as { product: RecoveryProbe }).product;
+          expect(await product.resumeOldestInputPreparation()).toBe("none");
+          expect(await product.resumeOldestInputPreparation()).toBe("none");
+          expect(product.opsNotices).toHaveLength(1);
+          const notice = JSON.parse(product.opsNotices[0]!) as { text: string };
+          expect(notice.text).toContain("delivered_message_agent_preparation_failed");
+          expect(notice.text).not.toContain("human text must not leave");
+          expect(state.storage.sql.exec(
+            "SELECT COUNT(*) AS count FROM canonical_conversation_turn_details WHERE client_message_id = ?",
+            "canonical-before-preparation-failure",
+          ).one()).toEqual({ count: 1 });
+        });
+      } finally {
+        await runInDurableObject(stub, (instance) => {
+          (instance as unknown as { product: RecoveryProbe }).product.restoreRecovery();
+        });
+        socket.close(1000, "done");
+      }
+    },
+  );
 });
