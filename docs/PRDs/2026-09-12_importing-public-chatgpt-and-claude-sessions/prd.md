@@ -65,8 +65,9 @@ a way to write human and assistant turns through Rally's production writers
 without a live classifier, by stating the addressing outcome on the message
 ([`demo-workspaces.md`](../../demo-workspaces.md#seeding-a-demo-from-a-pack));
 the transcript already draws turns by an external actor with a display name
-and no user row (Slack members, inbound email); and the repository already
-fetches public pages two different ways. What is new is small and named below.
+and no user row (Slack members, inbound email); and the desktop app already
+shows third-party web content inside a fenced browser view, the live-artifact
+viewer. What is new is small and named below.
 
 ## Goals
 
@@ -90,7 +91,7 @@ fetches public pages two different ways. What is new is small and named below.
    anything the page names but does not serve is marked in place rather than
    dropped silently.
 6. Failure is specific and never partial. A link that is private, expired,
-   unsupported, or behind a challenge the fetcher cannot pass names its reason in
+   unsupported, or that needs a sign-in the person declines names its reason in
    the dialog; a conversation is written whole or not at all.
 
 ## Non-goals
@@ -99,12 +100,16 @@ fetches public pages two different ways. What is new is small and named below.
    imported.** The request says so; a reader of the shared page does not see
    them either. A later PRD could fold a "worked for a while" receipt in the
    shape of the work accordion; nothing here forecloses it. Deferred.
-2. **Private or authenticated sessions — out of scope.** No OAuth to OpenAI or
-   Anthropic, no cookies, no account export archives. The share link is the only
-   ingress, and "public" means "anyone holding the link can read it", which is
-   exactly the condition under which copying it into a workspace needs no
-   further consent. An export-archive import is a different, offline product
-   and a different PRD. Deferred.
+2. **Private sessions and provider credentials — out of scope.** Rally holds no
+   OpenAI or Anthropic credential: no OAuth, no stored cookies, no account
+   export archives. Where a page needs a sign-in — a public Claude Code session
+   is visible only to someone signed in to claude.ai — the person signs in
+   inside the fenced view on their own machine, in a partition Rally never
+   reads and discards afterwards. The share link is the only ingress, and
+   "public" means "anyone holding the link can read it", which is exactly the
+   condition under which copying it into a workspace needs no further consent.
+   An export-archive import is a different, offline product and a different
+   PRD. Deferred.
 3. **Backdating — rejected.** Imported turns are stamped with the real clock,
    for the reasons [the demo-workspace PRD's non-goal
    1](../2026-09-04_demo-workspace/prd.md#non-goals) already records: a supplied
@@ -169,11 +174,21 @@ Claude share link (`claude.ai/share/…`), or a public Claude Code session
 request is made, with *Rally can import shared ChatGPT and Claude conversations.
 This link is not one.*
 
-Submitting starts a **preview**. The dialog reads *Reading the shared
-conversation…* with a cancel control; closing the dialog cancels a preview that
-has not been confirmed. The regional Worker fetches the page through the fetcher
-in **Key design decisions**, parses it with the provider's source adapter, stores
-the result against the import, and the dialog shows what it found:
+Submitting starts a **preview**. The dialog opens the link in a **fenced
+browser view** inside the app — the live-artifact viewer's isolation contract,
+pinned to the provider's host, with a throwaway partition — where the page loads
+exactly as it would in a browser: it passes the provider's bot check by being a
+real browser on the person's own machine, and if it asks for a sign-in (a public
+Claude Code session is visible only to someone signed in to claude.ai) the
+person signs in there, as themselves, and Rally never sees the credential. The
+dialog reads *Reading the shared conversation…* beside the view, with a cancel
+control; closing the dialog cancels a preview that has not been confirmed and
+discards the partition. Once the page has rendered, the app captures the
+transcript from the responses the page itself loaded — a ChatGPT share carries
+it in the page's HTML, a Claude share fetches it from `/api/chat_snapshots/<id>`,
+a Claude Code session from its own session endpoint — and sends those bytes to
+the regional Worker, which parses them with the provider's source adapter,
+stores the result against the import, and the dialog shows what it found:
 
 | The dialog shows | From |
 | --- | --- |
@@ -312,10 +327,12 @@ when a task needs the verbatim text.
 | --- | --- | --- |
 | Unsupported link | Refused before any request, with what is supported | Untouched |
 | Page not public, expired, or gone | *This conversation is not publicly shared, or the link has expired.* | Untouched |
-| The fetcher was challenged and could not pass | *Rally could not read this page. Claude pages sometimes require a browser check Rally cannot complete; try again later.* — with the import id for support | Untouched |
+| The page asks for a sign-in | The view shows the provider's sign-in; the dialog says *This session is visible only to someone signed in to claude.ai. Sign in here to import it; Rally does not keep the sign-in.* | Untouched |
+| The page shows a browser check | The view shows it; the person completes it and the preview continues | Untouched |
+| The page rendered but no transcript could be captured | *Rally could not read this conversation.* — with the import id for support | Untouched |
 | The page changed shape and the adapter could not parse it | *Rally could not read this conversation's format* — with the import id; the fetched page is retained for diagnosis | Untouched |
 | Confirmed, then the write failed | *The import did not complete. Nothing was added.* with retry | Untouched — the write is one transaction |
-| Offline during a preview | The last known phase, labelled stale; reconnecting resumes it | Untouched |
+| Offline during a preview | The view cannot load the page; the dialog says so and offers retry | Untouched |
 | Offline after confirming | The block arrives with the feed when the socket returns, like any turn | Written; the importer sees it on reconnect |
 | Same link, same content, same conversation | Refused, linking to the existing block | Untouched |
 
@@ -341,33 +358,44 @@ None yet.
 
 ## Key design decisions
 
-1. **One fetcher primitive, Firecrawl first; Browser Run recorded as the
-   in-region fallback; Daytona rejected.** Fetching a public page is its own
-   primitive with one job — a URL in, the page's HTML and final URL out — and the
-   first implementation is the existing Firecrawl client
-   ([`apps/api/src/lib/firecrawl.ts`](../../../apps/api/src/lib/firecrawl.ts))
-   asking for `rawHtml` and, for the rendered image URLs, `html`, one option
-   away from what the `rally:web` plugin already sends. Firecrawl is already a
-   regional dependency in both regions, already handles retry, `Retry-After`,
-   and provider errors, and advertises stealth proxies for pages behind a bot
-   challenge — which, [research.md](research.md#2-claude-pages) shows, every
-   Claude URL is. Cloudflare Browser Run is also already bound in both regions
-   (link capture in [`text-search.md`](../../text-search.md)) and keeps the
-   bytes on Cloudflare, so it is the fallback if Firecrawl cannot pass the
-   challenge or the team prefers no third party for this path; the primitive's
-   interface is what makes that a one-file swap. Daytona computer use is
-   rejected: the Terminal snapshot has no browser, both regions run on the `us`
-   fleet, and acquiring a sandbox to perform one HTTP fetch is the heaviest
-   possible shape for the lightest possible job.
+1. **The fetcher is the desktop app's own browser, in a fenced view; every
+   server-side fetcher is rejected.** Fetching a page is its own primitive with
+   one job — a link in, the page's transcript bytes out — and it runs on the
+   person's machine: a `WebContentsView` created with the live-artifact viewer's
+   isolation contract
+   ([`artifact-viewers.ts`](../../../apps/desktop/src/main/artifact-viewers.ts):
+   no preload, no Node, sandbox on, context isolation, navigation fenced,
+   window-open denied) with a throwaway partition in place of a persistent one,
+   pinned to the provider's host. The page loads as it would in a browser, and
+   the main process captures the transcript from the responses the page itself
+   loads, through the DevTools protocol's read-only network events; nothing is
+   injected into the page and nothing bridges out of it. Three facts decided
+   this, recorded in [research.md](research.md#5-what-the-documentation-and-the-app-bundle-say):
+   Anthropic's documentation says a public Claude Code session is visible only
+   to someone signed in to claude.ai, so no server can read one at all;
+   Cloudflare's documentation says Browser Run requests "are always identified
+   as bot traffic by Cloudflare", so the `BROWSER` binding cannot pass a managed
+   challenge; and Firecrawl's documentation promises nothing about challenges,
+   while Anthropic's consumer terms forbid accessing the Services "through
+   automated or non-human means" — which a scraping service is, and a person's
+   own app showing them a page is not. The same view reads a ChatGPT share,
+   whose transcript is in the page's HTML, and resolves its images inside the
+   page's own session, so one path covers both providers. A server-side ChatGPT
+   fetch through the existing Firecrawl client would work — it was verified —
+   and is rejected only because it would be a second path with its own failure
+   modes for no gain. Daytona computer use is rejected for every reason that
+   applies to a server-side fetch, plus the weight of a sandbox for one page
+   load. One consequence is stated rather than hidden: importing is a desktop
+   action; a phone can paste the link into the room and a desktop participant
+   imports it.
 2. **Parse the data, not the pixels.** A ChatGPT share page carries the whole
    conversation as a React Router data stream inside the HTML, and decoding it
    gives roles, hidden-message flags, exchange grouping, model names, instants,
    and image pointers exactly
    ([research.md §1](research.md#1-chatgpt-share-pages-httpschatgptcomshareuuid)).
-   Extracting from Firecrawl's markdown loses the role boundary; asking an LLM
-   to extract (Firecrawl's `json` format, Browser Run's `json` action) is lossy
-   and unverifiable, and would put a model between a colleague's words and their
-   attribution. Each provider's adapter is deterministic and unit-tested against
+   Extracting from a markdown rendering of the page loses the role boundary;
+   asking an LLM to extract is lossy and unverifiable, and would put a model
+   between a colleague's words and their attribution. Each provider's adapter is deterministic and unit-tested against
    a captured page; a page whose shape changes fails loudly as a parse error,
    which is the failure a reader will notice.
 3. **Imported turns are canonical conversation turns written by the room
@@ -458,7 +486,7 @@ record.
   `first_turn_id`, `last_turn_id`, `turn_count`, `failure_code`, `created_at`,
   `confirmed_at`, `ready_at`. One row per import; `phase` and `attempt` are
   written by the phase that owns them.
-- **The fetched page and the parsed conversation** live in the regional
+- **The captured page bytes and the parsed conversation** live in the regional
   `PAYLOADS` bucket under the import id until the import is `ready` (then the
   artifact is the durable copy and the page goes through the existing deletion
   outbox) or `failed` at parsing (then the page is kept for diagnosis, subject
@@ -481,27 +509,38 @@ No existing rows are backfilled.
 
 ## Regional impact
 
-The only thing that leaves a region is the share URL, sent to Firecrawl — the
-same subprocessor, under the same regional `FIRECRAWL_API_KEY`, that the
-`rally:web` plugin already uses from both regions. The page comes back to the
-regional Worker and everything derived from it — the import row, the fetched
-page, the turns, the artifact, the images — stays in that region's D1, R2, and
-objects. There is no cross-region fallback: an EU Worker whose Firecrawl key is
-absent has no import surface, the way it has no web plugin, degrading to
-nonexistent rather than to failing. Browser Run, the recorded fallback fetcher,
-is a Cloudflare-hosted dependency inside each regional Worker and changes none
-of this. Read [`regionalization.md`](../../regionalization.md) before moving
-any of it.
+The page is fetched on the person's own machine, so nothing leaves a region on
+Rally's behalf: the provider sees a browser on the person's own network, as it
+would if they opened the link themselves. The captured bytes go from the
+desktop app to the regional Worker, and everything derived from them — the
+import row, the captured page, the turns, the artifact, the images — stays in
+that region's D1, R2, and objects. No third-party fetcher, no subprocessor, no
+cross-region hop, and no regional configuration difference. Read
+[`regionalization.md`](../../regionalization.md) before moving any of it.
 
 ## Security and trust model
 
-- **Egress is two hosts, by exact match.** The adapter registry recognizes a
-  link before anything is fetched; a URL that is not `chatgpt.com/share/…`,
-  `claude.ai/share/…`, or `claude.ai/code/session_…` never reaches the
-  fetcher. `assertSafePublicUrl` still runs, as it does for both existing
-  fetchers. Redirects off those hosts are refused. No cookie, connector
-  credential, or Rally identity accompanies the fetch; it is unauthenticated
-  public-page retrieval, as link capture already is.
+- **The fenced view is the boundary, and it is the artifact viewer's.** The
+  view that loads a provider page is created with the same web preferences as
+  a live artifact — no preload, no Node, sandbox on, context isolation — plus a
+  throwaway partition that holds no Rally credential and is destroyed when the
+  dialog closes, navigation pinned to the provider's host with a redirect
+  elsewhere refused, and window-open denied. What is new against the artifact
+  contract is one read: the main process observes the view's network responses
+  through the DevTools protocol and captures the transcript response. It never
+  injects script, and the page has no bridge to reach. A sign-in the page asks
+  for happens in that partition, as the person, and is discarded with it; Rally
+  stores no provider cookie or token. [`security.md`](../../security.md) owns
+  this boundary and gains it in the same change.
+- **Only two hosts, by exact match.** The adapter registry recognizes a link
+  before any view opens; a URL that is not `chatgpt.com/share/…`,
+  `claude.ai/share/…`, or `claude.ai/code/session_…` never opens one, and the
+  view's fence refuses navigation off that host.
+- **The bytes are the importer's claim.** Because the client supplies them, the
+  Worker accepts a captured transcript only for an import it created, from the
+  importer's own session, and treats it as the importer's assertion about what
+  the link showed — exactly as the attribution is. A member can already post
+  whatever they like under their own name; this is no wider.
 - **Imported content is untrusted data at every boundary it crosses.** Text is
   rendered through the Markdown renderer that already treats member, model,
   email, and attachment text as untrusted; images pass the server-verified MIME
@@ -542,13 +581,10 @@ requires does not apply. What changes is what the agent *reads*:
 
 ## Provider configuration
 
-- **Firecrawl:** the regional `FIRECRAWL_API_KEY` secret already exists in both
-  regions; no new secret. The sandbox egress allowlist in
-  [`sandbox.md`](../../sandbox.md) already carries `api.firecrawl.dev`.
-- **Cloudflare:** the `BROWSER` binding already exists in both regional Worker
-  configurations; nothing to apply unless the fallback fetcher is chosen.
-- **OpenAI and Anthropic:** none. Both pages are read as an anonymous browser
-  would read them.
+- **None.** No Firecrawl key is used — the regional `FIRECRAWL_API_KEY` stays
+  the web plugin's — the `BROWSER` binding is not used, and nothing is
+  configured with OpenAI or Anthropic. Each page is read by the person's own
+  browser view, signed in only where the provider requires it.
 
 ## Rollout
 
@@ -565,13 +601,18 @@ are ordinary transcript and resources that stay either way.
 
 Phases, each shippable on its own:
 
-1. **ChatGPT.** The fetcher primitive, the ChatGPT adapter, the room's batch
-   writer, the external-actor label and mark registry, the dialog, the block,
-   and the artifact. Images best-effort from the rendered page.
-2. **Claude.** Gated on the spike in **Open questions**: the two Claude
-   adapters, and whichever fetcher passes the challenge. If neither does, this
-   phase ships as a named refusal in the dialog rather than not at all, and the
-   open question stays open.
+1. **The view, and ChatGPT.** The fenced import view and its capture, the
+   ChatGPT adapter, the room's batch writer, the external-actor label and mark
+   registry, the dialog, the block, and the artifact. Images resolved inside the
+   page's own session.
+2. **Claude.** The two Claude adapters. The share adapter reads the
+   `/api/chat_snapshots/<id>` response the page loads — no sign-in, and never
+   any attachments, because a shared chat does not carry them. The Claude Code
+   session adapter reads the session response the page loads once the person
+   has signed in; its shape is confirmed by the build's first task, which loads
+   one public session in the view (**Open questions**). If a session page turns
+   out to expose no readable transcript, this half ships as a named refusal in
+   the dialog rather than not at all.
 3. **Substream import and re-import versioning**, if phase 1 shipped them as
    main-feed-only to land sooner.
 
@@ -580,8 +621,9 @@ The implementing changes add a module document for the import subsystem, written
 [`docs/README.md`](../../README.md), and update the owners of the areas touched:
 [`demo-workspaces.md`](../../demo-workspaces.md) (the generalized statement of
 addressing), [`agent-attachments.md`](../../agent-attachments.md),
-[`conversation-surfaces.md`](../../conversation-surfaces.md), and
-[`text-search.md`](../../text-search.md) if Browser Run is used.
+[`conversation-surfaces.md`](../../conversation-surfaces.md),
+[`live-web-artifacts.md`](../../live-web-artifacts.md) (the fence the view
+reuses), and [`security.md`](../../security.md) (the boundary it adds).
 
 ## Acceptance
 
@@ -626,27 +668,28 @@ the durable checks land in [`e2e.md`](../../e2e.md).
 
 ## Open questions
 
-- **Can a fetcher pass claude.ai's challenge? — blocks phase 2, not phase 1.**
-  Every Claude URL shape returns a Cloudflare managed challenge to a
-  non-browser client ([research.md §2](research.md#2-claude-pages)); neither
-  Firecrawl with `proxy: "stealth"` nor Browser Run could be tried from the
-  sandbox (no key, no browser egress). The spike is one call of each against
-  the example session and a classic share, run by someone with the production
-  Firecrawl key and a remote Worker; its answer picks the fetcher for phase 2
-  and is recorded in the decision log.
-- **Are ChatGPT's images fetchable from the rendered page? — best effort, does
-  not block.** The share carries images as `sediment://` pointers the hydrated
-  client resolves; the rendered DOM's image URLs are the expected route and are
-  unverified. If they are not fetchable anonymously, images land as the
-  in-place *not available* line and Goal 5 narrows to what the page serves.
+- **What does a Claude Code session page load? — settles the phase 2
+  adapter, blocks nothing else.** A public session is visible only to a
+  signed-in claude.ai user, so the sandbox could not load one, and the session
+  route is a separate shell from the main claude.ai bundle, so its endpoint is
+  not in the code the sandbox could read
+  ([research.md §5](research.md#5-what-the-documentation-and-the-app-bundle-say)).
+  The build's first task loads the example session in the fenced view, signed
+  in, and records the response the page reads; the adapter is written against
+  that capture and the decision log records the shape.
+- **ChatGPT images — best effort, does not block.** The share carries images
+  as `sediment://` pointers the hydrated page resolves inside its own session;
+  the view captures the resolved image responses the page loads. If a pointer
+  resolves to nothing the page fetches, the image lands as the in-place *not
+  available* line and Goal 5 narrows to what the page serves.
 - **The numbers — handed to the team.** Page size, turn count, attachment
   bytes per import, preview retention, job deadline, and imports per workspace
   per day are each defined once and shipped open. The arithmetic for the
   team's use: a page is a few hundred KB to a few MB of HTML (the example is
   669 KB); an image is up to `MAX_ATTACHMENT_BYTES` each; a turn is at most
-  `MESSAGE_MAX_CHARACTERS`; a Firecrawl scrape is one request that the shipped
-  client already caps with its own `SCRAPE_TIMEOUT_MS`; and one import writes
-  one transaction of `turn_count + 1` rows plus one resource per image.
+  `MESSAGE_MAX_CHARACTERS`; a page load in the view is bounded by the open
+  preview deadline; and one import writes one transaction of `turn_count + 1`
+  rows plus one resource per image.
 - **Wording for guests.** *Adam (guest)* is the proposal; *Adam · guest* in the
   byline's context-label slot is the alternative. Decide with the designer of
   the byline; nothing else depends on it.
