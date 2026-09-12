@@ -815,7 +815,9 @@ does not advance the model projection past that hole. A human-only classificatio
 releases that turn for the next context fill. A canonical turn is never also
 rendered as a pending overlay.
 
-Explicitly queued messages, seed imports, and internal/REST human input retain
+An ordinary send uses this fast path only while the server-authoritative loop is idle;
+if a run is executing at the canonical handoff it also retains pending-first order.
+Explicitly queued or steered messages, seed imports, and internal/REST human input retain
 the pending-first path. Incoming input on that path is a server-authoritative pending record with a
 stable input ID and arrival order. It is not a canonical transcript turn and
 does not consume `transcript_sequence` while pending. The desktop may paint an
@@ -1600,7 +1602,9 @@ onto `runs.state` forward only.
 | `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. The root's `workstream_key` is the parent id and `parent_kind` (v39, default `workstream`) says which kind; `origin_type`, `automation_subscription_id`, `automation_run_id`, and `planned_for` are dead columns, never written or projected, kept because the runtime-compat triggers in `workstream-runtime-compat-schema.ts` name them inside released migration hashes. Existing main data uses local context `0`. |
 | `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
 | `participant_transcript_turns`, `participant_transcript_blocks`, `participant_transcript_attachments`, `participant_transcript_mentions`, `transcript_facts`, `transcript_payloads`, `content_refs` | One provider-neutral semantic order whose canonical turns reference content-addressed payloads plus exact attachment, mention, and large-content joins. Accepted human and assistant content, identity, and order never change. One stable tool turn may advance only its explicit lifecycle from started to terminal; a different turn under the same client id remains an ignored replay. Terminal residual-receipt repair asynchronously prepares the replacement payload, then commits its fact and tool metadata synchronously so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; pending messages have no canonical order and enter Bind only through the persistent loop's delivery transaction. |
-| `substream_loops`, `pending_loop_inputs`, `delivered_loop_inputs`, `assistant_turn_reservations`, `bind_loop_heads`, `bind_loop_state_messages`, `bind_activation_inputs`, `bind_provider_boundaries` | One persistent loop lifecycle and execution fence, server-authoritative prepared input awaiting atomic promotion, minimal delivery replay identity after promotion, exact canonical slots reserved before assistant generation, the current Bind projection, immutable activation receipts, and provider-boundary hashes. `bind_loop_heads` is the only current Bind metadata authority; ordered message rows reference it directly. Pending inputs have neither transcript nor attention order until delivery. |
+| `substream_loops`, `pending_loop_inputs`, `delivered_loop_inputs`, `assistant_turn_reservations`, `bind_loop_heads`, `bind_loop_state_messages`, `bind_activation_inputs`, `bind_provider_boundaries` | One persistent loop lifecycle and execution fence, server-authoritative prepared input awaiting atomic promotion, minimal delivery replay identity after promotion, exact canonical slots reserved before assistant generation, the current Bind projection, immutable activation receipts, and provider-boundary hashes. `bind_loop_heads` is the only current Bind metadata authority; ordered message rows reference it directly. Pending-first inputs have neither transcript nor attention order until delivery; an
+idle-loop ordinary socket send may already own its canonical turn while its
+preparation mailbox row awaits agent consumption. |
 | `runs`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts` | Subordinate execution receipts, frozen authority/context, and provider attempts. A run records restart context and loop provenance but is never the loop identity. |
 | `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. Each elicitation retains the stable Bind tool slot that its eventual answer must close. |
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output keyed by an explicit transient `stream_id`, active compaction phase, and the room sequence. Canonical output identity remains the turn's `turn_id`; `active_agent_compaction` is a singleton operational checkpoint and immutable summary history remains below. |
@@ -1742,7 +1746,10 @@ MCP identity without trusting the saved name or reading WorkspaceDO on replay.
 **What changed:** Canonical human delivery now precedes classifier inference and
 model attachment preparation. The existing durable mailbox and alarm resume
 agent preparation; activation reuses the committed turn and suppresses duplicate
-delivery effects. Explicit queue controls retain pending-first semantics.
+delivery effects. The fast path is server-gated to an idle loop; active-run
+ordinary messages and explicit queue and steer controls retain pending-first semantics.
+Recovery reuses the committed canonical text and mention offsets, and classifier
+context is fenced at that turn's sequence so later delivery cannot change it.
 
 **Why:** A teammate's chat message was held behind model latency and could fail
 delivery because an unrelated classifier failed. Keeping the object awake would

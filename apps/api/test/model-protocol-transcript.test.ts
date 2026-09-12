@@ -246,11 +246,10 @@ describe("durable UI-to-model transcript projection", () => {
       new Set(["waiting-preparation"]),
     );
 
-    // Bootstrap may render the later prepared turn, but the continuation must
-    // stop at the hole. Otherwise a later retry starts after sequence 3 and
-    // permanently loses the delivered turn at sequence 2.
-    expect(bootstrap.preparedMessages.map((entry) => entry.id))
-      .toEqual(["prepared-before", "prepared-after"]);
+    // Both model projection and compaction stop at the first awaiting turn.
+    // Projecting a prepared suffix would reorder it ahead of the hole and let
+    // a later incremental fill send it twice.
+    expect(bootstrap.preparedMessages.map((entry) => entry.id)).toEqual(["prepared-before"]);
     expect(bootstrap.compactionMessages.map((entry) => entry.id)).toEqual(["prepared-before"]);
   });
 
