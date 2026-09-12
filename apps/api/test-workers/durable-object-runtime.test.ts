@@ -43,8 +43,8 @@ import { enqueueSemanticRealtimeReference } from "../src/durable-objects/workstr
 import {
   insertPreparedTranscriptFact,
   prepareTranscriptFact,
+  WorkstreamTranscriptStorage,
 } from "../src/durable-objects/workstream-transcript-storage";
-import type { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import type { Env } from "../src/env";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
 import { canonicalModelMessageJson } from "../src/services/workstream-participant-model-message";
@@ -800,6 +800,143 @@ describe("Durable Objects in the Workers runtime", () => {
       ).one().count).toBe(2);
     });
   });
+
+  for (const targetChange of ["renamed", "removed"] as const) {
+    it(`recovers an early canonical mention after its target is ${targetChange} without rewriting the turn`, async () => {
+      await seedOpenAuthority();
+      await seedCreatorProfile();
+      const mentionedUserId = asUserId("00000000-0000-7000-8000-0000000001ae");
+      await env.DB.batch([
+        env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+          VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`)
+          .bind(WORKSPACE_ID, mentionedUserId),
+        env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+          VALUES (?, 'mentioned@example.com', 'Ada', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
+          .bind(mentionedUserId),
+      ]);
+      const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      ));
+      const auth = {
+        sessionId: SESSION_ID,
+        userId: USER_ID,
+        workspaceId: WORKSPACE_ID,
+        region: "global" as const,
+        role: "member" as const,
+      };
+      const text = "Please ask @Ada to review this.";
+      const mentionStart = text.indexOf("@Ada");
+      let messageId = "";
+      let canonicalText = "";
+      let canonicalMentionEnd = 0;
+
+      await runInDurableObject(stub, async (instance, state) => {
+        const product = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+        await product.initialize(auth, {
+          workspaceId: WORKSPACE_ID,
+          workstreamId: WORKSTREAM_ID,
+          generation: 1,
+          title: "Mention recovery",
+          objective: "Keep a delivered message's canonical mention stable while preparation resumes.",
+          descriptionSource: "authored",
+          titleStatus: "settled",
+          emailAddress: null,
+          creatorUserId: USER_ID,
+          openingMessage: "Start",
+          openingStructuredContent: null,
+          clientMessageId: "mention-recovery-opening",
+          participantUserIds: [],
+          attachmentIds: [],
+          originResourceIds: [],
+          scope: "workspace",
+          modelOverride: "test-model",
+          systemKind: null,
+          createdFromOpportunityId: null,
+          opportunityVersion: null,
+          opportunityDisplayPromptHash: null,
+          opportunityExecutionPromptHash: null,
+          executionPrincipal: { type: "user", userId: USER_ID },
+          reason: "user_message",
+        });
+        // The initial opening run is irrelevant here. An idle room is the
+        // admission state in which a socket message becomes canonical before
+        // its agent preparation has finished.
+        state.storage.sql.exec(`UPDATE substream_loops SET status = 'idle' WHERE id = 1`);
+
+        const admitted = await product.createMessageForAdmittedSocket(auth, {
+          text,
+          clientMessageId: "mention-recovery-message",
+          mentions: [{
+            type: "person",
+            userId: mentionedUserId,
+            connectorType: null,
+            startOffset: mentionStart,
+            endOffset: mentionStart + "@Ada".length,
+          }],
+          confirmedParticipantUserIds: [],
+          attachmentIds: [],
+        });
+        expect(admitted.deliveryState).toBe("canonical");
+        messageId = admitted.turn.turnId;
+        canonicalText = new WorkstreamTranscriptStorage(state.storage)
+          .participantTurn(messageId)!.blocks.find((block) => block.type === "text")!.text;
+        canonicalMentionEnd = state.storage.sql.exec<{ end_offset: number }>(
+          `SELECT end_offset FROM participant_transcript_mentions WHERE turn_id = ?`, messageId,
+        ).one().end_offset;
+        expect(state.storage.sql.exec<{ state: string }>(
+          `SELECT state FROM pending_loop_input_mailbox WHERE input_id = ?`, messageId,
+        ).one()).toEqual({ state: "preparing" });
+
+        // The recipient can change or leave while the object is recovering. The
+        // sender remains an active workspace member and is reauthorized by the
+        // resumed preparation.
+        if (targetChange === "renamed") {
+          await env.DB.prepare(`UPDATE users SET name = 'Grace' WHERE id = ?`)
+            .bind(mentionedUserId).run();
+        } else {
+          await env.DB.batch([
+            env.DB.prepare(`UPDATE workspace_members SET status = 'removed'
+              WHERE workspace_id = ? AND user_id = ?`).bind(WORKSPACE_ID, mentionedUserId),
+            env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(mentionedUserId),
+          ]);
+        }
+        await expect(product.resumeOldestInputPreparation()).resolves.toBe("settled");
+        expect(new WorkstreamMessageStorage(state.storage).message({ messageId })).toMatchObject({
+          id: messageId,
+          author_user_id: USER_ID,
+          text_content: canonicalText,
+        });
+        expect(new WorkstreamTranscriptStorage(state.storage).participantTurn(messageId)).toMatchObject({
+          blocks: [{
+            type: "text",
+            text: canonicalText,
+            mentions: [{
+              type: "person",
+              userId: mentionedUserId,
+              startOffset: mentionStart,
+              endOffset: canonicalMentionEnd,
+            }],
+          }],
+        });
+        const pending = state.storage.sql.exec<{
+          state: string; prepared_payload_json: string; mentions_json: string;
+        }>(`SELECT mailbox.state, input.prepared_payload_json, input.mentions_json
+            FROM pending_loop_inputs input
+            JOIN pending_loop_input_mailbox mailbox ON mailbox.input_id = input.input_id
+           WHERE input.input_id = ?`, messageId).one();
+        expect(pending.state).toBe("ready");
+        expect(JSON.parse(pending.prepared_payload_json)).toMatchObject({ content: canonicalText });
+        expect(JSON.parse(pending.mentions_json)).toEqual([{
+          mentionIndex: 0,
+          mentionKind: "person",
+          targetUserId: mentionedUserId,
+          connectorType: null,
+          startOffset: mentionStart,
+          endOffset: canonicalMentionEnd,
+        }]);
+      });
+    });
+  }
 
   it("does not read a preparing work stream while resolving its first model", async () => {
     await seedOpenAuthority();

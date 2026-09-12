@@ -63,6 +63,11 @@ The rule of thumb: if it can fail in a way that should hold *it* back without
 holding anything else back, it is an entry. If it is "the earliest row in this
 table", it is derived.
 
+An ordinary socket message admitted while no loop is executing retains its
+preparation mailbox after canonical chat delivery. The derived loop wake resumes
+classification and model preparation as normal work, including without a crash.
+Executing-loop sends and explicit queue/steer inputs keep pending-first behavior.
+
 ### Arming
 
 `armNextAlarm()` computes the minimum across the store and every derived
@@ -504,6 +509,21 @@ emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
 
 ## Changelog
+
+### 2026-09-12 — Resume ordinary-message preparation after delivery
+
+**What changed:** The existing SubstreamAgent mailbox wake now covers routine
+deferred preparation after an ordinary socket message becomes canonical.
+
+**Why:** Waiting for classification and model attachments delayed human chat.
+The mailbox already provides the durable recovery owner needed to separate them.
+
+**Considered and rejected:** An in-memory continuation or another alarm lane.
+The existing persisted preparation and derived wake express the work directly.
+
+**Consequences:** The alarm is armed before reservation. Active-run inputs keep
+pending-first ordering; failed recovery terminalizes its mailbox instead of
+holding subsequent inputs behind a preparation that can never finish.
 
 ### 2026-09-11 — Unfurl expiry uses the sweep's timestamp format
 
@@ -1002,11 +1022,3 @@ take its siblings down — is now a property of the drain itself. Maintenance is
 also no longer all-or-nothing per alarm: each pass is its own entry with its own
 due time, so a Slack reap that has been failing for an hour no longer re-runs
 the memory-index outbox every time it retries.
-
-### Deferred ordinary-message preparation
-
-An idle-loop ordinary socket send arms the SubstreamAgent alarm before reserving
-its durable preparation mailbox row. This is normal recovery work, not a
-crash-only path: the next drain resumes classifier and model preparation after
-canonical chat delivery. A currently executing loop keeps the message on the
-normal pending-first path instead.

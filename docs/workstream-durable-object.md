@@ -800,14 +800,16 @@ instead. Only a socket that never subscribed is refused.
 
 ### Queueing and steering
 
-Ordinary messages on an admitted conversation socket commit their canonical
-human turn, attention, resource links, and delivery effects before addressing
+Ordinary messages on an admitted conversation socket, when no loop is executing,
+commit their canonical human turn, attention, resource links, and delivery effects before addressing
 classification or model attachment preparation. The durable preparation mailbox
 retains the original authenticated envelope; the object's existing alarm drain
 resumes that preparation with current membership authorization. Agent activation
 then consumes the same turn identity without appending another transcript turn
 or emitting another delivery effect. A preparation failure leaves the human
 message delivered and records a failed mailbox entry; it does not retract chat.
+The failure also emits one content-free operator notice through the existing
+[notifier](ops-alerting.md), including failures before the preparation guard.
 
 Human delivery and model consumption have separate waterlines. A turn waiting
 for preparation or agent admission is excluded from overheard model context and
@@ -897,7 +899,7 @@ reason and against the same failure; a resumed admission is idempotent against
 every durable row it re-enters, and a late completion by the original
 invocation is fenced by the canonical `client_message_id` check.
 
-Promotion is one object-local transaction that validates the loop fence,
+For pending-first inputs, promotion is one object-local transaction that validates the loop fence,
 creates the immutable canonical participant turn with its exact fact,
 provenance, attachments and mentions, allocates transcript and attention order,
 replaces the full pending envelope with a minimal immutable delivery receipt,
@@ -905,7 +907,9 @@ and enqueues the resulting directory, user,
 activity, mention, and non-duplicate participant effects in `durable_outbox`.
 A crash can therefore observe none of the canonical turn, delivery receipt,
 and effect intents, or all of them. The loop owner persists the corresponding
-Bind transition before crossing the next provider boundary.
+Bind transition before crossing the next provider boundary. An early-delivered
+input already owns its canonical turn and effects; activation validates and
+reuses that identity while committing its Bind admission and delivery receipt.
 Prepared fields on `pending_loop_inputs` are immutable and exist only while
 pending. `input_sequence` is the exception: it is the live promotion order a
 drag rewrites. A changed request is still a new ordered input; it does not
@@ -1276,6 +1280,7 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 
 | Condition | Behavior |
 | --- | --- |
+| Deferred preparation fails after a human message was delivered | The canonical message remains visible. The mailbox becomes terminal `failed`, subsequent inputs can proceed, and one content-free operator notice reports the failure; no automatic model retry is implied. |
 | Migration hash mismatch/schema ahead/foreign-key violation | Constructor activation fails; no request observes a partially migrated schema. |
 | Object ID has the wrong/no jurisdiction in staging or production | Constructor activation fails before serving state; callers cannot silently use the unrestricted graph. |
 | Location hint cannot be honored | Cloudflare selects the nearest available location inside the jurisdiction; correctness and residency do not depend on the best-effort hint. |
@@ -1601,10 +1606,8 @@ onto `runs.state` forward only.
 | `object_retirement` | Singleton tombstone, conversation-object schema v48; shared constant, see `WorkspaceDO`. |
 | `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. The root's `workstream_key` is the parent id and `parent_kind` (v39, default `workstream`) says which kind; `origin_type`, `automation_subscription_id`, `automation_run_id`, and `planned_for` are dead columns, never written or projected, kept because the runtime-compat triggers in `workstream-runtime-compat-schema.ts` name them inside released migration hashes. Existing main data uses local context `0`. |
 | `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
-| `participant_transcript_turns`, `participant_transcript_blocks`, `participant_transcript_attachments`, `participant_transcript_mentions`, `transcript_facts`, `transcript_payloads`, `content_refs` | One provider-neutral semantic order whose canonical turns reference content-addressed payloads plus exact attachment, mention, and large-content joins. Accepted human and assistant content, identity, and order never change. One stable tool turn may advance only its explicit lifecycle from started to terminal; a different turn under the same client id remains an ignored replay. Terminal residual-receipt repair asynchronously prepares the replacement payload, then commits its fact and tool metadata synchronously so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; pending messages have no canonical order and enter Bind only through the persistent loop's delivery transaction. |
-| `substream_loops`, `pending_loop_inputs`, `delivered_loop_inputs`, `assistant_turn_reservations`, `bind_loop_heads`, `bind_loop_state_messages`, `bind_activation_inputs`, `bind_provider_boundaries` | One persistent loop lifecycle and execution fence, server-authoritative prepared input awaiting atomic promotion, minimal delivery replay identity after promotion, exact canonical slots reserved before assistant generation, the current Bind projection, immutable activation receipts, and provider-boundary hashes. `bind_loop_heads` is the only current Bind metadata authority; ordered message rows reference it directly. Pending-first inputs have neither transcript nor attention order until delivery; an
-idle-loop ordinary socket send may already own its canonical turn while its
-preparation mailbox row awaits agent consumption. |
+| `participant_transcript_turns`, `participant_transcript_blocks`, `participant_transcript_attachments`, `participant_transcript_mentions`, `transcript_facts`, `transcript_payloads`, `content_refs` | One provider-neutral semantic order whose canonical turns reference content-addressed payloads plus exact attachment, mention, and large-content joins. Accepted human and assistant content, identity, and order never change. One stable tool turn may advance only its explicit lifecycle from started to terminal; a different turn under the same client id remains an ignored replay. Terminal residual-receipt repair asynchronously prepares the replacement payload, then commits its fact and tool metadata synchronously so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; pending-first messages have no canonical order; early-delivered inputs already have canonical order. Both enter Bind through persistent-loop admission. |
+| `substream_loops`, `pending_loop_inputs`, `delivered_loop_inputs`, `assistant_turn_reservations`, `bind_loop_heads`, `bind_loop_state_messages`, `bind_activation_inputs`, `bind_provider_boundaries` | One persistent loop lifecycle and execution fence, server-authoritative prepared input awaiting atomic promotion, minimal delivery replay identity after promotion, exact canonical slots reserved before assistant generation, the current Bind projection, immutable activation receipts, and provider-boundary hashes. `bind_loop_heads` is the only current Bind metadata authority; ordered message rows reference it directly. Pending-first inputs have neither transcript nor attention order until delivery; an ordinary socket send admitted without an executing loop may already own its canonical turn while its preparation mailbox row awaits agent consumption. |
 | `runs`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts` | Subordinate execution receipts, frozen authority/context, and provider attempts. A run records restart context and loop provenance but is never the loop identity. |
 | `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. Each elicitation retains the stable Bind tool slot that its eventual answer must close. |
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output keyed by an explicit transient `stream_id`, active compaction phase, and the room sequence. Canonical output identity remains the turn's `turn_id`; `active_agent_compaction` is a singleton operational checkpoint and immutable summary history remains below. |
@@ -1754,8 +1757,19 @@ context is fenced at that turn's sequence so later delivery cannot change it.
 **Why:** A teammate's chat message was held behind model latency and could fail
 delivery because an unrelated classifier failed. Keeping the object awake would
 not remove that dependency. Durable separation removes it while preserving
-recovery, authorization, idempotency, and ordered model consumption. Future changes
-must not advance the model waterline over a turn still awaiting preparation.
+recovery, authorization, idempotency, and ordered model consumption.
+
+**Considered and rejected:** Warming objects or handing preparation to an
+in-memory promise. Neither removes the inference dependency with durable recovery.
+
+**Consequences:** Future changes must not advance the model waterline over a
+turn still awaiting preparation. A failed preparation leaves the human turn
+delivered, terminalizes the mailbox, and emits the content-free operator notice
+documented in [operator alerting](ops-alerting.md). Bind remains the AI loop owner.
+Do not roll back to code predating this handoff while early-delivered preparations
+or their pending agent inputs remain: that code cannot consume an already
+canonical input. Drain those inputs first or use a rollback that retains this
+recovery protocol.
 
 ### 2026-09-11 — A read is acknowledged by the conversation that was read
 
