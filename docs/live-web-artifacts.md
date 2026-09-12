@@ -86,6 +86,12 @@ The bitmap font transliterates accented Latin text and gives titles with no
 supported glyphs a stable visible site code; an authored card remains the right
 answer for non-Latin branding.
 
+Assets within a version upload concurrently, with at most the platform's six
+simultaneous outgoing connections. Every writer settles before publication can
+continue; any failed asset prevents the manifest write. This preserves the
+assets-before-manifest barrier without adding each independent R2 round trip to
+the publication latency.
+
 ### Revising
 
 A run asked to change a site it did not build — or built in a session that has
@@ -499,6 +505,15 @@ compromise of the serving Worker exposes artifact content and viewer sessions
 rather than workspace authority.
 
 ## Changelog
+
+### 2026-09-12 — Overlap independent artifact asset writes
+
+Serial R2 writes made multi-file publication pay every asset's network latency
+in succession. Asset writers now share the platform's six-connection ceiling and
+all settle before the manifest is written. Unbounded fan-out and early manifest
+publication were rejected: the former only queues inside the platform, and the
+latter can expose incomplete versions. Any asset failure still fails publication.
+
 
 ### 2026-09-11 — A link in a site preview leaves through the person who clicked it
 
