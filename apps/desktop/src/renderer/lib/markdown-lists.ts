@@ -26,12 +26,17 @@ import { isMarkdownCode, markdownLineKinds } from '@rally/contracts/markdown-cod
  * | `shiftListAtCaret` | Tab and Shift+Tab |
  * | `toggleListAtSelection` | ⌘/Ctrl+Shift+8 and ⌘/Ctrl+Shift+7 |
  *
- * Each returns `null` when it has nothing to do, and a `null` is the signal to
+ * Each returns `null` when it changed nothing, and a `null` is the signal to
  * let the keystroke do whatever it would have done — a plain newline, a move to
- * the next control. **That fallthrough is what keeps Tab from trapping a
- * keyboard user**: Tab only indents on a list line that has somewhere to nest,
- * and Shift+Tab only outdents one that is already nested, so there is always a
- * Tab or a Shift+Tab out of the composer.
+ * the next control.
+ *
+ * **Tab is the exception, and `selectionTouchesListItem` is why.** Inside a
+ * list, Tab indents and Shift+Tab unindents, and neither ever moves focus — not
+ * at `MAX_LIST_DEPTH`, not at the margin. A Tab that indents four times and
+ * then, with nothing on screen having changed, throws the caret out of the
+ * field on the fifth is the behaviour this exists to prevent; it was reported
+ * from a real draft. Outside a list Tab is untouched and still moves focus, so
+ * an ordinary message, and an empty composer, keep the exit they always had.
  *
  * ## Every ordered list is renumbered, every time
  *
@@ -149,6 +154,57 @@ function markerOf(item: ListItemLine, ordinal = item.number ?? 1): string {
  */
 function childIndentOf(item: ListItemLine): string {
   return ' '.repeat(item.indent.length + markerOf(item).length + item.spacing.length);
+}
+
+/**
+ * How many times Tab may indent an item, counting from the margin.
+ *
+ * Rally's own number, not a limit of the format: CommonMark nests as deep as
+ * you like, and `remark-gfm` renders it. Five is what the team set, and it is
+ * the depth past which a list in a chat message stops being something anybody
+ * reads — the fifth level is already a quarter of the composer's width in
+ * indent. Changing it changes nothing but where Tab stops.
+ */
+const MAX_LIST_DEPTH = 5;
+
+/**
+ * How many items this one is nested inside, counting only real ancestors: a
+ * shallower item above it, then a shallower one above that, and so on until the
+ * list block ends. Depth 0 is an item at the margin — or one carrying the
+ * up-to-three spaces CommonMark lets a top-level list have, which is the reason
+ * this counts ancestors rather than dividing the indent by a guessed unit.
+ */
+function depthOf(lines: readonly string[], index: number, width: number): number {
+  let depth = 0;
+  let ceiling = width;
+  for (let above = index - 1; above >= 0; above -= 1) {
+    const line = lines[above] ?? '';
+    if (line.trim() === '') continue;
+    const item = parseListItem(line);
+    if (!item) break;
+    if (item.indent.length < ceiling) {
+      depth += 1;
+      ceiling = item.indent.length;
+    }
+  }
+  return depth;
+}
+
+/**
+ * Whether the selection touches a list item at all.
+ *
+ * Tab and Shift+Tab belong to the list whenever it does, *including* where the
+ * shift has nowhere left to go — at the depth cap, or already at the margin.
+ * The composer swallows the key on a `true` here rather than on whether the
+ * draft changed, because the alternative is a Tab that indents four times and
+ * then, with nothing on screen having changed, throws the caret out of the
+ * field on the fifth.
+ */
+export function selectionTouchesListItem(text: string, selectionStart: number, selectionEnd: number): boolean {
+  const lines = text.split('\n');
+  const kinds = markdownLineKinds(lines);
+  return selectedLineIndices(lines, selectionStart, selectionEnd)
+    .some((index) => !isMarkdownCode(kinds[index] ?? 'prose') && parseListItem(lines[index] ?? '') !== null);
 }
 
 /** A prefix rewrite on one line: how much to take off the front, and what to put there. */
@@ -411,10 +467,15 @@ function ancestorIndentOf(lines: readonly string[], lineIndex: number, width: nu
 /**
  * Tab and Shift+Tab over the list items the selection touches.
  *
- * Nesting in Markdown is positional: an item is a child of the item above it,
- * so the first item of a list has nothing to nest under and Tab there does not
- * indent — it moves focus, which is the behaviour a keyboard user needs to
- * still be able to leave the composer. Shift+Tab at the margin does the same.
+ * Tab indents, Shift+Tab unindents, and `MAX_LIST_DEPTH` is as far in as Tab
+ * goes. Nesting in Markdown is positional — an item is a child of the item
+ * above it — so where there is an item above, the target is measured from it;
+ * where there is not, the item is indented by its own content width instead,
+ * because "Tab indents" is the rule and an item that refused would be
+ * indistinguishable to the person pressing it from one that could not.
+ *
+ * Returns `null` where nothing moved: at the cap, or at the margin going out.
+ * That is not a signal to hand the key back — see the note on the module.
  *
  * A selection spanning several items shifts all of them and keeps their shape.
  * The two directions reach that differently, which is the subtle part: nesting
@@ -457,15 +518,21 @@ export function shiftListAtCaret(
         ? parseListItem(lines[index - 1] ?? '')
         : null;
       const aboveIndent = above ? indentAt(index - 1) : undefined;
-      if (above && aboveIndent !== undefined) {
+      if (depthOf(lines, index, indent.length) >= MAX_LIST_DEPTH) {
+        next = null;
+      } else if (above && aboveIndent !== undefined) {
         // The deepest legal target: the predecessor's own column where it is
         // already deeper than this item — `- gamma` under a nested `- beta`
-        // becomes beta's sibling — and its child column otherwise. An item
-        // already at its predecessor's child column lands back on itself, which
-        // is the "as deep as this list can go" case, and declines below.
+        // becomes beta's sibling — and its child column otherwise.
         next = indent.length < aboveIndent.length
           ? aboveIndent
           : childIndentOf({ ...above, indent: aboveIndent });
+      } else {
+        // Nothing above to measure against — the first item of a list, or one
+        // under a line of prose. Tab still indents it, by its own content
+        // width, because "Tab indents" is the rule and an item that refused
+        // would be indistinguishable from one that could not.
+        next = childIndentOf({ ...item, indent });
       }
     } else if (indent !== '') {
       // Against the ancestors' *original* columns, not this pass's. Resolving

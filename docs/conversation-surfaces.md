@@ -663,13 +663,20 @@ crowded. `toggleListAtSelection` stays for the two shortcuts, which are what
 turns lines somebody has *already written* into a list — the one thing typing a
 marker cannot do.
 
-**Consequences:** Tab now has a meaning inside the composer, which is a
-keyboard-accessibility hazard if it is unconditional, so every operation returns
-`null` when it has nothing to do and the composer then leaves the keystroke
-alone: Tab only indents an item that has something above it to nest under, and
-Shift+Tab only outdents one that is already nested, so there is always a Tab or
-a Shift+Tab out of the field. That `null`-means-fallthrough contract is the
-thing to preserve when adding a fourth operation.
+**Tab belongs to the list, and does not move focus.** Inside a list Tab indents
+and Shift+Tab unindents, to a depth of five; outside one Tab is untouched and
+still moves to the next control, so an ordinary message and an empty composer
+keep the exit they always had. The composer decides that on
+`selectionTouchesListItem` — whether the caret is in a list — rather than on
+whether the draft moved, and the distinction is the whole point: an earlier
+round keyed it on the draft moving, so Tab indented four times and then, with
+nothing on screen having changed, threw the caret out of the field on the fifth.
+That was reported from a real draft, twice. Five levels is the team's number and
+not the format's; `MAX_LIST_DEPTH` is the one line to edit.
+
+The rest of the operations still return `null` to mean "nothing happened, let
+the keystroke be" — that contract is the thing to preserve when adding a fourth.
+Tab is the documented exception to it.
 
 Edits are applied with `document.execCommand`, not by handing the parent a new
 string. That is what keeps them on the textarea's undo stack — ⌘Z after Enter
