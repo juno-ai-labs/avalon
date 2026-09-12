@@ -3275,6 +3275,19 @@ describe("a member's message travels the whole pipeline", () => {
         const request = (await capturedProviderRequests(stub)).find((item) => item.body.stream === true)!;
         expect((JSON.stringify(request.body.messages).match(new RegExp(text, "g")) ?? [])).toHaveLength(1);
         await waitForLoopRelease(stub);
+        // Activation consumed this delivered turn. Its pending row remains in
+        // the transaction until the activation completes, so the model
+        // waterline must explicitly exclude that row rather than checkpointing
+        // just before a turn the model already received.
+        const waterline = await runInDurableObject(stub, (_instance, state) =>
+          state.storage.sql.exec<{ transcript_projected_through: number; transcript_sequence: number }>(
+            `SELECT loop.transcript_projected_through, turn.transcript_sequence
+               FROM substream_loops loop
+               JOIN participant_transcript_turns turn ON turn.turn_id = ?
+              WHERE loop.id = 1`,
+            turns[0]!.id,
+          ).one());
+        expect(waterline.transcript_projected_through).toBe(waterline.transcript_sequence);
       }
       expect(await canonical()).toEqual(turns);
     } finally {

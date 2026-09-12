@@ -1724,7 +1724,9 @@ export class WorkstreamTranscriptStorage {
         // which is allocated after the scan and would put a turn written in
         // between below the mark unseen.
         initializesFromCanonicalHistory
-          ? this.modelProjectionSafeThrough(delivered.transcriptSequence)
+          // This input is being consumed by this transition; it cannot keep
+          // the checkpoint behind a turn the model has just received.
+          ? this.modelProjectionSafeThrough(delivered.transcriptSequence, pending.prepared_turn_id)
           : prepared?.projectedThrough ?? 0,
         now,
         input.expectedLoopRevision,
@@ -2577,13 +2579,15 @@ export class WorkstreamTranscriptStorage {
     ).toArray().map((row) => row.turn_id);
   }
 
-  private modelProjectionSafeThrough(through: number): number {
+  private modelProjectionSafeThrough(through: number, excludeTurnId: string | null = null): number {
     const waiting = this.sql.exec<{ first_sequence: number | null }>(
       `SELECT MIN(transcript_sequence) AS first_sequence FROM participant_transcript_turns
         WHERE turn_id IN (
           SELECT input_id FROM pending_loop_input_mailbox WHERE state = 'preparing'
           UNION SELECT prepared_turn_id FROM pending_loop_inputs
-        )`,
+        )
+          AND (? IS NULL OR turn_id != ?)`,
+      excludeTurnId, excludeTurnId,
     ).one().first_sequence;
     return waiting === null ? through : Math.min(through, Math.max(0, waiting - 1));
   }
@@ -3755,7 +3759,13 @@ export class WorkstreamTranscriptStorage {
         steps.push(gap);
         projection = gap.next;
       }
-      projectedThrough = Math.max(projectedThrough, this.modelProjectionSafeThrough(scanThrough));
+      // This input is appended by the transition immediately below. Its
+      // delivered turn must not fence the projected-through mark behind a
+      // message the model has just received; other waiting inputs still do.
+      projectedThrough = Math.max(
+        projectedThrough,
+        this.modelProjectionSafeThrough(scanThrough, pending.prepared_turn_id),
+      );
       const transition: ProtocolUserTransition = {
         kind: "protocol_user_appended",
         loopId: previous.loopId,
