@@ -4115,6 +4115,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return loop;
     };
     return {
+      pendingAgentTurnIds: () => this.transcript.pendingAgentTurnIds(),
       assignSidekickSkillNames: (sources) => {
         fence();
         return this.state.storage.transactionSync(() => {

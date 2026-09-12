@@ -3213,6 +3213,78 @@ describe("a member's message travels the whole pipeline", () => {
     }))).toEqual({ claim: null, runStatus: "admitted", loopStatus: "idle" });
   });
 
+  it.each(["human_only", "agent_action"] as const)("delivers to subscribed readers while %s classification is held", async (classification) => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message", null, [OTHER_USER_ID]);
+    await settledRun(stub, opened.body.harnessRunId as string);
+    await waitForLoopRelease(stub);
+    const sender = await openSubscribedSocket(stub, "00000000-0000-7000-8000-0000000007a0");
+    const reader = await openSubscribedSocket(stub, "00000000-0000-7000-8000-0000000007a1");
+    const sent = collectSocketFrames(sender.socket);
+    const received = collectSocketFrames(reader.socket);
+    const text = "The revised launch timeline is in the shared notes";
+    const clientMessageId = "delivered-before-classification";
+    const command = {
+      type: "create_message", operationId: "00000000-0000-7000-8000-0000000007a2",
+      payload: { text, clientMessageId, mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] },
+    };
+    try {
+      await installScriptedProvider(stub, ["refuse"], {
+        primaryModel: "openai/gpt-4.1-mini", fallbackModels: [], gateFirstCall: true,
+        structuredReply: { classification, confidence: 0.95, rationaleCode: "human_coordination" },
+      });
+      // The product and loop share this external provider boundary. The helper
+      // normally replaces only the loop's environment for streaming tests.
+      await runInDurableObject(stub, (instance) => {
+        Object.defineProperty(Reflect.get(instance, "product"), "env", { value: Reflect.get(instance, "env") });
+      });
+      sender.socket.send(JSON.stringify(command));
+      await expect.poll(async () => JSON.stringify({
+        calls: (await capturedProviderRequests(stub)).filter((request) => request.body.stream !== true).length,
+        mailbox: await runInDurableObject(stub, (_instance, state) =>
+          state.storage.sql.exec(`SELECT state, terminal_code FROM pending_loop_input_mailbox`).toArray()),
+        frames: sent.frames.filter((frame) => frame.type.startsWith("client_command")),
+      }), { timeout: RUN_SETTLE_TIMEOUT_MS }).toContain('"calls":1');
+      await waitForSocketEvidence(sent.frames, (frame) => frame.type === "client_command_succeeded"
+        && frame.clientMessageId === clientMessageId && frame.deliveryState === "canonical");
+      await waitForSocketEvidence(received.frames, (frame) => frame.type === "transcript_turn_upserted"
+        && JSON.stringify(frame.turn).includes(text));
+      const canonical = () => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ id: string }>(
+          `SELECT id FROM canonical_conversation_turn_details WHERE client_message_id = ?`, clientMessageId,
+        ).toArray());
+      const turns = await canonical();
+      expect(turns).toHaveLength(1);
+      const replay = nextSocketCommandOutcome(sender.socket);
+      sender.socket.send(JSON.stringify(command));
+      expect(await replay).toMatchObject({ deliveryState: "canonical", turn: { turnId: turns[0]!.id } });
+      expect(await canonical()).toEqual(turns);
+      await openProviderGate(stub);
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM pending_loop_input_mailbox WHERE state = 'preparing'`,
+        ).one().count), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(0);
+      if (classification === "agent_action") {
+        await expect.poll(async () => JSON.stringify({
+          calls: (await capturedProviderRequests(stub)).filter((request) => request.body.stream === true).length,
+          mailbox: await runInDurableObject(stub, (_instance, state) => ({
+            inputs: state.storage.sql.exec(`SELECT state, terminal_code FROM pending_loop_input_mailbox`).toArray(),
+            runs: state.storage.sql.exec(`SELECT status, error_json FROM runs`).toArray(),
+          })),
+        }), { timeout: RUN_SETTLE_TIMEOUT_MS }).toContain('"calls":1');
+        const request = (await capturedProviderRequests(stub)).find((item) => item.body.stream === true)!;
+        expect((JSON.stringify(request.body.messages).match(new RegExp(text, "g")) ?? [])).toHaveLength(1);
+        await waitForLoopRelease(stub);
+      }
+      expect(await canonical()).toEqual(turns);
+    } finally {
+      await openProviderGate(stub).catch(() => undefined);
+      await restoreProviderFetch(stub);
+      sent.stop(); received.stop();
+      sender.socket.close(1000, "done"); reader.socket.close(1000, "done");
+    }
+  });
+
   it("acknowledges durable admission when the eager loop wake-up fails", async () => {
     const stub = agentStub();
     const opened = await initializeWorkstream(stub, "first message");
@@ -3246,23 +3318,13 @@ describe("a member's message travels the whole pipeline", () => {
       type: "client_command_succeeded",
       command: "create_message",
       clientMessageId: "pipeline-room-socket-wakeup-1",
-      deliveryState: "pending",
+      deliveryState: "canonical",
     });
-    // Admission arms alarm recovery before committing the pending row. That
-    // alarm may legally promote it while the socket receipt is in flight, so
-    // prove exactly one durable owner rather than racing that promotion.
+    // Human delivery is already durable even if agent activation fails.
     expect(await runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM (
-           SELECT input_id FROM pending_loop_inputs
-            WHERE client_message_id = 'pipeline-room-socket-wakeup-1'
-           UNION ALL
-           SELECT delivered.input_id
-             FROM delivered_loop_inputs delivered
-             JOIN canonical_conversation_turn_details turn
-               ON turn.id = delivered.delivered_turn_id
-            WHERE turn.client_message_id = 'pipeline-room-socket-wakeup-1'
-         )`,
+        `SELECT COUNT(*) AS count FROM canonical_conversation_turn_details
+          WHERE client_message_id = 'pipeline-room-socket-wakeup-1'`,
       ).one().count)).toBe(1);
     socket.close(1000, "done");
   });

@@ -914,7 +914,13 @@ export class WorkstreamObjectProductService {
     }
     try {
       if (preparation.preparation_kind === "human_message") {
-        await this.createMessage(envelope.auth as AuthContext, envelope.input as WorkstreamObjectCreateMessageInput);
+        await this.createMessageWithAuthority(
+          envelope.auth as AuthContext,
+          envelope.input as WorkstreamObjectCreateMessageInput,
+          true,
+          envelope.deliveredBeforeAgentPreparation === true,
+          envelope.deliveredBeforeAgentPreparation === true,
+        );
       } else if (preparation.preparation_kind === "external_message") {
         await this.admitExternalMessage(envelope.input as AdmitExternalMessageInput);
       } else if (preparation.preparation_kind === "automation_activation") {
@@ -928,8 +934,14 @@ export class WorkstreamObjectProductService {
           envelope.input as WorkstreamObjectAnswerElicitationInput,
         );
       }
-    } catch {
+    } catch (error) {
       // Admission methods terminalize preparation failures before returning.
+      if (envelope.deliveredBeforeAgentPreparation === true) {
+        logWarn(this.env, "delivered_message_agent_preparation_failed", {
+          input_id: preparation.input_id,
+          reason: this.preparationFailureCode(error),
+        });
+      }
     }
     return "settled";
   }
@@ -3879,15 +3891,19 @@ export class WorkstreamObjectProductService {
     auth: AuthContext,
     rawInput: WorkstreamObjectCreateMessageInput,
   ): Promise<WorkstreamObjectCreateMessageResult> {
-    return this.createMessageWithAuthority(auth, rawInput, false);
+    return this.createMessageWithAuthority(auth, rawInput, false, true);
   }
 
   private async createMessageWithAuthority(
     auth: AuthContext,
     rawInput: WorkstreamObjectCreateMessageInput,
     reauthorizeWorkspaceMembership: boolean,
+    deliverBeforePreparation = false,
+    finishDeliveredPreparation = false,
   ): Promise<WorkstreamObjectCreateMessageResult> {
     const input = WorkstreamObjectCreateMessageInputSchema.parse(rawInput);
+    // Explicitly queued messages keep their reorderable pending projection.
+    const earlyDelivery = deliverBeforePreparation && !input.seed && input.runMode !== "queue";
     const requestHash = workstreamImportHash({
       command: "create_message",
       authorUserId: auth.userId,
@@ -3908,7 +3924,8 @@ export class WorkstreamObjectProductService {
       `SELECT id, created_at FROM canonical_conversation_turn_details WHERE client_message_id = ?`,
       input.clientMessageId,
     ));
-    if (existing) {
+    const alreadyDelivered = Boolean(existing && finishDeliveredPreparation);
+    if (existing && !finishDeliveredPreparation) {
       await authorizedRoot();
       return this.canonicalMessageReplay(existing, input.clientMessageId);
     }
@@ -3928,7 +3945,7 @@ export class WorkstreamObjectProductService {
       inputId: uuidV7(reservationNow),
       clientMessageId: input.clientMessageId,
       preparationKind: "human_message",
-      envelope: { auth, input },
+      envelope: { auth, input, ...(earlyDelivery ? { deliveredBeforeAgentPreparation: true } : {}) },
       now: reservationNow,
     });
     return this.runInputPreparation(preparation, async () => {
@@ -3961,7 +3978,7 @@ export class WorkstreamObjectProductService {
     // Confirmation is authority for an accepted mention, not a second generic
     // participant-add API. A malformed or spoofed range cannot smuggle its raw
     // target into the audience after canonicalization rejects it.
-    const confirmedParticipantUserIds = input.confirmedParticipantUserIds.filter((userId) => personIds.includes(userId));
+    const confirmedParticipantUserIds = (alreadyDelivered ? [] : input.confirmedParticipantUserIds).filter((userId) => personIds.includes(userId));
     if (root.scope === "personal" && confirmedParticipantUserIds.length > 0) {
       const currentAudience = this.readerAudience(root);
       if (currentAudience.scope !== "personal") throw new Error("personal_reader_audience_expected");
@@ -3977,7 +3994,13 @@ export class WorkstreamObjectProductService {
         people: unconfirmed.map((userId) => ({ userId, name: people.get(userId)?.name ?? "Workspace member" })),
       });
     }
-    const attachmentRows = await this.reserveAttachmentDrafts({
+    // Once the human turn is committed these resources are attached, not
+    // reusable drafts. Read the current linked resources for model preparation.
+    const attachmentRows = alreadyDelivered && input.attachmentIds.length > 0
+      ? (await this.workspaceDatabase(auth.workspaceId).prepare(
+          `SELECT * FROM resources WHERE workspace_id = ? AND id IN (SELECT value FROM json_each(?))`,
+        ).bind(auth.workspaceId, JSON.stringify(input.attachmentIds)).all<AttachmentResourceRow>()).results
+      : await this.reserveAttachmentDrafts({
       workspaceId: auth.workspaceId,
       workstreamId: root.workstream_key,
       inputId: preparation.input_id,
@@ -4002,7 +4025,7 @@ export class WorkstreamObjectProductService {
       // scripted conversation cannot wait on a live guess about each line when
       // the pack is the authority on which lines start a run.
       shouldInvoke = input.seed.assistant !== null;
-    } else if (!shouldInvoke) {
+    } else if (!shouldInvoke && !(earlyDelivery && !finishDeliveredPreparation)) {
       const activeTask = this.loops.loop()?.status === "executing";
       const classification = await classifyWorkstreamMessage(this.env, {
         workspaceId: auth.workspaceId,
@@ -4022,6 +4045,7 @@ export class WorkstreamObjectProductService {
         || classification.classification === "both"
         || (classification.classification === "uncertain" && (activeTask || connectorMentions.length > 0));
     }
+    if (earlyDelivery && !finishDeliveredPreparation) shouldInvoke = false;
     const now = preparation.created_at;
     const messageId = preparation.input_id;
     const transcriptMessage = await this.transcript.prepareParticipantMessage({
@@ -4140,7 +4164,7 @@ export class WorkstreamObjectProductService {
             WHERE client_message_id = ?`,
           input.clientMessageId,
         ));
-        if (concurrentCanonical) {
+        if (concurrentCanonical && !alreadyDelivered) {
           this.markAttachmentReleaseOwnedByProjection(preparation.input_id);
           this.loops.discardInputPreparation({ inputId: preparation.input_id, now });
           return { kind: "canonical" as const, existing: concurrentCanonical };
@@ -4149,7 +4173,7 @@ export class WorkstreamObjectProductService {
         if (concurrentPending) {
           return { kind: "pending" as const, input: concurrentPending, inserted: false };
         }
-        if (receipt === "replayed") {
+        if (receipt === "replayed" && !alreadyDelivered) {
           throw new Error("substream_message_receipt_without_projection");
         }
         const currentLoop = this.loops.loop();
@@ -4196,6 +4220,7 @@ export class WorkstreamObjectProductService {
           authorizationJson: JSON.stringify({
             workspaceId: auth.workspaceId,
             workstreamId: root.workstream_key,
+            deliveredBeforeAgentPreparation: alreadyDelivered,
             executionPrincipal: { type: "user", userId: auth.userId },
             sessionId: auth.sessionId,
             principal: auth.principal ?? "session",
@@ -4219,12 +4244,14 @@ export class WorkstreamObjectProductService {
           mentionsJson: JSON.stringify(mentions),
           now,
         });
-        this.recordMessageAdmissionReceipt(
-          this.storage.sql,
-          input.clientMessageId,
-          requestHash,
-          now,
-        );
+        if (!alreadyDelivered) {
+          this.recordMessageAdmissionReceipt(
+            this.storage.sql,
+            input.clientMessageId,
+            requestHash,
+            now,
+          );
+        }
         return {
           kind: "pending" as const,
           input: result.input,
@@ -4244,7 +4271,7 @@ export class WorkstreamObjectProductService {
           input.clientMessageId,
           requestHash,
         );
-        const current = first(sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
+        const current = this.locallyAuthorizedRoot(auth);
         if (!current) throw new ApiError(404, "workstream_not_found", "Work stream not found");
         const replay = first(sql.exec<{
           id: string; sequence_number: number; attention_ordinal: number | null; created_at: number;
@@ -4258,7 +4285,9 @@ export class WorkstreamObjectProductService {
             throw new Error("replayed_message_missing_attention_ordinal");
           }
           this.markAttachmentReleaseOwnedByProjection(preparation.input_id);
-          this.loops.discardInputPreparation({ inputId: preparation.input_id, now });
+          if (!earlyDelivery || finishDeliveredPreparation) {
+            this.loops.discardInputPreparation({ inputId: preparation.input_id, now });
+          }
           return {
             messageId: replay.id,
             sequenceNumber: replay.sequence_number,
@@ -4388,7 +4417,9 @@ export class WorkstreamObjectProductService {
           now, now,
         );
         this.markAttachmentReleaseOwnedByProjection(preparation.input_id);
-        this.loops.discardInputPreparation({ inputId: preparation.input_id, now });
+        if (!earlyDelivery || finishDeliveredPreparation) {
+          this.loops.discardInputPreparation({ inputId: preparation.input_id, now });
+        }
         this.recordMessageAdmissionReceipt(
           sql,
           input.clientMessageId,

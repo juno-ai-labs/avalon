@@ -146,6 +146,14 @@ Stream and checkpoint events for participant loops carry that same sequence.
 
 ### Addressing
 
+Ordinary admitted-socket chat delivery precedes this classifier. Its result
+decides agent execution after the canonical human turn has reached readers.
+The durable preparation mailbox survives object eviction; an agent-directed
+result reuses the delivered turn, and a human-only result releases it into the
+next overheard-context fill. Pending agent inputs are excluded from bootstrap
+and incremental model projection until admitted. Explicit queue mode retains
+its reorderable pending-first behavior.
+
 Before starting a loop, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered — including a message aimed at a teammate: the caller passes the display names of the people the message mentions (`humanMentions`, resolved from validated mention rows), and the prompt rules that a message telling or asking a mentioned person something is that person's to act on, even mid-task, unless it also asks Rally for work. The same signal gates the deterministic fast paths: an opening imperative short-circuits to `agent_action` only while the message mentions nobody, since "Please review the deck @Alex" hands the work to Alex, not to Rally. Uncertain messages invoke only when an active task or explicit tool context exists. The label is not exposed in the UI.
 
 A message that invokes nothing is still a turn the model reads. The conversation object appends every such human or external text turn to the loop's projection at the next text admission, in transcript order, ahead of the input that follows it — rendered with a header saying it was said to the room, not to Rally, and naming its author, so the model reads it as context rather than as a request ([`workstream-durable-object.md`](workstream-durable-object.md)). An elicitation answer carries no such fill; the turns said while the question was open wait for the next text input.
@@ -1274,6 +1282,18 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-12 — Separate chat delivery from addressing inference
+
+**What changed:** Ordinary socket messages become canonical before inference;
+agent preparation and activation consume their existing identity afterward.
+Bootstrap and incremental context distinguish delivered human turns from inputs
+still awaiting agent preparation.
+
+**Why:** Classifier and attachment latency must not hold up human conversation.
+Reusing the durable mailbox avoids an unreliable in-memory handoff. The model
+must still see each input once, and a pending turn must not be included first as
+overheard context and then again as a request.
 
 ### 2026-09-12 — Bind 15 carries the loop patch, and this repository stops patching
 

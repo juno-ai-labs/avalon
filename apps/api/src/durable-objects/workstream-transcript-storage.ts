@@ -1460,7 +1460,7 @@ export class WorkstreamTranscriptStorage {
           throw new Error("pending_input_turn_hydration_failed");
         }
         turns.push(turn);
-        deliveryEffects.push(delivered.deliveryEffect);
+        if (delivered.deliveryEffect) deliveryEffects.push(delivered.deliveryEffect);
       }
       const nextBindStateRevision = committedPrepared.at(-1)?.next.stateRevision
         ?? committedDerived.next.stateRevision;
@@ -1724,7 +1724,7 @@ export class WorkstreamTranscriptStorage {
         // which is allocated after the scan and would put a turn written in
         // between below the mark unseen.
         initializesFromCanonicalHistory
-          ? delivered.transcriptSequence
+          ? this.modelProjectionSafeThrough(delivered.transcriptSequence)
           : prepared?.projectedThrough ?? 0,
         now,
         input.expectedLoopRevision,
@@ -1736,7 +1736,7 @@ export class WorkstreamTranscriptStorage {
       }
       invokeSynchronousEffectEnqueue(
         input.enqueueRegionalEffectsInTransaction,
-        [delivered.deliveryEffect],
+        delivered.deliveryEffect ? [delivered.deliveryEffect] : [],
       );
       const turn = this.participantTurn(pending.prepared_turn_id);
       const committedLoop = loopStorage.loop();
@@ -1748,7 +1748,7 @@ export class WorkstreamTranscriptStorage {
         transitions: prepared ? prepared.steps.map((step) => step.transition) : [],
         turns: [turn],
         removedInputIds: [pending.input_id],
-        deliveryEffects: [delivered.deliveryEffect],
+        deliveryEffects: delivered.deliveryEffect ? [delivered.deliveryEffect] : [],
         loop: committedLoop,
         receiptRunId: input.receipt.runId,
       };
@@ -2569,14 +2569,35 @@ export class WorkstreamTranscriptStorage {
     return this.turnsInRange(Number(row.transcript_sequence), Number(row.transcript_sequence) + 1)[0] ?? null;
   }
 
+  /** Human delivery and model consumption have independent durable waterlines. */
+  pendingAgentTurnIds(): string[] {
+    return this.sql.exec<{ turn_id: string }>(
+      `SELECT input_id AS turn_id FROM pending_loop_input_mailbox WHERE state = 'preparing'
+       UNION SELECT prepared_turn_id AS turn_id FROM pending_loop_inputs`,
+    ).toArray().map((row) => row.turn_id);
+  }
+
+  private modelProjectionSafeThrough(through: number): number {
+    const waiting = this.sql.exec<{ first_sequence: number | null }>(
+      `SELECT MIN(transcript_sequence) AS first_sequence FROM participant_transcript_turns
+        WHERE turn_id IN (
+          SELECT input_id FROM pending_loop_input_mailbox WHERE state = 'preparing'
+          UNION SELECT prepared_turn_id FROM pending_loop_inputs
+        )`,
+    ).one().first_sequence;
+    return waiting === null ? through : Math.min(through, Math.max(0, waiting - 1));
+  }
+
   pendingTranscriptInputs(): PendingTranscriptInput[] {
     return new SubstreamLoopStorage(this.storage).pendingInputs()
+      .filter((pending) => !this.participantTurn(pending.prepared_turn_id))
       .map((pending) => this.hydratePendingTranscriptInput(pending));
   }
 
   pendingTranscriptInput(inputId: string): PendingTranscriptInput | null {
     const pending = new SubstreamLoopStorage(this.storage).input(inputId);
-    return pending ? this.hydratePendingTranscriptInput(pending) : null;
+    return pending && !this.participantTurn(pending.prepared_turn_id)
+      ? this.hydratePendingTranscriptInput(pending) : null;
   }
 
   transcriptActivity(activityId: string, snapshotAt = Date.now()): TranscriptActivity | null {
@@ -3734,7 +3755,7 @@ export class WorkstreamTranscriptStorage {
         steps.push(gap);
         projection = gap.next;
       }
-      projectedThrough = Math.max(projectedThrough, scanThrough);
+      projectedThrough = Math.max(projectedThrough, this.modelProjectionSafeThrough(scanThrough));
       const transition: ProtocolUserTransition = {
         kind: "protocol_user_appended",
         loopId: previous.loopId,
@@ -3793,7 +3814,9 @@ export class WorkstreamTranscriptStorage {
     appendedInThisPass: Set<string>,
   ): Promise<PreparedPendingBindStep[]> {
     if (toInclusive <= fromExclusive) return [];
+    const awaitingPreparation = new Set(this.pendingAgentTurnIds());
     const candidates = this.conversationTurnsInRange(fromExclusive + 1, toInclusive + 1)
+      .filter((turn) => !awaitingPreparation.has(turn.turnId))
       .flatMap((turn) => {
         const text = turn.blocks.find((block) => block.type === "text");
         if (!text || text.type !== "text") return [];
@@ -4180,8 +4203,26 @@ export class WorkstreamTranscriptStorage {
   ): {
     transcriptSequence: number;
     attentionOrdinal: number;
-    deliveryEffect: PendingInputDeliveryEffectInput;
+    deliveryEffect: PendingInputDeliveryEffectInput | null;
   } {
+    const existing = this.participantTurn(pending.prepared_turn_id);
+    if (existing) {
+      const text = existing.blocks.find((block) => block.type === "text");
+      if (!prepared.authorization.deliveredBeforeAgentPreparation
+        || existing.actor !== "human" || existing.authorUserId !== pending.author_user_id
+        || existing.clientMessageId !== pending.client_message_id
+        || existing.attentionOrdinal === null || !text || text.type !== "text"
+        || text.text !== prepared.payload.content) {
+        throw new Error("pending_input_existing_turn_mismatch");
+      }
+      // The human delivery already owns its sequence, attention, links, and
+      // regional notifications. Activation consumes only the agent input.
+      return {
+        transcriptSequence: existing.transcriptSequence,
+        attentionOrdinal: existing.attentionOrdinal,
+        deliveryEffect: null,
+      };
+    }
     this.insertPendingPayload(pending);
     this.insertPendingFact(pending, prepared.provenance);
     const transcriptSequence = this.allocateTranscriptSequence(now);
@@ -4817,6 +4858,7 @@ interface ParsedPendingInputMaterial {
   authorization: {
     confirmedParticipantUserIds: string[];
     participantEpochs: Record<string, number | null>;
+    deliveredBeforeAgentPreparation: boolean;
     elicitationId: string | null;
   };
   attachments: PendingInputAttachmentDescriptor[];
@@ -4976,6 +5018,7 @@ function parsePendingInputMaterial(pending: PendingLoopInputRow): ParsedPendingI
     },
     authorization: {
       confirmedParticipantUserIds,
+      deliveredBeforeAgentPreparation: authorization.deliveredBeforeAgentPreparation === true,
       participantEpochs: Object.fromEntries(Object.entries(participantEpochs)
         .map(([userId, epoch]) => [userId, epoch === null ? null : Number(epoch)])),
       elicitationId,
