@@ -1,6 +1,6 @@
 # Agent harness
 
-Rally's production loop is an adapter over `@juno-ai/bind` 14.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. The owning `SubstreamAgent` Durable Object hosts every work-stream loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite; there is no pre-cutover drain or Workflow fallback for this surface. WorkspaceDO is authoritative for workspace connector/resource/memory/policy state and cross-work-stream products; regional D1 retains identity, membership, routing, migration and operational records, while R2 stores large outputs. Separate non-workstream loops may still use Cloudflare Workflows.
+Rally's production loop is an adapter over `@juno-ai/bind` 15.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. The owning `SubstreamAgent` Durable Object hosts every work-stream loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite; there is no pre-cutover drain or Workflow fallback for this surface. WorkspaceDO is authoritative for workspace connector/resource/memory/policy state and cross-work-stream products; regional D1 retains identity, membership, routing, migration and operational records, while R2 stores large outputs. Separate non-workstream loops may still use Cloudflare Workflows.
 
 Each substream owns one persistent server-side, tool-using loop. A run is a
 subordinate execution receipt for one activation of that loop; it never creates
@@ -1274,6 +1274,107 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-12 — Bind 15 carries the loop patch, and this repository stops patching
+
+**What changed:** `@juno-ai/bind` moves from 14.0.0 to 15.0.0, whose new surface
+is the three loop ports this repository had been patching in since it adopted
+Bind: `ToolLoopTurn.acceptMessage`, `ToolLoopParams.beforeToolMessageAccepted`
+and `ToolLoopParams.onStepSettled`, plus `StepSettlement`,
+`DiscardedTurnWithToolCallsError` and `InputBlockedBySuspendError`. Names and
+signatures are the patch's, so `bind-runtime.ts` is unchanged.
+`patches/@juno-ai__bind@14.0.0.patch` is deleted along with the
+`patchedDependencies` block in `pnpm-workspace.yaml` and in the lockfile;
+`minimumReleaseAgeExclude` names 15.0.0. The lockfile is edited for the Bind
+entries alone — five lines.
+
+Three behaviours differ from the patch, all of them defects review found while
+the code was being read as a package contract rather than as a diff:
+
+- A `shouldStop` that fires while `onStepSettled` returns queued input no longer
+  buys another model call. The patch's `continue` skipped the stop check that
+  the sibling `onTurnWouldEnd` path performs, so a disabled agent kept spending
+  for as long as input kept arriving.
+- Input delivered while an `answer`-suspend is open is refused rather than
+  appended, and reported as an `InputBlockedBySuspendError`. Appending it is
+  what produces `assistant(tool_calls) → user → tool` once the answer is
+  threaded back — a pairing every provider rejects. **For this repository that
+  is defence in depth rather than a live path**: our own projection guard
+  refuses the same message earlier and harder (below), so Bind's refusal is
+  reached only if that guard is ever relaxed.
+- A `requestCompaction` carried by the outcome that opened an `answer`-suspend
+  survives, now that a same-step answer can clear the suspension and let the run
+  continue.
+- A fourth difference this repository cannot currently reach: the patch dropped
+  the assistant message whenever `acceptMessage === false` and ran the batch
+  anyway, while 15.0.0 refuses that discard for a tool-calling turn, keeps the
+  message and reports a `DiscardedTurnWithToolCallsError` per requested call.
+  `discardEmptyAssistant` requires `toolCalls.length === 0`, so Rally only ever
+  asks for the allowed shape.
+
+`onToolCallRejected` is now wired at the production `runHarness` call site,
+logging `agent_tool_call_rejected` with the code and the workspace, work-stream,
+substream and run ids. That port had never been supplied outside tests, so every
+tool result Bind synthesized rather than threw was read by the model and by
+nobody else.
+
+**Why:** A patch is keyed by an exact version, so every Bind upgrade regenerates
+it, and the 13.0.0 file had already drifted to inexact hunks that pnpm's applier
+was tolerating. That is the visible cost. The larger one is that a patch gets no
+review: three of the behaviours above were wrong in the file this repository has
+been running, and two of them were found within an hour of the same code being
+read as a package contract. Only the suspend refusal was reachable from here —
+`shouldStop` and `requestCompaction` are never wired into `runToolLoop` by
+`bind-runtime.ts`, so those two were latent in the patch rather than live in
+production — which is the point rather than a mitigation: an unreviewed file
+carries its defects until something makes someone read it. The ports are pure, identical for every host, and
+expressible over injected values, which is where Bind's ownership fence puts
+them.
+
+**What a future change has to respect:** **Nothing but the answer may be
+prepared for a step that left an elicitation open, and today the attempt kills
+the run rather than corrupting it.** `settlePendingSteersAtStep` prepares
+pending inputs whenever `stop_requested_at` is null, with no knowledge of
+whether the batch just halted on `needs_input`. Both preparers —
+`prepareDerivedBindAppends` for resident-context deliveries and
+`preparePendingBindAppends` for participant steers — build a
+`protocol_user_appended` transition, and `applyBindLoopTransition` refuses that
+kind unless `lastAssistantStepIsSettled`, which an open `answer`-suspend makes
+false by construction: its tool result is withheld, so an expected call id has
+no accepted result. The transition throws `bind_loop_protocol_user_invalid`.
+
+Where that leaves us is worth stating exactly, because two plausible readings
+are both wrong. **The ledger is not corrupted**: both preparers run before
+`storage.transactionSync`, so the throw precedes every write — no steer row is
+committed, and no resident-context delivery is marked delivered, so neither is
+silently lost. And **Bind's refusal is not the signal**: this guard fires first,
+so `InputBlockedBySuspendError` does not appear in our logs for this. What
+actually happens is that `requiredPort` converts the throw into
+`run_state_persistence_failed`, a terminal user-facing error — and because
+steers and elicitation answers share one `pending_loop_inputs` queue drained
+oldest-first (`pendingSteersForCommit`, `ORDER BY input_sequence`), a steer
+queued ahead of the answer blocks the answer too. Head-of-line blocking on that
+work stream's input, not a bad transcript. All of this predates the upgrade; the
+guards are unchanged by it.
+
+The fix is smaller than the surface suggests, and it is not a Durable Object
+redesign. The host already knows: `harnessResultOutcome` is where the
+`answer`-suspend is constructed, from `result.halt === "needs_input"`, and
+`settleStep` already enriches Bind's three-field step with `loopId`,
+`executionId`, `assistantTurnId`, `modelTurnIndex`, `generation` and
+`stateRevision` before handing it to `onStepSettled`. One more field — whether
+this batch opened an answer-suspend — is what `settlePendingSteersAtStep` needs
+to park both kinds of input instead of preparing them, and it is Rally's field
+to add.
+
+Two housekeeping rules, one carried forward and one retired. **The lockfile edit
+stays surgical**: a `--lockfile-only` install re-resolves every `latest` catalog
+entry (vitest 4→5, zod, eslint, and `@types/node` backwards by four majors on
+the run that produced this change), so resolve into a scratch copy if you like,
+but commit only the Bind lines. And **the 2026-09-11 entry's instruction to
+regenerate `patches/@juno-ai__bind@<version>.patch` on the next upgrade is
+spent**, superseded here: there is no patch, and recreating one would rebuild
+the mechanism this change removed.
 
 ### 2026-09-11 — Bind 14: a nullable property reaches the model as a union
 
