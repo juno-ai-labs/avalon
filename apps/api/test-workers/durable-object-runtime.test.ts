@@ -5883,8 +5883,9 @@ describe("Durable Objects in the Workers runtime", () => {
 
     await runInDurableObject(stub, async (instance, state) => {
       const inputId = "00000000-0000-7000-8000-00000000014c";
+      const turnId = "00000000-0000-7000-8000-00000000014d";
       await new WorkstreamMessageStorage(state.storage).appendMessage({
-        messageId: inputId,
+        messageId: turnId,
         clientMessageId: "semantic-overtaken-receipted",
         authorType: "external",
         authorUserId: null,
@@ -5896,7 +5897,7 @@ describe("Durable Objects in the Workers runtime", () => {
         now: Date.parse("2026-08-26T20:00:00.000Z"),
       });
       const turn = state.storage.sql.exec<{ attention_ordinal: number }>(
-        `SELECT attention_ordinal FROM participant_transcript_turns WHERE turn_id = ?`, inputId,
+        `SELECT attention_ordinal FROM participant_transcript_turns WHERE turn_id = ?`, turnId,
       ).one();
       const loops = new SubstreamLoopStorage(state.storage);
       const loop = loops.loop() ?? loops.ensureLoop({
@@ -5909,7 +5910,7 @@ describe("Durable Objects in the Workers runtime", () => {
            (input_id, loop_id, input_sequence, delivered_turn_id,
             delivered_attention_ordinal, delivered_at)
          VALUES (?, ?, 1, ?, ?, ?)`,
-        inputId, loop.loop_id, inputId, turn.attention_ordinal,
+        inputId, loop.loop_id, turnId, turn.attention_ordinal,
         Date.parse("2026-08-26T20:00:00.001Z"),
       );
       const event = (instance as unknown as TestableSubstreamAgent).semanticRealtimeEvent({
