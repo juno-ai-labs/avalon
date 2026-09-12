@@ -1,10 +1,13 @@
 # Private access
 
 Rally's initial private-access implementation captures requests, acknowledges
-receipt, lists them in Ace, and issues single-use or timed bearer downloads. Launch hardening adds server-verified bot proof, pre-database admission, a coordinated mail budget, bounded parsing, and operator recovery/revocation. Production acquisition fails closed until the configuration and finite limits are set. The
+receipt, lists them in Ace, and issues single-use or timed bearer downloads. Launch hardening adds server-verified bot proof, pre-database admission, a coordinated mail budget, bounded parsing, and operator recovery/revocation. Production acquisition fails closed until the configuration and finite limits are set. Global
+workspace invitation emails now carry a download grant from the same issuer, so
+an invited teammate with no existing install is not stranded on the accept page;
+EU workspace invitations do not yet, since redemption is Global-only. The
 [product plan](PRDs/2026-09-09_private-access/prd.md) also covers operator invitation
-emails, workspace invitation downloads and closing the old public release paths;
-those follow-up stages are not implemented yet. The landing page replacement is
+emails and closing the old public release paths; those follow-up stages are not
+implemented yet. The landing page replacement is
 ready for a coordinated deployment, not deployed by this change.
 
 ## Where the code lives
@@ -21,6 +24,8 @@ ready for a coordinated deployment, not deployed by this change.
 | `packages/db/migrations/0101_private_access.sql` | Access requests, download grants, optional expiry and frozen acknowledgement sender. |
 | `apps/ace/src/private-access.ts`, `client/private-access.tsx` | Access-protected request list and ad hoc grant generator. |
 | `apps/site/download/index.html`, `src/download.ts` | Fragment-based grant handoff and deliberate Download button. |
+| `apps/api/src/services/workspace-service.ts` | Issues a `workspace_invitation` grant alongside each Global workspace invitation. |
+| `apps/api/src/services/invitation-email-service.ts` | Renders the optional download link into the invitation email. |
 
 ## How it works
 
@@ -38,7 +43,9 @@ Ace reads Global requests from its existing D1 binding, searches server-side, an
 associate one with a request. This creates a `manual` grant and returns its URL
 once; it does not send mail or mark the person invited. The same exported
 `issueDownloadGrant` accepts `access_invitation` and `workspace_invitation` sources
-for the planned email producers. Source fields are attribution, not authority.
+for email producers; the workspace invitation caller is described below, and
+`access_invitation`'s bulk Ace sender remains planned. Source fields are
+attribution, not authority.
 There is one generator, independent of the UI or any particular email template.
 Its optional `expiresAt` accepts a future ISO timestamp with an explicit offset,
 normalizes it to UTC, and makes the grant repeatable until that instant. Omission
@@ -61,6 +68,17 @@ expired grant. `used_at` records first admission and stays fixed on repeat use.
 There is no redirect to a storage URL, cache,
 or installer-sized buffer. The canonical key is `stable/darwin/arm64/Rally.dmg`,
 the same stable alias the release publisher promotes.
+
+`WorkspaceService.createInvitation` is the first automated caller of the shared
+issuer. For a Global workspace it issues a `workspace_invitation` grant, timed to
+the invitation's own 7-day expiry, and passes its URL to
+`sendWorkspaceInvitationEmail` so the email carries both the accept link and a
+download link. A recipient with no existing install is not left with only a
+desktop deep link that silently does nothing. If sending the email then fails,
+the grant is revoked alongside the invitation row so a failed send does not leave
+a live download capability behind. An EU workspace invitation gets no grant: the
+redemption route 404s outside the Global Worker, and issuing one anyway would
+create a link that can never be redeemed.
 
 ## Invariants
 
@@ -215,6 +233,10 @@ missing installers, scanner GET/HEAD and revoked/invalid tokens.
 through the actual Access middleware and shared issuer, including UTC normalization
 and rejection of past, current or ambiguous expiries; site tests retain
 legacy release-renderer coverage separately from the new form template.
+`apps/api/test/workspace-and-invitations.test.ts` covers the invitation-email
+caller: a Global invitation's email carries a download link whose token differs
+from the accept token and never appears in a database write, and a EU invitation
+issues no grant and mentions no download link.
 
 Mutation checks prove the write, token admission, forced concurrent claim,
 origin, expiry, rate/body guards and sender/idempotency paths fail when their
@@ -228,10 +250,13 @@ production requests, emails or grants are created.
 
 Requests are pre-workspace Global data, disclosed in the privacy policy. Migration
 0101 creates empty schema in both regional databases because they share the
-migration chain. The issuer is database-parameterized so future workspace grants
-can use the invitation's existing region. The first browser redemption endpoint
-is Global only; EU workspace grants must not be issued until regional redemption
-and regional links are wired together.
+migration chain. The issuer is database-parameterized, which is what let the
+Global workspace invitation caller reuse it directly. The browser redemption
+endpoint is still Global only; `createInvitation` gates on the invitation's own
+`workspace_region` and issues nothing for a EU workspace, since a grant written
+to EU's `download_grants` table would 404 at redemption with no regional route to
+serve it. EU workspace invitees remain without a download link until regional
+redemption and regional links are wired together.
 
 ## Launch copy and outreach
 
@@ -365,6 +390,48 @@ procedure is not a substitute for those controls. Future EU workspace-grant
 privacy operations stay in the owning region; the current slice creates none.
 
 ## Changelog
+
+### 2026-09-12 — Wire the shared issuer into Global workspace invitations
+
+**What changed:** `WorkspaceService.createInvitation` now issues a
+`workspace_invitation` grant, timed to the invitation's own 7-day expiry, for a
+Global workspace and passes its URL to `sendWorkspaceInvitationEmail`, which
+renders it as a second link/button alongside "Accept invitation". A EU
+invitation issues no grant. If the email send then fails, the grant is revoked
+in the same rollback that already revokes the invitation row.
+
+**Why:** The invitation email's only link opens `/invite/`, whose "Open Rally"
+button is a `rallywithai://` deep link that does nothing when the app is not
+already installed, and that page's copy ("install it first") pointed nowhere. An
+invited teammate with no existing install had no way to get Rally from the
+invitation email at all — reported as a real lockout, not a hypothetical gap.
+The `workspace_invitation` source and the database-parameterized issuer already
+existed for exactly this caller; nothing about the grant primitive needed to
+change.
+
+**Considered and rejected:** Also issuing a EU grant against the EU database.
+The browser redemption route 404s outside the Global Worker
+(`private-access.ts`'s region guard), so a EU-issued grant would produce a link
+that can never be redeemed — worse than no link, since it looks like it should
+work. Building the regional handoff the PRD describes (a URL carrying a
+non-secret owning-region locator, redeemed through that region's API) is
+separate, larger work with its own EU data-residency review; gating on
+`workspace_region` instead ships the Global fix now without guessing at that
+design.
+
+**Consequences:** EU workspace invitees remain without a download link — this
+was already true before this change and is unchanged by it, but it is now the
+one remaining gap rather than the only case. Picking it up requires the regional
+redemption route and locator described in the PRD's Regional impact section,
+which nothing in this change built. Revocation on email-send failure covers only
+the grant just issued in the same call; `revokeInvitation`, the duplicate-invite
+supersede path, and workspace abandonment do not yet revoke a linked grant, so a
+grant issued for an invitation later revoked through one of those paths stays
+live until its 7-day expiry. Installing does not grant workspace membership
+regardless, so the exposure is a teammate's-eyes-only download of the public
+installer, not access to the workspace.
+
+Shipped in juno-ai-labs/avalon#TBD.
 
 ### 2026-09-10 — Send the acknowledgement as plain text
 
