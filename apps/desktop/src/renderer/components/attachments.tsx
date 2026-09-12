@@ -251,7 +251,7 @@ function RemoteFileAttachment({ attachment, loadContent, onOpen, showDownload = 
       >
         <span className={clsx('attachment-file-icon', `is-${kind}`)}><PendingFileIcon kind={kind} /></span>
         <span className="attachment-file-details">
-          <span className="attachment-file-name"><span>{name.base}</span><span>{name.suffix}</span></span>
+          <span className={clsx('attachment-file-name', attachment.fileName.length > 200 && 'is-long-name')}><span>{name.base}</span><span>{name.suffix}</span></span>
           <span className="attachment-file-meta">{formatAttachmentSize(attachment.sizeBytes)}</span>
         </span>
       </button>
