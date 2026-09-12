@@ -15,17 +15,28 @@ function rule(selector: string): string | null {
 }
 
 describe('capsule composer stacking', () => {
-  // This guards the CSS contract; actual pointer hit-testing is verified in Electron.
-  it('keeps both capsule control areas above the spanning attachment input shell', () => {
-    const controls = rule(':is(.workstream-screen, .workstream-launch-screen) .is-message-capsule :is(.composer-tools, .composer-submit-area)');
-    expect(controls).toContain('position: relative;');
-    expect(controls).toContain('z-index: 1;');
-    expect(rule('.composer-input-shell')).toContain('position: relative;');
-    expect(rule('.composer-input-shell')).not.toContain('z-index:');
-    expect(rule(':is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments .composer-input-shell'))
+  /**
+   * Once the field spans the capsule's full width — wrapped text, or an
+   * attachment row above it — the controls go on a row of their own beneath it.
+   * They used to share the field's row, held off it by bottom padding inside
+   * the textarea, and padding inside a scroller scrolls: a draft taller than
+   * the field ran its middle lines straight under the plus button. jsdom lays
+   * nothing out, so no component test can see that; this guards the two
+   * declarations that keep the rows apart, and a real window is where it was
+   * looked at.
+   */
+  it('gives the capsule controls a row of their own once the field spans the grid', () => {
+    const spanning = ":is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule[data-multiline='true']";
+    const withAttachments = ':is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments';
+    expect(rule(`${spanning} .composer-input-shell,\n${withAttachments} .composer-input-shell`))
       .toContain('grid-column: 1 / -1;');
-    expect(rule(":is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule[data-multiline='true'] .composer-input-shell,\n:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments .composer-input-shell"))
-      .toContain('grid-column: 1 / -1;');
+    expect(rule(`${spanning} :is(.composer-tools, .composer-submit-area),\n${withAttachments} :is(.composer-tools, .composer-submit-area)`))
+      .toContain('grid-row: 3;');
+    // The field's own row, which the controls no longer stand in.
+    expect(rule(':is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-input-shell'))
+      .toContain('grid-row: 2;');
+    expect(rule(`${spanning} :is(textarea, .composer-highlight),\n${withAttachments} :is(textarea, .composer-highlight)`))
+      .not.toContain('39px');
   });
 });
 

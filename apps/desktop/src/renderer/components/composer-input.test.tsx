@@ -1,5 +1,5 @@
 import { createRef, type ComponentProps } from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, vi } from 'vitest';
 import { ComposerInput } from './composer-input';
@@ -128,5 +128,80 @@ describe('ComposerInput message capsule', () => {
 
     expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Start voice input' })).toBeVisible();
+  });
+});
+
+/**
+ * The rules themselves are `lib/markdown-lists`, proved there against text and
+ * offsets. These cover the wiring: which keystroke reaches which operation,
+ * that a handled one is cancelled and an unhandled one is not, and that the
+ * menu can reach the same toggle as the shortcut. jsdom has no `execCommand`,
+ * so the component takes its fallback and the new draft arrives through
+ * `onValueChange` — which is also what a real window's `input` event delivers.
+ */
+describe('ComposerInput markdown lists', () => {
+  function composeAt(value: string, caret: number, props: Partial<ComponentProps<typeof ComposerInput>> = {}): {
+    onValueChange: ReturnType<typeof vi.fn>;
+    textarea: HTMLTextAreaElement;
+  } {
+    const onValueChange = vi.fn();
+    renderInput({ onValueChange, value, ...props });
+    const textarea = screen.getByLabelText('Message') as HTMLTextAreaElement;
+    textarea.setSelectionRange(caret, caret);
+    return { onValueChange, textarea };
+  }
+
+  it('carries a numbered list on to the next line', () => {
+    const { onValueChange, textarea } = composeAt('1. first', 8, { shouldSubmitOnEnter: () => false });
+    // Cancelled: the composer wrote the newline, and the field must not write a
+    // second one under the marker it just inserted.
+    expect(fireEvent.keyDown(textarea, { key: 'Enter' })).toBe(false);
+    expect(onValueChange).toHaveBeenCalledWith('1. first\n2. ');
+  });
+
+  it('continues a list on Shift+Enter while a plain Enter still sends', () => {
+    const onSubmit = vi.fn();
+    const { onValueChange, textarea } = composeAt('- first', 7, { onSubmit });
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
+    expect(onValueChange).toHaveBeenCalledWith('- first\n- ');
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    expect(onSubmit).toHaveBeenCalledOnce();
+  });
+
+  it('leaves the list alone when Enter has nothing to continue', () => {
+    const { onValueChange, textarea } = composeAt('just prose', 10, { shouldSubmitOnEnter: () => false });
+    expect(fireEvent.keyDown(textarea, { key: 'Enter' })).toBe(true);
+    expect(onValueChange).not.toHaveBeenCalled();
+  });
+
+  it('nests an item with Tab', () => {
+    const { onValueChange, textarea } = composeAt('- a\n- b', 7);
+    expect(fireEvent.keyDown(textarea, { key: 'Tab' })).toBe(false);
+    expect(onValueChange).toHaveBeenCalledWith('- a\n  - b');
+  });
+
+  it('lets Tab out of the composer where there is nothing to nest', () => {
+    const { onValueChange, textarea } = composeAt('- a', 3);
+    // Uncancelled, or a draft that happens to be a list is a keyboard trap.
+    expect(fireEvent.keyDown(textarea, { key: 'Tab' })).toBe(true);
+    expect(onValueChange).not.toHaveBeenCalled();
+  });
+
+  it('toggles a list from the keyboard on the physical digit', () => {
+    const { onValueChange, textarea } = composeAt('write it up', 0);
+    // `*` is what Shift+8 reports; `Digit8` is what was pressed.
+    expect(fireEvent.keyDown(textarea, { key: '*', code: 'Digit8', shiftKey: true, metaKey: true })).toBe(false);
+    expect(onValueChange).toHaveBeenCalledWith('- write it up');
+  });
+
+  it('offers both lists in the capsule composer menu', async () => {
+    const { onValueChange } = composeAt('', 0, { layout: 'message-capsule' });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Composer actions' }), { button: 0, ctrlKey: false });
+    expect(screen.getByRole('menuitem', { name: 'Bulleted list' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Numbered list' }));
+    // The edit waits a frame for the menu to close and hand focus back.
+    await waitFor(() => expect(onValueChange).toHaveBeenCalledWith('1. '));
   });
 });
