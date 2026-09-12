@@ -950,8 +950,8 @@ export class WorkstreamObjectProductService {
     return withWorkspaceRuntimeDatabase(this.env, workspaceId).DB;
   }
 
-  private root(): RootRow {
-    const row = first(this.storage.sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
+  private root(sql: SqlStorage = this.storage.sql): RootRow {
+    const row = first(sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
     if (!row) throw new ApiError(404, "workstream_not_found", "Work stream not found");
     if (row.authority_mode !== "authoritative" || row.authority_generation <= 0) {
       throw new ApiError(503, "workstream_maintenance", "Work-stream maintenance is in progress");
@@ -1461,8 +1461,8 @@ export class WorkstreamObjectProductService {
     };
   }
 
-  private isParticipant(userId: string): boolean {
-    return first(this.storage.sql.exec<{ one: number }>(
+  private isParticipant(userId: string, sql: SqlStorage = this.storage.sql): boolean {
+    return first(sql.exec<{ one: number }>(
       `SELECT 1 AS one FROM participants WHERE user_id = ? AND status = 'active' LIMIT 1`,
       userId,
     )) !== null;
@@ -1563,12 +1563,16 @@ export class WorkstreamObjectProductService {
     ).toArray().map((row) => row.user_id);
   }
 
-  private locallyAuthorizedRoot(auth: AuthContext, includeArchived = false): RootRow {
-    const root = this.root();
+  private locallyAuthorizedRoot(
+    auth: AuthContext,
+    includeArchived = false,
+    sql: SqlStorage = this.storage.sql,
+  ): RootRow {
+    const root = this.root(sql);
     if (root.parent_workspace_key !== auth.workspaceId || root.workstream_key === "") {
       throw new ApiError(404, "workstream_not_found", "Work stream not found");
     }
-    if (!participantVisible(root, this.isParticipant(auth.userId))) {
+    if (!participantVisible(root, this.isParticipant(auth.userId, sql))) {
       throw new ApiError(404, "workstream_not_found", "Work stream not found");
     }
     if (!includeArchived && root.archived_at !== null) {
@@ -4271,8 +4275,9 @@ export class WorkstreamObjectProductService {
           input.clientMessageId,
           requestHash,
         );
-        const current = this.locallyAuthorizedRoot(auth);
-        if (!current) throw new ApiError(404, "workstream_not_found", "Work stream not found");
+        // This late access check and the allocation below share the
+        // regional-effects transaction, so neither observes a stale root.
+        const current = this.locallyAuthorizedRoot(auth, false, sql);
         const replay = first(sql.exec<{
           id: string; sequence_number: number; attention_ordinal: number | null; created_at: number;
         } & Record<string, SqlStorageValue>>(
