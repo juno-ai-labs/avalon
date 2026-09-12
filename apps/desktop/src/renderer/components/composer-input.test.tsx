@@ -1,5 +1,5 @@
 import { createRef, type ComponentProps } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, vi } from 'vitest';
 import { ComposerInput } from './composer-input';
@@ -134,8 +134,8 @@ describe('ComposerInput message capsule', () => {
 /**
  * The rules themselves are `lib/markdown-lists`, proved there against text and
  * offsets. These cover the wiring: which keystroke reaches which operation,
- * that a handled one is cancelled and an unhandled one is not, and that the
- * menu can reach the same toggle as the shortcut. jsdom has no `execCommand`,
+ * and that a handled one is cancelled while an unhandled one is not. jsdom has
+ * no `execCommand`,
  * so the component takes its fallback and the new draft arrives through
  * `onValueChange` — which is also what a real window's `input` event delivers.
  */
@@ -196,12 +196,11 @@ describe('ComposerInput markdown lists', () => {
     expect(onValueChange).toHaveBeenCalledWith('- write it up');
   });
 
-  it('offers both lists in the capsule composer menu', async () => {
-    const { onValueChange } = composeAt('', 0, { layout: 'message-capsule' });
+  it('leaves the composer menu to attachments alone', () => {
+    composeAt('', 0, { layout: 'message-capsule' });
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Composer actions' }), { button: 0, ctrlKey: false });
-    expect(screen.getByRole('menuitem', { name: 'Bulleted list' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Numbered list' }));
-    // The edit waits a frame for the menu to close and hand focus back.
-    await waitFor(() => expect(onValueChange).toHaveBeenCalledWith('1. '));
+    // A list is started by typing one, so the menu offers no list command to
+    // get out of step with what the keys do.
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Attach files']);
   });
 });
