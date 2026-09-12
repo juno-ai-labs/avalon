@@ -3085,6 +3085,23 @@ export async function runWorkstreamHarness(
           prepareCompaction: (compaction) => runtime.persistentLoop!.prepareResidentContextCompaction(compaction),
         },
       } : {}),
+      // Bind synthesizes these rather than throwing, so the model reads them
+      // and nothing else does unless this port is wired. The one that made the
+      // gap worth closing is `InputBlockedBySuspendError`: Bind refuses to
+      // append a participant steer that arrived while an elicitation is open,
+      // and the steer is already committed to the ledger — so without a line
+      // here the drop is silent, and the replay it sets up has no antecedent
+      // anyone can search for.
+      onToolCallRejected: ({ toolCallId, code }) => {
+        logStructuredEvent(env, "warn", "agent_tool_call_rejected", {
+          code,
+          tool_call_id: toolCallId,
+          workspace_id: input.workspaceId,
+          workstream_id: input.parentId,
+          substream_id: input.substreamId ?? "0",
+          run_id: input.harnessRunId,
+        });
+      },
       onBindLoopTransition: (transition) => runtime?.persistentLoop
         ? runtime.persistentLoop.commitBindTransition(transition)
         : orderedTranscript.commitBindTransition(transition),
