@@ -800,7 +800,23 @@ instead. Only a socket that never subscribed is refused.
 
 ### Queueing and steering
 
-Incoming human input is first a server-authoritative pending record with a
+Ordinary messages on an admitted conversation socket commit their canonical
+human turn, attention, resource links, and delivery effects before addressing
+classification or model attachment preparation. The durable preparation mailbox
+retains the original authenticated envelope; the object's existing alarm drain
+resumes that preparation with current membership authorization. Agent activation
+then consumes the same turn identity without appending another transcript turn
+or emitting another delivery effect. A preparation failure leaves the human
+message delivered and records a failed mailbox entry; it does not retract chat.
+
+Human delivery and model consumption have separate waterlines. A turn waiting
+for preparation or agent admission is excluded from overheard model context and
+does not advance the model projection past that hole. A human-only classification
+releases that turn for the next context fill. A canonical turn is never also
+rendered as a pending overlay.
+
+Explicitly queued messages, seed imports, and internal/REST human input retain
+the pending-first path. Incoming input on that path is a server-authoritative pending record with a
 stable input ID and arrival order. It is not a canonical transcript turn and
 does not consume `transcript_sequence` while pending. The desktop may paint an
 identified optimistic overlay, but reconnect replaces that set from the
@@ -1720,6 +1736,19 @@ the type when an older caller omits it. This lets the desktop distinguish custom
 MCP identity without trusting the saved name or reading WorkspaceDO on replay.
 
 ## Changelog
+
+### 2026-09-12 — Deliver ordinary socket messages before agent preparation
+
+**What changed:** Canonical human delivery now precedes classifier inference and
+model attachment preparation. The existing durable mailbox and alarm resume
+agent preparation; activation reuses the committed turn and suppresses duplicate
+delivery effects. Explicit queue controls retain pending-first semantics.
+
+**Why:** A teammate's chat message was held behind model latency and could fail
+delivery because an unrelated classifier failed. Keeping the object awake would
+not remove that dependency. Durable separation removes it while preserving
+recovery, authorization, idempotency, and ordered model consumption. Future changes
+must not advance the model waterline over a turn still awaiting preparation.
 
 ### 2026-09-11 — A read is acknowledged by the conversation that was read
 

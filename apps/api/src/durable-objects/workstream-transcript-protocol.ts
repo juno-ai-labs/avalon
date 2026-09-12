@@ -28,6 +28,7 @@ type LocalOnlyTranscriptOperation =
   | "appendPreparedParticipantMessageAtSequence"
   | "pendingTranscriptInputs"
   | "pendingTranscriptInput"
+  | "pendingAgentTurnIds"
   | "participantTurn"
   | "participantTurnForTool"
   | "transcriptActivity"

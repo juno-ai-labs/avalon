@@ -565,6 +565,12 @@ under its durable identity. Message admission uses `clientMessageId`,
 elicitation answers use their stable response identity, reorder and stop
 converge, and retry uses `operationId` as the subordinate run ID.
 
+For ordinary `create_message` commands, canonical human delivery now precedes
+classifier inference and model attachment preparation. The receipt reports
+`canonical`; the existing durable mailbox and alarm own subsequent agent work.
+Explicit queue mode keeps its pending, reorderable projection. Neither path
+equates a successful send with an agent execution having started.
+
 The command receipt is not canonical shared state. It tells one caller whether
 its transaction was accepted. The durable consequence is still published on
 the sequenced feed to every reader, including that caller. Socket deltas keep
@@ -851,6 +857,16 @@ surface. This is event-driven revalidation, not polling and not a second socket.
   the caller is made to wait for.
 
 ## Changelog
+
+### 2026-09-12 — Acknowledge human delivery independently of model preparation
+
+**What changed:** Ordinary socket sends publish canonical human state before
+agent preparation. Explicit queue controls retain their pending semantics.
+
+**Why:** Human chat latency inherited classifier and attachment-model latency.
+The existing durable mailbox provides recovery without putting inference back
+on the socket command's critical path. Receipts remain private acknowledgements;
+the canonical transcript event remains the shared delivery authority.
 
 ### 2026-09-11 — Connector recovery follows the existing workspace socket
 

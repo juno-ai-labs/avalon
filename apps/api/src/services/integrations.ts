@@ -2448,6 +2448,7 @@ export async function runWorkstreamHarness(
       projection: BindLoopProjectionState | null;
       modelIterationsUsed: number;
       transcriptThrough: number;
+      pendingAgentTurnIds?(): readonly string[];
       /** Extends the singleton loop lease after its subordinate attempt heartbeat commits. */
       heartbeat?(): void | Promise<void>;
       commitActivationInputs(input: {
@@ -2635,8 +2636,12 @@ export async function runWorkstreamHarness(
       priorCompaction?.compactedThroughSequence ?? -1,
     )
     : [];
+  const pendingAgentTurnIds = new Set(runtime.persistentLoop?.pendingAgentTurnIds?.() ?? []);
+  // Human delivery can precede preparation. An unadmitted turn must not enter
+  // bootstrap as overheard context and then enter Bind again as a request.
+  const preparedMessages = storedMessages.filter((message) => !pendingAgentTurnIds.has(message.id));
   const transcriptProjection = requiresCanonicalBootstrap
-    ? await projectModelProtocolTranscript(env, input, storedMessages)
+    ? await projectModelProtocolTranscript(env, input, preparedMessages)
     : { messages: [], issues: [] };
   const rawModelMessages = [
     ...renderSubstreamInitialContext(initialContext),

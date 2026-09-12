@@ -38,6 +38,7 @@ interface ProviderCaptureEntry {
    * that want no gate at all.
    */
   gate: { open: boolean } | null;
+  structuredReply?: Record<string, unknown>;
 }
 
 type ProviderCaptureGlobal = typeof globalThis & {
@@ -180,6 +181,7 @@ export async function installScriptedProvider(
      * test racing a stream that answers in microseconds.
      */
     gateFirstCall?: boolean;
+    structuredReply?: Record<string, unknown>;
   },
 ): Promise<void> {
   await runInDurableObject(stub, (instance, state) => {
@@ -189,6 +191,7 @@ export async function installScriptedProvider(
       get: (current, property, receiver) => {
         if (property === "OPENROUTER_API_KEY") return `${PROVIDER_KEY_PREFIX}${objectId}`;
         if (property === "OPENROUTER_PRIMARY_MODEL") return routing.primaryModel;
+        if (property === "OPENROUTER_CLASSIFIER_MODEL" && routing.structuredReply) return routing.primaryModel;
         if (property === "OPENROUTER_FALLBACK_MODELS") {
           return routing.fallbackModels.join(",");
         }
@@ -203,6 +206,7 @@ export async function installScriptedProvider(
       scripts: scripts.map((events) => events === "refuse" ? "refuse" : [...events]),
       models: [routing.primaryModel, ...routing.fallbackModels],
       gate: routing.gateFirstCall === true ? { open: false } : null,
+      ...(routing.structuredReply ? { structuredReply: routing.structuredReply } : {}),
     });
     scope.fetch = (async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof request === "string"
@@ -228,6 +232,13 @@ export async function installScriptedProvider(
         while (!gate.open) await scheduler.wait(10);
       }
       if (body.stream !== true) {
+        if (entry.structuredReply) {
+          return Response.json({
+            id: "scripted-classification",
+            choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(entry.structuredReply) }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          });
+        }
         return Response.json(
           { error: { code: "test_structured_request_refused", message: "not part of this oracle" } },
           { status: 401 },
