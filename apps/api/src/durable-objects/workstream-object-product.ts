@@ -4148,25 +4148,27 @@ export class WorkstreamObjectProductService {
       // normal pending path and classify now; otherwise this turn would be
       // admitted as human-only without ever reaching the newly active agent.
       deliverEarlyNow = false;
-      const activeTask = true;
-      const classification = await classifyWorkstreamMessage(this.env, {
-        workspaceId: auth.workspaceId,
-        workstreamId: root.workstream_key,
-        userId: auth.userId,
-        message: input.text,
-        activeTask,
-        connectorMentions,
-        humanMentions: mentionedPersonNames(prepared.mentions),
-        recentMessages: await this.recentAddressingMessages(Number(this.storage.sql.exec<{
-          next_transcript_sequence: number;
-        } & Record<string, SqlStorageValue>>(
-          `SELECT next_transcript_sequence FROM transcript_counters WHERE id = 1`,
-        ).one().next_transcript_sequence)),
-      });
-      shouldInvoke = classification.classification === "agent_action"
-        || classification.classification === "both"
-        || (classification.classification === "uncertain"
-          && (activeTask || connectorMentions.length > 0));
+      if (!shouldInvoke) {
+        const activeTask = true;
+        const classification = await classifyWorkstreamMessage(this.env, {
+          workspaceId: auth.workspaceId,
+          workstreamId: root.workstream_key,
+          userId: auth.userId,
+          message: input.text,
+          activeTask,
+          connectorMentions,
+          humanMentions: mentionedPersonNames(prepared.mentions),
+          recentMessages: await this.recentAddressingMessages(Number(this.storage.sql.exec<{
+            next_transcript_sequence: number;
+          } & Record<string, SqlStorageValue>>(
+            `SELECT next_transcript_sequence FROM transcript_counters WHERE id = 1`,
+          ).one().next_transcript_sequence)),
+        });
+        shouldInvoke = classification.classification === "agent_action"
+          || classification.classification === "both"
+          || (classification.classification === "uncertain"
+            && (activeTask || connectorMentions.length > 0));
+      }
     }
     if (shouldInvoke) {
       const modelAttachments: ModelAttachmentSource[] = attachmentRows.map((row) => ({
