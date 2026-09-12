@@ -3,27 +3,32 @@
 > Created 2026-08-14.
 >
 > A workspace or a member connects Fireflies.ai, the meeting notetaker, so
-> Avalon's agent can search and read Fireflies meeting transcripts and
+> Rally's agent can search and read Fireflies meeting transcripts and
 > summaries, and so finished Fireflies recaps arrive as connector activity.
 > Companion documents: [research](research.md), [state](state.md).
 > Standing contract:
-> [the Avalon implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
+> [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 > Read alongside [`connectors.md`](../../connectors.md),
-> [`hosted-mcp-connectors.md`](../../hosted-mcp-connectors.md), and
-> [`agent-tools.md`](../../agent-tools.md).
+> [`hosted-mcp-connectors.md`](../../hosted-mcp-connectors.md),
+> [`agent-tools.md`](../../agent-tools.md), and
+> [the connector installation lifecycle PRD](../2026-09-12_connector-installation-lifecycle/prd.md),
+> whose setup, verification, maintenance, and removal lifecycle for
+> customer-managed webhooks this connector adopts.
 
 ## Summary
 
-Avalon gains a `fireflies` connector with the same two-scope shape as Granola.
-A workspace admin pastes a Fireflies API key to create a **workspace
+Rally gains a `fireflies` connector with the same two-scope shape as Granola
+and Ashby. A workspace admin pastes a Fireflies API key to create a **workspace
 connection**: every work stream in the workspace can then search meetings and
 read transcripts and summaries through fixed, reviewed, read-only tools, and
-finished Fireflies recaps flow in as activity — over signed webhooks when the
-admin configures them, and over checkpointed polling either way. A member
-separately connects **their own** Fireflies account over the hosted MCP OAuth
-flow at `https://api.fireflies.ai/mcp`, which surfaces Fireflies' live
-provider-authored tools — including Fireflies' own write actions, under the
-pass-through's confirmed-write treatment — in that member's work streams only.
+finished Fireflies recaps arrive as activity over signed webhooks — which the
+admin registers by hand in the Fireflies dashboard, guided and tracked by the
+shared connector installation lifecycle, because Fireflies offers no API for
+it. A member separately connects **their own** Fireflies account over the
+hosted MCP OAuth flow at `https://api.fireflies.ai/mcp`, which surfaces
+Fireflies' live provider-authored tools — including Fireflies' own write
+actions, under the pass-through's confirmed-write treatment — in that member's
+work streams only.
 
 Teams that run Fireflies in their meetings today get their meeting record into
 the same place their work already happens: an automation can digest the week's
@@ -33,9 +38,9 @@ passage, and nobody re-pastes summaries by hand.
 ## Motivation
 
 Fireflies is one of the most widely deployed meeting notetakers, and prospects
-who already pay for it will not switch their meeting capture to Avalon's own
+who already pay for it will not switch their meeting capture to Rally's own
 recorder ([`meeting-notes.md`](../../meeting-notes.md)) as a precondition for
-adopting Avalon. Today their meeting record is invisible to Avalon: the agent
+adopting Rally. Today their meeting record is invisible to Rally: the agent
 cannot answer "what did the customer object to on Tuesday's call", automations
 cannot digest call activity, and users copy summaries into work streams by
 hand. The evidence here is coverage rather than a single incident: this is the
@@ -44,18 +49,29 @@ install base is the larger of the two, so every Fireflies-running prospect
 hits it on day one of an evaluation.
 
 Most of what this needs already exists — the `connector_connections` scope
-model, the admin-API-key flow (`createGranolaWorkspace`), the hosted MCP
-pass-through (`createHostedMcpPassthrough`), and signed webhook ingestion. One
-part is genuinely new: no connector today is both webhook- and poll-fed
-(Granola is webhook-only; only Google polls), so the dual-transport activity
-design below is new work shaped on Google's polling streams, not a Granola
-copy.
+model, the admin-API-key connection, the hosted MCP pass-through
+(`createHostedMcpPassthrough`), signed webhook ingestion into the shared
+activity pipeline, and the connector installation lifecycle proposed alongside
+Ashby ([the lifecycle PRD](../2026-09-12_connector-installation-lifecycle/prd.md)),
+which owns the setup, verification, maintenance, and removal of
+customer-managed webhooks so that a new provider does not copy Granola's
+connection-service path. What is new is the provider: Fireflies is the first
+connector whose every webhook registration operation is manual. It exposes no
+API to create, inspect, update, or delete a webhook, so the lifecycle's manual
+completion path — designed for exactly this case, and so far proved only
+against a synthetic provider — gets its first real provider here. An earlier
+revision of this PRD compensated for the missing API with a checkpointed poll
+shaped on Google's streams; key design decision 6 records why that was
+dropped.
 
 ## Goals
 
 1. A workspace admin creates a workspace-scoped Fireflies connection by pasting
    an API key, and sees it listed, testable, re-keyable, and deletable in
-   Settings → Connections like any other connection.
+   Settings → Connections like any other connection — with the webhook
+   installation's state (action required, current, cleanup pending) shown
+   separately from the credential's health, so a usable tool connection is
+   never hidden behind an unfinished registration.
 2. Any work stream in a workspace with an active workspace connection can, via
    progressive disclosure, load the connection's plugin and search meetings,
    read a meeting's summary, and read its transcript — read-only, executing as
@@ -64,10 +80,12 @@ copy.
    Fireflies' hosted MCP server, and their work streams gain Fireflies' live
    provider-authored tools under the existing hosted-MCP pass-through rules.
 4. A finished Fireflies meeting summary becomes exactly one digestible
-   connector activity in the owning workspace — within minutes when webhooks
-   are configured, and within one poll interval otherwise for any meeting
-   summarized within the poll's 48-hour overlap window — and automations can
-   subscribe to and digest it whichever transport delivered it.
+   connector activity in the owning workspace within minutes of Fireflies
+   finishing it, once the admin has completed the registration Fireflies
+   requires them to do by hand — and until a first verified delivery proves
+   that registration, Settings says the installation is unverified rather
+   than implying meetings are flowing. Automations can subscribe to and
+   digest the activity.
 5. Connection health is honest: an invalid or revoked API key flips the
    connection to `needs_reconnect` on the next use, `POST /connections/:id/test`
    reports it, and the desktop offers a working recovery path (re-keying for
@@ -75,24 +93,24 @@ copy.
 
 ## Non-goals
 
-Non-goals 1–4 scope the **workspace connection's Avalon-authored tools**. The
+Non-goals 1–4 scope the **workspace connection's Rally-authored tools**. The
 personal connection's tool surface is Fireflies' own live MCP catalog, which
-Avalon does not curate — see **Security and trust model** for what that
+Rally does not curate — see **Security and trust model** for what that
 includes and how it is contained.
 
-1. **Avalon-authored write tools.** The workspace toolset does not share
+1. **Rally-authored write tools.** The workspace toolset does not share
    meetings, retitle, move channels, create soundbites, or delete transcripts,
    although the Fireflies API offers all of these. Deferred: a later PRD can
    add reviewed write tools once read value is proven; starting read-only
    keeps the reviewed authority surface small.
 2. **Controlling the Fireflies bot.** No `Add to Live`, no inviting Fred to
-   meetings, no Realtime API. Rejected: Avalon has its own meeting capture
+   meetings, no Realtime API. Rejected: Rally has its own meeting capture
    ([`meeting-notes.md`](../../meeting-notes.md)); driving a competitor's bot
-   from Avalon is not a product direction.
+   from Rally is not a product direction.
 3. **Uploading audio to Fireflies for transcription.** Rejected for the same
    reason as 2.
 4. **AskFred pass-through in the workspace toolset.** Fireflies' own
-   meeting-QA agent is not exposed as a reviewed tool. Rejected: Avalon's
+   meeting-QA agent is not exposed as a reviewed tool. Rejected: Rally's
    agent reads the transcript and reasons itself; nesting a second vendor
    agent inside the harness confuses authority and attribution.
 5. **Ingesting media.** Audio/video URLs returned by Fireflies are not
@@ -109,6 +127,18 @@ includes and how it is contained.
    actor-identity mapping (see the actor identity section of
    [`connectors.md`](../../connectors.md)) would promise an identity the
    provider cannot honor.
+8. **Polling Fireflies for missed or late meetings.** Deferred: the
+   installation lifecycle this PRD adopts defers polling and reconciliation
+   sweeps outright (its non-goal 5), Granola and Ashby are both webhook-only,
+   and a missed delivery is made visible instead — as an installation that
+   never became current, or a stale last-received time — rather than silently
+   compensated. The design to reach for if support shows Fireflies drops
+   deliveries is recorded so it is not re-derived: a checkpointed
+   `pollingActivity` stream whose high-watermark carries a bounded set of
+   pending meeting ids alongside its date, re-reading each pending meeting by
+   id until its summary appears, because Fireflies filters only on creation
+   date and a summary can land after the meeting has aged out of any date
+   window. Open question 5 says what would promote it into scope.
 
 ## Product behavior
 
@@ -122,55 +152,80 @@ description distinguishes the scopes, since it is the only place a user learns
 the card does two things: "Your own Fireflies meetings through its live tools,
 or the team's transcripts and summaries through an admin API key."
 
-**Connect workspace** opens a two-step modal:
+**Connect workspace** runs the lifecycle's staged installation rather than a
+one-off modal. Every stage is saved, so Settings can close and reopen without
+losing progress, and a repeated click resumes the pending attempt — the
+client's idempotency key is bound to workspace, admin, provider, scope, and
+the key's fingerprint — instead of starting a second one:
 
 1. **Key entry.** The admin pastes the key from Fireflies → Integrations →
    Fireflies API. Fireflies keys have no documented prefix, so the field
-   validates only non-empty and length; submit disables while
-   `POST /connections/fireflies/workspace { apiKey, capabilities }` verifies
-   the key with a `user` query. On provider rejection the modal stays open
-   with the key intact and shows the failure inline; nothing is stored.
-2. **Webhook reveal.** On success the modal swaps to the reveal state the
-   inbound-webhook connector already uses: the connection's ingestion endpoint
-   URL and a generated signing secret, each with a copy button, and the
-   show-once line "Copy the endpoint and secret now. Avalon will not show this
-   secret again." The create response carries
-   `{ connection, endpoint, signingSecret, signatureFormat }`, as
-   `POST /connections/webhook` does today — the endpoint is per-connection, so
-   it cannot exist before step 1 completes. Instructions direct the admin to
-   Fireflies' **Webhooks V2 configuration page** and to subscribe
-   `meeting.transcribed` and `meeting.summarized` (not `meeting.bot_joined`).
-   The webhook-cost copy is in user terms: "Optional — set this up now or
-   later. With the webhook, a finished meeting reaches Avalon within a couple
-   of minutes. Without it, Avalon checks Fireflies on a schedule, so a meeting
-   can take up to an hour to show up. Nothing else changes."
+   validates only non-empty and length; submit disables while the workspace's
+   regional backend verifies the key with a `user` query. On provider
+   rejection the form stays open with the key intact and shows the failure
+   inline; nothing is stored.
+2. **Route and secret.** On success Rally prepares the connection's ingress
+   route and generates the signing secret, and the installation enters
+   **Action required** with the exact steps the admin must take in Fireflies:
+   open the **Webhooks V2 configuration page**, paste the endpoint URL and the
+   signing secret, subscribe `meeting.transcribed` and `meeting.summarized`
+   (not `meeting.bot_joined`), and save. The URL is not secret and stays
+   visible on the connection for as long as it exists; the secret is shown in
+   this stage and can be shown again only by rotating it (key design decision
+   7). The adapter declares every Fireflies registration operation manual and
+   inspection unsupported, so Rally cannot check this stage itself, and the
+   copy says so: "Rally can't check this for you. This changes to Current
+   when the first meeting arrives." The cost copy is in user terms: "Until
+   this is done, no meetings reach Rally. Once it is, a finished meeting
+   shows up within a couple of minutes."
+3. **Verified by delivery.** The installation moves from **Action required**
+   to **Current** on the first delivery that passes signature verification,
+   and shows a last-received time from then on. Fireflies offers no test
+   ping, so the meeting the admin records next is the test, and the
+   Action-required copy says that too.
 
-The modal reports what the connection sees **after** verification rather than
+The form reports what the connection sees **after** verification rather than
 asking the admin to evaluate a plan-tier conditional before it: "Connected as
 bob@acme.com. This key can read the whole team's meetings" when Super Admin
 coverage is detectable, "only this account's own meetings" when it is not
-enabled, and — if coverage cannot be determined from the API — "Avalon cannot
+enabled, and — if coverage cannot be determined from the API — "Rally cannot
 tell which meetings this key covers; if searches come back empty for other
 people's calls, the key only sees its own account." The consent copy also
 states the roll-down: "Every member of this workspace will be able to read
-these meetings through the agent." The connection row's display name is
-`Fireflies · <account email>`, following the `Google · <label>` compound shape.
+these meetings through the agent." — and the webhook's own coverage, since
+Fireflies fires it only for meetings the connected account organizes: "Rally
+will hear about meetings this account organizes." The connection row's display
+name is `Fireflies · <account email>`, following the `Google · <label>`
+compound shape.
 
-The row offers **Test**, **Update key**, **Webhook setup / Rotate secret**,
-and **Remove**:
+The row shows credential health (`healthy`, `needs_reconnect`) and the
+webhook installation state (**Action required**, **Current**, **Failed**,
+**Disconnected — cleanup pending**) as two separate facts, per the
+lifecycle's rule that an unfinished installation must not hide a usable tool
+connection. It offers **Test**, **Update key**, **Show setup / Rotate
+secret**, and **Remove**:
 
-- **Update key** reopens the key modal against the *existing* connection —
-  new work, since the OAuth-shaped reconnect flow does not apply to a pasted
-  key — so the connection id, endpoint URL, and signing secret survive a
-  revoked key. A `needs_reconnect` badge on a workspace connection points
-  here.
-- **Webhook setup / Rotate secret** re-reveals the (stable, non-secret)
-  endpoint URL and issues a fresh secret via the existing
-  `POST /connections/:id/webhook-secret/rotate` route extended to
-  `fireflies`, so an admin who clicked Done too early has a second chance.
-- **Remove** warns: "Removing this connection retires its webhook endpoint.
-  If you set up webhooks in Fireflies, you'll need to paste a new URL and
-  secret after reconnecting."
+- **Test** is the standard path: `adapter.repair`, then `healthCheck`. Repair
+  is a no-op for Fireflies — there is no remote registration Rally can
+  restore — and the health check verifies the key and reports an unverified
+  installation as a `warning`, never as a failure of the credential.
+- **Update key** replaces the credential on the *existing* connection — the
+  lifecycle's credential-replacement path, which invalidates any pending
+  maintenance and touches nothing at Fireflies — so the connection id,
+  endpoint URL, and signing secret survive a revoked key. A
+  `needs_reconnect` badge on a workspace connection points here.
+- **Show setup / Rotate secret** reopens the Action-required instructions
+  with the stable endpoint URL, and issues a fresh secret when asked.
+  Rotation is pending-plus-active (key design decision 7): the previous secret
+  keeps verifying deliveries until the first delivery signed with the new one
+  arrives, then it is retired, and the instructions say to paste the new
+  secret into Fireflies before that happens.
+- **Remove** disables the connection at once and leaves the installation in
+  **Disconnected — cleanup pending** with the one step Rally cannot take:
+  delete the webhook in Fireflies. The retired route rejects any delivery
+  that still arrives, so a webhook left behind is harmless. The warning
+  reads: "Rally can't remove the webhook from Fireflies for you. Delete it
+  there, or leave it — deliveries to a removed connection are rejected."
 
 Card and row states: default (Connect actions; workspace button admin-gated),
 already-connected (connect action disabled with the standard "already
@@ -178,11 +233,12 @@ installed — manage it above" tooltip, which requires enrolling `fireflies` in
 the renderer's per-provider gates alongside the catalog entry:
 `installedConnectorTypes`, `providerHasActivePersonalConnection`,
 `personalConnectionStateUnavailable`, and the Connections nav `searchTerms`),
-verifying (submit disabled, modal stays open on failure), populated,
-`needs_reconnect` (badge plus Update key), and offline (cached list; failed
-mutations show the standard inline error and are re-submitted manually). Test
-results surface as the row's status badge; a visible success/failure message
-for Test is deliberately out of this PRD's scope.
+verifying (submit disabled, form stays open on failure), populated,
+`needs_reconnect` (badge plus Update key), and offline (cached list showing
+the last known installation state with its timestamp; failed mutations show
+the standard inline error and are re-submitted manually). Test results surface
+as the row's status badge; a visible success/failure message for Test is
+deliberately out of this PRD's scope.
 
 ### Connecting — personal scope
 
@@ -194,11 +250,10 @@ as the pass-through already does for Granola personal connections. The browser
 returns through `GET /connections/fireflies/callback`; a durable
 `connector_oauth_attempts` row carries the attempt. One active personal
 connection per member per workspace. That Fireflies' MCP server serves
-protected-resource metadata and accepts dynamic client registration is a
-**build precondition** recorded in [research](research.md) — if it requires a
-pre-registered client instead, this flow needs per-region
-`FIREFLIES_OAUTH_CLIENT_ID/SECRET` secrets and a conditional registry entry,
-and the "no new Worker secrets" claims below change.
+protected-resource metadata and accepts dynamic client registration was
+verified against the live server on 2026-09-10 ([research](research.md)), so
+the flow needs no per-region client secrets. Whether Fireflies issues a
+refresh token without an explicit `offline_access` scope is open question 6.
 
 ### Using it — agent tools
 
@@ -214,82 +269,60 @@ Full contract in **Agent behavior**.
 
 `meeting.summarized` events become digestible `meeting.summarized` activities
 (activity types are declared unprefixed, following Granola's `note.generated`
-precedent) in the owning workspace, carrying title, date, attendees, and the
-summary overview and action items — with the title and summary text truncated
-to the standard connector bounds before storage. `meeting.transcribed` becomes
-an operational, non-digestible activity (the summarized event supersedes it
+precedent) in the owning workspace. `meeting.transcribed` becomes an
+operational, non-digestible activity (the summarized event supersedes it
 minutes later; double-digesting one meeting is worse than a short delay).
 `bot_joined` is not subscribed.
 
-**Exactly-once is enforced at insert, not by the cursor.** Both transports
-derive the same content-based identity — `provider_event_id` is the Fireflies
-meeting id and `dedupe_key` is `fireflies:<meeting_id>:<event>` — so the
-existing `UNIQUE (connection_id, provider_event_id, event_type)` and
-`UNIQUE (connection_id, dedupe_key)` constraints with `ON CONFLICT DO NOTHING`
-make the second arrival a no-op whichever transport it came by. The two event
-types produce distinct dedupe keys on purpose, so a transcribed activity does
-not swallow the later summarized one.
+**Delivery is webhook-only, through the shared ingestion pipeline.**
+`POST /ingest/fireflies/:id` on the owning region's API host maps the route to
+exactly one connection, verifies the raw bytes (**Security and trust model**),
+retains the raw body in regional R2, normalizes the event, and hands it to
+`persistNormalizedActivity`, which enqueues it on the regional activity queue
+for WorkspaceDO admission — the path Granola and Ashby take, with no
+per-provider Workflow and no second ledger. The receiver acknowledges (202
+new, 200 duplicate, as Granola's route does) only after that durable send
+succeeds. Fireflies requires a 2xx within ten seconds and documents no retry,
+which is why acknowledgement waits for the queue send and for nothing slower.
 
-**Polling is the authoritative transport and owns the checkpoint
-exclusively.** The adapter declares `supportsPolling: true` with a
-`pollingActivity` stream (the Google shape — Granola is webhook-only and is
-not the precedent for this half), marked `digestible` so poll-delivered
-summaries reach digests. The stream's checkpoint lives at
-`cursor_json.activityStreams.<streamId>` as the runner's
-`{ highWatermark, checkpointedAt }` record, committed only by
-`commitConnectorCursor`'s compare-and-set after the page's activities are
-persisted. Because Fireflies exposes only a meeting-date `fromDate` filter and
-summarization completes minutes to hours *after* the meeting date, the poll
-queries from `highWatermark − overlap` (overlap 48 hours) and lets the insert
-constraints absorb the repeats — a summary that lands late is caught on a
-later pass instead of being stranded behind the watermark. **Webhook receipt
-never writes the cursor**; a webhook is a latency optimization that ingests
-the meeting immediately and leaves the checkpoint to the poll. Connect-time
-setup creates the enabled `schedules` row (with `connector_connection_id`)
-that the checkpointed runner requires — the Google-callback
-`createPollSchedule` pattern generalized — at a connector-supplied interval
-(default hourly, not the 300-second Google constant, because of the plan
-quotas below).
+**The payload is a change signal, not the content.** A delivery carries only
+the event name, a millisecond timestamp, and the meeting id. Normalization
+therefore produces an activity that names the meeting — `provider_event_id`
+is the Fireflies meeting id, `dedupe_key` is `fireflies:<meeting_id>:<event>`,
+the resource is `fireflies_meeting` — with a fixed title per event type, and
+the adapter's `hydrateResource` reads the meeting over GraphQL when the queue
+consumer asks for it: Granola's shape exactly, and the reason a provider read
+never sits inside Fireflies' ten-second window or spends quota on a delivery
+that turns out to be a duplicate. The hydrated meeting (title, date,
+attendees, overview, action items, truncated to the standard connector bounds)
+is what digests and automations read.
 
-**The overlap window is a bounded guarantee, not an unbounded one.** Because
-the watermark lives in meeting-date space, a meeting whose summary lands more
-than 48 hours after the meeting itself is already behind
-`highWatermark − 48h` and polling will never emit it; for that case the
-webhook is the only delivery path. Fireflies summarizes within minutes
-normally, so the window covers ordinary operation and a long provider
-backlog, but a recording uploaded days later against an old meeting date is
-outside it by construction. Widening the overlap trades quota for coverage
-(each poll re-reads the window), so 48 hours is the starting value and open
-question 5 records what would change it.
+**Exactly-once is enforced at admission.** WorkspaceDO deduplicates on
+`(connection, provider_event_id, event_type)` and on `dedupe_key` inside its
+transaction, and the ingress receipt — keyed on the SHA-256 of the raw body,
+because Fireflies sends no delivery id — makes a replay of the same delivery
+a no-op before it reaches the queue. The two event types produce distinct
+dedupe keys on purpose, so a transcribed activity does not swallow the later
+summarized one.
 
-**What the poll emits.** The poll emits `meeting.summarized` only for
-meetings whose GraphQL response carries populated summary fields
-(`overview` or `action_items`); a meeting without them is skipped and picked
-up on a later pass once Fireflies finishes summarizing. The poll never emits
-`meeting.transcribed` at all — that event exists only to give webhook-configured
-workspaces an early operational signal, and emitting it from the poll would
-mean every meeting ingests twice on the poll path for no added information.
+**What a missed delivery looks like.** Fireflies fires webhooks only for
+meetings the connected account organizes and documents no retry, so a
+delivery can be lost. This PRD does not compensate silently (non-goal 8): an
+installation that never becomes current, or a last-received time that stops
+moving, is the signal, and open question 5 says what would justify the poll
+that closes the gap.
 
 ### Failure states
 
 Fireflies plan quotas are small (50 requests/day on Free, 500/day on Pro,
-60/min on Business/Enterprise), and polling and interactive tools spend the
-same budget. A provider 429 or quota exhaustion therefore must not be retried
-inside the poll step: the stream declares a static
-`failurePollIntervalSeconds` of 3,600 — one hour, matching the ordinary poll
-cadence — so a rate-limited stream waits out a per-minute window comfortably
-and costs at most one wasted request per hour against a daily quota, and the
-checkpoint does not advance. The value is **static by necessity**: the runner
-reads `failurePollIntervalSeconds` off the stream descriptor
-(`packages/connectors/src/types.ts:546`) and discards the `retryAfterMs` that
-`connectorRetryAfterMs` parses from the provider response, so a
-per-failure interval derived from `Retry-After` is not expressible today.
-Making it dynamic is a runner platform change — accepting a backoff timestamp
-back from a failed stream — and is explicitly out of this PRD's scope
-(open question 6). To the model,
-the same condition surfaces as a retryable-once rate-limit error (contract
-below). Fireflies reports application errors such as `auth_failed` inside an
-HTTP 200 GraphQL body, so the adapter translates `errors[].code` into
+60/min on Business/Enterprise), and hydration and interactive tools spend the
+same budget — one reason delivery is webhook-only and a meeting is hydrated
+once per admitted event rather than once per delivery. A provider 429 during
+hydration is a transient failure to the queue consumer, which retries under
+the existing per-message retry and dead-letter path; to the model, the same
+condition surfaces as a retryable-once rate-limit error (contract below).
+Fireflies reports application errors such as `auth_failed` inside an HTTP 200
+GraphQL body, so the adapter translates `errors[].code` into
 `ConnectorError`s — an `auth_failed` maps to the `unauthorized` code that
 marks the connection `needs_reconnect` (a belief, not a gate; rows keep
 answering `status <> 'disabled'` queries). For the personal connection,
@@ -297,6 +330,8 @@ token-endpoint failures are classified by provider error code with the
 three-answer rule and a narrow `isProviderCredentialRejection`, per the
 credential-freshness invariants in [`connectors.md`](../../connectors.md).
 Webhook posts failing verification are rejected with no state change (below).
+An installation that never receives a verified delivery stays **Action
+required**: that is a state the admin sees, not an error Rally raises.
 
 ## Impact on the product contract
 
@@ -304,7 +339,7 @@ None — this adds a connector inside the existing connector contract. The
 workspace scope grows the agent's authority only by three reviewed read
 tools; the personal scope carries Fireflies' live tool surface, including its
 write actions, under the same hosted-MCP governance that already applies to
-Granola, Slack, and Notion personal connections. Meetings enter Avalon as
+Granola, Slack, and Notion personal connections. Meetings enter Rally as
 connector activity and on-demand reads, not as a new surface.
 
 ## Decision log
@@ -313,13 +348,17 @@ None yet.
 
 ## Key design decisions
 
-1. **Mirror Granola's two-scope split — with the polling half honestly
-   attributed to Google.** Workspace = admin API key + fixed reviewed tools +
-   signed webhooks + polling; personal = hosted MCP OAuth pass-through.
-   Rejected: a single OAuth-only connector — Fireflies has no team-level
-   OAuth app; the API key is the only workspace-grade credential it offers.
-   This is the first connector that is both webhook- and poll-fed, and the
-   ingestion design above is new work, not a Granola copy.
+1. **Mirror Granola's two-scope split, and adopt the connector installation
+   lifecycle for the workspace webhook.** Workspace = admin API key + fixed
+   reviewed tools + signed webhooks whose setup, verification, maintenance,
+   and removal run through the lifecycle proposed in
+   [the Ashby PRD](../2026-09-12_connector-installation-lifecycle/prd.md);
+   personal = hosted MCP OAuth pass-through. Rejected: a single OAuth-only
+   connector — Fireflies has no team-level OAuth app; the API key is the only
+   workspace-grade credential it offers. Rejected: copying Granola's
+   connection-service setup path — that PRD exists to stop a third copy of
+   it, and Fireflies' all-manual registration is the case its manual
+   completion path was designed for.
 2. **Workspace tools are static code-authored GraphQL reads, not the hosted
    MCP server driven by the API key.** The MCP server accepts Bearer API keys,
    so pointing the pass-through at it was possible. Rejected because
@@ -331,15 +370,10 @@ None yet.
    GraphQL document with validated variables. Rejected: a raw GraphQL
    pass-through tool — unbounded read authority, introspection exposure, and
    un-reviewable field access.
-4. **Only `meeting.summarized` is digestible, the poll stream itself is
-   declared digestible, and the poll emits only that one event type.**
-   `meeting.transcribed` is operational and webhook-only. Rejected: making
-   both digestible — one meeting would digest twice minutes apart; and
-   rejected: emitting both from the poll — the poll sees a finished meeting
-   once, so a transcribed event there is a duplicate row carrying nothing the
-   summarized event does not. The stream-level declaration matters because a
-   non-digestible polling stream stamps withholding onto everything it
-   returns, which would silently defeat Goal 4 on the poll path.
+4. **Only `meeting.summarized` is digestible.** `meeting.transcribed` is
+   operational: routed, matched against automations, and logged, but never
+   read back in a digest. Rejected: making both digestible — one meeting
+   would digest twice minutes apart.
 5. **Accept degraded visibility on non-Enterprise keys, and disclose in both
    directions.** The connection reads whatever the key's account can see;
    the modal reports the detected coverage after verification, and also states
@@ -347,24 +381,38 @@ None yet.
    including, under Super Admin, meetings Fireflies members marked private.
    Rejected: requiring Fireflies Enterprise + Super Admin — it would exclude
    most Fireflies customers for a purity the product does not need.
-6. **Webhooks are a latency optimization; polling is the guarantee; dedup
-   lives in the activity insert.** Fireflies webhook registration is
-   dashboard-only with undocumented retries, so correctness cannot depend on
-   it. The poll owns the cursor exclusively (a webhook writing it would both
-   strand late-summarized meetings behind the watermark and break the poll's
-   compare-and-set commit), and both transports converge on one
-   content-derived dedupe identity. Rejected: the shared-cursor design this
-   PRD originally proposed — it could not deliver "exactly once" and could
-   lose meetings permanently.
-7. **The signing secret is Avalon-generated, mandatory, shown exactly once,
-   and rotatable — a recorded exception to "secrets never reach the
-   desktop".** Fireflies webhook registration is manual, so the admin must
-   see the plaintext once, in the create/rotate response only; it never
-   appears in `GET /connections`, `config_json`, display names, audit data,
-   or logs, and a lost secret is rotated, never re-revealed. Unsigned posts to
-   Avalon's endpoint are rejected even though Fireflies treats the secret as
-   optional. Rejected: accepting unsigned webhooks — the endpoint would
-   ingest attacker-authored events.
+6. **Webhook-only delivery, with a missed delivery made visible rather than
+   compensated.** An earlier revision of this PRD made a checkpointed poll
+   the authoritative transport and the webhook a latency optimization,
+   because Fireflies registers webhooks by hand and documents no retry. It
+   was dropped for three reasons. The lifecycle this PRD now adopts defers
+   polling and reconciliation sweeps outright, so Fireflies would have been
+   the only connector on a second transport. The poll as designed could never
+   see a summary that landed more than 48 hours after its meeting date,
+   because Fireflies filters on creation date only, so the guarantee it
+   offered was narrower than it read. And an hourly poll spends 24 of a Free
+   plan's 50 daily requests before a single tool call. What replaces the
+   guarantee is honesty in Settings: an installation is **Action required**
+   until a verified delivery arrives and shows its last-received time
+   afterward. Non-goal 8 records the pending-id poll that would close the gap
+   if support shows it is needed. Rejected: the shared-cursor and
+   poll-authoritative designs of the earlier revisions, for the reasons
+   above.
+7. **The signing secret is Rally-generated, mandatory, shown in the setup
+   stage, and rotated pending-plus-active — a recorded exception to "secrets
+   never reach the desktop".** Fireflies webhook registration is manual, so
+   the admin must see the plaintext, in the setup stage and in a rotation's
+   response only; it never appears in `GET /connections`, `config_json`,
+   display names, audit data, or logs, and a lost secret is rotated, never
+   re-revealed. Because Rally cannot see when the admin pastes a rotated
+   secret into Fireflies, rotation keeps the previous secret verifying until
+   the first delivery signed with the new one arrives, then retires it — the
+   lifecycle's pending-versus-active verification material. Rejected:
+   invalidating the old secret immediately, as the generic webhook does — for
+   a provider with no registration API that guarantees a delivery gap between
+   issuing and pasting. Unsigned posts to Rally's endpoint are rejected even
+   though Fireflies treats the secret as optional. Rejected: accepting
+   unsigned webhooks — the endpoint would ingest attacker-authored events.
 8. **The personal scope ships the provider's full live surface, writes
    included, and says so.** Rejected: filtering the MCP catalog to read-only
    tools — [`hosted-mcp-connectors.md`](../../hosted-mcp-connectors.md)
@@ -373,6 +421,10 @@ None yet.
    PRD keeps because the containment (confirmed-write treatment, exclusion
    from email-triggered automations and sub-agents, per-member scoping) is
    the same one Granola/Slack/Notion personal connections already live under.
+   Also rejected: pointing members at the `custom_mcp` connector instead of a
+   named entry — it reaches the same server, but a member would have to know
+   the endpoint and its authentication, and the Ashby PRD sets the direction
+   that a supported provider gets a named, searchable entry in Settings.
 9. **Rollout gates on a purpose-built region enablement variable, not a
    client feature flag and not a secret's absence.** X gates on the *real*
    secret it needs (`xConnectorConfig` returns `null` without
@@ -392,23 +444,45 @@ None yet.
     are snake_case verb-noun (`search_meetings`, `get_meeting_summary`,
     `get_transcript`) so the transcript-prose verb scan recognizes them;
     activity types are unprefixed (`meeting.summarized`) following Granola.
+11. **Every Fireflies registration operation is declared manual, and
+    inspection unsupported.** The adapter's management facet states create,
+    update, and remove as manual steps with exact instructions, and inspect
+    and reconcile as unsupported, because Fireflies exposes no webhook API at
+    all ([research](research.md)). The lifecycle then handles the
+    consequences without Fireflies-specific code: an installation is Current
+    only after a verified delivery; a fleet maintenance preview that changes
+    the destination URL or the event set lists every Fireflies workspace as
+    customer action and applies nothing to Fireflies; disconnect leaves
+    cleanup pending with the one manual removal step. Rejected: driving the
+    Fireflies dashboard by browser automation, or letting a checkbox stand
+    for verification — the lifecycle PRD rejects both, and a checkbox would
+    report meetings flowing when none can.
+12. **Meeting content is hydrated after admission, not inside the webhook.**
+    Rejected: reading the meeting over GraphQL in the webhook handler so the
+    activity carries the summary at insert — it puts a provider round trip
+    inside Fireflies' ten-second window, spends quota on a duplicate before
+    dedupe has run, and departs from Granola's change-signal shape for no
+    product gain, since digests and automations read the hydrated resource
+    either way.
 
 ## Data model
 
-One migration — `0077` at time of writing; re-check the highest prefix at
+One migration — `0104` at time of writing; re-check the highest prefix at
 merge, in `packages/db/migrations/` — rebuilding `connector_connections` to
 extend the `connector_type` CHECK with `'fireflies'`:
 
 - **The 0048 save/restore list must not be copied.** `connector_connections`
-  now has 22 FK children; three postdate 0048 (`slack_unfurled_links`,
-  `digest_delivery_targets`, and `workstream_terminal_repositories`). The last
-  is `ON DELETE RESTRICT`, which `PRAGMA defer_foreign_keys` does **not**
-  defer, so the 0048-style `DROP TABLE` fails on any database with Terminal
-  rows while passing the empty-database migration test. The migration
-  enumerates children from the *current* schema, stages the RESTRICT child
-  around the parent rebuild, and gets a test against a populated database.
-  (The 0046 trigger alternative avoids the rebuild but cannot extend a CHECK
-  constraint, so the rebuild stands — with its hazards named.)
+  has gained FK children since 0048 — among them `slack_unfurled_links`,
+  `digest_delivery_targets`, and `workstream_terminal_repositories`; count
+  them from the current schema at build time, because the number has moved
+  since this was written. The last is `ON DELETE RESTRICT`, which
+  `PRAGMA defer_foreign_keys` does **not** defer, so the 0048-style
+  `DROP TABLE` fails on any database with Terminal rows while passing the
+  empty-database migration test. The migration enumerates children from the
+  *current* schema, stages the RESTRICT child around the parent rebuild, and
+  gets a test against a populated database. (The 0046 trigger alternative
+  avoids the rebuild but cannot extend a CHECK constraint, so the rebuild
+  stands — with its hazards named.)
 - Partial unique indexes matching Granola's shape:
   `connector_connections_fireflies_workspace_active_uq` on
   `(workspace_id, connector_type) WHERE connector_type = 'fireflies' AND
@@ -422,29 +496,37 @@ extend the `connector_type` CHECK with `'fireflies'`:
   children; safe) and to `ConnectorOAuthProviders` in
   `packages/contracts/src/connector-oauth-providers.ts`.
 - `encrypted_credentials` holds, AES-GCM-sealed with `credential_key_version`
-  as today: the API key and the webhook signing secret (workspace), or the
-  MCP OAuth token set (personal).
-- `cursor_json` holds the checkpointed runner's per-stream record —
-  `activityStreams.<streamId>: { highWatermark, checkpointedAt }` — not a
-  legacy flat key.
+  as today: the API key and the active — and, during a rotation, the pending
+  — webhook signing secret (workspace), or the MCP OAuth token set (personal).
+- The webhook installation's state — desired and applied configuration
+  versions, the registration's logical key with no provider id (Fireflies
+  issues none), its verification state, last-verified and last-received
+  times, and any pending maintenance step — lives in the lifecycle's
+  WorkspaceDO records. This PRD adds no `connector_connections` column and no
+  `cursor_json` content for it.
 - Activity identity: `provider_event_id = <meeting_id>`,
   `dedupe_key = fireflies:<meeting_id>:<event>`, resource entity keys
   `fireflies:meeting:<id>` under a `fireflies_meeting` resource type; the
   manifest declares `resourceTypes` and its `activityTriggers` accordingly.
-- No new tables. No backfill.
+- No new tables of this PRD's own. No backfill.
 
 `ConnectionSchema.connectorType` in `packages/contracts/src/index.ts` gains
 `fireflies`; the manifest declares `supportedScopes: ["personal",
-"workspace"]`, `supportsPolling: true`, `supportsWebhooks: true`, with
-`capabilityConnectionScopes` narrowing `fireflies.workspace.read` to
-`["workspace"]` and `fireflies.personal.read` to `["personal"]`, mirroring
-`GranolaCapabilities` (`fireflies.personal.read` is the capability handed to
-`createHostedMcpPassthrough`, as Granola's `personalRead` is).
+"workspace"]`, `supportsWebhooks: true`, `supportsPolling: false`,
+`supportsWatches: false` (a meeting does not change after its summary, so
+there is nothing to watch), a `webhookActivity` facet, a `hydrateResource`
+for the post-admission read, and the lifecycle's management facet with every
+operation manual or unsupported, with `capabilityConnectionScopes` narrowing
+`fireflies.workspace.read` to `["workspace"]` and `fireflies.personal.read`
+to `["personal"]`, mirroring `GranolaCapabilities` (`fireflies.personal.read`
+is the capability handed to `createHostedMcpPassthrough`, as Granola's
+`personalRead` is).
 
 ## Regional impact
 
-Connections, credentials, cursors, and activities live in the regional D1 of
-the owning workspace, encrypted with that region's
+Connections, credentials, the webhook installation's state, and activities
+live in the regional D1 and WorkspaceDO of the owning workspace, encrypted
+with that region's
 `CONNECTOR_CREDENTIALS_KEY_*`; the ingestion endpoint is served by each
 regional Worker, and the URL shown in the connect modal is the owning
 region's, so an EU workspace's webhook traffic terminates in the EU Worker —
@@ -462,8 +544,11 @@ is a customer's processor decision, as with Granola and Notion. The
   returned to the desktop or written to `config_json`, display names, or
   audit data.
 - The webhook signing secret is the one deliberate, recorded exception to
-  plaintext-never-reaches-the-desktop: it appears in exactly the create and
-  rotate responses (key design decision 7) and nowhere else.
+  plaintext-never-reaches-the-desktop: it appears in exactly the setup stage
+  and the rotate response (key design decision 7) and nowhere else. During a
+  rotation two secrets verify — the active one and the pending one — and the
+  active one is retired the first time a delivery verifies against the
+  pending one.
 - Every provider call takes the branded `AuthorizedConnectorConnection` minted
   only by `withAuthorizedConnection`; personal OAuth tokens refresh behind the
   existing D1 lease, with rejection classified by provider error code, not
@@ -474,19 +559,25 @@ is a customer's processor decision, as with Granola and Notion. The
   `sha256=` prefix must match exactly (no algorithm downgrade); then a
   freshness window on the in-body `timestamp` — Fireflies signs the body and
   nothing else, so the timestamp inside the HMAC is the only replay anchor —
-  bounded by `WEBHOOK_REPLAY_WINDOW_SECONDS`; then a `webhook_receipts` row
-  keyed on a synthesized receipt key (SHA-256 of the raw body), which is what
-  makes a replayed valid delivery a no-op. **A post failing any of these is
-  rejected with no row written anywhere** — `webhook_receipts` holds verified
-  deliveries only, and recording rejections would hand an unauthenticated
-  caller a per-connection D1 write. Rejections are counted in structured
-  logs.
-- Webhook payloads carry only event name and meeting ID; ingestion re-reads
-  the meeting through the authenticated GraphQL API. That re-read content is
-  **still untrusted** — it is other people's speech, including external
-  attendees' — so it travels as evidence, never as instructions, activity
-  title and summary are truncated to the standard connector bounds before
-  storage, and both plugin system messages carry the untrusted-data clause.
+  bounded by `WEBHOOK_REPLAY_WINDOW_SECONDS`; then an ingress receipt claimed
+  in WorkspaceDO, keyed on a synthesized receipt key (SHA-256 of the raw
+  body, since Fireflies sends no delivery id), which is what makes a replayed
+  valid delivery a no-op. **A post failing any of these is rejected with no
+  row written anywhere** — receipts hold verified deliveries only, and
+  recording rejections would hand an unauthenticated caller a per-connection
+  write. Rejections are counted in structured logs.
+- Webhook payloads carry only event name and meeting ID; the meeting is read
+  through the authenticated GraphQL API after admission, by `hydrateResource`.
+  That hydrated content is **still untrusted** — it is other people's speech,
+  including external attendees' — so it travels as evidence, never as
+  instructions, activity title and summary are truncated to the standard
+  connector bounds before storage, and both plugin system messages carry the
+  untrusted-data clause.
+- Post-disable cleanup needs no retained credential: there is nothing for
+  Rally to delete at Fireflies, so the lifecycle's cleanup-only credential
+  snapshot is not taken for this provider, the disabled connection's
+  credentials are removed at once, and the manual removal step is shown
+  instead.
 - The personal scope's live catalog includes Fireflies-authored write tools
   (`fireflies_share_meeting`, `fireflies_revoke_meeting_access`,
   `fireflies_update_meeting_title`, `fireflies_move_meeting`,
@@ -501,9 +592,9 @@ is a customer's processor decision, as with Granola and Notion. The
 - Workspace-scoped tools execute as the workspace principal
   (`assertScopeAllowed` enforces owner/admin on creation server-side); a
   member's personal connection is never implicitly shared.
-- No new Worker secrets, contingent on the DCR precondition in
-  [research](research.md); `FIREFLIES_CONNECTOR_ENABLED` is a non-secret
-  variable.
+- No new Worker secrets: the dynamic-client-registration precondition was
+  verified against the live server ([research](research.md)), and
+  `FIREFLIES_CONNECTOR_ENABLED` is a non-secret variable.
 
 ## Agent behavior
 
@@ -566,7 +657,7 @@ allowed.
 | Canonical | Wire name | Description (model-facing) |
 | --- | --- | --- |
 | `search_meetings` | `<prefix>_search_meetings` | Search the connected Fireflies account's meetings, most recent first. Give at least one of keyword (matched against meeting titles and spoken text), fromDate, toDate, participantEmail, or hostEmail. Emails must be full addresses — if you only have a name, search by keyword and read participants from the results. Returns meeting metadata and IDs for the other tools. |
-| `get_meeting_summary` | `<prefix>_get_meeting_summary` | Read one meeting's AI summary: overview, action items, keywords, outline, plus attendees and timing. Requires a meetingId from a search or a Fireflies activity. |
+| `get_meeting_summary` | `<prefix>_get_meeting_summary` | Read one meeting's AI summary: overview, action items, keywords, topics, outline, plus attendees and timing. Requires a meetingId from a search or a Fireflies activity. |
 | `get_transcript` | `<prefix>_get_transcript` | Read one meeting's transcript sentences with speakers and timestamps, paged; repeat with the returned nextOffset for more. Requires a meetingId from a search or a Fireflies activity. |
 
 ### Wire shapes
@@ -605,9 +696,13 @@ internally), `limit` (integer 1–25, optional, default 10), `offset` (integer
 **`get_meeting_summary`** — input: `meetingId` (string, required). Success
 output: `meetingId`, `title`, `date`, `durationMinutes`, `hostEmail`,
 `attendees` (array of `{ name, email }`), `summary` object with `overview`
-(string, ≤ 4,000 chars), `actionItems` (≤ 50 strings of ≤ 500 chars),
-`keywords` (string array), `outline` (string, ≤ 4,000 chars), a `truncated`
-flag set when any cap cut content, and `transcriptAvailable` (boolean).
+(string, ≤ 4,000 chars), `actionItems` (string, ≤ 4,000 chars — Fireflies
+returns action items as one text field, not a list, so the adapter passes it
+through rather than splitting on a guessed delimiter), `keywords` (string,
+≤ 1,000 chars, for the same reason), `topicsDiscussed` (array of ≤ 50
+strings, the one list-typed summary field Fireflies offers), `outline`
+(string, ≤ 4,000 chars), a `truncated` flag set when any cap cut content, and
+`transcriptAvailable` (boolean).
 
 **`get_transcript`** — input: `meetingId` (string, required), `offset`
 (integer ≥ 0, optional, default 0), `limit` (integer 1–500, optional, default
@@ -715,26 +810,30 @@ loops on `fireflies_rate_limited`.
 
 ## Provider configuration
 
-All configuration is the customer's, in the Fireflies dashboard — Avalon
+All configuration is the customer's, in the Fireflies dashboard — Rally
 registers nothing with Fireflies:
 
 - **API key** (workspace scope): Fireflies → Integrations → Fireflies API.
   Team-wide visibility additionally requires Fireflies Enterprise with Super
   Admin enabled; otherwise the key reads its owner's meetings only.
-- **Webhook** (optional, workspace scope): Fireflies' **Webhooks V2
-  configuration page** — paste the endpoint URL and signing secret from
-  Avalon's connect modal and subscribe `meeting.transcribed` and
-  `meeting.summarized`. The signing secret is required on Avalon's side:
-  posts without a valid `X-Hub-Signature` are rejected, so skipping the
-  secret in Fireflies means no webhook activity (polling still works).
-  (Legacy Developer-settings webhooks and the Enterprise Super-Admin
-  team-wide webhook are different surfaces; the modal links the V2 page.)
+- **Webhook** (workspace scope; required for activity, not for the tools):
+  Fireflies' **Webhooks V2 configuration page** — paste the endpoint URL and
+  signing secret from the installation's Action-required instructions and
+  subscribe `meeting.transcribed` and `meeting.summarized`. The signing
+  secret is required on Rally's side: posts without a valid
+  `X-Hub-Signature` are rejected, so skipping the secret in Fireflies means
+  no activity at all. Fireflies fires these webhooks only for meetings the
+  connected account organizes, which is the coverage the consent copy
+  states. (Legacy Developer-settings webhooks and the Enterprise Super-Admin
+  team-wide webhook are different surfaces; the instructions link the V2
+  page.)
 - Fireflies rate limits are the customer's plan's: 60 req/min
   (Business/Enterprise), 500/day (Pro), 50/day (Free). Nothing breaks if
-  webhook configuration is skipped.
+  webhook configuration is skipped: the tools work, and the installation
+  stays Action required.
 
-Avalon-side: `FIREFLIES_CONNECTOR_ENABLED` in both Wrangler configs (below),
-and no per-provider secrets unless the DCR precondition fails.
+Rally-side: `FIREFLIES_CONNECTOR_ENABLED` in both Wrangler configs (below),
+and no per-provider secrets.
 
 ## Rollout
 
@@ -756,6 +855,12 @@ read and has to be added in three places, all in the same change:
 `.env.example` gains it too, with the one-line comment its neighbours carry,
 since local development reads it the same way.
 
+This connector ships after the connector installation lifecycle from
+[the Ashby PRD](../2026-09-12_connector-installation-lifecycle/prd.md), whose
+manual completion path it depends on. It is that lifecycle's first
+all-manual provider, and it stands in for the synthetic provider in that
+PRD's "manual capability" acceptance row.
+
 The desktop `connectorProviders` card ships in the same release
 that enables the variable (a card whose type is absent from the catalog
 renders as a visible "Unavailable" card, so the card must not ship ahead of
@@ -766,49 +871,59 @@ surface region-wide while retaining rows; per-connection rollback is
 `connector_type` value is inert.
 
 When implementation ships, `docs/connectors.md` gains the Fireflies section
-and changelog entry, and `docs/connector-digestibility.md` gains the
+and changelog entry, the lifecycle's module document gains Fireflies as its
+manual-provider example, and `docs/connector-digestibility.md` gains the
 `meeting.summarized` (digestible) and `meeting.transcribed` (operational)
 rows — the latter is a CI gate, since `digestibility-doc.test.ts` keeps that
 document and the manifests in step.
 
 ## Acceptance
 
-Flows 1, 3, 5, 6, and 7 need a live Fireflies workspace and land as a
+Flows 1, 3, 5, 6, 7, and 8 need a live Fireflies workspace and land as a
 connector flow in [`e2e.md`](../../e2e.md) when implementation ships; the
 rest are automatable.
 
-1. Admin connects a workspace key in Settings → Connections; step 2 reveals
-   endpoint and secret with copy buttons; the row reads `Fireflies · <email>`
-   with the detected coverage stated in the modal; Test outcome is visible as
-   the row's status badge; Remove (after its webhook warning) deletes the
-   connection.
+1. Admin connects a workspace key in Settings → Connections; the installation
+   shows **Action required** with the endpoint URL, the secret, and the
+   Fireflies steps; the row reads `Fireflies · <email>` with the detected
+   coverage stated; closing and reopening Settings shows the same pending
+   installation, and a second Connect click resumes it rather than creating
+   another; Test shows the credential healthy and the unverified installation
+   as a warning; Remove disables the connection and shows **cleanup pending**
+   with the manual step.
 2. In a work stream, asking about a recent meeting leads the agent to
    discover and load the plugin, search, and read the summary; a long
    transcript pages to `nextOffset: null`.
-3. Exactly-once: for one meeting, deliver the webhook then run the poll, and
-   separately run the poll then deliver the webhook — one activity row in
-   both orders. A meeting summarized hours after its meeting date is caught
-   by the overlap window; a meeting whose summary is still absent produces no
-   activity on that pass and one `meeting.summarized` on a later pass, and no
-   poll pass ever produces a `meeting.transcribed` row.
+3. Verified by delivery: after the admin registers the webhook and records a
+   meeting, the `meeting.transcribed` delivery moves the installation to
+   **Current** with a last-received time, and the `meeting.summarized`
+   delivery produces exactly one digestible activity whose hydrated content
+   carries the summary; replaying either delivery produces no second
+   activity.
 4. A digest automation subscribed to the connection digests the summary
-   activity — including one that arrived by poll, which proves the stream's
-   digestible declaration.
+   activity; an automation bound to `meeting.transcribed` fires on the
+   operational event, which never reaches a digest.
 5. Revoking the key in Fireflies flips the connection to `needs_reconnect` on
    next use; **Update key** with a fresh key restores it without changing the
-   endpoint or secret.
+   endpoint, the secret, or the installation state.
 6. A second workspace member's `list_plugins`/`search_plugins` does not
    surface the first member's personal plugin, and a forced `load_plugin` is
    refused with `capability_not_granted`.
 7. An unsigned, mis-signed, oversized, or stale-timestamped post to
    `/ingest/fireflies/:id` is rejected with no row written; a replayed valid
    post ingests at most once (receipt dedupe).
-8. A provider 429 pauses the poll stream — checkpoint unchanged, no in-step
-   retry, next attempt one hour out per the static
-   `failurePollIntervalSeconds` — and that run resumes from the same cursor.
+8. Rotation: after **Rotate secret**, a delivery signed with the old secret is
+   still admitted until one signed with the new secret arrives, after which
+   the old secret is refused; a delivery signed with neither is rejected
+   throughout.
 9. Unsetting `FIREFLIES_CONNECTOR_ENABLED` in one region removes `fireflies`
    from that region's catalog and tool surface; existing rows are retained
    and other regions are unaffected.
+10. Lifecycle maintenance: a maintenance preview that changes the Fireflies
+    destination URL or event set lists every Fireflies installation as
+    customer action and applies nothing to Fireflies; this row, with a real
+    provider, is what the lifecycle PRD's synthetic-provider acceptance stood
+    in for.
 
 ## Open questions
 
@@ -816,11 +931,11 @@ rest are automatable.
    post-verification coverage sentence (key design decision 5) needs either a
    queryable signal (e.g. a field on `user`) or the honest fallback wording.
    Affects modal copy only; does not block the build.
-2. **Poll cadence per plan tier.** Hourly is the default; whether to let the
-   admin pick a cadence, and whether to surface a plan-tier hint in the
-   connect modal, waits for real usage. The quota-safety mechanics (no
-   in-step 429 retry, static hourly failure interval) are in scope
-   regardless.
+2. **Does the Webhooks V2 page hold more than one URL per account?** If it
+   holds one, a customer already sending Fireflies events to another tool
+   cannot also send them to Rally, and the Action-required copy should say
+   so. Verify in a Fireflies account before writing the copy; does not block
+   the build.
 3. **Personal MCP tool drift.** Fireflies marks several MCP tools
    experimental; the pass-through's surface hash already detects change, but
    we should decide whether a changed surface re-prompts activation
@@ -828,20 +943,17 @@ rest are automatable.
 4. **`meeting.transcribed` promotion.** If real workspaces disable Fireflies
    AI summaries, `meeting.summarized` never fires and their meetings produce
    no digestible activity. If support requests show this, promote
-   `meeting.transcribed` to digestible — and emit it from the poll, which
-   this PRD does not — for connections where no summary arrives. A
-   decision-log entry when evidence exists.
-5. **Is a 48-hour overlap window wide enough?** A meeting summarized more
-   than 48 hours after its meeting date is invisible to polling by
-   construction, so webhook-less workspaces would miss it entirely. Widening
-   costs quota on every pass (the window is re-read each time), so the answer
-   wants real data on Fireflies' summarization lag — particularly for audio
-   uploaded against an old meeting date. Does not block the build; the
-   boundary is documented behavior until it changes.
-6. **Should the poll runner accept dynamic backoff?** `failurePollIntervalSeconds`
-   is static per stream and the runner discards the provider's `Retry-After`,
-   so a rate-limited Fireflies stream waits a fixed hour rather than exactly
-   as long as the provider asked. Teaching `pollCheckpointedActivityStreams`
-   to accept a backoff timestamp from a failed stream would benefit every
-   polling connector, not just this one — a platform change worth its own
-   PRD, and out of scope here.
+   `meeting.transcribed` to digestible for connections where no summary
+   arrives. A decision-log entry when evidence exists.
+5. **When is a missed delivery worth a poll?** Fireflies documents no webhook
+   retry, and this PRD makes a gap visible rather than closing it. The poll
+   that would close it is recorded in non-goal 8; what promotes it into scope
+   is support evidence of dropped deliveries — a stale last-received time on
+   an installation whose account is still recording — and a decision-log
+   entry when that happens. Does not block the build.
+6. **Does Fireflies issue a refresh token without an `offline_access`
+   scope?** Its authorization server advertises the `refresh_token` grant but
+   only the `profile` and `email` scopes, whereas Granola needs an explicit
+   `offline_access`. If no refresh token comes back, a personal connection
+   needs re-authorization when its access token expires. Verify at build;
+   affects the personal scope's reconnect frequency, not its design.
