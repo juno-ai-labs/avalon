@@ -46,6 +46,29 @@ describe("what a run may consult, and what it may do", () => {
 
 });
 
+describe("what a run reports when Bind refuses a tool result", () => {
+  it("wires the rejection port the production run would otherwise drop on the floor", () => {
+    const root = section(
+      "export async function runWorkstreamHarness(",
+      "function inlineChildOutcomeAsToolResult(",
+    );
+
+    // Bind synthesizes a rejected tool result rather than throwing, so the
+    // model reads it and nothing else does unless this port is wired. The one
+    // that makes it matter is `InputBlockedBySuspendError`: Bind declines to
+    // append a participant steer that arrived while an elicitation is open,
+    // and that steer is already committed to this repository's ledger — so
+    // without a line here the drop is silent and the invalid replay order it
+    // sets up has no antecedent to search for.
+    expect(root).toContain("onToolCallRejected: ({ toolCallId, code }) => {");
+    expect(root).toContain('logStructuredEvent(env, "warn", "agent_tool_call_rejected", {');
+    // Queryable fields, not prose: Workers Logs filters on these.
+    for (const field of ["code,", "tool_call_id:", "workspace_id:", "workstream_id:", "run_id:"]) {
+      expect(root).toContain(field);
+    }
+  });
+});
+
 describe("harness liveness-monitor lifetime", () => {
   it("starts the root monitor only after fallible pre-inference setup", () => {
     const root = section(
