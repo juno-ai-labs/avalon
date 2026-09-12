@@ -40,6 +40,16 @@ const INVITEE_ID = "00000000-0000-7000-8000-0000000007b5";
 const INVITEE_SESSION_ID = "00000000-0000-7000-8000-0000000007b6";
 
 type TestableSubstreamAgent = {
+  loadViewers(workspaceId: string, workstreamId: string): Promise<unknown>;
+  assembleSocketSnapshot(
+    workspaceId: string,
+    workstreamId: string,
+    auth: typeof INVITEE_AUTH,
+    speculative: boolean,
+    reason: "initial",
+    sequence: number,
+    markOpened: boolean,
+  ): Promise<unknown>;
   publishLocalProductEvent(
     attachment: { workspaceId: string; workstreamId: string },
     event: Record<string, unknown>,
@@ -318,6 +328,29 @@ describe("a work stream nobody has shown this person yet", () => {
     expect(opened.body.unseen).toBe(false);
     expect(await firstOpenedAt(stub, INVITEE_ID)).toEqual(expect.any(Number));
     expect((await viewerState(stub, INVITEE_ID))?.unseen).toBe(false);
+  });
+
+  it("does not mark an unseen work stream opened when loading viewer profiles fails", async () => {
+    const stub = agentStub();
+    await startWorkstream(stub, [INVITEE_ID]);
+    let originalLoadViewers: TestableSubstreamAgent["loadViewers"] | undefined;
+    await runInDurableObject(stub, (instance) => {
+      const testable = instance as unknown as TestableSubstreamAgent;
+      originalLoadViewers = testable.loadViewers;
+      testable.loadViewers = async () => { throw new Error("viewer_profile_read_failed"); };
+    });
+
+    await expect(runInDurableObject(stub, (instance) => {
+      const testable = instance as unknown as TestableSubstreamAgent;
+      return testable.assembleSocketSnapshot(
+        WORKSPACE_ID, WORKSTREAM_ID, INVITEE_AUTH, false, "initial", 0, true,
+      );
+    })).rejects.toThrow("viewer_profile_read_failed");
+    expect(await firstOpenedAt(stub, INVITEE_ID)).toBeNull();
+
+    await runInDurableObject(stub, (instance) => {
+      (instance as unknown as TestableSubstreamAgent).loadViewers = originalLoadViewers!;
+    });
   });
 
   it("keeps a speculative socket snapshot unseen until navigation promotes it", async () => {

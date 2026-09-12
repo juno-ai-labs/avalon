@@ -39,38 +39,6 @@ export class ConversationService {
   ) {}
 
   /**
-   * Which kind of parent this id names.
-   *
-   * Work streams first, because they are most of the traffic; an id neither
-   * knows is a 404 rather than a guess. Both reads are the parent's own
-   * `authority`, which also carries the generation and archive state the
-   * ticket needs.
-   */
-  async resolveParent(parentId: string): Promise<ResolvedConversationParent> {
-    const workstream = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSTREAM_DOS,
-      this.auth.workspaceId,
-      workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(parentId)),
-    );
-    const asWorkstream = await workstream.authority({ workspaceId: this.auth.workspaceId, parentId });
-    if (asWorkstream.exists) {
-      return { kind: "workstream", id: parentId, membershipVersion: 0, ...asWorkstream };
-    }
-    const automation = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.AUTOMATION_DOS,
-      this.auth.workspaceId,
-      automationDOName(this.env.AVALON_REGION, this.auth.workspaceId, asAutomationId(parentId)),
-    );
-    const asAutomation = await automation.authority({ workspaceId: this.auth.workspaceId, parentId });
-    if (asAutomation.exists) {
-      return { kind: "automation", id: parentId, membershipVersion: 0, ...asAutomation };
-    }
-    throw new ApiError(404, "conversation_not_found", "Conversation not found");
-  }
-
-  /**
    * The parent's answer to "may this person read your conversations", and the
    * seat that follows from it.
    *
