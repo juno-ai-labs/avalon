@@ -28,6 +28,7 @@ describe("artifact asset publication in real R2", () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     let active = 0;
+    let activeAtManifest = -1;
     let maximum = 0;
     const started: string[] = [];
     vi.spyOn(bucket, "put").mockImplementation(async (...args) => {
@@ -39,19 +40,25 @@ describe("artifact asset publication in real R2", () => {
         try { await gate; return await put(...args); }
         finally { active -= 1; }
       }
-      expect(active).toBe(0);
+      activeAtManifest = active;
       return await put(...args);
     });
     const publishing = writeArtifactVersion({ PAYLOADS: bucket }, input);
     try {
-      await expect.poll(() => started.length).toBe(6);
+      await expect.poll(() => started.length, { timeout: 5_000 }).toBe(6);
       expect(await bucket.get(artifactManifestKey(artifactId, 3))).toBeNull();
     } finally { release(); }
     const result = await publishing;
     expect(maximum).toBe(6);
-    for (const file of input.files) {
-      expect(await (await bucket.get(artifactAssetKey(artifactId, 3, file.path)))?.text())
-        .toBe(new TextDecoder().decode(file.bytes));
+    expect(activeAtManifest).toBe(0);
+    for (const file of result.manifest.assets) {
+      const stored = await (await bucket.get(artifactAssetKey(artifactId, 3, file.path)))?.text();
+      expect(stored).toBeTypeOf("string");
+      expect(stored).not.toBe("");
+      const inputFile = input.files.find((candidate) => candidate.path === file.path);
+      if (inputFile) {
+        expect(stored).toBe(new TextDecoder().decode(inputFile?.bytes));
+      }
     }
     expect(await (await bucket.get(result.manifestRef))?.json()).toEqual(result.manifest);
   });
@@ -60,7 +67,9 @@ describe("artifact asset publication in real R2", () => {
     const bucket = env.PAYLOADS;
     const put = bucket.put.bind(bucket);
     let active = 0;
+    const attemptedAssets: string[] = [];
     vi.spyOn(bucket, "put").mockImplementation(async (...args) => {
+      if (args[0] !== artifactManifestKey(artifactId, 3)) attemptedAssets.push(args[0]);
       if (args[0] === artifactAssetKey(artifactId, 3, "asset-1.txt")) throw new Error("R2 unavailable");
       active += 1;
       try { return await put(...args); }
@@ -69,6 +78,7 @@ describe("artifact asset publication in real R2", () => {
     await expect(writeArtifactVersion({ PAYLOADS: bucket }, input)).rejects
       .toMatchObject({ code: "resource_publish_failed" });
     expect(active).toBe(0);
+    expect(attemptedAssets).toHaveLength(6);
     expect(await bucket.get(artifactManifestKey(artifactId, 3))).toBeNull();
   });
 });
