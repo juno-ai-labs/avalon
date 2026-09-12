@@ -13,7 +13,8 @@
 | Plain HTTPS `GET` of the two example pages through the sandbox proxy, with a desktop-browser `User-Agent` | ChatGPT: `200`, 669 KB of HTML. Claude Code session: `403` with a Cloudflare managed challenge (`cf-mitigated: challenge`). | Decides which pages a request-only fetcher can read. |
 | Headless Chromium (Playwright, the sandbox's own `/opt/pw-browsers/chromium`) against either page | `net::ERR_CONNECTION_RESET` for both hosts, including `chatgpt.com`, which `curl` reads. The proxy's status endpoint logged `ws_closed_mid_exchange` for each attempt. | A sandbox limitation, not a fact about the sites. No browser-based fetch could be tested here. |
 | Firecrawl `/scrape` with `proxy: "stealth"` | Not run: `.env.local` carries an empty `FIRECRAWL_API_KEY`. | The spike the PRD's rollout gates Claude import on is exactly this call. |
-| Cloudflare Browser Run `quickAction` | Not run: needs the Worker's `BROWSER` binding, which only exists in a deployed or `wrangler dev --remote` Worker. | Same spike, second candidate. |
+| Cloudflare Browser Run `quickAction` | Not run: needs the Worker's `BROWSER` binding, which only exists in a deployed or `wrangler dev --remote` Worker. | Moot: Cloudflare's own documentation rules it out, see §5. |
+| Anthropic's documentation, Cloudflare's documentation, Firecrawl's documentation, Anthropic's consumer terms, and the claude.ai application bundle | Read later the same day; findings in §5. | Together they decide the fetcher. |
 
 So: ChatGPT's page shape is verified in full; Claude's is verified only as far
 as "a non-browser client is challenged", and everything said about its payload
@@ -137,17 +138,20 @@ transcript's shape is unknown until the spike reads one.
 | | Firecrawl `/scrape` | Cloudflare Browser Run | Daytona computer use |
 | --- | --- | --- | --- |
 | In the tree today | Yes: [`apps/api/src/lib/firecrawl.ts`](../../../apps/api/src/lib/firecrawl.ts), the `rally:web` plugin's `search` and `fetch`, a regional `FIRECRAWL_API_KEY` in both regions | Yes: the `BROWSER` binding in both regional Wrangler files, used by `conversation-link-search.ts` for link capture | Yes, as the Terminal sandbox — one per work stream, no browser in the snapshot, both regions target the `us` fleet |
-| Gets past a managed challenge | Designed to (stealth proxies); unverified for claude.ai | Unverified; likely not exempt | Would need a browser installed in the snapshot and `full_internet` egress; unverified |
+| Gets past a managed challenge | Not promised: the `proxy` parameter is deprecated and "enhanced" mode escalates once on a 401, 403, or 429, with nothing said about challenges (§5) | No: "Browser Run requests are always identified as bot traffic by Cloudflare" (§5) | Would need a browser installed in the snapshot and `full_internet` egress; unverified |
+| Can read a public Claude Code session | No: the page is visible only to a signed-in claude.ai user (§5), and a server holds no such sign-in | No, same reason | No, same reason |
 | Returns raw HTML | `formats: ["rawHtml"]` — one option away; the client today asks for markdown only | `quickAction("content")` returns the rendered DOM | Whatever a script writes to disk |
 | Rendered-DOM image URLs | With `formats: ["html"]`, or `actions` | Yes, it is the rendered DOM | Yes |
 | Where it runs | Firecrawl's infrastructure, from either region — the same subprocessor the web plugin already uses; only the URL leaves Rally | Cloudflare, in each regional Worker; no third party | Daytona `us` — a subprocessor exception [`regionalization.md`](../../regionalization.md) already records for Terminal |
 | Failure surface the repo already handles | `FirecrawlError` with `kind` and `retryable`, `Retry-After`, four attempts with backoff | Provider `code` on a `422` (a `5006` connection-closed case is recorded in [`text-search.md`](../../text-search.md)) | Sandbox lifecycle |
 | Weight for one fetch | One HTTPS call | One HTTPS call | Sandbox acquisition, a browser, a script, and cleanup |
 
-The PRD's decision follows from the last row and the first: one call, already
-wired, already regional, with the one property the Claude pages need still to be
-proved. Browser Run is the fallback because it is also already wired and keeps
-the bytes on Cloudflare. Daytona is rejected for a fetch.
+When this table was first drawn the PRD chose Firecrawl, with Browser Run as
+the fallback. The reads in §5, later the same day, overturned that: no server
+can show a claude.ai sign-in, and the one server-side browser that is already
+wired is identified as a bot by construction. The PRD now fetches in the desktop
+app's own fenced browser view, and this table is kept as the record of why the
+server-side options were considered and what each one lacks.
 
 ## 4. Client-side pieces already present
 
@@ -171,3 +175,90 @@ the bytes on Cloudflare. Daytona is rejected for a fetch.
   contiguous rows, with per-reader disclosure state that survives the
   virtualizer. The imported-conversation block is the same shape with a
   different header.
+
+## 5. What the documentation and the app bundle say
+
+Read on 2026-09-12, after the fetch experiments above.
+
+### Anthropic's documentation on sharing
+
+- **A public Claude Code web session is visible to anyone signed in to
+  claude.ai** — signed in, not merely holding the link. Max and Pro accounts
+  choose Private or Public; Team and Enterprise choose Private or Team. A
+  recipient sees a snapshot as of the moment of sharing
+  ([Use Claude Code on the web, "Share sessions"](https://code.claude.com/docs/en/claude-code-on-the-web)).
+  So a Claude Code session cannot be read by any server-side fetcher, whatever
+  it does about the challenge: the page needs a person's sign-in, and Rally
+  holds none. This is the fact that decided the fetcher.
+- **A public Claude.ai chat link needs no login.** Anyone with the link can
+  view it; it is a view-only snapshot; and **files attached to the chat are not
+  included** in the shared page
+  ([Public links for shared chats](https://support.claude.com/en/articles/16762437-public-links-for-shared-chats)).
+  So a Claude share import never carries attachments, by the provider's design.
+- **No API reads a Claude Code web session.** The Compliance API's session
+  endpoints cover local sessions only and state that the remote-session
+  endpoints return Cowork sessions, not Claude Code on the web; the Managed
+  Agents sessions API is a different product. A person's *own local* sessions
+  are readable on their machine (`~/.claude/projects/<project>/<session>.jsonl`,
+  `claude -p --resume <id> --output-format json`, `/export`), which is a
+  possible later import path for one's own work and not a way to read someone
+  else's shared session.
+
+### Cloudflare's documentation on Browser Run
+
+The Browser Rendering FAQ: "Browser Run requests are always identified as bot
+traffic by Cloudflare", requests carry identifying headers
+(`cf-biso-request-id`, `cf-biso-devtools`), and they "originate from
+Cloudflare's global network" with no per-request IP choice
+([FAQ](https://developers.cloudflare.com/browser-rendering/faq/)). A managed
+challenge on a third-party site is therefore not something the `BROWSER`
+binding can pass.
+
+### Firecrawl's documentation on proxies
+
+The `proxy` parameter "is deprecated"; the recommended `auto` tries basic and
+"retries with `enhanced` on failure", escalation "happens at most once per
+request" and is triggered by a 401, 403, or 429; enhanced requests cost the
+same one credit. Nothing is said about challenge pages or anti-bot systems
+([Proxies](https://docs.firecrawl.dev/features/proxies),
+[Enhanced mode](https://docs.firecrawl.dev/features/enhanced-mode)).
+
+### Anthropic's consumer terms
+
+Section 3, "Use of our Services", forbids, "except when you are accessing our
+Services via an Anthropic API Key or where we otherwise explicitly permit it,
+to access the Services through automated or non-human means, whether through a
+bot, script, or otherwise", and to "crawl, scrape, or otherwise harvest data or
+information from our Services other than as permitted under these Terms"
+([Consumer Terms](https://www.anthropic.com/legal/consumer-terms)). A scraping
+service reading claude.ai on Rally's behalf sits against that; a person's own
+app showing them a page they were sent, as themselves, is ordinary use. Not
+legal advice; worth a read by whoever owns that question.
+
+### The claude.ai application bundle
+
+The share shell's script tag names one entry module on
+`assets-proxy.anthropic.com`, which loads 226 further chunks; all were fetched
+(about 22 MB) and searched for API paths. Findings:
+
+- The classic share page reads **`/api/chat_snapshots/${id}`** anonymously,
+  and an organization-scoped variant
+  `/api/organizations/${org}/chat_snapshots/${id}` exists for a signed-in
+  reader. That is the response the Claude share adapter parses.
+- The `/code/…` route is dispatched to a **separate shell** (the router treats
+  `/code` and `/artifact/` alike and hands them off), and the desktop Claude
+  app's deep-link handler opens `/code` links in a browser window rather than
+  in itself. The Claude Code session page's own data endpoint is therefore not
+  in the code the sandbox could read; it is learned by loading one public
+  session in the fenced view, signed in, and recording what the page fetches.
+- The bundle's Claude Code paths that are visible (`/api/claude_code/…`) are
+  settings, analytics, insights, and code-review endpoints, none of them a
+  session transcript.
+
+### What this settles
+
+Only a real browser on a person's own machine, signed in as that person where
+the provider requires it, can read every link the PRD accepts. The desktop app
+is one, and it already has the fence (§4). The capture is the responses that
+browser loads: the HTML document for ChatGPT, `/api/chat_snapshots/<id>` for a
+Claude share, and the session response for a Claude Code session.
