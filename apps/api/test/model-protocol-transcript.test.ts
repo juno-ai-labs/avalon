@@ -234,6 +234,26 @@ function transcriptPort(
 }
 
 describe("durable UI-to-model transcript projection", () => {
+  it("keeps a bootstrap compaction checkpoint below an earlier pending delivered turn", () => {
+    const messages = [
+      message("prepared-before", 1, { author: "human", textContent: "first" }),
+      message("waiting-preparation", 2, { author: "human", textContent: "second" }),
+      message("prepared-after", 3, { author: "human", textContent: "third" }),
+    ];
+
+    const bootstrap = __integrationTesting.bootstrapProjectionMessages(
+      messages,
+      new Set(["waiting-preparation"]),
+    );
+
+    // Bootstrap may render the later prepared turn, but the continuation must
+    // stop at the hole. Otherwise a later retry starts after sequence 3 and
+    // permanently loses the delivered turn at sequence 2.
+    expect(bootstrap.preparedMessages.map((entry) => entry.id))
+      .toEqual(["prepared-before", "prepared-after"]);
+    expect(bootstrap.compactionMessages.map((entry) => entry.id)).toEqual(["prepared-before"]);
+  });
+
   it("canonicalizes persisted model-message keys by UTF-16 code unit", () => {
     expect(canonicalModelMessageJson({
       role: "user",

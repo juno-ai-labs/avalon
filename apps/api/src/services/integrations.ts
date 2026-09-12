@@ -1019,6 +1019,29 @@ type TranscriptMessageLister = (
   beforeSequence?: number,
 ) => Promise<Message[]>;
 
+function bootstrapProjectionMessages(
+  storedMessages: readonly Message[],
+  pendingAgentTurnIds: ReadonlySet<string>,
+): { preparedMessages: Message[]; compactionMessages: Message[] } {
+  const preparedMessages = storedMessages.filter((message) => !pendingAgentTurnIds.has(message.id));
+  // A compaction continuation is a contiguous transcript prefix. A later
+  // prepared turn cannot move its waterline past an earlier delivered turn
+  // that still awaits agent preparation, or that earlier turn would be lost
+  // from the next bootstrap.
+  const firstPendingSequence = storedMessages.reduce<number | null>(
+    (first, message) => pendingAgentTurnIds.has(message.id)
+      ? Math.min(first ?? message.sequenceNumber, message.sequenceNumber)
+      : first,
+    null,
+  );
+  return {
+    preparedMessages,
+    compactionMessages: firstPendingSequence === null
+      ? preparedMessages
+      : preparedMessages.filter((message) => message.sequenceNumber < firstPendingSequence),
+  };
+}
+
 async function loadWorkstreamContextCompaction(
   database: D1Database,
   transcript: Pick<TranscriptObjectPort, "compactionCheckpoint">,
@@ -2639,7 +2662,10 @@ export async function runWorkstreamHarness(
   const pendingAgentTurnIds = new Set(runtime.persistentLoop?.pendingAgentTurnIds?.() ?? []);
   // Human delivery can precede preparation. An unadmitted turn must not enter
   // bootstrap as overheard context and then enter Bind again as a request.
-  const preparedMessages = storedMessages.filter((message) => !pendingAgentTurnIds.has(message.id));
+  const { preparedMessages, compactionMessages } = bootstrapProjectionMessages(
+    storedMessages,
+    pendingAgentTurnIds,
+  );
   const transcriptProjection = requiresCanonicalBootstrap
     ? await projectModelProtocolTranscript(env, input, preparedMessages)
     : { messages: [], issues: [] };
@@ -2649,7 +2675,7 @@ export async function runWorkstreamHarness(
     ...transcriptProjection.messages,
   ];
   const compactedThroughSequence = requiresCanonicalBootstrap
-    ? storedMessages.reduce(
+    ? compactionMessages.reduce(
         (highest, message) => Math.max(highest, message.sequenceNumber),
         priorCompaction?.compactedThroughSequence ?? 0,
       )
@@ -8697,6 +8723,7 @@ export const __integrationTesting = {
   loadToolInvocation,
   stableWireToolName,
   loadTriggerFencedTranscriptMessages,
+  bootstrapProjectionMessages,
   loadRunPromptContext,
   workstreamActivationInput,
   projectModelProtocolTranscript,
