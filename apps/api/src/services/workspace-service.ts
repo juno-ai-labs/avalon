@@ -711,20 +711,23 @@ export class WorkspaceService {
     if (!row) throw new ApiError(500, "invitation_persistence_failed", "Could not create the invitation");
     const inviteUrl = new URL("/invite/", this.env.PUBLIC_WEB_BASE_URL);
     inviteUrl.hash = new URLSearchParams({ region: this.env.AVALON_REGION, token }).toString();
-    // Download redemption only exists on the Global Worker today (see
-    // docs/private-access.md#regional-impact); an EU workspace invitation gets
-    // no download link until regional redemption is wired.
-    const downloadGrant = row.workspace_region === "global"
-      ? await issueDownloadGrant(this.env.DB, {
-          source: "workspace_invitation",
-          sourceId: row.id,
-          createdBy: this.auth.userId,
-          expiresAt,
-        })
-      : null;
-    const downloadUrl = downloadGrant ? downloadGrantUrl(downloadGrant.token, this.env.PUBLIC_WEB_BASE_URL) : undefined;
+    let downloadGrant: { id: string; token: string; expiresAt: string | null } | null = null;
     let emailDelivery: InvitationEmailDelivery;
     try {
+      // Download redemption only exists on the Global Worker today (see
+      // docs/private-access.md#regional-impact); an EU workspace invitation gets
+      // no download link until regional redemption is wired. Issuance stays
+      // inside this try so a grant failure rolls back the invitation exactly
+      // like an email failure does, rather than orphaning it.
+      downloadGrant = row.workspace_region === "global"
+        ? await issueDownloadGrant(this.env.DB, {
+            source: "workspace_invitation",
+            sourceId: row.id,
+            createdBy: this.auth.userId,
+            expiresAt,
+          })
+        : null;
+      const downloadUrl = downloadGrant ? downloadGrantUrl(downloadGrant.token, this.env.PUBLIC_WEB_BASE_URL) : undefined;
       emailDelivery = await sendWorkspaceInvitationEmail(this.env, {
         id: row.id,
         recipientEmail: row.email,

@@ -74,9 +74,11 @@ issuer. For a Global workspace it issues a `workspace_invitation` grant, timed t
 the invitation's own 7-day expiry, and passes its URL to
 `sendWorkspaceInvitationEmail` so the email carries both the accept link and a
 download link. A recipient with no existing install is not left with only a
-desktop deep link that silently does nothing. If sending the email then fails,
-the grant is revoked alongside the invitation row so a failed send does not leave
-a live download capability behind. An EU workspace invitation gets no grant: the
+desktop deep link that silently does nothing. Issuance and the email send share
+one `try`/`catch`, so a failure in either one revokes the grant (if one was
+issued) alongside the invitation row: a grant-issuance failure cannot leave the
+invitation persisted and un-rolled-back, and a failed send does not leave a live
+download capability behind. An EU workspace invitation gets no grant: the
 redemption route 404s outside the Global Worker, and issuing one anyway would
 create a link that can never be redeemed.
 
@@ -235,8 +237,9 @@ and rejection of past, current or ambiguous expiries; site tests retain
 legacy release-renderer coverage separately from the new form template.
 `apps/api/test/workspace-and-invitations.test.ts` covers the invitation-email
 caller: a Global invitation's email carries a download link whose token differs
-from the accept token and never appears in a database write, and a EU invitation
-issues no grant and mentions no download link.
+from the accept token and never appears in a database write, a EU invitation
+issues no grant and mentions no download link, and a failure writing the grant
+itself revokes the invitation exactly like a failed email send does.
 
 Mutation checks prove the write, token admission, forced concurrent claim,
 origin, expiry, rate/body guards and sender/idempotency paths fail when their
@@ -397,8 +400,10 @@ privacy operations stay in the owning region; the current slice creates none.
 `workspace_invitation` grant, timed to the invitation's own 7-day expiry, for a
 Global workspace and passes its URL to `sendWorkspaceInvitationEmail`, which
 renders it as a second link/button alongside "Accept invitation". A EU
-invitation issues no grant. If the email send then fails, the grant is revoked
-in the same rollback that already revokes the invitation row.
+invitation issues no grant. Issuance runs inside the same `try` that sends the
+email, so a grant-issuance failure or an email-send failure both revoke the
+grant (if one was issued) and the invitation row through the one existing
+rollback path.
 
 **Why:** The invitation email's only link opens `/invite/`, whose "Open Rally"
 button is a `rallywithai://` deep link that does nothing when the app is not
