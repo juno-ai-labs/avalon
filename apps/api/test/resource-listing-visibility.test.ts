@@ -327,7 +327,7 @@ describe("the member's artifacts rail", () => {
       workspaceId: WORKSPACE,
       region: "global",
       role: "owner",
-    }, [], false);
+    }, false);
     expect(detail.resources.map((resource) => resource.id)).toEqual([PUBLISHED]);
     expect(detail.resources[0]?.direction).toBe("artifact");
   });

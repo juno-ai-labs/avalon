@@ -287,6 +287,7 @@ where its state rolls up; its parent does, through the contract in
 
 | RPC | Answers | `WorkstreamDO` | `AutomationDO` |
 | --- | --- | --- | --- |
+| `resolveViewer({workspaceId, parentId, userId, substreamId?})` | `{exists, authorityGeneration, authorized, archived, childStatus?, membershipVersion?}` | combines the work stream's existence and authority generation with the requested viewer or private-child membership decision | combines the automation row's existence and generation with its viewer decision; a deleted automation reports absent |
 | `authorizeViewer({workspaceId, parentId, userId})` | `{authorized, archived}` | `scope = 'workspace'`, or the person's Main viewer row says participant; `archived` from `workstream_metadata.archived_at` | scope `workspace`, the author, the run-as principal, or, for a room's automation, `WorkspaceDO.workstreamParticipant`; `archived` when the owning room is archived; a deleted automation answers unauthorized |
 | `authority({workspaceId, parentId})` | `{exists, authorityGeneration, archived}` | from `workstream_metadata` | from the automation row; `archived` when deleted or the owning room is archived |
 | `reserveChild({workspaceId, parentId, substreamId, kind, createdByUserId, authorityGeneration, directory?})` | `{reserved: true, authorityGeneration}`, idempotent on `(parentId, substreamId)` | inserts `conversation_children`; for `"0"` with `directory` it also creates the provisional `workstream_metadata` row and delivers the provisional directory row to WorkspaceDO synchronously | inserts `conversation_children` |
@@ -304,14 +305,14 @@ aggregate hooks `onChildCommonAggregate` / `onChildUserAggregate` /
 would have put a table-name parameter on every statement for no reader's
 benefit.
 
-The Worker resolves which kind of parent an id names once per request
-(`ConversationService.resolveParent`: `WorkstreamDO.authority().exists` first,
-because work streams are most of the traffic, then `AutomationDO.authority()`,
-else 404), carries the kind in the socket ticket (`pk`) and the Worker-to-object
-headers (`x-rally-parent-kind`, `x-rally-parent-id`), and never branches on it
-below that point. A caller that needs only the contract, such as the Queue
-consumer or access revocation, asks `conversationParentStub` for a stub and
-calls the contract.
+For conversation opening, the Worker asks `WorkstreamDO.resolveViewer()` first.
+An existing work stream returns its combined decision and an inaccessible one
+fails closed; only an absent work stream makes the Worker ask
+`AutomationDO.resolveViewer()`. The resulting kind travels in the socket ticket
+(`pk`) and the Worker-to-object headers (`x-rally-parent-kind`,
+`x-rally-parent-id`), and nothing below that point branches on it. A caller that
+needs only the contract, such as the Queue consumer or access revocation, asks
+`conversationParentStub` for a stub and calls the contract.
 
 `WorkspaceDO` owns workspace synchronization/commands, all workspace-scoped
 product domains, the authoritative cross-work-stream directory, and the

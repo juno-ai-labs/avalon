@@ -65,7 +65,7 @@ interface Recorded {
   authorizeViewer: ReturnType<typeof vi.fn<(input: unknown) => Promise<{
     authorized: boolean; archived: boolean; membershipVersion: number;
   }>>>;
-  /** Which parent claims the id, which is what `resolveParent` asks each in turn. */
+  /** Which parent claims the id, which selects the combined viewer decision. */
   parentKind: ParentKind;
   /** Whether the parent reports itself archived, which only a write is refused for. */
   archived: boolean;

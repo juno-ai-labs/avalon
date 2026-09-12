@@ -2052,15 +2052,15 @@ export class WorkstreamObjectProductService {
   }
 
   /** Detail for the canonical transcript snapshot assembled by SubstreamAgent. */
-  async boot(auth: AuthContext, viewers: WorkstreamDetail["viewers"] = []): Promise<{
+  async boot(auth: AuthContext): Promise<{
     workstream: WorkstreamDetail;
   }> {
-    return { workstream: await this.get(auth, viewers) };
+    return { workstream: await this.get(auth) };
   }
 
-  async get(auth: AuthContext, viewers: WorkstreamDetail["viewers"] = []): Promise<WorkstreamDetail> {
+  async get(auth: AuthContext): Promise<WorkstreamDetail> {
     const root = await this.authorize(auth);
-    return this.detailAfterAdmission(auth, root, viewers);
+    return this.detailAfterAdmission(auth, root);
   }
 
   /**
@@ -2071,11 +2071,10 @@ export class WorkstreamObjectProductService {
    */
   async getAdmitted(
     auth: AuthContext,
-    viewers: WorkstreamDetail["viewers"] = [],
     markOpened = true,
   ): Promise<WorkstreamDetail> {
     const root = this.locallyAuthorizedRoot(auth);
-    return this.detailAfterAdmission(auth, root, viewers, markOpened);
+    return this.detailAfterAdmission(auth, root, markOpened);
   }
 
   /** Settle unseen state after a speculative socket is promoted by navigation. */
@@ -2087,7 +2086,6 @@ export class WorkstreamObjectProductService {
   private async detailAfterAdmission(
     auth: AuthContext,
     root: RootRow,
-    viewers: WorkstreamDetail["viewers"],
     markOpened = true,
   ): Promise<WorkstreamDetail> {
     // Both ways of opening a work stream — the socket's snapshot and
@@ -2115,7 +2113,7 @@ export class WorkstreamObjectProductService {
       ...workstream,
       stopRequested: this.loops.loop()?.stop_requested_at != null,
       participants,
-      viewers,
+      viewers: [],
       resources,
       connections,
       backgroundTasks: this.backgroundTasks(),
