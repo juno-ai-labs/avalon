@@ -541,8 +541,10 @@ workspace search and the work-stream flows described here.
 - **The session lookup is one uncached, blocking D1 round trip per
   authenticated request**, and there is no read replication on the `DB` binding.
   Root-mounted identity and workspace middleware share that request-local result,
-  so `rally.auth.duration_ms` is emitted once for protected routes; a deploy-time
-  step down in that metric reflects removal of the former duplicate lookup.
+  removing one lookup from a protected request's critical path. Before that
+  reuse, the second call overwrote `rally.auth.duration_ms`; the metric now
+  represents the single identity pass and must not be compared as a sum of both
+  old calls.
   Whether that is a problem is now measurable rather than arguable: read
   `rally.auth.duration_ms`, and the platform's own `d1_first` span for the same
   query carries `cloudflare.d1.response.sql_duration_ms` beside it, which
