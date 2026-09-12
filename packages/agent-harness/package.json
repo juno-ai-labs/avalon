@@ -13,7 +13,7 @@
   "dependencies": {
     "@openrouter/sdk": "1.2.54",
     "@rally/contracts": "workspace:*",
-    "@juno-ai/bind": "14.0.0",
+    "@juno-ai/bind": "15.0.0",
     "eventsource-parser": "latest",
     "zod": "catalog:"
   },
