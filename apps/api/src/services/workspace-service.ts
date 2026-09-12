@@ -9,6 +9,7 @@ import {
   type WorkspaceInvitationRole,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
+import { downloadGrantUrl, issueDownloadGrant, revokeDownloadGrant } from "@rally/db/private-access";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { randomToken, sha256 } from "../lib/crypto";
@@ -710,6 +711,18 @@ export class WorkspaceService {
     if (!row) throw new ApiError(500, "invitation_persistence_failed", "Could not create the invitation");
     const inviteUrl = new URL("/invite/", this.env.PUBLIC_WEB_BASE_URL);
     inviteUrl.hash = new URLSearchParams({ region: this.env.AVALON_REGION, token }).toString();
+    // Download redemption only exists on the Global Worker today (see
+    // docs/private-access.md#regional-impact); an EU workspace invitation gets
+    // no download link until regional redemption is wired.
+    const downloadGrant = row.workspace_region === "global"
+      ? await issueDownloadGrant(this.env.DB, {
+          source: "workspace_invitation",
+          sourceId: row.id,
+          createdBy: this.auth.userId,
+          expiresAt,
+        })
+      : null;
+    const downloadUrl = downloadGrant ? downloadGrantUrl(downloadGrant.token, this.env.PUBLIC_WEB_BASE_URL) : undefined;
     let emailDelivery: InvitationEmailDelivery;
     try {
       emailDelivery = await sendWorkspaceInvitationEmail(this.env, {
@@ -721,8 +734,10 @@ export class WorkspaceService {
         region: row.workspace_region,
         expiresAt: row.expires_at,
         inviteUrl: inviteUrl.toString(),
+        ...(downloadUrl ? { downloadUrl } : {}),
       });
     } catch (error) {
+      if (downloadGrant) await revokeDownloadGrant(this.env.DB, downloadGrant.id).catch(() => undefined);
       await this.env.DB.prepare(
         `UPDATE workspace_invitations SET revoked_at = ?
          WHERE id = ? AND workspace_id = ? AND accepted_at IS NULL AND revoked_at IS NULL`,

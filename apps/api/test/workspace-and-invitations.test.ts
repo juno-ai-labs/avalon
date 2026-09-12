@@ -473,6 +473,41 @@ describe("workspace invitation lifecycle", () => {
     const token = new URLSearchParams(new URL(result.inviteUrl).hash.slice(1)).get("token");
     expect(token).toBeTruthy();
     expect(JSON.stringify(database.batches)).not.toContain(token!);
+
+    // A recipient with no Rally install yet must not be stuck on the accept
+    // page with only a desktop deep link: the email also carries a one-time
+    // download grant from the same shared issuer Ace uses.
+    const downloadUrlMatch = String(body.text).match(/https:\/\/with-avalon\.com\/download\/#token=([a-f0-9]{64})/);
+    expect(downloadUrlMatch).toBeTruthy();
+    expect(String(body.html)).toContain("Download it for macOS");
+    const downloadToken = downloadUrlMatch![1]!;
+    expect(downloadToken).not.toBe(token);
+    expect(JSON.stringify(database.runs)).not.toContain(downloadToken);
+  });
+
+  it("does not issue a download link for a EU workspace invitation, since redemption is Global-only", async () => {
+    const euRow = { ...invitationRow, workspace_region: "eu" as const };
+    const database = new StubDatabase(({ sql }) => {
+      if (sql.includes("SELECT 1 AS present")) return null;
+      if (sql.includes("WHERE i.id = ?")) return euRow;
+      return undefined;
+    });
+    const resend = vi.fn(async () => new Response(JSON.stringify({ id: "resend-email-id" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", resend);
+
+    await new WorkspaceService(environment(database, {
+      APP_ENV: "production",
+      RESEND_API_KEY: "re_test_send_only",
+    }), ownerAuth).createInvitation(invitationRow.email, "member");
+
+    expect(database.runs.some((run) => run.sql.includes("INSERT INTO download_grants"))).toBe(false);
+    const [, init] = resend.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(String(body.text)).not.toContain("/download/");
+    expect(String(body.html)).not.toContain("Download it for macOS");
   });
 
   it("revokes a newly persisted invitation when Resend rejects delivery", async () => {
