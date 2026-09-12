@@ -66,7 +66,7 @@ export class ArtifactOpenService {
   }
 
   /**
-   * Authorize one viewer and mint their access.
+   * Resolve an artifact and authorize its current viewer.
    *
    * The two checks are deliberately separate authorities, and neither
    * substitutes for the other: the registry says which artifact a resource is,
@@ -75,7 +75,7 @@ export class ArtifactOpenService {
    * cannot see and one that does not exist produce the same answer, so this
    * endpoint is not an existence oracle.
    */
-  async open(resourceId: string): Promise<ArtifactOpenResult> {
+  private async resolveAuthorized(resourceId: string) {
     const workspaceId = this.auth.workspaceId;
     if (!workspaceId) throw new ApiError(403, "workspace_required", "Choose a workspace before opening an artifact.");
     const row = await this.env.DB.prepare(
@@ -110,6 +110,18 @@ export class ArtifactOpenService {
       throw new ApiError(404, "artifact_not_found", "That artifact does not exist here.");
     }
 
+    const host = durableObjectStubForArtifact(
+      this.env,
+      this.env.ARTIFACT_HOSTS,
+      artifactHostDOName(this.env.AVALON_REGION, asArtifactId(row.artifact_id)),
+      affinity,
+    );
+    return { row, host };
+  }
+
+  async open(resourceId: string): Promise<ArtifactOpenResult> {
+    const { row, host } = await this.resolveAuthorized(resourceId);
+    const workspaceId = this.auth.workspaceId;
     // Pre-stub artifacts are migrated lazily, but only after the ordinary
     // visibility check. The platform-D1 reservation is durable before the
     // WorkspaceDO registry starts returning the public address.
@@ -126,12 +138,6 @@ export class ArtifactOpenService {
       ).bind(hostnameStub, workspaceId, row.artifact_id).run();
     }
 
-    const host = durableObjectStubForArtifact(
-      this.env,
-      this.env.ARTIFACT_HOSTS,
-      artifactHostDOName(this.env.AVALON_REGION, asArtifactId(row.artifact_id)),
-      affinity,
-    );
     const { code } = await host.openForViewer({
       userId: this.auth.userId,
       // Carried so a single revoked session drops only the windows that
@@ -181,9 +187,9 @@ export class ArtifactOpenService {
   async describeData(resourceId: string): Promise<{
     tables: { name: string; columns: { name: string; type: string }[]; rowCount: number }[];
   }> {
-    const opened = await this.open(resourceId);
-    if (!opened.stateful) return { tables: [] };
-    return await (await this.hostFor(opened.artifactId)).describeData();
+    const { row, host } = await this.resolveAuthorized(resourceId);
+    if (row.stateful !== 1) return { tables: [] };
+    return await host.describeData();
   }
 
   /**
@@ -197,22 +203,13 @@ export class ArtifactOpenService {
     rows: Record<string, unknown>[];
     csv: string;
   }> {
-    const opened = await this.open(resourceId);
-    if (!opened.stateful) return { rows: [], csv: "" };
-    const page = await (await this.hostFor(opened.artifactId)).pageData(table, offset, DATA_PAGE_ROWS);
+    const { row, host } = await this.resolveAuthorized(resourceId);
+    if (row.stateful !== 1) return { rows: [], csv: "" };
+    const page = await host.pageData(table, offset, DATA_PAGE_ROWS);
     if (!page.ok) {
       throw new ApiError(404, "artifact_table_not_found", "That table is not part of this site's data.");
     }
     return { rows: page.rows, csv: toCsv(page.rows) };
-  }
-
-  private async hostFor(artifactId: string) {
-    return durableObjectStubForArtifact(
-      this.env,
-      this.env.ARTIFACT_HOSTS,
-      artifactHostDOName(this.env.AVALON_REGION, asArtifactId(artifactId)),
-      await workspacePlacementAffinity(this.env, this.auth.workspaceId),
-    );
   }
 
   /** What the model's server module threw, for the rail's error log. */
@@ -223,11 +220,10 @@ export class ArtifactOpenService {
     message: string;
     stack: string | null;
   }[]> {
-    // Through `open`, so reading the log needs the same visibility as opening
-    // the artifact: an error log names request paths a page defines, and is not
-    // something to hand to somebody who may not see the work stream.
-    const opened = await this.open(resourceId);
-    return await (await this.hostFor(opened.artifactId)).readErrors();
+    // The same registry and parent authorization as navigation, without
+    // minting a browser bootstrap code that this read never consumes.
+    const { host } = await this.resolveAuthorized(resourceId);
+    return await host.readErrors();
   }
 }
 
