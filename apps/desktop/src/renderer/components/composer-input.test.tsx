@@ -182,9 +182,18 @@ describe('ComposerInput markdown lists', () => {
     expect(onValueChange).toHaveBeenCalledWith('- a\n  - b');
   });
 
-  it('lets Tab out of the composer where there is nothing to nest', () => {
-    const { onValueChange, textarea } = composeAt('- a', 3);
-    // Uncancelled, or a draft that happens to be a list is a keyboard trap.
+  it('keeps Tab inside the list even where the indent has nowhere to go', () => {
+    // Cancelled and unchanged. Tab that indents four times and then, with
+    // nothing on screen having moved, throws the caret out of the field is the
+    // thing this is for; the depth cap is proved in the module's own tests.
+    const { onValueChange, textarea } = composeAt('- a\n  - b\n    - c\n      - d\n        - e\n          - f\n          - g', 68);
+    expect(fireEvent.keyDown(textarea, { key: 'Tab' })).toBe(false);
+    expect(onValueChange).not.toHaveBeenCalled();
+  });
+
+  it('lets Tab out of the composer when the caret is not in a list', () => {
+    const { onValueChange, textarea } = composeAt('just prose', 10);
+    // Uncancelled: an ordinary message keeps the way out of the field it had.
     expect(fireEvent.keyDown(textarea, { key: 'Tab' })).toBe(true);
     expect(onValueChange).not.toHaveBeenCalled();
   });

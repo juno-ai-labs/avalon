@@ -3,6 +3,7 @@ import {
   continueListAtCaret,
   type DraftEdit,
   parseListItem,
+  selectionTouchesListItem,
   shiftListAtCaret,
   toggleListAtSelection,
 } from './markdown-lists';
@@ -136,16 +137,18 @@ describe('shiftListAtCaret', () => {
     expect(indent('10. a\n11. b|')).toBe('10. a\n    1. b|');
   });
 
-  it('will not nest an item that has nothing above it to nest under', () => {
-    expect(indent('- a|')).toBeNull();
-    expect(indent('intro\n- a|')).toBeNull();
+  it('indents an item with nothing above it by its own width', () => {
+    // Tab indents. An item that refused because it happens to be first would be
+    // indistinguishable, to the person pressing the key, from one that could not.
+    expect(indent('- a|')).toBe('  - a|');
+    expect(indent('intro\n- a|')).toBe('intro\n  - a|');
   });
 
   it('unnests back onto the column of the nearest shallower item', () => {
     expect(outdent('- a\n    - b|')).toBe('- a\n- b|');
   });
 
-  it('lets Tab out of the composer rather than shifting what cannot shift', () => {
+  it('changes nothing unnesting an item already at the margin', () => {
     expect(outdent('- a|')).toBeNull();
     expect(indent('plain text|')).toBeNull();
   });
@@ -166,7 +169,27 @@ describe('shiftListAtCaret', () => {
   });
 
   it('will not nest an item under a line of code', () => {
-    expect(indent('    - sample\n- real|')).toBeNull();
+    // Two spaces, its own width — not the four that would put it inside the
+    // code block above it and stop it being a list at all.
+    expect(indent('    - sample\n- real|')).toBe('    - sample\n  - real|');
+  });
+
+  it('stops indenting at five levels', () => {
+    const five = '- a\n  - b\n    - c\n      - d\n        - e';
+    // The sixth item is a sibling at depth 4, so it still has somewhere to go.
+    expect(indent(`${five}\n        - f|`)).toBe(`${five}\n          - f|`);
+    // At depth 5 it does not. Nothing moves — and the composer still swallows
+    // the key, which `selectionTouchesListItem` is what decides.
+    expect(indent(`${five}\n          - f\n          - g|`)).toBeNull();
+    expect(selectionTouchesListItem(`${five}\n          - f\n          - g`, 60, 60)).toBe(true);
+  });
+
+  it('knows when Tab belongs to the list and when it does not', () => {
+    expect(selectionTouchesListItem('- a', 3, 3)).toBe(true);
+    // Nothing to indent: Tab is the page's again, and the composer lets it move focus.
+    expect(selectionTouchesListItem('just prose', 4, 4)).toBe(false);
+    expect(selectionTouchesListItem('', 0, 0)).toBe(false);
+    expect(selectionTouchesListItem('```\n- a\n```', 6, 6)).toBe(false);
   });
 
   it('keeps a nested block nested when the whole block is unnested', () => {
