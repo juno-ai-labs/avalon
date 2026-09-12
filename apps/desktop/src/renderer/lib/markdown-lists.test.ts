@@ -48,6 +48,15 @@ describe('parseListItem', () => {
     expect(parseListItem('-word')).toBeNull();
     expect(parseListItem('2026-09-12. shipped')).toBeNull();
   });
+
+  it('reads a spaced horizontal rule as a rule, not as a bullet', () => {
+    // The renderer draws these; a bullet introducing `- -` is not what they are.
+    expect(parseListItem('- - -')).toBeNull();
+    expect(parseListItem('* * *')).toBeNull();
+    expect(parseListItem('  _ _ _  ')).toBeNull();
+    // Still a list item, though — three bullets is a rule, one is an item.
+    expect(parseListItem('- - a')).toMatchObject({ kind: 'bulleted', content: '- a' });
+  });
 });
 
 describe('continueListAtCaret', () => {
@@ -94,6 +103,28 @@ describe('continueListAtCaret', () => {
   it('leaves a list-looking line inside a code fence alone', () => {
     expect(enter('```\n- a|\n```')).toBeNull();
   });
+
+  it('leaves a horizontal rule alone rather than bulleting under it', () => {
+    expect(enter('* * *|')).toBeNull();
+  });
+
+  it('counts past an item\'s own continuation paragraph', () => {
+    // The indented line belongs to item 1, so the item after it is 3 and not a
+    // second 2 — the run did not end, it was interrupted by its own content.
+    expect(enter('1. a|\n   continuation\n2. b')).toBe('1. a\n2. |\n   continuation\n3. b');
+  });
+
+  it('starts a new run when the delimiter changes', () => {
+    // CommonMark reads `1.` and `1)` as two lists, so the second keeps its own
+    // first ordinal instead of counting on from the first.
+    expect(enter('1. a|\n5) b')).toBe('1. a\n2. |\n5) b');
+  });
+
+  it('keeps the first ordinal of a top-level list that carries an indent', () => {
+    // Up to three spaces is still a list at the margin. Nothing nests this run,
+    // so renumbering it from 1 would rewrite a line nobody was editing.
+    expect(enter('  5. a|\n  6. b')).toBe('  5. a\n  6. |\n  7. b');
+  });
 });
 
 describe('shiftListAtCaret', () => {
@@ -125,6 +156,21 @@ describe('shiftListAtCaret', () => {
 
   it('renumbers both lists when a numbered item leaves one for the other', () => {
     expect(outdent('1. a\n2. b\n   1. c\n   2. d|')).toBe('1. a\n2. b\n   1. c\n3. d|');
+  });
+
+  it('nests under a predecessor that is deeper, as its sibling', () => {
+    // The line above is already a sublist, so the deepest legal target is its
+    // own column. Declining here would not merely do nothing: Tab would fall
+    // through and take focus out of the composer.
+    expect(indent('- a\n  - b\n- c|')).toBe('- a\n  - b\n  - c|');
+  });
+
+  it('will not nest an item under a line of code', () => {
+    expect(indent('    - sample\n- real|')).toBeNull();
+  });
+
+  it('keeps a nested block nested when the whole block is unnested', () => {
+    expect(outdent('- a\n|  - b\n    - c|')).toBe('- a\n|- b\n  - c|');
   });
 });
 
@@ -161,5 +207,11 @@ describe('toggleListAtSelection', () => {
 
   it('leaves lines inside a code fence alone', () => {
     expect(bulleted('```\na|\n```')).toBeNull();
+  });
+
+  it('does not take the line a selection merely stops at the head of', () => {
+    // Shift+Down from the head of a line: the range covers `alpha\n` and none
+    // of `beta`, so only `alpha` is a line the person chose.
+    expect(bulleted('|alpha\n|beta')).toBe('|- alpha\n|beta');
   });
 });

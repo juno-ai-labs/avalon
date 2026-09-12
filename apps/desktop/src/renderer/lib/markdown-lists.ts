@@ -24,7 +24,7 @@ import { isMarkdownCode, markdownLineKinds } from '@rally/contracts/markdown-cod
  * | --- | --- |
  * | `continueListAtCaret` | the key that inserts a newline |
  * | `shiftListAtCaret` | Tab and Shift+Tab |
- * | `toggleListAtSelection` | ⌘/Ctrl+Shift+8, ⌘/Ctrl+Shift+7, and the composer menu |
+ * | `toggleListAtSelection` | ⌘/Ctrl+Shift+8 and ⌘/Ctrl+Shift+7 |
  *
  * Each returns `null` when it has nothing to do, and a `null` is the signal to
  * let the keystroke do whatever it would have done — a plain newline, a move to
@@ -47,11 +47,12 @@ import { isMarkdownCode, markdownLineKinds } from '@rally/contracts/markdown-cod
  * a run written `1. 1. 1.` renders as 1, 2, 3 — so this is entirely about what
  * the person is looking at while they write.
  *
- * A list at the margin keeps its first ordinal and counts on from there, so a
- * list deliberately started at `5.` stays started at 5. A *nested* run always
- * restarts at 1, because the only way a sublist comes to start at 11 is that
- * somebody nested the eleventh item of the list above it, and that is never
- * what they meant.
+ * A run with no item above it to be nested under keeps its first ordinal and
+ * counts on from there, so a list deliberately started at `5.` stays started at
+ * 5 — including one carrying the up-to-three spaces of indent CommonMark allows
+ * a top-level list. A *nested* run always restarts at 1, because the only way a
+ * sublist comes to start at 11 is that somebody nested the eleventh item of the
+ * list above it, and that is never what they meant.
  *
  * ## Code is left alone
  *
@@ -102,8 +103,22 @@ export interface ListItemLine {
  */
 const LIST_ITEM = /^([ \t]*)(?:([-*+])|(\d{1,9})([.)]))([ \t]+)(\[[ xX]\][ \t]+)?(.*)$/u;
 
+/**
+ * A horizontal rule: three or more of one of `- _ *`, spaces allowed between
+ * them and nothing else on the line.
+ *
+ * It has to be excluded by name rather than by the grammar above, because the
+ * spaces are what let it through: `---` is already not an item — nothing
+ * follows the marker — but `- - -` and `* * *` parse as a bullet introducing
+ * `- -`. `remark-gfm` draws both as a rule, so continuing one would put a
+ * bullet under something that is not a list, and toggling would take a rule's
+ * first character away.
+ */
+const THEMATIC_BREAK = /^ {0,3}([-_*])(?:[ \t]*\1){2,}[ \t]*$/u;
+
 /** Read one line as a list item, or `null` where it is not one. */
 export function parseListItem(line: string): ListItemLine | null {
+  if (THEMATIC_BREAK.test(line)) return null;
   const match = LIST_ITEM.exec(line);
   if (!match) return null;
   const [, indent = '', bullet, ordinal, ordinalDelimiter, spacing = '', checkbox = '', content = ''] = match;
@@ -210,32 +225,56 @@ function renumberOrderedRuns(edit: DraftEdit): DraftEdit {
   const lines = edit.text.split('\n');
   const kinds = markdownLineKinds(lines);
   const changes = new Map<number, PrefixChange>();
-  /** The ordinal last handed out at each indent width, for the runs still open. */
-  const counters = new Map<number, number>();
+  /** An ordered run still open at one indent width. */
+  const counters = new Map<number, { ordinal: number; delimiter: string }>();
   const closeDeeperThan = (width: number): void => {
     for (const open of counters.keys()) if (open > width) counters.delete(open);
   };
+  /**
+   * The content column of the last item seen. A non-list line indented at least
+   * this far is that item's own continuation paragraph rather than the end of
+   * its list, and closing the run on one would leave the item after it counting
+   * from scratch — two `2.` markers in a row where the draft wanted 2 and 3.
+   */
+  let continuationColumn = 0;
+  const close = (): void => {
+    counters.clear();
+    continuationColumn = 0;
+  };
   for (const [index, line] of lines.entries()) {
     if (isMarkdownCode(kinds[index] ?? 'prose')) {
-      counters.clear();
+      close();
       continue;
     }
     const item = parseListItem(line);
     if (!item) {
-      if (line.trim() !== '') counters.clear();
+      if (line.trim() === '') continue;
+      if ((/^[ \t]*/u.exec(line)?.[0].length ?? 0) < continuationColumn) close();
       continue;
     }
     const width = item.indent.length;
     closeDeeperThan(width);
+    continuationColumn = width + markerOf(item).length + item.spacing.length;
     if (item.kind === 'bulleted') {
       // A bulleted run at this width is not something to count, and it ends any
       // ordered run that was open here — the two cannot be the same list.
       counters.delete(width);
       continue;
     }
+    // Keyed by delimiter as well as width: CommonMark starts a new list when
+    // `1.` becomes `1)`, so a run written with one must not be counted on by
+    // the other.
     const open = counters.get(width);
-    const ordinal = open !== undefined ? open + 1 : width === 0 ? item.number ?? 1 : 1;
-    counters.set(width, ordinal);
+    const continues = open !== undefined && open.delimiter === item.delimiter;
+    // A run's first item keeps the ordinal it was written with, so a list
+    // deliberately started at `5.` stays started at 5 — unless it is nested,
+    // where an inherited ordinal only ever means somebody indented the eleventh
+    // item of the list above. Nesting is having a shallower item above, not
+    // starting at column 0: CommonMark lets a top-level list carry up to three
+    // spaces of indent, and those are somebody's list too.
+    const nested = ancestorIndentOf(lines, index, width) !== null;
+    const ordinal = continues ? open.ordinal + 1 : nested ? 1 : item.number ?? 1;
+    counters.set(width, { ordinal, delimiter: item.delimiter });
     if (ordinal === item.number) continue;
     changes.set(index, {
       prefixLength: item.prefixLength,
@@ -253,13 +292,23 @@ function lineBoundsAt(text: string, offset: number): { start: number; end: numbe
   return { start, end: break_ === -1 ? text.length : break_ };
 }
 
-/** The indices of every line the selection touches, in order. */
+/**
+ * The indices of every line the selection touches, in order.
+ *
+ * A range that *ends* at the head of a line is not holding that line — it stops
+ * on the newline above it, which is exactly what Shift+↓ from the start of a
+ * line produces, and it is the commonest keyboard way to select one line. This
+ * is the mirror of the rule `replacePrefixes` applies to a range's head: there,
+ * an offset at the head of a line is holding the line; here, one that has only
+ * reached the next line's doorstep is not. `at === selectionStart` is what
+ * keeps a collapsed caret sitting at a line's head on its own line.
+ */
 function selectedLineIndices(lines: readonly string[], selectionStart: number, selectionEnd: number): number[] {
   const indices: number[] = [];
   let at = 0;
   for (const [index, line] of lines.entries()) {
     const end = at + line.length;
-    if (end >= selectionStart && at <= selectionEnd) indices.push(index);
+    if (end >= selectionStart && (at < selectionEnd || at === selectionStart)) indices.push(index);
     at = end + 1;
   }
   return indices;
@@ -334,21 +383,29 @@ export function continueListAtCaret(text: string, selectionStart: number, select
  * those items can hand back where it has already put them rather than where
  * they started.
  */
-function outdentOf(
-  lines: readonly string[],
-  lineIndex: number,
-  indent: string,
-  indentAt: (index: number, item: ListItemLine) => string = (_index, item) => item.indent,
-): string {
+function outdentOf(lines: readonly string[], lineIndex: number, indent: string): string {
+  return ancestorIndentOf(lines, lineIndex, indent.length) ?? '';
+}
+
+/**
+ * The indent of the nearest item above `lineIndex` that is shallower than
+ * `width`, or `null` where this item has no parent at all.
+ *
+ * The two callers want different halves of that answer — an outdent wants the
+ * column, and the renumbering wants only to know whether there *is* one — and
+ * they must not disagree about where a list block ends, which is why it is one
+ * scan. Blank lines are stepped over, because a list with a blank line between
+ * its items is still one list; anything that is not a list item ends the block.
+ */
+function ancestorIndentOf(lines: readonly string[], lineIndex: number, width: number): string | null {
   for (let above = lineIndex - 1; above >= 0; above -= 1) {
     const line = lines[above] ?? '';
     if (line.trim() === '') continue;
     const ancestor = parseListItem(line);
-    if (!ancestor) break;
-    const ancestorIndent = indentAt(above, ancestor);
-    if (ancestorIndent.length < indent.length) return ancestorIndent;
+    if (!ancestor) return null;
+    if (ancestor.indent.length < width) return ancestor.indent;
   }
-  return '';
+  return null;
 }
 
 /**
@@ -358,9 +415,13 @@ function outdentOf(
  * so the first item of a list has nothing to nest under and Tab there does not
  * indent — it moves focus, which is the behaviour a keyboard user needs to
  * still be able to leave the composer. Shift+Tab at the margin does the same.
- * A selection spanning several items shifts all of them, each measured against
- * the item above it *as already shifted*, so a nested block keeps its shape
- * instead of collapsing onto one column.
+ *
+ * A selection spanning several items shifts all of them and keeps their shape.
+ * The two directions reach that differently, which is the subtle part: nesting
+ * measures each item against the one above it *as this pass has already left
+ * it*, so a block moves as a block, while unnesting measures against the
+ * ancestors' original columns, because resolving against a parent that is
+ * itself moving would land every selected item on the same column.
  */
 export function shiftListAtCaret(
   text: string,
@@ -389,15 +450,29 @@ export function shiftListAtCaret(
     }
     let next: string | null = null;
     if (direction === 'in') {
-      const above = parseListItem(lines[index - 1] ?? '');
-      const aboveIndent = indentAt(index - 1);
-      // Only under a sibling or an ancestor. An item already nested inside the
-      // one above it is as deep as this list can legally go.
-      if (above && aboveIndent !== undefined && aboveIndent.length <= indent.length) {
-        next = childIndentOf({ ...above, indent: aboveIndent });
+      // Never under a code line: the classifier that keeps a pasted transcript's
+      // `- ` flags out of the grammar has to keep them from being parents too,
+      // or Tab nests a real item into an indented code block.
+      const above = index > 0 && !isMarkdownCode(kinds[index - 1] ?? 'prose')
+        ? parseListItem(lines[index - 1] ?? '')
+        : null;
+      const aboveIndent = above ? indentAt(index - 1) : undefined;
+      if (above && aboveIndent !== undefined) {
+        // The deepest legal target: the predecessor's own column where it is
+        // already deeper than this item — `- gamma` under a nested `- beta`
+        // becomes beta's sibling — and its child column otherwise. An item
+        // already at its predecessor's child column lands back on itself, which
+        // is the "as deep as this list can go" case, and declines below.
+        next = indent.length < aboveIndent.length
+          ? aboveIndent
+          : childIndentOf({ ...above, indent: aboveIndent });
       }
     } else if (indent !== '') {
-      next = outdentOf(lines, index, indent, (above, ancestor) => shifted.get(above) ?? ancestor.indent);
+      // Against the ancestors' *original* columns, not this pass's. Resolving
+      // against a parent that is itself moving collapses a selected block onto
+      // one column: unnesting `b` and its child `c` together would send both to
+      // the margin rather than leaving `c` nested under `b`.
+      next = outdentOf(lines, index, indent);
     }
     if (next === null || next === indent) {
       shifted.set(index, indent);

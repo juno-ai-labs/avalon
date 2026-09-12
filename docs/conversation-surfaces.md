@@ -681,9 +681,10 @@ unavailable, which is how the jsdom tests exercise it.
 Ordered runs are renumbered wholesale rather than each operation patching up
 what it disturbed: continuing, nesting and unnesting all shift numbering below
 the caret, and three separate corrections would be three chances to disagree. A
-run at the margin keeps its first ordinal, so a list deliberately started at
-`5.` stays started at 5; a nested run always restarts at 1, because a sublist
-starting at 11 only ever means somebody nested the eleventh item above it.
+run with nothing above it to be nested under keeps its first ordinal, so a list
+deliberately started at `5.` stays started at 5; a nested run always restarts at
+1, because a sublist starting at 11 only ever means somebody nested the eleventh
+item above it.
 
 The stacking context the old layout needed — `position: relative; z-index: 1` on
 both control groups, so the spanning textarea could not intercept their clicks —
