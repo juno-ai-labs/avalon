@@ -23,12 +23,15 @@ table, and the delivery path are shared. A third entry point later — the
 Sidekicks library, an empty state, a failed run — costs a component and an enum
 member.
 
-A stored submission then goes two places: an Ace page that reads both regions,
-and a Slack post into `#connector-requests` or `#user-feedback` from the
-internal app that already posts operator notices. Forwarding submissions into
-Juno Labs' own Rally workspace for Sidekick triage is deliberately deferred —
-[decision 4](#4-where-a-submission-goes-next) records why, and what would bring
-it back.
+A submission goes to Slack. A connector request posts into
+`#connector-requests` and product feedback into `#user-feedback`, from the
+internal app that already posts operator notices — the loop closes where the
+team already works. Nothing about this feature puts feedback into Rally:
+forwarding submissions into Juno Labs' own workspace for Sidekick triage is
+rejected, and an operator page in Ace is deferred out of the first version. A
+row is still written to regional D1 first, as a receipt rather than a surface,
+so a failed Slack post cannot silently destroy what somebody typed
+([decision 4a](#4a-the-d1-row-is-a-receipt-not-a-destination)).
 
 ## Motivation
 
@@ -97,10 +100,13 @@ any individual one.
    *Rejected* — anonymity makes follow-up impossible and abuse free, and the
    member is already authenticated.
 7. **This adds no connector and changes no catalogue.** A request is a request.
-8. **No forwarding into Juno Labs' own Rally workspace, and no Sidekick
-   triage.** *Deferred* — option C in [decision 4](#4-where-a-submission-goes-next),
-   with the condition for picking it back up stated there. It is the most
-   interesting destination and the one with nothing to do at current volume.
+8. **Feedback does not go into Rally.** No forwarding into Juno Labs' own
+   workspace, no work stream, no Sidekick triage. *Rejected* — the loop closes
+   in Slack. See [decision 4](#4-a-submission-goes-to-a-slack-channel).
+9. **No operator page in Ace.** *Deferred* — the rows are queryable by SQL, and
+   a browsable list is worth building when scrolling the channel stops
+   answering the question. Its absence is what makes the EU question in
+   [Regional impact](#regional-impact) live rather than academic.
 
 ## Product behavior
 
@@ -210,13 +216,9 @@ absence of channels, a global inbox, and global search; a form that sends a
 message to Juno Labs is not a conversation surface in the product and creates no
 new place for members to talk to each other.
 
-One clause is worth naming in advance, because the deferred
-[option C](#4-where-a-submission-goes-next) would brush it. Were submissions
-forwarded into Juno Labs' own Rally workspace, the work streams created would be
-in *Juno Labs'* workspace, not the submitter's: no member sees a work stream
-they did not create, and no workspace gains a participant. The contract would
-still hold, which is worth recording now so that reopening C is a scheduling
-question rather than a contract one.
+The rejected option C would not have breached it either — the work streams
+would have been in *Juno Labs'* workspace, not the submitter's — so nothing in
+this document turns on the contract. It was declined as product direction.
 
 ## Decision log
 
@@ -259,60 +261,49 @@ A submission is correspondence with the vendor, not workspace data: no member
 reads it back, no work stream references it, and it must be readable by staff
 across every workspace at once. Regional D1 is where cross-workspace,
 staff-readable rows already live, and Ace already holds read-only `GLOBAL_DB`
-and `EU_DB` bindings, so a staff-facing list costs a query rather than a new
-operator route per region.
+and `EU_DB` bindings — so if the deferred operator page is ever built, it costs
+a query rather than a new operator route per region.
 
 *Rejected:* a table in the WorkspaceDO, which is right for anything a workspace
 owns and wrong here — reading it would mean fanning out across every object in
 both regions to answer "what did people ask for this week".
 
-### 4. Where a submission goes next
+### 4. A submission goes to a Slack channel
 
-**Decided on 2026-09-11: A and B together, and nothing else in v1.** The row is
-written to regional D1, an Ace page reads both regions, and the internal Slack
-app posts the submission into `#connector-requests` or `#user-feedback`. C is
-deferred and D is rejected; the four options are kept below with their costs,
-because the case for deferring C is only legible beside what C was.
+**Decided: the destination is Slack, and only Slack.** A connector request posts
+to `#connector-requests`; product feedback posts to `#user-feedback`. That is
+where the loop closes — where somebody reads it, reacts to it, threads on it,
+and decides what to do. Nothing about this feature creates a surface inside
+Rally for the team to visit.
 
-All four share sections 2 and 3 above — the row is written regardless — and
-differ only in what happens afterwards.
+**Forwarding submissions into Juno Labs' own Rally workspace is rejected**, not
+deferred. It was the most interesting option on paper — a Sidekick grouping the
+fortieth Jira request with the first thirty-nine — and the product owner
+declined it twice. That is the decision; the arguments below are recorded only
+so a future reader knows it was weighed rather than overlooked. Reopening it is
+a product direction to be argued fresh, not a backlog item waiting for volume.
 
-| | Destination | New infrastructure | EU submissions | Cost |
-| --- | --- | --- | --- | --- |
-| **A** | Ace page + content-free ping to the existing operator Slack channel | none | identical treatment | small |
-| **B** | Dedicated internal Slack channels carrying the text | two channel ids; the existing app and token | needs a residency decision | small |
-| **C** | Forwarded into Juno Labs' own Rally workspace as a work stream | one address or webhook, held as a secret | needs a residency decision | medium |
-| **D** | A Linear issue per submission | one Linear credential | needs a residency decision | medium |
+What was considered:
 
-**Option A — Ace, plus a pointer in the operator channel.** The row is written;
-`notifyOps` posts `feedback_submitted` with `region`, `kind`, `workspace_id`,
-and the submission id — *codes, counts, and opaque ids only*, which is the
-existing invariant of that channel and the reason it can be shared by both
-regions. A new **Feedback** page in Ace lists both regions from the bindings it
-already has, filters by kind, searches server-side, and marks a submission
-triaged. Nothing a member typed leaves its region; no new secret, no new app, no
-residency decision. The cost is a click: the channel says *something arrived*,
-and Ace says what it was.
-
-**Option B — dedicated Slack channels carrying the text.** Feedback lands where
-the team already is, can be reacted to and threaded, and needs no second surface
-to read. Routing by kind is part of the appeal: `#connector-requests` is a demand
-signal a whole team can watch accumulate, and `#user-feedback` is a different
-conversation with different readers.
+| | Destination | Verdict |
+| --- | --- | --- |
+| **A** | An operator page in Ace, plus a content-free ping to Slack | The page is deferred; the Slack post became the destination. |
+| **B** | The submission's text posted into a dedicated Slack channel | **Chosen.** |
+| **C** | Forwarded into Juno Labs' own Rally workspace as a work stream | **Rejected** — the feedback loop lives in Slack. |
+| **D** | A Linear issue per submission | Rejected — forty issues named "Jira". Filing one is a triage action taken with a count in hand. |
 
 **It reuses the existing internal Slack app.** That app holds `chat:write`, and
-`chat:write` posts to any channel the bot is a member of — so the two new
-channels cost an invite each, not an installation. What it does *not* reuse is
-`notifyOps` itself, for two reasons that are about the function rather than the
-app:
+`chat:write` posts to any channel the bot is a member of, so the two channels
+cost an invite each rather than an installation. What it does *not* reuse is
+`notifyOps` itself, for two reasons about the function rather than the app:
 
 - **Its renderer is content-free by contract.** `OpsNotification.fields` is
   documented as codes, counts, and opaque ids only, and the operator channel is
   shared by both regions precisely because that holds. Member text does not go
   through it.
 - **Its renderer would mangle the text anyway.** Every field is collapsed to one
-  line and cut at 200 characters with a visible mark — correct for an error code,
-  wrong for the paragraph that is the entire point of the submission.
+  line and cut at 200 characters with a visible mark — correct for an error
+  code, wrong for the paragraph that is the entire point of the submission.
 
 So the change is a decomposition, not a new integration. `notifyOps` today mixes
 one mechanism with one policy: posting a bounded `chat.postMessage` with the
@@ -325,56 +316,34 @@ the deadline, the outcome rows, and `escapeMrkdwn` exactly as they are;
 own renderer — one that quotes the body as a block rather than a field — and its
 own channel id per kind.
 
-That is the platform move the repository asks for: one primitive, two policies,
-and a third caller later costs a channel id. The concrete cost is two env vars
-per region, an invite per channel, and a renderer.
+One coupling to accept knowingly: a single token now serves both alerting and
+feedback, so rotating it or removing the app from the workspace breaks both. At
+this size that is a cheaper trade than a second app to administer, and it is one
+env var away from being undone.
 
-One coupling to accept knowingly: one token now serves both alerting and
-feedback, so rotating it or removing the app from the workspace breaks both.
-At this size that is the cheaper trade than a second app to administer, and it
-is one env var away from being undone.
+### 4a. The D1 row is a receipt, not a destination
 
-**Option C — forward it into Rally.** The submission becomes a turn in a work
-stream in Juno Labs' own Rally workspace, where a Sidekick reads it: groups the
-fortieth Jira request with the first thirty-nine, keeps a running tally, drafts
-a reply for a human to send, and files the Linear issue when the count justifies
-one. This is the highest-leverage option and the one that most obviously belongs
-to this product, and it needs no new ingress — Rally already has two primitives
-that accept outside content into a work stream: every automation holds a
-permanent address on `automation.rallywith.ai`, and the generic inbound webhook
-connector accepts signed posts. Either is configuration held as a Worker
-secret, not architecture. Its risk is that it is the option whose failure is
-quietest: a forward that silently stops leaves submissions accumulating in D1
-that nobody is reading, which is why it wants A's Ace page underneath it either
-way.
+The submission is still written to regional D1 before the Slack post is
+attempted. This is the one place this document keeps something the product owner
+did not ask for, so it states the case plainly and makes it easy to cut.
 
-**Option D — a Linear issue each.** Direct to the backlog, with no second
-surface. It is the wrong shape for intake: connector requests are inherently
-repetitive, and forty issues named "Jira" is worse than no issues. Filing one
-belongs downstream of triage, as a thing a person or a Sidekick does with a
-count in hand. Recorded here as considered and rejected as an intake path.
+**It is not a surface.** Nothing reads it back in Rally, no member sees it, and
+the Ace page that would have made it browsable is deferred out of v1 along with
+everything else Rally-side. It exists for one reason: a Slack post can fail —
+`not_in_channel` after somebody archives a channel, `invalid_auth` after a token
+rotation, a five-second deadline against a slow Slack — and without a row, a
+member who was thanked by the dialog has had their message destroyed silently.
+The failure is invisible from both ends: they believe it arrived, and nobody
+here knows it did not.
 
-**Why A and B, and why not C yet.** The row is written under every option and
-is not negotiable (decision 2), so A's durable half is v1 regardless. B is then
-the cheapest thing that makes a submission *visible to a human* — two channel
-ids and an invite, on an app that already exists — and it wins on the only axis
-that matters this early, which is whether anyone actually reads what people
-sent. Together they are a complete feature: nothing is lost, and somebody sees
-every submission the day it arrives.
+It also answers the question the feature exists to answer. "Which connectors
+have people asked for, and how many people asked" is a `GROUP BY` against a
+table and a scroll-and-tally against a channel.
 
-C is deferred rather than rejected, and the reason is that its value is entirely
-in aggregation. A Sidekick that groups the fortieth Jira request with the first
-thirty-nine is worth more than a channel of individually-read messages — *at
-forty*. At four it is a pipeline with nothing to do, built against guesses about
-a shape the submissions have not taken yet. Its failure mode is also the
-quietest of the four: a forward that silently stops leaves rows accumulating
-that nobody is reading. Both arguments point the same way, which is to let the
-`#connector-requests` channel become annoying first. **Pick it back up when
-reading the channel stops being the efficient way to know what people want** —
-in practice, when duplicate requests outnumber novel ones, or when nobody can
-say from memory what the top three asks are.
-
-D remains a triage action taken with a count in hand, not an intake path.
+The cost is a migration and an insert. **Cutting it is a real option** — delete
+the table and the service writes nothing — and the thing to weigh is whether
+silently losing a member's message on a Slack failure is acceptable. This
+document says it is not, and defers every other Rally-side piece instead.
 
 ### 5. Deduplication is per member, per kind, per subject
 
@@ -424,7 +393,7 @@ One new table per region, `feedback_submissions`, in migration `0104`:
 | `repeat_count` | incremented by a deduplicated resend |
 | `created_at`, `updated_at` | server clock |
 | `delivery_state`, `delivered_at` | the outcome of whatever destination is chosen; `pending` until then |
-| `triaged_at`, `triaged_by` | set from Ace |
+| `triaged_at`, `triaged_by` | unused in v1; the columns the deferred Ace page would set |
 
 A partial unique index on `(workspace_id, user_id, kind, subject)` where `kind =
 'connector_request'` makes decision 5 the database's job rather than a query's.
@@ -436,35 +405,39 @@ same change.
 This is the section that decides the shape of the feature, so read
 [`regionalization.md`](../../regionalization.md) alongside it.
 
-A submission is written to the D1 of the region its workspace is pinned to. Ace
-reads both through the read-only bindings it already holds, so a staff list
-spanning both regions involves no cross-region movement of content: the query
-runs against each region's own database and only the answer reaches the
-operator's browser, which is exactly what the existing directory search does.
+A submission is written to the D1 of the region its workspace is pinned to, and
+stays there. The Slack post is the only thing that leaves — and because Juno
+Labs' Slack is a single Global-side destination, posting an EU member's text
+into it moves member-authored content out of the EU boundary.
 
-The Slack post is the one thing that leaves. Juno Labs' Slack is a single
-Global-side destination, so posting an EU member's text into it moves
-member-authored content out of the EU boundary. Rally has been strict here by
-default: EU telemetry terminates in EU resources, and EU acquisition intake
-returns 404 rather than falling back to Global. A deliberate vendor-contact form
-is arguably a different thing from telemetry about a member's data — the member
-is knowingly writing to Juno Labs — but *arguably* is not a basis to ship it.
+Rally has been strict here by default: EU telemetry terminates in EU resources,
+and EU acquisition intake returns 404 rather than falling back to Global. A
+deliberate vendor-contact form is arguably a different thing from telemetry
+about a member's data — the member is knowingly writing to Juno Labs — but
+*arguably* is not a basis to ship it.
 
-**The proposal is therefore a region-conditional renderer, which needs no
-decision to ship.** A Global submission posts its text. An EU submission posts
-the content-free pointer — region, kind, workspace id, submission id — into the
-same channel: exactly the payload `notifyOps` already posts there, and the
-reason one channel can serve both regions today. The team learns an EU
-submission arrived and reads it in Ace, where the content already is and where
-it never left its region. One delivery path, one channel, one policy that
-differs by region.
+**Deferring the Ace page removed the cheap way around this**, and that trade
+should be made with open eyes. The earlier draft had EU submissions post a
+content-free pointer to the channel and be read in Ace, which needed no
+residency decision at all. With no Ace page, a pointer points at nothing a
+person can open.
 
-That keeps the property worth having: v1 makes no residency decision, so it
-cannot make the wrong one. The alternative remains open — **the product owner
-may decide EU text may be posted, in which case the form says so above the
-textarea before anyone types, and the renderer stops branching.** That is a real
-option and a cheap one; it is simply not one this document takes on the product
-owner's behalf.
+Three ways to close it, in the order this document prefers them:
+
+1. **Decide EU text may be posted.** One question to the product owner, one line
+   of copy above the textarea before anybody types, and the renderer never
+   branches. This is the honest shape of the feature: a member deliberately
+   writing to their vendor, told where it goes.
+2. **Ship Global-first.** The card and the menu item are absent in an EU
+   workspace until the answer arrives. Nothing is collected that cannot be
+   read, and nobody is thanked for a message no one will see.
+3. **Collect EU submissions, post the pointer, read by query.** Keeps the
+   feature universal at the cost of an engineer running SQL to read anything an
+   EU member wrote. Workable at current EU volume; unpleasant, and the kind of
+   unpleasant that quietly becomes nobody reading them.
+
+What is *not* an option is posting an EU member's text without the decision in
+(1) having been taken.
 
 ## Security and trust model
 
@@ -512,10 +485,8 @@ region beside the token that is already there. The bot must be invited to both
 channels: without the invite Slack answers `not_in_channel`, which the existing
 notifier already logs as a delivery failure rather than throwing.
 
-Nothing else is needed in v1. The deferred option C would need either the target
-work stream's permanent address or a generic-webhook URL and signing secret from
-Juno Labs' own Rally workspace; it is not configured now. In every case the
-change ships before the configuration exists and does nothing until it is set.
+Nothing else is needed. The change ships before the channels exist and stores
+submissions without posting until the ids are set.
 
 ## Rollout
 
@@ -534,13 +505,13 @@ Suggested sequencing, which a `plan.md` will carry once this PRD is approved:
 1. The primitive — contract, migration, route, service, both entry points,
    inline acknowledgement, settings-registry entry, telemetry. Submissions are
    stored and readable by SQL only.
-2. Delivery to a channel someone watches: the internal Slack post mechanism
-   split out of `notifyOps`, a renderer that carries the body as a quoted block,
-   and one channel id per kind. Ace's Feedback page across both regions follows
-   here as the queryable record and triage surface.
-That is the whole of v1. There is no third phase: option C is deferred with its
-re-entry condition in [decision 4](#4-where-a-submission-goes-next), and picking
-it up later is a new change against the durable rows this one produces.
+2. Delivery: the internal Slack post mechanism split out of `notifyOps`, a
+   renderer that carries the body as a quoted block, and one channel id per
+   kind.
+
+That is the whole of it. An operator page in Ace and any Rally-side triage are
+out of scope, and building either later is a new change against the rows this
+one produces.
 
 ## Acceptance
 
@@ -557,8 +528,11 @@ it up later is a new change against the durable rows this one produces.
    appears, and Send works again once the API recovers.
 5. With no destination configured, both submissions still store and return
    success.
-6. An operator opens Ace's Feedback page and sees both submissions, from both
-   regions, newest first, filterable by kind.
+6. Both submissions appear in their channels — the connector request in
+   `#connector-requests`, the feedback in `#user-feedback` — with the body
+   readable as typed, and a submission whose text contains `<!channel>`, a
+   link, and a newline renders as literal text rather than as markup, a ping,
+   or an extra field.
 7. Settings search for "request a connector" reveals the card.
 8. Both screens are captured under Xvfb and read as images, per
    [`AGENTS.md`](../../../AGENTS.md#verifying-visible-changes) — a component
@@ -567,18 +541,13 @@ it up later is a new change against the durable rows this one produces.
 
 ## Open questions
 
-1. **May an EU member's text be posted into Juno Labs' Slack?** Cutting C did
-   not retire this question — it brought it forward, because B is now in v1 and
-   Juno Labs' Slack is a single Global-side destination. **The proposed answer
-   needs no decision at all: make the renderer region-conditional.** A Global
-   submission posts its text; an EU submission posts the content-free pointer —
-   region, kind, workspace id, submission id — into the same channel, which is
-   exactly the shape `notifyOps` already posts there and is already agreed to be
-   safe for a channel serving both regions. The team sees that an EU request
-   arrived and opens Ace to read it. One delivery path, one channel, a policy
-   that differs by region, and flipping EU to full text later is a one-line
-   change *if* the product owner decides it should be. Confirm or overrule
-   before phase 2 ships.
+1. **May an EU member's text be posted into Juno Labs' Slack?** **This now
+   blocks the EU half of phase 2**, and it is the one question the build cannot
+   route around: Slack is the only destination, and Juno Labs' Slack is
+   Global-side. [Regional impact](#regional-impact) sets out the three ways to
+   close it and recommends simply deciding yes, with a line of copy above the
+   textarea saying where the message goes. Phase 1 and the Global half of phase
+   2 proceed either way.
 2. **Does this ship behind a flag?** See [Rollout](#rollout). The answer is
    recorded there either way. Blocks nothing until the first entry point lands.
 3. **What are the two opened numbers?** The per-member hourly submission ceiling
