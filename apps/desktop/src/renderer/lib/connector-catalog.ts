@@ -2,7 +2,7 @@ import { ConnectorConnectionCardCatalog } from '@rally/contracts';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
 import { ServerCog, Webhook } from 'lucide-react';
-export const PERSONAL_CONNECT_LABEL = 'Connect only for me';
+export const PERSONAL_CONNECT_LABEL = 'Connect for me';
 
 export const connectorProviders = [
   {
@@ -31,6 +31,16 @@ export const connectorProviders = [
     mark: ConnectorConnectionCardCatalog.github.iconName,
     scopes: ['you', 'workspace'] as const,
     capabilities: ['github.metadata.read', 'github.contents.read', 'github.issues.read', 'github.issues.write', 'github.pull_requests.read', 'github.pull_requests.write', 'github.actions.read', 'github.checks.read'],
+  },
+  {
+    id: 'ashby' as const,
+    provider: ConnectorConnectionCardCatalog.ashby.providerType,
+    name: 'Ashby',
+    description: "Personal recruiting queries through Ashby's beta MCP server, and independently authorized workspace application events. Hiring, candidates, interviews, applicant tracking, and pipelines.",
+    mark: ConnectorConnectionCardCatalog.ashby.iconName,
+    scopes: ['you', 'workspace'] as const,
+    personalCapabilities: ['ashby.personal.mcp'],
+    capabilities: ['ashby.workspace.events'],
   },
   {
     id: 'granola' as const,

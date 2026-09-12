@@ -1,3 +1,9 @@
+import { workspaceDOName } from "../durable-objects/names";
+import { asWorkspaceId } from "@rally/contracts";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { decryptVersionedCredentialValue } from "./connector-credential-envelope";
+import type { InstallationClaim } from "../durable-objects/connector-installation-protocol";
+import type { ConnectorInstallationManagement } from "@rally/connectors";
 import {
   ConnectorError,
   authorizedConnection,
@@ -170,4 +176,20 @@ export async function markConnectorNeedsReconnect(
     connection.id,
     connection.workspaceId,
   ).run();
+}
+
+/** Separate deletion-only purpose: no ordinary callback, refresh, or credential writes. */
+export async function removeAuthorizedConnectorRegistration(
+  env: Env, request: InstallationClaim, management: ConnectorInstallationManagement, signal: AbortSignal,
+): Promise<void> {
+  const workspaceId = asWorkspaceId(request.workspaceId);
+  const object = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(env.AVALON_REGION, workspaceId));
+  const snapshot = await object.connectorInstallationCleanup(request);
+  const credentials = JSON.parse(await decryptVersionedCredentialValue(env, snapshot, request.connectionId)) as Record<string, unknown>;
+  // Recheck after decryption, which yields; this also enforces retirement.
+  const current = await object.connectorInstallationCleanup(request);
+  if (current.providerId !== snapshot.providerId || current.encrypted_credentials !== snapshot.encrypted_credentials) throw new Error("connector_cleanup_superseded");
+  signal.throwIfAborted();
+  await management.remove(authorizedConnection({ id: request.connectionId, workspaceId: request.workspaceId,
+    scope: "workspace", ownerUserId: null, credentials, config: {}, cursor: {}, grantedScopes: snapshot.grantedScopes }), snapshot.providerId, signal);
 }

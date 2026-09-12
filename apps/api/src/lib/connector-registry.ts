@@ -162,6 +162,7 @@ function buildConnectorRegistry(env: Env) {
   return createConnectorRegistry({
     observer: (level, event, fields) => logStructuredEvent(env, level, event, fields),
     customMcp,
+    ashby: { redirectUri: new URL("/connections/ashby/callback", env.PUBLIC_API_BASE_URL).toString() },
     granola,
     ...(google ? { google } : {}),
     ...(github ? { github } : {}),

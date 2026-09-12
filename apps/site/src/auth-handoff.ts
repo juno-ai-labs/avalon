@@ -10,6 +10,7 @@ const connectorName: Record<ConnectorProvider, string> = {
   custom_mcp: 'The MCP server',
   google: 'Google',
   github: 'GitHub',
+  ashby: 'Ashby',
   granola: 'Granola',
   linear: 'Linear',
   notion: 'Notion',

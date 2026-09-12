@@ -1,0 +1,193 @@
+# Implementation plan
+
+Build against merged PR #733 at `d3e292087`, in the isolated
+`codex/ashby-installation-lifecycle` worktree. The original checkout contains
+unrelated work and remains untouched. Approval authorizes all phases below;
+completion still requires the PRD's live acceptance evidence.
+
+## Repository inspection
+
+Existing: connector manifests and cross-validation; scope-specific dynamic hosted
+MCP; protected-resource OAuth discovery, DCR, PKCE, refresh; WorkspaceDO OAuth
+attempts and workspace-addressed desktop completion; branded credential access;
+explicit Test → repair → healthCheck; dynamic Settings inventories; regional
+connection routes and activity Queue admission; deterministic event matching;
+operator-authenticated regional routes and workspace retirement fences.
+
+New: provider management facet; WorkspaceDO installation and registration
+inventory, generation-fenced operation receipts, cleanup-only encrypted snapshots;
+shared setup/recovery/removal runner; frozen bulk maintenance targets and command.
+Granola currently provisions in ConnectionService and repairs in its adapter.
+Neither bulk maintenance nor post-disable credential access exists today.
+
+## Phase 1 — Provider contracts and additive foundations
+
+- [ ] Verify official Ashby OAuth metadata, webhook API shapes, signatures, ping,
+  payload identity, confidential-data behavior, and unsupported recovery/rotation.
+- [x] Add Ashby scope-specific manifest and hosted-MCP declaration, strict
+  authorization schemas, registry enrollment, and provider-boundary tests.
+- [x] Add typed installation/registration/step contracts and additive WorkspaceDO
+  migrations, preserving populated connection children and OAuth receipts.
+- [x] Document exact live access gaps rather than substituting invented fixtures
+  for evidence of provider compatibility.
+
+Gate: registry and protocol tests; populated migration and concurrency checks on
+real workerd. No personal OAuth path can provision workspace webhooks.
+
+## Phase 2 — Shared installation and Granola adoption
+
+- [x] Persist stable identity, administrator/input-bound idempotency, credential
+  fingerprint, approved event selection, routing, and secrets before dispatch.
+- [x] Atomically reserve one enabled workspace Ashby installation across distinct
+  concurrent setup keys; preserve Granola's existing cardinality rule.
+- [x] Implement the shared provider-management runner and per-step dispatch,
+  inspection, partial failure, unknown outcome, and manual reconciliation.
+- [x] Import Granola IDs, credentials, signing secrets, URLs, and grouped events
+  without creating/deleting registrations; fence lifecycle ownership.
+- [x] Route explicit Test repair through the runner; health and inventory stay
+  read-only, with authorization and delivery results separate.
+
+Gate: retries, changed-input conflicts, concurrent administrators, immediate ping,
+interruption, ambiguous creation, and no-write Granola adoption runtime coverage.
+
+## Phase 3 — Ashby event ingress and personal lifecycle
+
+- [x] Wire regional personal start/callback/reconnect and live tools through the
+  existing attempts, credential authorization, receipts, and completion handoff.
+- [x] Verify signed raw webhook bytes, isolate documented pings, enforce selected
+  event types, and admit through existing regional payload/Queue processing.
+- [ ] Preserve `(webhookActionId, action)` identity and stable occurrence semantics;
+  normalize only verified IDs and the approved minimal data/audience mapping.
+- [x] Expose the two operational closed-filter triggers to event-only connection
+  authoring without REST recruiting tools, automatic automations, or watches.
+
+Gate: Global/EU isolation, replay and conflicting bytes, related actions, disabled
+and retired authority, Queue handoff failure, MCP/event independence.
+
+## Phase 4 — Maintenance, rotation, recovery, and removal
+
+- [x] Implement reviewed version preview/apply/status/resume/cancel using the
+  existing regional operator-authenticated entrypoint with explicit connector
+  maintenance authorization; add no permanent credential or arbitrary HTTP path.
+- [x] Freeze operation targets; derive content-free progress from per-connection
+  receipts; skip completed steps and fence every provider dispatch/completion.
+- [x] Persist active/pending encrypted signing material before rotation; promote
+  only with verified provider cutover evidence, otherwise require manual action.
+- [x] Disable ordinary access immediately, retain a separate deletion-only
+  snapshot for exact recorded resources, and erase it after confirmed cleanup.
+- [x] Record stale in-flight creations as cleanup work; never restore disabled or
+  retired authority. Surface unsupported/revoked/unknown cleanup honestly.
+
+Gate: shared synthetic-provider contract tests and real workerd generation,
+retirement, stale completion, cleanup capability, and resumability tests.
+
+## Phase 5 — Product surfaces and owning documentation
+
+- [x] One searchable Ashby catalog entry with independent personal/workspace
+  setup, prerequisites, privacy disclosure, event selection, and readiness.
+- [x] Preserve setup identity across retries/reopen; show stage, partial failure,
+  verification and delivery times, action required, repair, and cleanup pending.
+- [x] Add personal OAuth conversation cards and reconnect, shared tool counts,
+  workspace zero-tool inventory, push invalidation, and offline/error behavior.
+- [x] Update connector, hosted-MCP, provider-app, data-model, security, regional,
+  Settings, digestibility, public support, and operational acceptance docs.
+- [x] Add the lifecycle module document and running changelogs.
+
+Gate: inspect changed states in a real Electron window; component and catalog
+checks; no credentials in API views, desktop persistence, search, or logs.
+
+## Phase 6 — Verification and release evidence
+
+- [x] Prove each new integration behavior fails under a representative production
+  break, revert the break, then rerun the affected file.
+- [x] Run repo-wide lint and typecheck, relevant Node and real-workerd suites,
+  required script/build checks, and the full tests when warranted by scope.
+- [ ] Exercise authorized Ashby and Granola test accounts in both regions,
+  including OAuth/refresh, events, adoption, recovery, and provider cutover.
+- [ ] Run live recruiting and no-confirmation acceptance on the configured medium
+  fallback model using the observed catalog, recording sanitized metadata only.
+- [x] Record exact outstanding acceptance checks if live access is unavailable.
+  Keep state `in progress` until every required acceptance gate is satisfied.
+
+PR creation and review were subsequently authorized. Deployment and merge remain excluded.
+
+## Product clarifications during implementation
+
+- Workspace Ashby remains event-only; personal OAuth supplies recruiting tools.
+- Buttons read **Connect for me** and **Connect for workspace**; the latter is administrator-only.
+- Rally never asks for per-tool confirmation. This is recorded in AGENTS.md; stale claims of an existing confirmation gate are corrected. Shared conservative MCP execution/retry classification remains unchanged.
+- Ashby uses `ashby.rallywith.ai` on a dedicated Ashby Worker with its own startup graph, an opaque connection-to-region directory, and named regional service bindings. The user explicitly approved a Worker per connector because API bundle size/startup already caused a production engineering incident. Merely assigning a domain to the API Worker does not satisfy that intent; verify emitted imports and size, and identify any provider work that remains in the shared API. Granola URLs remain unchanged.
+
+## Current verification evidence (2026-09-12)
+
+- Ashby and Granola provider suites: 17 tests pass, including OAuth metadata,
+  registration, regional callback, exchange, and refresh fixtures. These prove
+  Rally's protocol handling, not live Ashby account compatibility.
+- Installation suite: 25 tests on real workerd cover atomic setup, generation
+  fences, populated migration, signed raw-byte ingress, both regional bridges,
+  Queue admission, cleanup, Granola adoption, key replacement, rotation evidence,
+  frozen maintenance, concurrent updates, cancellation, and personal isolation.
+- Representative production breaks were observed failing for duplicate setup,
+  repeated dispatch, stale create settlement, local disablement, unverified cleanup
+  IDs, pending-key persistence, rotation evidence and unresolved-cutover repair,
+  provider removal, regional
+  routing, signed-byte preservation, signature verification, Queue admission,
+  Granola URL adoption, replacement dependencies, repair preserving removals,
+  maintenance cancellation/frozen targets/provider updates, credential replacement,
+  populated migration, operator roles, and read-only inventory authority. All
+  mutations are reverted. Initial migration-selector and frozen-target proofs
+  were insufficient; the corrected selector and a real later installation failed
+  under the intended breaks.
+- Native Electron views inspected: independent connect actions, workspace setup,
+  loading, partial/unknown installation, API-key replacement, successful Test status,
+  administrator denial, cleanup pending, forgotten cleanup credential, and offline
+  controls. Fixtures contained only public status metadata; no provider acceptance
+  is inferred from these screenshots. Ashby and Granola public support pages were
+  also inspected in a visible browser.
+- Script suite: 446 pass. Desktop release invariants: 140 pass. Typecheck passes.
+  Lint (zero warnings), docs check, site build, and Global/EU/Ashby dry-run
+  builds and local startup checks pass.
+- Final `pnpm test` passes: API Node 272 files / 2,916 tests; real workerd
+  79 files / 830 tests; desktop 191 files / 2,894 tests; and every other package.
+  An earlier run caught a maintenance initialization error; it was corrected,
+  the installation file passed, and the full suite then passed. The final
+  installation suite also passes independently (25 tests).
+- Dedicated Ashby artifact: 735.62 KiB (112.20 KiB gzip); local startup sampled
+  9.1 ms active. It isolates ingress only. Provider management and hosted MCP still
+  execute in the regional API; this change does not reduce the main API bundle
+  (10,990.39 KiB / 3,602.37 KiB gzip in both regional dry runs).
+  Startup profiles are local diagnostics, not deployed Cloudflare measurements.
+
+## Remaining live acceptance
+
+No Ashby test organization is available. Do not mark this PRD completed or claim
+launch readiness until an authorized account can establish:
+
+1. Personal OAuth/DCR, refresh, reconnect, actual tool inventory and recruiting
+   query/update behavior in Global and EU, including revoked access and no tool
+   confirmations on the configured medium fallback model.
+2. API-key permissions, signed ping and both selected organization events,
+   provider enable/disable behavior, redelivery, and API-key replacement against
+   the same organization. `apiKey.info` proves read access; webhook creation proves
+   write access. No undocumented permission-string conversion is assumed.
+3. The actual confidential payload and allowed workspace audience. Current Ashby
+   activities contain verified IDs only and deny workspace automation admission.
+   Both event-driven automation and personal tools are required for launch; this
+   restriction is an outstanding acceptance dependency, not a feature flag.
+4. Existing Granola credentials, exact callback URLs, all four existing event
+   subscriptions, provider recovery and removal in authorized test workspaces.
+5. Signing-key cutover where the provider supplies verifiable evidence. Current
+   Ashby/Granola controls give explicit manual recreation guidance with a stated
+   delivery gap; they do not claim verified automatic rotation.
+6. After a separate deployment request, dedicated-domain/service-binding behavior
+   and actual regional Worker startup acceptance. No deployment was performed.
+
+## Review evidence
+
+The requested review swarm is in progress. Nine personas review independently at
+high effort, in batches of three because of the runtime concurrency limit. Opus
+is unavailable in this environment; the available GPT-6 model is used instead.
+
+Native Electron captures: [workspace setup](evidence/workspace-setup.png) and
+[installation recovery and permission denial](evidence/installation-recovery.png).
+These are synthetic public-status fixtures, not evidence of live provider success.

@@ -21,6 +21,7 @@
     "ARTIFACT_SERVING_DOMAIN": "rallyusercontent.com",
     "GITHUB_INGRESS_BASE_URL": "https://github.rallywith.ai",
     "LINEAR_INGRESS_BASE_URL": "https://linear.rallywith.ai",
+    "ASHBY_INGRESS_BASE_URL": "https://ashby.rallywith.ai",
     "NOTION_INGRESS_BASE_URL": "https://notion.rallywith.ai",
     "SLACK_INGRESS_BASE_URL": "https://slack.rallywith.ai",
     "POSTHOG_HOST": "https://us.i.posthog.com",
@@ -110,6 +111,7 @@
   // the deployment pipeline itself needs.
   "triggers": { "crons": ["*/5 * * * *"] },
   "services": [
+    { "binding": "EU_ASHBY_BRIDGE", "service": "avalon-api-eu", "entrypoint": "AshbyRegionalBridge" },
     {
       "binding": "DOCUMENT_PROCESSOR",
       "service": "avalon-api-documents-global"

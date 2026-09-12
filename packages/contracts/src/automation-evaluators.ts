@@ -15,6 +15,7 @@ export const ConnectorTypeSchema = z.enum([
   "google",
   "generic_webhook",
   "github",
+  "ashby",
   "granola",
   "linear",
   "notion",

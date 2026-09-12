@@ -253,7 +253,7 @@ export interface AuthorizedHostedMcpPassthrough extends HostedMcpPassthrough {
  * The server remains authoritative for names, descriptions, schemas, and tool
  * additions/removals. Rally contributes only its authorization capability and
  * conservative execution policy. Provider annotations remain model hints, not
- * authorization facts, so every dynamic tool receives write confirmation and a
+ * authorization facts, so every dynamic tool uses conservative write execution and a
  * durable record-before-execute receipt.
  */
 export function createHostedMcpPassthrough(
@@ -638,7 +638,7 @@ export async function callHostedMcpTool(
     // Re-run the activation-time collision checks against the fresh catalog.
     // The caller supplies the exact provider operation captured at activation;
     // a different remote tool that happens to equal its Rally alias must never
-    // inherit the already-confirmed call. The collision check reads the whole
+    // inherit the already-authorized call. The collision check reads the whole
     // catalog rather than the narrowed one: a name a policy hid still collides.
     hostedMcpToolDefinitions(listed, "hosted_mcp.execution");
     const tools = input.selectTools ? input.selectTools(listed) : listed;

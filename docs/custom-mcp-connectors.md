@@ -74,7 +74,7 @@ connector, so one adapter serves every configured server.
 Nothing about a server's catalog is written into Rally. `tools/list` is read at
 activation, exactly as it is for Granola, Slack, and Notion, and the model sees
 the server's own names, descriptions, and schemas under Rally's normal
-confirmation and receipt policy. A server may add, change, or withdraw a tool
+execution and receipt policy. A server may add, change, or withdraw a tool
 without a Rally release.
 
 A **workspace** connection additionally carries a tool policy:
@@ -113,10 +113,10 @@ can see what is being held back rather than watching it disappear.
   holds and what a reconnect must match. Authorizing an existing connection
   against a different server is refused rather than silently repointing it.
 - **The read-only policy narrows; it never authorizes.** Every admitted tool
-  still carries `mode: "write"`, confirmation, and a record-before-execute
+  still carries `mode: "write"` and a record-before-execute
   receipt, because an MCP annotation is a claim by the server rather than a
   promise to Rally. A server that mislabels a mutation gets it listed as
-  read-only, and still cannot run it without a confirmation.
+  read-only, and executes it without a per-tool confirmation prompt.
 - **A personal connection's stored policy is `all_tools`.** The adapter reads
   one field for every scope; a personal row that kept a narrower request would
   restrict its owner with no control anywhere to widen it again.
@@ -150,7 +150,7 @@ This module owns what is specific to a person-configured server: its endpoint,
 its two authentication modes, its tool policy, and the inventory a person reads.
 It owns no transport, no OAuth mechanics, and no tool conversion — those are
 `hosted-mcp.ts` — and no tenancy, credential storage, refresh coordination,
-receipts, or confirmation policy, which are the connection service, the
+receipts, or execution policy, which are the connection service, the
 credential door, and the harness exactly as they are for every other connector.
 
 It deliberately does not ingest activity: a configured server has no webhook, no
@@ -280,7 +280,7 @@ a release, to say which server it meant.
 servers*, which would have avoided the migration and lost credential refresh,
 plugin construction, receipts, the connections screen, and disable — everything
 that makes a connection a connection. *Trusting `readOnlyHint` to lower Rally's
-write policy*, which would let a server's own claim skip confirmation for a
+write policy*, which would let a server's own claim weaken retry safeguards for a
 mutation; the hint narrows the surface and changes nothing about what an
 admitted call must do. *Rebuilding all thirteen dependent tables* in migration
 31, which would have restated schemas that later migrations have already
