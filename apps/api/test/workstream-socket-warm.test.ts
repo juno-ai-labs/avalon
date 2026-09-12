@@ -36,9 +36,9 @@ const auth: AuthContext = {
  * the real `WorkstreamDO`'s in `test-workers/conversation-parent-contract`;
  * here they are the seam, so the Worker-side sequence is what is under test.
  */
-function parentDecisions(authorized = true, archived = false, membershipVersion = 0) {
+function parentDecisions(authorized = true, archived = false, membershipVersion = 0, exists = true) {
   return {
-    resolveViewer: vi.fn(async () => ({ exists: true, authorityGeneration: 7, authorized, archived, membershipVersion })),
+    resolveViewer: vi.fn(async () => ({ exists, authorityGeneration: 7, authorized, archived, membershipVersion })),
   };
 }
 
@@ -48,6 +48,7 @@ function environment(
     createTestDurableObjectId("substream"),
   getSubstream: (id: DurableObjectId) => object = () => ({ prepareSocketAdmission }),
   parent: ReturnType<typeof parentDecisions> = parentDecisions(),
+  automationParent: ReturnType<typeof parentDecisions> = parent,
 ): Env {
   return createTestEnv({
     APP_ENV: "test",
@@ -67,6 +68,10 @@ function environment(
     WORKSTREAM_DOS: createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
       idFromName: () => createTestDurableObjectId("workstream"),
       get: () => parent,
+    }),
+    AUTOMATION_DOS: createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
+      idFromName: () => createTestDurableObjectId("automation"),
+      get: () => automationParent,
     }),
     SUBSTREAM_AGENTS: createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
       idFromName: substreamObjectName,
@@ -109,6 +114,7 @@ describe("conversation socket ticket preparation", () => {
     expect(parent.resolveViewer).toHaveBeenCalledWith({
       workspaceId, parentId: workstreamId, substreamId: "0", userId,
     });
+    expect(parent.resolveViewer).toHaveBeenCalledTimes(1);
     expect(deferred).toHaveLength(1);
     await expect(deferred[0]).resolves.toBeUndefined();
     expect(substreamObjectName).toHaveBeenCalledWith(
@@ -222,6 +228,25 @@ describe("conversation socket ticket preparation", () => {
     });
     expect(deferred).toEqual([]);
     expect(getSubstream).not.toHaveBeenCalled();
+    expect(prepareSocketAdmission).not.toHaveBeenCalled();
+  });
+
+  it("refuses a ticket when neither parent resolves the id", async () => {
+    const prepareSocketAdmission = vi.fn(async () => ({ outcome: "snapshot_prepared" as const }));
+    const workstream = parentDecisions(false, false, 0, false);
+    const automation = parentDecisions(false, false, 0, false);
+    const service = new ConversationService(
+      environment(prepareSocketAdmission, undefined, undefined, workstream, automation),
+      auth,
+      () => undefined,
+    );
+
+    await expect(service.socketTicket(workstreamId)).rejects.toMatchObject({
+      status: 404,
+      code: "conversation_not_found",
+    });
+    expect(workstream.resolveViewer).toHaveBeenCalledTimes(1);
+    expect(automation.resolveViewer).toHaveBeenCalledTimes(1);
     expect(prepareSocketAdmission).not.toHaveBeenCalled();
   });
 

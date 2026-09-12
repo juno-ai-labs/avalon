@@ -355,7 +355,9 @@ cannot serialize unrelated child data planes. Parent updates travel in the other
 direction as versioned, idempotent child effects.
 
 What the Worker does ask the parent is who may read. `ConversationService.authorizeViewer`
-calls the parent's `authorizeViewer` and then seats the reader on the
+calls `WorkstreamDO.resolveViewer` once for existence, authority generation,
+archive state, and the viewer decision; only an absent workstream causes an
+`AutomationDO.resolveViewer` call. It then seats an admitted automation reader on the
 conversation object: for a work stream the seat already exists (the room's
 participants are the conversation's), and for an automation the parent's rule
 is wider than the conversation's participant list, so the Worker admits the
@@ -1727,14 +1729,22 @@ shipped recovers on its own: the answer is still in the queue, and the next wake
 promotes it.
 ### 2026-09-12 — Remove the second parent round trip from opening
 
-The Worker now calls `resolveViewer` to receive existence, generation, archive
-state, and child visibility together. The prior authority-then-viewer sequence
-asked one owner twice before issuing a ticket. Legacy narrow methods delegate
-to the same visibility implementation, preserving their response shapes. The
-conversation snapshot also overlaps independent viewer and detail reads; it
-continues to carry the complete authorized baseline. A prewarming expansion was
-rejected because it leaves the duplicate network dependency in every cold open.
+**What changed:** `resolveViewer` returns parent existence, authority generation,
+archive state, and the requested viewer decision together. The Worker uses it
+for the workstream probe and asks automation only when that probe reports absent;
+this retains the prior fail-closed behavior for an existing inaccessible
+workstream. Legacy narrow methods delegate to the same implementation. Snapshot
+assembly overlaps viewer and read-only detail loading, then settles unseen state
+only after both reads succeed.
 
+**Why:** authority and viewer access are one parent decision, so the former
+authority-then-viewer sequence paid a redundant serial RPC. Viewer profile and
+detail reads are independent, but a failed snapshot must not acknowledge unseen
+state.
+
+**Consequences:** private-child membership and archive decisions remain part of
+admission; the full snapshot remains schema-validated. Prewarming was rejected
+because it retains the duplicate dependency on every cold open.
 
 ### 2026-09-11 — A read is acknowledged by the conversation that was read
 
