@@ -244,3 +244,11 @@ that already logs it, under the one-notice-per-episode rule. The secrets are
 optional in every region, so nothing about a deployment changes until an
 operator sets both. Setting up the channel means creating one more Slack app,
 which is the price of keeping the credential out of every URL.
+
+### Delivered-message preparation failures
+
+`delivered_message_agent_preparation_failed` is emitted by deferred ordinary
+socket-message recovery after its mailbox row makes the single `preparing` to
+`failed` transition. It contains only the opaque input id and terminal code.
+A subsequent alarm sees a terminal row and cannot emit another notice for that
+input; notification remains best effort after the durable failure is recorded.

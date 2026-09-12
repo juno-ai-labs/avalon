@@ -1002,3 +1002,11 @@ take its siblings down — is now a property of the drain itself. Maintenance is
 also no longer all-or-nothing per alarm: each pass is its own entry with its own
 due time, so a Slack reap that has been failing for an hour no longer re-runs
 the memory-index outbox every time it retries.
+
+### Deferred ordinary-message preparation
+
+An idle-loop ordinary socket send arms the SubstreamAgent alarm before reserving
+its durable preparation mailbox row. This is normal recovery work, not a
+crash-only path: the next drain resumes classifier and model preparation after
+canonical chat delivery. A currently executing loop keeps the message on the
+normal pending-first path instead.

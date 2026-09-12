@@ -3324,6 +3324,7 @@ describe("a member's message travels the whole pipeline", () => {
         mentions: [],
         confirmedParticipantUserIds: [],
         attachmentIds: [],
+        runMode: "queue",
       },
     }));
 
@@ -3331,12 +3332,13 @@ describe("a member's message travels the whole pipeline", () => {
       type: "client_command_succeeded",
       command: "create_message",
       clientMessageId: "pipeline-room-socket-wakeup-1",
-      deliveryState: "canonical",
+      deliveryState: "pending",
     });
-    // Human delivery is already durable even if agent activation fails.
+    // The injected eager wake-up failed after pending admission, so the durable
+    // input remains the activation authority rather than being lost.
     expect(await runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM canonical_conversation_turn_details
+        `SELECT COUNT(*) AS count FROM pending_loop_inputs
           WHERE client_message_id = 'pipeline-room-socket-wakeup-1'`,
       ).one().count)).toBe(1);
     socket.close(1000, "done");

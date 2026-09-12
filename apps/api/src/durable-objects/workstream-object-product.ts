@@ -653,9 +653,30 @@ export class WorkstreamObjectProductService {
     return "pending_input_preparation_failed";
   }
 
+  private async terminalizePreparationFailure(
+    preparation: PendingInputPreparationRow,
+    error: unknown,
+    reportDeliveredFailure: boolean,
+  ): Promise<void> {
+    if (this.loops.inputPreparation(preparation.input_id)?.state !== "preparing") return;
+    const terminalCode = this.preparationFailureCode(error);
+    this.loops.failInputPreparation({ inputId: preparation.input_id, terminalCode, now: Date.now() });
+    if (!reportDeliveredFailure) return;
+    logWarn(this.env, "delivered_message_agent_preparation_failed", {
+      input_id: preparation.input_id,
+      reason: terminalCode,
+    });
+    await notifyOps(this.env, {
+      event: "delivered_message_agent_preparation_failed",
+      summary: "A delivered message could not be prepared for the agent.",
+      fields: { input_id: preparation.input_id, reason: terminalCode },
+    });
+  }
+
   private async runInputPreparation<T>(
     preparation: PendingInputPreparationRow,
     work: () => Promise<T>,
+    reportDeliveredFailure = false,
   ): Promise<T> {
     if (preparation.state === "failed") {
       throw new ApiError(409, "pending_input_preparation_failed", "This message could not be prepared");
@@ -667,11 +688,7 @@ export class WorkstreamObjectProductService {
     try {
       return await work();
     } catch (error) {
-      this.loops.failInputPreparation({
-        inputId: preparation.input_id,
-        terminalCode: this.preparationFailureCode(error),
-        now: Date.now(),
-      });
+      await this.terminalizePreparationFailure(preparation, error, reportDeliveredFailure);
       throw error;
     } finally {
       this.endInputPreparation(preparation.input_id);
@@ -960,27 +977,11 @@ export class WorkstreamObjectProductService {
         );
       }
     } catch (error) {
-      // Admission methods normally terminalize themselves. This catch also owns
-      // failures before their preparation guard, and only the preparing→failed
-      // transition is an ops-notice episode.
-      const terminalizedHere = this.loops.inputPreparation(preparation.input_id)?.state === "preparing";
-      const terminalCode = this.preparationFailureCode(error);
-      this.loops.failInputPreparation({
-        inputId: preparation.input_id,
-        terminalCode,
-        now: Date.now(),
-      });
-      if (envelope.deliveredBeforeAgentPreparation === true) {
-        logWarn(this.env, "delivered_message_agent_preparation_failed", {
-          input_id: preparation.input_id,
-          reason: terminalCode,
-        });
-        if (terminalizedHere) await notifyOps(this.env, {
-          event: "delivered_message_agent_preparation_failed",
-          summary: "A delivered message could not be prepared for the agent.",
-          fields: { input_id: preparation.input_id, reason: terminalCode },
-        });
-      }
+      await this.terminalizePreparationFailure(
+        preparation,
+        error,
+        envelope.deliveredBeforeAgentPreparation === true,
+      );
     }
     return "settled";
   }
@@ -4143,7 +4144,29 @@ export class WorkstreamObjectProductService {
     });
     if (deliverEarlyNow && !finishDeliveredPreparation
       && this.loops.loop()?.status === "executing") {
+      // The loop started while canonical preparation yielded. Fall back to the
+      // normal pending path and classify now; otherwise this turn would be
+      // admitted as human-only without ever reaching the newly active agent.
       deliverEarlyNow = false;
+      const activeTask = true;
+      const classification = await classifyWorkstreamMessage(this.env, {
+        workspaceId: auth.workspaceId,
+        workstreamId: root.workstream_key,
+        userId: auth.userId,
+        message: input.text,
+        activeTask,
+        connectorMentions,
+        humanMentions: mentionedPersonNames(prepared.mentions),
+        recentMessages: await this.recentAddressingMessages(Number(this.storage.sql.exec<{
+          next_transcript_sequence: number;
+        } & Record<string, SqlStorageValue>>(
+          `SELECT next_transcript_sequence FROM transcript_counters WHERE id = 1`,
+        ).one().next_transcript_sequence)),
+      });
+      shouldInvoke = classification.classification === "agent_action"
+        || classification.classification === "both"
+        || (classification.classification === "uncertain"
+          && (activeTask || connectorMentions.length > 0));
     }
     if (shouldInvoke) {
       const modelAttachments: ModelAttachmentSource[] = attachmentRows.map((row) => ({
@@ -4578,7 +4601,7 @@ export class WorkstreamObjectProductService {
       activationRequest: null,
       inserted: committed.result.inserted,
     };
-    });
+    }, finishDeliveredPreparation);
   }
 
   async answerElicitation(
