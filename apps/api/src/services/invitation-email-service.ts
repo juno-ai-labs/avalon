@@ -16,7 +16,7 @@ export interface WorkspaceInvitationEmail {
   region: "global" | "eu";
   expiresAt: string;
   inviteUrl: string;
-  /** A one-time Rally download link, when one was issued for this invitation. */
+  /** A Rally download link, repeatable until the invitation expires, when one was issued. */
   downloadUrl?: string;
 }
 
