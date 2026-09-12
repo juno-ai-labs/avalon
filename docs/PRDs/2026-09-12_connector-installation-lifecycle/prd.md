@@ -6,8 +6,7 @@
 > with a shared installation and maintenance lifecycle adopted by Granola.
 > Companion: [connector and MCP contracts](design.md).
 > Standing contract: [Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
-> Replaces the [personal-only Ashby proposal](../2026-09-10_ashby-connector/prd.md).
-> Owners of the existing behavior: [connectors](../../connectors.md),
+> Read alongside [connectors](../../connectors.md),
 > [regionalization](../../regionalization.md), [security](../../security.md),
 > [Ace](../../ace.md), and [data model](../../data-model.md).
 
@@ -508,7 +507,7 @@ None yet.
    describe more events without authorizing them for existing customers.
 8. **One PRD and one launch, with two authorization modes.** Product scope follows
    the user's complete Ashby workflow; the protocol split belongs inside the design.
-   The earlier personal-only proposal is replaced by this one.
+   Both paths share the acceptance and release requirements in this proposal.
 9. **MCP for personal recruiting queries; REST for webhook management.** Reuse
    live discovery and OAuth instead of building a parallel recruiting API catalog.
    Ashby documents that MCP schemas can change and recommends its public API when
@@ -533,9 +532,23 @@ The following are logical records; physical schema and migrations follow
 | Record | Required information |
 | --- | --- |
 | Installation | Connection ID, provider, authorized configuration, desired/applied versions, lifecycle generation, setup identity, state, last verification, actionable error |
-| Remote registration | Installation ID, stable logical registration key, provider ID when known, selected events, expected destination, observed enabled/configuration state, verification-secret reference |
+| Remote registration | Installation ID, stable logical registration key, provider ID when known, selected events, expected destination, observed enabled/configuration state, active verification-secret reference, nullable pending verification-secret reference, rotation state, rotation generation, cutover verification evidence |
 | Maintenance operation | Owning region, operator identity, reviewed target configuration, frozen target enumeration, progress, cancellation state |
 | Operation step | Connection/generation, intended action and input hash, pending/dispatched/completed/unknown outcome, resulting provider ID, verification evidence, safe next action |
+
+Signing-secret rotation records its state as stable, prepared, dispatched, unknown,
+or verified. Persist the pending encrypted secret reference and rotation generation
+before asking the provider to switch. Retain the active reference while the update
+is pending or its outcome is unknown. Ingress uses the provider-specific, tested
+verification policy for that generation; where the provider can deliver with either
+secret during cutover, the receiver is prepared to verify both before dispatch.
+A timeout never promotes the pending secret or discards the active one. A verified
+cutover atomically promotes the pending reference and records its evidence;
+retirement of old verification material follows the verified provider delivery
+semantics. If those semantics cannot be established, stop the rotation with an
+explicit action-required result rather than guessing an overlap interval or
+silently weakening signature verification. Stale completions cannot change a
+newer generation's accepted verification material.
 
 Secrets use the existing versioned encrypted envelope, never plain configuration
 or operation payloads. A required new record inherits the owning subsystem's
@@ -746,6 +759,24 @@ installation version it cannot interpret. Downgrading provider configuration is
 an explicit compensating maintenance operation, not an automatic consequence
 of deploying older code. Disablement and manual disconnect remain usable.
 
+Provider-side MCP catalog changes have a separate recovery path from deployment
+rollback. A removed operation, incompatible schema, or invalid catalog produces
+the companion's typed failure; Rally does not repeat the call under a guessed
+replacement or reuse confirmation for changed arguments. A new user attempt
+reauthorizes and rediscovers the live catalog through `load_plugin`, rebuilds the
+query or requested update against the available tools, and obtains the existing
+confirmation where required. An incomplete or invalid catalog leaves that personal
+tool surface unavailable; a missing operation does not imply that the user's
+OAuth grant is revoked. Reconnect is requested only for a verified authorization
+failure. If rediscovery cannot recover compatibility, report that Rally's connector
+needs an update and keep disconnect available.
+
+MCP catalog failures do not disable the independently authorized workspace event
+connection, remove its webhook registrations, or stop its event ingestion. Likewise,
+webhook repair does not refresh or replace a person's MCP grant. This isolation,
+visible query failure, and explicit recovery apply to the unflagged launch; there
+is no automatic switch to workspace API credentials and no new feature flag.
+
 Implementation updates `connectors.md`, `hosted-mcp-connectors.md`,
 `provider-apps.md`, `data-model.md`, `security.md`, regional
 and provider configuration, Settings discovery, and operational/manual acceptance
@@ -764,7 +795,7 @@ subsystem ships. A phased `plan.md` is written only after PRD approval.
 | Personal OAuth | Both regional callbacks handle consent, denial, replay, workspace switching, refresh, reconnect, and disconnect without exposing credentials. |
 | Personal authority | Members with different Ashby permissions cannot spend one another's grants; workspace automation and read-only child paths cannot inherit personal tool authority. |
 | Recruiting workflows | Complete the personal query/update scenarios with test records; hired answers state application filters and scope; unsupported profile history produces an explicit limitation. Verify confirmed writes in Ashby and no writes after denial. |
-| Live tool contract | Fully paginated discovery, schema changes, removed tools, collisions, malformed schemas, uncertain writes, and clipped results follow the companion contract. |
+| Live tool contract | Fully paginated discovery, schema changes, removed tools, collisions, malformed schemas, uncertain writes, and clipped results follow the companion contract. Catalog failure and recovery leave workspace webhooks delivering; changed calls require fresh confirmation and do not trigger OAuth reconnect unless authorization actually failed. |
 | Model usability | On the configured medium fallback model, cover discovery, a successful multi-tool query, ambiguous names, wrong ID families, changed stages, missing modification fields, confirmation, and recovery without loops. |
 | Shared implementation | Ashby and Granola use the same setup/maintenance state machine; provider-specific branches are limited to declared protocol facets. |
 | Installation | Same-key retries return the same attempt; changed-input key reuse conflicts; interrupted setup is reconciled; immediate ping succeeds; partial registration failure remains visible. |
@@ -779,7 +810,7 @@ subsystem ships. A phased `plan.md` is written only after PRD approval.
 | Manual capability | A synthetic provider lacking update/list/delete produces exact manual steps and never reports an unverified installation as current. |
 | Permission expansion | New event/data scope cannot be applied before the administrator authorizes it, even through fleet maintenance. |
 | Cleanup | Revoked credentials, unsupported deletion, and failed removal remain visible; local disablement succeeds immediately. |
-| Rotation and cutover | Pending verification material is available before a provider switch; failed/unknown rotation preserves a recoverable state and never clears signing protection. |
+| Rotation and cutover | Active and pending secret references plus rotation generation survive interruption. Pending material is available before dispatch; failed/unknown rotation preserves the active reference; verified promotion is atomic; stale completion cannot change accepted keys. |
 | User surfaces | Real desktop inspection covers setup, loading, partial success, repair, denied access, offline state, and cleanup pending. |
 | Maintainability | A developer can run the same contract suite against both providers and follow the companion's registration checklist. |
 | Registry and events | Validate both scope-specific capabilities, the empty static tool list, live personal tools, operational trigger descriptors, normalized IDs, and closed filter metadata through existing registry/schema checks. |

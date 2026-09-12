@@ -227,7 +227,14 @@ Before a tool call, the shared transport initializes a session and re-lists the
 catalog to verify the exact remote name still exists and no names collide.
 Schema drift cannot silently transform an already confirmed operation. If the
 current input is rejected, obtain a fresh surface in a new attempt and rebuild
-the call rather than looping against cached metadata.
+the call rather than looping against cached metadata. A removed operation remains
+unsupported unless live discovery supplies an appropriate alternative; that
+alternative is a new call with its own authorization, never a renamed receipt.
+Do not treat schema/catalog drift as revoked OAuth or suggest reconnecting for it.
+If discovery still cannot produce a valid compatible surface, report the query
+unavailable pending a connector/provider fix. These failures concern only the
+personal tool surface: the workspace webhook connection and its grants, secrets,
+registrations, and ingestion continue independently.
 
 Retain existing record-before-execute receipts. A completed receipt replays its
 persisted result without another provider call. An incomplete dispatched receipt
