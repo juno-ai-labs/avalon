@@ -30,6 +30,7 @@ import {
   continueListAtCaret,
   type DraftEdit,
   type ListMarkerKind,
+  selectionTouchesListItem,
   shiftListAtCaret,
   toggleListAtSelection,
 } from '../lib/markdown-lists';
@@ -510,7 +511,12 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
     const { selectionStart, selectionEnd, value: live } = textarea;
     if (event.key === 'Enter') return runListEdit(continueListAtCaret(live, selectionStart, selectionEnd));
     if (event.key === 'Tab') {
-      return runListEdit(shiftListAtCaret(live, selectionStart, selectionEnd, event.shiftKey ? 'out' : 'in'));
+      runListEdit(shiftListAtCaret(live, selectionStart, selectionEnd, event.shiftKey ? 'out' : 'in'));
+      // On whether the caret is in a list, not on whether the draft moved: at
+      // the depth cap and at the margin the shift does nothing, and handing the
+      // key back there would take the caret out of the field mid-list, which is
+      // the one thing about Tab people notice.
+      return selectionTouchesListItem(live, selectionStart, selectionEnd);
     }
     const kind = listShortcutKind(event);
     return kind !== null && runListEdit(toggleListAtSelection(live, selectionStart, selectionEnd, kind));
