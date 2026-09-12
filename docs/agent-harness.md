@@ -1323,7 +1323,11 @@ it, and the 13.0.0 file had already drifted to inexact hunks that pnpm's applier
 was tolerating. That is the visible cost. The larger one is that a patch gets no
 review: three of the behaviours above were wrong in the file this repository has
 been running, and two of them were found within an hour of the same code being
-read as a package contract. The ports are pure, identical for every host, and
+read as a package contract. Only the suspend refusal was reachable from here —
+`shouldStop` and `requestCompaction` are never wired into `runToolLoop` by
+`bind-runtime.ts`, so those two were latent in the patch rather than live in
+production — which is the point rather than a mitigation: an unreviewed file
+carries its defects until something makes someone read it. The ports are pure, identical for every host, and
 expressible over injected values, which is where Bind's ownership fence puts
 them.
 
@@ -1361,11 +1365,16 @@ redesign. The host already knows: `harnessResultOutcome` is where the
 `stateRevision` before handing it to `onStepSettled`. One more field — whether
 this batch opened an answer-suspend — is what `settlePendingSteersAtStep` needs
 to park both kinds of input instead of preparing them, and it is Rally's field
-to add. And the lockfile edit stays surgical: a
-`--lockfile-only` install re-resolves every `latest` catalog entry (vitest 4→5,
-zod, eslint, `@types/node` backwards by four majors on the run that produced this
-change) — resolve into a scratch copy if you like, but commit only the Bind
-lines.
+to add.
+
+Two housekeeping rules, one carried forward and one retired. **The lockfile edit
+stays surgical**: a `--lockfile-only` install re-resolves every `latest` catalog
+entry (vitest 4→5, zod, eslint, and `@types/node` backwards by four majors on
+the run that produced this change), so resolve into a scratch copy if you like,
+but commit only the Bind lines. And **the 2026-09-11 entry's instruction to
+regenerate `patches/@juno-ai__bind@<version>.patch` on the next upgrade is
+spent**, superseded here: there is no patch, and recreating one would rebuild
+the mechanism this change removed.
 
 ### 2026-09-11 — Bind 14: a nullable property reaches the model as a union
 

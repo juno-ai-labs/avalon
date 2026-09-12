@@ -831,7 +831,17 @@ owner.
 `steer` means deliver after the current step: the in-flight provider response
 finishes, its reserved assistant turn becomes canonical, and every tool call it
 already emitted settles before pending steer inputs are promoted in arrival
-order and included in the next model request. `queue` means deliver after the
+order and included in the next model request. **An `answer`-suspend is the
+exception, and today it fails rather than waiting**: a tool that halts on
+`needs_input` withholds its result until a human answers, so that step never
+settles, and `applyBindLoopTransition` refuses the `protocol_user_appended`
+transition a steer (or a resident-context delivery) would need. Preparation runs
+before the transaction, so nothing is written and nothing is marked delivered —
+but `requiredPort` turns the throw into a terminal `run_state_persistence_failed`,
+and because answers share this queue and it drains oldest-first, a steer ahead of
+the answer blocks the answer too. The fix is to park both kinds of input for a
+step that opened an elicitation; see the 2026-09-12 entry in
+[`agent-harness.md`](agent-harness.md). `queue` means deliver after the
 persistent loop next becomes idle; promotion wakes that same loop rather than
 creating another one. If failure or stop prevents a steer boundary, the input
 falls forward to the next idle activation and is never lost. Multiple inputs
