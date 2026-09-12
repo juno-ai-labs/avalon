@@ -207,6 +207,37 @@ Bulk invitation sending, regional workspace grants, activation/recovery download
 and exclusive artifact distribution remain incomplete. The subsystem reference
 owns concrete migration filenames, deployment prerequisites and erasure operations.
 
+### 2026-09-12 — Ship the workspace-invitation grant Global-only, ahead of the regional handoff
+
+**Decided:** `WorkspaceService.createInvitation` issues a `workspace_invitation`
+grant and puts its link in the invitation email for a Global workspace only. An
+EU workspace invitation gets no download link and no grant. The regional
+handoff this PRD's Regional impact section describes — a download URL carrying
+a non-secret owning-region locator, redeemed through that region's own API —
+is not built; EU redemption stays Global-only, as it was before this change.
+
+**Why:** Rollout step 3 (regional workspace invitation grants) was still
+unimplemented, and a reported lockout — invited teammates with no existing
+Rally install had no way to get the app from the invitation email at all —
+needed the Global majority case fixed now rather than waiting on the full
+regional design. Issuing an EU grant against the EU database without the
+locator/regional-redemption work would produce a link that can never be
+redeemed, which is worse than no link. This is a scope cut on rollout step 3,
+not a reversal of it: the locator design, EU data-residency review, and
+regional redemption endpoint remain the PRD's stated shape for closing this gap.
+
+**Changes:** Narrows rollout step 3 to its Global half; EU workspace invitation
+grants remain future work with the design already on record in this PRD's
+Regional impact section. The revocation-cascade invariant this PRD's Product
+behavior section already states ("revocation or supersession must invalidate
+any still-active grants linked to that invitation") is fully implemented in the
+same change, across all four ways a workspace invitation can end
+(`revokeInvitation`, decline, duplicate-invitation supersession, and workspace
+abandonment) — that invariant is met, not deferred. Shipped in
+[#728](https://github.com/juno-ai-labs/avalon/pull/728); the module reference
+(`docs/private-access.md`) owns the mechanism and carries the fuller changelog
+entry.
+
 ## Key design decisions
 
 1. **Use the supplied landing and acknowledgement copy.** The pasted

@@ -35,6 +35,18 @@ export async function revokeDownloadGrant(db: D1DatabaseLike, id: string): Promi
     .bind(new Date().toISOString(), id).first() !== null;
 }
 
+/**
+ * Invalidates any still-live grant tied to one workspace invitation, per the
+ * PRD's invariant that revocation or supersession must not leave a download
+ * capability behind. Uses the `download_grants_source` index on
+ * `(source, source_id)`; a no-op if the invitation never had a grant.
+ */
+export async function revokeDownloadGrantsForInvitation(db: D1DatabaseLike, invitationId: string): Promise<void> {
+  await db.prepare(`UPDATE download_grants SET revoked_at = COALESCE(revoked_at, ?)
+    WHERE source = 'workspace_invitation' AND source_id = ? AND revoked_at IS NULL`)
+    .bind(new Date().toISOString(), invitationId).run();
+}
+
 /** A distributed cap per known grant, without creating rows for attacker tokens. */
 export async function admitDownloadStart(db: D1DatabaseLike, token: string, limit: number, now = Date.now()): Promise<boolean> {
   if (!Number.isFinite(limit)) return true;
