@@ -4121,6 +4121,7 @@ export class WorkstreamObjectProductService {
         || classification.classification === "both"
         || (classification.classification === "uncertain" && (activeTask || connectorMentions.length > 0));
     }
+    const invocationBeforeEarlyDeferral = shouldInvoke;
     if (deliverEarlyNow && !finishDeliveredPreparation) shouldInvoke = false;
     const now = preparation.created_at;
     const messageId = preparation.input_id;
@@ -4148,6 +4149,7 @@ export class WorkstreamObjectProductService {
       // normal pending path and classify now; otherwise this turn would be
       // admitted as human-only without ever reaching the newly active agent.
       deliverEarlyNow = false;
+      shouldInvoke = invocationBeforeEarlyDeferral;
       if (!shouldInvoke) {
         const activeTask = true;
         const classification = await classifyWorkstreamMessage(this.env, {

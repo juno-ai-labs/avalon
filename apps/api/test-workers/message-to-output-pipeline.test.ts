@@ -3298,6 +3298,40 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
+  it("falls back to deterministic pending preparation when a run starts during canonical preparation", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    await runInDurableObject(stub, (instance, state) => {
+      const transcript = Reflect.get(instance, "transcript") as {
+        prepareParticipantMessage: (input: { clientMessageId: string }) => Promise<unknown>;
+      };
+      const original = transcript.prepareParticipantMessage.bind(transcript);
+      transcript.prepareParticipantMessage = async (input) => {
+        const prepared = await original(input);
+        if (input.clientMessageId === "late-handoff-deterministic") {
+          holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+        }
+        return prepared;
+      };
+    });
+    const { socket } = await openSubscribedSocket(stub, "00000000-0000-7000-8000-0000000007c1");
+    const receipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      type: "create_message", operationId: "00000000-0000-7000-8000-0000000007c2",
+      payload: {
+        text: "deterministic invocation after handoff", clientMessageId: "late-handoff-deterministic",
+        mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
+      },
+    }));
+    expect(await receipt).toMatchObject({ deliveryState: "pending" });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(new SubstreamLoopStorage(state.storage).inputByClientMessageId("late-handoff-deterministic"))
+        .toBeDefined();
+    });
+    socket.close(1000, "done");
+  });
+
   it("keeps an ordinary socket send and queued follow-up visible during an active run", async () => {
     const stub = agentStub();
     const opened = await initializeWorkstream(stub, "first message");
