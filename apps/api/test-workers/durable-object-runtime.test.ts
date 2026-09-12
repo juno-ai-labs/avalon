@@ -43,8 +43,8 @@ import { enqueueSemanticRealtimeReference } from "../src/durable-objects/workstr
 import {
   insertPreparedTranscriptFact,
   prepareTranscriptFact,
-  WorkstreamTranscriptStorage,
 } from "../src/durable-objects/workstream-transcript-storage";
+import type { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import type { Env } from "../src/env";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
 import { canonicalModelMessageJson } from "../src/services/workstream-participant-model-message";
@@ -5927,7 +5927,7 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
-  it("keeps the bootstrap model waterline below a second canonical input still in flight", async () => {
+  it("keeps the model waterline below a second canonical input still in flight", async () => {
     await seedOpenAuthority();
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
