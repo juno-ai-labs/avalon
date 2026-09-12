@@ -16,6 +16,8 @@ export interface WorkspaceInvitationEmail {
   region: "global" | "eu";
   expiresAt: string;
   inviteUrl: string;
+  /** A Rally download link, repeatable until the invitation expires, when one was issued. */
+  downloadUrl?: string;
 }
 
 export interface WorkspaceInvitationResolutionEmail {
@@ -53,6 +55,7 @@ export async function sendWorkspaceInvitationEmail(
     `${invitation.inviterName} invited you to join ${invitation.workspaceName} as ${roleLabel}.`,
     "",
     `Accept the invitation: ${invitation.inviteUrl}`,
+    ...(invitation.downloadUrl ? ["", `Don't have Rally yet? Download it for macOS: ${invitation.downloadUrl}`] : []),
     "",
     `This one-time invitation expires ${expiration}.`,
     `Workspace data region: ${regionLabel}.`,
@@ -141,6 +144,9 @@ function invitationEmailHtml(input: WorkspaceInvitationEmail & {
   const roleLabel = escapeHtml(input.roleLabel);
   const regionLabel = escapeHtml(input.regionLabel);
   const expiration = escapeHtml(input.expiration);
+  const downloadRow = input.downloadUrl
+    ? `<tr><td style="font-size:14px;line-height:1.6;color:#c9ccc4;padding-bottom:12px">Don't have Rally yet? <a href="${escapeHtml(input.downloadUrl)}" style="color:#CEDC00">Download it for macOS</a>.</td></tr>`
+    : "";
   return `<!doctype html>
 <html lang="en">
   <body style="margin:0;background:#10130f;color:#f2f3ec;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
@@ -151,6 +157,7 @@ function invitationEmailHtml(input: WorkspaceInvitationEmail & {
           <tr><td><h1 style="margin:18px 0 12px;font-size:28px;line-height:1.2;color:#f2f3ec">Join ${workspaceName}</h1></td></tr>
           <tr><td style="font-size:16px;line-height:1.6;color:#c9ccc4">${inviterName} invited you to join <strong style="color:#f2f3ec">${workspaceName}</strong> as ${roleLabel}.</td></tr>
           <tr><td style="padding:28px 0"><a href="${inviteUrl}" style="display:inline-block;background:#CEDC00;color:#11140f;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:10px">Accept invitation</a></td></tr>
+          ${downloadRow}
           <tr><td style="font-size:13px;line-height:1.6;color:#8f948b">This one-time invitation expires ${expiration}.<br>Workspace data region: ${regionLabel}.</td></tr>
           <tr><td style="padding-top:24px;font-size:12px;line-height:1.5;color:#73786f;border-top:1px solid #2b2f29">If you were not expecting this invitation, you can ignore this email.</td></tr>
         </table>
