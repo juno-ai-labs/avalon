@@ -6549,23 +6549,26 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   grid-column: 1 / -1;
 }
 
-/* Wrapped text spans the controls' own grid row, so the reserve at its foot is
-   what keeps the two apart: the 28px control, the 7px of row padding under it,
-   and 4px of air between the last line and the top of the plus. At 34px the
-   text ended flush with that top edge — legible, but the field read as one
-   block of text with buttons stuck to it. */
+/* The field keeps its own foot clear; the controls below it keep the rest.
+   This used to reserve 39px here instead — a control's height plus the row
+   padding — because the controls sat in the same grid row as the wrapped text
+   and that padding was all that held them apart. Padding inside a scroller
+   scrolls: it held on the last line of the draft and nowhere else, so the
+   moment a draft outgrew the field and the text scrolled, every line under the
+   caret ran beneath the plus button. The row below is what holds them apart
+   now, and a row cannot be scrolled into. */
 :is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule[data-multiline='true'] :is(textarea, .composer-highlight),
 :is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments :is(textarea, .composer-highlight) {
-  padding: 9px 14px 39px;
+  padding: 9px 14px 4px;
 }
 
 :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-toolbar { display: contents; }
 
-/* Attachments and multiline text span the input across the controls' grid row.
-   Raise the controls above that shell so the textarea cannot intercept clicks. */
-:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule :is(.composer-tools, .composer-submit-area) {
-  position: relative;
-  z-index: 1;
+/* Attachments and multiline text span the input across the full width, so the
+   controls take a row of their own under it rather than sharing one. */
+:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule[data-multiline='true'] :is(.composer-tools, .composer-submit-area),
+:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments :is(.composer-tools, .composer-submit-area) {
+  grid-row: 3;
 }
 
 :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-tools {
