@@ -521,10 +521,11 @@ rejected because each inspection must ask the current parent authority.
 
 **Consequences:** Only `open` may create a viewer session or migrate a hostname.
 Any future operation that needs either effect must go through `open`; inspection
-callers must stay on `resolveAuthorized`.
+callers must stay on `resolveAuthorized`. Expired viewer sessions are therefore
+pruned on navigation rather than on inspection, which creates no sessions to
+consume them.
 
 Shipped in #731.
-
 
 ### 2026-09-11 — A link in a site preview leaves through the person who clicked it
 
