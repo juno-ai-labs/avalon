@@ -92,7 +92,12 @@ function environment(recorded: Recorded): Env {
           authorityGeneration: 7,
           archived: recorded.archived,
         }),
-        authorizeViewer: recorded.authorizeViewer,
+        resolveViewer: async (input: unknown) => ({
+          exists: recorded.parentKind === "workstream", authorityGeneration: 7,
+          ...(recorded.parentKind === "workstream"
+            ? await recorded.authorizeViewer(input)
+            : { authorized: false, archived: false }),
+        }),
       }),
     }),
     AUTOMATION_DOS: createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
@@ -103,7 +108,10 @@ function environment(recorded: Recorded): Env {
           authorityGeneration: 7,
           archived: recorded.archived,
         }),
-        authorizeViewer: recorded.authorizeViewer,
+        resolveViewer: async (input: unknown) => ({
+          exists: recorded.parentKind === "automation", authorityGeneration: 7,
+          ...await recorded.authorizeViewer(input),
+        }),
       }),
     }),
     SUBSTREAM_AGENTS: createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
