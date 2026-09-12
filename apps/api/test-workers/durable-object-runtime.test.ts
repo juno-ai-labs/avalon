@@ -5786,6 +5786,39 @@ describe("Durable Objects in the Workers runtime", () => {
     ).toBe(0);
   });
 
+  it("recovers delivered attachments in request order and rejects a missing resource", async () => {
+    await seedOpenAuthority();
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const firstResourceId = "00000000-0000-7000-8000-000000000151";
+    const secondResourceId = "00000000-0000-7000-8000-000000000152";
+    await runInDurableObject(workspace, (_instance, state) => {
+      for (const [id, title] of [[firstResourceId, "First"], [secondResourceId, "Second"]]) {
+        state.storage.sql.exec(
+          `INSERT INTO resources(id, workspace_id, resource_type, provider, title, metadata_json, created_at, updated_at)
+           VALUES (?, ?, 'file', 'avalon_upload', ?, '{}', '2026-09-12T00:00:00.000Z', '2026-09-12T00:00:00.000Z')`,
+          id, WORKSPACE_ID, title,
+        );
+      }
+    });
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    await runInDurableObject(stub, async (instance) => {
+      const product = (instance as unknown as { product: {
+        recoverDeliveredAttachments(workspaceId: string, resourceIds: string[]): Promise<Array<{ id: string }>>;
+      } }).product;
+      await expect(product.recoverDeliveredAttachments(WORKSPACE_ID, [secondResourceId, firstResourceId]))
+        .resolves.toEqual([
+          expect.objectContaining({ id: secondResourceId }),
+          expect.objectContaining({ id: firstResourceId }),
+        ]);
+      await expect(product.recoverDeliveredAttachments(WORKSPACE_ID, [firstResourceId, "missing-resource"]))
+        .rejects.toMatchObject({ status: 422, code: "invalid_message_attachment" });
+    });
+  });
+
   it("removes an early canonical upsert before activation writes its delivery receipt", async () => {
     await seedOpenAuthority();
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
