@@ -1023,6 +1023,8 @@ function bootstrapProjectionMessages(
   storedMessages: readonly Message[],
   pendingAgentTurnIds: ReadonlySet<string>,
 ): { preparedMessages: Message[]; compactionMessages: Message[] } {
+  // Model projection and compaction must use the same contiguous prefix. A
+  // prepared suffix beyond an awaiting turn would reach the model out of order.
   const preparedMessages = storedMessages.filter((message) => !pendingAgentTurnIds.has(message.id));
   // A compaction continuation is a contiguous transcript prefix. A later
   // prepared turn cannot move its waterline past an earlier delivered turn
@@ -1034,12 +1036,10 @@ function bootstrapProjectionMessages(
       : first,
     null,
   );
-  return {
-    preparedMessages,
-    compactionMessages: firstPendingSequence === null
-      ? preparedMessages
-      : preparedMessages.filter((message) => message.sequenceNumber < firstPendingSequence),
-  };
+  const contiguousMessages = firstPendingSequence === null
+    ? preparedMessages
+    : preparedMessages.filter((message) => message.sequenceNumber < firstPendingSequence);
+  return { preparedMessages: contiguousMessages, compactionMessages: contiguousMessages };
 }
 
 async function loadWorkstreamContextCompaction(

@@ -34,7 +34,6 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-obje
 import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
 import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
-import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
 import { WorkstreamDO } from "../src/durable-objects/workstream-do";
 import { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import type { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
@@ -5783,7 +5782,7 @@ describe("Durable Objects in the Workers runtime", () => {
     ).toBe(0);
   });
 
-  it("hydrates an overtaken pending upsert as a delivered removal from the minimal receipt", async () => {
+  it("removes an early canonical upsert before activation writes its delivery receipt", async () => {
     await seedOpenAuthority();
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
@@ -5809,30 +5808,6 @@ describe("Durable Objects in the Workers runtime", () => {
         producedByRunId: null,
         now: Date.parse("2026-08-26T20:00:00.000Z"),
       });
-      const turn = state.storage.sql.exec<{
-        attention_ordinal: number;
-      }>(
-        `SELECT attention_ordinal FROM participant_transcript_turns WHERE turn_id = ?`,
-        inputId,
-      ).one();
-      const loops = new SubstreamLoopStorage(state.storage);
-      const loop = loops.loop() ?? loops.ensureLoop({
-        loopId: substreamLoopId(WORKSTREAM_ID),
-        bindStateRevision: 0,
-        now: Date.parse("2026-08-26T20:00:00.001Z"),
-      });
-      state.storage.sql.exec(
-        `INSERT INTO delivered_loop_inputs
-           (input_id, loop_id, input_sequence, delivered_turn_id,
-            delivered_attention_ordinal, delivered_at)
-         VALUES (?, ?, 1, ?, ?, ?)`,
-        inputId,
-        loop.loop_id,
-        inputId,
-        turn.attention_ordinal,
-        Date.parse("2026-08-26T20:00:00.001Z"),
-      );
-
       const event = (instance as unknown as TestableSubstreamAgent).semanticRealtimeEvent({
         messageId: "semantic-realtime:1",
         sequence: 1,

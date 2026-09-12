@@ -60,6 +60,7 @@ import {
   type WorkstreamReaderAudience,
 } from "../lib/audience-containment";
 import { logWarn } from "../observability/logger";
+import { notifyOps } from "../observability/ops-slack-notifier";
 import { mentionedPersonNames, prepareMentionMarkdown, type MentionPerson } from "@rally/contracts/message-mentions";
 import { uuidV7 } from "../lib/uuid-v7";
 import { connectionFromRow } from "../mappers/connection";
@@ -724,6 +725,29 @@ export class WorkstreamObjectProductService {
     );
   }
 
+  private async recoverDeliveredAttachments(
+    workspaceId: string,
+    resourceIds: readonly string[],
+  ): Promise<AttachmentResourceRow[]> {
+    if (new Set(resourceIds).size !== resourceIds.length) {
+      throw new ApiError(422, "invalid_message_attachment", "One or more attachments are unavailable or already sent");
+    }
+    const rows = (await this.workspaceDatabase(workspaceId).prepare(
+      `SELECT id, connection_id, resource_type, provider, provider_resource_id, title,
+              mime_type, content_ref, content_sha256, canonical_url, metadata_json,
+              model_content_ref, model_mime_type, model_content_sha256,
+              model_metadata_json, model_content_status, model_content_extractor_version,
+              model_content_error_code, created_at, updated_at
+         FROM resources
+        WHERE workspace_id = ? AND id IN (SELECT value FROM json_each(?))`,
+    ).bind(workspaceId, JSON.stringify(resourceIds)).all<AttachmentResourceRow>()).results;
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    if (byId.size !== resourceIds.length || resourceIds.some((id) => !byId.has(id))) {
+      throw new ApiError(422, "invalid_message_attachment", "One or more attachments are unavailable or already sent");
+    }
+    return resourceIds.map((id) => byId.get(id)!);
+  }
+
   private async reserveAttachmentDrafts(input: {
     workspaceId: string;
     workstreamId: string;
@@ -920,6 +944,7 @@ export class WorkstreamObjectProductService {
           true,
           envelope.deliveredBeforeAgentPreparation === true,
           envelope.deliveredBeforeAgentPreparation === true,
+          envelope.activeTaskAtDelivery === true,
         );
       } else if (preparation.preparation_kind === "external_message") {
         await this.admitExternalMessage(envelope.input as AdmitExternalMessageInput);
@@ -935,11 +960,25 @@ export class WorkstreamObjectProductService {
         );
       }
     } catch (error) {
-      // Admission methods terminalize preparation failures before returning.
+      // Admission methods normally terminalize themselves. This catch also owns
+      // failures before their preparation guard, and only the preparing→failed
+      // transition is an ops-notice episode.
+      const terminalizedHere = this.loops.inputPreparation(preparation.input_id)?.state === "preparing";
+      const terminalCode = this.preparationFailureCode(error);
+      this.loops.failInputPreparation({
+        inputId: preparation.input_id,
+        terminalCode,
+        now: Date.now(),
+      });
       if (envelope.deliveredBeforeAgentPreparation === true) {
         logWarn(this.env, "delivered_message_agent_preparation_failed", {
           input_id: preparation.input_id,
-          reason: this.preparationFailureCode(error),
+          reason: terminalCode,
+        });
+        if (terminalizedHere) await notifyOps(this.env, {
+          event: "delivered_message_agent_preparation_failed",
+          summary: "A delivered message could not be prepared for the agent.",
+          fields: { input_id: preparation.input_id, reason: terminalCode },
         });
       }
     }
@@ -3904,10 +3943,14 @@ export class WorkstreamObjectProductService {
     reauthorizeWorkspaceMembership: boolean,
     deliverBeforePreparation = false,
     finishDeliveredPreparation = false,
+    activeTaskAtDelivery = false,
   ): Promise<WorkstreamObjectCreateMessageResult> {
     const input = WorkstreamObjectCreateMessageInputSchema.parse(rawInput);
-    // Explicitly queued messages keep their reorderable pending projection.
-    const earlyDelivery = deliverBeforePreparation && !input.seed && input.runMode !== "queue";
+    // Only an ordinary message may become canonical before preparation. Explicit
+    // steering and queue modes must remain visible to the active loop first.
+    const earlyDelivery = deliverBeforePreparation && !input.seed && input.runMode === undefined
+      && this.loops.loop()?.status !== "executing";
+    const activeLoopAtDelivery = earlyDelivery && this.loops.loop()?.status === "executing";
     const requestHash = workstreamImportHash({
       command: "create_message",
       authorUserId: auth.userId,
@@ -3923,9 +3966,9 @@ export class WorkstreamObjectProductService {
       requestHash,
     );
     const existing = first(this.storage.sql.exec<{
-      id: string; created_at: number;
+      id: string; created_at: number; sequence_number: number;
     } & Record<string, SqlStorageValue>>(
-      `SELECT id, created_at FROM canonical_conversation_turn_details WHERE client_message_id = ?`,
+      `SELECT id, created_at, sequence_number FROM canonical_conversation_turn_details WHERE client_message_id = ?`,
       input.clientMessageId,
     ));
     const alreadyDelivered = Boolean(existing && finishDeliveredPreparation);
@@ -3949,15 +3992,25 @@ export class WorkstreamObjectProductService {
       inputId: uuidV7(reservationNow),
       clientMessageId: input.clientMessageId,
       preparationKind: "human_message",
-      envelope: { auth, input, ...(earlyDelivery ? { deliveredBeforeAgentPreparation: true } : {}) },
+      envelope: {
+        auth,
+        input,
+        ...(earlyDelivery ? {
+          deliveredBeforeAgentPreparation: true,
+          activeTaskAtDelivery: activeLoopAtDelivery,
+        } : {}),
+      },
       now: reservationNow,
     });
     return this.runInputPreparation(preparation, async () => {
     const root = await authorizedRoot();
 
-    const requestedPersonIds = [...new Set(input.mentions.flatMap((mention) =>
+    const requestedPersonIds = alreadyDelivered ? [] : [...new Set(input.mentions.flatMap((mention) =>
       mention.type === "person" && mention.userId ? [mention.userId] : []))];
-    const allMemberIds = [...new Set([auth.userId, ...requestedPersonIds, ...input.confirmedParticipantUserIds])];
+    // The delivered turn's mentions are immutable history. Recovery rechecks
+    // its author, but a later target departure cannot invalidate that history.
+    const allMemberIds = [...new Set([auth.userId, ...requestedPersonIds,
+      ...(alreadyDelivered ? [] : input.confirmedParticipantUserIds)])];
     const people = new Map<string, MentionPerson>();
     if (allMemberIds.length > 0) {
       const placeholders = allMemberIds.map(() => "?").join(",");
@@ -3976,7 +4029,18 @@ export class WorkstreamObjectProductService {
         throw new ApiError(422, "invalid_workspace_member", "A mentioned person is not an active workspace member");
       }
     }
-    const prepared = prepareMentionMarkdown(input.text, input.mentions, people);
+    // Recovery must keep the text and mention offsets that were made canonical
+    // at socket admission. Re-rendering after a profile rename would produce a
+    // different markdown payload for the same immutable turn.
+    const canonicalText = alreadyDelivered
+      ? this.transcript.participantTurn(existing!.id)?.blocks.find((block) => block.type === "text")
+      : null;
+    if (alreadyDelivered && (!canonicalText || canonicalText.type !== "text")) {
+      throw new Error("delivered_message_canonical_text_missing");
+    }
+    const prepared = canonicalText && canonicalText.type === "text"
+      ? { text: canonicalText.text, mentions: canonicalText.mentions ?? [] }
+      : prepareMentionMarkdown(input.text, input.mentions, people);
     const personIds = [...new Set(prepared.mentions.flatMap((mention) =>
       mention.type === "person" && mention.userId ? [mention.userId] : []))];
     // Confirmation is authority for an accepted mention, not a second generic
@@ -3991,7 +4055,7 @@ export class WorkstreamObjectProductService {
         userIds: [...new Set([...currentAudience.userIds, ...confirmedParticipantUserIds])],
       });
     }
-    const unconfirmed = personIds.filter((userId) =>
+    const unconfirmed = alreadyDelivered ? [] : personIds.filter((userId) =>
       !this.isParticipant(userId) && !confirmedParticipantUserIds.includes(userId));
     if (root.scope === "personal" && unconfirmed.length > 0) {
       throw new ApiError(409, "participant_confirmation_required", "Confirm before mentioning a nonparticipant", {
@@ -4001,9 +4065,7 @@ export class WorkstreamObjectProductService {
     // Once the human turn is committed these resources are attached, not
     // reusable drafts. Read the current linked resources for model preparation.
     const attachmentRows = alreadyDelivered && input.attachmentIds.length > 0
-      ? (await this.workspaceDatabase(auth.workspaceId).prepare(
-          `SELECT * FROM resources WHERE workspace_id = ? AND id IN (SELECT value FROM json_each(?))`,
-        ).bind(auth.workspaceId, JSON.stringify(input.attachmentIds)).all<AttachmentResourceRow>()).results
+      ? await this.recoverDeliveredAttachments(auth.workspaceId, input.attachmentIds)
       : await this.reserveAttachmentDrafts({
       workspaceId: auth.workspaceId,
       workstreamId: root.workstream_key,
@@ -4012,6 +4074,11 @@ export class WorkstreamObjectProductService {
       resourceIds: input.attachmentIds,
       now: preparation.created_at,
     });
+
+    // Async membership and attachment work can yield to a newly-started run.
+    // Recheck immediately before choosing the canonical handoff: while a run
+    // owns the loop, this input must retain pending-first ordering.
+    let deliverEarlyNow = earlyDelivery && this.loops.loop()?.status !== "executing";
 
     const participantCount = Number(first(this.storage.sql.exec<{ count: number }>(
       `SELECT COUNT(*) AS count FROM participants WHERE status = 'active'`,
@@ -4029,8 +4096,10 @@ export class WorkstreamObjectProductService {
       // scripted conversation cannot wait on a live guess about each line when
       // the pack is the authority on which lines start a run.
       shouldInvoke = input.seed.assistant !== null;
-    } else if (!shouldInvoke && !(earlyDelivery && !finishDeliveredPreparation)) {
-      const activeTask = this.loops.loop()?.status === "executing";
+    } else if (!shouldInvoke && !(deliverEarlyNow && !finishDeliveredPreparation)) {
+      // Preparation can resume after the active loop drains; its delivery-time
+      // state is the classifier's causal context for a canonical early send.
+      const activeTask = alreadyDelivered ? activeTaskAtDelivery : this.loops.loop()?.status === "executing";
       const classification = await classifyWorkstreamMessage(this.env, {
         workspaceId: auth.workspaceId,
         workstreamId: root.workstream_key,
@@ -4039,17 +4108,19 @@ export class WorkstreamObjectProductService {
         activeTask,
         connectorMentions,
         humanMentions: mentionedPersonNames(prepared.mentions),
-        recentMessages: await this.recentAddressingMessages(Number(this.storage.sql.exec<{
-          next_transcript_sequence: number;
-        } & Record<string, SqlStorageValue>>(
-          `SELECT next_transcript_sequence FROM transcript_counters WHERE id = 1`,
-        ).one().next_transcript_sequence)),
+        recentMessages: await this.recentAddressingMessages(alreadyDelivered
+          ? existing!.sequence_number
+          : Number(this.storage.sql.exec<{
+            next_transcript_sequence: number;
+          } & Record<string, SqlStorageValue>>(
+            `SELECT next_transcript_sequence FROM transcript_counters WHERE id = 1`,
+          ).one().next_transcript_sequence)),
       });
       shouldInvoke = classification.classification === "agent_action"
         || classification.classification === "both"
         || (classification.classification === "uncertain" && (activeTask || connectorMentions.length > 0));
     }
-    if (earlyDelivery && !finishDeliveredPreparation) shouldInvoke = false;
+    if (deliverEarlyNow && !finishDeliveredPreparation) shouldInvoke = false;
     const now = preparation.created_at;
     const messageId = preparation.input_id;
     const transcriptMessage = await this.transcript.prepareParticipantMessage({
@@ -4070,6 +4141,10 @@ export class WorkstreamObjectProductService {
       createdAtUtc: new Date(now).toISOString(),
       attentionOrdinal: root.next_attention_ordinal,
     });
+    if (deliverEarlyNow && !finishDeliveredPreparation
+      && this.loops.loop()?.status === "executing") {
+      deliverEarlyNow = false;
+    }
     if (shouldInvoke) {
       const modelAttachments: ModelAttachmentSource[] = attachmentRows.map((row) => ({
         id: String(row.id),
@@ -4290,7 +4365,7 @@ export class WorkstreamObjectProductService {
             throw new Error("replayed_message_missing_attention_ordinal");
           }
           this.markAttachmentReleaseOwnedByProjection(preparation.input_id);
-          if (!earlyDelivery || finishDeliveredPreparation) {
+          if (!deliverEarlyNow || finishDeliveredPreparation) {
             this.loops.discardInputPreparation({ inputId: preparation.input_id, now });
           }
           return {
@@ -4422,7 +4497,7 @@ export class WorkstreamObjectProductService {
           now, now,
         );
         this.markAttachmentReleaseOwnedByProjection(preparation.input_id);
-        if (!earlyDelivery || finishDeliveredPreparation) {
+        if (!deliverEarlyNow || finishDeliveredPreparation) {
           this.loops.discardInputPreparation({ inputId: preparation.input_id, now });
         }
         this.recordMessageAdmissionReceipt(

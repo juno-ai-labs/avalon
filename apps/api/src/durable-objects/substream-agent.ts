@@ -4688,6 +4688,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           // outbox. The minimal delivery receipt lets that stale reference
           // converge the client by removal without retaining the full overlay.
           const delivered = this.loop.deliveredInput(pending.reference.inputId);
+          // An ordinary socket send is canonical before preparation finishes.
+          // It never becomes a pending overlay, so converge this stale upsert
+          // directly to removal even if activation has not created its receipt.
+          if (this.transcript.participantTurn(pending.reference.inputId)) {
+            return ServerSocketEventSchema.parse({
+              ...base,
+              type: "loop_input_removed",
+              inputId: pending.reference.inputId,
+              outcome: "delivered",
+            });
+          }
           if (!delivered) throw new Error("semantic_realtime_loop_input_missing");
           return ServerSocketEventSchema.parse({
             ...base,
