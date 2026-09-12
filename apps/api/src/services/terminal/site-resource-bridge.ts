@@ -119,8 +119,11 @@ export async function writeArtifactVersion(
   };
 
   try {
-    // Cloudflare permits six simultaneous outgoing connections per invocation,
-    // including R2. Transcribed 2026-09-12, not an application policy cap:
+    // Cloudflare permits six outgoing connections awaiting response headers per
+    // top-level invocation, including R2; a seventh queues. This uses six whole
+    // upload jobs as a conservative per-invocation worker budget, not as a
+    // claim about the header-phase limit or an account-wide transfer cap.
+    // Transcribed 2026-09-12:
     // https://developers.cloudflare.com/workers/platform/limits/#simultaneous-open-connections
     const simultaneousConnections = 6;
     const files = storedFiles.values();

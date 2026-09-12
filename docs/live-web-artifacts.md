@@ -86,11 +86,12 @@ The bitmap font transliterates accented Latin text and gives titles with no
 supported glyphs a stable visible site code; an authored card remains the right
 answer for non-Latin branding.
 
-Assets within a version upload concurrently, with at most the platform's six
-simultaneous outgoing connections. Every writer settles before publication can
-continue; any failed asset prevents the manifest write. This preserves the
-assets-before-manifest barrier without adding each independent R2 round trip to
-the publication latency.
+Assets within a version upload through at most six whole-upload workers. That is
+a conservative per-invocation budget based on Cloudflare's six connections
+waiting for response headers; it is neither a hard transfer cap nor an
+account-wide limit. Every writer settles before publication can continue; any
+failed asset prevents the manifest write. This preserves the assets-before-manifest
+barrier without adding each independent R2 round trip to the publication latency.
 
 ### Revising
 
@@ -521,9 +522,11 @@ serialization.
 only queue inside the platform; early manifest publication was rejected because
 it could expose an incomplete version.
 
-**Consequences:** Six transcribes Cloudflare's simultaneous-connections ceiling,
-not an application policy. Any writer added to this path runs beside five
-siblings and must settle before the assets-before-manifest barrier can continue.
+**Consequences:** Six is a conservative whole-upload worker budget derived from
+Cloudflare's per-invocation header-phase connection ceiling; it is neither a
+hard transfer cap nor an account-wide limit. Any writer added to this path runs
+beside five siblings and must settle before the assets-before-manifest barrier
+can continue.
 
 Shipped in #732.
 
