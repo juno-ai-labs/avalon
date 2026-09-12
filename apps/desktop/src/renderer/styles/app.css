@@ -4174,9 +4174,16 @@ pre {
 .attachment-file-open:hover:not(:disabled) .attachment-file-name { text-decoration: underline; text-underline-offset: 2px; }
 .attachment-file-icon { align-items: center; background: color-mix(in srgb, var(--av-sys-color-accent-base) 18%, var(--av-sys-color-surface-raised)); border-radius: 9px; color: var(--av-sys-color-accent-base); display: flex; flex: 0 0 auto; height: 36px; justify-content: center; width: 36px; }
 .attachment-file-details { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
-.attachment-file-name { display: flex; font-size: 14px; font-weight: 540; line-height: 18px; min-width: 0; white-space: nowrap; }
-.attachment-file-name > span:first-child { overflow: hidden; text-overflow: ellipsis; }
-.attachment-file-name > span:last-child { flex: 0 0 auto; }
+.attachment-file-name { font-size: 14px; font-weight: 540; line-height: 18px; min-width: 0; overflow-wrap: anywhere; }
+/* A name past 200 characters would otherwise grow the chip without bound;
+   capped at four lines and faded rather than cut, matching the mask
+   `.markdown-collapse.is-collapsed` uses for the same reason. */
+.attachment-file-name.is-long-name {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%);
+  max-height: 4lh;
+  overflow: hidden;
+}
 .attachment-file-meta { color: var(--av-sys-color-text-muted); font-size: 12px; line-height: 16px; }
 .attachment-file-card.is-pending .attachment-file-icon { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
 .attachment-file-icon.is-spreadsheet { background: var(--av-sys-color-success-wash); color: var(--av-sys-color-success-base); }
@@ -7484,6 +7491,11 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 
 .composer-attachments .attachment-tile { height: var(--attachment-media-size); aspect-ratio: 1; width: var(--attachment-media-size); }
 .composer-attachments .attachment-file-card { min-width: 0; width: 100%; }
+/* The staged tile keeps its old fixed-height single-line ellipsis: wrapping
+   would break the fixed-height horizontal scroll strip the composer uses. */
+.composer-attachments .attachment-file-name { display: flex; overflow-wrap: normal; white-space: nowrap; }
+.composer-attachments .attachment-file-name > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.composer-attachments .attachment-file-name > span:last-child { flex: 0 0 auto; }
 
 .attachment-media-tile .attachment-video-play { color: var(--av-sys-color-text-default); }
 .attachment-media-tile:has(video) .attachment-video-play { color: var(--av-sys-color-text-on-media); }
