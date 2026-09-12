@@ -55,7 +55,7 @@ export async function sendWorkspaceInvitationEmail(
     `${invitation.inviterName} invited you to join ${invitation.workspaceName} as ${roleLabel}.`,
     "",
     `Accept the invitation: ${invitation.inviteUrl}`,
-    ...(invitation.downloadUrl ? ["", `Don't have Rally yet? Download it: ${invitation.downloadUrl}`] : []),
+    ...(invitation.downloadUrl ? ["", `Don't have Rally yet? Download it for macOS: ${invitation.downloadUrl}`] : []),
     "",
     `This one-time invitation expires ${expiration}.`,
     `Workspace data region: ${regionLabel}.`,

@@ -13,10 +13,17 @@ export async function listAccessRequests(db: D1DatabaseLike, query = '', before?
 }
 
 export async function listDownloadGrants(db: D1DatabaseLike, query = '', before?: string): Promise<DownloadGrantListItem[]> {
-  const result = await db.prepare(`SELECT g.id, r.email, g.created_at AS createdAt,
+  // A grant's source_id points at whichever table its source names: an
+  // access_requests row for 'manual'/'access_invitation', a
+  // workspace_invitations row for 'workspace_invitation'. Both joins are
+  // needed so a workspace-invitation grant is attributable and searchable by
+  // email instead of always rendering as an unattributed standalone link.
+  const result = await db.prepare(`SELECT g.id, COALESCE(r.email, wi.email) AS email, g.created_at AS createdAt,
     g.expires_at AS expiresAt, g.used_at AS usedAt, g.revoked_at AS revokedAt
-    FROM download_grants g LEFT JOIN access_requests r ON r.id = g.source_id
-    WHERE (? = '' OR instr(r.email, ?) > 0 OR g.id = ?)
+    FROM download_grants g
+    LEFT JOIN access_requests r ON r.id = g.source_id AND g.source IN ('manual', 'access_invitation')
+    LEFT JOIN workspace_invitations wi ON wi.id = g.source_id AND g.source = 'workspace_invitation'
+    WHERE (? = '' OR instr(COALESCE(r.email, wi.email), ?) > 0 OR g.id = ?)
     AND (? IS NULL OR (g.created_at, g.id) < (SELECT created_at, id FROM download_grants WHERE id = ?))
     ORDER BY g.created_at DESC, g.id DESC LIMIT ?`)
     .bind(query, query.toLowerCase(), query, before ?? null, before ?? null, ACCESS_PAGE_SIZE + 1).all<DownloadGrantListItem>();

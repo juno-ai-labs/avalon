@@ -39,7 +39,7 @@ response without sending another message. The widget runs invisibly: Cloudflare
 shows its checkbox only to a visitor it decides has to interact, so most visitors
 never see a challenge.
 
-Ace reads Global requests from its existing D1 binding, searches server-side, and keyset-pages 50 rows at a time. It shows acknowledgement state, first-attempt time and request ID for provider reconciliation. Grant history is separately paginated and contains recipient attribution and lifecycle timestamps, never raw tokens. Revocation is a same-origin Access-protected write. An operator can generate a standalone download or
+Ace reads Global requests from its existing D1 binding, searches server-side, and keyset-pages 50 rows at a time. It shows acknowledgement state, first-attempt time and request ID for provider reconciliation. Grant history is separately paginated and contains recipient attribution and lifecycle timestamps, never raw tokens; `listDownloadGrants` resolves that email by joining `source_id` against whichever table the grant's `source` names — `access_requests` for `manual`/`access_invitation`, `workspace_invitations` for `workspace_invitation` — so a workspace-invitation grant is findable by the invitee's email rather than always rendering as an unattributed standalone link. Revocation is a same-origin Access-protected write. An operator can generate a standalone download or
 associate one with a request. This creates a `manual` grant and returns its URL
 once; it does not send mail or mark the person invited. The same exported
 `issueDownloadGrant` accepts `access_invitation` and `workspace_invitation` sources
@@ -233,8 +233,11 @@ redemption, repeat timed downloads, exact expiry, expiry during R2 lookup,
 missing installers, scanner GET/HEAD and revoked/invalid tokens.
 `apps/api/test/ace-private-access.test.ts` covers Ace admission and issuance
 through the actual Access middleware and shared issuer, including UTC normalization
-and rejection of past, current or ambiguous expiries; site tests retain
-legacy release-renderer coverage separately from the new form template.
+and rejection of past, current or ambiguous expiries, and that `listDownloadGrants`
+attributes a `workspace_invitation` grant to the invitee's email (and finds it by
+that email) while a standalone `manual` grant with no `source_id` still renders
+unattributed; site tests retain legacy release-renderer coverage separately from
+the new form template.
 `apps/api/test/workspace-and-invitations.test.ts` covers the invitation-email
 caller: a Global invitation's email carries a download link whose token differs
 from the accept token and never appears in a database write, an EU invitation
@@ -403,7 +406,9 @@ renders it as a second link/button alongside "Accept invitation". An EU
 invitation issues no grant. Issuance runs inside the same `try` that sends the
 email, so a grant-issuance failure or an email-send failure both revoke the
 grant (if one was issued) and the invitation row through the one existing
-rollback path.
+rollback path. `listDownloadGrants` now also joins `workspace_invitations` on
+`source_id` so these grants are attributed and searchable by the invitee's
+email in Ace, the same as request-sourced grants already were.
 
 **Why:** The invitation email's only link opens `/invite/`, whose "Open Rally"
 button is a `rallywithai://` deep link that does nothing when the app is not
@@ -434,7 +439,12 @@ supersede path, and workspace abandonment do not yet revoke a linked grant, so a
 grant issued for an invitation later revoked through one of those paths stays
 live until its 7-day expiry. Installing does not grant workspace membership
 regardless, so the exposure is a teammate's-eyes-only download of the public
-installer, not access to the workspace.
+installer, not access to the workspace. That deferred cascade leans on an
+operator revoking the grant by hand in Ace as the fallback; review caught that
+`listDownloadGrants`' existing `LEFT JOIN access_requests` left every
+workspace-invitation grant showing as an unattributed `Standalone` link with no
+way to find it by the invitee's email, which would have made that fallback
+unreachable. Fixed in the same change by also joining `workspace_invitations`.
 
 Shipped in [#728](https://github.com/juno-ai-labs/avalon/pull/728).
 
