@@ -72,6 +72,14 @@ checked instead of carrying a local lint suppression.
 
 ## How it works
 
+### Request authentication
+
+Identity and workspace middleware share one authenticated context within a single
+HTTP request. Workspace middleware still requires a workspace and role; an
+identity-only session cannot enter protected routes. Each new request verifies
+its token and reads current regional session/membership state again. This is not
+a cross-request cache and does not change revocation or regional isolation.
+
 ### Trust boundaries
 
 The renderer, inbound internet, connector providers, monitored URLs, model
@@ -854,6 +862,15 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-12 — Authenticate once within each HTTP request
+
+Protected routes pass through both root-mounted identity and workspace
+middleware. Reusing the identity decision removes a duplicate token verification
+and session query from every such request. Persistent caching was rejected
+because it would introduce stale revocation decisions; only the request-local
+context is reused, and workspace/role refinement remains mandatory.
+
 
 ### 2026-09-11 — The five prompt trust labels are gone
 
