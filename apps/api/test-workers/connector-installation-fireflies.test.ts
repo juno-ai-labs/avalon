@@ -166,7 +166,7 @@ async function fixture(options: { connectorEnabled?: boolean } = {}) {
 
   return {
     workspaceId, owner, member, stub, request, deliver, drainQueue, activities, receipts, installation, setup, queue,
-    rejectKey: () => { userReply = () => Response.json({ errors: [{ code: 'auth_failed' }] }); },
+    rejectKey: () => { userReply = () => Response.json({ errors: [{ code: 'auth_failed' }] }, { status: 500 }); },
   };
 }
 

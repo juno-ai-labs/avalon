@@ -2,10 +2,11 @@ import type { ConnectorInstallationManagement } from "./installation";
 import type { ToolDefinition } from "@rally/contracts";
 import { z, type ZodError } from "zod";
 import {
+  isAbortError,
   isProviderCredentialRejection,
   isRecord,
   isRevokedGrantError,
-  providerJson,
+  readResponseBytes,
   stringValue,
   truncateText,
   withProviderReauthorization,
@@ -25,7 +26,7 @@ import {
 const FIREFLIES_GRAPHQL_URL = "https://api.fireflies.ai/graphql";
 export const FIREFLIES_MCP_URL = "https://api.fireflies.ai/mcp";
 /**
- * The Granola-precedent raise over the 1 MB `providerJson` default. A Fireflies
+ * The Granola-precedent raise over the shared 1 MB default. A Fireflies
  * transcript document is the whole sentence array on every page, and the 1 MB
  * default cut an ordinary hour-long meeting off mid-read.
  */
@@ -411,15 +412,47 @@ export function createFirefliesConnector(config: FirefliesConnectorConfig): Conn
     maxBytes = FIREFLIES_RESPONSE_BYTES,
   ): Promise<Record<string, unknown>> {
     const apiKey = requireWorkspaceApiKey(connection);
-    const payload = await providerJson(fetcher, graphqlUrl, {
-      method: "POST",
-      headers: { accept: "application/json", "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ query: document, variables: prune(variables) }),
-      signal,
-    }, maxBytes).catch((error: unknown) => { throw transportFailure(error); });
-    // Fireflies reports application errors inside an HTTP 200 body, so the
-    // provider's own code — never the status — decides what happened.
+    // Read the body before the status, because Fireflies answers a rejected API
+    // key with **HTTP 500** and the GraphQL `errors` array — observed live on
+    // 2026-09-13, against the documentation, which describes only the body.
+    // Going through `providerJson` threw on the non-2xx before the code in that
+    // body was ever read, so a revoked key surfaced as "Fireflies did not
+    // respond. Retry once" and the connection was never marked
+    // `needs_reconnect`. The provider's own code decides; the status is the
+    // fallback for a response that carries no code at all.
+    let response: Response;
+    try {
+      response = await fetcher(graphqlUrl, {
+        method: "POST",
+        headers: { accept: "application/json", "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ query: document, variables: prune(variables) }),
+        signal,
+      });
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      throw transportFailure(new ConnectorError("provider_error", "The provider request could not be completed", error));
+    }
+    let payload: Record<string, unknown>;
+    try {
+      const text = new TextDecoder().decode(await readResponseBytes(response, maxBytes));
+      const parsed: unknown = text ? JSON.parse(text) : {};
+      if (!isRecord(parsed)) throw new ConnectorError("provider_error", "Fireflies returned an invalid response");
+      payload = parsed;
+    } catch (error) {
+      // A body Rally could not read leaves only the status to go on, and
+      // `payload_too_large` has its own meaning the caller depends on.
+      throw transportFailure(error instanceof ConnectorError
+        ? error
+        : new ConnectorError("provider_error", "Fireflies returned malformed JSON", error));
+    }
     throwFirefliesGraphQLError(payload);
+    if (!response.ok) {
+      throw transportFailure(new ConnectorError(
+        response.status === 401 || response.status === 403 ? "unauthorized" : "provider_error",
+        `Fireflies returned HTTP ${response.status}`,
+        { status: response.status },
+      ));
+    }
     const data = payload.data;
     if (!isRecord(data)) throw new ConnectorError("provider_error", "Fireflies returned no data", { reason: "unavailable" });
     return data;
@@ -845,9 +878,9 @@ export async function verifyFirefliesSignature(
 }
 
 /**
- * Fireflies answers an application error with HTTP 200 and an `errors` array,
- * so the provider's short code — not the status — decides what happened and
- * what the model should do next. Every result is one of `ConnectorError`'s
+ * Fireflies answers an application error with an `errors` array, at whatever
+ * status it likes — a rejected key is HTTP 500 — so the provider's short code,
+ * never the status, decides what happened and what the model should do next. Every result is one of `ConnectorError`'s
  * closed codes carrying a `details.reason` that names the Fireflies condition.
  */
 function throwFirefliesGraphQLError(payload: Record<string, unknown>): void {
@@ -916,9 +949,10 @@ function throwFirefliesGraphQLError(payload: Record<string, unknown>): void {
 }
 
 /**
- * An HTTP-level failure, malformed JSON, or a transport error — distinct from
- * the domain outcomes Fireflies reports inside a 200 — reaches the model as the
- * same retry-once sentence, because the next action is the same.
+ * A transport error, malformed JSON, or a status carrying no provider code —
+ * distinct from the domain outcomes Fireflies names in its `errors` array,
+ * which are read first whatever the status — reaches the model as the same
+ * retry-once sentence, because the next action is the same.
  */
 function transportFailure(error: unknown): unknown {
   if (!(error instanceof ConnectorError)) return error;
