@@ -485,33 +485,42 @@ None yet.
 
 ## Data model
 
-One migration — `0104` at time of writing; re-check the highest prefix at
-merge, in `packages/db/migrations/` — rebuilding `connector_connections` to
-extend the `connector_type` CHECK with `'fireflies'`:
+Connector rows do not live in regional D1. Migration
+`0090_drop_legacy_product_tables.sql` retired the D1 copies of
+`connector_connections` and `connector_oauth_attempts`; both are WorkspaceDO
+SQLite tables (`workspace-domain-schema.ts`), reached through
+`withWorkspaceRuntimeDatabase`. Their type vocabularies are CHECK
+constraints, and SQLite cannot widen a CHECK in place, so admitting
+`'fireflies'` is **one WorkspaceDO migration** — version 53 at time of
+writing; re-check the highest version in `workspace-do.ts` at merge — written
+to the rules in [`durable-object-sqlite.md`](../../durable-object-sqlite.md):
 
-- **The 0048 save/restore list must not be copied.** `connector_connections`
-  has gained FK children since 0048 — among them `slack_unfurled_links`,
-  `digest_delivery_targets`, and `workstream_terminal_repositories`; count
-  them from the current schema at build time, because the number has moved
-  since this was written. The last is `ON DELETE RESTRICT`, which
-  `PRAGMA defer_foreign_keys` does **not** defer, so the 0048-style
-  `DROP TABLE` fails on any database with Terminal rows while passing the
-  empty-database migration test. The migration enumerates children from the
-  *current* schema, stages the RESTRICT child around the parent rebuild, and
-  gets a test against a populated database. (The 0046 trigger alternative
-  avoids the rebuild but cannot extend a CHECK constraint, so the rebuild
-  stands — with its hazards named.)
-- Partial unique indexes matching Granola's shape:
-  `connector_connections_fireflies_workspace_active_uq` on
-  `(workspace_id, connector_type) WHERE connector_type = 'fireflies' AND
-  scope = 'workspace' AND status <> 'disabled'`, and
-  `connector_connections_fireflies_personal_active_user_uq` with the personal
-  predicate — exact parity with Granola, whose workspace and personal indexes
-  both carry `status <> 'disabled'`
-  (`packages/db/migrations/0048_granola_connector.sql:91-96`), so a disabled
-  row does not block re-connecting.
-- Add `'fireflies'` to the `connector_oauth_attempts.provider` CHECK (no FK
-  children; safe) and to `ConnectorOAuthProviders` in
+- **Copy WorkspaceDO migration 31, not the retired D1 recipe.** Migration 31
+  is the worked example for exactly this change (it admitted `custom_mcp`):
+  every dependent named in `CONNECTOR_CONNECTION_DEPENDENTS` is copied to a
+  scratch table; the parent is recreated with the widened CHECK and its rows
+  copied across; the old parent is dropped, which cascades through the
+  dependents — the reason they were held; the replacement is renamed into
+  place with its indexes and workspace identity fences; and the dependents
+  are emptied and restored from their copies. All of it runs with foreign
+  keys enforced. `foreignKeys: "disabled_during_rebuild"` must not be used —
+  `PRAGMA foreign_keys = OFF` is silently a no-op once an object event has
+  touched SQLite — and the migration never restates a dependent's schema.
+  `connector_oauth_attempts` is one of those dependents and gets its own
+  `provider` CHECK widened in the same migration, as migration 31 did. The
+  proof is a populated workerd upgrade test in the shape of
+  `apps/api/test-workers/workstream-schema-migration.test.ts`: rows in the
+  parent and in a cascading dependent before the upgrade, the same rows and a
+  clean `foreign_key_check` after it.
+- **Cardinality is enforced by the create path, not by an index.** Granola's
+  D1 partial unique indexes did not survive the move to WorkspaceDO; on
+  `main`, one active Granola workspace connection per workspace is the
+  connection service's existence check (409
+  `granola_workspace_connection_exists`), and one active personal connection
+  per member per workspace is what the shared personal OAuth completion path
+  keeps. Fireflies does the same — the lifecycle's setup stage carries the
+  workspace check — and adds no index for it.
+- Add `'fireflies'` to `ConnectorOAuthProviders` in
   `packages/contracts/src/connector-oauth-providers.ts`.
 - `encrypted_credentials` holds, AES-GCM-sealed with `credential_key_version`
   as today: the API key and the active — and, during a rotation, the pending
@@ -542,10 +551,14 @@ is the capability handed to `createHostedMcpPassthrough`, as Granola's
 
 ## Regional impact
 
-Connections, credentials, the webhook installation's state, and activities
-live in the regional D1 and WorkspaceDO of the owning workspace, encrypted
-with that region's
-`CONNECTOR_CREDENTIALS_KEY_*`; the ingestion endpoint is served by each
+Connection rows, credentials, the webhook installation's state, and
+activities are authoritative in the owning workspace's regional WorkspaceDO,
+with credentials encrypted with that region's `CONNECTOR_CREDENTIALS_KEY_*`;
+regional D1 holds only routing and identity — the directory that maps a
+connection's ingress route and an OAuth callback to the workspace that owns
+them — and never a connector row, credential, or activity body, per the
+no-fallback rule in [`data-model.md`](../../data-model.md). The ingestion
+endpoint is served by each
 regional Worker, and the URL shown in the connect modal is the owning
 region's, so an EU workspace's webhook traffic terminates in the EU Worker —
 no shared Global ingress is needed because the customer pastes a
@@ -569,8 +582,8 @@ is a customer's processor decision, as with Granola and Notion. The
   pending one.
 - Every provider call takes the branded `AuthorizedConnectorConnection` minted
   only by `withAuthorizedConnection`; personal OAuth tokens refresh behind the
-  existing D1 lease, with rejection classified by provider error code, not
-  HTTP status.
+  connection row's existing refresh lease, with rejection classified by
+  provider error code, not HTTP status.
 - Webhook ingestion at `POST /ingest/fireflies/:id`: a byte-size check
   (`PROVIDER_WEBHOOK_MAX_BYTES`) before decoding; HMAC-SHA256 over the exact
   raw body compared timing-safe against the `X-Hub-Signature` header, whose
@@ -712,15 +725,22 @@ internally), `limit` (integer 1–25, optional, default 10), `offset` (integer
 `limit`/`skip`, mapped internally.
 
 **`get_meeting_summary`** — input: `meetingId` (string, required). Success
-output: `meetingId`, `title`, `date`, `durationMinutes`, `hostEmail`,
-`attendees` (array of `{ name, email }`), `summary` object with `overview`
-(string, ≤ 4,000 chars), `actionItems` (string, ≤ 4,000 chars — Fireflies
-returns action items as one text field, not a list, so the adapter passes it
-through rather than splitting on a guessed delimiter), `keywords` (string,
-≤ 1,000 chars, for the same reason), `topicsDiscussed` (array of ≤ 50
-strings, the one list-typed summary field Fireflies offers), `outline`
-(string, ≤ 4,000 chars), a `truncated` flag set when any cap cut content, and
-`transcriptAvailable` (boolean).
+output: `meetingId`, `title` (≤ 300 chars), `date`, `durationMinutes`,
+`hostEmail`, `attendees` (array of `{ name, email }`, ≤ 100 entries with an
+`attendeesTruncated` flag when Fireflies returned more; `name` ≤ 200 chars,
+`email` ≤ 254), `summary` object with `overview` (string, ≤ 4,000 chars),
+`actionItems` (string, ≤ 4,000 chars — Fireflies returns action items as one
+text field, not a list, so the adapter passes it through rather than
+splitting on a guessed delimiter), `keywords` (string, ≤ 1,000 chars, for the
+same reason), `topicsDiscussed` (≤ 50 strings of ≤ 200 chars, the one
+list-typed summary field Fireflies offers), `outline` (string, ≤ 4,000
+chars), a `truncated` flag set when any of these caps cut content — every
+string and array in this output has one, so no provider-controlled field is
+unbounded — and `transcriptAvailable` (boolean). `attendees` is deliberately
+not called `participants` as the search rows are: search carries only the
+email list Fireflies returns per row, the summary read carries attendee
+objects with names, and one name for two shapes would invite the model to
+read a bare email as a person's name.
 
 **`get_transcript`** — input: `meetingId` (string, required), `offset`
 (integer ≥ 0, optional, default 0), `limit` (integer 1–500, optional, default
@@ -732,7 +752,7 @@ page re-fetches the meeting's transcript document (one provider request per
 page, against the plan quota; the 200-sentence default keeps most meetings to
 one or two pages) under a 2 MB response cap (the Granola-precedent raise over
 the 1 MB `providerJson` default). A transcript document exceeding the cap
-fails with `fireflies_transcript_too_large`.
+fails as `payload_too_large` with reason `transcript_too_large`.
 
 ### Discovery and sequencing
 
@@ -744,43 +764,32 @@ tools — every tool is a safe read — and no shell path reaches the provider.
 
 ### Failure and self-healing contract
 
-Stable codes; the exact model-visible sentence lives in the failed result's
-`error` field, with structured remediation in model-visible `data.details` —
-never only in the human-facing `summary`, which does not reach the model.
-Fireflies returns application errors inside HTTP 200 GraphQL bodies, so the
-adapter maps `errors[].code` to these (`auth_failed` → the `unauthorized`
-classification that drives `needs_reconnect`), rather than relying on HTTP
-status:
+`ConnectorError.code` is a closed set — `invalid_configuration`,
+`unauthorized`, `invalid_signature`, `invalid_payload`, `provider_error`,
+`unsupported_capability`, `payload_too_large`, `unsafe_url` — and the host
+keys on it: `unauthorized` is what marks a connection `needs_reconnect`. Every
+failure below is therefore one of those codes plus a `details.reason` naming
+the Fireflies condition, the way Google's `wrong_id_family` rides on
+`invalid_payload`; there are no `fireflies_*` codes. The exact model-visible
+sentence lives in the failed result's `error` field and the structured
+remediation in model-visible `data.details` — never only in the human-facing
+`summary`, which does not reach the model. Fireflies reports application
+errors inside HTTP 200 GraphQL bodies as `errors[].code` (`auth_failed`,
+`invalid_arguments`, `args_required`, `object_not_found`, `forbidden`,
+`not_in_team`, `require_elevated_privilege`, `paid_required`,
+`account_cancelled`, `too_many_requests`, `request_timeout`), so the adapter
+maps that code, not the HTTP status:
 
-- `fireflies_missing_filter` — "Fireflies search needs at least one filter.
-  Retry with a keyword, a date range, or a participant email." (Correct and
-  retry.)
-- `fireflies_auth_failed` — "Fireflies rejected this connection's
-  credentials. Stop calling Fireflies tools for the rest of this run and
-  state in your reply that the Fireflies connection needs reconnecting in
-  Settings → Connections; continue with what you have."
-  (`data.details.reconnectRequired: true`; do not retry.)
-- `fireflies_rate_limited` — "Fireflies rate-limited this request. Retry once
-  only if retryAfterMs is under 60000; otherwise continue without Fireflies
-  data and say so." (`data.details.retryAfterMs`: the provider's `Retry-After`
-  when present; otherwise 60,000 for per-minute plans, or the time to the
-  next UTC midnight — capped at 86,400,000 — when the daily quota is
-  exhausted.)
-- `fireflies_not_found` — "No Fireflies meeting has that ID. Search Fireflies
-  meetings again and use a meetingId from those results." (Also returned for
-  an id whose shape is not a Fireflies meeting id — e.g. a Granola note id
-  from the same run. Correct and retry.)
-- `fireflies_forbidden` — "The connected Fireflies account cannot see that
-  meeting. Search again; only meetings visible to the connected account can
-  be read." (Do not retry the same ID. Distinguishing forbidden from
-  not-found is deliberate: it mirrors the provider's own responses and
-  meeting ids are unguessable, so the existence signal discloses nothing an
-  id-holder does not already have.)
-- `fireflies_transcript_too_large` — "This transcript exceeds the response
-  limit. Use the meeting summary instead." (Do not retry.)
-- `fireflies_unavailable` — "Fireflies did not respond. Retry once; if it
-  still fails, continue without Fireflies data and say so." (Transport
-  failure; distinct from the domain outcomes above.)
+| Code / `details.reason` | Fireflies condition | Exact model-visible sentence | Other `details`; next action |
+| --- | --- | --- | --- |
+| `invalid_payload` / `missing_filter` | Rally's own cross-field check, before any provider call | "Fireflies search needs at least one filter. Retry with a keyword, a date range, or a participant email." | `field: "keyword"`; correct and retry. |
+| `invalid_payload` / `invalid_arguments` | `invalid_arguments` or `args_required` from the provider — a Rally bug, since the strict schemas exist to catch it first | "Fireflies rejected these arguments. Correct them and retry." | `field`: the provider's named fields; correct and retry, and the mismatch is visible in logs. |
+| `unauthorized` / `auth_failed` | `auth_failed`, `account_cancelled` | "Fireflies rejected this connection's credentials. Stop calling Fireflies tools for the rest of this run and state in your reply that the Fireflies connection needs reconnecting in Settings → Connections; continue with what you have." | `reconnectRequired: true`; do not retry. This is the code that flips the row to `needs_reconnect`. |
+| `provider_error` / `rate_limited` | `too_many_requests` | "Fireflies rate-limited this request. Retry once only if retryAfterMs is under 60000; otherwise continue without Fireflies data and say so." | `retryAfterMs`: from `extensions.metadata.retryAfter` (an epoch time) when present; otherwise 60,000 on a per-minute plan, or the time to the next UTC midnight, capped at 86,400,000, on a daily quota. |
+| `provider_error` / `not_found` | `object_not_found`, or an id whose shape is not a Fireflies meeting id (a Granola note id from the same run, say) | "No Fireflies meeting has that ID. Search Fireflies meetings again and use a meetingId from those results." | `field: "meetingId"`; correct and retry. |
+| `provider_error` / `forbidden` | `forbidden`, `not_in_team`, `require_elevated_privilege`, `paid_required` | "The connected Fireflies account cannot see that meeting. Search again; only meetings visible to the connected account can be read." | `field: "meetingId"`; do not retry the same id. Distinguishing forbidden from not-found mirrors the provider and discloses nothing, since meeting ids are unguessable. A `paid_required` on a read is reported here rather than as a plan upsell: the model's next action is the same, and the plan tier is the admin's concern, which the health check's message states. |
+| `payload_too_large` / `transcript_too_large` | the transcript document exceeds the 2 MB response cap | "This transcript exceeds the response limit. Use the meeting summary instead." | do not retry. |
+| `provider_error` / `unavailable` | `request_timeout`, an HTTP 5xx, malformed JSON, or a transport failure | "Fireflies did not respond. Retry once; if it still fails, continue without Fireflies data and say so." | `status` when there was one; a transport failure, distinct from the domain outcomes above. |
 
 An empty search result is a normal domain outcome (empty `meetings` array),
 not an error — and per the system message the model reports it as "no
@@ -823,8 +832,8 @@ directly without a redundant search; an empty search reported as "no matching
 meeting in the connected account" rather than "the meeting didn't happen";
 paging a long transcript to `nextOffset: null` and stopping (the
 continuation-recovery analogue — conflict recovery is N/A, as there are no
-revisions); stopping on `fireflies_auth_failed`; and absence of blind retry
-loops on `fireflies_rate_limited`.
+revisions); stopping on `unauthorized` / `auth_failed`; and absence of blind
+retry loops on `provider_error` / `rate_limited`.
 
 ## Provider configuration
 
