@@ -171,12 +171,15 @@ the digestibility split between generated and operational note events. Its
 D1 migration, `0048_granola_connector.sql`, is history rather than precedent:
 `0090_drop_legacy_product_tables.sql` retired the D1 connector tables, and
 the schema change for a new connector type is a WorkspaceDO migration in the
-shape of migration 31 in `workspace-do.ts` (the PRD's data model has the
-recipe). The setup, verification,
+shape of migration 53 in `workspace-do.ts`, which admitted Ashby (the PRD's
+data model has the recipe). The setup, verification,
 maintenance, and removal of the workspace webhook follow
 [the connector installation lifecycle PRD](../2026-09-12_connector-installation-lifecycle/prd.md)
-instead of Granola's connection-service path; Ashby in that PRD is the
-automatic case, Granola the mostly-automatic one, and Fireflies the first
-provider whose every operation is manual. See
+instead of Granola's connection-service path — shipped in
+[`connector-installation-lifecycle.md`](../../connector-installation-lifecycle.md),
+whose management facet (`packages/connectors/src/installation.ts`) states
+each operation as automatic, manual, or unsupported. Ashby is the automatic
+case, Granola the mostly-automatic one, and Fireflies the first provider
+whose every operation is manual or unsupported. See
 [`connectors.md`](../../connectors.md) and
 [`hosted-mcp-connectors.md`](../../hosted-mcp-connectors.md).
