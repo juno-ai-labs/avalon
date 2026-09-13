@@ -84,22 +84,22 @@ describe('workspace event controls', () => {
     expect(screen.queryByRole('button', { name: 'Test' })).toBeNull();
   });
 
-  it('retries setup with the same attempt and selected events using a password-only key field', async () => {
+  it('retries automatic event setup with the same attempt using a password-only key field', async () => {
     const api = new RallyApi('https://api.example.test', null);
     const create = vi.spyOn(api, 'createAshbyWorkspaceConnection').mockRejectedValue(new Error('Connection unavailable'));
     vi.spyOn(api, 'getConnections').mockResolvedValue([]);
     const attemptId = installation().attemptId;
     show(<AshbyWorkspaceSetup api={api} attemptId={attemptId} onSuccess={() => {}} onClose={() => {}} onRecovered={() => {}} />);
+    expect(screen.queryByRole('checkbox')).toBeNull();
     const input = document.querySelector('input[type="password"]');
     if (!input) throw new Error('The API key must use a password field');
     fireEvent.change(input, { target: { value: 'fixture-key' } });
-    fireEvent.click(screen.getByLabelText('Application stage changed'));
     fireEvent.click(screen.getByRole('button', { name: 'Connect for workspace' }));
     await screen.findByText('Connection unavailable');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Connect for workspace' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Connect for workspace' }));
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
-    expect(create.mock.calls).toEqual([['fixture-key', ['applicationSubmit'], attemptId], ['fixture-key', ['applicationSubmit'], attemptId]]);
+    expect(create.mock.calls).toEqual([['fixture-key', attemptId], ['fixture-key', attemptId]]);
   });
 
   it('recovers a reserved setup after a lost response without creating another installation', async () => {
@@ -124,7 +124,6 @@ describe('workspace event controls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Connect for workspace' }));
     await screen.findByText('Existing installations could not be checked. Check again before retrying setup.');
     fireEvent.change(screen.getByLabelText('Ashby workspace API key'), { target: { value: 'corrected-key' } });
-    fireEvent.click(screen.getByLabelText('Application stage changed'));
     expect(screen.getByRole('button', { name: 'Connect for workspace' })).toBeDisabled();
     read.mockResolvedValue([{ id: connectionId, modelPluginId: 'plugin_ashby_fixture', connectorType: 'ashby', scope: 'workspace', displayName: 'Ashby workspace events', status: 'healthy', capabilities: ['ashby.workspace.events'] }]);
     fireEvent.click(screen.getByRole('button', { name: 'Find existing installation' }));

@@ -1,4 +1,4 @@
-import { asWorkspaceId } from '@rally/contracts';
+import { AshbyEventTypes, AshbyEventLabels, asWorkspaceId } from '@rally/contracts';
 import { describe, expect, it } from 'vitest';
 import { createAshbyConnector, verifyAshbyWebhook, AshbyCapabilities } from './ashby';
 import { ConnectorRegistry } from './index';
@@ -20,10 +20,12 @@ async function signature(body: string, secret: string) {
 }
 
 describe('Ashby protocol', () => {
-  it('registers only the approved operational triggers and personal dynamic tools', () => {
+  it('registers the documented operational triggers and personal dynamic tools', () => {
     const adapter = new ConnectorRegistry([createAshbyConnector({ redirectUri })]).get('ashby');
     expect(adapter.manifest.tools).toEqual([]);
-    expect(adapter.manifest.activityTypes).toEqual(['applicationSubmit', 'candidateStageChange']);
+    expect(adapter.manifest.activityTypes).toEqual([...AshbyEventTypes]);
+    expect(adapter.manifest.activityTypes).toHaveLength(27);
+    expect(adapter.manifest.activityTypes).not.toContain('ping');
     expect(adapter.dynamicAgentTools?.connectionScopes).toEqual(['personal']);
     expect(adapter.installationManagement?.support.rotate).toBe('manual');
   });
@@ -113,4 +115,17 @@ describe('Ashby protocol', () => {
     expect(JSON.stringify(activity)).not.toContain('private@example.test');
     expect(JSON.stringify(activity)).not.toContain('Confidential role');
   });
+  it.each(AshbyEventTypes)('normalizes the %s notification without promoting raw provider content', async (eventType) => {
+    const adapter = createAshbyConnector({ redirectUri });
+    const workspace = connection('workspace');
+    workspace.config.selectedEvents = [...AshbyEventTypes];
+    const rawBody = JSON.stringify({ action: eventType, webhookActionId: 'provider-action',
+      data: { candidate: { id: 'candidate-id', name: 'Confidential candidate' }, watermark: 'opaque-delivery-watermark' } });
+    const verified = await adapter.webhookActivity!.verify({ rawBody, receivedAt: '2026-09-12T12:00:00.000Z', now: Date.now(), headers: new Headers({ 'Ashby-Signature': await signature(rawBody, 'secret') }), verificationSecret: 'secret', maxBytes: rawBody.length * 4 });
+    const activity = adapter.webhookActivity!.normalize(workspace, { ...verified, event: { ...verified.event as object, observedAt: '2026-09-12T12:00:00.000Z' } }, 'regional-payload-reference');
+    expect(activity).toMatchObject({ eventType, title: AshbyEventLabels[eventType], providerEventId: 'provider-action', payloadRef: 'regional-payload-reference', visibility: { workspaceAutomationAllowed: false } });
+    expect(JSON.stringify(activity)).not.toContain('Confidential candidate');
+    expect(JSON.stringify(activity)).not.toContain('opaque-delivery-watermark');
+  });
+
 });

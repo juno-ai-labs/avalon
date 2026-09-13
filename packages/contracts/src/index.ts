@@ -3839,3 +3839,5 @@ export const ClientSocketEventTypeSchema = z.union(ClientSocketEventSchema.optio
 export const WorkspaceSocketClientEventTypeSchema = z.union(WorkspaceSocketClientEventSchema.options.map((event) => event.shape.type));
 
 export { ConnectorInstallationSchema, ConnectorInstallationProviderSchema, ConnectorRegistrationSchema, type ConnectorInstallation, type InstallationRegistration } from "./connector-installation";
+
+export { AshbyEventTypes, AshbyEventLabels } from "./ashby-events";

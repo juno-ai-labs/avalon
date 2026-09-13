@@ -4,7 +4,7 @@ import { createExecutionContext, createMessageBatch, getQueueResult, reset, runI
 import { SignJWT } from 'jose';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { asUserId, asWorkspaceId, ConnectionSchema, ConnectorInstallationSchema, type ConnectorInstallation } from '@rally/contracts';
+import { AshbyEventTypes, asUserId, asWorkspaceId, ConnectionSchema, ConnectorInstallationSchema, type ConnectorInstallation } from '@rally/contracts';
 import { createApp } from '../src/app';
 import AshbyIngressWorker from '../src/ashby-ingress-worker';
 import { AshbyRoutingBridge } from '../src/ashby-routing-bridge';
@@ -105,6 +105,7 @@ async function fixture() {
   const remote = new Map<string, { id: string; requestUrl: string; webhookType: string; enabled: boolean }>();
   let validate: (apiKey: string) => Promise<Response> = async () => Response.json({ success: true, results: {} });
   let granola: GranolaProvider | null = null;
+  let refusedEvent: string | null = null;
   const provider = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(input instanceof Request ? input.url : input);
     if (url.origin === 'https://public-api.granola.ai' && granola) return granola(url, init);
@@ -116,7 +117,8 @@ async function fixture() {
     if (url.pathname === '/apiKey.info') return validate(apiKey);
     const body: unknown = JSON.parse(String(init?.body));
     if (url.pathname === '/webhook.create') {
-      const create = z.object({ requestUrl: z.string(), webhookType: z.enum(events), secretToken: z.string().min(1) }).parse(body);
+      const create = z.object({ requestUrl: z.string(), webhookType: z.enum(AshbyEventTypes), secretToken: z.string().min(1) }).parse(body);
+      if (create.webhookType === refusedEvent) return Response.json({ success: false });
       const row = { id: crypto.randomUUID(), requestUrl: create.requestUrl, webhookType: create.webhookType, enabled: true };
       remote.set(row.id, row);
       return Response.json({ success: true, results: row });
@@ -157,9 +159,9 @@ async function fixture() {
       ? z.record(z.string(), z.unknown()).parse(JSON.parse(await decryptString(row.encrypted_credentials, row.credential_iv, envelopeKey, connectionId))) : null;
     return { ...row, credentials };
   }
-  async function deliver(installation: ConnectorInstallation, eventType: typeof events[number], secret: string) {
-    const bytes = new TextEncoder().encode(JSON.stringify({ action: eventType, webhookActionId: crypto.randomUUID(),
-      data: { application: { id: `application-${eventType}`, candidate: { id: 'candidate-id' }, job: { id: 'job-id' } } } }));
+  async function deliver(installation: ConnectorInstallation, eventType: typeof AshbyEventTypes[number], secret: string, delivery?: { id: string; data: unknown }) {
+    const bytes = new TextEncoder().encode(JSON.stringify({ action: eventType, webhookActionId: delivery?.id ?? crypto.randomUUID(),
+      data: delivery?.data ?? { application: { id: `application-${eventType}`, candidate: { id: 'candidate-id' }, job: { id: 'job-id' } } } }));
     const signingKey = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
     const digest = Array.from(new Uint8Array(await crypto.subtle.sign('HMAC', signingKey, bytes)), (byte) => byte.toString(16).padStart(2, '0')).join('');
     const ctx = createExecutionContext();
@@ -170,11 +172,90 @@ async function fixture() {
     return { status: response.status, body };
   }
   return { workspaceId, stub, owner, member, request, queue, provider, create, consume, readEnvelope, deliver, testEnv,
+    refuseEvent: (eventType: string) => { refusedEvent = eventType; },
     setGranola: (handler: GranolaProvider) => { granola = handler; },
     setValidation: (handler: typeof validate) => { validate = handler; } };
 }
 
 describe('public connector installation boundaries', () => {
+  it('reserves every documented event once under concurrent automatic setup and admits signed notifications through the Queue', async () => {
+    const f = await fixture();
+    const admin = await f.member('admin');
+    const results = await Promise.all([f.owner, admin].map((auth) => f.request('/connections/ashby/workspace', auth,
+      { apiKey: 'original-api-key', idempotencyKey: crypto.randomUUID() })));
+    expect(results.map((result) => result.status).sort()).toEqual([201, 409]);
+    const installed = SetupResponse.parse(results.find((result) => result.status === 201)!.body).installation;
+    expect(installed.registrations).toHaveLength(27);
+    expect(installed.selectedEvents).toEqual([...AshbyEventTypes].sort());
+    await f.consume('installation');
+    const current = (await f.stub.connectorInstallation({ workspaceId: f.workspaceId, connectionId: installed.connectionId }))!;
+    expect(current.state).toBe('current');
+    const creates = f.provider.mock.calls.filter(([url]) => String(url).endsWith('/webhook.create'));
+    expect(creates).toHaveLength(27);
+    expect(new Set(creates.map(([, init]) => JSON.parse(String(init?.body)).webhookType)).size).toBe(27);
+    const saved = (await f.readEnvelope(installed.connectionId)).credentials!;
+    for (const eventType of AshbyEventTypes) {
+      const registration = current.registrations.find((entry) => entry.events.includes(eventType))!;
+      const result = await f.deliver(current, eventType, z.string().parse(saved[registration.activeSecretRef!]),
+        { id: crypto.randomUUID(), data: eventType === 'candidateRecentEmailMessagesUpdated'
+          ? { candidate: { id: 'candidate-id' }, watermark: 'opaque-first-watermark' } : {} });
+      expect(result.status, JSON.stringify(result.body)).toBe(200);
+    }
+    await f.consume('event');
+    await runInDurableObject(f.stub, (_instance: WorkspaceDO, state) => {
+      const rows = state.storage.sql.exec<{ event_type: string }>('SELECT event_type FROM workspace_connector_events ORDER BY event_type').toArray();
+      expect(rows.map((row) => row.event_type)).toEqual([...AshbyEventTypes].sort());
+    });
+  });
+
+  it('deduplicates a renewed email watermark while preserving raw deliveries and rejecting a changed candidate identity', async () => {
+    const f = await fixture();
+    const eventType = 'candidateRecentEmailMessagesUpdated';
+    const setup = await f.request('/connections/ashby/workspace', f.owner,
+      { apiKey: 'original-api-key', idempotencyKey: crypto.randomUUID(), events: [eventType] });
+    const installed = SetupResponse.parse(setup.body).installation;
+    await f.consume('installation');
+    const secret = z.string().parse((await f.readEnvelope(installed.connectionId)).credentials![installed.registrations[0]!.activeSecretRef!]);
+    const id = crypto.randomUUID();
+    for (const watermark of ['opaque-first-watermark', 'opaque-renewed-watermark']) {
+      expect((await f.deliver(installed, eventType, secret, { id, data: { candidate: { id: 'candidate-id' }, watermark } })).status).toBe(200);
+      await f.consume('event');
+    }
+    expect((await env.PAYLOADS.list({ prefix: `global/${f.workspaceId}/` })).objects).toHaveLength(2);
+    await runInDurableObject(f.stub, (_instance: WorkspaceDO, state) => {
+      expect(state.storage.sql.exec('SELECT ingress_event_id FROM workspace_connector_event_ingress_receipts').toArray()).toHaveLength(2);
+    });
+    await runInDurableObject(f.stub, (_instance: WorkspaceDO, state) => {
+      expect(state.storage.sql.exec('SELECT provider_resource_id FROM workspace_connector_events').toArray()).toEqual([{ provider_resource_id: 'candidate-id' }]);
+    });
+    expect((await f.deliver(installed, eventType, secret, { id, data: { candidate: { id: 'different-candidate' }, watermark: 'opaque-third-watermark' } })).status).toBe(200);
+    await f.consume('event');
+    await runInDurableObject(f.stub, (_instance: WorkspaceDO, state) => {
+      expect(state.storage.sql.exec('SELECT ingress_event_id FROM workspace_connector_event_ingress_receipts').toArray()).toHaveLength(2);
+    });
+  });
+
+  it('keeps other subscriptions working when the provider rejects the beta subscription without blindly retrying it', async () => {
+    const f = await fixture();
+    const beta = 'candidateRecentEmailMessagesUpdated';
+    f.refuseEvent(beta);
+    const setup = await f.request('/connections/ashby/workspace', f.owner, { apiKey: 'original-api-key', idempotencyKey: crypto.randomUUID() });
+    const installed = SetupResponse.parse(setup.body).installation;
+    await f.consume('installation');
+    const current = (await f.stub.connectorInstallation({ workspaceId: f.workspaceId, connectionId: installed.connectionId }))!;
+    expect(current.state).toBe('action_required');
+    expect(current.registrations.filter((entry) => entry.state === 'current')).toHaveLength(26);
+    expect(current.registrations.find((entry) => entry.events.includes(beta))?.state).toBe('unknown');
+    const registration = current.registrations.find((entry) => entry.events.includes('jobCreate'))!;
+    const secret = z.string().parse((await f.readEnvelope(installed.connectionId)).credentials![registration.activeSecretRef!]);
+    expect((await f.deliver(installed, 'jobCreate', secret)).status).toBe(200);
+    await f.consume('event');
+    const repair = await f.request(`/connections/${installed.connectionId}/installation`, f.owner, { action: 'repair' });
+    expect(repair.status).toBe(200);
+    await f.consume('installation');
+    expect(f.provider.mock.calls.filter(([url, init]) => String(url).endsWith('/webhook.create') && JSON.parse(String(init?.body)).webhookType === beta)).toHaveLength(1);
+  });
+
   it('rejects an oversized streamed body before dedicated ingress routing or regional provider admission', async () => {
     const f = await fixture();
     const router = new AshbyRoutingBridge(createExecutionContext(), f.testEnv);

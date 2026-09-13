@@ -23,8 +23,11 @@ use the same execution path; ordinary tool activation remains in
 
 ## How it works
 
-An administrator chooses the approved event set and provides a provider API key
-in Settings. Before provider I/O, one WorkspaceDO transaction binds the setup
+An administrator provides a provider API key in Settings. New Ashby setup
+automatically reserves all 27 documented business event types from
+`packages/contracts/src/ashby-events.ts`; there are no subscription checkboxes.
+`ping` is a transport check, not a subscription. Older clients that explicitly
+supply an event subset retain that grant; maintenance does not widen it. Before provider I/O, one WorkspaceDO transaction binds the setup
 attempt to the administrator and a keyed digest of normalized inputs, reserves a
 stable connection ID, and saves encrypted credentials plus registration intents.
 Repeated setup with the same identity resumes the reservation; changed inputs or
@@ -110,7 +113,7 @@ an idempotency key; current clients supply a stable setup attempt.
 - Cleanup credentials authorize removal of recorded IDs only. Passing them through
   normal refresh or activation would reopen a disabled connection.
 - Desired events come from the reviewed provider declaration intersected with
-  customer selection, never arbitrary operator payloads.
+  the saved installation grant, never arbitrary operator payloads.
 - Granola adoption preserves existing subscriptions and verification material;
   replacing its webhook would introduce an unverified delivery gap.
 
@@ -119,8 +122,19 @@ an idempotency key; current clients supply a stable setup attempt.
 WorkspaceDO owns installation state. Regional D1 holds opaque ingress routing
 and frozen administrative maintenance operations; R2 stores signed payloads in the owning region. No second activity pipeline is
 introduced. Ashby workspace connections expose zero REST recruiting tools.
-Ashby currently normalizes only application, candidate and job IDs with host
-first-observation time; raw provider content is not promoted to names or summaries.
+All declared Ashby event types normalize to operational notifications with host
+first-observation time. Application payloads contribute application, candidate and
+job IDs; the email beta contributes candidate identity. Other event families keep
+their raw regional payload reference without inventing entity fields. Names and
+provider content are not promoted to summaries.
+
+The [email beta](https://developers.ashbyhq.com/reference/candidaterecentemailmessagesupdatedwebhook)
+is a change signal, not email content. Its action ID survives retries while its
+watermark can change. Canonical Queue admission therefore compares the normalized
+candidate signal, excluding only its raw hash and payload reference from the
+logical hash. Every raw delivery retains its actual hash and separate R2 object;
+a changed candidate under the same action ID still conflicts. No email REST
+refresh or recruiting tool is introduced.
 The approved confidential-payload authorization review remains a release gate:
 normalized Ashby events currently have restricted visibility and do not run
 workspace automations. This is not launch completion.
@@ -140,6 +154,11 @@ visible. Queue infrastructure failures use existing retries and DLQ handling.
 A locally disabled connection refuses ingress even while provider deletion is
 pending. If the cleanup credential was revoked or forgotten, the administrator
 must remove the recorded webhook in the provider dashboard.
+
+A rejected Ashby subscription remains visibly unresolved, including the email
+beta that Ashby says may not be available to every organization. Other
+registrations continue setup and delivery. No undocumented rejection code is
+classified as harmless, and an uncertain create is never blindly retried.
 
 A Granola create response with a provider ID but no signing secret is not a
 verified installation. The ID remains available for inspection or exact removal;
@@ -169,7 +188,9 @@ replacement. `connector-installation-recovery.test.ts` covers late Granola
 identity recovery, missing signing material, repeated disconnect and credential
 envelope races. `connector-installation-routes.test.ts` covers authenticated HTTP
 roles, validation, secret-preserving replacement, audit replay and event-signing
-scope before persistence. `connector-maintenance-progress.test.ts` exercises
+scope before persistence, automatic 27-event setup under concurrent administrators,
+signed admission for every event type, renewed email-watermark retries and partial
+provider subscription failures. `connector-maintenance-progress.test.ts` exercises
 atomic settlement of two frozen targets, cancellation and stale completions.
 `connector-installation-audit.test.ts` exercises Test repair's administrator
 audit and distinct authenticated operators across preview, apply, resume and cancel.
@@ -258,9 +279,9 @@ action. An administrator's explicit Test adopts an existing Granola connection.
 
 ### 2026-09-12 — Reserve and record workspace installations before provider I/O
 
-**What changed:** WorkspaceDO owns installation attempts, exact provider dispatch receipts and separate cleanup authority. Ashby and Granola share one runner; maintenance freezes reviewed registration diffs and updates target outcomes independently. Early Resume leaves unprepared targets to the queued frozen configuration, and setup response recovery opens the existing reservation.
+**What changed:** WorkspaceDO owns installation attempts, exact provider dispatch receipts and separate cleanup authority. Ashby and Granola share one runner; maintenance freezes reviewed registration diffs and updates target outcomes independently. Early Resume leaves unprepared targets to the queued frozen configuration, and setup response recovery opens the existing reservation. New Ashby connections automatically register the documented event catalog, without customer subscription selection.
 
-**Why:** The direct Granola create/repair/delete path could neither retain uncertain creates nor clean up after local disablement. A generation that does not advance with credential settlement cannot protect the newer envelope from an in-flight replacement. Repeated disablement must preserve the only credential that can remove the remote endpoint. Adoption or Queue failures must not strand local authority or enabled schedules, and a host-side credential failure must not pretend a provider delete was dispatched.
+**Why:** Subscription checkboxes exposed provider plumbing when users should choose automation triggers instead; the user requested automatic coverage on 2026-09-13. The direct Granola create/repair/delete path could neither retain uncertain creates nor clean up after local disablement. A generation that does not advance with credential settlement cannot protect the newer envelope from an in-flight replacement. Repeated disablement must preserve the only credential that can remove the remote endpoint. Adoption or Queue failures must not strand local authority or enabled schedules, and a host-side credential failure must not pretend a provider delete was dispatched.
 
 **Considered and rejected:** Blind create retries, a second legacy Granola mutation path and speculative secret-overlap intervals. None preserves the provider identity and verification evidence needed to reconcile uncertainty. Whole-operation JSON rewrites also lose concurrent target progress. Stamping an operation identity before applying its frozen configuration would make an early Resume silently report the old configuration as current.
 

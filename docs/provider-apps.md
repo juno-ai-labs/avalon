@@ -62,7 +62,10 @@ requires organization opt-in and eligible account access.
 Workspace event setup independently uses an administrator-provided API key with
 `apiKeysRead` and `apiKeysWrite` permissions, using Basic authentication for
 `apiKey.info` and `webhook.create/info/update/delete`. It does not use OAuth to
-register subscriptions or add a server secret. See [Ashby authentication](https://developers.ashbyhq.com/docs/authentication)
+register subscriptions or add a server secret. New setup automatically registers
+the 27 business event types documented by [webhook.create](https://developers.ashbyhq.com/reference/webhookcreate-1),
+without a customer event picker. The email-change beta may be unavailable for an
+organization; a refused registration remains visible while others continue. See [Ashby authentication](https://developers.ashbyhq.com/docs/authentication)
 and [API key information](https://developers.ashbyhq.com/reference/apikeyinfo).
 The new public webhook hostname belongs to the dedicated Ashby ingress Worker;
 [installation lifecycle](connector-installation-lifecycle.md) owns setup,
