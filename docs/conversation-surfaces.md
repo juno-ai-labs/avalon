@@ -625,6 +625,10 @@ surface and inherits the surface's corner radius, and it travels by animating
 `background-position` over a gradient tile four times the surface's width, the
 construction the tool-activity label's shimmer already uses, rather than by
 translating a full-width pseudo-element under the wrapper's `overflow: hidden`.
+The band is upright where it was tilted 15°: a tilt spreads the band sideways
+by the surface's height, which for the bubble is unbounded against its width,
+so no tile width kept a tilted band clear of a tall, narrow bubble at the ends
+of its travel, and a tinted corner stayed parked there through each pause.
 
 **Why:** The wrapper is a rectangle. It takes in the hover-action slot laid out
 under the bubble and the corners the bubble's radius cuts away, so the sweep
@@ -642,9 +646,10 @@ only itself.
 **Consequences:** A new attachment surface rendered inside a person's turn has
 to be added to the selector list at `.human-message.is-sending` in `app.css`,
 or a send made of that kind of attachment alone goes out with no in-flight
-cue. The band's stop percentages and the 400% tile hold together: the band has
-to sit clear of the surface at both ends of its travel, and the comment above
-the rule carries the arithmetic.
+cue. The band's stop percentages, the 400% tile and the upright band hold
+together: the band has to sit clear of the surface at both ends of its travel,
+a tilt gives that clearance a height term nothing can bound, and the comment
+above the rule carries the arithmetic.
 
 ### 2026-09-12 — The composer writes lists, and stops hiding text behind the plus
 
