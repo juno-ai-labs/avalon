@@ -21,7 +21,7 @@ interface TriggerSource {
  * `webhook.received` made every webhook rule unmatchable: a delivery carried
  * its caller's type, and the matcher selects registrations by exact type.
  */
-function configuredEventTypes(configJson: string | null | undefined): string[] {
+function configuredEventTypes(configJson: string | null | undefined, field: "eventTypes" | "selectedEvents" = "eventTypes"): string[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(configJson ?? "{}");
@@ -29,7 +29,7 @@ function configuredEventTypes(configJson: string | null | undefined): string[] {
     return [];
   }
   const configured = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-    ? (parsed as { eventTypes?: unknown }).eventTypes
+    ? (parsed as Record<string, unknown>)[field]
     : undefined;
   return Array.isArray(configured)
     ? [...new Set(configured.filter((value): value is string => typeof value === "string" && value.trim() !== ""))]
@@ -40,6 +40,10 @@ export function connectorActivityTriggerDescriptors(
   adapter: TriggerSource,
   connectionConfigJson: string | null | undefined,
 ): ConnectorActivityTriggerDescriptorV2[] {
+  if (adapter.manifest.type === "ashby") {
+    const selected = new Set(configuredEventTypes(connectionConfigJson, "selectedEvents"));
+    return adapter.manifest.activityTriggers.filter((descriptor) => selected.has(descriptor.eventType));
+  }
   if (adapter.manifest.type !== "generic_webhook") return [...adapter.manifest.activityTriggers];
   const eventTypes = configuredEventTypes(connectionConfigJson);
   return (eventTypes.length > 0 ? eventTypes : ["webhook.received"]).map((eventType) => ({
