@@ -463,6 +463,29 @@ describe('MessageBlock human identity', () => {
     expect(inFlight.querySelector('.attachment-file-card')).toBeInTheDocument();
   });
 
+  it('renders both the bubble and the attachment card for an in-flight turn with text and a file', () => {
+    // The sweep is painted per surface, so a turn with words and a file has
+    // two, and a render that fell back to one or the other would still pass
+    // the two single-surface cases above.
+    render(
+      <MessageBlock
+        {...actions}
+        currentUserId="user-adam"
+        loadAttachmentContent={async () => new Blob(['text'])}
+        message={{
+          ...baseMessage,
+          deliveryState: 'sending',
+          attachments: [{ id: 'file', fileName: 'notes.txt', mimeType: 'text/plain', sizeBytes: 4, contentAvailable: true, createdAt: baseMessage.createdAt }],
+        }}
+        onOpenAttachment={vi.fn()}
+      />,
+    );
+
+    const inFlight = screen.getByLabelText('Sending message');
+    expect(inFlight.querySelector('.human-message-bubble')).toBeInTheDocument();
+    expect(inFlight.querySelector('.attachment-file-card')).toBeInTheDocument();
+  });
+
   it('names the signed-in person over their own prompt, like every other turn', () => {
     render(<MessageBlock {...actions} currentUserId="user-adam" message={baseMessage} />);
 
