@@ -2992,6 +2992,11 @@ across it, because the global reduced-motion block would otherwise run it once
 at 0.001ms and leave it clipped outside the wrapper — an in-flight turn with no
 cue at all, and less marked than a queued one.
 
+*Superseded on 2026-09-13.* The sweep no longer hangs off the wrapper, and the
+sending state writes no `overflow` on anything: it is painted on each surface
+the turn draws, and clips itself to that surface's corner. The 2026-09-13 entry
+above has the mechanism and why the wrapper was left.
+
 ### 2026-09-01 — An automation's result is a message in the room, named Automation
 
 **What changed:** `automation_activation` is a participant message type, and
