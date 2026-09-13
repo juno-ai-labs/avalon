@@ -330,11 +330,15 @@ describe("Avalon connector connection tools", () => {
     ).run();
     await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "personal" }, context()))
       .resolves.toMatchObject({ output: { state: "reconnect_required" } });
+    // `error` is connected, matching the desktop and `resolveUserDelivery`.
+    // A failed background poll writes it and a later successful poll does not
+    // clear it, so reading it as `reconnect_required` sent the agent to a
+    // recovery card for a connection whose credential was never in question.
     objectDatabase.prepare(
       "UPDATE connector_connections SET status = 'error' WHERE model_plugin_id = 'plugin_google'",
     ).run();
     await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "personal" }, context()))
-      .resolves.toMatchObject({ output: { state: "reconnect_required" } });
+      .resolves.toMatchObject({ output: { state: "connected" } });
 
     objectDatabase.prepare(
       `INSERT INTO connector_connections
