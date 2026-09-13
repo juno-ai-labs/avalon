@@ -256,8 +256,12 @@ describe('Fireflies workspace setup', () => {
     // Fireflies' own labels, because that is what the administrator is reading
     // off the form — and the one field its form calls optional that Rally will
     // not work without.
-    expect(screen.getByText(/Meeting Transcribed/u)).toBeVisible();
-    expect(screen.getByText(/Meeting Bot Joined/u)).toBeVisible();
+    expect(screen.getByText('Configure')).toBeVisible();
+    expect(screen.getByText('Webhook Configuration')).toBeVisible();
+    expect(screen.getByText('Event Subscriptions')).toBeVisible();
+    expect(screen.getByText('Meeting Transcribed')).toBeVisible();
+    expect(screen.getByText('Meeting Summarized')).toBeVisible();
+    expect(screen.getByText('Meeting Bot Joined')).toBeVisible();
     expect(screen.getByText(/labels the signing secret optional/u)).toBeVisible();
     expect(screen.getByText(/the connection changes to/u)).toHaveTextContent('changes to Connected as soon as the test event arrives');
     // Closing is the administrator's, not the setup's: the secret must not be
