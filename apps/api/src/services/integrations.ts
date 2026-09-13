@@ -100,6 +100,8 @@ import {
   connectorCapabilitySupportsScope,
   AshbyCapabilities,
   AshbyWorkspaceAgentPresentation,
+  FirefliesCapabilities,
+  FirefliesPersonalAgentPresentation,
   CUSTOM_MCP_DISPLAY_NAME,
   ConnectorError,
   GoogleFileWriteAuthorizationGuidance,
@@ -6397,6 +6399,16 @@ function connectorPluginPresentation(
     return grantedScopes.includes(AshbyCapabilities.workspaceEvents)
       ? { ...fallback, ...AshbyWorkspaceAgentPresentation }
       : { ...fallback, displayName: "Ashby personal account" };
+  }
+  if (connectorType === "fireflies") {
+    // The descriptor carries the workspace guidance, because that is the scope
+    // whose tools it declares. A personal connection's surface is Fireflies'
+    // own live catalogue — writes and meeting sharing included — so it gets the
+    // message that describes what those tools can do rather than one written
+    // for three reads.
+    return grantedScopes.includes(FirefliesCapabilities.personalRead)
+      ? { ...fallback, ...FirefliesPersonalAgentPresentation }
+      : fallback;
   }
   if (connectorType !== "google") return fallback;
 

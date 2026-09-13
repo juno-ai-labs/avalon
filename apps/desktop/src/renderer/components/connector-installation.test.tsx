@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConnectorInstallationSchema, ConnectorRegistrationSchema } from '@rally/contracts';
 import { RallyApi } from '../lib/api';
-import { AshbyWorkspaceSetup, ConnectorInstallationDetails } from './connector-installation';
+import { AshbyWorkspaceSetup, ConnectorInstallationDetails, FirefliesWorkspaceSetup } from './connector-installation';
 
 afterEach(() => { cleanup(); onlineManager.setOnline(true); vi.restoreAllMocks(); });
 
@@ -183,5 +183,84 @@ describe('workspace event controls', () => {
     const fullLabel = 'Note access granted, Note edited, Note generated, Note regenerated';
     expect(await screen.findByRole('heading', { name: fullLabel })).toBeVisible();
     expect(screen.getByRole('option', { name: 'Granola note events' })).toHaveAttribute('title', fullLabel);
+  });
+});
+
+describe('Fireflies workspace setup', () => {
+  const manualRegistration = {
+    destination: 'https://api.example.test/ingest/fireflies/00000000-0000-4000-8000-000000000001',
+    events: ['meeting.transcribed', 'meeting.summarized'],
+    signingSecret: 'ssssssssssssssssssssssssssssssss',
+    instructions: 'Open the Webhooks V2 page.',
+  };
+
+  it('asks for one key with no event or consent boxes, then hands over the steps once', async () => {
+    const api = new RallyApi('https://api.example.test', null);
+    const setup = vi.spyOn(api, 'createFirefliesWorkspaceConnection').mockResolvedValue({
+      installation: { ...installation(), provider: 'fireflies', selectedEvents: manualRegistration.events },
+      connection: { id: connectionId, displayName: 'Fireflies · bob@acme.test' },
+      manualRegistration,
+    } as Awaited<ReturnType<RallyApi['createFirefliesWorkspaceConnection']>>);
+    const closed = vi.fn();
+    show(<FirefliesWorkspaceSetup api={api} attemptId="00000000-0000-4000-8000-0000000000aa"
+      onSuccess={() => {}} onClose={closed} onRecovered={() => {}} />);
+
+    // The event set is the connector's, and consent is copy the admin reads.
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(screen.getByText(/Every member of this workspace will be able to read these meetings/u)).toBeVisible();
+    expect(screen.getByText(/Rally cannot tell which meetings this key covers/u)).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText(/Fireflies API key/u), { target: { value: 'a-workspace-key' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Connect' })); });
+    expect(setup).toHaveBeenCalledWith('a-workspace-key', '00000000-0000-4000-8000-0000000000aa');
+
+    // The one moment the secret is on screen, and the steps that need it.
+    await screen.findByText('Finish in Fireflies');
+    expect(screen.getByLabelText('Fireflies endpoint URL')).toHaveValue(manualRegistration.destination);
+    expect(screen.getByLabelText('Fireflies signing secret')).toHaveValue(manualRegistration.signingSecret);
+    expect(screen.getByText(/Rally will not show it again/u)).toBeVisible();
+    expect(screen.getByText(/one webhook URL per account/u)).toBeVisible();
+    expect(screen.getByText(/changes to Current when the first meeting arrives/u)).toBeVisible();
+    // Closing is the administrator's, not the setup's: the secret must not be
+    // taken off screen by the mutation that produced it.
+    expect(closed).not.toHaveBeenCalled();
+  });
+
+  it('keeps a rejected key in the form and stores nothing', async () => {
+    const api = new RallyApi('https://api.example.test', null);
+    vi.spyOn(api, 'createFirefliesWorkspaceConnection')
+      .mockRejectedValue(new Error('Fireflies rejected this key. Check that you copied the whole key from the provider, then try again.'));
+    vi.spyOn(api, 'getConnections').mockResolvedValue([]);
+    const closed = vi.fn();
+    show(<FirefliesWorkspaceSetup api={api} attemptId="00000000-0000-4000-8000-0000000000ab"
+      onSuccess={() => {}} onClose={closed} onRecovered={() => {}} />);
+    fireEvent.change(screen.getByLabelText(/Fireflies API key/u), { target: { value: 'wrong-key' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Connect' })); });
+    await screen.findByText(/Fireflies rejected this key/u);
+    expect(screen.getByLabelText(/Fireflies API key/u)).toHaveValue('wrong-key');
+    expect(screen.queryByText('Finish in Fireflies')).toBeNull();
+    expect(closed).not.toHaveBeenCalled();
+  });
+
+  it('offers no cleanup retry where no registration has a provider identity to remove', async () => {
+    const api = new RallyApi('https://api.example.test', null);
+    vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: {
+      ...installation(), provider: 'fireflies', state: 'cleanup_pending',
+      registrations: [registration('meeting.transcribed+meeting.summarized', 'action_required')],
+    } });
+    show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
+    await screen.findByText(/Rally can't remove the webhook from your provider for you/u);
+    expect(screen.queryByRole('button', { name: 'Retry cleanup' })).toBeNull();
+  });
+
+  it('still offers cleanup retry where a recorded provider identity exists', async () => {
+    const api = new RallyApi('https://api.example.test', null);
+    vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: {
+      ...installation(), state: 'cleanup_pending',
+      registrations: [registration('applicationSubmit', 'pending', 'webhook-1')],
+    } });
+    show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
+    expect(await screen.findByRole('button', { name: 'Retry cleanup' })).toBeVisible();
+    expect(screen.queryByText(/Rally can't remove the webhook from your provider for you/u)).toBeNull();
   });
 });

@@ -22,6 +22,7 @@ const oauth = { clientId: "client", clientSecret: "secret", redirectUri: "https:
 export const testRegistryConfig: Parameters<typeof createConnectorRegistry>[0] = {
   customMcp: { redirectUri: "https://api.example.com/callback" },
   ashby: { redirectUri: "https://api.example.com/callback" },
+  fireflies: { redirectUri: "https://api.example.com/callback" },
   granola: { redirectUri: "https://api.example.com/callback" },
   google: oauth,
   github: {

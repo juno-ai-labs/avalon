@@ -104,6 +104,7 @@ export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, on
   const online = useSyncExternalStore(subscribeOnline, readOnline);
   const [apiKey, setApiKey] = useState('');
   const [registration, setRegistration] = useState<{ destination: string; signingSecret: string; account: string } | null>(null);
+  const [copied, setCopied] = useState<'destination' | 'secret' | null>(null);
   const recovery = useWorkspaceInstallationRecovery(api, 'fireflies', (connectionId) => {
     setApiKey('');
     onSuccess();
@@ -134,14 +135,24 @@ export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, on
       description="Rally can't register this webhook for you — Fireflies has no API for it."
       footer={<Button className="button-primary" onClick={onClose}>Done</Button>}>
       <p role="status">{registration.account} is connected. The meeting tools work now; these steps are what makes finished meetings arrive as activity.</p>
-      <ol>
-        <li>Open Fireflies' <Button onClick={() => void desktopBridge().openExternal('https://app.fireflies.ai/integrations/api/webhook')}>Webhooks V2 configuration page ↗</Button></li>
+      <Button onClick={() => void desktopBridge().openExternal('https://app.fireflies.ai/integrations/api/webhook')}>Open Fireflies' Webhooks V2 page ↗</Button>
+      {/* Numbered inline: the app resets list markers globally, so an ordinary
+          `ol` renders as four unnumbered lines that read as one paragraph. */}
+      <ol style={{ listStyle: 'decimal', paddingInlineStart: '1.5rem' }}>
         <li>Paste the endpoint URL below into <strong>Webhook URL</strong>, and the signing secret into <strong>Signing Secret</strong>.</li>
         <li>Subscribe <code>meeting.transcribed</code> and <code>meeting.summarized</code>. Leave <code>meeting.bot_joined</code> unselected.</li>
         <li>Save.</li>
       </ol>
-      <label className="form-field"><span>Endpoint URL</span><input readOnly value={registration.destination} /></label>
-      <label className="form-field"><span>Signing secret</span><input readOnly value={registration.signingSecret} /></label>
+      {/* Copied rather than read: a connection URL is longer than the field,
+          and the secret is deliberately the one thing nobody should retype. */}
+      <label className="form-field"><span>Endpoint URL</span><input aria-label="Fireflies endpoint URL" readOnly spellCheck={false} value={registration.destination} /></label>
+      <Button onClick={() => { void desktopBridge().copyText(registration.destination); setCopied('destination'); }}>
+        {copied === 'destination' ? 'Endpoint copied' : 'Copy endpoint'}
+      </Button>
+      <label className="form-field"><span>Signing secret</span><input aria-label="Fireflies signing secret" readOnly spellCheck={false} type="password" value={registration.signingSecret} /></label>
+      <Button onClick={() => { void desktopBridge().copyText(registration.signingSecret); setCopied('secret'); }}>
+        {copied === 'secret' ? 'Secret copied' : 'Copy signing secret'}
+      </Button>
       <p><strong>Copy the signing secret now.</strong> Rally will not show it again; replacing it means removing this connection and connecting again.</p>
       <p>Fireflies holds one webhook URL per account, so this replaces any URL already configured there.</p>
       <p>Until this is done, no meetings reach Rally. Once it is, a finished meeting shows up within a couple of minutes. Rally can't check this for you — the installation changes to Current when the first meeting arrives.</p>

@@ -2774,7 +2774,10 @@ export class ConnectionService {
         // never is, because its timestamp moves.
         signatureHash: envelope.receiptKey ?? envelope.bodyHash, receivedAt,
         expiresAt: new Date(Date.now() + 4 * 24 * 60 * 60 * 1_000).toISOString(),
-        eventIdentity: { providerEventId: envelope.deliveryId, eventType: envelope.eventType },
+        // No `eventIdentity`: that exists to recover a first-observed time for
+        // a provider whose retries carry no stable timestamp. Fireflies signs
+        // the moment the event fired into the body, so a replay carries the
+        // original time by construction and there is nothing to recover.
       }),
     );
     const payloadKey = `${this.env.AVALON_REGION}/${connection.workspace_id}/activities/fireflies/${connectionId}/${envelope.bodyHash}.json`;

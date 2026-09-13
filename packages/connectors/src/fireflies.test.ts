@@ -163,6 +163,28 @@ describe('Fireflies workspace tools', () => {
     expect(result.output).toEqual({ meetings: [], nextOffset: null });
   });
 
+  it('advertises and enforces the same strict shape for all three tools', async () => {
+    const adapter = createFirefliesConnector({ redirectUri, fetch: async () => Response.json({ data: {} }) });
+    const schemas = new Map(adapter.manifest.tools.map((tool) => [tool.name, tool.inputSchema as {
+      additionalProperties: boolean; required?: string[]; properties: Record<string, unknown>;
+    }]));
+    // Declared for the model...
+    expect([...schemas.values()].every((schema) => schema.additionalProperties === false)).toBe(true);
+    expect(schemas.get('search_meetings')?.required).toBeUndefined();
+    expect(schemas.get('get_meeting_summary')?.required).toEqual(['meetingId']);
+    expect(schemas.get('get_transcript')?.required).toEqual(['meetingId']);
+    // ...and enforced by the executor, which is what actually refuses. A
+    // declaration the parse does not repeat validates nothing.
+    const call = (name: string, args: unknown) => adapter.executeTool(name, args, { connection: connection(), principal, signal: neverAborts() });
+    await expect(call('search_meetings', { keyword: 'x', unexpected: true })).rejects.toBeDefined();
+    await expect(call('get_meeting_summary', {})).rejects.toBeDefined();
+    await expect(call('get_meeting_summary', { meetingId: 'm', unexpected: true })).rejects.toBeDefined();
+    await expect(call('get_transcript', { meetingId: 'm', limit: 501 })).rejects.toBeDefined();
+    await expect(call('search_meetings', { keyword: 'x', participantEmail: 'Dana' })).rejects.toBeDefined();
+    await expect(call('search_meetings', { keyword: 'x', limit: 26 })).rejects.toBeDefined();
+    await expect(call('unknown_tool', {})).rejects.toMatchObject({ code: 'unsupported_capability' });
+  });
+
   it('refuses a filterless search before spending a provider request', async () => {
     let called = false;
     const { adapter } = adapterWith(() => { called = true; return { data: { transcripts: [] } }; });
