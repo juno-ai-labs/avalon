@@ -541,6 +541,23 @@ IDs, callback URLs or signing-key state.
 semantics. Opening either view remains read-only. Explicit Test retains repair
 followed by healthCheck. Visual inspection is still performed locally.
 
+### 2026-09-13 — Automate the first regional deployment
+
+**Decided:** The normal API workflow inspects active Cloudflare exports and
+bootstraps Global first only when the new Ashby router is absent, after proving
+its existing EU dependencies. Health and export verification precede EU; shared
+ingress follows both regions. Later releases retain EU-first order. A partial
+EU-only request cannot implicitly deploy Global.
+
+**Why:** EU retirement will take time and must not block this connector. Requiring
+a manual pre-merge bootstrap would make ordinary deployment unsafe. The user
+authorized the workflow fix and PR update, without authorizing deployment or merge.
+
+**Changes:** Reuse direct regional deployment commands and existing health checks;
+fail on unknown metadata or a circular dependency, and test both initial and
+normal ordering with failure barriers. Live deployment and provider acceptance
+remain outstanding.
+
 ## Key design decisions
 
 1. **Extract from Granola while adding Ashby.** Two real providers test the
