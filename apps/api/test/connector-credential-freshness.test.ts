@@ -553,7 +553,8 @@ describe("a workspace API key the provider has stopped accepting", () => {
       fireflies: {
         redirectUri: "https://api.example.com/connections/fireflies/callback",
         // Fireflies reports a rejected key inside an HTTP 200 GraphQL body.
-        fetch: (async () => Response.json({ errors: [{ code: "auth_failed" }] })) as typeof fetch,
+        // HTTP 500 with the errors array, which is what Fireflies actually sends.
+        fetch: (async () => Response.json({ errors: [{ code: "auth_failed" }] }, { status: 500 })) as typeof fetch,
       },
     }).get("fireflies");
     const statements: string[] = [];

@@ -581,9 +581,15 @@ meetings, read a meeting's AI summary, read its transcript pages. The model
 never writes GraphQL. Every provider-controlled string and array in those
 outputs is capped and the cut reported through a `truncated` flag, and a
 transcript document over the 2 MB response cap fails as `payload_too_large`
-pointing at the summary instead. Fireflies reports application errors inside
-HTTP 200 GraphQL bodies, so the adapter maps `errors[].code` rather than the
-status: `auth_failed` becomes the `unauthorized` that marks the connection
+pointing at the summary instead. Fireflies reports application errors in a GraphQL
+`errors` array, and **not always with a 200** — a rejected API key comes back
+as HTTP 500 carrying that array, checked before the query is parsed (observed
+live 2026-09-13; the documentation describes the body and is silent on the
+status). The adapter therefore reads the body first and maps `errors[].code`,
+falling back to the status only for a response that carries no code at all.
+Going through the shared `providerJson` helper, which throws on a non-2xx
+before the body is read, made a revoked key look like a transient outage and
+left the connection reporting healthy. So: `auth_failed` becomes the `unauthorized` that marks the connection
 `needs_reconnect`, `too_many_requests` carries a wait derived from the
 provider's own reset time, and the rest resolve to correct-and-retry,
 not-found, forbidden, or retry-once-then-continue.
