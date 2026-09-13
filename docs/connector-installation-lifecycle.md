@@ -220,7 +220,8 @@ agent runtime. Its `/health` verifies its three named dependencies, regional ide
 the Global route table, without provider repair. It looks up an opaque connection's region and forwards unchanged
 signed bytes through a named regional binding. The API HTTP receiver is regional
 only; the dedicated Worker is the sole shared-host forwarding path. First
-deployment requires Global router bootstrap before EU, then dedicated ingress;
+deployment automatically bootstraps the Global router before EU when its active
+export is missing, then deploys dedicated ingress after both regional health checks;
 see the [deployment guide](api-worker-deployment.md#dedicated-ashby-ingress).
 Credentials, verification, Queue
 admission, and canonical event processing remain under regional authority.

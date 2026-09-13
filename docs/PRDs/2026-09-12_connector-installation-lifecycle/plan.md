@@ -185,9 +185,9 @@ launch readiness until an authorized account can establish:
    delivery gap; they do not claim verified automatic rotation.
 6. After a separate deployment request, dedicated-domain/service-binding behavior
    and actual regional Worker startup acceptance. The first rollout requires a
-   Global-only router bootstrap before EU can bind the new entrypoint, then the
-   dedicated ingress. Do not merge into automatic EU-first deployment before that
-   bootstrap. No bootstrap or deployment was performed.
+   Global router before EU can bind the new entrypoint; the workflow now detects
+   and performs that ordering automatically, then deploys dedicated ingress after
+   both regional health checks. No bootstrap or deployment was performed.
 
 ## Review evidence
 
@@ -287,3 +287,28 @@ Electron showed connected and needs-attention views plus advanced recovery for a
 synthetic 27-subscription installation. Opening Advanced made no provider write.
 The support page was inspected locally. Screenshots are temporary local QA files
 and are not attached to the PR or committed.
+
+## Automatic deployment ordering — 2026-09-13
+
+The API workflow now inspects active Cloudflare exports before resource changes.
+A missing Global Ashby router selects direct Global bootstrap after proving its
+existing EU dependencies. Global deployment, health and router verification must
+succeed before EU runs; shared ingress follows both healthy regions and has its
+own health probe. Both-region version uploads remain ahead of promotion on later
+ordinary releases. EU-only first setup is refused without deploying Global.
+Retries after Global bootstrap return to EU-first order, and Worker-first D1
+migration barriers remain intact. No manual pre-merge bootstrap is required.
+
+Validation: `pnpm test:scripts` passed 460 tests, including 13 new control-plane
+and executable workflow tests. Lint (zero warnings), typecheck, docs check and the
+final seven-test workflow file passed. Five production mutation proofs failed
+for their intended reasons and were reverted: ignoring a missing Global export,
+skipping the EU target check, skipping bootstrap Global health, ignoring a failed
+Worker deployment, and permitting version uploads before bootstrap.
+
+The attempted read-only live preflight stopped before any network request because
+the local Cloudflare credential entries are empty. Actual active-export inspection
+and the deployment/health path remain to be exercised with the existing CI
+production credential when deployment is separately authorized. No deployment,
+merge, provider repair or fleet action was performed. The PRD remains in progress
+because the Ashby test organization and required live acceptance are unavailable.
