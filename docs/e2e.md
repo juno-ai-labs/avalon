@@ -703,7 +703,7 @@ binding.
 ## Flow 13 — Fireflies workspace meetings and personal MCP
 
 Needs a live Fireflies workspace, an account that records meetings, and control
-of that account's Webhooks V2 page. None of it is reachable offline.
+of that account's Webhooks page. None of it is reachable offline.
 
 **Run the read half first, with a key alone** — no workspace, no dashboard, no
 webhook:
