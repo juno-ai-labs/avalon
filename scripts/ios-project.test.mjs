@@ -105,11 +105,13 @@ test("required Swift surfaces exist for a complete conversation client", () => {
     "Rally/Features/Workspaces/WorkspacePickerView.swift",
     "Rally/Features/Chat/ConversationScreen.swift",
     "Rally/Features/Chat/ComposerBar.swift",
+    "Rally/Features/Chat/SubstreamSwitcher.swift",
     "Rally/Features/History/HistoryPanel.swift",
     "Rally/Features/Settings/SettingsScreen.swift",
     "Rally/Features/Voice/VoiceBar.swift",
     "Rally/Features/Chat/FeedProjection.swift",
     "Rally/Network/WorkspaceSocket.swift",
+    "Rally/Network/WorkstreamControlSocket.swift",
     "Rally/App/MainShell.swift",
     "Rally/Features/Projects/ProjectsScreen.swift",
     "Rally/Features/Notes/NotesScreen.swift",
@@ -165,6 +167,23 @@ test("iOS feed kinds and shell cover the Electron conversation and directory", (
   const settings = read("Rally/Features/Settings/SettingsScreen.swift");
   assert.match(settings, /Digest/);
   assert.match(settings, /Connections/);
+  const substreams = read("Rally/Features/Chat/SubstreamSwitcher.swift");
+  assert.match(substreams, /New substream/);
+  assert.match(substreams, /Copy substream link/);
+  assert.match(substreams, /Archive substream/);
+  assert.match(substreams, /Start a substream/);
+  const model = read("Rally/App/AppModel.swift");
+  assert.match(model, /prepareSubstream/);
+  assert.match(model, /confirmSubstream/);
+  assert.match(model, /startSubstream/);
+  const client = read("Rally/Network/RallyClient.swift");
+  assert.match(client, /substreams\/prepare/);
+  assert.match(client, /control-socket/);
+  assert.match(conversation, /New substream/);
+  assert.match(conversation, /SubstreamLaunchView/);
+  const deepLink = read("Rally/App/RallyDeepLink.swift");
+  assert.match(deepLink, /substreams/);
+  assert.match(feed, /branchProvenance/);
   const desktopApp = readFileSync(join(repoRoot, "apps/desktop/src/renderer/App.tsx"), "utf8");
   for (const route of [
     "/workstreams/new",

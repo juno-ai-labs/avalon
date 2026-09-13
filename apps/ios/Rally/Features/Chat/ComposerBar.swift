@@ -11,6 +11,8 @@ struct ComposerBar: View {
     var onAttach: (Data, String, String) -> Void
     var onRemoveAttachment: (String) -> Void
     var onVoice: () -> Void
+    var placeholder: String = "Ask Rally anything"
+    var isDisabled: Bool = false
 
     @Environment(\.rallyColors) private var colors
     @FocusState private var focused: Bool
@@ -55,18 +57,20 @@ struct ComposerBar: View {
                         .foregroundStyle(colors.textSecondary)
                         .frame(width: 32, height: 32)
                 }
+                .disabled(isDisabled)
                 .accessibilityLabel("Attach a photo")
                 .contextMenu {
                     Button("Choose file") { pickingFile = true }
                 }
-                TextField("Ask Rally anything", text: $text, axis: .vertical)
+                TextField(placeholder, text: $text, axis: .vertical)
                     .font(RallyType.prompt())
                     .foregroundStyle(colors.textPrimary)
                     .tint(colors.textPrimary)
                     .lineLimit(1...5)
                     .focused($focused)
+                    .disabled(isDisabled)
                     .submitLabel(.send)
-                    .onSubmit { if sendEnabled && !isStreaming { onSend() } }
+                    .onSubmit { if sendEnabled && !isStreaming && !isDisabled { onSend() } }
                     .accessibilityLabel("Message")
                 Button(action: onVoice) {
                     Image(systemName: "waveform")
@@ -75,7 +79,7 @@ struct ComposerBar: View {
                         .frame(width: 32, height: 32)
                 }
                 .accessibilityLabel("Speak a message")
-                SendButton(isStreaming: isStreaming, enabled: sendEnabled, onSend: onSend, onStop: onStop)
+                SendButton(isStreaming: isStreaming, enabled: sendEnabled && !isDisabled, onSend: onSend, onStop: onStop)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)

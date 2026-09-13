@@ -18,7 +18,7 @@ enum FeedProjection {
         let role = role(for: turn.actor)
         let id = turn.turnId ?? UUID().uuidString
         if turn.blocksOmitted == true {
-            return [RallyChatMessage(
+            return tagged([RallyChatMessage(
                 id: id,
                 kind: .omitted,
                 role: role,
@@ -28,10 +28,10 @@ enum FeedProjection {
                 clientMessageId: turn.clientMessageId,
                 sequence: turn.transcriptSequence,
                 authorName: turn.authorSnapshot?.displayName
-            )]
+            )], turnId: turn.turnId)
         }
         if turn.entryKind == "status" {
-            return [RallyChatMessage(
+            return tagged([RallyChatMessage(
                 id: id,
                 kind: .system,
                 role: .system,
@@ -40,7 +40,7 @@ enum FeedProjection {
                 isStreaming: false,
                 sequence: turn.transcriptSequence,
                 statusKind: turn.statusKind
-            )]
+            )], turnId: turn.turnId)
         }
         var rows: [RallyChatMessage] = []
         for (index, block) in (turn.blocks ?? []).enumerated() {
@@ -49,7 +49,24 @@ enum FeedProjection {
                 rows.append(row)
             }
         }
-        return rows
+        return tagged(rows, turnId: turn.turnId)
+    }
+
+    /// The five turns ending at the branch point, matching desktop
+    /// `branchProvenance` (`BRANCH_PROVENANCE_TURNS = 5`).
+    static func branchProvenance(messages: [RallyChatMessage], throughTurnId: String?) -> [RallyChatMessage] {
+        guard let throughTurnId else { return [] }
+        guard let cutoff = messages.lastIndex(where: { $0.turnId == throughTurnId }) else { return [] }
+        let start = max(0, cutoff + 1 - 5)
+        return Array(messages[start...cutoff])
+    }
+
+    private static func tagged(_ rows: [RallyChatMessage], turnId: String?) -> [RallyChatMessage] {
+        rows.map { row in
+            var copy = row
+            copy.turnId = turnId
+            return copy
+        }
     }
 
     private static func row(
@@ -194,7 +211,8 @@ enum FeedProjection {
                     createdAt: pending.first?.createdAt ?? row.createdAt,
                     isStreaming: false,
                     sequence: pending.first?.sequence,
-                    nested: pending
+                    nested: pending,
+                    turnId: row.turnId
                 )
                 result.append(accordion)
                 pending.removeAll()
