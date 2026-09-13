@@ -17,6 +17,7 @@ import { __integrationTesting } from "../src/services/integrations";
 const oauth = { clientId: "client", clientSecret: "secret", redirectUri: "https://api.example.com/callback" };
 const registry = createConnectorRegistry({
   ashby: { redirectUri: "https://api.example.com/connections/ashby/callback" },
+  fireflies: { redirectUri: "https://api.example.com/callback" },
   granola: { redirectUri: "https://api.example.com/callback" },
   google: oauth,
   github: {
@@ -34,7 +35,7 @@ const registry = createConnectorRegistry({
 });
 
 /** The connector types with a tool surface a request would go looking for. */
-const TOOL_CONNECTORS = ["slack", "github", "linear", "notion", "granola", "x", "google"] as const;
+const TOOL_CONNECTORS = ["slack", "github", "linear", "notion", "fireflies", "granola", "x", "google"] as const;
 
 /**
  * One phrase per connector that a person would plausibly use and that is not
@@ -47,6 +48,7 @@ const REQUEST_VOCABULARY: Record<string, string> = {
   linear: "ticket",
   notion: "wiki",
   granola: "meeting",
+  fireflies: "transcript",
   x: "tweet",
 };
 
@@ -190,6 +192,23 @@ describe("custom MCP connection names", () => {
     };
     expect(__integrationTesting.transcriptPluginPresentation({ corePlugins: [], plugins: [plugin] }, plugin.canonicalId))
       .toEqual({ label: "Slack", connectorType: "custom_mcp" });
+  });
+});
+
+describe("Fireflies capability-specific presentation", () => {
+  it("swaps the read-only message for the live catalogue's on a personal connection", () => {
+    const adapter = registry.get("fireflies");
+    const fallback = { displayName: "Fireflies", description: adapter.agentPlugin.description,
+      searchAliases: [...(adapter.agentPlugin.searchAliases ?? [])], systemMessage: adapter.agentPlugin.systemMessage };
+    const personal = __integrationTesting.connectorPluginPresentation("fireflies", ["fireflies.personal.read"], "fireflies", fallback);
+    const workspace = __integrationTesting.connectorPluginPresentation("fireflies", ["fireflies.workspace.read"], "fireflies", fallback);
+    // The workspace scope is three fixed read tools; the personal scope is
+    // Fireflies' own live MCP catalogue, write tools included. Telling a model
+    // the second is read-only is how a share it was never asked for happens.
+    expect(workspace.systemMessage).toContain("only read");
+    expect(personal.systemMessage).toContain("supplied live by Fireflies");
+    expect(personal.systemMessage).toContain("shares a meeting with people outside this workspace");
+    expect(personal.systemMessage).not.toContain("only read");
   });
 });
 

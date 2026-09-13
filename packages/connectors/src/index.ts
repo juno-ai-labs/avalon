@@ -64,6 +64,7 @@ export {
 import { createCustomMcpConnector, type CustomMcpConnectorConfig } from "./custom-mcp";
 import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
 import { createAshbyConnector, type AshbyConnectorConfig } from "./ashby";
+import { createFirefliesConnector, type FirefliesConnectorConfig } from "./fireflies";
 import { createGranolaConnector, type GranolaConnectorConfig } from "./granola";
 import { createLinearConnector, type LinearConnectorConfig } from "./linear";
 import { createNotionConnector, type NotionConnectorConfig } from "./notion";
@@ -175,6 +176,21 @@ export {
   SLACK_MARKDOWN_BLOCK_LIMIT,
   type SlackMarkdownMessage,
 } from "./slack-markdown";
+export {
+  createFirefliesConnector,
+  verifyFirefliesSignature,
+  isFirefliesEventType,
+  FirefliesAgentPluginDescriptor,
+  FirefliesCapabilities,
+  FirefliesEventTypes,
+  FirefliesPersonalAgentPresentation,
+  FIREFLIES_MANUAL_INSTRUCTIONS,
+  FIREFLIES_MCP_URL,
+  firefliesTools,
+  type FirefliesConnectorConfig,
+  type FirefliesEventType,
+  type VerifiedFirefliesWebhook,
+} from "./fireflies";
 export {
   createGranolaConnector,
   createGranolaWebhookEndpoint,
@@ -5066,6 +5082,7 @@ export function createConnectorRegistry(input: {
   observer?: ConnectorObserver;
   customMcp?: CustomMcpConnectorConfig;
   ashby?: AshbyConnectorConfig;
+  fireflies?: FirefliesConnectorConfig;
   granola?: GranolaConnectorConfig;
   google?: GoogleConnectorConfig;
   github?: GitHubConnectorConfig;
@@ -5086,6 +5103,14 @@ export function createConnectorRegistry(input: {
   if (input.ashby) adapters.push(createAshbyConnector({
     ...input.ashby,
     fetch: instrumentConnectorFetch("ashby", input.ashby.fetch ?? globalThis.fetch, input.observer),
+  }));
+  if (input.fireflies) adapters.push(createFirefliesConnector({
+    ...input.fireflies,
+    fetch: instrumentConnectorFetch(
+      "fireflies",
+      input.fireflies.fetch ?? globalThis.fetch,
+      input.observer,
+    ),
   }));
   if (input.granola) adapters.push(createGranolaConnector({
     ...input.granola,

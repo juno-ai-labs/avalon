@@ -462,7 +462,7 @@ describe("adapter conformance: a revoked grant reaches the row", () => {
 
   it("covers every adapter that can refresh a credential", () => {
     expect(adapters.map(({ type }) => type).sort())
-      .toEqual(["github", "google", "granola", "linear", "notion", "slack"]);
+      .toEqual(["fireflies", "github", "google", "granola", "linear", "notion", "slack"]);
   });
 
   for (const { type, adapter } of adapters) {
@@ -538,6 +538,50 @@ async function doorStatementsForFailedRefresh(
   )).rejects.toBeDefined();
   return statements;
 }
+
+/**
+ * The conformance suites above discover adapters through `refreshCredentials`,
+ * which an admin-API-key connection does not have: nothing about a pasted key
+ * can be renewed. That is the whole reason this case needs its own test — a
+ * revoked Fireflies key has no exchange to fail, only a provider that starts
+ * answering `auth_failed`, and the row still has to stop reporting healthy or
+ * every run silently drops the plugin with nobody told why.
+ */
+describe("a workspace API key the provider has stopped accepting", () => {
+  it("marks a Fireflies workspace connection needs_reconnect on the next use", async () => {
+    const adapter = createConnectorRegistry({
+      fireflies: {
+        redirectUri: "https://api.example.com/connections/fireflies/callback",
+        // Fireflies reports a rejected key inside an HTTP 200 GraphQL body.
+        // HTTP 500 with the errors array, which is what Fireflies actually sends.
+        fetch: (async () => Response.json({ errors: [{ code: "auth_failed" }] }, { status: 500 })) as typeof fetch,
+      },
+    }).get("fireflies");
+    const statements: string[] = [];
+    const connection = connectionContext({ apiKey: "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk" }, "workspace", ["fireflies.workspace.read"]);
+    const database = createTestD1Database({
+      prepare(sql: string) {
+        statements.push(sql.replace(/\s+/gu, " ").trim());
+        return {
+          bind() { return this; },
+          async first() { return null; },
+          async run() { return { success: true, meta: { changes: 1 } }; },
+        };
+      },
+    });
+
+    await expect(withAuthorizedConnection(
+      { DB: database, CONNECTOR_CREDENTIALS_KEY: "coordinator-key", CONNECTOR_CREDENTIALS_KEY_VERSION: "1" },
+      { connection, adapter, signal: AbortSignal.timeout(5_000) },
+      (authorized) => adapter.executeTool("search_meetings", { keyword: "renewal" }, {
+        connection: authorized,
+        principal: { type: "workspace", workspaceId: asWorkspaceId(connection.workspaceId) },
+        signal: AbortSignal.timeout(5_000),
+      }),
+    )).rejects.toMatchObject({ code: "unauthorized" });
+    expect(statements.some((sql) => sql.includes("status = 'needs_reconnect'"))).toBe(true);
+  });
+});
 
 describe("repairing a connection under test", () => {
   const identity = { connectionId: "connection", connectorType: "granola" };
@@ -786,7 +830,7 @@ describe("adapter conformance: recovery from a rejected credential", () => {
 
   it("covers every adapter that can refresh a credential", () => {
     expect(adapters.map(({ type }) => type).sort())
-      .toEqual(["github", "google", "granola", "linear", "notion", "slack"]);
+      .toEqual(["fireflies", "github", "google", "granola", "linear", "notion", "slack"]);
   });
 
   for (const { type, adapter } of adapters) {
@@ -807,6 +851,7 @@ describe("adapter conformance: recovery from a rejected credential", () => {
       const connection = connectionContext(
         { ...fixture.credentials, expiresAt: "2099-01-01T00:00:00.000Z" },
         fixture.scope,
+        fixture.grantedScopes,
       );
 
       const health = await adapter.healthCheck(
@@ -875,11 +920,36 @@ const CREDENTIAL_FIXTURES: Record<string, {
    * has no bearer to have rejected.
    */
   presentsExpiringCredential: boolean;
+  /**
+   * Capabilities the connection holds, where the adapter's health check runs a
+   * capability-gated path. Fireflies' personal check is live tool discovery,
+   * which the pass-through refuses outright to an ungranted connection — so
+   * without this it presents no credential at all and the row above would have
+   * to claim, untruthfully, that it never does.
+   */
+  grantedScopes?: readonly string[];
 }> = {
   google: {
     presentsExpiringCredential: true,
     scope: "workspace",
     credentials: { accessToken: STALE_TOKEN, refreshToken: "refresh-token" },
+  },
+  fireflies: {
+    presentsExpiringCredential: true,
+    grantedScopes: ["fireflies.personal.read"],
+    // Only the personal scope refreshes. The workspace scope is an admin API
+    // key that never expires and has no exchange to conform to — what happens
+    // when the provider rejects *it* is covered separately, below.
+    scope: "personal",
+    credentials: {
+      accessToken: STALE_TOKEN,
+      refreshToken: "refresh-token",
+      tokenEndpoint: "https://auth.fireflies.test/token",
+      clientId: "fireflies-client",
+      tokenEndpointAuthMethod: "none",
+      resource: "https://mcp.fireflies.test/mcp",
+      tokenScope: "profile email",
+    },
   },
   granola: {
     presentsExpiringCredential: true,
@@ -1007,6 +1077,11 @@ const revokedGrantFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
 function conformanceRegistry(fetchOverride?: typeof fetch) {
   const fetcher = fetchOverride ?? conformanceFetch.fetcher;
   return createConnectorRegistry({
+    fireflies: {
+      redirectUri: "https://api.example.com/connections/fireflies/callback",
+      mcpUrl: "https://mcp.fireflies.test/mcp",
+      fetch: fetcher,
+    },
     granola: {
       redirectUri: "https://api.example.com/connections/granola/callback",
       mcpUrl: "https://mcp.granola.test/mcp",
@@ -1052,13 +1127,14 @@ function conformanceRegistry(fetchOverride?: typeof fetch) {
 function connectionContext(
   credentials: Record<string, unknown>,
   scope: "personal" | "workspace" = "workspace",
+  grantedScopes: readonly string[] = [],
 ): ConnectorConnectionContext {
   return {
     id: "00000000-0000-7000-8000-00000000c0de",
     workspaceId: "00000000-0000-7000-8000-00000000ffff",
     scope,
     ownerUserId: scope === "personal" ? "00000000-0000-7000-8000-00000000a11e" : null,
-    grantedScopes: [],
+    grantedScopes: [...grantedScopes],
     credentials: { ...credentials },
     cursor: {},
     config: {},

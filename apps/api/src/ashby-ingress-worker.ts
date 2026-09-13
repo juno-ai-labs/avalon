@@ -1,5 +1,5 @@
 import { readBoundedRequestBytes } from './lib/bounded-request-body';
-import { ashbyWebhookMaxBytes } from './lib/ashby-ingress';
+import { providerWebhookMaxBytes } from './lib/bounded-request-body';
 import { ApiError } from './lib/api-error';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { z } from 'zod';
@@ -31,7 +31,7 @@ export default class AshbyIngressWorker extends WorkerEntrypoint<AshbyIngressEnv
     const connection = ConnectionIdSchema.safeParse(match[1]);
     if (!connection.success) return new Response(null, { status: 404 });
     let bytes: Uint8Array<ArrayBuffer>;
-    try { bytes = await readBoundedRequestBytes(request, ashbyWebhookMaxBytes(this.env)); }
+    try { bytes = await readBoundedRequestBytes(request, providerWebhookMaxBytes(this.env)); }
     catch (error) {
       if (error instanceof ApiError) return Response.json({ error: { code: error.code, message: error.message } }, { status: error.status });
       throw error;

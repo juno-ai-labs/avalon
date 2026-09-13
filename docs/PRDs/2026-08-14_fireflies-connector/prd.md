@@ -363,7 +363,72 @@ connector activity and on-demand reads, not as a new surface.
 
 ## Decision log
 
-None yet.
+### 2026-09-13 — Super Admin coverage is not detectable, so the copy says so
+
+**Decided:** The setup form states the honest fallback in every case: "Rally
+cannot tell which meetings this key covers; if searches come back empty for
+other people's calls, the key only sees its own account." There is no
+conditional sentence.
+
+**Why:** Open question 1. Fireflies' `User` schema publishes `is_admin`, which
+is the ordinary account-admin flag, and nothing about the Enterprise Super Admin
+privacy bypass — a separate feature a company admin enables. No other field in
+the schema reports it. Trying to infer coverage by comparing a `mine: true`
+search against an unfiltered one would spend two requests of a 50-request daily
+plan to produce a guess that is wrong whenever the account is the only person
+recording.
+
+**Changes:** Key design decision 5 keeps its disclosure in both directions; its
+three-branch wording collapses to the third branch. Nothing else moves.
+
+### 2026-09-13 — The Webhooks V2 page holds one URL, and the copy says what that costs
+
+**Decided:** The Action-required copy and the support page both state that
+Fireflies holds one webhook URL per account, so pointing it at Rally replaces
+any URL already configured there.
+
+**Why:** Open question 2. Fireflies' documentation describes the V2 page as a
+single **Webhook URL** field with a single **Signing Secret** beside it, and
+speaks of "your configured URL" throughout; nothing in it suggests a list. A
+customer already sending Fireflies events to another tool therefore has to
+choose, and finding that out by breaking the other integration is the outcome
+the sentence exists to prevent.
+
+**Changes:** Nothing in the agreed scope. Product behavior stage 2 gains the
+sentence the open question asked for.
+
+### 2026-09-13 — Rally asks for no `offline_access`, and treats a missing refresh token as reconnect-required
+
+**Decided:** The personal pass-through requests only the scopes Fireflies
+publishes. `refreshCredentials` renews when a refresh token was issued and
+reports `unauthorized` with `reconnectRequired` when one was not.
+
+**Why:** Open question 6. Re-verified against the live server on 2026-09-13: its
+authorization-server metadata advertises `scopes_supported: ["profile",
+"email"]` and `grant_types_supported` including `refresh_token`. Asking for a
+scope the server does not publish risks an `invalid_scope` refusal of the whole
+authorization, which would trade an occasional re-authorization for no
+authorization at all. Whether a refresh token comes back cannot be settled
+without an authorized Fireflies account, and both outcomes are handled.
+
+**Changes:** Nothing in the agreed scope. The personal scope's reconnect
+frequency is the provider's to decide, as the open question anticipated.
+
+### 2026-09-13 — Both scopes ship together
+
+**Decided:** The workspace and personal scopes land in one pull request rather
+than two.
+
+**Why:** Rollout allows sequencing them "if sequencing demands", and it does
+not. They share one adapter file, one manifest, one migration — whose personal
+cardinality index exists for the personal scope — one desktop card with both
+buttons, and one support page. Splitting them would mean shipping a card with a
+disabled button and then rewriting each of those in the follow-up, which is more
+to review rather than less.
+
+**Changes:** Nothing in the agreed scope. Rollout's "ship workspace scope first,
+personal MCP second if sequencing demands" is answered: it did not.
+
 
 ## Key design decisions
 
@@ -999,33 +1064,21 @@ rest are automatable.
 
 ## Open questions
 
-1. **Is Super Admin coverage detectable from the API?** The modal's
-   post-verification coverage sentence (key design decision 5) needs either a
-   queryable signal (e.g. a field on `user`) or the honest fallback wording.
-   Affects modal copy only; does not block the build.
-2. **Does the Webhooks V2 page hold more than one URL per account?** If it
-   holds one, a customer already sending Fireflies events to another tool
-   cannot also send them to Rally, and the Action-required copy should say
-   so. Verify in a Fireflies account before writing the copy; does not block
-   the build.
-3. **Personal MCP tool drift.** Fireflies marks several MCP tools
+Questions 1, 2 and 6 were answered while building and are recorded in the
+decision log above; what remains is genuinely still open.
+
+1. **Personal MCP tool drift.** Fireflies marks several MCP tools
    experimental; the pass-through's surface hash already detects change, but
    we should decide whether a changed surface re-prompts activation
    acknowledgement. Follows the general hosted-MCP answer; does not block.
-4. **`meeting.transcribed` promotion.** If real workspaces disable Fireflies
+2. **`meeting.transcribed` promotion.** If real workspaces disable Fireflies
    AI summaries, `meeting.summarized` never fires and their meetings produce
    no digestible activity. If support requests show this, promote
    `meeting.transcribed` to digestible for connections where no summary
    arrives. A decision-log entry when evidence exists.
-5. **When is a missed delivery worth a poll?** Fireflies documents no webhook
+3. **When is a missed delivery worth a poll?** Fireflies documents no webhook
    retry, and this PRD makes a gap visible rather than closing it. The poll
    that would close it is recorded in non-goal 8; what promotes it into scope
    is support evidence of dropped deliveries — a stale last-received time on
    an installation whose account is still recording — and a decision-log
    entry when that happens. Does not block the build.
-6. **Does Fireflies issue a refresh token without an `offline_access`
-   scope?** Its authorization server advertises the `refresh_token` grant but
-   only the `profile` and `email` scopes, whereas Granola needs an explicit
-   `offline_access`. If no refresh token comes back, a personal connection
-   needs re-authorization when its access token expires. Verify at build;
-   affects the personal scope's reconnect frequency, not its design.

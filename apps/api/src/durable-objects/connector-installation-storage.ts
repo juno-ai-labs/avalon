@@ -1,6 +1,6 @@
 import { uuidV7 } from "../lib/uuid-v7";
 import { ConnectorInstallationSchema, type ConnectorInstallation } from "@rally/contracts";
-import type { InstallationCreate, InstallationClaim, InstallationSettle, InstallationChange, InstallationRotationPrepare, InstallationMaintenance, InstallationMaintenanceCancel, InstallationCredentialReplace } from "./connector-installation-protocol";
+import type { InstallationCreate, InstallationClaim, InstallationDelivery, InstallationSettle, InstallationChange, InstallationRotationPrepare, InstallationMaintenance, InstallationMaintenanceCancel, InstallationCredentialReplace } from "./connector-installation-protocol";
 
 export function readInstallation(storage: DurableObjectStorage, connectionId: string): ConnectorInstallation | null {
   const row = storage.sql.exec<{ document_json: string }>("SELECT document_json FROM connector_installations WHERE connection_id = ?", connectionId).toArray()[0];
@@ -40,13 +40,67 @@ export function createInstallation(storage: DurableObjectStorage, input: Install
        credential_key_version, granted_scopes_json, model_plugin_id, config_json, created_at, updated_at)
       VALUES (?, ?, ?, 'workspace', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       installation.connectionId, installation.workspaceId, installation.provider,
-      `${installation.provider === "ashby" ? "Ashby" : "Granola"} workspace events`,
+      input.displayName,
       input.credentials.ciphertext, input.credentials.iv, input.credentials.keyVersion, JSON.stringify([input.capability]),
       `plugin_${installation.provider}_${installation.connectionId.replaceAll("-", "")}`,
       JSON.stringify({ installationLifecycle: 1, selectedEvents: installation.selectedEvents }), installation.createdAt, installation.createdAt);
     storage.sql.exec(`INSERT INTO connector_installations
       (connection_id, workspace_id, attempt_id, user_id, input_hash, generation, document_json) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       installation.connectionId, installation.workspaceId, installation.attemptId, input.userId, input.inputHash, installation.generation, JSON.stringify(installation));
+    return installation;
+  });
+}
+
+/**
+ * Record a verified delivery, and — where nothing else ever could — let it be
+ * the evidence that the registration exists.
+ *
+ * Every other provider proves a registration by inspecting it: the runner reads
+ * the webhook back, compares its destination and events, and only then is the
+ * registration `current`. A provider whose `create` is manual and whose
+ * `inspect` is unsupported offers no such read, so an installation waiting for
+ * inspection would sit in **Action required** forever while meetings arrived
+ * perfectly well. The delivery itself is better evidence than an inspection
+ * anyway — it is signed with the secret Rally generated, so it proves the
+ * registration exists, points here, and carries the right key, which is more
+ * than reading a row back proves.
+ *
+ * Keyed on the facet's support declaration, never on a provider name: what
+ * makes a delivery sufficient is that nothing else is available, and the facet
+ * is where that is stated.
+ */
+export function recordInstallationDelivery(storage: DurableObjectStorage, input: InstallationDelivery): ConnectorInstallation | null {
+  return storage.transactionSync(() => {
+    const installation = readInstallation(storage, input.connectionId);
+    if (!installation) return null;
+    // Deliveries can arrive out of order; the last-received time only moves
+    // forward, so a late one never rewinds what Settings shows.
+    const advanced = !installation.lastReceivedAt || installation.lastReceivedAt < input.receivedAt;
+    if (advanced) installation.lastReceivedAt = input.receivedAt;
+    let changed = advanced;
+    const verifiableOnlyByDelivery = input.registrationSupport?.create === "manual"
+      && input.registrationSupport.inspect === "unsupported";
+    // A disabled connection is in cleanup: a delivery that somehow reaches it
+    // must not restore an installation the administrator removed.
+    if (verifiableOnlyByDelivery && enabled(storage, input.connectionId)) {
+      for (const registration of installation.registrations) {
+        if (registration.action === "remove" || registration.state === "removed" || registration.state === "current") continue;
+        // A claimed step owns its registration until it settles; promoting one
+        // here would be overwritten by the settle that follows, losing the
+        // verification until the next delivery.
+        if (registration.state === "dispatched") continue;
+        // Only the registration whose secret verified these bytes. A caller
+        // that names none vouches for nothing.
+        if (registration.key !== input.registrationKey) continue;
+        registration.state = "current";
+        registration.verifiedAt = input.receivedAt;
+        registration.error = null;
+        changed = true;
+      }
+      if (changed) rollUpInstallationState(storage, installation, input.connectionId);
+    }
+    if (!changed) return installation;
+    save(storage, installation);
     return installation;
   });
 }
@@ -129,20 +183,33 @@ export function settleInstallation(storage: DurableObjectStorage, input: Install
       // when no administrator action occurred between that read and this write.
       installation.generation += 1;
     }
-    const disconnected = !enabled(storage, input.connectionId);
-    if (installation.registrations.every((item) => item.state === "removed" || (!disconnected && item.state === "current"))) {
-      const coversSelection = installation.selectedEvents.every((event) => installation.registrations.some((item) => item.state === "current" && item.events.includes(event)));
-      installation.state = disconnected ? "disconnected" : coversSelection ? "current" : "action_required";
-      if (disconnected || coversSelection) installation.error = null;
-      if (!disconnected && coversSelection) installation.appliedVersion = installation.desiredVersion;
-      if (!disconnected && !coversSelection) installation.error = "Selected events have no active webhook. Disconnect this connection and connect workspace events again.";
-      if (disconnected) storage.sql.exec("UPDATE connector_installations SET cleanup_ciphertext = NULL, cleanup_iv = NULL, cleanup_key_version = NULL WHERE connection_id = ?", input.connectionId);
-    } else if (disconnected) installation.state = "cleanup_pending";
-    else if (installation.registrations.some((item) => ["unknown", "action_required"].includes(item.state))) installation.state = "action_required";
-    else if (installation.registrations.some((item) => item.state === "failed")) installation.state = "failed";
+    rollUpInstallationState(storage, installation, input.connectionId);
     save(storage, installation);
     return installation;
   });
+}
+
+/**
+ * Derive the installation's state from its registrations.
+ *
+ * One function because two paths reach it — a settled step, and a verified
+ * delivery on a provider that offers nothing to inspect — and they were written
+ * twice with conditions that had already drifted apart. The evidence that moves
+ * a registration legitimately differs between them; what that evidence *means*
+ * for the installation must not.
+ */
+function rollUpInstallationState(storage: DurableObjectStorage, installation: ConnectorInstallation, connectionId: string) {
+  const disconnected = !enabled(storage, connectionId);
+  if (installation.registrations.every((item) => item.state === "removed" || (!disconnected && item.state === "current"))) {
+    const coversSelection = installation.selectedEvents.every((event) => installation.registrations.some((item) => item.state === "current" && item.events.includes(event)));
+    installation.state = disconnected ? "disconnected" : coversSelection ? "current" : "action_required";
+    if (disconnected || coversSelection) installation.error = null;
+    if (!disconnected && coversSelection) installation.appliedVersion = installation.desiredVersion;
+    if (!disconnected && !coversSelection) installation.error = "Selected events have no active webhook. Disconnect this connection and connect workspace events again.";
+    if (disconnected) storage.sql.exec("UPDATE connector_installations SET cleanup_ciphertext = NULL, cleanup_iv = NULL, cleanup_key_version = NULL WHERE connection_id = ?", connectionId);
+  } else if (disconnected) installation.state = "cleanup_pending";
+  else if (installation.registrations.some((item) => ["unknown", "action_required"].includes(item.state))) installation.state = "action_required";
+  else if (installation.registrations.some((item) => item.state === "failed")) installation.state = "failed";
 }
 
 export function changeInstallation(storage: DurableObjectStorage, input: InstallationChange): ConnectorInstallation {
@@ -215,7 +282,15 @@ export function changeInstallation(storage: DurableObjectStorage, input: Install
           : item.state === "failed" && item.action === "create" ? { ...item, state: "pending", stepId: uuidV7() } : item);
       }
       installation.generation += 1;
-      installation.state = installation.registrations.some((item) => item.pendingSecretRef && item.state !== "pending") ? "action_required" : "updating";
+      // "Updating" is a claim that work is queued, and the runner only picks up
+      // a `pending` registration. Where nothing became pending — a provider
+      // whose registrations carry no provider id has nothing to inspect — the
+      // old code still said updating, and since no step ever settled, nothing
+      // recomputed the state: Test knocked a working installation out of
+      // Connected and left it there until the next delivery happened to arrive.
+      if (installation.registrations.some((item) => item.state === "pending")) {
+        installation.state = installation.registrations.some((item) => item.pendingSecretRef && item.state !== "pending") ? "action_required" : "updating";
+      } else rollUpInstallationState(storage, installation, input.connectionId);
     }
     if (!enabled(storage, input.connectionId) && installation.registrations.every((item) => item.state === "removed")) {
       installation.state = "disconnected";

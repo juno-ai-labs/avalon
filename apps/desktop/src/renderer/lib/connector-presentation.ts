@@ -38,6 +38,10 @@ const CATALOG: Readonly<Record<string, CatalogEntry>> = {
     name: 'GitHub',
     description: 'Repositories, issues, pull requests, checks, and development events.',
   },
+  fireflies: {
+    name: 'Fireflies',
+    description: "Your own Fireflies meetings through its live tools, or the team's transcripts and summaries through an admin API key.",
+  },
   granola: {
     name: 'Granola',
     description: 'Personal meeting context through Granola MCP, or workspace notes and transcripts through an admin API key.',

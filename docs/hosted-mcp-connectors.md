@@ -24,7 +24,7 @@ was incorrect and must not be used to introduce confirmations.
 | `packages/connectors/src/types.ts` | `ConnectorDynamicAgentTools`, the adapter facet that declares which grants and connection scopes use a live tool surface. |
 | `apps/api/src/services/integrations.ts` | Converts a dynamic connector facet into one connection-specific `HarnessPlugin.loadTools`, validates the live surface against the frozen grant, and routes execution back to the adapter. |
 | `packages/agent-harness/src/bind-runtime.ts` | Loads the tools after authorization at `load_plugin`, replaces the empty deferred plugin in the Bind registry, and caches that surface for the run. |
-| `packages/connectors/src/{ashby,granola,slack,notion}.ts` | Small provider declarations: endpoint, accepted capability, token accessor/refresh wrapper, and the personal-versus-workspace branch. |
+| `packages/connectors/src/{ashby,fireflies,granola,slack,notion}.ts` | Small provider declarations: endpoint, accepted capability, token accessor/refresh wrapper, and the personal-versus-workspace branch. |
 
 ## How it works
 
@@ -118,9 +118,20 @@ while every newly opened MCP session uses the Rally initialization identity.
 
 | Provider | Personal connection | Workspace connection |
 | --- | --- | --- |
+| Fireflies | Live hosted-MCP tools under `fireflies.personal.read`. | Three fixed GraphQL reads and a signed meeting webhook the administrator registers by hand. |
 | Granola | Live hosted-MCP tools under `granola.personal.read`. | Fixed Workspace API reads and signed note webhooks. |
 | Slack | Live hosted-MCP tools under `slack.personal.mcp`; legacy granular personal grants remain on their fixed reviewed Web API tools until reconnect. | Fixed reviewed Web API tools, Agent, events, and deterministic delivery. |
 | Notion | Official hosted-MCP OAuth and live tools under `notion.personal.mcp`. | Public integration bot, selected-page REST tools, and signed webhooks. |
+
+Fireflies is the first provider whose authorization server publishes **no
+`offline_access`** — its metadata advertises only `profile` and `email`
+alongside a `refresh_token` grant. Rally therefore asks for no scope the
+provider does not publish, and treats an authorization that returns no refresh
+token as reconnect-required rather than as something it can renew later. That is
+the expected path for this provider, not a fault, and it is why its personal
+connections must be reconnectable: see
+[`provider-apps.md`](provider-apps.md#fireflies-personal-oauth-and-workspace-api-keys)
+for the metadata and the date it was last read.
 
 ## Invariants
 

@@ -52,7 +52,7 @@ async function fixture(legacyGranola = false) {
         rotation: 'stable', rotationGeneration: 0, activeSecretRef: 'signing', pendingSecretRef: null }],
     }), userId, inputHash: 'teardown-fixture',
     credentials: { ...await encryptString(JSON.stringify({ apiKey: 'fixture-api-key', signing: 'fixture-signing-secret' }), key, connectionId), keyVersion: 1 },
-    capability: 'ashby.workspace.events' });
+    capability: 'ashby.workspace.events', displayName: 'Ashby workspace events' });
   }
   await runInDurableObject(stub, (_instance: WorkspaceDO, state) => {
     state.storage.sql.exec(`INSERT INTO schedules

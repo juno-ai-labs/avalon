@@ -1,6 +1,7 @@
 import {
   createConnectorRegistry,
   type CustomMcpConnectorConfig,
+  type FirefliesConnectorConfig,
   type GranolaConnectorConfig,
   type GitHubConnectorConfig,
   type LinearConnectorConfig,
@@ -39,6 +40,24 @@ export function githubConnectorConfig(env: Env): GitHubConnectorConfig | null {
 export function customMcpConnectorConfig(env: Env): CustomMcpConnectorConfig {
   return {
     redirectUri: new URL("/connections/custom-mcp/callback", env.PUBLIC_API_BASE_URL).toString(),
+  };
+}
+
+/**
+ * The rollout gate, and the only thing keeping a half-launched region honest.
+ *
+ * Every other connector's configuration falls out of a credential it needs, so
+ * an unconfigured region omits it without anyone deciding to. Fireflies needs
+ * no Rally-side credential at all — the API key is the admin's and the OAuth
+ * grant is the member's — so the gate is a variable whose only job is to be the
+ * gate. Unset, this returns `null`, the registry never builds the adapter, the
+ * type is absent from `GET /connections/catalog`, and creation is refused; the
+ * rows of a region that is switched back off are retained and inert.
+ */
+export function firefliesConnectorConfig(env: Env): FirefliesConnectorConfig | null {
+  if (env.FIREFLIES_CONNECTOR_ENABLED !== "true") return null;
+  return {
+    redirectUri: new URL("/connections/fireflies/callback", env.PUBLIC_API_BASE_URL).toString(),
   };
 }
 
@@ -152,6 +171,7 @@ export function connectorSupportsResourceHydration(
 
 function buildConnectorRegistry(env: Env) {
   const customMcp = customMcpConnectorConfig(env);
+  const fireflies = firefliesConnectorConfig(env);
   const granola = granolaConnectorConfig(env);
   const github = githubConnectorConfig(env);
   const linear = linearConnectorConfig(env);
@@ -163,6 +183,7 @@ function buildConnectorRegistry(env: Env) {
     observer: (level, event, fields) => logStructuredEvent(env, level, event, fields),
     customMcp,
     ashby: { redirectUri: new URL("/connections/ashby/callback", env.PUBLIC_API_BASE_URL).toString() },
+    ...(fireflies ? { fireflies } : {}),
     granola,
     ...(google ? { google } : {}),
     ...(github ? { github } : {}),
