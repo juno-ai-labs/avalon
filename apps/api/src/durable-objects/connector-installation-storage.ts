@@ -79,9 +79,30 @@ export function settleInstallation(storage: DurableObjectStorage, input: Install
     if (!step || step.state !== "dispatched") return installation;
     storage.sql.exec("UPDATE connector_installation_steps SET state = ?, result_json = ? WHERE step_id = ?", input.registration.state, JSON.stringify(input.registration), input.stepId);
     if (installation.generation !== input.generation) {
-      // An in-flight create is still our remote resource, even after disablement.
+      // Repair and credential replacement also advance the generation. A late
+      // create still wanted by an enabled installation must not become cleanup.
       if (input.registration.providerId && !installation.registrations.some((item) => item.providerId === input.registration.providerId)) {
         const placeholder = installation.registrations.findIndex((item) => item.key === input.registration.key && !item.providerId);
+        const desired = installation.registrations[placeholder];
+        if (enabled(storage, input.connectionId) && desired && desired.action !== "remove" && desired.state !== "removed"
+          && desired.destination === input.registration.destination
+          && JSON.stringify([...desired.events].sort()) === JSON.stringify([...input.registration.events].sort())
+          && desired.events.every((event) => installation.selectedEvents.includes(event))) {
+          // Provider-generated signing material belongs to the stale envelope.
+          // Never restore that envelope over a replacement API key: retain the
+          // exact remote identity for manual recovery/removal instead.
+          const needsRecovery = installation.provider === "granola" || installation.maintenanceCancelled;
+          installation.registrations[placeholder] = { ...desired, providerId: input.registration.providerId,
+            providerIdVerified: input.registration.providerIdVerified, action: "inspect", stepId: uuidV7(),
+            state: needsRecovery ? "action_required" : "pending", verifiedAt: null,
+            error: installation.provider === "granola"
+              ? "The webhook was created, but its signing secret could not be saved safely. Disconnect this connection, remove the recorded webhook, then connect workspace events again."
+              : needsRecovery ? "Maintenance was cancelled. Use Test to inspect this recorded webhook." : null };
+          installation.state = needsRecovery ? "action_required" : "updating";
+          save(storage, installation);
+          return installation;
+        }
+        // Disconnected or obsolete registrations still belong to our cleanup.
         const cleanup = { ...input.registration, action: "remove" as const, state: "pending" as const, stepId: uuidV7(), verifiedAt: null };
         if (placeholder >= 0) installation.registrations[placeholder] = cleanup;
         else installation.registrations.push({ ...cleanup, key: `${cleanup.key}:superseded:${input.generation}` });
@@ -104,11 +125,17 @@ export function settleInstallation(storage: DurableObjectStorage, input: Install
     if (input.credentials && enabled(storage, input.connectionId)) {
       storage.sql.exec("UPDATE connector_connections SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ? WHERE id = ? AND status <> 'disabled'",
         input.credentials.ciphertext, input.credentials.iv, input.credentials.keyVersion, input.connectionId);
+      // A caller that read the old envelope must lose its replacement CAS even
+      // when no administrator action occurred between that read and this write.
+      installation.generation += 1;
     }
     const disconnected = !enabled(storage, input.connectionId);
     if (installation.registrations.every((item) => item.state === "removed" || (!disconnected && item.state === "current"))) {
-      installation.state = disconnected ? "disconnected" : "current";
-      if (!disconnected) installation.appliedVersion = installation.desiredVersion;
+      const coversSelection = installation.selectedEvents.every((event) => installation.registrations.some((item) => item.state === "current" && item.events.includes(event)));
+      installation.state = disconnected ? "disconnected" : coversSelection ? "current" : "action_required";
+      if (disconnected || coversSelection) installation.error = null;
+      if (!disconnected && coversSelection) installation.appliedVersion = installation.desiredVersion;
+      if (!disconnected && !coversSelection) installation.error = "Selected events have no active webhook. Disconnect this connection and connect workspace events again.";
       if (disconnected) storage.sql.exec("UPDATE connector_installations SET cleanup_ciphertext = NULL, cleanup_iv = NULL, cleanup_key_version = NULL WHERE connection_id = ?", input.connectionId);
     } else if (disconnected) installation.state = "cleanup_pending";
     else if (installation.registrations.some((item) => ["unknown", "action_required"].includes(item.state))) installation.state = "action_required";
@@ -122,6 +149,9 @@ export function changeInstallation(storage: DurableObjectStorage, input: Install
   return storage.transactionSync(() => {
     const installation = readInstallation(storage, input.connectionId);
     if (!installation) throw new Error("connector_installation_not_found");
+    // HTTP retries must preserve the existing cleanup claim and its receipt,
+    // including a completed removal whose credential has already been erased.
+    if (input.action === "disconnect" && !enabled(storage, input.connectionId)) return installation;
     if (input.action === 'repair' || input.action === 'disconnect') {
       installation.maintenanceOperationId = null;
       installation.maintenanceCancelled = false;
@@ -147,7 +177,7 @@ export function changeInstallation(storage: DurableObjectStorage, input: Install
         WHERE connection_id = ?`, input.connectionId, input.connectionId, input.connectionId, input.connectionId);
       storage.sql.exec("UPDATE connector_connections SET status = 'disabled', encrypted_credentials = NULL, credential_iv = NULL, credential_refresh_lease_id = NULL, credential_refresh_lease_expires_at = NULL, updated_at = ? WHERE id = ?", new Date().toISOString(), input.connectionId);
       installation.generation += 1; installation.state = "cleanup_pending";
-      installation.registrations = installation.registrations.map((item) => ({ ...item,
+      installation.registrations = installation.registrations.map((item) => item.state === "removed" ? item : ({ ...item,
         action: "remove", afterRegistrationKeys: [], state: item.providerId ? item.providerIdVerified ? "pending" : "action_required" : item.state === "pending" ? "removed" : "action_required",
         error: !item.providerId && item.state !== "pending" ? "Inspect the provider for a webhook whose create outcome is unknown." : null,
         stepId: uuidV7(),

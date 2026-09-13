@@ -25,23 +25,6 @@ Global additionally binds the existing `avalon-desktop-releases` R2 bucket as
 regional migration 0101 before releasing the Global API, then Ace and the site.
 EU has no installer binding or public intake route in this first slice. Global requires the Turnstile secret and a finite approved rate-limit binding before production acquisition opens; the four application limits must also be finite. See [private-access operations](private-access.md#operations).
 
-## Dedicated Ashby ingress
-
-`ashby.rallywith.ai` belongs to `avalon-connector-ashby-global`, a separate static
-entry point. `build:ashby` profiles its emitted artifact and rejects accidental
-imports of the API application, connector registry, or agent runtime. The public
-entry point forwards signed bytes to `AshbyRegionalBridge` in the owning region;
-credentials, verification, and canonical Queue admission remain regional. This
-isolates ingress startup, while shared provider/lifecycle code remains in the API
-artifact and must not be described as removed from it.
-
-The deployment workflow deploys Ashby ingress only after both regional APIs pass
-health, so both named bridge targets exist on first creation. Partial regional
-recovery leaves the shared ingress deployment unchanged. No new stored secret or
-per-customer deployment is involved. Existing Granola webhook URLs stay on their
-original regional receivers. Local UI work can use regional ingestion directly;
-shared-host acceptance uses the dedicated Worker and its configured bindings.
-
 ## Sidekick staged deployment
 
 PR #583 deploys both class exports while retaining `AutomationDO` at v9. After
@@ -66,6 +49,36 @@ See [the lifecycle rollout](automation-lifecycle.md#class-rename-deployment).
 | Rollout | `.github/workflows/deploy-api.yml` | Profiles, version upload, migration ordering, promotion, health, and retained evidence. |
 
 ## How it works
+
+### Dedicated Ashby ingress
+
+`ashby.rallywith.ai` belongs to `avalon-connector-ashby-global`, a separate static
+entry point. `build:ashby` profiles its emitted artifact and rejects accidental
+imports of the API application, connector registry, or agent runtime. The public
+entry point forwards signed bytes to `AshbyRegionalBridge` in the owning region;
+credentials, verification, and canonical Queue admission remain regional. This
+isolates ingress startup, while shared provider/lifecycle code remains in the API
+artifact and must not be described as removed from it.
+
+The first rollout requires a bootstrap before the normal EU-first workflow:
+deploy the new Global API first so `AshbyRoutingBridge` exists, then deploy EU,
+then deploy the dedicated ingress. The Global API has no new Ashby binding to EU;
+only the dedicated ingress binds both regional receivers. A separately authorized
+Global-only deployment of this ref can perform that first stage. Do not merge
+this first release into the automatic EU-first deployment path before bootstrap.
+
+After bootstrap, the deployment workflow deploys Ashby ingress only after both
+regional APIs pass health. Its own `/health` calls all three named targets,
+checks their regions, and verifies the Global directory is readable; missing
+bindings, a missing routing migration or misrouted bridges return 503. Partial regional
+recovery leaves the shared ingress deployment unchanged. No new stored secret or
+per-customer deployment is involved. Existing Granola webhook URLs stay on their
+original regional receivers. Local UI work can use regional ingestion directly;
+shared-host acceptance uses the dedicated Worker and its configured bindings.
+The dedicated and both regional configs set `PROVIDER_WEBHOOK_MAX_BYTES` to
+2,000,000 bytes; the shared reader defaults to 1,000,000 when unset and rejects
+oversized bodies before buffering or RPC forwarding. This reuses the existing
+provider ingress policy.
 
 ### Search indexing and capture
 
@@ -329,14 +342,15 @@ for Azure-bound models in its route plan.
 
 ### 2026-09-12 — Give Ashby public ingress its own startup graph
 
-The user requested a Worker per connector after API startup/bundle growth had
-already cost an engineering day. Ashby therefore owns a dedicated domain and
-entry point, with a build assertion against accidentally pulling the API graph
-back in. A domain alias on the Global API was rejected because it would evaluate
-the same graph. Regional credentials and event authority remain shared; this
-first ingress boundary makes no claim of reducing the shared API artifact.
+**What changed:** Ashby receives a dedicated entry point/domain and build assertion, deployed after both regional API health barriers. It enforces the existing provider body-size setting before forwarding, and its health endpoint verifies the routing table and both regional ingress contracts. The first release requires a Global-only router bootstrap before EU gains the new binding.
 
+**Why:** The user requested connector Workers after API startup and bundle growth had already cost an engineering day. The public ingress graph must stay independent while credentials and product authority remain regional.
 
+**Considered and rejected:** Adding a domain alias to the Global API, which would evaluate the same graph, or claiming that an ingress-only split removes shared provider/lifecycle code.
+
+**Consequences:** Keep the ingress free of API, registry and agent imports. Apply the same configured provider body limit before buffering/RPC and in regional ingress. Both bridges must exist before ingress deployment; partial regional recovery leaves the shared deployment unchanged.
+
+PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
 
 ### 2026-09-09 — Bound and recover early-access operations
 

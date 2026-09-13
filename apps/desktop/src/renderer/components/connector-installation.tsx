@@ -16,12 +16,43 @@ const eventChoices = [
   { value: 'applicationSubmit', label: 'Application submitted' },
   { value: 'candidateStageChange', label: 'Application stage changed' },
 ] as const;
+const installationEventLabels: Record<string, string> = {
+  ...Object.fromEntries(eventChoices.map(({ value, label }) => [value, label])),
+  'note.access_granted': 'Note access granted',
+  'note.edited': 'Note edited',
+  'note.generated': 'Note generated',
+  'note.regenerated': 'Note regenerated',
+};
+const eventLabel = (event: string) => installationEventLabels[event] ?? event;
 
-export function AshbyWorkspaceSetup({ api, attemptId, onSuccess, onClose }: { api: RallyApi; attemptId: string; onSuccess: () => void; onClose: () => void }) {
+/** A failed response can follow a durable reservation; recover it before offering another setup. */
+export function useWorkspaceInstallationRecovery(api: RallyApi | null, provider: 'ashby' | 'granola', onRecovered: (connectionId: string) => void) {
+  const cache = useQueryClient();
+  return useMutation({
+    networkMode: 'always',
+    mutationFn: async () => {
+      requireOnline();
+      if (!api) throw new Error('Sign in before managing connections.');
+      await cache.cancelQueries({ queryKey: ['connections'] });
+      const connections = await api.getConnections();
+      cache.setQueryData(['connections'], connections);
+      return connections.find((connection) => connection.connectorType === provider && connection.scope === 'workspace' && connection.status !== 'disabled');
+    },
+    onSuccess: (connection) => { if (connection) onRecovered(connection.id); },
+  });
+}
+
+export function AshbyWorkspaceSetup({ api, attemptId, onSuccess, onClose, onRecovered }: { api: RallyApi; attemptId: string; onSuccess: () => void; onClose: () => void; onRecovered: (connectionId: string) => void }) {
   const cache = useQueryClient();
   const online = useSyncExternalStore(subscribeOnline, readOnline);
   const [apiKey, setApiKey] = useState('');
   const [events, setEvents] = useState<string[]>(eventChoices.map((event) => event.value));
+  const recovery = useWorkspaceInstallationRecovery(api, 'ashby', (connectionId) => {
+    setApiKey('');
+    onSuccess();
+    onRecovered(connectionId);
+    onClose();
+  });
   const setup = useMutation({
     networkMode: 'always',
     mutationFn: () => { requireOnline(); return api.createAshbyWorkspaceConnection(apiKey.trim(), events, attemptId); },
@@ -31,10 +62,11 @@ export function AshbyWorkspaceSetup({ api, attemptId, onSuccess, onClose }: { ap
       void cache.invalidateQueries({ queryKey: ['connections'] });
       onClose();
     },
+    onError: () => recovery.mutate(),
   });
   return <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Connect Ashby for workspace"
     description="One shared connection receives your Ashby organization's selected events. Personal Ashby sign-in does not create webhooks."
-    footer={<><Button onClick={onClose}>Cancel</Button><Button className="button-primary" disabled={!online || !apiKey.trim() || !events.length || setup.isPending} onClick={() => setup.mutate()}>{setup.isPending ? 'Setting up…' : 'Connect for workspace'}</Button></>}>
+    footer={<><Button onClick={onClose}>Cancel</Button><Button className="button-primary" disabled={!online || !apiKey.trim() || !events.length || setup.isPending || recovery.isPending || recovery.isError} onClick={() => setup.mutate()}>{setup.isPending ? 'Setting up…' : 'Connect for workspace'}</Button></>}>
     {!online && <InlineError>Connection management is unavailable while offline.</InlineError>}
     <p>In Ashby Admin → Integrations, create an API key with Read API Keys (apiKeysRead) and Write API Keys (apiKeysWrite) permissions. Paste it here, never in a work stream. The key stays encrypted in this workspace's Rally region. Ashby processes requests and delivers organization events outside Rally's regional storage boundary.</p>
     <p>These events concern the organization, including recruiting records whose visibility may differ from a personal query. Review the selected event scope with your Ashby administrator.</p>
@@ -43,10 +75,12 @@ export function AshbyWorkspaceSetup({ api, attemptId, onSuccess, onClose }: { ap
     <fieldset disabled={!online || setup.isPending}><legend><SettingLabel setting={settings.ashbyEvents} /></legend>{eventChoices.map((choice) => <label className="form-field" key={choice.value}><span><input type="checkbox" checked={events.includes(choice.value)} onChange={(event) => { const checked = event.currentTarget.checked; setEvents((previous) => checked ? [...previous, choice.value] : previous.filter((value) => value !== choice.value)); }} /> {choice.label}</span></label>)}</fieldset>
     <p>Workspace events do not provide recruiting query or update tools. Connect your account separately for personal tools.</p>
     {setup.error && <InlineError>{setup.error.message}</InlineError>}
+    {recovery.isPending && <p role="status">Checking for an existing workspace installation…</p>}
+    {recovery.error && <><InlineError>Existing installations could not be checked. Check again before retrying setup.</InlineError><Button disabled={!online || recovery.isPending} onClick={() => recovery.mutate()}>Find existing installation</Button></>}
   </Modal>;
 }
 
-export function ConnectorInstallationDetails({ api, connectionId, onClose }: { api: RallyApi; connectionId: string; onClose: () => void }) {
+export function ConnectorInstallationDetails({ api, connectionId, connectionEnabled = false, onClose }: { api: RallyApi; connectionId: string; connectionEnabled?: boolean; onClose: () => void }) {
   const cache = useQueryClient();
   const online = useSyncExternalStore(subscribeOnline, readOnline);
   const [providerId, setProviderId] = useState('');
@@ -56,7 +90,10 @@ export function ConnectorInstallationDetails({ api, connectionId, onClose }: { a
   const change = useMutation({
     networkMode: 'always',
     mutationFn: (action: 'repair' | 'forget_cleanup' | 'reconcile' | 'rotate') => { requireOnline(); return api.changeConnectorInstallation(connectionId, { action, ...(action === 'reconcile' ? { key: registrationKey, providerId: providerId.trim() } : {}) }); },
-    onSuccess: () => { void query.refetch(); void cache.invalidateQueries({ queryKey: ['connections'] }); },
+    onSuccess: (_result, action) => {
+      if (action === 'reconcile') { setProviderId(''); setRegistrationKey(''); }
+      void query.refetch(); void cache.invalidateQueries({ queryKey: ['connections'] });
+    },
   });
   const test = useMutation({ networkMode: 'always', mutationFn: () => { requireOnline(); return api.testConnection(connectionId); },
     onSuccess: () => { void query.refetch(); void cache.invalidateQueries({ queryKey: ['connections'] }); },
@@ -65,18 +102,19 @@ export function ConnectorInstallationDetails({ api, connectionId, onClose }: { a
     onSuccess: () => { setReplacementKey(''); void query.refetch(); void cache.invalidateQueries({ queryKey: ['connections'] }); },
   });
   const installation = query.data?.installation;
+  const reconcilableRegistrations = installation?.registrations.filter((registration) => !registration.providerId && ['unknown', 'action_required', 'dispatched'].includes(registration.state)) ?? [];
   return <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Workspace event installation" description="Provider registrations and recovery for this shared workspace connection."
     footer={<Button onClick={onClose}>Close</Button>}>
     {!online && <InlineError>Connection management is unavailable while offline. Saved status may be out of date.</InlineError>}
     {query.isPending && <p>Loading installation…</p>}
     {query.error && <InlineError>{query.error.message}</InlineError>}
-    {query.data && !installation && <p>This existing connection has not been adopted yet. Use Test on the connection to inspect and adopt its existing webhook.</p>}
+    {query.data && !installation && <><p>This existing connection has not been adopted yet. Test inspects and adopts its existing webhook, repairing the approved configuration when supported.</p>{connectionEnabled && <Button disabled={!online || test.isPending} onClick={() => test.mutate()}>Test</Button>}</>}
     {installation && <>
       <p role="status">Status: {installation.state.replaceAll('_', ' ')}. Configuration {installation.appliedVersion ?? 'not verified'} / {installation.desiredVersion}.</p>
       <p>Last event received: {installation.lastReceivedAt ? new Date(installation.lastReceivedAt).toLocaleString() : 'None recorded'}.</p>
       {installation.error && <InlineError>{installation.error}</InlineError>}
       {installation.registrations.map((registration) => <section className="settings-list-card" style={{ padding: '1rem', marginBlock: '0.75rem' }} key={registration.key}>
-        <h3>{registration.events.map((event) => eventChoices.find((choice) => choice.value === event)?.label ?? event).join(', ')}</h3>
+        <h3>{registration.events.map(eventLabel).join(', ')}</h3>
         <p>{registration.state.replaceAll('_', ' ')} · {registration.enabled === null ? 'Enabled state unknown' : registration.enabled ? 'Enabled' : 'Disabled'}</p>
         <p>Provider ID: {registration.providerId ?? 'Not confirmed'}</p>
         <p style={{ overflowWrap: 'anywhere' }}>Destination: {registration.destination}</p>
@@ -89,12 +127,13 @@ export function ConnectorInstallationDetails({ api, connectionId, onClose }: { a
         <Button disabled={!online || !replacementKey.trim() || replaceKey.isPending} onClick={() => replaceKey.mutate()}>Replace API key</Button>
         {replaceKey.error && <InlineError>{replaceKey.error.message}</InlineError>}
       </details>}
-      <div className="provider-actions"><Button disabled={!online || query.isFetching} onClick={() => void query.refetch()}>Refresh status</Button>{installation.state !== 'cleanup_pending' && installation.state !== 'disconnected' && <Button disabled={!online || test.isPending} onClick={() => test.mutate()}>Test</Button>}{installation.state !== 'cleanup_pending' && installation.state !== 'disconnected' && <Button disabled={!online || change.isPending} onClick={() => change.mutate('rotate')}>Signing-key rotation guidance</Button>}</div>
-      {installation.state !== 'cleanup_pending' && installation.state !== 'disconnected' && installation.registrations.some((registration) => !registration.providerId && ['unknown', 'action_required', 'dispatched'].includes(registration.state)) && <>
+      <div className="provider-actions"><Button disabled={!online || query.isFetching} onClick={() => void query.refetch()}>Refresh status</Button>{installation.state !== 'cleanup_pending' && installation.state !== 'disconnected' && <Button disabled={!online || test.isPending} onClick={() => test.mutate()}>Test</Button>}</div>
+      {installation.state !== 'cleanup_pending' && installation.state !== 'disconnected' && <><p>Test checks credentials and repairs the approved webhook configuration when supported.</p><details><summary>Signing-key rotation guidance</summary><p>To replace the signing key, disconnect this workspace connection, finish cleanup of the recorded webhooks (or remove them in the provider dashboard), then connect workspace events again. Delivery is interrupted until the new registrations are verified. Reading this guidance changes no key or provider setting.</p></details></>}
+      {installation.state !== 'cleanup_pending' && installation.state !== 'disconnected' && reconcilableRegistrations.length > 0 && <>
         <p>A create response is unconfirmed. Inspect the exact destination in the provider dashboard before supplying its ID. Retrying setup could create another webhook.</p>
-        <label className="form-field"><span>Registration</span><select value={registrationKey} onChange={(event) => setRegistrationKey(event.currentTarget.value)}><option value="">Choose registration</option>{installation.registrations.filter((registration) => !registration.providerId).map((registration) => <option key={registration.key} value={registration.key}>{registration.events.join(', ')}</option>)}</select></label>
+        <label className="form-field"><span>Registration</span><select value={registrationKey} onChange={(event) => { setRegistrationKey(event.currentTarget.value); setProviderId(''); }}><option value="">Choose registration</option>{reconcilableRegistrations.map((registration) => <option key={registration.key} value={registration.key} title={registration.events.map(eventLabel).join(', ')}>{installation.provider === 'granola' && registration.events.length > 1 ? 'Granola note events' : registration.events.map(eventLabel).join(', ')}</option>)}</select></label>
         <label className="form-field"><span>Existing provider webhook ID</span><input value={providerId} onChange={(event) => setProviderId(event.currentTarget.value)} /></label>
-        <Button disabled={!online || !registrationKey || !providerId.trim() || change.isPending} onClick={() => change.mutate('reconcile')}>Verify existing webhook</Button>
+        <Button disabled={!online || !reconcilableRegistrations.some((registration) => registration.key === registrationKey) || !providerId.trim() || change.isPending} onClick={() => change.mutate('reconcile')}>Verify existing webhook</Button>
       </>}
       {installation.state === 'cleanup_pending' && !installation.cleanupCredentialForgotten && <><p>Rally has disabled this connection. The recorded registrations still require removal. Forgetting the local cleanup credential leaves provider removal to your administrator.</p><Button disabled={!online || change.isPending} onClick={() => change.mutate('repair')}>Retry cleanup</Button><Button disabled={!online || change.isPending} onClick={() => change.mutate('forget_cleanup')}>Forget local cleanup credential</Button></>}
     </>}

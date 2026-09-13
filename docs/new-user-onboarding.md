@@ -29,8 +29,10 @@ Existing [workspace discovery and invitation acceptance](multiple-workspaces.md)
 choose the regional workspace. Its creator starts at connectors; invited or
 existing members start at personal setup. Optional connector and invitation
 steps can be skipped. OAuth uses the existing connector authorization and
-workspace-addressed callback machinery. The personal action reads **Connect only
-for me**, using the same catalog label as Settings.
+workspace-addressed callback machinery. The actions read **Connect for me** and
+**Connect for workspace**, matching Settings. Ashby and Granola workspace setup
+opens Settings → Connections for the API key and event configuration; their
+personal connections continue through browser authorization.
 
 Global `users` owns the introduction flag, eligibility, appearance and revision.
 Appearance includes the chosen display name and avatar initials; the name also
@@ -126,8 +128,9 @@ equal projections do not emit repeated invalidations.
 
 Desktop `account-profile-editor.test.ts` covers immediate drafts, serial writes,
 coalescing, conflicts, invalid fields and navigation; `guided-onboarding.test.tsx`
-exercises the real settings fields and account-gate lifecycle. Settings search
-and workspace-socket suites cover discovery and streamed query invalidations.
+exercises the real settings fields and account-gate lifecycle, plus the Ashby and
+Granola workspace handoff to Settings and personal Ashby browser authorization.
+Settings search and workspace-socket suites cover discovery and streamed query invalidations.
 `test-workers/account-profile-realtime.test.ts` drives a real account PATCH,
 D1 persistence and delivery to another member's WorkspaceDO socket while EU
 discovery fails. Dropping the route's publication must fail that test.

@@ -1,5 +1,4 @@
 import { connectorMaintenanceOperatorRoutes } from './routes/connector-maintenance-operations';
-import { isSharedAshbyIngress, isAllowedAshbyIngressRoute } from "./lib/ashby-ingress";
 import { accessOperatorRoutes } from './routes/access-operations';
 import { Hono } from "hono";
 import { searchRoutes } from "./routes/search";
@@ -67,9 +66,6 @@ export function createApp(): Hono<HonoAppEnv> {
           requestId: c.get("requestId") ?? null,
         },
       }, 404);
-    }
-    if (isSharedAshbyIngress(c.env, c.req.url) && !isAllowedAshbyIngressRoute(c.req.method, requestUrl.pathname)) {
-      return c.json({ error: { code: "not_found", message: "The requested API route does not exist", requestId: c.get("requestId") ?? null } }, 404);
     }
     if (
       isSharedGitHubIngress(c.env, c.req.url)

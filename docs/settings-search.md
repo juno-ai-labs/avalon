@@ -78,6 +78,20 @@ The Connections pane ends at the connector grid, without a page-level success
 or error log. Connection status remains on the cards, and setup dialogs retain
 their own validation feedback.
 
+Ashby setup exposes the exact labels **Connect for me** and
+**Connect for workspace**; the latter requires workspace administration. Exact
+searches for either label filter by the available scope. API-key and event-field
+searches reveal the setup entry point rather than creating a connection.
+Personal owners can refresh their own OAuth connection. Administrators manage
+Ashby and Granola installations through **Manage events**: saved status reads
+are separate from the explained **Test** action, API-key replacement and cleanup
+recovery. A legacy Granola connection offers Test before adoption. Rotation
+guidance is local information and does not change installation state. The
+workspace connection notification refreshes both list and installation queries,
+so open details do not retain a pre-repair snapshot. Management is unavailable
+offline; [installation lifecycle](connector-installation-lifecycle.md) owns its
+authorization and provider effects.
+
 ## Invariants
 
 - Labels and descriptions belong to definitions. Duplicating them in a keyword
@@ -128,13 +142,15 @@ scrolling and both appearances.
 
 ### 2026-09-12 — Separate Ashby personal setup from shared event installation
 
-Manage events includes password-only API-key replacement, explicit Test, cleanup
-retry and exact-ID reconciliation. Exact searches for either Connect label filter
-by the available scope; fuzzy matches on “me” must not expose workspace-only
-results. Personal owners can refresh their own grant without workspace admin
-status. These controls preserve personal/workspace authority separately.
+**What changed:** The catalogue exposes exact scope-specific Connect labels and searchable Ashby key/event controls. Manage events separates status, explained Test, key replacement and recovery; personal owners can refresh their own OAuth grant.
 
-The catalog includes Ashby and searchable API-key/event controls. Personal sign-in uses the existing OAuth handoff; workspace setup asks an administrator for a key and the approved event selection. Installed workspace rows expose registration status and explicit recovery controls. Tool counts remain on the existing inventory route; displaying status never repairs provider configuration.
+**Why:** Setup and recovery must preserve personal versus administrator authority, and reading registration status or rotation instructions must not mutate the provider. Open details must follow the same pushed state as the connection list.
+
+**Considered and rejected:** Fuzzy scope-label matches that expose workspace-only results, automatic repair during status display, or a rotation-guidance request that marks a current installation as failed.
+
+**Consequences:** Availability and search share scope rules; workspace updates invalidate both connection and installation reads. Legacy Granola rows expose adoption through Test. Management actions remain unavailable offline.
+
+PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
 
 ### 2026-09-10 — Internet access becomes its own page, and one strip draws every exclusive choice
 

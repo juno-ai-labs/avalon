@@ -106,6 +106,11 @@ settings pane renders it beside the endpoint, the authentication mode, and the
 policy control. A tool the policy withholds stays listed and marked, so a person
 can see what is being held back rather than watching it disappear.
 
+Settings and the public support guide explain that admitted tools execute within
+the connection's granted access and the person's request, without per-tool
+confirmation prompts. Server annotations remain informational and cannot grant
+additional authority.
+
 ## Invariants
 
 - **The endpoint is the account identity.** A generic MCP server need not
@@ -280,7 +285,7 @@ a release, to say which server it meant.
 servers*, which would have avoided the migration and lost credential refresh,
 plugin construction, receipts, the connections screen, and disable — everything
 that makes a connection a connection. *Trusting `readOnlyHint` to lower Rally's
-write policy*, which would let a server's own claim weaken retry safeguards for a
+write policy*, which would let a server's own claim skip confirmation for a
 mutation; the hint narrows the surface and changes nothing about what an
 admitted call must do. *Rebuilding all thirteen dependent tables* in migration
 31, which would have restated schemas that later migrations have already

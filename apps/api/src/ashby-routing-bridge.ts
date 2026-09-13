@@ -7,6 +7,13 @@ import { ApiError } from './lib/api-error';
 
 /** Internal EU-to-Global opaque routing registration, with no public mutation URL. */
 export class AshbyRoutingBridge extends WorkerEntrypoint<Env> {
+  health() {
+    return serializeAshbyRpcResult(async () => {
+      if (this.env.AVALON_REGION !== "global") throw new ApiError(503, "ashby_router_wrong_region", "Ashby routing must run in Global");
+      await workspaceRegionalDatabase(this.env).prepare("SELECT connection_id FROM ashby_connection_routes LIMIT 1").first();
+      return { region: this.env.AVALON_REGION };
+    });
+  }
   lookupRoute(connectionId: unknown) {
     return serializeAshbyRpcResult(async () => {
       if (this.env.AVALON_REGION !== 'global') throw new ApiError(503, 'ashby_router_wrong_region', 'Ashby routing must run in Global');
