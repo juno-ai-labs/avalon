@@ -144,7 +144,7 @@ export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, on
           form, and `meeting.transcribed` appears nowhere in that form. */}
       <ol>
         <li>Select <strong>Configure</strong>.</li>
-        <li>Paste the endpoint URL below into <strong>Webhook URL</strong>, and the signing secret into <strong>Signing Secret</strong>.</li>
+        <li>Under <strong>Webhook Configuration</strong>, paste the endpoint URL below into <strong>Webhook URL</strong>, and the signing secret into <strong>Signing Secret</strong>.</li>
         <li>Under <strong>Event Subscriptions</strong>, tick both <strong>Meeting Transcribed</strong> and <strong>Meeting Summarized</strong>. Leave <strong>Meeting Bot Joined</strong> unticked — Rally rejects it.</li>
         <li><strong>Save</strong>.</li>
       </ol>

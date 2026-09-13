@@ -119,7 +119,14 @@ describe('Fireflies protocol', () => {
     // optional and Rally rejects every unsigned delivery, so instructions that
     // do not say so send somebody away with a webhook that silently sends
     // nothing Rally will accept.
-    expect(management.manualInstructions).toMatch(/optional[\s\S]*requires it/u);
+    expect(management.manualInstructions).toContain('Fireflies labels that field optional');
+    expect(management.manualInstructions).toContain('Rally requires it');
+    // The wire names this string keeps for the other surface it reaches: it is
+    // the registration error Settings shows while an installation is
+    // action_required, which is the moment somebody is reading Fireflies'
+    // delivery History and seeing `meeting.transcribed` rather than a label.
+    expect(management.manualInstructions).toContain('meeting.transcribed');
+    expect(management.manualInstructions).toContain('meeting.summarized');
   });
 
   it('records the connected account from validate so Settings can name it', async () => {
