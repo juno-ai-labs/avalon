@@ -138,6 +138,11 @@ preview/resume, blocked removal and version handoff recovery. They exercise actu
 storage, service authorization, signed ingress and Queue admission; only provider
 HTTP is substituted. Renderer/catalog cases cover the presentation fixes.
 
+The subsequent CI secret-scan finding was the synthetic Granola signing fixture,
+not provider-issued credentials. The exact encoded test phrase is allowlisted
+with a narrow rejection test; no test file or webhook-key shape is excluded.
+Pinned Gitleaks full-history verification passes locally.
+
 Production mutation results and final gate counts are recorded in [plan.md](plan.md).
 Each mutation is temporary, runs only its affected test file, and is restored
 before final validation. These are regression proofs, not live Ashby acceptance.

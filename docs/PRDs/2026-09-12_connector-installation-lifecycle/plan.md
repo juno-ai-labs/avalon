@@ -147,7 +147,7 @@ PR creation and review were subsequently authorized. Deployment and merge remain
   controls. Fixtures contained only public status metadata; no provider acceptance
   is inferred from these screenshots. Ashby and Granola public support pages were
   also inspected in a visible browser.
-- Script suite: 446 pass. Desktop release invariants: 140 pass. Typecheck passes.
+- Script suite: 447 pass. Desktop release invariants: 140 pass. Typecheck passes.
   Lint (zero warnings), docs check, site build, and Global/EU/Ashby dry-run
   builds and local startup checks pass.
 - Final `pnpm test` passes: API Node 273 files / 2,919 tests; real workerd
@@ -222,3 +222,10 @@ the fixtures now match the API client contract.
 Native Electron captures: [workspace setup](evidence/workspace-setup.png) and
 [installation recovery and permission denial](evidence/installation-recovery.png).
 These are synthetic public-status fixtures, not evidence of live provider success.
+
+
+CI follow-up: its full-history Gitleaks scan flagged the synthetic Granola fixture
+encoding of `provider-issued-secret`. A literal-only anchored exception and a
+regression rejecting other/longer keys preserve the scan boundary. The pinned
+CI Gitleaks version scanned 3,783 local commits with no leaks. Script tests now
+pass 447 cases; application test/build results above remain unchanged.

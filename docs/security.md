@@ -893,6 +893,11 @@ incident response that may prompt it.
 
 **Consequences:** Cleanup remains removal-only; repeat disconnect preserves it and forgetting leaves manual provider work. Raw-byte signature/size checks precede persistence, and confidential Ashby events remain restricted. The [lifecycle owner](connector-installation-lifecycle.md) records recovery details.
 
+The full-history secret scan permits exactly the Granola test key encoding of
+`provider-issued-secret`; it grants no provider authority. Its anchored literal
+exception has a regression test rejecting other keys and longer values, rather
+than allowing arbitrary webhook secrets or excluding the fixture file.
+
 PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
 
 ### 2026-09-11 — The five prompt trust labels are gone
