@@ -17,6 +17,7 @@
     "ARTIFACT_SERVING_DOMAIN": "rallyusercontent.com",
     "GITHUB_INGRESS_BASE_URL": "https://github.rallywith.ai",
     "LINEAR_INGRESS_BASE_URL": "https://linear.rallywith.ai",
+    "ASHBY_INGRESS_BASE_URL": "https://ashby.rallywith.ai",
     "NOTION_INGRESS_BASE_URL": "https://notion.rallywith.ai",
     "SLACK_INGRESS_BASE_URL": "https://slack.rallywith.ai",
     "DAYTONA_API_URL": "https://app.daytona.io/api",
@@ -89,6 +90,7 @@
   ],
   "triggers": { "crons": ["*/5 * * * *"] },
   "services": [
+    { "binding": "GLOBAL_ASHBY_ROUTER", "service": "avalon-api-global", "entrypoint": "AshbyRoutingBridge" },
     {
       "binding": "DOCUMENT_PROCESSOR",
       "service": "avalon-api-documents-eu"

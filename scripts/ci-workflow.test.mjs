@@ -50,6 +50,7 @@ test('CI distributes the expensive verification work across independent lanes', 
     'pnpm typecheck && pnpm --filter @rally/api build && '
       + 'pnpm --filter @rally/api build:eu && pnpm --filter @rally/api build:telemetry && '
       + 'pnpm --filter @rally/api check:telemetry-startup-boundary && '
+      + 'pnpm --filter @rally/api build:ashby && '
       + 'pnpm --filter @rally/api build:pricing && '
       // The artifact-serving Workers are dry-run built here rather than only in
       // the deploy workflow, unlike the documents and Terminal services: they

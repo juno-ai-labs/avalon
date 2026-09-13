@@ -1,3 +1,4 @@
+import { BriefcaseBusiness } from 'lucide-react';
 import Github from '@thesvg/react/github';
 import Google from '@thesvg/react/google';
 import GoogleDrive from '@thesvg/react/google-drive';
@@ -43,9 +44,10 @@ export type PluginBrandMarkComponent =
 
 /** The brands Rally connects to that have a mark of their own. */
 export const PLUGIN_BRAND_MARKS: Record<
-  'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'notion' | 'slack' | 'x',
+  'ashby' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'notion' | 'slack' | 'x',
   PluginBrandMarkComponent
 > = {
+  ashby: { Mark: BriefcaseBusiness, mono: false },
   github: { Mark: Github, mono: true },
   google: { Mark: Google, mono: true },
   'google-drive': { Mark: GoogleDrive, mono: true },
@@ -88,6 +90,7 @@ export function connectorBrandMark(
   displayName?: string,
 ): PluginBrandMark | null {
   switch (connectorType) {
+    case 'ashby': return 'ashby';
     case 'github': return 'github';
     case 'google': return displayName?.includes('Drive') ? 'google-drive' : 'google';
     case 'granola': return 'granola';

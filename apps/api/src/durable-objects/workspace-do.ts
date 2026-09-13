@@ -1,3 +1,12 @@
+import { InstallationCredentialReplaceSchema, type InstallationCredentialReplace } from './connector-installation-protocol';
+import { replaceInstallationCredentials } from './connector-installation-storage';
+import { InstallationMaintenanceSchema, InstallationMaintenanceCancelSchema, type InstallationMaintenance, type InstallationMaintenanceCancel } from './connector-installation-protocol';
+import { prepareInstallationMaintenance, cancelInstallationMaintenance } from './connector-installation-storage';
+import { InstallationRotationPrepareSchema, type InstallationRotationPrepare } from "./connector-installation-protocol";
+import { prepareInstallationRotation } from "./connector-installation-storage";
+import { InstallationCreateSchema, InstallationReadSchema, InstallationClaimSchema, InstallationSettleSchema, InstallationChangeSchema,
+  type InstallationCreate, type InstallationClaim, type InstallationSettle, type InstallationChange } from "./connector-installation-protocol";
+import { createInstallation, readInstallation, claimInstallation, settleInstallation, changeInstallation } from "./connector-installation-storage";
 import { safeParseSocketEvent, isUnknownSocketEvent, WorkspaceSocketClientEventTypeSchema } from "@rally/contracts";
 
 import { SEARCH_AUTHORIZATION_PUSH_MIGRATION, nextSearchAuthorizationPush, flushSearchAuthorizationPush } from './search-authorization-projection';
@@ -835,6 +844,7 @@ import {
 } from "./workspace-runtime-sql";
 
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
+  "connector_installations", "connector_installation_steps",
   ...AUTHORIZATION_STORAGE_TABLES,
   'search_authorization_push', 'search_authorization_keys', 'search_authorization_dependencies',
   "resource_search_versions",
@@ -1112,7 +1122,7 @@ function automationDirectoryWorkspaceIdentityGuards(): string[] {
 }
 
 /**
- * Every table whose rows a `DROP TABLE connector_connections` would take with
+ * Frozen inventory through v53 of tables a `DROP TABLE connector_connections` would take with
  * it — twelve that cascade and `connector_oauth_attempts`, whose connection
  * pointer would be nulled. Migration 31 copies each one out and back around
  * the parent's replacement.
@@ -1120,8 +1130,11 @@ function automationDirectoryWorkspaceIdentityGuards(): string[] {
  * A list rather than a query over `sqlite_schema`: a migration's statements are
  * hashed into every object's receipt, so what it does has to be decided in
  * source rather than by whatever an individual database happens to hold.
+ * Do not extend this historical list: v54 adds connector_installations with
+ * a non-cascading foreign key. A later parent rebuild must declare a new
+ * inventory including it, without changing v31/v53 statement fingerprints.
  */
-const CONNECTOR_CONNECTION_DEPENDENTS = [
+const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53 = [
   "connector_oauth_attempts",
   "slack_agent_contexts",
   "slack_agent_feedback",
@@ -2497,7 +2510,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     // real — and it means this migration never restates a child's schema,
     // which is the other way a rebuild loses something: a column added by a
     // later migration, an index, a trigger, quietly not carried across.
-    ...CONNECTOR_CONNECTION_DEPENDENTS.map((table) => (
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53.map((table) => (
       `CREATE TABLE ${table}_v31_hold AS SELECT * FROM ${table}`
     )),
     `CREATE TABLE connector_connections_v31 (
@@ -2555,7 +2568,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     // dependent empty: twelve cascade to nothing, while `connector_oauth_attempts`
     // nulls its pointer and keeps the row, which the hold would then duplicate.
     // Deleting makes the restore mean the same thing for both.
-    ...CONNECTOR_CONNECTION_DEPENDENTS.flatMap((table) => [
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53.flatMap((table) => [
       `DELETE FROM ${table}`,
       `INSERT INTO ${table} SELECT * FROM ${table}_v31_hold`,
       `DROP TABLE ${table}_v31_hold`,
@@ -3008,6 +3021,122 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
      ON CONFLICT(resource_id)
        DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0`,
   ],
+}, {
+  version: 53,
+  description: "admit Ashby without losing connector dependents",
+  statements: [
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53.map((table) => (
+      `CREATE TABLE ${table}_v53_hold AS SELECT * FROM ${table}`
+    )),
+    `CREATE TABLE connector_connections_v53 (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      connector_type TEXT NOT NULL CHECK (connector_type IN ('ashby', 'custom_mcp', 'google', 'generic_webhook', 'github', 'granola', 'linear', 'notion', 'slack', 'x')),
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
+      owner_user_id TEXT,
+      provider_account_id TEXT,
+      display_name TEXT NOT NULL,
+      encrypted_credentials TEXT,
+      credential_iv TEXT,
+      credential_key_version INTEGER,
+      credential_refresh_lease_id TEXT,
+      credential_refresh_lease_expires_at TEXT,
+      granted_scopes_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(granted_scopes_json)),
+      status TEXT NOT NULL DEFAULT 'healthy' CHECK (status IN ('healthy', 'needs_reconnect', 'error', 'disabled')),
+      cursor_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(cursor_json)),
+      config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json)),
+      last_sync_at TEXT,
+      next_poll_at TEXT,
+      error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      model_plugin_id TEXT NOT NULL,
+      CHECK ((scope = 'personal' AND owner_user_id IS NOT NULL) OR (scope = 'workspace' AND owner_user_id IS NULL))
+    ) STRICT`,
+    `INSERT INTO connector_connections_v53
+       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+        encrypted_credentials, credential_iv, credential_key_version,
+        credential_refresh_lease_id, credential_refresh_lease_expires_at,
+        granted_scopes_json, status, cursor_json, config_json, last_sync_at, next_poll_at,
+        error_json, created_at, updated_at, model_plugin_id)
+     SELECT id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+            encrypted_credentials, credential_iv, credential_key_version,
+            credential_refresh_lease_id, credential_refresh_lease_expires_at,
+            granted_scopes_json, status, cursor_json, config_json, last_sync_at, next_poll_at,
+            error_json, created_at, updated_at, model_plugin_id
+       FROM connector_connections`,
+    `DROP TABLE connector_connections`,
+    `ALTER TABLE connector_connections_v53 RENAME TO connector_connections`,
+    `CREATE INDEX connector_connections_poll_idx
+      ON connector_connections(status, next_poll_at, id)`,
+    `CREATE INDEX connector_connections_provider_account_idx
+      ON connector_connections(connector_type, provider_account_id, status)`,
+    `CREATE UNIQUE INDEX connector_connections_active_model_plugin_id_uq
+      ON connector_connections(model_plugin_id) WHERE status != 'disabled'`,
+    ...workspaceIdentityFencesFor("connector_connections"),
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53.flatMap((table) => [
+      `DELETE FROM ${table}`,
+      `INSERT INTO ${table} SELECT * FROM ${table}_v53_hold`,
+      `DROP TABLE ${table}_v53_hold`,
+    ]),
+    `CREATE TABLE connector_oauth_attempts_v53 (
+      id TEXT PRIMARY KEY,
+      region TEXT NOT NULL CHECK (region IN ('global', 'eu')),
+      provider TEXT NOT NULL CHECK (provider IN ('ashby', 'custom_mcp', 'google', 'github', 'granola', 'linear', 'notion', 'slack')),
+      user_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'denied', 'failed')),
+      connection_id TEXT REFERENCES connector_connections(id) ON DELETE SET NULL,
+      error_code TEXT,
+      expires_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      telemetry_operation_id TEXT,
+      telemetry_event_version INTEGER NOT NULL DEFAULT 1,
+      telemetry_scope TEXT,
+      telemetry_capability_count INTEGER,
+      telemetry_reconnect INTEGER NOT NULL DEFAULT 0
+    ) STRICT`,
+    `INSERT INTO connector_oauth_attempts_v53
+       (id, region, provider, user_id, workspace_id, status, connection_id, error_code,
+        expires_at, completed_at, created_at, updated_at, telemetry_operation_id,
+        telemetry_event_version, telemetry_scope, telemetry_capability_count, telemetry_reconnect)
+     SELECT id, region, provider, user_id, workspace_id, status, connection_id, error_code,
+            expires_at, completed_at, created_at, updated_at, telemetry_operation_id,
+            telemetry_event_version, telemetry_scope, telemetry_capability_count, telemetry_reconnect
+       FROM connector_oauth_attempts`,
+    `DROP TABLE connector_oauth_attempts`,
+    `ALTER TABLE connector_oauth_attempts_v53 RENAME TO connector_oauth_attempts`,
+    `CREATE INDEX connector_oauth_attempts_expiry_idx
+      ON connector_oauth_attempts(status, expires_at, id)`,
+    `CREATE UNIQUE INDEX connector_oauth_attempts_telemetry_operation_idx
+      ON connector_oauth_attempts(telemetry_operation_id)
+      WHERE telemetry_operation_id IS NOT NULL`,
+    ...workspaceIdentityFencesFor("connector_oauth_attempts"),
+  ],
+}, { version: 54, description: "durable connector installation lifecycle", statements: [
+  `CREATE TABLE connector_installations (
+    connection_id TEXT PRIMARY KEY REFERENCES connector_connections(id),
+    workspace_id TEXT NOT NULL,
+    attempt_id TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation > 0),
+    document_json TEXT NOT NULL CHECK (json_valid(document_json)),
+    cleanup_ciphertext TEXT, cleanup_iv TEXT, cleanup_key_version INTEGER
+  ) STRICT`,
+  `CREATE TABLE connector_installation_steps (
+    step_id TEXT PRIMARY KEY, connection_id TEXT NOT NULL, generation INTEGER NOT NULL,
+    state TEXT NOT NULL, intent_json TEXT NOT NULL CHECK (json_valid(intent_json)),
+    result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)), created_at TEXT NOT NULL
+  ) STRICT`,
+  `CREATE INDEX connector_installation_steps_connection ON connector_installation_steps(connection_id, generation)`,
+  `CREATE UNIQUE INDEX ashby_personal_connection_unique ON connector_connections(workspace_id, owner_user_id)
+    WHERE connector_type = 'ashby' AND scope = 'personal' AND status <> 'disabled'`,
+  `CREATE UNIQUE INDEX ashby_workspace_connection_unique ON connector_connections(workspace_id)
+    WHERE connector_type = 'ashby' AND scope = 'workspace' AND status <> 'disabled'`,
+]
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -7177,6 +7306,82 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const result = retireWorkspaceNoteResourceDeletion(this.state.storage, request);
     if (result.outcome === "retired") this.refreshScheduleAfterWrite(request.workspaceId);
     return result;
+  }
+
+  async createConnectorInstallation(input: InstallationCreate) {
+    await this.initialized; const request = InstallationCreateSchema.parse(input);
+    this.assertWorkspace(request.installation.workspaceId);
+    return createInstallation(this.state.storage, request);
+  }
+  async connectorInstallation(input: { workspaceId: string; connectionId: string }) {
+    await this.initialized; const request = InstallationReadSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return readInstallation(this.state.storage, request.connectionId);
+  }
+  async claimConnectorInstallationStep(input: InstallationClaim) {
+    await this.initialized; const request = InstallationClaimSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return claimInstallation(this.state.storage, request);
+  }
+  async settleConnectorInstallationStep(input: InstallationSettle) {
+    await this.initialized; const request = InstallationSettleSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return settleInstallation(this.state.storage, request);
+  }
+  async replaceConnectorInstallationCredentials(input: InstallationCredentialReplace) {
+    await this.initialized;
+    const request = InstallationCredentialReplaceSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return replaceInstallationCredentials(this.state.storage, request);
+  }
+  async prepareConnectorInstallationMaintenance(input: InstallationMaintenance) {
+    await this.initialized;
+    const request = InstallationMaintenanceSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return prepareInstallationMaintenance(this.state.storage, request);
+  }
+  async cancelConnectorInstallationMaintenance(input: InstallationMaintenanceCancel) {
+    await this.initialized;
+    const request = InstallationMaintenanceCancelSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return cancelInstallationMaintenance(this.state.storage, request);
+  }
+  async prepareConnectorInstallationRotation(input: InstallationRotationPrepare) {
+    await this.initialized;
+    const request = InstallationRotationPrepareSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return prepareInstallationRotation(this.state.storage, request);
+  }
+
+  async receiveConnectorInstallationEvent(input: { workspaceId: string; connectionId: string; receivedAt: string }) {
+    await this.initialized;
+    const request = InstallationReadSchema.extend({ receivedAt: z.string().datetime() }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    this.state.storage.sql.exec(`UPDATE connector_installations SET document_json = json_set(document_json, '$.lastReceivedAt', ?)
+      WHERE connection_id = ? AND (json_extract(document_json, '$.lastReceivedAt') IS NULL OR json_extract(document_json, '$.lastReceivedAt') < ?)`, request.receivedAt, request.connectionId, request.receivedAt);
+  }
+
+  async connectorInstallationCleanup(input: InstallationClaim) {
+    await this.initialized; const request = InstallationClaimSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const installation = readInstallation(this.state.storage, request.connectionId);
+    const registration = installation?.registrations.find((item) => item.stepId === request.stepId);
+    if (!installation || installation.generation !== request.generation || registration?.action !== "remove"
+      || registration.state !== "dispatched" || !registration.providerId || !registration.providerIdVerified) throw new Error("connector_cleanup_not_authorized");
+    const row = this.state.storage.sql.exec<{ cleanup_ciphertext: string | null; cleanup_iv: string | null; cleanup_key_version: number | null; granted_scopes_json: string; config_json: string }>(
+      `SELECT i.cleanup_ciphertext, i.cleanup_iv, i.cleanup_key_version, c.granted_scopes_json, c.config_json
+       FROM connector_installations i JOIN connector_connections c ON c.id = i.connection_id
+       WHERE i.connection_id = ? AND c.status = 'disabled'`, request.connectionId).toArray()[0];
+    if (!row?.cleanup_ciphertext || !row.cleanup_iv) throw new Error("connector_cleanup_credential_unavailable");
+    return { providerId: registration.providerId, encrypted_credentials: row.cleanup_ciphertext,
+      credential_iv: row.cleanup_iv, credential_key_version: row.cleanup_key_version,
+      grantedScopes: z.array(z.string()).parse(JSON.parse(row.granted_scopes_json)) };
+  }
+
+  async changeConnectorInstallation(input: InstallationChange) {
+    await this.initialized; const request = InstallationChangeSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return changeInstallation(this.state.storage, request);
   }
 
   /** Record a started connector OAuth handoff, pending until settled. */

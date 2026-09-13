@@ -1,3 +1,4 @@
+import { ConnectorInstallationSchema } from "./connector-installation";
 import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, WorkstreamIconKeySchema } from "./workstream-appearance";
 export * from "./workstream-appearance";
 import { PersonalPresentationSchema } from './onboarding';
@@ -872,7 +873,7 @@ export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   workspaceId: IdSchema,
-  connectorType: z.enum(["custom_mcp", "google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
+  connectorType: z.enum(["ashby", "custom_mcp", "google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
   scope: ScopeSchema,
   ownerUserId: IdSchema.nullable(),
   ownerName: z.string().nullable(),
@@ -894,6 +895,11 @@ export const ConnectionSchema = z.object({
   lastSyncAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema
 });
+
+export const ConnectorInstallationReadResponseSchema = z.object({ installation: ConnectorInstallationSchema.nullable() });
+export const ConnectorInstallationMutationResponseSchema = z.object({ installation: ConnectorInstallationSchema });
+export const ConnectorInstallationSetupResponseSchema = z.object({ installation: ConnectorInstallationSchema, connection: ConnectionSchema });
+export const ConnectionTestResponseSchema = z.object({ ok: z.boolean(), message: z.string(), reconnectRequired: z.boolean().optional() });
 
 export const GitHubRepositoryRemoteAccessSchema = z.enum(["read_only", "full_access"]);
 export const GitHubRepositoryAccessModeSchema = z.enum(["all_repositories", "selected_repositories"]);
@@ -1890,7 +1896,7 @@ export const CustomMcpAuthModeSchema = z.enum(CustomMcpAuthModes);
  *
  * `read_only_tools` keeps only what the server itself annotates `readOnlyHint`.
  * It narrows what Rally offers and relaxes nothing: an admitted tool still
- * carries write confirmation and a record-before-execute receipt, because an
+ * uses conservative write execution and a record-before-execute receipt, because an
  * MCP annotation is a hint from the server rather than a promise to Rally.
  */
 export const CustomMcpToolPolicies = ["all_tools", "read_only_tools"] as const;
@@ -3831,3 +3837,7 @@ export { safeParseSocketEvent, isUnknownSocketEvent } from "./socket-events";
 
 export const ClientSocketEventTypeSchema = z.union(ClientSocketEventSchema.options.map((event) => event.shape.type));
 export const WorkspaceSocketClientEventTypeSchema = z.union(WorkspaceSocketClientEventSchema.options.map((event) => event.shape.type));
+
+export { ConnectorInstallationSchema, ConnectorInstallationProviderSchema, ConnectorRegistrationSchema, type ConnectorInstallation, type InstallationRegistration } from "./connector-installation";
+
+export { AshbyEventTypes, AshbyEventLabels } from "./ashby-events";

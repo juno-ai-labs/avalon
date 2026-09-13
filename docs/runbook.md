@@ -26,6 +26,17 @@ Local authentication is available only when all of these are true:
 
 If the local account cannot sign in, run `pnpm env:sync`, confirm `.env.local` remains owner-readable, and restart both processes. Never add a development-auth value to a hosted Worker.
 
+## Connector installation maintenance
+
+For Ashby or Granola registration recovery and a frozen regional fleet operation,
+use [connector installation operations](connector-installation-lifecycle.md#operations).
+The repository command uses the existing regional Ace `demos` credential and
+supports preview, apply, status, resume and cancel. Preview fixes the selected
+connections before any provider mutations; inspect per-target outcomes after an
+operation completes. The route's presence does not authorize an operator run.
+Deployment order for the dedicated Ashby ingress is in
+[API Worker deployment](api-worker-deployment.md#dedicated-ashby-ingress).
+
 ## Required hosted resources
 
 Create independent resource sets for `global` and `eu`:
@@ -924,6 +935,20 @@ without putting either setup material or its signing secret into logs:
    again. The new command invalidates any earlier unconsumed URL; never recover a
    nonce or verification token from Workers Logs or Logpush.
 
+The first Ashby rollout is handled automatically by `deploy-api.yml`. Its
+read-only preflight inspects active Global exports and checks Global's existing
+EU targets before selecting a one-time Global-first direct deployment. Global
+health and a fresh `AshbyRoutingBridge` export check must pass before EU runs.
+The dedicated `avalon-connector-ashby-global` ingress deploys after both regional
+health barriers, and its own health is checked afterward. Later releases return
+to ordinary EU-first order. An EU-only dispatch before the router exists stops
+and asks the operator to select both regions; metadata read failures also stop
+before uploads or migrations. There is no manual Global-only prerequisite for
+this release, and no dependency on retiring EU infrastructure. Existing Granola
+callbacks are untouched. See [the deployment guide](api-worker-deployment.md#dedicated-ashby-ingress)
+for failure and retry behavior. Health checks do not verify provider credentials
+or repair subscriptions.
+
 For ordinary releases after both entrypoints exist:
 
 1. Build the API, document-processing, and Terminal-provider artifacts for both
@@ -964,7 +989,8 @@ For ordinary releases after both entrypoints exist:
    config or Crash Symbolicator image change uses direct deploy because Versions
    cannot apply Durable Object migrations or update Container images. For the
    first inbound-email release and the first shared-Notion-ingress release, use
-   the three-stage bootstrap order above instead.
+   the three-stage bootstrap order above instead. The first Ashby release uses
+   the automatically selected Global-first path described above.
 7. Call `GET /health` after each regional promotion and finally on both APIs
    with `pnpm health:regions`, which fails unless both regions report `ok`. That
    now includes the Worker's own environment contract: a region missing a
@@ -985,7 +1011,7 @@ Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers af
 Three GitHub Actions workflows carry the mechanical part of this procedure. They are the same commands documented above, so a local operator run and a workflow run remain interchangeable.
 
 - `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. Verification fans out across independent Ubuntu runners; the desktop Vitest suite uses two shards, the API Vitest suite uses three, and the workers suite uses two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
-- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: eight exact-artifact dry-runs and startup profiles, the shared platform D1 migration chain followed by regional D1 migrations, service-first two-region version upload or direct deployment, artifact-reader-before-API promotion, EU promotion and health, Global service/PostHog/pricing/API promotion and health, and final regional health. The profiles and build manifests are retained even on failure. Before any migration or Worker upload, it fetches a canonical `/app/workspaces/<region>/<workspace>/workstreams/<id>` probe from the live site and requires the work-stream handoff marker; it also requires `latest-mac.yml` on the live update channel to carry the addressed-reader marker written into verified desktop releases. The site, desktop, and API deploy independently on the same merge, so an API run that reaches this gate before either reader—or after a failed reader release—stops safely and is re-run after both are live; the previous API keeps emitting only link shapes deployed readers understand. Wrangler-config, Durable Object migration, Container-image, and first-service releases select direct deployment because Cloudflare Versions cannot establish that platform state; successful releases tag each active version with the immutable verified Git SHA. Its verify matrix shards the workers suite the same way CI does (`api-tests-workers-1-of-n` / `2-of-n`) rather than appending an unsharded `test:workers` onto a Node lane — that split is load, not coverage, and an unsharded full-suite Miniflare is more `reset()` interleave than PR CI ever sees. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including both D1 migration chains), either lakehouse manifest/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and locally materializes the two pinned Global lakehouse bindings before migrations without calling the Pipelines management API; the EU deploy config intentionally contains no lakehouse binding. Lakehouse creation and drift verification use explicit operator reconciliation. The workflow does not create unrelated resources, confirm regional D1 IDs, create the wildcard artifact DNS record, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
+- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: eight exact-artifact dry-runs and startup profiles, the shared platform D1 migration chain followed by regional D1 migrations, service-first two-region version upload or direct deployment, artifact-reader-before-API promotion, EU promotion and health, Global service/PostHog/pricing/API promotion and health, and final regional health. The profiles and build manifests are retained even on failure. Before any migration or Worker upload, it fetches a canonical `/app/workspaces/<region>/<workspace>/workstreams/<id>` probe from the live site and requires the work-stream handoff marker; it also requires `latest-mac.yml` on the live update channel to carry the addressed-reader marker written into verified desktop releases. The site, desktop, and API deploy independently on the same merge, so an API run that reaches this gate before either reader—or after a failed reader release—stops safely and is re-run after both are live; the previous API keeps emitting only link shapes deployed readers understand. Wrangler-config, Durable Object migration, Container-image, and first-service releases select direct deployment because Cloudflare Versions cannot establish that platform state; successful releases tag each active version with the immutable verified Git SHA. Its verify matrix shards the workers suite the same way CI does (`api-tests-workers-1-of-n` / `2-of-n`) rather than appending an unsharded `test:workers` onto a Node lane — that split is load, not coverage, and an unsharded full-suite Miniflare is more `reset()` interleave than PR CI ever sees. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including both D1 migration chains), either lakehouse manifest/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and locally materializes the two pinned Global lakehouse bindings before migrations without calling the Pipelines management API; the EU deploy config intentionally contains no lakehouse binding. Lakehouse creation and drift verification use explicit operator reconciliation. The workflow does not create unrelated resources, confirm regional D1 IDs, create the wildcard artifact DNS record, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or another circular cross-region entrypoint rollout. The one-way Ashby router bootstrap is automated as described above. Circular rollouts are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
   Migration 0090 is the one destructive exception to normal migration-first ordering: when it is the sole pending migration, compatible Workers deploy before it. The workflow fails closed if 0090 appears beside any other pending migration, because Wrangler applies the complete pending ledger and must never move an ordinary later migration behind the Worker that may require it.
 - **The durable automation lifecycle cutover ran on 2026-08-28** and its three
   one-shot deploy steps (the single-region refusal, the preflight, and the
