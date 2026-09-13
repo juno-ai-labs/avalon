@@ -85,7 +85,7 @@ const defaultActions = {
     ({ enqueuedCount: 0, archivedNoteCount: 0 }),
   onChangeNoteScope: async (): Promise<void> => undefined,
   onChangeWorkstreamScope: async (): Promise<void> => undefined,
-  onDeleteAutomation: async (): Promise<void> => undefined,
+  onArchiveAutomation: async (): Promise<void> => undefined,
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
   onOpenMeetingNotes: async (): Promise<void> => undefined,
   onPreviewWorkstreamBatch: async (): Promise<{ matchedCount: number; matchedNoteCount: number }> =>
