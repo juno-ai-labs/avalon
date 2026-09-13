@@ -31,7 +31,7 @@ export async function runConnectorInstallation(env: Env, workspace: string, conn
     if (!claim.claimed) return claim.installation;
     if (!management || management.version !== installation.desiredVersion) {
       installation = await object.settleConnectorInstallationStep({ ...request, registration: {
-        ...registration, state: "action_required", error: "The installed Worker does not support this configuration version. Resume after the matching version is available.",
+        ...registration, state: "failed", error: "The installed Worker does not support this configuration version. Use Test after the matching version is available.",
       } });
       await publishWorkspaceSync(localEnv, workspaceId, ["connector_connections"]);
       return installation;
@@ -49,8 +49,7 @@ export async function runConnectorInstallation(env: Env, workspace: string, conn
     try {
       const active = await localEnv.DB.prepare("SELECT id FROM connector_connections WHERE id = ? AND workspace_id = ? AND status <> 'disabled'").bind(connectionId, workspaceId).first();
       if (registration.action === "remove" && !active) {
-        writeDispatched = true;
-        await removeAuthorizedConnectorRegistration(env, request, management, signal);
+        await removeAuthorizedConnectorRegistration(env, request, management, signal, () => { writeDispatched = true; });
         result = { ...registration, state: "removed", enabled: false, error: null };
       } else {
         const row = await localEnv.DB.prepare("SELECT * FROM connector_connections WHERE id = ? AND workspace_id = ? AND status <> 'disabled'").bind(connectionId, workspaceId).first<{
@@ -126,6 +125,12 @@ export async function runConnectorInstallation(env: Env, workspace: string, conn
             if (!observed || observed.providerId !== registration.providerId || observed.destination !== registration.destination
               || JSON.stringify([...observed.events].sort()) !== JSON.stringify([...registration.events].sort())) {
               result = { ...registration, state: "action_required", error: "The recorded webhook does not match the approved destination and events. Inspect it in the provider dashboard." };
+            } else if (!registration.activeSecretRef || typeof authorized.credentials[registration.activeSecretRef] !== "string"
+              || !authorized.credentials[registration.activeSecretRef]
+              || (installation?.provider === "granola" && (authorized.credentials.webhookSigningSecret !== authorized.credentials[registration.activeSecretRef]
+                || authorized.credentials.webhookEndpointId !== observed.providerId))) {
+              result = { ...registration, providerIdVerified: true, state: "action_required",
+                error: "The recorded webhook matches, but its signing credential is unavailable. Disconnect this connection, remove the recorded webhook, then connect workspace events again." };
             } else if (!observed.enabled) {
               result = registration.error === "enable_attempted"
                 ? { ...registration, state: "action_required", error: "The provider kept the webhook disabled. Check its ping delivery before testing again." }

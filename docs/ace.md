@@ -454,13 +454,15 @@ do not publish a new Ace bundle.
 
 ### 2026-09-12 — Use the existing operator identity for connector maintenance
 
-The regional connector maintenance routes explicitly admit Ace's existing
-`DEMO_OPERATORS_JSON` credential and `demos` role, as selected by the product
-owner. The command previews a fixed regional provider/version/workspace selection
-before apply, and provides status, resume and cancel. This avoids adding a
-permanent administrative secret or treating read-only inspection as write
-authority. It adds no Ace UI, arbitrary provider request or SQL execution path;
-deployment and a real maintenance run remain separate actions.
+**What changed:** Regional maintenance routes admit the existing Ace demos operator identity for preview, apply, status, resume and cancel; no Ace UI is added.
+
+**Why:** The product owner selected the existing operator identity for reviewed connector maintenance, while read-only engineering access must remain insufficient for provider writes.
+
+**Considered and rejected:** A new permanent administrative secret or arbitrary provider-request/SQL capability.
+
+**Consequences:** Maintenance freezes a reviewed regional selection and records operator attribution. Deployment and a real fleet operation require their own authorization; follow [lifecycle operations](connector-installation-lifecycle.md#operations).
+
+PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
 
 ### 2026-09-10 — New demo casts colleagues from a dropdown
 

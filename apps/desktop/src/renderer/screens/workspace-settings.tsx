@@ -1,4 +1,4 @@
-import { AshbyWorkspaceSetup, ConnectorInstallationDetails } from '../components/connector-installation';
+import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstallationRecovery } from '../components/connector-installation';
 import { ServerCog } from 'lucide-react';
 import { connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 import { PersonalSetup } from './guided-onboarding';
@@ -660,6 +660,12 @@ export function WorkspaceSettingsScreen({
       });
     },
   });
+  const granolaRecovery = useWorkspaceInstallationRecovery(api, 'granola', (connectionId) => {
+    setGranolaWorkspaceApiKey('');
+    setGranolaSetupKey(crypto.randomUUID());
+    setGranolaWorkspaceModalOpen(false);
+    setInstallationTarget(connectionId);
+  });
   const createGranolaWorkspaceConnection = useMutation({
     mutationFn: () => api!.createGranolaWorkspaceConnection(granolaWorkspaceApiKey.trim(), granolaSetupKey),
     onSuccess: () => {
@@ -668,6 +674,7 @@ export function WorkspaceSettingsScreen({
       setGranolaWorkspaceModalOpen(false);
       void queryClient.invalidateQueries({ queryKey: ['connections'] });
     },
+    onError: () => granolaRecovery.mutate(),
   });
   const createWebhookConnection = useMutation({
     mutationFn: () => api!.createWebhookConnection(
@@ -1522,7 +1529,7 @@ export function WorkspaceSettingsScreen({
                                 <td>
                                   <span className="settings-connection-actions">
                                     {isAdmin && connection.scope === 'workspace' && ['ashby', 'granola'].includes(connection.connectorType) && (
-                                      <Button onClick={() => setInstallationTarget(connection.id)}>Manage events</Button>
+                                      <Button aria-label={`Manage events for ${connection.displayName}`} onClick={() => setInstallationTarget(connection.id)}>Manage events</Button>
                                     )}
                                     {(isAdmin || connection.scope === 'you') && reconnectableConnectorTypes.has(connection.connectorType)
                                       && !(['ashby', 'granola'].includes(connection.connectorType) && connection.scope === 'workspace') && (
@@ -1638,6 +1645,7 @@ export function WorkspaceSettingsScreen({
                           </div>
                           <p>{provider.description}</p>
                           {provider.provider === 'ashby' && <p>Personal account: {hasActivePersonalConnection ? 'Connected' : 'Not connected'}. Workspace events: {hasActiveWorkspaceConnection ? 'Configured — manage delivery above' : 'Not configured'}.</p>}
+                          {provider.provider === 'ashby' && <p>Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account. <Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/connectors/ashby/')}>Ashby setup guide ↗</Button></p>}
                           {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (
                             <p className="settings-search-guidance" role="status">
                               {searchTarget.definition.label} is part of setup. Choose the appropriate connection scope below.
@@ -1915,7 +1923,7 @@ export function WorkspaceSettingsScreen({
                       </div>
                       <label className="settings-preference-row">
                         <SettingCopy setting={settings.mcpPolicy} instanceId={customMcpSettingsConnectionId ?? undefined} description={<> {customMcpSettings.data.toolPolicyEditable
-                              ? 'Read-only exposes just the tools this server marks as read-only. Every remaining tool still asks before it runs — the marking is the server’s own claim, not something Rally can verify.'
+                              ? 'Read-only exposes just the tools this server marks as read-only. The marking is the server’s own claim, which Rally cannot verify; it grants no additional access.'
                               : 'A personal connection is only ever yours and acts with your own identity on that server, so it exposes everything the server offers you.'} </>} />
                         <select
                           aria-label="Tools Rally may use"
@@ -1963,7 +1971,7 @@ export function WorkspaceSettingsScreen({
                       ))}
                     </div>
                     <p className="settings-section-copy settings-custom-mcp-footnote">
-                      Tool names, descriptions, and markings come from the server itself and are shown as it sent them. Rally treats them as information, never as instructions, and every tool call still asks for confirmation before it runs.
+                      Tool names, descriptions, and markings come from the server itself and are shown as it sent them. Rally treats them as information, never as instructions. Tools run within the connection's granted access and your request, without per-tool confirmation prompts.
                     </p>
                   </>
                 ) : null}
@@ -2358,8 +2366,8 @@ export function WorkspaceSettingsScreen({
           )}
           {connectCustomMcp.error && <InlineError>{connectCustomMcp.error.message}</InlineError>}
         </Modal>
-        {api && ashbyWorkspaceOpen && <AshbyWorkspaceSetup api={api} attemptId={ashbySetupKey} onSuccess={() => setAshbySetupKey(crypto.randomUUID())} onClose={() => setAshbyWorkspaceOpen(false)} />}
-        {api && installationTarget && <ConnectorInstallationDetails api={api} connectionId={installationTarget} onClose={() => setInstallationTarget(null)} />}
+        {api && ashbyWorkspaceOpen && <AshbyWorkspaceSetup api={api} attemptId={ashbySetupKey} onSuccess={() => setAshbySetupKey(crypto.randomUUID())} onClose={() => setAshbyWorkspaceOpen(false)} onRecovered={setInstallationTarget} />}
+        {api && installationTarget && <ConnectorInstallationDetails api={api} connectionId={installationTarget} connectionEnabled={connections.data?.some((connection) => connection.id === installationTarget && connection.status !== 'disabled') ?? false} onClose={() => setInstallationTarget(null)} />}
         <Modal
           description="A workspace-wide Granola connection requires a Workspace API key. Personal Granola connections use browser sign-in and do not need a key."
           footer={(
@@ -2367,7 +2375,7 @@ export function WorkspaceSettingsScreen({
               <Button onClick={() => setGranolaWorkspaceModalOpen(false)}>Cancel</Button>
               <Button
                 className="button-primary"
-                disabled={!/^grn_[\x21-\x7E]{1,508}$/u.test(granolaWorkspaceApiKey.trim()) || createGranolaWorkspaceConnection.isPending}
+                disabled={!/^grn_[\x21-\x7E]{1,508}$/u.test(granolaWorkspaceApiKey.trim()) || createGranolaWorkspaceConnection.isPending || granolaRecovery.isPending || granolaRecovery.isError}
                 onClick={() => createGranolaWorkspaceConnection.mutate()}
               >
                 {createGranolaWorkspaceConnection.isPending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <LockKeyhole aria-hidden="true" size={14} />}
@@ -2416,6 +2424,8 @@ export function WorkspaceSettingsScreen({
             <small>Rally sends the key once to your regional API, encrypts it at rest, never returns it to the desktop, and registers a signed note-events webhook.</small>
           </label>
           {createGranolaWorkspaceConnection.error && <InlineError>{createGranolaWorkspaceConnection.error.message}</InlineError>}
+          {granolaRecovery.isPending && <p role="status">Checking for an existing workspace installation…</p>}
+          {granolaRecovery.error && <><InlineError>Existing installations could not be checked. Check again before retrying setup.</InlineError><Button disabled={granolaRecovery.isPending} onClick={() => granolaRecovery.mutate()}>Find existing installation</Button></>}
         </Modal>
         <Modal
           description="You’ll be sent to the provider to authorize this connection again."

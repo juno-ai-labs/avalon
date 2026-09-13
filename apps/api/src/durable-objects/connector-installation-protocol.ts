@@ -20,29 +20,6 @@ export type InstallationClaim = z.infer<typeof InstallationClaimSchema>;
 export type InstallationSettle = z.infer<typeof InstallationSettleSchema>;
 export type InstallationChange = z.infer<typeof InstallationChangeSchema>;
 
-export const INSTALLATION_SCHEMA_STATEMENTS = [
-  `CREATE TABLE connector_installations (
-    connection_id TEXT PRIMARY KEY REFERENCES connector_connections(id),
-    workspace_id TEXT NOT NULL,
-    attempt_id TEXT NOT NULL UNIQUE,
-    user_id TEXT NOT NULL,
-    input_hash TEXT NOT NULL,
-    generation INTEGER NOT NULL CHECK (generation > 0),
-    document_json TEXT NOT NULL CHECK (json_valid(document_json)),
-    cleanup_ciphertext TEXT, cleanup_iv TEXT, cleanup_key_version INTEGER
-  ) STRICT`,
-  `CREATE TABLE connector_installation_steps (
-    step_id TEXT PRIMARY KEY, connection_id TEXT NOT NULL, generation INTEGER NOT NULL,
-    state TEXT NOT NULL, intent_json TEXT NOT NULL CHECK (json_valid(intent_json)),
-    result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)), created_at TEXT NOT NULL
-  ) STRICT`,
-  `CREATE INDEX connector_installation_steps_connection ON connector_installation_steps(connection_id, generation)`,
-  `CREATE UNIQUE INDEX ashby_personal_connection_unique ON connector_connections(workspace_id, owner_user_id)
-    WHERE connector_type = 'ashby' AND scope = 'personal' AND status <> 'disabled'`,
-  `CREATE UNIQUE INDEX ashby_workspace_connection_unique ON connector_connections(workspace_id)
-    WHERE connector_type = 'ashby' AND scope = 'workspace' AND status <> 'disabled'`,
-];
-
 export const InstallationRotationPrepareSchema = InstallationReadSchema.extend({
   generation: z.number().int().positive(), key: z.string().min(1), pendingSecretRef: z.string().min(1),
   verificationPolicy: z.enum(["active", "active_and_pending"]), credentials: InstallationCreateSchema.shape.credentials,

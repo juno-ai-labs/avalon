@@ -181,6 +181,7 @@ export async function markConnectorNeedsReconnect(
 /** Separate deletion-only purpose: no ordinary callback, refresh, or credential writes. */
 export async function removeAuthorizedConnectorRegistration(
   env: Env, request: InstallationClaim, management: ConnectorInstallationManagement, signal: AbortSignal,
+  onDispatch: () => void,
 ): Promise<void> {
   const workspaceId = asWorkspaceId(request.workspaceId);
   const object = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(env.AVALON_REGION, workspaceId));
@@ -190,6 +191,7 @@ export async function removeAuthorizedConnectorRegistration(
   const current = await object.connectorInstallationCleanup(request);
   if (current.providerId !== snapshot.providerId || current.encrypted_credentials !== snapshot.encrypted_credentials) throw new Error("connector_cleanup_superseded");
   signal.throwIfAborted();
+  onDispatch();
   await management.remove(authorizedConnection({ id: request.connectionId, workspaceId: request.workspaceId,
     scope: "workspace", ownerUserId: null, credentials, config: {}, cursor: {}, grantedScopes: snapshot.grantedScopes }), snapshot.providerId, signal);
 }

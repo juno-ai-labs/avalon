@@ -1,4 +1,4 @@
-import { ConnectorInstallationSchema } from '@rally/contracts';
+import { ConnectorInstallationReadResponseSchema, ConnectorInstallationMutationResponseSchema, ConnectorInstallationSetupResponseSchema, ConnectionTestResponseSchema } from '@rally/contracts';
 import { SidekickAttachmentsSchema, type SidekickAttachment } from '@rally/contracts';
 import { SearchResponseSchema, type SearchRequest, type SearchResponse } from '@rally/contracts/search';
 import { OnboardingJourneySchema, type UpdateOnboardingJourney } from '@rally/contracts';
@@ -2075,20 +2075,20 @@ export class RallyApi {
 
   async replaceInstallationApiKey(connectionId: string, apiKey: string) {
     return this.request(`/connections/${connectionId}/installation/api-key`, {
-      method: 'POST', body: { apiKey }, schema: z.object({ installation: ConnectorInstallationSchema }),
+      method: 'POST', body: { apiKey }, schema: ConnectorInstallationMutationResponseSchema,
     });
   }
 
   async createAshbyWorkspaceConnection(apiKey: string, events: string[], idempotencyKey: string) {
     return this.request('/connections/ashby/workspace', {
       method: 'POST', body: { apiKey, events, idempotencyKey },
-      schema: z.object({ installation: ConnectorInstallationSchema }),
+      schema: ConnectorInstallationSetupResponseSchema,
     });
   }
 
   async connectorInstallation(connectionId: string) {
     return this.request(`/connections/${connectionId}/installation`, {
-      schema: z.object({ installation: ConnectorInstallationSchema.nullable() }),
+      schema: ConnectorInstallationReadResponseSchema,
     });
   }
 
@@ -2096,7 +2096,7 @@ export class RallyApi {
     action: 'repair' | 'disconnect' | 'forget_cleanup' | 'reconcile' | 'rotate'; key?: string; providerId?: string;
   }) {
     return this.request(`/connections/${connectionId}/installation`, {
-      method: 'POST', body: input, schema: z.object({ installation: ConnectorInstallationSchema }),
+      method: 'POST', body: input, schema: ConnectorInstallationMutationResponseSchema,
     });
   }
 
@@ -2195,7 +2195,7 @@ export class RallyApi {
 
   async testConnection(id: string) {
     return this.request(`/connections/${encodeURIComponent(id)}/test`, {
-      method: 'POST', schema: z.object({ ok: z.boolean(), message: z.string(), reconnectRequired: z.boolean().optional() }),
+      method: 'POST', schema: ConnectionTestResponseSchema,
     });
   }
 

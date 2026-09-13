@@ -24,7 +24,7 @@ was incorrect and must not be used to introduce confirmations.
 | `packages/connectors/src/types.ts` | `ConnectorDynamicAgentTools`, the adapter facet that declares which grants and connection scopes use a live tool surface. |
 | `apps/api/src/services/integrations.ts` | Converts a dynamic connector facet into one connection-specific `HarnessPlugin.loadTools`, validates the live surface against the frozen grant, and routes execution back to the adapter. |
 | `packages/agent-harness/src/bind-runtime.ts` | Loads the tools after authorization at `load_plugin`, replaces the empty deferred plugin in the Bind registry, and caches that surface for the run. |
-| `packages/connectors/src/{granola,slack,notion}.ts` | Small provider declarations: endpoint, accepted capability, token accessor/refresh wrapper, and the personal-versus-workspace branch. |
+| `packages/connectors/src/{ashby,granola,slack,notion}.ts` | Small provider declarations: endpoint, accepted capability, token accessor/refresh wrapper, and the personal-versus-workspace branch. |
 
 ## How it works
 
@@ -70,6 +70,13 @@ code plus PKCE, and refresh. No endpoint, fetch policy, or response limit is
 declared twice. A provider with its own OAuth dialect, such as Slack, omits the
 block, keeps that credential code, and still uses the same pass-through object
 for live tools.
+
+Ashby uses this same helper with `https://mcp.ashbyhq.com/mcp/v1`, personal
+capability `ashby.personal.mcp`, and authorization origin
+`https://mcp-auth.ashbyhq.com`. Its live catalog is never checked in. Workspace
+API keys and webhook management are a separate authorization path and do not
+enter the MCP transport. See [provider prerequisites](provider-apps.md#ashby-personal-oauth-and-workspace-api-keys)
+for metadata observations and outstanding live acceptance.
 
 ### Discovery and activation
 
@@ -266,10 +273,6 @@ patch a historical snapshot into Rally.
 
 ## Changelog
 
-### 2026-09-12 — Ashby uses the existing hosted transport
-
-Ashby declares `https://mcp.ashbyhq.com/mcp/v1`, personal grant `ashby.personal.mcp`, and authorization origin `https://mcp-auth.ashbyhq.com`. Protected-resource and issuer metadata supply endpoints and scopes; no live tool names or schemas are checked in. Unannotated tools retain the shared conservative write classification. Workspace API keys never enter MCP authorization. Live account, DCR, refresh and recruiting acceptance remain outstanding.
-
 ### 2026-09-03 — A hosted server can be named by a connection rather than by source
 
 **What changed:** `createHostedMcpPassthrough` accepts a `serverUrl` resolver as
@@ -447,7 +450,7 @@ and exact call forwarding. Granola, Slack, and Notion personal connections use
 that live surface; Notion's official MCP server is now the personal counterpart
 to its workspace bot connection.
 
-Every hosted-MCP tool receives conservative write execution and a record-before-execute
+Every hosted-MCP tool receives write confirmation and a record-before-execute
 receipt regardless of `readOnlyHint`. OAuth discovery uses RFC path insertion
 before the root fallback, a loaded deferred surface is retained on the host
 plugin so later child narrowing sees the activated tools, and exact remote
@@ -462,7 +465,7 @@ Adding Notion by copying its documented list would have repeated the same
 failure and made every future MCP connector another custom transport.
 
 Tool annotations are provider hints rather than enforceable contracts; using
-one to weaken retry safeguards made a newly added or mislabeled mutation a silent
+one to skip confirmation made a newly added or mislabeled mutation a silent
 write. Root-only discovery also failed compliant path-scoped servers, and
 keeping loaded tools only inside Bind made the API's child-scope builder see
 the original empty placeholder. Persisting a restored deferred activation before
@@ -485,10 +488,10 @@ authorization guarantee.
 tool catalog, and tool changes take effect on the next activation. A dynamic
 plugin can fail to load when its server returns a malformed or colliding surface,
 which is deliberately safer than exposing a partial guess. Future changes must
-keep the static catalog trusted, preserve execution safeguards/receipts, and never turn
+keep the static catalog trusted, preserve confirmation/receipts, and never turn
 remote tool metadata into new Rally authority.
 
-Hosted-MCP reads do not ask for confirmation, but the write classification makes them unavailable to
+Hosted-MCP reads currently ask for confirmation and are not available to
 read-only inline children. A future lower-friction read path needs an
 independent Rally-authored policy source. Metadata discovery may issue one
 extra 404 request when a server publishes only the root fallback. Hosted MCP

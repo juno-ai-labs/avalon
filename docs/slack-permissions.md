@@ -332,7 +332,7 @@ for every requested permission even though the remote tool catalog is dynamic.
 **Consequences:** A scope addition still requires review here, in code, and at
 Slack. A tool addition on Slack's server does not require a Rally change unless
 it needs a provider OAuth scope Rally has not requested. Remote annotations do
-not relax execution or receipt policy; every live MCP operation is treated as
+not relax confirmation or receipt policy; every live MCP operation is treated as
 a write until Rally has an independent trusted classifier.
 
 Shipped in the pull request for this change.

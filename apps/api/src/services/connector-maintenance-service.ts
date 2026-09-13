@@ -15,6 +15,7 @@ import { durableObjectStubForWorkspace } from '../lib/durable-object-namespace';
 import { connectorRegistryForEnv } from '../lib/connector-registry';
 import { workspaceRegionalDatabase } from './workspace-runtime-database';
 import { runConnectorInstallation } from './connector-installation-service';
+import { logInfo } from '../observability/logger';
 
 export const ConnectorMaintenanceSelectionSchema = z.strictObject({
   provider: z.enum(['ashby', 'granola']), region: z.enum(['global', 'eu']), version: z.number().int().positive(),
@@ -83,23 +84,36 @@ export async function previewConnectorMaintenance(env: Env, raw: unknown, operat
   return operation;
 }
 
-export async function applyConnectorMaintenance(env: Env, id: string, resume = false): Promise<Operation> {
+export async function applyConnectorMaintenance(env: Env, id: string, resume = false, operatorId?: string): Promise<Operation> {
   const operation = await connectorMaintenanceStatus(env, id);
+  if (operatorId) logInfo(env, 'connector_maintenance_action_requested', {
+    operation_id: id, operator_id: operatorId, action: resume ? 'resume' : 'apply', state: operation.state,
+  });
   if (operation.state === 'cancelled') throw new ApiError(409, 'connector_maintenance_cancelled', 'Preview a new operation after cancellation');
+  if (resume && operation.state === 'preview') throw new ApiError(409, 'connector_maintenance_not_applied', 'Apply the preview before resuming maintenance');
   if (operation.state === 'complete') return operation;
   await workspaceRegionalDatabase(env).prepare("UPDATE connector_maintenance_operations SET document_json = json_set(document_json, '$.state', 'running') WHERE id = ? AND json_extract(document_json, '$.state') = 'preview'").bind(id).run();
   if (resume) {
     for (const target of operation.targets) {
       if (target.state !== 'pending' || !target.generation) continue;
-      await (await objectFor(env, target.workspaceId)).prepareConnectorInstallationMaintenance({ workspaceId: target.workspaceId, connectionId: target.connectionId, operationId: id, generation: target.generation, version: operation.selection.version, resume: true });
+      const object = await objectFor(env, target.workspaceId);
+      const installation = await object.connectorInstallation({ workspaceId: target.workspaceId, connectionId: target.connectionId });
+      // Apply may still be waiting for its first Queue delivery. Only resume
+      // prepared work; otherwise repair would stamp this operation's identity
+      // before the queued preparation can install its frozen configuration.
+      if (installation?.maintenanceOperationId !== id) continue;
+      await object.prepareConnectorInstallationMaintenance({ workspaceId: target.workspaceId, connectionId: target.connectionId, operationId: id, generation: target.generation, version: operation.selection.version, resume: true });
     }
   }
   await env.ACTIVITY_QUEUE.send(ConnectorMaintenanceQueueSchema.parse({ kind: 'connector_maintenance', operationId: id, region: env.AVALON_REGION }));
   return connectorMaintenanceStatus(env, id);
 }
 
-export async function cancelConnectorMaintenance(env: Env, id: string): Promise<Operation> {
-  await connectorMaintenanceStatus(env, id);
+export async function cancelConnectorMaintenance(env: Env, id: string, operatorId?: string): Promise<Operation> {
+  const requested = await connectorMaintenanceStatus(env, id);
+  if (operatorId) logInfo(env, 'connector_maintenance_action_requested', {
+    operation_id: id, operator_id: operatorId, action: 'cancel', state: requested.state,
+  });
   await workspaceRegionalDatabase(env).prepare("UPDATE connector_maintenance_operations SET document_json = json_set(document_json, '$.state', 'cancelled') WHERE id = ? AND json_extract(document_json, '$.state') <> 'complete'").bind(id).run();
   const operation = await connectorMaintenanceStatus(env, id);
   if (operation.state !== 'cancelled') return operation;
@@ -150,7 +164,10 @@ export async function runConnectorMaintenance(env: Env, id: string, signal: Abor
         return;
       }
       const result = await runConnectorInstallation(env, target.workspaceId, target.connectionId, signal);
-      if (result?.registrations.some((registration) => registration.state === 'dispatched' || registration.state === 'pending')) continue;
+      // A stale claimant can observe the next runnable step before the owning
+      // runner claims it. Only dependency-blocked pending work is terminal here.
+      if (result?.registrations.some((registration) => registration.state === 'dispatched'
+        || (registration.state === 'pending' && registration.afterRegistrationKeys.every((key) => result.registrations.some((dependency) => dependency.key === key && dependency.state === 'current'))))) continue;
       target.state = result?.state === 'current' ? 'current' : result?.state === 'failed' ? 'failed' : 'action_required';
       target.reason = target.state === 'current' ? null : 'Inspect the per-connection installation receipt for the remaining provider action.';
     } catch {
@@ -165,3 +182,6 @@ export async function runConnectorMaintenance(env: Env, id: string, signal: Abor
       .bind(new Date().toISOString(), id).run();
   }
 }
+
+/** Exercises concurrent target persistence independently of runner retries. */
+export const __connectorMaintenanceTesting = { saveTarget };

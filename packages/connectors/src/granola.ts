@@ -717,14 +717,6 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       };
     },
     refreshCredentials,
-    async revoke(connection, signal) {
-      if (connection.scope !== "workspace" || connection.config.installationLifecycle === 1) return;
-      const apiKey = requireWorkspaceApiKey(connection);
-      const webhookEndpointId = stringValue(connection.credentials, "webhookEndpointId");
-      if (webhookEndpointId) {
-        await deleteGranolaWebhookEndpoint(apiKey, webhookEndpointId, signal, fetcher, apiBaseUrl);
-      }
-    },
     async hydrateResource(connection, resource, signal) {
       if (connection.scope !== "workspace") {
         throw new ConnectorError("unsupported_capability", "Granola MCP resources are read through personal tools");
@@ -775,34 +767,6 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       }
       throw new ConnectorError("unsupported_capability", `Granola workspace API does not expose ${name}`);
     },
-    async repair(connection, signal) {
-      // Granola stops delivering when its webhook endpoint is disabled, and
-      // re-enabling it is the one provider write Avalon can make on a
-      // connection's behalf without being asked for anything. It runs from an
-      // explicit connection test, never from a health check: reauthorization
-      // calls that on every activation, and a read-shaped check must not
-      // repeatedly mutate provider state as a side effect.
-      if (connection.scope !== "workspace" || connection.config.installationLifecycle === 1) return { repaired: false };
-      const apiKey = requireWorkspaceApiKey(connection);
-      const webhookEndpointId = stringValue(connection.credentials, "webhookEndpointId");
-      if (!webhookEndpointId) return { repaired: false };
-      const endpoints = await granolaApi(fetcher, apiBaseUrl, apiKey, "/v1/webhook-endpoints", {}, signal);
-      const endpoint = recordArray(endpoints, "webhook_endpoints")
-        .find((candidate) => stringValue(candidate, "id") === webhookEndpointId);
-      if (!endpoint || endpoint.enabled === true) return { repaired: false };
-      await providerJson(
-        fetcher,
-        new URL(`/v1/webhook-endpoints/${encodeURIComponent(webhookEndpointId)}`, apiBaseUrl),
-        {
-          method: "PATCH",
-          headers: jsonHeaders(apiKey),
-          body: JSON.stringify({ enabled: true }),
-          signal,
-        },
-        GRANOLA_RESPONSE_BYTES,
-      );
-      return { repaired: true, message: "Re-enabled the Granola webhook endpoint" };
-    },
     async healthCheck(connection, callerSignal) {
       if (!connection) return { ok: true, message: "Granola connector configuration is available" };
       const signal = callerSignal ?? AbortSignal.timeout(15_000);
@@ -826,7 +790,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
             .find((candidate) => stringValue(candidate, "id") === webhookEndpointId);
           if (!endpoint) throw new ConnectorError("provider_error", "Granola webhook endpoint no longer exists");
           if (endpoint.enabled !== true) {
-            // Reported, not repaired: re-enabling is a write, and `repair`
+            // Reported, not repaired: re-enabling is a write, and the installation runner
             // owns it. Still `ok` — the authorization is sound and every read
             // tool works; it is delivery that has stopped, so failing the
             // check here would take a usable connection out of every run to

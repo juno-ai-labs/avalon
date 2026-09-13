@@ -765,7 +765,7 @@ For a Global-only local acceptance pass:
    Always pass the same three `SLACK_MANIFEST_*` overrides when syncing that
    development app.
 7. In the Rally desktop, sign in as a workspace owner/admin and open **Settings
-   → Connections → Rally Agent for Slack → Connect workspace**. Complete this OAuth flow even
+   → Connections → Rally Agent for Slack → Connect for workspace**. Complete this OAuth flow even
    if Slack already shows the app in the test workspace; it creates Rally's
    encrypted connection and team route. Do not substitute `slack app install`.
 8. Open the app's Home tab in Slack, choose **Connect Rally**, and let the local

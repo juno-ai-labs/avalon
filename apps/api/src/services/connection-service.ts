@@ -236,11 +236,11 @@ function connectorFailureMessage(error: unknown): string {
 }
 
 const TELEMETRY_CONNECTOR_TYPES = new Set([
-  "custom_mcp", "generic_webhook", "github", "google", "granola", "linear", "notion", "slack", "x",
+  "ashby", "custom_mcp", "generic_webhook", "github", "google", "granola", "linear", "notion", "slack", "x",
 ]);
 
 type TelemetryConnectorType =
-  "custom_mcp" | "generic_webhook" | "github" | "google" | "granola" | "linear" | "notion" | "slack" | "x";
+  "ashby" | "custom_mcp" | "generic_webhook" | "github" | "google" | "granola" | "linear" | "notion" | "slack" | "x";
 
 function telemetryConnector(value: unknown): TelemetryConnectorType | null {
   const connector = String(value);
@@ -1635,7 +1635,8 @@ export class ConnectionService {
     const context = await this.context(connection);
     const baseAdapter = this.registry().get(connection.connector_type);
     const adapter = managed ? { ...baseAdapter, repair: async (_connection: ConnectorConnectionContext, signal: AbortSignal) => {
-      await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, action: "repair" });
+      const repaired = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, action: "repair" });
+      await this.recordInstallationAudit(repaired, "connector.installation.repair");
       const result = await runConnectorInstallation(this.env, connection.workspace_id, id, signal);
       return { repaired: result?.state === "current", message: result?.state === "current" ? "Approved webhook configuration is verified" : "Webhook repair needs attention; inspect installation details" };
     } } : baseAdapter;
@@ -1784,17 +1785,22 @@ export class ConnectionService {
 
   async disable(id: string): Promise<void> {
     const connection = await this.loadAuthorized(id);
-    await this.adoptGranolaInstallation(connection);
     const adapter = this.registry().get(connection.connector_type);
     // Google OAuth revocation is project-wide for the token grant. A regional
     // database cannot prove that no sibling connection exists in another
     // region, so disabling one Google connection must remain a local action.
-    const managedInstallation = connection.scope === "workspace" && adapter.installationManagement
-      ? await (await this.workspaceObject(connection.workspace_id)).connectorInstallation({ workspaceId: connection.workspace_id, connectionId: id }) : null;
-    if (managedInstallation) await this.changeInstallation(id, { action: "disconnect" });
-    const mayRevokeRemotely = connection.connector_type !== "google" && !managedInstallation;
     let remoteRevocation: "skipped" | "succeeded" | "failed" = "skipped";
     try {
+      await this.adoptGranolaInstallation(connection);
+      const managedInstallation = connection.scope === "workspace" && adapter.installationManagement
+        ? await (await this.workspaceObject(connection.workspace_id)).connectorInstallation({ workspaceId: connection.workspace_id, connectionId: id }) : null;
+      if (managedInstallation) {
+        const installation = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, action: "disconnect" });
+        await this.recordInstallationAudit(installation, "connector.installation.disconnect");
+        await enqueueConnectorInstallation(this.env, installation);
+        await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
+      }
+      const mayRevokeRemotely = connection.connector_type !== "google" && !managedInstallation;
       if (mayRevokeRemotely && adapter.revoke) {
         const signal = AbortSignal.timeout(15_000);
         await withAuthorizedConnection(
@@ -2134,6 +2140,7 @@ export class ConnectionService {
   }
 
   async createWorkspaceInstallation(input: { provider: "ashby" | "granola"; apiKey: string; idempotencyKey: string; events: string[] }) {
+    const telemetryStartedAt = Date.now();
     const auth = this.requireAuth(); this.assertScopeAllowed("workspace");
     const adapter = this.registry().get(input.provider);
     const management = adapter.installationManagement;
@@ -2168,6 +2175,10 @@ export class ConnectionService {
       if (error instanceof Error && /idempotency_conflict|installation_exists/u.test(error.message)) throw new ApiError(409, "connector_setup_conflict", "This setup key has different inputs, or workspace events are already configured. Reopen the existing installation.");
       throw error;
     }
+    await this.recordInstallationAudit(installation, "connector.authorized", "setup");
+    if (installation.connectionId === id) {
+      await this.emitConnectorSetupCompleted(await this.loadAuthorized(id), "api_key", Date.now() - telemetryStartedAt, false).catch(() => undefined);
+    }
     await this.syncConnectorIngressRoute(installation.connectionId);
     await enqueueConnectorInstallation(this.env, installation);
     await publishConnectorWorkspaceSync(this.env, auth.workspaceId);
@@ -2183,7 +2194,18 @@ export class ConnectionService {
 
   async changeInstallation(id: string, input: { action: "repair" | "disconnect" | "forget_cleanup" | "reconcile" | "rotate"; key?: string | undefined; providerId?: string | undefined }) {
     const connection = await this.loadAuthorized(id); this.assertScopeAllowed("workspace");
-    const installation = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, ...input });
+    if (input.action === "disconnect") {
+      if (!(await this.installation(id)).installation) {
+        throw new ApiError(404, "connector_installation_not_found", "This connection has no workspace event installation");
+      }
+      await this.disable(id);
+      return this.installation(id);
+    }
+    let installation: ConnectorInstallation;
+    try {
+      installation = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, ...input });
+    } catch (error) { throw installationActionError(error); }
+    await this.recordInstallationAudit(installation, `connector.installation.${input.action}`);
     await this.syncConnectorIngressRoute(id);
     await enqueueConnectorInstallation(this.env, installation);
     await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
@@ -2199,7 +2221,11 @@ export class ConnectionService {
     const object = await this.workspaceObject(connection.workspace_id);
     const installation = await object.connectorInstallation({ workspaceId: connection.workspace_id, connectionId: id });
     if (!installation) throw new ApiError(409, "installation_unavailable", "Adopt the existing connection with Test first");
-    const context = await this.context(connection);
+    // Pair the envelope read with the generation observed before it. Credential
+    // settlement advances that generation, so validation cannot overwrite a
+    // newly returned webhook secret or rotation result with this snapshot.
+    const freshConnection = await this.loadAuthorized(id);
+    const context = await this.context(freshConnection);
     let replacement: Record<string, unknown> | null = null;
     await withAuthorizedConnection(this.env, { connection: context, adapter, signal }, async (authorized) => {
       const credentials = { ...authorized.credentials, apiKey: apiKey.trim() };
@@ -2208,16 +2234,22 @@ export class ConnectionService {
     });
     if (!replacement) throw new ApiError(409, "credential_replacement_unavailable", "The replacement credential could not be validated");
     const encrypted = await encryptString(JSON.stringify(replacement), this.env.CONNECTOR_CREDENTIALS_KEY, id);
-    const updated = await object.replaceConnectorInstallationCredentials({ workspaceId: connection.workspace_id, connectionId: id,
-      generation: installation.generation, credentials: { ...encrypted, keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1) } });
+    let updated: ConnectorInstallation;
+    try {
+      updated = await object.replaceConnectorInstallationCredentials({ workspaceId: connection.workspace_id, connectionId: id,
+        generation: installation.generation, credentials: { ...encrypted, keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1) } });
+    } catch (error) {
+      throw installationActionError(error);
+    }
+    await this.recordInstallationAudit(updated, "connector.credentials.replaced");
     await enqueueConnectorInstallation(this.env, updated);
     await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
     return { installation: updated };
   }
 
-  async createGranolaWorkspace(input: { apiKey: string; capabilities: string[]; idempotencyKey: string }) {
+  async createGranolaWorkspace(input: { apiKey: string; capabilities: string[]; idempotencyKey?: string | undefined }) {
     if (input.capabilities.length !== 1 || input.capabilities[0] !== GranolaCapabilities.workspaceRead) throw new ApiError(422, "invalid_connector_capabilities", "Choose the Granola workspace capability");
-    return this.createWorkspaceInstallation({ provider: "granola", apiKey: input.apiKey, idempotencyKey: input.idempotencyKey,
+    return this.createWorkspaceInstallation({ provider: "granola", apiKey: input.apiKey, idempotencyKey: input.idempotencyKey ?? crypto.randomUUID(),
       events: ["note.access_granted", "note.edited", "note.generated", "note.regenerated"] });
   }
 
@@ -2239,7 +2271,7 @@ export class ConnectionService {
       createdAt: at, updatedAt: at, lastReceivedAt: null, error: null });
     return object.createConnectorInstallation({ installation, userId: this.requireAuth().userId, inputHash: "granola-existing-connection",
       credentials: { ciphertext: String(connection.encrypted_credentials), iv: String(connection.credential_iv), keyVersion: Number(connection.credential_key_version || 1) },
-      capability: GranolaCapabilities.workspaceRead, adopt: true });
+      capability: GranolaCapabilities.workspaceRead, adopt: true }).catch((error: unknown) => { throw installationActionError(error); });
   }
 
   /**
@@ -3364,6 +3396,19 @@ export class ConnectionService {
     ).bind(workspaceId, connectionId, at, at, JSON.stringify(rows)).run();
   }
 
+  private async recordInstallationAudit(installation: ConnectorInstallation, action: string, phase = String(installation.generation)): Promise<void> {
+    const auth = this.requireAuth();
+    const operationKey = `${installation.connectionId}:${action}:${phase}`;
+    await this.env.DB.prepare(`INSERT INTO audit_events
+      (id, workspace_id, actor_type, actor_user_id, action, target_type, target_id, metadata_json, created_at)
+      SELECT ?, ?, 'user', ?, ?, 'connector_connection', ?, ?, ?
+      WHERE NOT EXISTS (SELECT 1 FROM audit_events WHERE workspace_id = ? AND target_id = ?
+        AND action = ? AND actor_user_id = ? AND json_extract(metadata_json, '$.operationKey') = ?)`)
+      .bind(newId(), auth.workspaceId, auth.userId, action, installation.connectionId,
+        JSON.stringify({ operationKey, provider: installation.provider, generation: installation.generation }), nowIso(),
+        auth.workspaceId, installation.connectionId, action, auth.userId, operationKey).run();
+  }
+
   private async recordConnectionAudit(
     workspaceId: string,
     userId: string,
@@ -3563,6 +3608,21 @@ export class ConnectionService {
   private async refreshScheduler(workspaceId: string): Promise<void> {
     await refreshWorkspaceSchedule(this.env, workspaceId);
   }
+}
+
+function installationActionError(error: unknown): unknown {
+  if (!(error instanceof Error)) return error;
+  const refusals = [
+    ["connector_installation_not_found", "This connection has no workspace event installation"],
+    ["connector_still_enabled", "Disconnect this connection before forgetting its cleanup credential"],
+    ["connector_disabled", "This connection is disconnected"],
+    ["connector_cleanup_credential_unavailable", "The cleanup credential is unavailable. Remove the recorded webhook in the provider dashboard"],
+    ["connector_reconciliation_invalid", "Choose an unresolved registration and supply its provider webhook ID"],
+    ["connector_adoption_invalid", "The existing workspace connection changed. Reload its status before trying again"],
+    ["connector_installation_superseded", "The connection changed during this operation. Reload its status before trying again"],
+  ] as const;
+  const refusal = refusals.find(([code]) => error.message.includes(code));
+  return refusal ? new ApiError(refusal[0] === "connector_installation_not_found" ? 404 : 409, refusal[0], refusal[1]) : error;
 }
 
 function parseJson<T>(value: unknown, fallback: T): T {

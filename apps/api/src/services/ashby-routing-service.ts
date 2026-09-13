@@ -1,9 +1,7 @@
 import { z } from 'zod';
 import { ConnectorError } from '@rally/connectors';
 import type { Env } from '../env';
-import { numericEnv } from '../env';
 import { ApiError } from '../lib/api-error';
-import { ConnectionService } from './connection-service';
 import { workspaceRegionalDatabase } from './workspace-runtime-database';
 
 export const AshbyRouteSchema = z.strictObject({ connectionId: z.string().uuid(), region: z.enum(['global', 'eu']), status: z.enum(['active', 'disabled']) });
@@ -14,10 +12,12 @@ export const AshbyIngestionResultSchema = z.union([
 ]);
 export type AshbyRpcResult<T> = { ok: true; value: T } | { ok: false; error: { status: ApiError['status']; code: string; message: string } };
 export interface GlobalAshbyRouterRpcBinding {
+  health(): Promise<AshbyRpcResult<{ region: "global" | "eu" }>>;
   lookupRoute(connectionId: string): Promise<AshbyRpcResult<{ region: "global" | "eu" }>>;
   registerRoute(input: z.infer<typeof AshbyRouteSchema>): Promise<AshbyRpcResult<{ registered: true }>>;
 }
 export interface AshbyRegionalBridgeRpcBinding {
+  health(): Promise<AshbyRpcResult<{ region: "global" | "eu" }>>;
   ingest(input: z.infer<typeof AshbyIngressSchema>): Promise<AshbyRpcResult<z.infer<typeof AshbyIngestionResultSchema>>>;
 }
 export async function serializeAshbyRpcResult<T>(operation: () => Promise<T>): Promise<AshbyRpcResult<T>> {
@@ -48,13 +48,4 @@ export async function registerAshbyRoute(env: Env, input: z.infer<typeof AshbyRo
   const persisted = await workspaceRegionalDatabase(env).prepare('SELECT region FROM ashby_connection_routes WHERE connection_id = ?').bind(route.connectionId).first<{ region: string }>();
   if (persisted?.region !== route.region) throw new ApiError(409, 'ashby_route_conflict', 'Ashby connection already belongs to another region');
   return { registered: true as const };
-}
-export async function routeAshbyWebhook(env: Env, connectionId: string, rawBody: Uint8Array, signature: string | null) {
-  if (rawBody.byteLength > numericEnv(env, 'PROVIDER_WEBHOOK_MAX_BYTES', 1_000_000)) throw new ApiError(413, 'webhook_too_large', 'Ashby webhook exceeds the configured limit');
-  const route = await workspaceRegionalDatabase(env).prepare("SELECT region FROM ashby_connection_routes WHERE connection_id = ? AND status = 'active'").bind(connectionId).first<{ region: string }>();
-  if (!route) throw new ApiError(404, 'connection_not_found', 'Ashby connection route not found');
-  if (route.region === env.AVALON_REGION) return AshbyIngestionResultSchema.parse(await new ConnectionService(env).ingestAshbyWebhook(connectionId, rawBody, new Headers(signature ? { 'Ashby-Signature': signature } : {})));
-  if (env.AVALON_REGION !== 'global' || route.region !== 'eu' || !env.EU_ASHBY_BRIDGE) throw new ApiError(503, 'ashby_region_unavailable', 'The Ashby connection region is unavailable');
-  const bytes = new Uint8Array(rawBody.byteLength); bytes.set(rawBody);
-  return AshbyIngestionResultSchema.parse(unwrap(await env.EU_ASHBY_BRIDGE.ingest({ connectionId, rawBody: bytes.buffer, signature })));
 }
