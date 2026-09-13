@@ -166,9 +166,13 @@ Per <https://docs.fireflies.ai/getting-started/mcp-configuration> and
 Granola is the structural template for the adapter: two scopes on one adapter
 (`packages/connectors/src/granola.ts`), a workspace admin API key, personal
 hosted MCP OAuth via `createHostedMcpPassthrough`, a signed-webhook facet
-whose normalized activity is a change signal hydrated after admission, the
-digestibility split between generated and operational note events, and the
-`0048_granola_connector.sql` migration shape. The setup, verification,
+whose normalized activity is a change signal hydrated after admission, and
+the digestibility split between generated and operational note events. Its
+D1 migration, `0048_granola_connector.sql`, is history rather than precedent:
+`0090_drop_legacy_product_tables.sql` retired the D1 connector tables, and
+the schema change for a new connector type is a WorkspaceDO migration in the
+shape of migration 31 in `workspace-do.ts` (the PRD's data model has the
+recipe). The setup, verification,
 maintenance, and removal of the workspace webhook follow
 [the connector installation lifecycle PRD](../2026-09-12_connector-installation-lifecycle/prd.md)
 instead of Granola's connection-service path; Ashby in that PRD is the
