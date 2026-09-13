@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ConnectorConnectionCardCatalog } from "@rally/contracts";
 
 import {
   AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
@@ -29,8 +30,25 @@ describe("connector connection tool guidance", () => {
 
     expect(schema.required).toEqual(["connectorId", "scope"]);
     expect(schema.additionalProperties).toBe(false);
-    expect(schema.properties?.connectorId?.description)
-      .toContain("Personal only: google-mail-calendar, ashby, granola.");
+    // Two independent facts, because reading the split back off the same
+    // catalog the sentence is built from asserts nothing: a wrong scope would
+    // move the id in the description and in the expectation together.
+    //
+    // The first is the product's, stated here: these connectors offer no
+    // workspace connection card, and adding one to the other side is a product
+    // decision that should fail a test rather than rewrite one silently.
+    const connectorIds = schema.properties?.connectorId?.description ?? "";
+    expect(connectorIds).toBe(
+      "Connector to check or show."
+      + " Personal only: google-mail-calendar, ashby, fireflies, granola."
+      + " Personal or workspace: google-drive-workspace, github, linear, slack, notion.",
+    );
+    // The second is that the sentence keeps naming every id the catalog holds,
+    // so a connector added there cannot be quietly missing from what the model
+    // is told it may ask for.
+    for (const id of Object.keys(ConnectorConnectionCardCatalog)) {
+      expect(connectorIds, id).toContain(id);
+    }
     expect(schema.properties?.scope?.description)
       .toBe("Use personal for the current user's account. Use workspace only for an id described as personal or workspace.");
     expect(AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION.inputSchema).toEqual(schema);
