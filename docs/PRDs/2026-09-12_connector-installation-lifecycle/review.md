@@ -82,8 +82,9 @@ Later review also led to these corrections:
 - Dedicated ingress health checks the Global routing directory and both regional
   ingress contracts, including region identity. The duplicate shared-host API
   routing path and Global API-to-EU Ashby binding were removed. The first rollout
-  still requires an authorized Global-only bootstrap before the normal EU-first
-  deployment workflow; this has not been performed and must precede merge.
+  automatically bootstraps Global when the active router export is absent,
+  verifies its health/export, then proceeds to EU and shared ingress. No manual
+  pre-merge Global-only deployment is required.
 - Historical connection-dependent lists are explicitly named through v53. The v54
   installation foreign key is documented for future rebuilds without changing
   old migration SQL or hashes.
@@ -167,9 +168,8 @@ acceptance. The PRD remains in progress. Ashby workspace automation admission is
 restricted until the audience is verified; personal queries and usable workspace
 events are both required for launch. The dedicated Worker isolates ingress only;
 provider management and MCP still execute in the regional API. See the exact
-remaining checks in [plan.md](plan.md). The first deployment also needs a
-Global router bootstrap before the automatic EU-first path can safely merge; no
-bootstrap or deployment was authorized or performed.
+remaining checks in [plan.md](plan.md). The workflow automatically handles the
+first Global router deployment before EU; no bootstrap or deployment was performed.
 
 ## Automatic subscription follow-up — 2026-09-13
 
@@ -206,3 +206,17 @@ read-only expansion, explicit Test, offline handling, reconciliation and legacy
 Granola adoption. Lint/typecheck, docs validation, site build and native/public
 visual inspection pass. All ten committed screenshot files and PR image embeds
 were removed at the user's request; visual QA continues locally.
+
+## Automatic deployment ordering — 2026-09-13
+
+The first Global router bootstrap is now selected automatically from active
+exports, with existing EU targets checked before reversing the ordinary order.
+Global health/export failure stops EU; shared ingress follows both regional
+health barriers. Partial regional dispatch and Worker-first migrations retain
+their boundaries. No manual pre-merge deployment remains required.
+
+The 460-test scripts suite, lint, typecheck and docs check passed; five reverted
+production mutation proofs caught missing ordering/failure barriers. Detailed
+evidence and the unavailable live Cloudflare credential check are in
+[plan.md](plan.md#automatic-deployment-ordering--2026-09-13). No deployment or
+merge was performed; live Ashby acceptance is still outstanding.

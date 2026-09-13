@@ -60,15 +60,30 @@ credentials, verification, and canonical Queue admission remain regional. This
 isolates ingress startup, while shared provider/lifecycle code remains in the API
 artifact and must not be described as removed from it.
 
-The first rollout requires a bootstrap before the normal EU-first workflow:
-deploy the new Global API first so `AshbyRoutingBridge` exists, then deploy EU,
-then deploy the dedicated ingress. The Global API has no new Ashby binding to EU;
-only the dedicated ingress binds both regional receivers. A separately authorized
-Global-only deployment of this ref can perform that first stage. Do not merge
-this first release into the automatic EU-first deployment path before bootstrap.
+The normal deployment workflow handles the first rollout automatically.
+`scripts/select-ashby-deploy-order.mjs` reads Cloudflare's active Global version
+metadata. If `AshbyRoutingBridge` is absent, it checks that the current EU
+versions export every EU entrypoint named by the Global config, then selects a
+direct Global-first release. Both version-upload lanes are skipped because even
+uploading EU would resolve its missing Global target. After ordinary migrations,
+Global services and API deploy once; Global health and a fresh router-export
+check must pass before EU deploys. Worker-first migrations still wait for both
+compatible regional Workers. The dedicated ingress deploys last.
 
-After bootstrap, the deployment workflow deploys Ashby ingress only after both
-regional APIs pass health. Its own `/health` calls all three named targets,
+Later releases, including retries after a successful Global bootstrap, use the
+existing EU-first order and deployment-mode selection. A split deployment counts
+as ready only when every serving version exports the router. Missing or malformed
+control-plane metadata fails the preflight; it is not evidence that an export is
+absent. EU-only dispatch before bootstrap stops with instructions to select both
+regions, without deploying unselected Global. This is specific to Ashby's one-way
+new dependency: a missing EU target in Global's config stops the release instead
+of attempting a circular bootstrap. No manual Global-only rollout is required.
+The metadata contracts are Cloudflare's [List Deployments](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/list/)
+and [Get Version Detail](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/versions/methods/get/).
+
+The workflow deploys Ashby ingress only after both regional APIs pass health,
+then probes `https://ashby.rallywith.ai/health` with the existing health checker's
+URL override and retry policy. Its own `/health` calls all three named targets,
 checks their regions, and verifies the Global directory is readable; missing
 bindings, a missing routing migration or misrouted bridges return 503. Partial regional
 recovery leaves the shared ingress deployment unchanged. No new stored secret or
@@ -342,11 +357,11 @@ for Azure-bound models in its route plan.
 
 ### 2026-09-12 — Give Ashby public ingress its own startup graph
 
-**What changed:** Ashby receives a dedicated entry point/domain and build assertion, deployed after both regional API health barriers. It enforces the existing provider body-size setting before forwarding, and its health endpoint verifies the routing table and both regional ingress contracts. The first release requires a Global-only router bootstrap before EU gains the new binding.
+**What changed:** Ashby receives a dedicated entry point/domain and build assertion, deployed after both regional API health barriers. It enforces the existing provider body-size setting before forwarding, and its health endpoint verifies the routing table and both regional ingress contracts. The workflow detects active router exports and automatically bootstraps Global before EU on the first release, with health/export barriers and no duplicate Global deployment.
 
 **Why:** The user requested connector Workers after API startup and bundle growth had already cost an engineering day. The public ingress graph must stay independent while credentials and product authority remain regional.
 
-**Considered and rejected:** Adding a domain alias to the Global API, which would evaluate the same graph, or claiming that an ingress-only split removes shared provider/lifecycle code.
+**Considered and rejected:** Adding a domain alias to the Global API, which would evaluate the same graph, or claiming that an ingress-only split removes shared provider/lifecycle code. A manual pre-merge bootstrap would make an ordinary merge unsafe and block work on EU retirement; permanent Global-first ordering would break existing EU dependencies. Active export inspection keeps the exception automatic and temporary.
 
 **Consequences:** Keep the ingress free of API, registry and agent imports. Apply the same configured provider body limit before buffering/RPC and in regional ingress. Both bridges must exist before ingress deployment; partial regional recovery leaves the shared deployment unchanged.
 
