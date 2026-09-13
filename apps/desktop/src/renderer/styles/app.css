@@ -5576,12 +5576,20 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    of 2.5%, a tenth: the same band the transform sweep carried. Confined to the
    middle of a tile four times the surface's width, it is clear of the surface at
    both ends of the travel: at `100%` the tile starts 3W to the left and the band
-   ends at -0.75W, and at `0%` the band starts at 1.75W. The 105° tilt moves an
-   edge by about a quarter of the surface's height, which stays inside those
-   margins for every surface here, the square tiles included. */
+   ends at -0.75W, and at `0%` the band starts at 1.75W, so the pause at either
+   end of the ease parks nothing on the surface.
+
+   The band is upright, where the transform sweep's was tilted 15°. A tilt
+   spreads the band's edges sideways by the surface's height times the tilt's
+   tangent, and the bubble's height is unbounded against its width — a pasted
+   list of short lines is many times taller than it is wide — so no tile width
+   keeps a tilted band clear at the ends of the travel: past about five times
+   as tall as wide, with this tile, a tinted corner stayed parked through each
+   pause. Upright, the stops are in the surface's width alone and the clearance
+   holds for every shape. */
 .human-message.is-sending :is(.human-message-bubble, .message-attachment-image-cell, .attachment-media-tile, .attachment-file-card)::after {
   animation: message-sending-shimmer 1.8s ease-in-out infinite;
-  background: linear-gradient(105deg, transparent 43.75%, var(--av-sys-color-shimmer-default) 48.75%, var(--av-sys-color-shimmer-default) 51.25%, transparent 56.25%);
+  background: linear-gradient(to right, transparent 43.75%, var(--av-sys-color-shimmer-default) 48.75%, var(--av-sys-color-shimmer-default) 51.25%, transparent 56.25%);
   background-size: 400% 100%;
   border-radius: inherit;
   content: '';
