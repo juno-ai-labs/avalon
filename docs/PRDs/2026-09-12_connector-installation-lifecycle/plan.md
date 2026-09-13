@@ -17,8 +17,8 @@ operator-authenticated regional routes and workspace retirement fences.
 New: provider management facet; WorkspaceDO installation and registration
 inventory, generation-fenced operation receipts, cleanup-only encrypted snapshots;
 shared setup/recovery/removal runner; frozen bulk maintenance targets and command.
-Granola currently provisions in ConnectionService and repairs in its adapter.
-Neither bulk maintenance nor post-disable credential access exists today.
+At the inspected base, Granola provisioned in ConnectionService and repaired in its adapter.
+Neither bulk maintenance nor post-disable credential access existed at that base.
 
 ## Phase 1 — Provider contracts and additive foundations
 
@@ -75,7 +75,8 @@ and retired authority, Queue handoff failure, MCP/event independence.
   only with verified provider cutover evidence, otherwise require manual action.
 - [x] Disable ordinary access immediately, retain a separate deletion-only
   snapshot for exact recorded resources, and erase it after confirmed cleanup.
-- [x] Record stale in-flight creations as cleanup work; never restore disabled or
+- [x] Retain late still-desired identities for inspection; record obsolete or
+  disconnected in-flight creations as cleanup work. Never restore disabled or
   retired authority. Surface unsupported/revoked/unknown cleanup honestly.
 
 Gate: shared synthetic-provider contract tests and real workerd generation,
@@ -123,10 +124,12 @@ PR creation and review were subsequently authorized. Deployment and merge remain
 - Ashby and Granola provider suites: 17 tests pass, including OAuth metadata,
   registration, regional callback, exchange, and refresh fixtures. These prove
   Rally's protocol handling, not live Ashby account compatibility.
-- Installation suite: 25 tests on real workerd cover atomic setup, generation
+- Installation lifecycle suites: 62 tests across 9 real-workerd files cover atomic setup, generation
   fences, populated migration, signed raw-byte ingress, both regional bridges,
   Queue admission, cleanup, Granola adoption, key replacement, rotation evidence,
-  frozen maintenance, concurrent updates, cancellation, and personal isolation.
+  frozen maintenance, concurrent updates, cancellation, and personal isolation. Review adds authenticated routes, complete local teardown,
+  setup telemetry, early Resume and duplicate-delivery races, and real Queue
+  consumer dispatch.
 - Representative production breaks were observed failing for duplicate setup,
   repeated dispatch, stale create settlement, local disablement, unverified cleanup
   IDs, pending-key persistence, rotation evidence and unresolved-cutover repair,
@@ -147,15 +150,15 @@ PR creation and review were subsequently authorized. Deployment and merge remain
 - Script suite: 446 pass. Desktop release invariants: 140 pass. Typecheck passes.
   Lint (zero warnings), docs check, site build, and Global/EU/Ashby dry-run
   builds and local startup checks pass.
-- Final `pnpm test` passes: API Node 272 files / 2,916 tests; real workerd
-  79 files / 830 tests; desktop 191 files / 2,894 tests; and every other package.
+- Final `pnpm test` passes: API Node 273 files / 2,919 tests; real workerd
+  87 files / 867 tests; desktop 191 files / 2,903 tests; and every other package.
   An earlier run caught a maintenance initialization error; it was corrected,
   the installation file passed, and the full suite then passed. The final
-  installation suite also passes independently (25 tests).
-- Dedicated Ashby artifact: 735.62 KiB (112.20 KiB gzip); local startup sampled
-  9.1 ms active. It isolates ingress only. Provider management and hosted MCP still
+  lifecycle suites also pass independently (62 tests across 9 files).
+- Dedicated Ashby artifact: 738.37 KiB (113.15 KiB gzip); local startup sampled
+  3.9 ms active. It isolates ingress only. Provider management and hosted MCP still
   execute in the regional API; this change does not reduce the main API bundle
-  (10,990.39 KiB / 3,602.37 KiB gzip in both regional dry runs).
+  (10,996.47 KiB / 3,604.54 KiB gzip in both regional dry runs).
   Startup profiles are local diagnostics, not deployed Cloudflare measurements.
 
 ## Remaining live acceptance
@@ -180,13 +183,41 @@ launch readiness until an authorized account can establish:
    Ashby/Granola controls give explicit manual recreation guidance with a stated
    delivery gap; they do not claim verified automatic rotation.
 6. After a separate deployment request, dedicated-domain/service-binding behavior
-   and actual regional Worker startup acceptance. No deployment was performed.
+   and actual regional Worker startup acceptance. The first rollout requires a
+   Global-only router bootstrap before EU can bind the new entrypoint, then the
+   dedicated ingress. Do not merge into automatic EU-first deployment before that
+   bootstrap. No bootstrap or deployment was performed.
 
 ## Review evidence
 
-The requested review swarm is in progress. Nine personas review independently at
-high effort, in batches of three because of the runtime concurrency limit. Opus
-is unavailable in this environment; the available GPT-6 model is used instead.
+The nine-persona review swarm is complete, with all findings corrected and
+follow-up verification. Opus was unavailable; reviewers used GPT-6 Astra at high
+effort in batches of three. The additional GitHub automated review findings and
+reasoned non-findings are recorded in [review.md](review.md).
+
+Review regression proofs deliberately removed late-create retention, signing
+material verification, repeated-disconnect idempotency, credential settlement
+generation advancement, workspace role refusal, audit writes and replay dedupe,
+credential preservation and validation, event-specific signing authority, saved
+event selection, streamed byte limits, atomic target updates, cancellation and
+settled-target guards. Additional breaks restored the preview-resume bypass,
+blocked-maintenance stall, unrecoverable version mismatch, missing Test audit and
+wrong operator identity. Each affected file failed for its intended behavior,
+and all changes were restored. The first saved-selection proof stopped at a
+response-code mismatch; moving the no-persistence assertion first then proved
+that removing the early guard writes unauthorized R2 content before the later
+normalization refusal. The onboarding regression also failed before its fix.
+
+Further isolated proofs removed only the same-step claim generation check,
+runnable-target deferral, ingress readiness checks, routing region-conflict guard,
+setup telemetry, local teardown guarantee, complete installation disconnect,
+cleanup dispatch classification, and stable public refusals. Each failed its
+actual authority/persistence or completion assertion. Removing maintenance Queue
+dispatch leaves the real consumed operation running and fails completion. Early
+Resume failed before its fix by reporting current with the old destination.
+All production mutations are restored. Final gate typecheck also caught two
+new renderer fixtures using an unnormalized status and missing plugin identity;
+the fixtures now match the API client contract.
 
 Native Electron captures: [workspace setup](evidence/workspace-setup.png) and
 [installation recovery and permission denial](evidence/installation-recovery.png).

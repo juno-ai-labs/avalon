@@ -23,6 +23,7 @@ const api = vi.hoisted(() => ({
   updateGitHubRepositoryAccessSettings: vi.fn(),
   getAvailableConnectorTypes: vi.fn(),
   createGranolaWorkspaceConnection: vi.fn(),
+  connectorInstallation: vi.fn(),
   createWebhookConnection: vi.fn(),
   rotateWebhookSecret: vi.fn(),
   createXConnection: vi.fn(),
@@ -1392,6 +1393,26 @@ describe('Workspace settings', () => {
     await waitFor(() => expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledWith(apiKey, expect.any(String)));
     expect(await screen.findByText('No personal connections yet')).toBeVisible();
     expect(screen.getByText('No workspace connections yet')).toBeVisible();
+  });
+
+  it('opens the existing Granola installation when setup loses its response', async () => {
+    renderSettings();
+    openSettingsSection('Connections');
+    const granolaCard = (await screen.findByText('Granola')).closest('article');
+    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for workspace'));
+    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola workspace' });
+    api.createGranolaWorkspaceConnection.mockRejectedValue(new Error('Response lost'));
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000018', connectorType: 'granola', scope: 'workspace',
+      displayName: 'Granola workspace events', capabilities: ['granola.workspace.read'], status: 'error',
+    }]);
+    api.connectorInstallation.mockResolvedValue({ installation: null });
+    fireEvent.change(within(dialog).getByLabelText('Workspace API key'), { target: { value: `grn_${'a'.repeat(24)}` } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect for workspace' }));
+    await screen.findByRole('dialog', { name: 'Workspace event installation' });
+    expect(api.connectorInstallation).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000018');
+    expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Manage events for Granola workspace events', hidden: true })).toBeInTheDocument();
   });
 
   it('offers the read-only X connector only at workspace scope', async () => {

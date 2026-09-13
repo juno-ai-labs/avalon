@@ -4,7 +4,7 @@ import { InstallationMaintenanceSchema, InstallationMaintenanceCancelSchema, typ
 import { prepareInstallationMaintenance, cancelInstallationMaintenance } from './connector-installation-storage';
 import { InstallationRotationPrepareSchema, type InstallationRotationPrepare } from "./connector-installation-protocol";
 import { prepareInstallationRotation } from "./connector-installation-storage";
-import { INSTALLATION_SCHEMA_STATEMENTS, InstallationCreateSchema, InstallationReadSchema, InstallationClaimSchema, InstallationSettleSchema, InstallationChangeSchema,
+import { InstallationCreateSchema, InstallationReadSchema, InstallationClaimSchema, InstallationSettleSchema, InstallationChangeSchema,
   type InstallationCreate, type InstallationClaim, type InstallationSettle, type InstallationChange } from "./connector-installation-protocol";
 import { createInstallation, readInstallation, claimInstallation, settleInstallation, changeInstallation } from "./connector-installation-storage";
 import { safeParseSocketEvent, isUnknownSocketEvent, WorkspaceSocketClientEventTypeSchema } from "@rally/contracts";
@@ -1122,7 +1122,7 @@ function automationDirectoryWorkspaceIdentityGuards(): string[] {
 }
 
 /**
- * Every table whose rows a `DROP TABLE connector_connections` would take with
+ * Frozen inventory through v53 of tables a `DROP TABLE connector_connections` would take with
  * it — twelve that cascade and `connector_oauth_attempts`, whose connection
  * pointer would be nulled. Migration 31 copies each one out and back around
  * the parent's replacement.
@@ -1130,8 +1130,11 @@ function automationDirectoryWorkspaceIdentityGuards(): string[] {
  * A list rather than a query over `sqlite_schema`: a migration's statements are
  * hashed into every object's receipt, so what it does has to be decided in
  * source rather than by whatever an individual database happens to hold.
+ * Do not extend this historical list: v54 adds connector_installations with
+ * a non-cascading foreign key. A later parent rebuild must declare a new
+ * inventory including it, without changing v31/v53 statement fingerprints.
  */
-const CONNECTOR_CONNECTION_DEPENDENTS = [
+const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53 = [
   "connector_oauth_attempts",
   "slack_agent_contexts",
   "slack_agent_feedback",
@@ -2507,7 +2510,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     // real — and it means this migration never restates a child's schema,
     // which is the other way a rebuild loses something: a column added by a
     // later migration, an index, a trigger, quietly not carried across.
-    ...CONNECTOR_CONNECTION_DEPENDENTS.map((table) => (
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53.map((table) => (
       `CREATE TABLE ${table}_v31_hold AS SELECT * FROM ${table}`
     )),
     `CREATE TABLE connector_connections_v31 (
@@ -2565,7 +2568,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     // dependent empty: twelve cascade to nothing, while `connector_oauth_attempts`
     // nulls its pointer and keeps the row, which the hold would then duplicate.
     // Deleting makes the restore mean the same thing for both.
-    ...CONNECTOR_CONNECTION_DEPENDENTS.flatMap((table) => [
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53.flatMap((table) => [
       `DELETE FROM ${table}`,
       `INSERT INTO ${table} SELECT * FROM ${table}_v31_hold`,
       `DROP TABLE ${table}_v31_hold`,
@@ -3022,7 +3025,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 53,
   description: "admit Ashby without losing connector dependents",
   statements: [
-    ...CONNECTOR_CONNECTION_DEPENDENTS.map((table) => (
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53.map((table) => (
       `CREATE TABLE ${table}_v53_hold AS SELECT * FROM ${table}`
     )),
     `CREATE TABLE connector_connections_v53 (
@@ -3071,7 +3074,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `CREATE UNIQUE INDEX connector_connections_active_model_plugin_id_uq
       ON connector_connections(model_plugin_id) WHERE status != 'disabled'`,
     ...workspaceIdentityFencesFor("connector_connections"),
-    ...CONNECTOR_CONNECTION_DEPENDENTS.flatMap((table) => [
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53.flatMap((table) => [
       `DELETE FROM ${table}`,
       `INSERT INTO ${table} SELECT * FROM ${table}_v53_hold`,
       `DROP TABLE ${table}_v53_hold`,
@@ -3112,7 +3115,28 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       WHERE telemetry_operation_id IS NOT NULL`,
     ...workspaceIdentityFencesFor("connector_oauth_attempts"),
   ],
-}, { version: 54, description: "durable connector installation lifecycle", statements: INSTALLATION_SCHEMA_STATEMENTS
+}, { version: 54, description: "durable connector installation lifecycle", statements: [
+  `CREATE TABLE connector_installations (
+    connection_id TEXT PRIMARY KEY REFERENCES connector_connections(id),
+    workspace_id TEXT NOT NULL,
+    attempt_id TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation > 0),
+    document_json TEXT NOT NULL CHECK (json_valid(document_json)),
+    cleanup_ciphertext TEXT, cleanup_iv TEXT, cleanup_key_version INTEGER
+  ) STRICT`,
+  `CREATE TABLE connector_installation_steps (
+    step_id TEXT PRIMARY KEY, connection_id TEXT NOT NULL, generation INTEGER NOT NULL,
+    state TEXT NOT NULL, intent_json TEXT NOT NULL CHECK (json_valid(intent_json)),
+    result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)), created_at TEXT NOT NULL
+  ) STRICT`,
+  `CREATE INDEX connector_installation_steps_connection ON connector_installation_steps(connection_id, generation)`,
+  `CREATE UNIQUE INDEX ashby_personal_connection_unique ON connector_connections(workspace_id, owner_user_id)
+    WHERE connector_type = 'ashby' AND scope = 'personal' AND status <> 'disabled'`,
+  `CREATE UNIQUE INDEX ashby_workspace_connection_unique ON connector_connections(workspace_id)
+    WHERE connector_type = 'ashby' AND scope = 'workspace' AND status <> 'disabled'`,
+]
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {

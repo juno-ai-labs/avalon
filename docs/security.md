@@ -413,11 +413,39 @@ workspace-scoped.
 Google scopes are requested incrementally. Sign-in does not grant Gmail, Calendar,
 or Drive access. Revoked and expired grants become an explicit reconnect state.
 
+### Workspace installation and cleanup authority
+
+Ashby and Granola workspace setup binds an administrator's attempt and input
+digest to a reserved connection before provider mutations. API keys and signing
+material use the connection-bound regional credential envelope. Replacement
+validates provider access and checks both generation and the current envelope
+before committing, so a racing settlement cannot overwrite a newer API key.
+
+Disconnect removes ordinary access atomically while retaining separate encrypted
+cleanup authority. Only a claimed removal of an exact recorded provider ID may
+use it; it cannot refresh, discover tools, create or update registrations.
+Repeated disconnect preserves pending cleanup. An uncertain create's late result
+is handled against its recorded intent without reviving access; forgetting local
+cleanup authority leaves provider removal to the administrator. The existing Ace
+`demos` operator role authorizes reviewed fleet maintenance, never arbitrary
+provider requests or new customer event grants. Administrative mutations retain
+actor-attributed audit records without keys or candidate content. See
+[installation lifecycle](connector-installation-lifecycle.md).
+
 ### Webhooks
 
 Generic webhooks use an endpoint-specific secret, a timestamped HMAC-SHA256
 signature, a bounded replay window, a stored receipt, schema validation, size
 limits, and provider dedupe keys.
+
+Ashby verifies the exact raw body with HMAC-SHA256 before decoding, parsing or
+regional persistence. Both dedicated ingress and regional receipt enforce the
+existing `PROVIDER_WEBHOOK_MAX_BYTES` limit (1,000,000 bytes when unset;
+2,000,000 in all three checked-in Wrangler configs), before buffering/forwarding
+on ingress. Host-derived content hashes bind replay identity
+to the same bytes. Normalized recruiting events remain restricted pending an
+authorized confidential-payload review; receiving a workspace webhook does not
+grant its contents to workspace automations.
 
 Granola webhooks are verified using the Standard Webhooks `webhook-id`,
 `webhook-timestamp`, and `webhook-signature` headers over the exact raw request
@@ -857,14 +885,15 @@ incident response that may prompt it.
 
 ### 2026-09-12 — Separate workspace installation cleanup from personal access
 
-Workspace API-key replacement validates the supplied key through the authorized
-provider facet and commits only against the still-enabled installation generation.
-It preserves signing secrets and unknown provider receipts. Bulk configuration
-intersects reviewed event declarations with existing customer selection; operator
-maintenance cannot grant itself a new event category. Signed Ashby bytes are
-forwarded unchanged and authenticated as bytes, including their content hash.
+**What changed:** Workspace installation reserves encrypted authority before provider writes, isolates exact-ID removal credentials after disablement, and fences credential replacement against the current envelope. Administrative mutations retain actor attribution.
 
-Workspace event setup reserves and encrypts provider authority before remote side effects. Ashby verifies raw-body HMAC SHA-256 signatures before parsing event fields. Disablement atomically removes ordinary credentials while a separate encrypted snapshot authorizes only exact recorded webhook removal; it cannot refresh, create, update, discover or execute tools. Generation checks fence stale work. Confidential Ashby webhook payload scope has not been verified against an authorized account, so the normalized audience remains restricted pending the approved release review. See [installation lifecycle](connector-installation-lifecycle.md).
+**Why:** A disabled connection must stop ordinary access without losing the only means of deleting its provider registration. A stale response must not restore credentials or silently replace a newer API key.
+
+**Considered and rejected:** Reusing ordinary credential authorization for cleanup, blindly retrying uncertain creates, or widening event grants through operator maintenance.
+
+**Consequences:** Cleanup remains removal-only; repeat disconnect preserves it and forgetting leaves manual provider work. Raw-byte signature/size checks precede persistence, and confidential Ashby events remain restricted. The [lifecycle owner](connector-installation-lifecycle.md) records recovery details.
+
+PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
 
 ### 2026-09-11 — The five prompt trust labels are gone
 

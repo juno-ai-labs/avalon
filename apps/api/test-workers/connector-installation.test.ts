@@ -369,15 +369,26 @@ describe('connector installation authority', () => {
     expect(provider).not.toHaveBeenCalled();
   });
 
-  it('reports unavailable configuration versions without a provider dispatch', async () => {
+  it('recovers an undispatched version mismatch through Test after the matching Worker is available', async () => {
     const { stub, input, workspaceId, connectionId } = await fixture();
+    const key = 'version-handoff-envelope-key';
     input.installation.desiredVersion = 2;
+    input.credentials = { ...await encryptString(JSON.stringify({ apiKey: 'test-key', signing: 'signing-key' }), key, connectionId), keyVersion: 1 };
     await stub.createConnectorInstallation(input);
-    const provider = vi.fn(); vi.stubGlobal('fetch', provider);
-    const result = await runConnectorInstallation(env, workspaceId, connectionId, new AbortController().signal);
-    expect(result?.state).toBe('action_required');
+    const remote = { id: crypto.randomUUID(), requestUrl: input.installation.registrations[0]!.destination, webhookType: 'applicationSubmit', enabled: true };
+    const provider = vi.fn(async (url: string | URL | Request) => Response.json({ success: true, results: String(url).endsWith('/apiKey.info') ? {} : remote }));
+    vi.stubGlobal('fetch', provider);
+    const testEnv = { ...env, CONNECTOR_CREDENTIALS_KEY: key };
+    const result = await runConnectorInstallation(testEnv, workspaceId, connectionId, new AbortController().signal);
     expect(result?.registrations[0]?.error).toContain('configuration version');
     expect(provider).not.toHaveBeenCalled();
+    const adapter = connectorRegistryForEnv(testEnv).get('ashby');
+    adapter.installationManagement = { ...adapter.installationManagement!, version: 2 };
+    await stub.changeConnectorInstallation({ workspaceId, connectionId, action: 'repair' });
+    const recovered = await runConnectorInstallation(testEnv, workspaceId, connectionId, new AbortController().signal);
+    expect(recovered?.state).toBe('current');
+    expect(recovered?.appliedVersion).toBe(2);
+    expect(provider.mock.calls.filter(([url]) => String(url).endsWith('/webhook.create'))).toHaveLength(1);
   });
 
   it('retirement refuses new dispatch and stale settlement without accessing the provider', async () => {
@@ -393,6 +404,22 @@ describe('connector installation authority', () => {
     const settled = await stub.settleConnectorInstallationStep({ ...claim, registration: { ...registration, state: 'current', providerId: crypto.randomUUID() } }).then(() => null, (error: unknown) => error);
     expect(String(settled)).toContain('retired');
     expect(provider).not.toHaveBeenCalled();
+  });
+
+  it('checks all dedicated ingress dependencies before reporting healthy', async () => {
+    await seedOpenWorkstreamAuthority(env.DB);
+    const router = new AshbyRoutingBridge(createExecutionContext(), env);
+    const globalBridge = new AshbyRegionalBridge(createExecutionContext(), { ...env, AVALON_REGION: 'global' });
+    const euBridge = new AshbyRegionalBridge(createExecutionContext(), { ...env, AVALON_REGION: 'eu' });
+    const bindings = { GLOBAL_ASHBY_ROUTER: router, GLOBAL_ASHBY_BRIDGE: globalBridge, EU_ASHBY_BRIDGE: euBridge };
+    const worker = new AshbyIngressWorker(createExecutionContext(), bindings);
+    const request = () => new Request('https://ashby.rallywith.ai/health');
+    // Missing directory migration must fail readiness before any provider call.
+    expect((await worker.fetch(request())).status).toBe(503);
+    await env.DB.exec(`CREATE TABLE ashby_connection_routes (connection_id TEXT PRIMARY KEY, region TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+    expect((await worker.fetch(request())).status).toBe(200);
+    const miswired = new AshbyIngressWorker(createExecutionContext(), { ...bindings, EU_ASHBY_BRIDGE: globalBridge });
+    expect((await miswired.fetch(request())).status).toBe(503);
   });
 
   it.each(['global', 'eu'] as const)('routes the dedicated Ashby host to %s authority with unchanged signed bytes', async (region) => {
@@ -446,16 +473,67 @@ describe('connector installation authority', () => {
     later.input.credentials = { ...await encryptString(JSON.stringify({ apiKey: 'later-key', signing: 'later-signing-key' }), key, later.connectionId), keyVersion: 1 };
     await later.stub.createConnectorInstallation(later.input);
     await env.DB.prepare("INSERT INTO connector_ingress_routes VALUES (?, ?, 'global', 'ashby', 'workspace', 'active')").bind(later.connectionId, later.workspaceId).run();
-    await applyConnectorMaintenance(testEnv, preview.id);
-    await runConnectorMaintenance(testEnv, preview.id, new AbortController().signal);
-    await applyConnectorMaintenance(testEnv, preview.id);
-    await runConnectorMaintenance(testEnv, preview.id, new AbortController().signal);
+    const sent = vi.spyOn(env.ACTIVITY_QUEUE, 'send');
+    async function consumeAppliedMaintenance() {
+      sent.mockClear();
+      await applyConnectorMaintenance(testEnv, preview.id);
+      const messages = sent.mock.calls.map(([body]) => body);
+      const batch = createMessageBatch('avalon-do-runtime-test-activity', messages.map((body) => ({ id: crypto.randomUUID(), timestamp: new Date(), body, attempts: 1 })));
+      await consumeActivityQueue(batch, testEnv);
+      expect((await getQueueResult(batch, createExecutionContext())).retryMessages).toEqual([]);
+    }
+    await consumeAppliedMaintenance();
+    await consumeAppliedMaintenance();
     const completed = await connectorMaintenanceStatus(testEnv, preview.id);
     expect(completed.state).toBe('complete');
     expect(completed.targets).toHaveLength(1);
     expect((await later.stub.connectorInstallation({ workspaceId: later.workspaceId, connectionId: later.connectionId }))?.registrations[0]?.state).toBe('pending');
     expect(completed.targets[0]?.state).toBe('current');
     expect(provider.mock.calls.filter(([url]) => String(url).endsWith('/webhook.create'))).toHaveLength(1);
+  });
+
+  it('refuses resume of an unapplied preview without changing its frozen configuration', async () => {
+    const { stub, input, workspaceId, connectionId } = await fixture();
+    await stub.createConnectorInstallation(input);
+    await env.DB.exec(`CREATE TABLE connector_maintenance_operations (id TEXT PRIMARY KEY, document_json TEXT NOT NULL CHECK(json_valid(document_json)));
+      CREATE TABLE connector_ingress_routes (connection_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, region TEXT NOT NULL, connector_type TEXT NOT NULL, scope TEXT NOT NULL, status TEXT NOT NULL);`);
+    await env.DB.prepare("INSERT INTO connector_ingress_routes VALUES (?, ?, 'global', 'ashby', 'workspace', 'active')").bind(connectionId, workspaceId).run();
+    const preview = await previewConnectorMaintenance(env, { provider: 'ashby', region: 'global', version: 1 }, 'ace-test-operator');
+    await expect(applyConnectorMaintenance(env, preview.id, true)).rejects.toMatchObject({ code: 'connector_maintenance_not_applied', status: 409 });
+    expect(await connectorMaintenanceStatus(env, preview.id)).toEqual(preview);
+    expect((await stub.connectorInstallation({ workspaceId, connectionId }))?.generation).toBe(1);
+  });
+
+  it('settles maintenance when a failed replacement leaves dependency-blocked removal pending', async () => {
+    const { stub, input, workspaceId, connectionId } = await fixture();
+    const key = 'blocked-maintenance-envelope-key';
+    input.credentials = { ...await encryptString(JSON.stringify({ apiKey: 'test-key', signing: 'old-signing-key' }), key, connectionId), keyVersion: 1 };
+    input.installation.selectedEvents = ['applicationSubmit', 'candidateStageChange'];
+    input.installation.state = 'current'; input.installation.appliedVersion = 1;
+    const original = input.installation.registrations[0]!;
+    original.key = input.installation.selectedEvents.join('+');
+    original.events = input.installation.selectedEvents;
+    original.state = 'current'; original.providerId = crypto.randomUUID();
+    await stub.createConnectorInstallation(input);
+    await env.DB.exec(`CREATE TABLE connector_maintenance_operations (id TEXT PRIMARY KEY, document_json TEXT NOT NULL CHECK(json_valid(document_json)));
+      CREATE TABLE connector_ingress_routes (connection_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, region TEXT NOT NULL, connector_type TEXT NOT NULL, scope TEXT NOT NULL, status TEXT NOT NULL);`);
+    await env.DB.prepare("INSERT INTO connector_ingress_routes VALUES (?, ?, 'global', 'ashby', 'workspace', 'active')").bind(connectionId, workspaceId).run();
+    const provider = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).endsWith('/apiKey.info')) return Response.json({ success: true, results: {} });
+      throw new Error('Provider create response lost');
+    });
+    vi.stubGlobal('fetch', provider);
+    const testEnv = { ...env, CONNECTOR_CREDENTIALS_KEY: key };
+    const preview = await previewConnectorMaintenance(testEnv, { provider: 'ashby', region: 'global', version: 1 }, 'ace-test-operator');
+    await applyConnectorMaintenance(testEnv, preview.id);
+    await runConnectorMaintenance(testEnv, preview.id, new AbortController().signal);
+    const completed = await connectorMaintenanceStatus(testEnv, preview.id);
+    expect(completed.state).toBe('complete');
+    expect(completed.targets[0]?.state).toBe('action_required');
+    const installation = (await stub.connectorInstallation({ workspaceId, connectionId }))!;
+    expect(installation.registrations.some((registration) => registration.action === 'create' && registration.state === 'unknown')).toBe(true);
+    expect(installation.registrations.find((registration) => registration.providerId === original.providerId)).toMatchObject({ action: 'remove', state: 'pending' });
+    expect(provider.mock.calls.some(([url]) => String(url).endsWith('/webhook.delete'))).toBe(false);
   });
 
   it('previews and applies a destination update without recreating the subscription, even with concurrent Queue deliveries', async () => {

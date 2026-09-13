@@ -1,4 +1,4 @@
-import type { AshbyRegionalBridgeRpcBinding, GlobalAshbyRouterRpcBinding } from "./services/ashby-routing-service";
+import type { GlobalAshbyRouterRpcBinding } from "./services/ashby-routing-service";
 import {
   AzureInferenceEndpointSchema,
   DesktopDeepLinkUrlSchema,
@@ -101,7 +101,6 @@ export interface Env {
   EU_GITHUB_BRIDGE?: GitHubRegionalBridgeRpcBinding;
   EU_INBOUND_EMAIL_BRIDGE?: InboundEmailRegionalRpcBinding;
   EU_LINEAR_BRIDGE?: LinearRegionalBridgeRpcBinding;
-  EU_ASHBY_BRIDGE?: AshbyRegionalBridgeRpcBinding;
   GLOBAL_ASHBY_ROUTER?: GlobalAshbyRouterRpcBinding;
   EU_NOTION_BRIDGE?: NotionRegionalBridgeRpcBinding;
   EU_SLACK_BRIDGE?: SlackRegionalBridgeRpcBinding;

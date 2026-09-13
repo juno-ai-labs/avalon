@@ -26,6 +26,17 @@ Local authentication is available only when all of these are true:
 
 If the local account cannot sign in, run `pnpm env:sync`, confirm `.env.local` remains owner-readable, and restart both processes. Never add a development-auth value to a hosted Worker.
 
+## Connector installation maintenance
+
+For Ashby or Granola registration recovery and a frozen regional fleet operation,
+use [connector installation operations](connector-installation-lifecycle.md#operations).
+The repository command uses the existing regional Ace `demos` credential and
+supports preview, apply, status, resume and cancel. Preview fixes the selected
+connections before any provider mutations; inspect per-target outcomes after an
+operation completes. The route's presence does not authorize an operator run.
+Deployment order for the dedicated Ashby ingress is in
+[API Worker deployment](api-worker-deployment.md#dedicated-ashby-ingress).
+
 ## Required hosted resources
 
 Create independent resource sets for `global` and `eu`:
@@ -923,6 +934,17 @@ without putting either setup material or its signing secret into logs:
 3. If the nonce expires or setup must be restarted, run the prepare command
    again. The new command invalidates any earlier unconsumed URL; never recover a
    nonce or verification token from Workers Logs or Logpush.
+
+The first Ashby rollout also needs a Global-first bootstrap: the new EU
+`GLOBAL_ASHBY_ROUTER` binding cannot target `AshbyRoutingBridge` until Global
+exports it. Global has no new Ashby dependency on EU, so deploy this ref to Global
+alone first (with the ordinary regional migrations), then deploy EU, then the
+dedicated `avalon-connector-ashby-global` ingress. Use a separately authorized
+Global-only deployment before merging this first release into the automatic
+EU-first workflow. Existing Granola callbacks are untouched. Subsequent Ashby
+releases follow the ordinary order. Dedicated ingress `/health` verifies all
+three named targets, their regional identity and the Global route table; it does
+not verify provider credentials or repair subscriptions.
 
 For ordinary releases after both entrypoints exist:
 

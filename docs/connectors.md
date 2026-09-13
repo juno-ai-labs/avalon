@@ -138,7 +138,7 @@ Freshness at the door is necessary but not sufficient, because a credential can 
 
 Two things about that recovery are easy to get wrong, so neither is left to the caller. **What counts as a refusal is provider-specific and is never inferred from the `unauthorized` code alone** — adapters raise that for policy and configuration failures that never reached the provider, and spending a single-use refresh token on one buys a retry that fails identically. Each adapter states its own vocabulary through `isProviderCredentialRejection`, which additionally admits only errors carrying provider response details: Granola matches a 401 from its MCP transport and not a 403, Slack matches `token_expired` and not the settled answers around it, Google matches the two reasons a new access token resolves. **And the rotation itself is serialized by the host**, not performed beside the coordinator: the door hands the adapter a `rotateCredentials` that claims the same WorkspaceDO-local lease, so two calls refused at the same moment cannot each redeem a rotating refresh token and leave the loser marking a connection `needs_reconnect` that its sibling had just rotated successfully. A caller that finds the stored credentials already changed adopts them instead of redeeming over them.
 
-Two adapter obligations sit alongside that. **A health check answers a question and must not write.** Reauthorization calls it on every plugin activation, so a read-shaped call that quietly repairs provider state does so on that cadence; an adapter with state worth restoring — Granola's webhook endpoint, which stops delivering when disabled — declares `repair`, which only an explicit connection test invokes. A repair never fails the test, and its outcome is reported in the test result either way, because a connection whose delivery is still broken must not read the same as one that was fixed. The health check reports the same condition without failing on it: the authorization is sound and every read tool works, so failing would take a usable connection out of every run to describe a problem only the test can fix. **And a token-endpoint failure is classified by the provider's error code, not its status.** `isRevokedGrantError` treats `invalid_grant`, `expired_token`, and `invalid_token` as a dead grant and everything else the provider names as Rally's problem, because OAuth reports a revoked grant and our own malformed request with the same HTTP 400 — and marking a member's working connection `needs_reconnect` over our bug is the worse of those two mistakes. `providerJsonResponse` carries the code through as `details.providerError`, read from `error` or `code` and from either nested, since Notion keys its token-endpoint envelope differently from the OAuth spec. When a provider names nothing at all the original status test stands: an unclassifiable failure that leaves a dead connection reporting healthy, prompting nobody while every call fails, is worse than one that asks for a reconnect that was not needed.
+Two adapter obligations sit alongside that. **A health check answers a question and must not write.** Reauthorization calls it on every plugin activation, so a read-shaped call that quietly repairs provider state does so on that cadence; an adapter with state worth restoring uses its installation-management facet, or `repair` when it has no installation lifecycle. Only an explicit connection test invokes repair; Granola webhook restoration belongs solely to the shared lifecycle. A repair never fails the test, and its outcome is reported in the test result either way, because a connection whose delivery is still broken must not read the same as one that was fixed. The health check reports the same condition without failing on it: the authorization is sound and every read tool works, so failing would take a usable connection out of every run to describe a problem only the test can fix. **And a token-endpoint failure is classified by the provider's error code, not its status.** `isRevokedGrantError` treats `invalid_grant`, `expired_token`, and `invalid_token` as a dead grant and everything else the provider names as Rally's problem, because OAuth reports a revoked grant and our own malformed request with the same HTTP 400 — and marking a member's working connection `needs_reconnect` over our bug is the worse of those two mistakes. `providerJsonResponse` carries the code through as `details.providerError`, read from `error` or `code` and from either nested, since Notion keys its token-endpoint envelope differently from the OAuth spec. When a provider names nothing at all the original status test stands: an unclassifiable failure that leaves a dead connection reporting healthy, prompting nobody while every call fails, is worse than one that asks for a reconnect that was not needed.
 
 Both halves are held to account by `connector-credential-freshness.test.ts` — see
 [Testing](#testing).
@@ -516,11 +516,47 @@ regional: one public connection issues one redirect URI and one webhook URL for
 both regions, so both arrive at a Global ingress that routes them to the owning
 region — see [`notion-ingress.md`](notion-ingress.md).
 
+### Ashby
+
+Ashby has independent personal and workspace modes. **Connect for me** uses
+Ashby's hosted MCP service, with the personal `ashby.personal.mcp` grant and
+owner authorization. Tool names and schemas come from live discovery; all retain
+conservative write execution and receipts without individual tool confirmations.
+**Connect for workspace** requires a Rally administrator and an Ashby API key
+with webhook management access. Its model-visible workspace catalogue explicitly describes an event-only
+connection and directs recruiting queries or updates to a personal connection;
+it exposes no recruiting read or write tools. Its selected `applicationSubmit` and `candidateStageChange` events are operational,
+not digest news. Events currently normalize only application, candidate and job
+IDs and remain restricted: workspace automation admission awaits the authorized
+confidential-payload review. Live provider acceptance remains outstanding.
+
+The dedicated `ashby.rallywith.ai` Worker forwards unchanged signed bytes to the
+owning regional API. Credentials, signature verification, payload persistence,
+and canonical event admission remain regional. [Provider app registrations](provider-apps.md)
+owns the OAuth/API prerequisites; [installation lifecycle](connector-installation-lifecycle.md)
+owns registration state and recovery.
+
+### Workspace installation management
+
+`ConnectorAdapter.installationManagement` declares the provider's reviewed event
+set, grouping, configuration version, supported operations and manual recovery.
+Ashby and Granola use the shared lifecycle service for setup, repair and removal.
+It reserves workspace identity before creating provider registrations, records
+uncertain outcomes, and separates ordinary authorization from exact-ID cleanup
+credentials. Health checks and inventory reads never repair an installation.
+Explicit **Test** adopts legacy Granola state, then requests lifecycle repair and
+checks health. Granola has no second adapter repair/revoke mutation path.
+
+The request/response contracts are shared with the desktop in
+`@rally/contracts`. Installation changes invalidate both the connection list and
+open installation details through the workspace connection notification. A
+personal OAuth failure cannot disable a separately authorized workspace install.
+
 ### Granola
 
 Granola has two intentionally separate connection modes. A personal connection uses Granola's hosted Streamable HTTP MCP server and browser OAuth with PKCE and dynamic client registration. It follows the member's currently active Granola workspace and exposes the server's live tool surface rather than a code-authored snapshot. A personal connection remains available only to its Rally owner.
 
-A workspace connection uses one administrator-created Granola Workspace API key. It exposes bounded read operations for listing notes, reading a note with an optional transcript, and listing folders. Rally creates the Granola webhook endpoint during installation with Granola's required `workspace` scope and note access/edit/generation events. This admits notes visible through that Workspace API key. Deliveries are verified against their untouched raw body using the endpoint's Standard Webhooks signing secret before storage, deduplication, normalization, and queueing. Granola's delivery is a change signal, so Rally hydrates the current note through `GET /v1/notes/{note_id}` before opportunity admission. Disconnecting the connection removes the remote endpoint when Granola accepts the request.
+A workspace connection uses one administrator-created Granola Workspace API key. It exposes bounded read operations for listing notes, reading a note with an optional transcript, and listing folders. Rally creates the Granola webhook endpoint during installation with Granola's required `workspace` scope and note access/edit/generation events. This admits notes visible through that Workspace API key. Deliveries are verified against their untouched raw body using the endpoint's Standard Webhooks signing secret before storage, deduplication, normalization, and queueing. Granola's delivery is a change signal, so Rally hydrates the current note through `GET /v1/notes/{note_id}` before opportunity admission. Disconnecting immediately disables local access and queues removal of the exact recorded remote endpoint. Pending cleanup retains separate encrypted removal authority; repeated disconnect does not erase it. Test and disconnect adopt an existing connection without changing its subscription, destination or signing secret.
 
 The workspace key and webhook signing secret are encrypted in the owning
 WorkspaceDO connector row with AES-GCM and connection-ID additional
@@ -620,7 +656,7 @@ change, not a last-seen heartbeat. Real workerd coverage lives in `resource-upda
 
 Connectors expose one of two provider-facing activity facets while sharing the same normalized activity, persistence, queue, identity, and opportunity pipeline:
 
-- `webhookActivity.verify` verifies exact raw bytes and returns a provider-neutral delivery envelope; `normalize` applies connection scope and provider-specific semantics. GitHub, Granola, Linear, Notion, and generic webhook use this facet.
+- `webhookActivity.verify` verifies exact raw bytes and returns a provider-neutral delivery envelope; `normalize` applies connection scope and provider-specific semantics. Ashby, GitHub, Granola, Linear, Notion, and generic webhook use this facet.
 - `pollingActivity` declares named streams and polls each from an opaque provider-native high-watermark. Its required `normalizeHighWatermark` hook canonicalizes sequences, dates, cursors, legacy values, or composite provider state both when checkpoints are loaded and before they are committed. The shared checkpoint runner bounds retries and backlog scheduling while leaving provider hooks in control of checkpoint semantics, pagination, reset/reconciliation rules, and activity normalization. Google currently supplies Gmail, Calendar, and Drive streams.
 
 #### Declaring what a digest may read
@@ -804,7 +840,7 @@ Every rule below was learned from a defect in production or in review, and each 
 
 **Never reach a provider with a credential nobody refreshed.** Enforced structurally: provider-calling entry points take `AuthorizedConnectorConnection`, which only the credential door can mint. *A Granola personal connection became unloadable minutes after it was connected, reporting `plugin_not_authorized` while the connections screen showed it healthy, because `load_plugin` revalidation health-checked it without refreshing first.*
 
-**A health check must not write.** Provider state that needs restoring goes in `repair`, which only an explicit connection test invokes. *Granola re-enabled its webhook endpoint with a `PATCH` inside `healthCheck`, which reauthorization ran on every plugin activation.*
+**A health check must not write.** Provider state that needs restoring goes through installation management (or adapter `repair` for a provider without that lifecycle), which only an explicit connection test invokes. *Granola re-enabled its webhook endpoint with a `PATCH` inside `healthCheck`, which reauthorization ran on every plugin activation.*
 
 **An unsigned setup challenge is not a logging channel.** When the delivered
 plaintext will verify future webhooks, authorize the challenge with an expiring,
@@ -1017,7 +1053,15 @@ fixture table instead, where it is reviewable.
 
 ### 2026-09-12 — Ashby and shared workspace installation ownership
 
-Ashby adds personal hosted MCP and independently authorized workspace events. Only `applicationSubmit` and `candidateStageChange` are declared, both operational. Workspace tools remain empty. Shared installation state now reserves identity before provider create and retains cleanup authority after disablement. Granola adopts the same lifecycle without replacing its existing subscription. See [installation lifecycle](connector-installation-lifecycle.md) for invariants and outstanding acceptance; the confidential-payload review still blocks workspace automation launch.
+**What changed:** Ashby adds personal hosted MCP and independent workspace event installation. Granola setup, explicit repair and removal now use the shared installation facet.
+
+**Why:** Personal tool consent cannot authorize organization event registration, and direct provider writes could lose the identity needed for recovery after uncertainty or disablement.
+
+**Considered and rejected:** Adding recruiting REST tools to the workspace grant or retaining a parallel Granola repair/revoke path. Both would blur the authority the new lifecycle separates.
+
+**Consequences:** Keep inventory and health read-only, preserve existing Granola subscriptions on adoption, and use the [installation lifecycle](connector-installation-lifecycle.md) for mutations. Ashby events remain restricted until confidential-payload acceptance.
+
+PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
 
 ### 2026-09-11 — Agent-presented connection cards reuse the one OAuth authority
 
@@ -2558,7 +2602,7 @@ that its public integration acts as a bot. That correctly describes the public
 API connection but leaves no member-attributed path; the official hosted MCP
 server is that separate path and should not be conflated with the bot install.
 Keeping static tool allowlists as a safety boundary was also rejected because
-Rally's capability grant, principal checks, execution policy, and receipts
+Rally's capability grant, principal checks, confirmation policy, and receipts
 already provide that boundary without inventing a provider catalog.
 
 Reusing Notion's `owner=user` parameter as Rally's scope signal was rejected

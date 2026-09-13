@@ -5413,6 +5413,6 @@ export const __testing = {
   serializeEmail
 };
 
-export { createAshbyConnector, AshbyCapabilities, AshbyEventTypes, AshbyEventSelectionSchema, AshbyAgentPluginDescriptor, verifyAshbyWebhook, type AshbyConnectorConfig } from "./ashby";
+export { createAshbyConnector, AshbyCapabilities, AshbyEventTypes, AshbyEventSelectionSchema, AshbyAgentPluginDescriptor, AshbyWorkspaceAgentPresentation, verifyAshbyWebhook, type AshbyConnectorConfig } from "./ashby";
 
 export type { ConnectorInstallationManagement, ConnectorRegistration } from "./installation";

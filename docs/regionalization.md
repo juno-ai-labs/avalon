@@ -62,6 +62,23 @@ time; it never contains the invited address, workspace name, link, or token.
 Acceptance is attributed to the accepting member after the regional membership
 write, while administrator actions are attributed to that administrator.
 
+### Ashby shared ingress
+
+`ashby.rallywith.ai/ingest/ashby/:id` terminates on the dedicated
+`avalon-connector-ashby-global` Worker. `AshbyRoutingBridge` consults the
+content-free Global connection-to-region directory, then the ingress calls the
+named `GLOBAL_ASHBY_BRIDGE` or `EU_ASHBY_BRIDGE`. The regional
+`AshbyRegionalBridge` resolves the workspace before credentials or payloads are
+accessed. Exact signed bytes cross that binding; HMAC verification, regional R2
+storage, Queue admission and canonical WorkspaceDO events remain regional.
+The ingress applies the existing provider body-size limit before buffering/RPC.
+
+This is an ingress startup boundary, not removal of provider management or
+hosted MCP from the regional API artifact. Granola retains its existing regional
+API subscription URLs. Personal MCP and workspace API-key requests still reach
+Ashby's external service; EU Rally storage is not an Ashby processing residency
+guarantee. See [installation lifecycle](connector-installation-lifecycle.md#regional-impact).
+
 ### Deployments
 
 The same Worker source is deployed twice:
@@ -398,7 +415,15 @@ resident.
 
 ### 2026-09-12 — Dedicated Ashby ingress preserves regional authority
 
-Ashby uses `ashby.rallywith.ai/ingest/ashby/:id` on a separate connector Worker. A content-free Global directory chooses a named regional service binding; the regional ingress directory then resolves WorkspaceDO before credential or payload access. The dedicated entry point excludes API application and agent imports because startup/bundle growth already caused an engineering incident. A domain alias on the API Worker would not establish that boundary. Existing Granola URLs stay on their regional API hosts. HMAC verification, R2 storage, Queue admission and canonical event identity stay in that region. Personal MCP requests and workspace API-key requests reach Ashby’s external service; choosing EU Rally storage does not represent an Ashby processing residency guarantee.
+**What changed:** A separate Global Ashby ingress consults an opaque directory and forwards exact signed bytes through named regional bindings.
+
+**Why:** The requested ingress startup boundary must not move provider credentials or canonical event processing out of the workspace region.
+
+**Considered and rejected:** An extra domain alias on the API Worker, which evaluates the same startup graph, or a shared credential/payload store.
+
+**Consequences:** Keep verification, R2 persistence, Queue admission and WorkspaceDO state regional. Granola retains its regional URLs. Ashby remains an external processor; this change does not reduce the shared API artifact or promise provider residency.
+
+PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
 
 ### 2026-09-07 — Ace relays workspace retirement to the region that owns the workspace
 

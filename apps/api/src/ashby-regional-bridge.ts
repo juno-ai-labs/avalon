@@ -6,6 +6,12 @@ import { requireWorkstreamIngress } from './services/workstream-authority';
 
 /** Exact signed bytes reach credential and event authority only in their owning region. */
 export class AshbyRegionalBridge extends WorkerEntrypoint<Env> {
+  health() {
+    return serializeAshbyRpcResult(async () => {
+      await requireWorkstreamIngress(this.env);
+      return { region: this.env.AVALON_REGION };
+    });
+  }
   ingest(input: unknown) {
     return serializeAshbyRpcResult(async () => {
       await requireWorkstreamIngress(this.env);

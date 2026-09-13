@@ -123,6 +123,7 @@ function invalidateTopic(
     invitation_directory: [['workspace-invitations']],
     connector_connections: [
       ['connections'],
+      ['connector-installation'],
       ['connector-catalog'],
       ['github-repository-access'],
       ['workspace-onboarding'],

@@ -16,8 +16,8 @@ connectorMaintenanceOperatorRoutes.post('/preview', zValidator('json', Connector
 connectorMaintenanceOperatorRoutes.get('/:id', zValidator('param', OperationParamSchema), async (c) =>
   c.json(ConnectorMaintenanceOperationSchema.parse(await connectorMaintenanceStatus(c.env, c.req.valid('param').id))));
 connectorMaintenanceOperatorRoutes.post('/:id/apply', zValidator('param', OperationParamSchema), async (c) =>
-  c.json(ConnectorMaintenanceOperationSchema.parse(await applyConnectorMaintenance(c.env, c.req.valid('param').id))));
+  c.json(ConnectorMaintenanceOperationSchema.parse(await applyConnectorMaintenance(c.env, c.req.valid('param').id, false, getOperator(c).operatorId))));
 connectorMaintenanceOperatorRoutes.post('/:id/resume', zValidator('param', OperationParamSchema), async (c) =>
-  c.json(ConnectorMaintenanceOperationSchema.parse(await applyConnectorMaintenance(c.env, c.req.valid('param').id, true))));
+  c.json(ConnectorMaintenanceOperationSchema.parse(await applyConnectorMaintenance(c.env, c.req.valid('param').id, true, getOperator(c).operatorId))));
 connectorMaintenanceOperatorRoutes.post('/:id/cancel', zValidator('param', OperationParamSchema), async (c) =>
-  c.json(ConnectorMaintenanceOperationSchema.parse(await cancelConnectorMaintenance(c.env, c.req.valid('param').id))));
+  c.json(ConnectorMaintenanceOperationSchema.parse(await cancelConnectorMaintenance(c.env, c.req.valid('param').id, getOperator(c).operatorId))));

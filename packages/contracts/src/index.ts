@@ -1,3 +1,4 @@
+import { ConnectorInstallationSchema } from "./connector-installation";
 import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, WorkstreamIconKeySchema } from "./workstream-appearance";
 export * from "./workstream-appearance";
 import { PersonalPresentationSchema } from './onboarding';
@@ -894,6 +895,11 @@ export const ConnectionSchema = z.object({
   lastSyncAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema
 });
+
+export const ConnectorInstallationReadResponseSchema = z.object({ installation: ConnectorInstallationSchema.nullable() });
+export const ConnectorInstallationMutationResponseSchema = z.object({ installation: ConnectorInstallationSchema });
+export const ConnectorInstallationSetupResponseSchema = z.object({ installation: ConnectorInstallationSchema, connection: ConnectionSchema });
+export const ConnectionTestResponseSchema = z.object({ ok: z.boolean(), message: z.string(), reconnectRequired: z.boolean().optional() });
 
 export const GitHubRepositoryRemoteAccessSchema = z.enum(["read_only", "full_access"]);
 export const GitHubRepositoryAccessModeSchema = z.enum(["all_repositories", "selected_repositories"]);
