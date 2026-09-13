@@ -434,12 +434,14 @@ describe('MessageBlock human identity', () => {
     expect(screen.getByText('Client-only mention rendering')).toBeInTheDocument();
   });
 
-  it('marks an attachment-only turn in flight on its attachment card', () => {
+  it('renders the surface the in-flight sweep keys on for an attachment-only turn', () => {
     // The bubble is drawn only for a turn with text, and a send can be
     // attachments alone. The in-flight sweep is painted per surface — the
     // bubble, and each attachment tile or card — so the card is the one surface
-    // this turn has for it, and the turn is not the one message that goes out
-    // saying nothing about itself.
+    // this turn has for it. jsdom applies no stylesheet, so what is proved here
+    // is the markup: the article is marked in flight and the card is rendered
+    // inside it. That the sweep is keyed on the card is `app.css`'s selector
+    // list, covered by the screenshot pass rather than by this test.
     render(
       <MessageBlock
         {...actions}
