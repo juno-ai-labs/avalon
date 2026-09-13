@@ -873,7 +873,7 @@ export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   workspaceId: IdSchema,
-  connectorType: z.enum(["ashby", "custom_mcp", "google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
+  connectorType: z.enum(["ashby", "custom_mcp", "fireflies", "google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
   scope: ScopeSchema,
   ownerUserId: IdSchema.nullable(),
   ownerName: z.string().nullable(),
@@ -898,7 +898,29 @@ export const ConnectionSchema = z.object({
 
 export const ConnectorInstallationReadResponseSchema = z.object({ installation: ConnectorInstallationSchema.nullable() });
 export const ConnectorInstallationMutationResponseSchema = z.object({ installation: ConnectorInstallationSchema });
-export const ConnectorInstallationSetupResponseSchema = z.object({ installation: ConnectorInstallationSchema, connection: ConnectionSchema });
+/**
+ * What an administrator has to carry to a provider that offers no registration
+ * API, returned exactly once by the setup call that generated it.
+ *
+ * The signing secret is the deliberate exception to "a secret never reaches the
+ * desktop": a manual registration cannot be completed without the plaintext,
+ * and Rally is the side that generates it. It is absent from `GET /connections`,
+ * from the installation document, from display names, and from audit data, and a
+ * replayed setup returns `null` rather than re-revealing it — a lost secret is
+ * replaced by reconnecting, not by asking again.
+ */
+export const ConnectorManualRegistrationSchema = z.strictObject({
+  destination: HttpsUrlSchema,
+  events: z.array(z.string().min(1)).min(1),
+  signingSecret: z.string().min(1).max(512),
+  instructions: z.string().min(1).max(4_000),
+});
+export type ConnectorManualRegistration = z.infer<typeof ConnectorManualRegistrationSchema>;
+export const ConnectorInstallationSetupResponseSchema = z.object({
+  installation: ConnectorInstallationSchema,
+  connection: ConnectionSchema,
+  manualRegistration: ConnectorManualRegistrationSchema.nullable().default(null),
+});
 export const ConnectionTestResponseSchema = z.object({ ok: z.boolean(), message: z.string(), reconnectRequired: z.boolean().optional() });
 
 export const GitHubRepositoryRemoteAccessSchema = z.enum(["read_only", "full_access"]);

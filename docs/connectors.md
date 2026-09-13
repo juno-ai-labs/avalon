@@ -561,6 +561,63 @@ The request/response contracts are shared with the desktop in
 open installation details through the workspace connection notification. A
 personal OAuth failure cannot disable a separately authorized workspace install.
 
+### Fireflies
+
+Fireflies has two independent connection modes, like Granola's. A **personal**
+connection uses Fireflies' hosted MCP server at `https://api.fireflies.ai/mcp`
+over browser OAuth with PKCE and dynamic client registration, origin-pinned to
+that host. It exposes the server's live tool surface — including Fireflies' own
+sharing, retitling, moving and soundbite actions — under the pass-through's
+confirmed-write treatment, and is available only to its Rally owner. Fireflies'
+authorization server publishes exactly the `profile` and `email` scopes, so
+Rally asks for no `offline_access`; if no refresh token comes back, the
+connection reports itself as needing reconnection when its access expires
+rather than pretending it can renew itself.
+
+A **workspace** connection uses one administrator-pasted Fireflies API key,
+validated against the provider's `user` query before anything is stored, and
+exposes three fixed read tools over checked-in GraphQL documents: search
+meetings, read a meeting's AI summary, read its transcript pages. The model
+never writes GraphQL. Every provider-controlled string and array in those
+outputs is capped and the cut reported through a `truncated` flag, and a
+transcript document over the 2 MB response cap fails as `payload_too_large`
+pointing at the summary instead. Fireflies reports application errors inside
+HTTP 200 GraphQL bodies, so the adapter maps `errors[].code` rather than the
+status: `auth_failed` becomes the `unauthorized` that marks the connection
+`needs_reconnect`, `too_many_requests` carries a wait derived from the
+provider's own reset time, and the rest resolve to correct-and-retry,
+not-found, forbidden, or retry-once-then-continue.
+
+What the key can read is the connected Fireflies account's own access.
+Team-wide visibility needs Fireflies Enterprise with Super Admin, and Fireflies
+publishes no field that reports whether it is enabled, so the setup copy states
+the uncertainty rather than guessing; every workspace member can read whatever
+the key can.
+
+Activity is webhook-only at `POST /ingest/fireflies/:id`. A delivery carries an
+event name, a millisecond timestamp and a meeting id and nothing else, so the
+normalized activity names the meeting and `hydrateResource` reads it over
+GraphQL after admission — keeping a provider round trip out of Fireflies'
+ten-second acknowledgement window and off a delivery that turns out to be a
+duplicate. `meeting.summarized` is digestible; `meeting.transcribed` is
+operational, because they are the same meeting minutes apart. The two keep
+distinct dedupe keys so the earlier one cannot swallow the later. Verification
+is HMAC-SHA256 over the exact bytes against `X-Hub-Signature`, then a freshness
+window on the in-body timestamp — the only replay anchor Fireflies signs — then
+an ingress receipt keyed on the hash of those bytes, since Fireflies sends no
+delivery id. A post failing any of it is rejected with no row written anywhere.
+A verified delivery of `meeting.bot_joined`, or of anything else this connector
+does not handle, is refused before the receipt.
+
+Registration is the customer's: Fireflies exposes no webhook API at all, so the
+adapter declares create, update, remove and rotate manual and inspect and
+reconcile unsupported, Rally generates the signing secret and shows it once at
+setup, and the first verified delivery is what makes the installation current.
+[Installation lifecycle](connector-installation-lifecycle.md) owns that path.
+Both scopes are gated region by region on the non-secret
+`FIREFLIES_CONNECTOR_ENABLED` variable; unset, the type is absent from the
+catalog and creation is refused, while existing rows are retained and inert.
+
 ### Granola
 
 Granola has two intentionally separate connection modes. A personal connection uses Granola's hosted Streamable HTTP MCP server and browser OAuth with PKCE and dynamic client registration. It follows the member's currently active Granola workspace and exposes the server's live tool surface rather than a code-authored snapshot. A personal connection remains available only to its Rally owner.
@@ -1059,6 +1116,44 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-13 — Fireflies connects a meeting record Rally cannot register itself
+
+**What changed:** A `fireflies` connector with the two-scope shape Granola set:
+an admin API key behind three fixed GraphQL read tools plus signed webhook
+activity, and a hosted-MCP OAuth pass-through for a member's own account.
+`meeting.summarized` is digestible and `meeting.transcribed` operational. Its
+rollout is gated per region on `FIREFLIES_CONNECTOR_ENABLED`, and WorkspaceDO
+migration 55 widens the connector vocabularies and adds its cardinality indexes.
+
+**Why:** Fireflies' install base is larger than Granola's, and a prospect who
+already pays for it will not move their meeting capture to Rally as a
+precondition for evaluating Rally. Without this their meeting record is
+invisible: the agent cannot answer what a customer objected to on Tuesday's
+call, and members re-paste summaries by hand.
+
+**Considered and rejected:** Pointing the workspace scope at Fireflies' own MCP
+server with the API key, which it accepts — pass-through tools are all treated
+as confirmed writes and so are unusable at automation time, several are marked
+experimental and can change shape underneath us, and a fixed document keeps the
+read authority reviewable field by field. A raw GraphQL tool, for the same
+reason at greater cost. Requiring Enterprise with Super Admin so coverage could
+be stated exactly, which would exclude most Fireflies customers for a purity the
+product does not need. A checkpointed poll alongside the webhook, which the
+installation lifecycle defers outright and which could never see a summary that
+landed more than the poll's own window after its meeting, because Fireflies
+filters on creation date alone.
+
+**Consequences:** Fireflies is the first provider whose every registration
+operation is the customer's, so setup hands the administrator an endpoint and a
+signing secret and the installation stays **Action required** until a delivery
+proves the registration — the one lifecycle extension this needed. A missed
+delivery is made visible rather than compensated: Fireflies documents no retry,
+so a last-received time that stops moving is the signal. Coverage is stated as
+unknown because the provider exposes no way to know it.
+
+PR: the Fireflies connector. Design:
+[Fireflies connector](PRDs/2026-08-14_fireflies-connector/prd.md).
 
 ### 2026-09-12 — Ashby and shared workspace installation ownership
 

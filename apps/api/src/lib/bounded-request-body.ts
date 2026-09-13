@@ -1,4 +1,15 @@
 import { ApiError } from "./api-error";
+import type { Env } from "../env";
+
+/**
+ * The regional ceiling on a provider's inbound webhook body, applied before any
+ * transport buffer is allocated. One helper rather than one per provider: the
+ * setting is regional and every signed ingress admits the same size.
+ */
+export function providerWebhookMaxBytes(env: Pick<Env, "PROVIDER_WEBHOOK_MAX_BYTES">): number {
+  const configured = Number.parseInt(env.PROVIDER_WEBHOOK_MAX_BYTES ?? "", 10);
+  return Number.isFinite(configured) && configured > 0 ? configured : 1_000_000;
+}
 
 export async function readBoundedRequestBytes(request: Request, maxBytes: number, message = "Webhook payload exceeds the configured limit"): Promise<Uint8Array<ArrayBuffer>> {
   const declaredLength = request.headers.get("content-length");

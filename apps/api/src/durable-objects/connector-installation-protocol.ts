@@ -6,6 +6,8 @@ export const InstallationCreateSchema = z.strictObject({
   installation: ConnectorInstallationSchema, userId: z.string().uuid(), inputHash: z.string().min(1),
   credentials: z.strictObject({ ciphertext: z.string().min(1), iv: z.string().min(1), keyVersion: z.number().int().positive() }),
   capability: z.string().min(1), adopt: z.boolean().optional(),
+  /** Settings' label for the reserved connection, chosen by the caller that knows the provider. */
+  displayName: z.string().min(1).max(180).optional(),
 });
 export const InstallationClaimSchema = Coordinates.extend({ generation: z.number().int().positive(), stepId: z.string().uuid() });
 export const InstallationSettleSchema = InstallationClaimSchema.extend({ registration: ConnectorRegistrationSchema,
@@ -40,3 +42,20 @@ export const InstallationCredentialReplaceSchema = InstallationReadSchema.extend
   generation: z.number().int().positive(), credentials: InstallationCreateSchema.shape.credentials,
 });
 export type InstallationCredentialReplace = z.infer<typeof InstallationCredentialReplaceSchema>;
+
+/**
+ * One verified delivery, and what the provider's own facet says can establish
+ * that its registration exists.
+ *
+ * `registrationSupport` carries the adapter's declaration rather than its name:
+ * the caller reads it off the deployed facet and this object decides what it
+ * means, so a second all-manual provider needs no code here.
+ */
+export const InstallationDeliverySchema = InstallationReadSchema.extend({
+  receivedAt: z.string().datetime(),
+  registrationSupport: z.strictObject({
+    create: z.enum(["automatic", "manual", "unsupported"]),
+    inspect: z.enum(["automatic", "manual", "unsupported"]),
+  }).optional(),
+});
+export type InstallationDelivery = z.infer<typeof InstallationDeliverySchema>;
