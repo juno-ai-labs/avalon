@@ -1742,9 +1742,17 @@ authority-then-viewer sequence paid a redundant serial RPC. Viewer profile and
 detail reads are independent, but a failed snapshot must not acknowledge unseen
 state.
 
+**Considered and rejected:** Keeping separate `authority` and
+`authorizeViewer` calls would preserve a serial round trip and let opening read
+parent facts from different revisions. Settling unseen state with the parallel
+detail read would acknowledge an opening that later fails while loading viewer
+profiles.
+
 **Consequences:** private-child membership and archive decisions remain part of
 admission; the full snapshot remains schema-validated. Prewarming was rejected
 because it retains the duplicate dependency on every cold open.
+
+Shipped in #734.
 
 ### 2026-09-11 — A read is acknowledged by the conversation that was read
 

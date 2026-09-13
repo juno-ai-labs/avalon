@@ -57,7 +57,6 @@ The later socket admission still checks its own authority fences. The full
 opening snapshot overlaps viewer-profile and product-detail loading rather than
 serializing those independent reads.
 
-
 A client cannot authenticate a WebSocket handshake the way it authenticates a
 request: a browser sets no headers on one, so `Authorization` is unavailable. So
 admission is split in two.
@@ -738,8 +737,15 @@ fact.
 **Why:** the old authority-then-viewer path made two serial RPCs to the same
 parent before a ticket could be issued.
 
+**Considered and rejected:** Retaining `authority` followed by
+`authorizeViewer`. It keeps existence, archive state, and authorization in
+separate parent calls even though opening requires all of them, adding latency
+and allowing the two answers to come from different parent revisions.
+
 **Consequences:** ticket admission keeps private-child membership and archive
 state, and later socket admission keeps its independent authority fences.
+
+Shipped in #734.
 
 ### 2026-09-08 — Make socket evolution independent of URL capabilities
 
