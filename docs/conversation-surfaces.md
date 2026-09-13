@@ -475,7 +475,17 @@ family. A new automation is created by `POST /automations` before its
 conversation is opened, so its page starts on a durable id. Socket snapshots remain authoritative after reconnect;
 local optimistic rows are reconciled by stable client turn IDs.
 
-Delivered attachments follow the message body and precede its action row. Every
+Delivered attachments follow the message body and precede its action row. A
+person's turn still in flight (`deliveryState: 'sending'`) is that same row at
+0.82 opacity with a light sweeping across each surface it draws — the bubble,
+and each attachment image cell, media tile and file card — painted by
+`app.css` under `.human-message.is-sending` as an overlay that inherits the
+surface's corner, in a twentieth of the surface's own ink so it shows on a dark
+or profile-coloured bubble as well as on a light card. The sweep is keyed on a
+selector list naming those four surfaces, once in the animated rule and once in
+its reduced-motion twin, and `app.css.node.test.ts` pins both: a new attachment
+surface has to be added to both lists, or a send made of that attachment alone
+goes out with no in-flight cue. Every
 turn's identity line is `MessageByline`, one component for the assistant's turn,
 a colleague's, the reader's own and a settled elicitation answer, so the name and
 the time carry one size and one pair of greys whoever is speaking; what tells
@@ -628,7 +638,14 @@ translating a full-width pseudo-element under the wrapper's `overflow: hidden`.
 The band is upright where it was tilted 15°: a tilt spreads the band sideways
 by the surface's height, which for the bubble is unbounded against its width,
 so no tile width kept a tilted band clear of a tall, narrow bubble at the ends
-of its travel, and a tinted corner stayed parked there through each pause.
+of its travel, and a tinted corner stayed parked there through each pause. The
+travel is the transform sweep's 2.5 widths, so the band crosses at the speed
+and for the share of the cycle it did before. And the band is a twentieth of
+the surface's own ink rather than the shimmer token: the token is a dark tint
+for light surfaces (white in the dark theme), and a person's bubble is dark or
+profile-coloured in both themes, so on it the token was invisible once the
+wrapper's light strip stopped carrying the sweep. The body above describes the
+result; this supersedes the wrapper scoping the 2026-09-02 entry below records.
 
 **Why:** The wrapper is a rectangle. It takes in the hover-action slot laid out
 under the bubble and the corners the bubble's radius cuts away, so the sweep
@@ -650,6 +667,8 @@ cue. The band's stop percentages, the 400% tile and the upright band hold
 together: the band has to sit clear of the surface at both ends of its travel,
 a tilt gives that clearance a height term nothing can bound, and the comment
 above the rule carries the arithmetic.
+
+Shipped in [#739](https://github.com/juno-ai-labs/avalon/pull/739).
 
 ### 2026-09-12 — The composer writes lists, and stops hiding text behind the plus
 
