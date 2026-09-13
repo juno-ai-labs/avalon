@@ -168,7 +168,7 @@ export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, on
       <div className="dialog-callout">
         <p><strong>This replaces any webhook URL already on that page.</strong> Fireflies holds one per account, so if another Rally workspace is connected to this Fireflies account, it stops receiving meetings.</p>
       </div>
-      <p>Until this is done, no meetings reach Rally. Rally can't check it for you — the connection changes to <strong>Connected</strong> when the first meeting arrives, usually within a couple of minutes of one finishing.</p>
+      <p>Until this is done, no meetings reach Rally. Rally can't check that page for you: after saving, use its <strong>Send test event</strong> button, and the connection changes to <strong>Connected</strong> as soon as the test event arrives. A finished meeting does the same, usually within a couple of minutes.</p>
     </Modal>;
   }
   // Dismissal is refused while the setup is in flight. The mutation does not

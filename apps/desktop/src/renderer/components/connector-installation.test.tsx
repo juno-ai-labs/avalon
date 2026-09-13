@@ -253,7 +253,7 @@ describe('Fireflies workspace setup', () => {
     expect(screen.getByLabelText('Fireflies signing secret')).toHaveValue(manualRegistration.signingSecret);
     expect(screen.getByText(/Rally will not show it again/u)).toBeVisible();
     expect(screen.getByText(/Fireflies holds one per account/u)).toBeVisible();
-    expect(screen.getByText(/the connection changes to/u)).toHaveTextContent('changes to Connected when the first meeting arrives');
+    expect(screen.getByText(/the connection changes to/u)).toHaveTextContent('changes to Connected as soon as the test event arrives');
     // Closing is the administrator's, not the setup's: the secret must not be
     // taken off screen by the mutation that produced it.
     expect(closed).not.toHaveBeenCalled();

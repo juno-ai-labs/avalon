@@ -17,6 +17,7 @@ import {
   LinearCapabilityScopes,
   SlackCapabilityScopes,
   SlackWorkspaceCapabilities,
+  FIREFLIES_TEST_EVENT,
   assertGitHubCapabilitiesGranted,
   isFirefliesEventType,
   connectorCapabilitySupportsScope,
@@ -2785,6 +2786,20 @@ export class ConnectionService {
       if (envelope) { authorizedEvents = registration.events; verifyingRegistrationKey = registration.key; break; }
     }
     if (!envelope || !authorizedEvents || !verifyingRegistrationKey) throw new ApiError(401, "invalid_signature", "Fireflies webhook signature is invalid");
+    // The dashboard's test event is the one delivery an administrator can
+    // produce on demand, and it proves exactly what a meeting would: the URL
+    // reaches this connection and the signing secret matches. It is recorded
+    // as the verifying delivery and nothing else — no receipt, since replaying
+    // it changes nothing, no payload, no activity — and answered 2xx so
+    // Fireflies' page reports the setup working rather than failed.
+    if (envelope.eventType === FIREFLIES_TEST_EVENT) {
+      await (await this.workspaceObject(connection.workspace_id)).receiveConnectorInstallationEvent({
+        workspaceId: connection.workspace_id, connectionId, receivedAt,
+        registrationKey: verifyingRegistrationKey,
+        registrationSupport: { create: management.support.create, inspect: management.support.inspect },
+      });
+      return { ping: true as const };
+    }
     // Both refusals land before the receipt, so neither writes anything and
     // neither can stand in as the installation's verifying delivery. They are
     // different conditions: an event this connector does not handle at all —
