@@ -2,8 +2,8 @@
 
 Workspace event connections use a durable installation record alongside the
 connection's encrypted credentials. The record coordinates provider registrations
-without assigning that authority to personal MCP authorization. Ashby and Granola
-use the same execution path; ordinary tool activation remains in
+without assigning that authority to personal MCP authorization. Ashby, Fireflies
+and Granola use the same execution path; ordinary tool activation remains in
 [connectors](connectors.md) and [hosted MCP](hosted-mcp-connectors.md).
 
 ## Where the code lives
@@ -12,7 +12,7 @@ use the same execution path; ordinary tool activation remains in
 | --- | --- |
 | `packages/contracts/src/connector-installation.ts` | Public installation and registration state, without credential values. |
 | `packages/connectors/src/installation.ts` | Provider-management facet and explicit automatic/manual support. |
-| `packages/connectors/src/{ashby,granola}.ts` | Documented provider calls and manual recovery instructions. |
+| `packages/connectors/src/{ashby,fireflies,granola}.ts` | Documented provider calls and manual recovery instructions. |
 | `apps/api/src/durable-objects/connector-installation-{protocol,storage}.ts` | Typed commands, atomic reservation, dispatch receipts, generation fences, and cleanup snapshots. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Schema migrations and workspace/retirement authority. |
 | `apps/api/src/services/connector-installation-service.ts` | Shared Queue-driven provider execution. |
@@ -96,6 +96,42 @@ rotation is reserved for facets with authenticated cutover evidence. The guidanc
 control performs no request; it cannot turn a current installation into action
 required merely because somebody reads the instructions.
 
+### The all-manual provider
+
+Fireflies is the worked example of a provider that can automate none of this.
+It exposes no webhook create, inspect, update or delete operation anywhere in
+its API — only a dashboard page — so its facet declares create, update, remove
+and rotate **manual**, and inspect and reconcile **unsupported**. Three
+consequences follow without any Fireflies-specific code in the runner.
+
+A manual create never reaches `management.create`: the runner settles the step
+as action required carrying the facet's `manualInstructions`. Because that path
+also never reaches `management.validate`, setup validates the pasted credential
+itself before reserving anything, so a rejected key leaves no connection behind
+rather than sending an administrator off to a provider dashboard on behalf of a
+key that will not work. Setup returns the endpoint URL and the host-generated
+signing secret exactly once, in the response that created them; a replayed
+setup returns the existing installation and no secret, and a lost secret is
+replaced by reconnecting rather than re-revealed.
+
+Nothing but a delivery can then establish that the registration exists.
+Inspection is what makes every other provider's registration current, so an
+installation waiting for one would sit in action required forever while events
+arrived perfectly well. The ingress hook that records a verified delivery
+therefore also marks such a registration — and the installation with it —
+current, with the delivery time as `verifiedAt`. It is keyed on the facet's
+support declaration, never on a provider name: what makes a delivery sufficient
+is that nothing else is available, and the facet is where that is stated. A
+disabled connection is excluded, so a late delivery cannot restore an
+installation an administrator removed.
+
+A fleet maintenance preview that changes such a provider's destination or event
+set lists every one of its installations as customer action and applies nothing.
+Disconnect leaves cleanup pending with no provider identity to remove, so the
+management window says the administrator has to delete the registration in the
+provider's dashboard instead of offering a retry that could do nothing; a
+delivery to the retired route is rejected, so a webhook left behind is harmless.
+
 Existing Granola workspace connections are adopted on explicit Test or disconnect.
 Adoption retains the connection ID, plugin ID, encrypted envelope and secret, and
 records the existing provider webhook ID. It creates no subscription. An absent
@@ -121,6 +157,10 @@ an idempotency key; current clients supply a stable setup attempt.
   the saved installation grant, never arbitrary operator payloads.
 - Granola adoption preserves existing subscriptions and verification material;
   replacing its webhook would introduce an unverified delivery gap.
+- A delivery verifies a registration only where the facet says create is manual
+  and inspect unsupported. Letting one stand in generally would replace real
+  inspection — which compares destination, events and enabled state — with the
+  weaker claim that something signed correctly once.
 
 ## Boundary
 
@@ -210,6 +250,13 @@ adoption and queue failures, cleanup dispatch classification, domain refusals an
 single-count setup telemetry through real workspace and regional storage.
 `packages/connectors/src/ashby.test.ts` covers scope separation, dynamic tool
 inventory, conservative writes, signatures, pings, and the normalized allowlist.
+`connector-installation-fireflies.test.ts` drives the all-manual path end to end
+on real workerd: a rejected key reserving nothing, the one-time endpoint and
+secret, the installation moving from action required to current on its first
+verified delivery, unsigned/mis-signed/stale/unsubscribed posts writing nothing
+and verifying nothing, a replayed delivery admitting once, and the region gate.
+`packages/connectors/src/fireflies.test.ts` covers the tool wire shapes and
+bounds, the provider's in-body error codes, and signature verification.
 
 Live acceptance is outstanding: there is no authorized Ashby test account.
 Protocol fixtures establish implementation behavior, not provider compatibility.
@@ -287,6 +334,65 @@ Unknown provider outcomes and not-yet-adopted Granola connections report custome
 action. An administrator's explicit Test adopts an existing Granola connection.
 
 ## Changelog
+
+### 2026-09-13 — A verified delivery is the evidence a manual registration cannot otherwise produce
+
+**What changed:** `receiveConnectorInstallationEvent` takes the provider facet's
+create/inspect support declaration alongside the delivery, and where create is
+manual and inspect unsupported it now marks the registration and its
+installation current with the delivery time as `verifiedAt`, instead of only
+advancing the last-received time. Setup additionally validates a pasted
+credential before reserving anything when create is manual, and returns the
+endpoint and host-generated signing secret once for the administrator to carry
+to the provider.
+
+**Why:** Fireflies is the first real provider with no webhook API at all. Every
+other registration becomes current by being inspected; there is nothing to
+inspect here, so its installation would have read **Action required** forever
+while meetings arrived correctly — Settings saying delivery was broken while the
+activity log filled up. A delivery is also stronger evidence than an inspection:
+it is signed with the secret Rally generated, so it proves the registration
+exists, points at Rally, and carries the right key, which reading a row back
+does not.
+
+**Considered and rejected:** A per-provider branch in the ingress hook, which
+would need editing again for the next such provider. A checkbox in Rally's setup
+form standing in for verification, which would report meetings flowing when none
+can. Driving the provider's dashboard by browser automation. Validating the key
+inside the runner as automatic providers do, which a manual create never
+reaches.
+
+**Consequences:** A facet that declares create manual and inspect unsupported is
+declaring that its first verified delivery is its verification; nothing else
+about the lifecycle changes for it. A delivery verifies only the registration
+whose signing secret actually checked the bytes — the ingress names it — so a
+grouped provider is unaffected and a `single_event` one cannot have a delivery
+for one event vouch for a subscription nobody ticked. A disabled connection is
+excluded, so a late delivery cannot revive a removed installation, and a claimed
+step keeps its registration until it settles.
+
+Three things follow for a provider that automates nothing. Its registrations
+carry no provider identity, so disconnect leaves cleanup pending with nothing
+Rally can remove, and the management window says so rather than offering a retry
+that cannot act. `repair` schedules no step for it, so the installation's state
+is recomputed from its registrations instead of being told work is queued —
+otherwise Test moved a working installation to **Updating** and nothing ever
+settled it back. And reconciling a provider id is refused where the facet
+declares `reconcileCreate: "unsupported"`: storing one would make the
+registration read as a webhook Rally created, and the cleanup advice would start
+offering to delete it through an API the provider does not have.
+
+**What a future change must respect:** `registrationSupport` and
+`registrationKey` on the delivery are deliberately optional. A deploy is not
+atomic, so during the rollout window an older Worker calls the newer object
+without them; requiring either would reject a delivery that used to be accepted.
+Absent means "this establishes nothing", which is exactly what that older Worker
+expects. The gate they feed is on every provider's delivery path, including
+Ashby's, and `apps/api/test-workers/connector-installation-fireflies.test.ts`
+holds a test that fails if it is removed.
+
+PR #738. Design:
+[Fireflies connector](PRDs/2026-08-14_fireflies-connector/prd.md).
 
 ### 2026-09-12 — Reserve and record workspace installations before provider I/O
 

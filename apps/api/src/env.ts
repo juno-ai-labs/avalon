@@ -207,6 +207,17 @@ export interface Env {
   SLACK_CLIENT_SECRET?: string;
   SLACK_SIGNING_SECRET?: string;
   TWITTER_API_IO_API_KEY?: string;
+  /**
+   * The Fireflies connector's rollout gate, region by region.
+   *
+   * Both of its credentials are the customer's — an admin-pasted API key and a
+   * member's own OAuth grant — so there is no Rally-side secret whose absence
+   * could stand in for "not launched here" the way `TWITTER_API_IO_API_KEY`
+   * does for X. Deliberately absent from `assertEnvContract`: unset is the off
+   * state, not a misconfiguration, and a region that has never heard of
+   * Fireflies must still start.
+   */
+  FIREFLIES_CONNECTOR_ENABLED?: string;
   POSTHOG_PROJECT_TOKEN?: string;
   /** Global-only signer for onboarding telemetry capabilities. EU validates
    * them through the narrow Global telemetry-control RPC. */

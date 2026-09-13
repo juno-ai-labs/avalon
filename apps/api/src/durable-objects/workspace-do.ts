@@ -4,9 +4,9 @@ import { InstallationMaintenanceSchema, InstallationMaintenanceCancelSchema, typ
 import { prepareInstallationMaintenance, cancelInstallationMaintenance } from './connector-installation-storage';
 import { InstallationRotationPrepareSchema, type InstallationRotationPrepare } from "./connector-installation-protocol";
 import { prepareInstallationRotation } from "./connector-installation-storage";
-import { InstallationCreateSchema, InstallationReadSchema, InstallationClaimSchema, InstallationSettleSchema, InstallationChangeSchema,
-  type InstallationCreate, type InstallationClaim, type InstallationSettle, type InstallationChange } from "./connector-installation-protocol";
-import { createInstallation, readInstallation, claimInstallation, settleInstallation, changeInstallation } from "./connector-installation-storage";
+import { InstallationCreateSchema, InstallationReadSchema, InstallationClaimSchema, InstallationDeliverySchema, InstallationSettleSchema, InstallationChangeSchema,
+  type InstallationCreate, type InstallationClaim, type InstallationDelivery, type InstallationSettle, type InstallationChange } from "./connector-installation-protocol";
+import { createInstallation, readInstallation, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation } from "./connector-installation-storage";
 import { safeParseSocketEvent, isUnknownSocketEvent, WorkspaceSocketClientEventTypeSchema } from "@rally/contracts";
 
 import { SEARCH_AUTHORIZATION_PUSH_MIGRATION, nextSearchAuthorizationPush, flushSearchAuthorizationPush } from './search-authorization-projection';
@@ -1148,6 +1148,28 @@ const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53 = [
   "slack_unfurled_links",
   "slack_user_links",
   "webhook_receipts",
+] as const;
+
+/**
+ * The same inventory as of v55, which is the first parent rebuild after v54
+ * added `connector_installations`.
+ *
+ * Two things make it a separate constant rather than an edit to the list above.
+ * A migration's statements are hashed into every deployed object's receipt, so
+ * changing v31's or v53's text would invalidate receipts that already committed.
+ * And `connector_installations` behaves differently from the other thirteen:
+ * its foreign key carries no `ON DELETE` action, so the implicit `DELETE` inside
+ * `DROP TABLE connector_connections` does not empty it — it *aborts the drop*.
+ * Migration 55 therefore empties every dependent explicitly before replacing the
+ * parent, rather than letting the cascade do it, which is the one way the recipe
+ * differs from 53's.
+ *
+ * A table missing from this list loses its rows. The next parent rebuild
+ * declares its own inventory again, from the schema as of that version.
+ */
+export const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55 = [
+  ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53,
+  "connector_installations",
 ] as const;
 
 /**
@@ -3137,6 +3159,120 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   `CREATE UNIQUE INDEX ashby_workspace_connection_unique ON connector_connections(workspace_id)
     WHERE connector_type = 'ashby' AND scope = 'workspace' AND status <> 'disabled'`,
 ]
+}, {
+  version: 55,
+  description: "admit Fireflies without losing connector dependents",
+  statements: [
+    // Held before the parent is replaced, because dropping it would otherwise
+    // cascade through every one of them. `connector_installations` is the
+    // reason this list exists separately from v53's: its foreign key does not
+    // cascade, so the parent's implicit DELETE would *abort* rather than empty
+    // it — which is why every dependent is emptied here, before the drop,
+    // rather than relying on the cascade to do it.
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55.map((table) => (
+      `CREATE TABLE ${table}_v55_hold AS SELECT * FROM ${table}`
+    )),
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55.map((table) => `DELETE FROM ${table}`),
+    `CREATE TABLE connector_connections_v55 (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      connector_type TEXT NOT NULL CHECK (connector_type IN ('ashby', 'custom_mcp', 'fireflies', 'google', 'generic_webhook', 'github', 'granola', 'linear', 'notion', 'slack', 'x')),
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
+      owner_user_id TEXT,
+      provider_account_id TEXT,
+      display_name TEXT NOT NULL,
+      encrypted_credentials TEXT,
+      credential_iv TEXT,
+      credential_key_version INTEGER,
+      credential_refresh_lease_id TEXT,
+      credential_refresh_lease_expires_at TEXT,
+      granted_scopes_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(granted_scopes_json)),
+      status TEXT NOT NULL DEFAULT 'healthy' CHECK (status IN ('healthy', 'needs_reconnect', 'error', 'disabled')),
+      cursor_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(cursor_json)),
+      config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json)),
+      last_sync_at TEXT,
+      next_poll_at TEXT,
+      error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      model_plugin_id TEXT NOT NULL,
+      CHECK ((scope = 'personal' AND owner_user_id IS NOT NULL) OR (scope = 'workspace' AND owner_user_id IS NULL))
+    ) STRICT`,
+    `INSERT INTO connector_connections_v55
+       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+        encrypted_credentials, credential_iv, credential_key_version,
+        credential_refresh_lease_id, credential_refresh_lease_expires_at,
+        granted_scopes_json, status, cursor_json, config_json, last_sync_at, next_poll_at,
+        error_json, created_at, updated_at, model_plugin_id)
+     SELECT id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+            encrypted_credentials, credential_iv, credential_key_version,
+            credential_refresh_lease_id, credential_refresh_lease_expires_at,
+            granted_scopes_json, status, cursor_json, config_json, last_sync_at, next_poll_at,
+            error_json, created_at, updated_at, model_plugin_id
+       FROM connector_connections`,
+    `DROP TABLE connector_connections`,
+    `ALTER TABLE connector_connections_v55 RENAME TO connector_connections`,
+    `CREATE INDEX connector_connections_poll_idx
+      ON connector_connections(status, next_poll_at, id)`,
+    `CREATE INDEX connector_connections_provider_account_idx
+      ON connector_connections(connector_type, provider_account_id, status)`,
+    `CREATE UNIQUE INDEX connector_connections_active_model_plugin_id_uq
+      ON connector_connections(model_plugin_id) WHERE status != 'disabled'`,
+    // v54's cardinality indexes went with the table it just replaced. A rebuild
+    // restores every index the parent carried, not only the ones the migration
+    // that created the parent wrote.
+    `CREATE UNIQUE INDEX ashby_personal_connection_unique ON connector_connections(workspace_id, owner_user_id)
+      WHERE connector_type = 'ashby' AND scope = 'personal' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX ashby_workspace_connection_unique ON connector_connections(workspace_id)
+      WHERE connector_type = 'ashby' AND scope = 'workspace' AND status <> 'disabled'`,
+    // Fireflies' own cardinality, in Ashby's shape: one active workspace
+    // connection per workspace and one active personal connection per member,
+    // while a disabled row never blocks reconnecting.
+    `CREATE UNIQUE INDEX fireflies_workspace_connection_unique ON connector_connections(workspace_id)
+      WHERE connector_type = 'fireflies' AND scope = 'workspace' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX fireflies_personal_connection_unique ON connector_connections(workspace_id, owner_user_id)
+      WHERE connector_type = 'fireflies' AND scope = 'personal' AND status <> 'disabled'`,
+    ...workspaceIdentityFencesFor("connector_connections"),
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55.flatMap((table) => [
+      `INSERT INTO ${table} SELECT * FROM ${table}_v55_hold`,
+      `DROP TABLE ${table}_v55_hold`,
+    ]),
+    `CREATE TABLE connector_oauth_attempts_v55 (
+      id TEXT PRIMARY KEY,
+      region TEXT NOT NULL CHECK (region IN ('global', 'eu')),
+      provider TEXT NOT NULL CHECK (provider IN ('ashby', 'custom_mcp', 'fireflies', 'google', 'github', 'granola', 'linear', 'notion', 'slack')),
+      user_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'denied', 'failed')),
+      connection_id TEXT REFERENCES connector_connections(id) ON DELETE SET NULL,
+      error_code TEXT,
+      expires_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      telemetry_operation_id TEXT,
+      telemetry_event_version INTEGER NOT NULL DEFAULT 1,
+      telemetry_scope TEXT,
+      telemetry_capability_count INTEGER,
+      telemetry_reconnect INTEGER NOT NULL DEFAULT 0
+    ) STRICT`,
+    `INSERT INTO connector_oauth_attempts_v55
+       (id, region, provider, user_id, workspace_id, status, connection_id, error_code,
+        expires_at, completed_at, created_at, updated_at, telemetry_operation_id,
+        telemetry_event_version, telemetry_scope, telemetry_capability_count, telemetry_reconnect)
+     SELECT id, region, provider, user_id, workspace_id, status, connection_id, error_code,
+            expires_at, completed_at, created_at, updated_at, telemetry_operation_id,
+            telemetry_event_version, telemetry_scope, telemetry_capability_count, telemetry_reconnect
+       FROM connector_oauth_attempts`,
+    `DROP TABLE connector_oauth_attempts`,
+    `ALTER TABLE connector_oauth_attempts_v55 RENAME TO connector_oauth_attempts`,
+    `CREATE INDEX connector_oauth_attempts_expiry_idx
+      ON connector_oauth_attempts(status, expires_at, id)`,
+    `CREATE UNIQUE INDEX connector_oauth_attempts_telemetry_operation_idx
+      ON connector_oauth_attempts(telemetry_operation_id)
+      WHERE telemetry_operation_id IS NOT NULL`,
+    ...workspaceIdentityFencesFor("connector_oauth_attempts"),
+  ],
 }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
@@ -7353,12 +7489,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return prepareInstallationRotation(this.state.storage, request);
   }
 
-  async receiveConnectorInstallationEvent(input: { workspaceId: string; connectionId: string; receivedAt: string }) {
+  async receiveConnectorInstallationEvent(input: InstallationDelivery) {
     await this.initialized;
-    const request = InstallationReadSchema.extend({ receivedAt: z.string().datetime() }).parse(input);
+    const request = InstallationDeliverySchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    this.state.storage.sql.exec(`UPDATE connector_installations SET document_json = json_set(document_json, '$.lastReceivedAt', ?)
-      WHERE connection_id = ? AND (json_extract(document_json, '$.lastReceivedAt') IS NULL OR json_extract(document_json, '$.lastReceivedAt') < ?)`, request.receivedAt, request.connectionId, request.receivedAt);
+    return recordInstallationDelivery(this.state.storage, request);
   }
 
   async connectorInstallationCleanup(input: InstallationClaim) {

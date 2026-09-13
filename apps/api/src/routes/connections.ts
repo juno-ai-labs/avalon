@@ -1,5 +1,4 @@
-import { readBoundedRequestBytes } from "../lib/bounded-request-body";
-import { ashbyWebhookMaxBytes } from "../lib/ashby-ingress";
+import { providerWebhookMaxBytes, readBoundedRequestBytes } from "../lib/bounded-request-body";
 import { AshbyIngestionResultSchema } from "../services/ashby-routing-service";
 import { ConnectorInstallationReadResponseSchema, ConnectorInstallationMutationResponseSchema, ConnectorInstallationSetupResponseSchema, ConnectionTestResponseSchema } from "@rally/contracts";
 import { AshbyEventSelectionSchema } from "@rally/connectors";
@@ -87,6 +86,17 @@ const notionStart = z.discriminatedUnion("scope", [
     ])).min(1),
   }),
 ]);
+const firefliesStart = z.object({
+  scope: z.literal("personal"),
+  capabilities: z.array(z.literal("fireflies.personal.read")).length(1),
+});
+// Fireflies documents no key prefix and no length, so there is nothing to
+// validate here beyond a non-empty string. The provider's own `user` query is
+// the check, and setup runs it before anything is stored.
+const firefliesWorkspace = z.strictObject({
+  apiKey: z.string().trim().min(1),
+  idempotencyKey: z.string().uuid(),
+});
 const granolaStart = z.object({
   scope: z.literal("personal"),
   capabilities: z.array(z.literal("granola.personal.read")).length(1),
@@ -243,6 +253,23 @@ connectionRoutes.get("/:id/installation", zValidator("param", idParam), async (c
 connectionRoutes.post("/:id/installation", zValidator("param", idParam), zValidator("json", z.strictObject({
   action: z.enum(["repair", "disconnect", "forget_cleanup", "reconcile", "rotate"]), key: z.string().optional(), providerId: z.string().optional(),
 })), async (c) => c.json(ConnectorInstallationMutationResponseSchema.parse(await new ConnectionService(c.env, getAuth(c)).changeInstallation(c.req.valid("param").id, c.req.valid("json")))));
+connectionRoutes.post("/fireflies/start", zValidator("json", firefliesStart), async (c) => {
+  const service = new ConnectionService(c.env, getAuth(c));
+  return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
+    c, service, await service.beginProvider("fireflies", {
+      ...c.req.valid("json"), desktopHandoffVersion: desktopHandoffVersion(c),
+    }),
+  )));
+});
+connectionRoutes.post("/fireflies/workspace", zValidator("json", firefliesWorkspace), async (c) =>
+  c.json(ConnectorInstallationSetupResponseSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).createWorkspaceInstallation({
+      provider: "fireflies",
+      apiKey: c.req.valid("json").apiKey,
+      idempotencyKey: c.req.valid("json").idempotencyKey,
+      signal: c.req.raw.signal,
+    }),
+  ), 201));
 connectionRoutes.post("/granola/start", zValidator("json", granolaStart), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
@@ -486,6 +513,10 @@ connectionCallbackRoutes.get("/ashby/callback", zValidator("query", googleCallba
   const query = c.req.valid("query");
   return connectorCallback(c, "ashby", query, (service, code, state) => service.completeProvider("ashby", code, state));
 });
+connectionCallbackRoutes.get("/fireflies/callback", zValidator("query", googleCallback), async (c) => {
+  const query = c.req.valid("query");
+  return connectorCallback(c, "fireflies", query, (service, code, state) => service.completeProvider("fireflies", code, state));
+});
 connectionCallbackRoutes.get("/granola/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
   return connectorCallback(c, "granola", query, (service, code, state) => service.completeProvider("granola", code, state));
@@ -538,10 +569,19 @@ webhookIngestionRoutes.post("/notion", async (c) => {
   return c.json(WebhookIngestionSchema.parse(result), 200);
 });
 webhookIngestionRoutes.post("/ashby/:id", zValidator("param", idParam), async (c) => {
-  const body = await readBoundedRequestBytes(c.req.raw, ashbyWebhookMaxBytes(c.env));
+  const body = await readBoundedRequestBytes(c.req.raw, providerWebhookMaxBytes(c.env));
   const id = c.req.valid("param").id;
   const result = await new ConnectionService(c.env).ingestAshbyWebhook(id, body, c.req.raw.headers);
   return c.json(AshbyWebhookResponseSchema.parse(result), 200);
+});
+webhookIngestionRoutes.post("/fireflies/:id", zValidator("param", idParam), async (c) => {
+  const body = await readBoundedRequestBytes(c.req.raw, providerWebhookMaxBytes(c.env));
+  const result = await new ConnectionService(c.env).ingestFirefliesWebhook(
+    c.req.valid("param").id,
+    body,
+    c.req.raw.headers,
+  );
+  return c.json(ConnectorWebhookIngestionSchema.parse(result), result.duplicate ? 200 : 202);
 });
 webhookIngestionRoutes.post("/granola/:id", zValidator("param", idParam), async (c) => {
   const result = await new ConnectionService(c.env).ingestGranolaWebhook(

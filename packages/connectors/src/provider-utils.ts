@@ -510,6 +510,6 @@ function timingSafeEqual(left: Uint8Array, right: Uint8Array): boolean {
   return difference === 0;
 }
 
-function isAbortError(error: unknown): boolean {
+export function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }

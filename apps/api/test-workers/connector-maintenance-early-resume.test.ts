@@ -41,7 +41,7 @@ describe('resuming maintenance before Queue preparation', () => {
           stepId: crypto.randomUUID(), verifiedAt: at, error: null, rotation: 'stable', rotationGeneration: 0,
           activeSecretRef: 'signing', pendingSecretRef: null }],
       }),
-      userId: crypto.randomUUID(), inputHash: 'maintenance-early-resume-inputs', capability: 'ashby.workspace.events',
+      userId: crypto.randomUUID(), inputHash: 'maintenance-early-resume-inputs', capability: 'ashby.workspace.events', displayName: 'Ashby workspace events',
       credentials: { ...await encryptString(JSON.stringify({ apiKey: 'provider-fixture-key', signing: 'retained-signing-key' }), key, connectionId), keyVersion: 1 },
     });
     await env.DB.batch([

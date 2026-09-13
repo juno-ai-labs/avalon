@@ -286,6 +286,24 @@ One of four.
 | `note.edited` | No | A revision to a note already reported. |
 | `note.access_granted` | No | A permission change, not something that happened. |
 
+## Fireflies
+
+One of two. Fireflies reports the same meeting twice, minutes apart, and only
+the second report has anything written about it.
+
+Worth stating plainly, because the Yes above promises more than the digest
+receives: a Fireflies webhook carries `{event, timestamp, meeting_id}` and
+nothing else, so the activity has no title, no snippet and no link, and the
+digest brief renders it as "Fireflies meeting summarized" with no meeting
+identity. The overview and action items exist, but only behind a hydration the
+digest path does not perform — the same shape as Granola. Fixing that is a
+change to how the digest hydrates, not to this row.
+
+| Activity type | Digestible | Reason |
+| --- | --- | --- |
+| `meeting.summarized` | Yes | The meeting arriving — the one of the two reports that means something was written about the call. |
+| `meeting.transcribed` | No | The same meeting a few minutes earlier, with the words captured and nothing concluded from them. Digesting both would tell somebody about one call twice, and the later one is the useful half. |
+
 ## X
 
 None of none. X is read-only through a shared account and ingests no activity at

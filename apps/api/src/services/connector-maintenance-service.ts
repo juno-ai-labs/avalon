@@ -6,7 +6,7 @@ import { withAuthorizedConnection } from './connector-connection-access';
 import { withWorkspaceRuntimeDatabase } from './workspace-runtime-database';
 import { randomToken } from '../lib/crypto';
 import { z } from 'zod';
-import { ConnectorRegistrationSchema, asWorkspaceId } from '@rally/contracts';
+import { ConnectorInstallationProviderSchema, ConnectorRegistrationSchema, asWorkspaceId } from '@rally/contracts';
 import type { Env } from '../env';
 import { ApiError } from '../lib/api-error';
 import { uuidV7 } from '../lib/uuid-v7';
@@ -18,7 +18,7 @@ import { runConnectorInstallation } from './connector-installation-service';
 import { logInfo } from '../observability/logger';
 
 export const ConnectorMaintenanceSelectionSchema = z.strictObject({
-  provider: z.enum(['ashby', 'granola']), region: z.enum(['global', 'eu']), version: z.number().int().positive(),
+  provider: ConnectorInstallationProviderSchema, region: z.enum(['global', 'eu']), version: z.number().int().positive(),
   workspaceIds: z.array(z.string().uuid()).optional(),
 });
 const TargetSchema = z.strictObject({
