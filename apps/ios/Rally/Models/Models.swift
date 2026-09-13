@@ -153,6 +153,54 @@ struct RallyChatMessage: Identifiable, Equatable, Sendable {
     var mentions: [RallyMention] = []
     var nested: [RallyChatMessage] = []
     var deliveryState: String? = nil
+    /// The transcript turn this row was projected from. Message actions that
+    /// branch a substream address this id, not the per-block row id.
+    var turnId: String? = nil
+}
+
+enum SubstreamAddress {
+    static let main = "0"
+}
+
+struct RallyPrivateChild: Codable, Sendable, Equatable, Identifiable {
+    var substreamId: String
+    var title: String
+    var createdByUserId: String?
+    var createdAt: String?
+    var updatedAt: String?
+    var id: String { substreamId }
+}
+
+struct SubstreamPreparationPreview: Decodable, Sendable {
+    var operationId: String
+    var substreamId: String
+    var title: String
+}
+
+struct SubstreamCreationResult: Decodable, Sendable {
+    var substreamId: String
+    var title: String
+    var opening: Opening?
+
+    struct Opening: Decodable, Sendable {
+        var turnId: String
+        var clientMessageId: String
+        var createdAt: String
+    }
+}
+
+struct SubstreamCreationAttempt: Equatable, Sendable {
+    var parentId: String
+    var throughTurnId: String?
+    var operationId: String
+    var clientMessageId: String
+}
+
+struct RallyWorkstreamControlMetadata: Decodable, Sendable {
+    var title: String?
+    var scope: String?
+    var systemKind: String?
+    var privateChildren: [RallyPrivateChild]?
 }
 
 struct RallyAttachment: Codable, Sendable, Equatable, Identifiable {
@@ -258,17 +306,19 @@ struct RallySearchHit: Codable, Sendable, Equatable, Identifiable {
     var snippet: String?
     var kind: String?
     var workstreamId: String?
+    var substreamId: String?
 
     enum CodingKeys: String, CodingKey {
         case id, title, snippet, kind, excerpt, category, location
     }
 
-    init(id: String, title: String? = nil, snippet: String? = nil, kind: String? = nil, workstreamId: String? = nil) {
+    init(id: String, title: String? = nil, snippet: String? = nil, kind: String? = nil, workstreamId: String? = nil, substreamId: String? = nil) {
         self.id = id
         self.title = title
         self.snippet = snippet
         self.kind = kind
         self.workstreamId = workstreamId
+        self.substreamId = substreamId
     }
 
     init(from decoder: Decoder) throws {
@@ -281,8 +331,10 @@ struct RallySearchHit: Codable, Sendable, Equatable, Identifiable {
             ?? container.decodeIfPresent(String.self, forKey: .kind)
         if let location = try container.decodeIfPresent(Location.self, forKey: .location) {
             workstreamId = location.workstreamId
+            substreamId = location.substreamId
         } else {
             workstreamId = nil
+            substreamId = nil
         }
     }
 
@@ -297,6 +349,7 @@ struct RallySearchHit: Codable, Sendable, Equatable, Identifiable {
     private struct Location: Decodable {
         var kind: String?
         var workstreamId: String?
+        var substreamId: String?
     }
 }
 
