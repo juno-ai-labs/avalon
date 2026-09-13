@@ -427,14 +427,14 @@ export function createTerminalResourceBridge(
       );
     }
     const manifestBytes = new Uint8Array(await stored.arrayBuffer());
-    const digest = await sha256Hex(manifestBytes);
-    if (row.content_sha256 && digest !== row.content_sha256) {
-      throw new TerminalToolError(
-        "resource_hash_mismatch",
-        "The site's stored manifest changed while importing. Re-list the work-stream resources and retry from its current version.",
-        { reason: "Re-list work-stream resources and retry the import." },
-      );
-    }
+    // A site's `content_sha256` is publication's digest over the *file list*,
+    // not over the manifest bytes — the manifest carries a version number and a
+    // timestamp, so hashing it would make every republish look like a content
+    // change. The durable import record therefore stores the same digest
+    // publication stored, which is what identifies the version that was
+    // materialized; hashing the manifest here instead would record a value
+    // nothing else in the product can be compared against.
+    const digest = row.content_sha256 ?? await sha256Hex(manifestBytes);
     let manifest: ArtifactManifest;
     try {
       manifest = ArtifactManifestSchema.parse(

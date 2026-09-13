@@ -89,10 +89,23 @@ answer for non-Latin branding.
 ### Revising
 
 A run asked to change a site it did not build — or built in a session that has
-since ended — brings the files back first. The manifest is the index, and
-`index.js` is materialized alongside the assets even though a viewer's request
-for it 404s: "module, not asset" is a rule about the *serving* path, and a model
-that could not see its own server could not revise it.
+since ended — brings the files back first, through `terminal_import_resource`
+on the site's own resource id. The manifest is the index, and `index.js` is
+materialized alongside the assets even though a viewer's request for it 404s:
+"module, not asset" is a rule about the *serving* path, and a model that could
+not see its own server could not revise it. The version imported is the one the
+resource points at, so an edit starts from what viewers are being served rather
+than from whatever an earlier sandbox happened to hold.
+
+**A site import names its destination.** The deterministic placement that gives
+a file import its provenance — a fixed path, a digest, a reuse when they match —
+has nothing to match against for a tree, and the path a site wants is not
+Rally's to pick: it is the one the site publishes from, because republishing
+exactly that path is what updates this site instead of minting a second one at a
+second URL. An import that omits `destinationPath` is therefore refused with
+that path, `.rally-output/<source path>`, spelled from the workspace root the
+import measures from rather than the output directory publication measures
+from.
 
 `overwrite` is **whole-tree replacement, never a merge**. Merging would leave
 behind files a later version deleted, and the next publish would ship them back
@@ -504,6 +517,38 @@ compromise of the serving Worker exposes artifact content and viewer sessions
 rather than workspace authority.
 
 ## Changelog
+
+### 2026-09-13 — The revision loop's import half is connected
+
+**What changed:** `import_resource` branches on `generated_site` and
+materializes the version's tree — `readArtifactVersionFiles` for the bytes, a
+staged directory for the upload, `materializeTreeCommand` to move it into place,
+`importTreeFailure` for the exit codes. All four already existed in
+`site-import.ts`; nothing called them. The output reports `fileCount` beside the
+directory root in `filePath`, and an import that omits `destinationPath` is
+refused with the site's own publish path rather than placed automatically.
+
+**Why:** Rally could publish a site and never edit it again. The import fell
+through to the single-file path, which fetches the one object at the resource's
+`content_ref` — for a site that is the manifest, so a run asking for its own
+source received the JSON index of it. The only revision left was to rewrite the
+site from memory and republish, which keeps the URL but is not a revision of
+what is being served: every unremembered detail silently disappears from the
+next version. The tool description, `docs/agent-tools.md`, and the sites skill
+had all specified this behavior; only the caller was missing.
+
+**Considered and rejected:** *A separate `import_site` tool*, which would split
+one question — put this resource in my workspace — across two names the model
+has to choose between, when the existing schema already carries a directory
+destination and a whole-tree `overwrite`. *Defaulting a site to
+`.rally/resources/<id>/resource`*, which materializes a tree at a path that
+cannot be republished, so the first thing the run learns about its site is a
+path that mints a second one.
+
+**What a future change has to respect:** the import is whole-tree replacement
+and the publish path is the identity. Anything that changes where a site
+materializes has to keep those two the same path, or a revision becomes a fork
+with a live URL pointing at the version nobody edits.
 
 ### 2026-09-12 — Inspect artifacts without creating navigation grants
 
