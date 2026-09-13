@@ -123,7 +123,7 @@ describe('Ashby protocol', () => {
       data: { candidate: { id: 'candidate-id', name: 'Confidential candidate' }, watermark: 'opaque-delivery-watermark' } });
     const verified = await adapter.webhookActivity!.verify({ rawBody, receivedAt: '2026-09-12T12:00:00.000Z', now: Date.now(), headers: new Headers({ 'Ashby-Signature': await signature(rawBody, 'secret') }), verificationSecret: 'secret', maxBytes: rawBody.length * 4 });
     const activity = adapter.webhookActivity!.normalize(workspace, { ...verified, event: { ...verified.event as object, observedAt: '2026-09-12T12:00:00.000Z' } }, 'regional-payload-reference');
-    expect(activity).toMatchObject({ eventType, title: AshbyEventLabels[eventType], providerEventId: 'provider-action', payloadRef: 'regional-payload-reference', visibility: { workspaceAutomationAllowed: false } });
+    expect(activity).toMatchObject({ eventType, title: AshbyEventLabels[eventType], providerEventId: 'provider-action', payloadRef: 'regional-payload-reference', visibility: { kind: "workspace" } });
     expect(JSON.stringify(activity)).not.toContain('Confidential candidate');
     expect(JSON.stringify(activity)).not.toContain('opaque-delivery-watermark');
   });
