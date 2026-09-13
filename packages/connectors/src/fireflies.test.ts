@@ -108,6 +108,7 @@ describe('Fireflies protocol', () => {
     await expect(management.remove(connection(), 'anything', neverAborts())).rejects.toMatchObject({ code: 'unsupported_capability' });
     expect(management.manualInstructions).toContain('https://app.fireflies.ai/integrations/api/webhook');
     expect(management.manualInstructions).toContain('meeting.bot_joined');
+    expect(management.manualInstructions).toContain('test event');
   });
 
   it('records the connected account from validate so Settings can name it', async () => {
@@ -469,6 +470,16 @@ describe('Fireflies webhook ingestion', () => {
     expect(envelope.eventType).toBe('meeting.bot_joined');
     expect(() => adapter.webhookActivity!.normalize(connection(), envelope, null))
       .toThrow(expect.objectContaining({ code: 'unsupported_capability' }) as Error);
+  });
+
+  it('verifies the dashboard test event like any delivery and leaves nothing to normalize', async () => {
+    // The shape Fireflies' "Send test event" button was observed to deliver:
+    // signed, timestamped, and naming a placeholder meeting.
+    const test = JSON.stringify({ event: 'test', timestamp: 1_786_000_000_000, meeting_id: 'test_00000000' });
+    await expect(verify(test, signingSecret, null)).rejects.toMatchObject({ code: 'invalid_signature' });
+    const envelope = await verify(test, signingSecret, await signature(test, signingSecret));
+    expect(envelope.eventType).toBe('test');
+    expect(adapter.webhookActivity!.normalize(connection(), envelope, null)).toBeNull();
   });
 
   it('refuses to normalize a delivery against a personal connection', async () => {

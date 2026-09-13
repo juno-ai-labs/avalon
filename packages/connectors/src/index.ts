@@ -185,6 +185,7 @@ export {
   FirefliesEventTypes,
   FirefliesPersonalAgentPresentation,
   FIREFLIES_MANUAL_INSTRUCTIONS,
+  FIREFLIES_TEST_EVENT,
   FIREFLIES_MCP_URL,
   firefliesTools,
   type FirefliesConnectorConfig,

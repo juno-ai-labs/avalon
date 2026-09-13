@@ -235,6 +235,31 @@ describe('the Fireflies workspace installation', () => {
     expect(verified?.appliedVersion).toBe(verified?.desiredVersion);
   });
 
+  it('lets the dashboard test event verify the registration without writing an activity', async () => {
+    const f = await fixture();
+    const { connection, manualRegistration } = await f.setup();
+    const secret = manualRegistration!.signingSecret;
+    expect((await f.installation(connection.id))?.state).toBe('action_required');
+
+    // A test event is still a delivery: unsigned, it proves nothing.
+    expect((await f.deliver(connection.id, payload('test', 'test_00000000'), secret, null)).status).toBe(401);
+
+    const tested = await f.deliver(connection.id, payload('test', 'test_00000000'), secret);
+    expect(tested.status, JSON.stringify(tested.body)).toBe(200);
+    expect(tested.body).toEqual({ ping: true });
+
+    // The administrator pressed a button and the connection answered: that is
+    // the verification, so Settings says Connected before any meeting exists.
+    const verified = await f.installation(connection.id);
+    expect(verified?.state).toBe('current');
+    expect(verified?.registrations[0]?.verifiedAt).not.toBeNull();
+    expect(verified?.lastReceivedAt).not.toBeNull();
+    // Nothing to read back for a placeholder meeting, and nothing to dedupe.
+    await f.drainQueue('event');
+    expect(await f.activities()).toEqual([]);
+    expect(await f.receipts()).toBe(0);
+  });
+
   it('rejects an unsigned, mis-signed, stale, or unsubscribed delivery without writing anything', async () => {
     const f = await fixture();
     const { connection, manualRegistration } = await f.setup();
