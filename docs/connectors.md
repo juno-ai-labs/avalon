@@ -525,9 +525,16 @@ conservative write execution and receipts without individual tool confirmations.
 **Connect for workspace** requires a Rally administrator and an Ashby API key
 with webhook management access. Its model-visible workspace catalogue explicitly describes an event-only
 connection and directs recruiting queries or updates to a personal connection;
-it exposes no recruiting read or write tools. Its selected `applicationSubmit` and `candidateStageChange` events are operational,
-not digest news. Events currently normalize only application, candidate and job
-IDs and remain restricted: workspace automation admission awaits the authorized
+it exposes no recruiting read or write tools. New setup subscribes automatically
+to all 27 documented business event types in `packages/contracts/src/ashby-events.ts`
+(application, candidate, interview, job, posting, offer, opening, HRIS, survey,
+signature, take-home and email-change notifications). These are operational, not
+digest news. `ping` is transport-only. Existing explicit subsets remain bounded.
+Normalization retains regional payload references and extracts only documented
+application/candidate/job identity fields. The email beta renews its watermark on
+retry: only that signal excludes delivery-specific raw hash/reference from the
+canonical comparison, retaining candidate identity and every raw R2 delivery.
+No email fetching is added. Events remain restricted: workspace automation admission awaits the authorized
 confidential-payload review. Live provider acceptance remains outstanding.
 
 The dedicated `ashby.rallywith.ai` Worker forwards unchanged signed bytes to the
@@ -1053,9 +1060,9 @@ fixture table instead, where it is reviewable.
 
 ### 2026-09-12 — Ashby and shared workspace installation ownership
 
-**What changed:** Ashby adds personal hosted MCP and independent workspace event installation. Granola setup, explicit repair and removal now use the shared installation facet.
+**What changed:** Ashby adds personal hosted MCP and independent workspace event installation, automatically registering its documented 27-event catalog. Its email-change signal deduplicates renewed delivery watermarks while preserving raw regional evidence. Granola setup, explicit repair and removal now use the shared installation facet.
 
-**Why:** Personal tool consent cannot authorize organization event registration, and direct provider writes could lose the identity needed for recovery after uncertainty or disablement.
+**Why:** Subscription management belongs to the connector while event choice belongs to automations. Personal tool consent cannot authorize organization event registration, and direct provider writes could lose the identity needed for recovery after uncertainty or disablement.
 
 **Considered and rejected:** Adding recruiting REST tools to the workspace grant or retaining a parallel Granola repair/revoke path. Both would blur the authority the new lifecycle separates.
 

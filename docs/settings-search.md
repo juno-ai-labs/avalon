@@ -80,8 +80,9 @@ their own validation feedback.
 
 Ashby setup exposes the exact labels **Connect for me** and
 **Connect for workspace**; the latter requires workspace administration. Exact
-searches for either label filter by the available scope. API-key and event-field
-searches reveal the setup entry point rather than creating a connection.
+searches for either label filter by the available scope. API-key searches reveal the setup entry point rather than creating a connection.
+Workspace setup has no event selection: Rally manages Ashby subscriptions
+automatically, while automations choose which event types they use.
 Personal owners can refresh their own OAuth connection. Administrators manage
 Ashby and Granola installations through **Manage events**: saved status reads
 are separate from the explained **Test** action, API-key replacement and cleanup
@@ -142,7 +143,7 @@ scrolling and both appearances.
 
 ### 2026-09-12 — Separate Ashby personal setup from shared event installation
 
-**What changed:** The catalogue exposes exact scope-specific Connect labels and searchable Ashby key/event controls. Manage events separates status, explained Test, key replacement and recovery; personal owners can refresh their own OAuth grant.
+**What changed:** The catalogue exposes exact scope-specific Connect labels and searchable Ashby key controls and automatic event subscriptions. Manage events separates status, explained Test, key replacement and recovery; personal owners can refresh their own OAuth grant.
 
 **Why:** Setup and recovery must preserve personal versus administrator authority, and reading registration status or rotation instructions must not mutate the provider. Open details must follow the same pushed state as the connection list.
 
