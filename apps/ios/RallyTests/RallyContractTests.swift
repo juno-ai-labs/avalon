@@ -39,6 +39,42 @@ final class DeepLinkTests: XCTestCase {
     func testWorkstreamUniversalLink() throws {
         let url = try XCTUnwrap(URL(string: "https://rallywith.ai/app/workspaces/ws_1/workstreams/wsr_9"))
         XCTAssertEqual(RallyDeepLink.workstreamId(from: url), "wsr_9")
+        XCTAssertEqual(RallyDeepLink.workstreamTarget(from: url)?.substreamId, "0")
+    }
+
+    func testWorkstreamChildPath() throws {
+        let url = try XCTUnwrap(URL(string: "https://rallywith.ai/app/workspaces/global/ws_1/workstreams/00000000-0000-4000-8000-000000000009/substreams/00000000-0000-4000-8000-00000000000a"))
+        let target = try XCTUnwrap(RallyDeepLink.workstreamTarget(from: url))
+        XCTAssertEqual(target.workstreamId, "00000000-0000-4000-8000-000000000009")
+        XCTAssertEqual(target.substreamId, "00000000-0000-4000-8000-00000000000a")
+    }
+
+    func testWorkstreamQuerySubstream() throws {
+        let url = try XCTUnwrap(URL(string: "https://rallywith.ai/app/workspaces/global/ws_1/workstreams/wsr_9?substream=child-1"))
+        XCTAssertEqual(RallyDeepLink.workstreamTarget(from: url)?.substreamId, "child-1")
+    }
+
+    func testDesktopDeepLinkChild() throws {
+        let url = try XCTUnwrap(URL(string: "rallywithai://workstreams/wsr_9/substreams/child-1"))
+        let target = try XCTUnwrap(RallyDeepLink.workstreamTarget(from: url))
+        XCTAssertEqual(target.workstreamId, "wsr_9")
+        XCTAssertEqual(target.substreamId, "child-1")
+    }
+
+    func testCanonicalChildURL() throws {
+        let url = try XCTUnwrap(RallyDeepLink.canonicalURL(
+            region: .global,
+            workspaceId: "ws_1",
+            workstreamId: "wsr_9",
+            substreamId: "child-1"
+        ))
+        XCTAssertEqual(url.absoluteString, "https://rallywith.ai/app/workspaces/global/ws_1/workstreams/wsr_9/substreams/child-1")
+        let main = try XCTUnwrap(RallyDeepLink.canonicalURL(
+            region: .eu,
+            workspaceId: "ws_1",
+            workstreamId: "wsr_9"
+        ))
+        XCTAssertEqual(main.absoluteString, "https://rallywith.ai/app/workspaces/eu/ws_1/workstreams/wsr_9")
     }
 
     func testIgnoresUnrelatedHTTPS() throws {
@@ -172,8 +208,26 @@ final class FeedProjectionTests: XCTestCase {
         XCTAssertEqual(rows.first { $0.kind == .system }?.statusKind, "assistant_turn_failed")
         XCTAssertEqual(rows.first { $0.kind == .elicitation }?.elicitation?.options.count, 1)
         let accordion = try XCTUnwrap(rows.first { $0.kind == .workAccordion })
-        XCTAssertTrue(accordion.nested.contains { $0.kind == .thought })
-        XCTAssertTrue(accordion.nested.contains { $0.kind == .pluginActivity })
+        XCTAssertEqual(accordion.nested.contains { $0.kind == .thought }, true)
+        XCTAssertEqual(accordion.nested.contains { $0.kind == .pluginActivity }, true)
+        XCTAssertEqual(rows.first { $0.kind == .text }?.turnId, "human")
+    }
+
+    func testBranchProvenanceTakesFiveTurnsThroughCutoff() throws {
+        let messages = (1...8).map { index in
+            RallyChatMessage(
+                id: "m\(index)",
+                role: index.isMultiple(of: 2) ? .assistant : .user,
+                text: "t\(index)",
+                createdAt: Date(),
+                isStreaming: false,
+                turnId: "turn-\(index)"
+            )
+        }
+        let provenance = FeedProjection.branchProvenance(messages: messages, throughTurnId: "turn-6")
+        XCTAssertEqual(provenance.map(\.turnId), ["turn-2", "turn-3", "turn-4", "turn-5", "turn-6"])
+        XCTAssertEqual(FeedProjection.branchProvenance(messages: messages, throughTurnId: nil), [])
+        XCTAssertEqual(FeedProjection.branchProvenance(messages: messages, throughTurnId: "missing"), [])
     }
 
     func testKeepsStreamingThoughtsOutOfAccordion() throws {
@@ -217,7 +271,7 @@ final class DirectoryDecodeTests: XCTestCase {
             "category": "messages",
             "title": "Ship iOS",
             "excerpt": "Hello Rally",
-            "location": { "kind": "message", "workstreamId": "wsr_9", "substreamId": "0", "turnId": "t", "transcriptSequence": 1, "range": { "start": 0, "end": 1 } }
+            "location": { "kind": "message", "workstreamId": "wsr_9", "substreamId": "child-1", "turnId": "t", "transcriptSequence": 1, "range": { "start": 0, "end": 1 } }
           }]
         }
         """.data(using: .utf8)!
@@ -226,6 +280,7 @@ final class DirectoryDecodeTests: XCTestCase {
         XCTAssertEqual(response.results.first?.kind, "messages")
         XCTAssertEqual(response.results.first?.snippet, "Hello Rally")
         XCTAssertEqual(response.results.first?.workstreamId, "wsr_9")
+        XCTAssertEqual(response.results.first?.substreamId, "child-1")
     }
 }
 
@@ -265,5 +320,53 @@ final class ConversationBootTests: XCTestCase {
         let boot = try JSONCoding.decoder.decode(ConversationBoot.self, from: json)
         XCTAssertEqual(boot.id, "wsr_2")
         XCTAssertEqual(boot.title, "From socket")
+    }
+}
+
+final class SubstreamDecodeTests: XCTestCase {
+    func testDecodesPreparationPreview() throws {
+        let json = """
+        { "operationId": "op-1", "substreamId": "child-1", "title": "Branch" }
+        """.data(using: .utf8)!
+        let prepared = try JSONCoding.decoder.decode(SubstreamPreparationPreview.self, from: json)
+        XCTAssertEqual(prepared.substreamId, "child-1")
+        XCTAssertEqual(prepared.title, "Branch")
+    }
+
+    func testDecodesCreationResult() throws {
+        let json = """
+        {
+          "substreamId": "child-1",
+          "title": "Branch",
+          "opening": {
+            "turnId": "t1",
+            "clientMessageId": "c1",
+            "createdAt": "2026-09-12T12:00:00.000Z"
+          }
+        }
+        """.data(using: .utf8)!
+        let created = try JSONCoding.decoder.decode(SubstreamCreationResult.self, from: json)
+        XCTAssertEqual(created.substreamId, "child-1")
+        XCTAssertEqual(created.opening?.turnId, "t1")
+    }
+
+    func testDecodesControlMetadataChildren() throws {
+        let json = """
+        {
+          "title": "Ship iOS",
+          "scope": "personal",
+          "privateChildren": [{
+            "substreamId": "child-1",
+            "title": "Investigate crash",
+            "createdByUserId": "u1",
+            "createdAt": "2026-09-12T12:00:00.000Z",
+            "updatedAt": "2026-09-12T12:00:01.000Z"
+          }]
+        }
+        """.data(using: .utf8)!
+        let metadata = try JSONCoding.decoder.decode(RallyWorkstreamControlMetadata.self, from: json)
+        XCTAssertEqual(metadata.title, "Ship iOS")
+        XCTAssertEqual(metadata.privateChildren?.first?.substreamId, "child-1")
+        XCTAssertEqual(metadata.privateChildren?.first?.title, "Investigate crash")
     }
 }

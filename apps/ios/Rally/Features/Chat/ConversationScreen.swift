@@ -12,7 +12,13 @@ struct ConversationScreen: View {
                 colors.canvas.ignoresSafeArea()
                 VStack(spacing: 0) {
                     topBar
-                    if model.messages.isEmpty {
+                    if model.canUseSubstreams, model.currentWorkstream != nil {
+                        ConversationSwitcherChip()
+                            .padding(.bottom, 8)
+                    }
+                    if model.substreamLaunch != nil {
+                        SubstreamLaunchView()
+                    } else if model.messages.isEmpty {
                         EmptyGreeting(name: model.greetingName, opportunities: model.opportunities) { prompt in
                             model.composerText = prompt
                             Task { await model.send() }
@@ -26,21 +32,23 @@ struct ConversationScreen: View {
                             jumpToken: model.jumpToLatestToken
                         )
                     }
-                    if model.messages.contains(where: { $0.statusKind == "assistant_turn_failed" }) {
+                    if model.substreamLaunch == nil, model.messages.contains(where: { $0.statusKind == "assistant_turn_failed" }) {
                         Button("Retry") { Task { await model.retryHarness() } }
                             .font(RallyType.button())
                             .padding(.bottom, 4)
                     }
-                    ComposerBar(
-                        text: $model.composerText,
-                        isStreaming: model.isStreaming,
-                        attachments: model.pendingAttachments,
-                        onSend: { Task { await model.send() } },
-                        onStop: { Task { await model.stopGeneration() } },
-                        onAttach: { data, name, mime in model.attach(data: data, fileName: name, mimeType: mime) },
-                        onRemoveAttachment: { model.removeAttachment($0) },
-                        onVoice: { model.isVoicePresented = true }
-                    )
+                    if model.substreamLaunch == nil {
+                        ComposerBar(
+                            text: $model.composerText,
+                            isStreaming: model.isStreaming,
+                            attachments: model.pendingAttachments,
+                            onSend: { Task { await model.send() } },
+                            onStop: { Task { await model.stopGeneration() } },
+                            onAttach: { data, name, mime in model.attach(data: data, fileName: name, mimeType: mime) },
+                            onRemoveAttachment: { model.removeAttachment($0) },
+                            onVoice: { model.isVoicePresented = true }
+                        )
+                    }
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -56,7 +64,13 @@ struct ConversationScreen: View {
                 VoiceBar { transcript in
                     model.composerText = transcript
                     model.isVoicePresented = false
-                    Task { await model.send() }
+                    Task {
+                        if model.substreamLaunch != nil {
+                            await model.submitSubstreamLaunch()
+                        } else {
+                            await model.send()
+                        }
+                    }
                 }
                 .presentationDetents([.height(220)])
             }
@@ -66,8 +80,13 @@ struct ConversationScreen: View {
             .sheet(isPresented: $model.isInspectorPresented) {
                 InspectorSheet()
             }
+            .sheet(isPresented: $model.isSubstreamSwitcherPresented) {
+                SubstreamSwitcherSheet()
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
             .overlay(alignment: .bottomTrailing) {
-                if model.messages.count > 6 {
+                if model.substreamLaunch == nil, model.messages.count > 6 {
                     Button {
                         model.jumpToLatest()
                     } label: {
@@ -388,10 +407,12 @@ struct UserBubble: View {
                             .font(RallyType.caption())
                             .foregroundStyle(colors.textSecondary)
                     }
+                    if !message.isStreaming {
+                        MessageActions(message: message)
+                    }
                 }
             }
         }
-        .accessibilityElement(children: .combine)
         .accessibilityLabel("You, \(message.text)")
     }
 }
@@ -610,6 +631,14 @@ struct MessageActions: View {
     @Environment(\.rallyColors) private var colors
     @State private var copied = false
 
+    private var canStartSubstream: Bool {
+        model.canUseSubstreams
+            && model.currentSubstreamId == SubstreamAddress.main
+            && model.substreamLaunch == nil
+            && !message.isStreaming
+            && message.turnId != nil
+    }
+
     var body: some View {
         HStack(spacing: 20) {
             Button {
@@ -636,6 +665,16 @@ struct MessageActions: View {
                     .foregroundStyle(colors.textSecondary)
             }
             .accessibilityLabel("Share")
+            if canStartSubstream {
+                Button {
+                    model.startSubstream(throughTurnId: message.turnId)
+                } label: {
+                    Image(systemName: "arrow.turn.down.right")
+                        .font(.system(size: 18))
+                        .foregroundStyle(colors.textSecondary)
+                }
+                .accessibilityLabel("New substream")
+            }
             Spacer()
         }
         .padding(.top, 4)

@@ -179,8 +179,95 @@ actor RallyClient {
         try await get(path: "/conversations/\(id)", as: ConversationBoot.self)
     }
 
-    func conversationSocketTicket(parentId: String, substreamId: String = "0") async throws -> RallySocketTicket {
+    func conversationSocketTicket(parentId: String, substreamId: String = SubstreamAddress.main) async throws -> RallySocketTicket {
         try await get(path: "/conversations/\(parentId)/substreams/\(substreamId)/socket", as: RallySocketTicket.self)
+    }
+
+    func workstreamControlSocketTicket(id: String) async throws -> RallySocketTicket {
+        try await get(path: "/workstreams/\(id)/control-socket", as: RallySocketTicket.self)
+    }
+
+    func prepareSubstream(parentId: String, operationId: String, throughTurnId: String?) async throws -> SubstreamPreparationPreview {
+        struct Body: Encodable {
+            var operationId: String
+            var throughTurnId: String?
+
+            enum CodingKeys: String, CodingKey { case operationId, throughTurnId }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(operationId, forKey: .operationId)
+                try container.encode(throughTurnId, forKey: .throughTurnId)
+            }
+        }
+        return try await post(
+            path: "/conversations/\(parentId)/substreams/prepare",
+            body: Body(operationId: operationId, throughTurnId: throughTurnId),
+            as: SubstreamPreparationPreview.self,
+            headers: [APIConfiguration.operationHeader: operationId]
+        )
+    }
+
+    func confirmSubstream(
+        parentId: String,
+        operationId: String,
+        clientMessageId: String,
+        text: String,
+        attachmentIds: [String]
+    ) async throws -> SubstreamCreationResult {
+        struct Opening: Encodable {
+            var clientMessageId: String
+            var text: String
+            var mentions: [RallyMention]
+            var attachmentIds: [String]
+            var confirmedParticipantUserIds: [String]
+        }
+        struct Body: Encodable {
+            var operationId: String
+            var opening: Opening
+        }
+        return try await post(
+            path: "/conversations/\(parentId)/substreams/confirm",
+            body: Body(
+                operationId: operationId,
+                opening: Opening(
+                    clientMessageId: clientMessageId,
+                    text: text,
+                    mentions: [],
+                    attachmentIds: attachmentIds,
+                    confirmedParticipantUserIds: []
+                )
+            ),
+            as: SubstreamCreationResult.self,
+            headers: [APIConfiguration.operationHeader: operationId]
+        )
+    }
+
+    func cancelSubstream(parentId: String, operationId: String) async {
+        struct Body: Encodable { var operationId: String }
+        try? await postVoid(
+            path: "/conversations/\(parentId)/substreams/cancel",
+            body: Body(operationId: operationId),
+            authorized: true
+        )
+    }
+
+    func renameSubstream(parentId: String, substreamId: String, title: String) async throws {
+        struct Body: Encodable { var title: String }
+        try await requestVoid(
+            method: "PATCH",
+            path: "/conversations/\(parentId)/substreams/\(substreamId)",
+            body: Body(title: title)
+        )
+    }
+
+    func setSubstreamArchived(parentId: String, substreamId: String, archived: Bool) async throws {
+        struct Body: Encodable { var archived: Bool }
+        try await requestVoid(
+            method: "PATCH",
+            path: "/conversations/\(parentId)/substreams/\(substreamId)",
+            body: Body(archived: archived)
+        )
     }
 
     func workspaceSocketTicket() async throws -> RallySocketTicket {
