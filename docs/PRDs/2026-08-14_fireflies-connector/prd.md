@@ -172,26 +172,21 @@ the key's fingerprint — instead of starting a second one:
    route and generates the signing secret, and the installation enters
    **Action required** with the exact steps the admin must take in Fireflies:
    open the **Webhooks V2 configuration page**, paste the endpoint URL and the
-   signing secret, and save. Nothing is selected: if the page asks which
-   events to send, the admin leaves it as it is or chooses all of them, and
-   the copy says so — "Rally accepts every event Fireflies can send, so there
-   is nothing to pick." The URL is not secret and stays visible on the
-   connection for as long as it exists; the secret is shown in this stage and
-   can be shown again only by rotating it (key design decision 7). The
-   adapter declares every Fireflies registration operation manual and
+   signing secret, subscribe `meeting.transcribed` and `meeting.summarized`
+   (not `meeting.bot_joined`), and save. The URL is not secret and stays
+   visible on the connection for as long as it exists; the secret is shown in
+   this stage and can be shown again only by rotating it (key design decision
+   7). The adapter declares every Fireflies registration operation manual and
    inspection unsupported, so Rally cannot check this stage itself, and the
-   copy says that too: "Rally can't check this for you. This changes to
-   Current once your next meeting reaches Rally." The cost copy is in user
-   terms: "Until this is done, no meetings reach Rally. Once it is, a
-   finished meeting shows up within a couple of minutes."
+   copy says so: "Rally can't check this for you. This changes to Current
+   when the first meeting arrives." The cost copy is in user terms: "Until
+   this is done, no meetings reach Rally. Once it is, a finished meeting
+   shows up within a couple of minutes."
 3. **Verified by delivery.** The installation moves from **Action required**
    to **Current** on the first delivery that passes signature verification,
-   whichever event it carries, and shows a last-received time from then on.
-   When Fireflies sends `meeting.bot_joined`, that is usually the first one,
-   so a registration is verified as the bot joins the next meeting rather
-   than after it ends. Fireflies offers no test ping, so the meeting the
-   admin records next is the test, and the Action-required copy says that
-   too.
+   and shows a last-received time from then on. Fireflies offers no test
+   ping, so the meeting the admin records next is the test, and the
+   Action-required copy says that too.
 
 The form reports what the connection sees **after** verification rather than
 asking the admin to evaluate a plan-tier conditional before it: "Connected as
@@ -281,12 +276,10 @@ Full contract in **Agent behavior**.
 precedent) in the owning workspace. `meeting.transcribed` becomes an
 operational, non-digestible activity (the summarized event supersedes it
 minutes later; double-digesting one meeting is worse than a short delay).
-`meeting.bot_joined` is accepted — a verified delivery is acknowledged and
-counts as the installation's verified delivery — but produces no activity
-and no receipt: nothing in the product listens for a call starting, and a
-replay of it is harmless. An event name Rally does not know is handled the
-same way, so a new Fireflies event type never fails a customer's endpoint;
-it is dropped until the manifest declares it.
+`meeting.bot_joined` is not subscribed. A verified delivery carrying it, or
+any other event Rally does not handle, is rejected as unsupported after
+verification — as Granola's ingress does — and does not count as the
+installation's verified delivery.
 
 **Delivery is webhook-only, through the shared ingestion pipeline.**
 `POST /ingest/fireflies/:id` on the owning region's API host maps the route to
@@ -478,19 +471,17 @@ None yet.
     dedupe has run, and departs from Granola's change-signal shape for no
     product gain, since digests and automations read the hydrated resource
     either way.
-13. **The admin selects nothing — no events, no checkboxes — in Rally or in
-    Fireflies.** Fireflies offers three events, Rally wants two of them and
-    can safely ignore the third, so a choice would only add a way to get
-    setup wrong; the endpoint therefore accepts every event Fireflies sends
-    and the instructions say to paste and save. Rejected: Ashby-style
-    per-event selection at setup — right for a provider with many events and
-    a registration per event, wrong for one page with three boxes. Rejected:
-    a consent checkbox — the roll-down and coverage statements are copy the
-    admin reads before clicking Connect, and a box would not make them truer.
-    A consequence for maintenance: the approved event scope is "everything
-    Fireflies sends to this URL", so declaring a new Fireflies event type in
-    the manifest needs no customer action, because the customer never chose
-    events to begin with.
+13. **Rally's form has no checkboxes: the event set is the connector's, and
+    consent is copy.** The two subscribed events are fixed by this PRD and
+    named in the Fireflies instructions; the admin never chooses them in
+    Rally. Rejected: Ashby-style per-event selection at setup — right for a
+    provider with many events and a registration per event, wrong for a
+    connector that wants exactly two. Rejected: a consent checkbox — the
+    roll-down and coverage statements are copy the admin reads before
+    clicking Connect, and a box would not make them truer. A consequence for
+    maintenance: adding an event later expands the approved scope, which the
+    lifecycle treats as customer action — for Fireflies, one more box the
+    admin ticks on the Webhooks V2 page, listed by the maintenance preview.
 
 ## Data model
 
@@ -846,9 +837,8 @@ registers nothing with Fireflies:
 - **Webhook** (workspace scope; required for activity, not for the tools):
   Fireflies' **Webhooks V2 configuration page** — paste the endpoint URL and
   signing secret from the installation's Action-required instructions and
-  save; no event selection is needed, since Rally accepts every event the
-  page can send. The signing secret is required on Rally's side: posts
-  without a valid
+  subscribe `meeting.transcribed` and `meeting.summarized`. The signing
+  secret is required on Rally's side: posts without a valid
   `X-Hub-Signature` are rejected, so skipping the secret in Fireflies means
   no activity at all. Fireflies fires these webhooks only for meetings the
   connected account organizes, which is the coverage the consent copy
@@ -923,13 +913,12 @@ rest are automatable.
    discover and load the plugin, search, and read the summary; a long
    transcript pages to `nextOffset: null`.
 3. Verified by delivery: after the admin registers the webhook and records a
-   meeting, the first verified delivery — `meeting.bot_joined` when it is
-   sent, else `meeting.transcribed` — moves the installation to **Current**
-   with a last-received time, and the `meeting.summarized` delivery produces
-   exactly one digestible activity whose hydrated content carries the
-   summary; `meeting.bot_joined` and an unknown event name are acknowledged
-   and produce no activity; replaying any delivery produces no second
-   activity.
+   meeting, the `meeting.transcribed` delivery moves the installation to
+   **Current** with a last-received time, and the `meeting.summarized`
+   delivery produces exactly one digestible activity whose hydrated content
+   carries the summary; a verified delivery of an unsubscribed event is
+   rejected and does not verify the installation; replaying either handled
+   delivery produces no second activity.
 4. A digest automation subscribed to the connection digests the summary
    activity; an automation bound to `meeting.transcribed` fires on the
    operational event, which never reaches a digest.
