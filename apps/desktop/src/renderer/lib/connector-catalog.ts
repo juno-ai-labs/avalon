@@ -43,6 +43,16 @@ export const connectorProviders = [
     capabilities: ['ashby.workspace.events'],
   },
   {
+    id: 'fireflies' as const,
+    provider: 'fireflies' as const,
+    name: 'Fireflies',
+    description: "Your own Fireflies meetings through its live tools, or the team's transcripts and summaries through an admin API key.",
+    mark: 'fireflies' as const,
+    scopes: ['you', 'workspace'] as const,
+    personalCapabilities: ['fireflies.personal.read'],
+    capabilities: ['fireflies.workspace.read'],
+  },
+  {
     id: 'granola' as const,
     provider: ConnectorConnectionCardCatalog.granola.providerType,
     name: 'Granola',

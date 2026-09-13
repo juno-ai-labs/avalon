@@ -1,6 +1,6 @@
 import { uuidV7 } from "../lib/uuid-v7";
 import { ConnectorInstallationSchema, type ConnectorInstallation } from "@rally/contracts";
-import type { InstallationCreate, InstallationClaim, InstallationSettle, InstallationChange, InstallationRotationPrepare, InstallationMaintenance, InstallationMaintenanceCancel, InstallationCredentialReplace } from "./connector-installation-protocol";
+import type { InstallationCreate, InstallationClaim, InstallationDelivery, InstallationSettle, InstallationChange, InstallationRotationPrepare, InstallationMaintenance, InstallationMaintenanceCancel, InstallationCredentialReplace } from "./connector-installation-protocol";
 
 export function readInstallation(storage: DurableObjectStorage, connectionId: string): ConnectorInstallation | null {
   const row = storage.sql.exec<{ document_json: string }>("SELECT document_json FROM connector_installations WHERE connection_id = ?", connectionId).toArray()[0];
@@ -40,13 +40,66 @@ export function createInstallation(storage: DurableObjectStorage, input: Install
        credential_key_version, granted_scopes_json, model_plugin_id, config_json, created_at, updated_at)
       VALUES (?, ?, ?, 'workspace', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       installation.connectionId, installation.workspaceId, installation.provider,
-      `${installation.provider === "ashby" ? "Ashby" : "Granola"} workspace events`,
+      input.displayName ?? `${installation.provider === "ashby" ? "Ashby" : "Granola"} workspace events`,
       input.credentials.ciphertext, input.credentials.iv, input.credentials.keyVersion, JSON.stringify([input.capability]),
       `plugin_${installation.provider}_${installation.connectionId.replaceAll("-", "")}`,
       JSON.stringify({ installationLifecycle: 1, selectedEvents: installation.selectedEvents }), installation.createdAt, installation.createdAt);
     storage.sql.exec(`INSERT INTO connector_installations
       (connection_id, workspace_id, attempt_id, user_id, input_hash, generation, document_json) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       installation.connectionId, installation.workspaceId, installation.attemptId, input.userId, input.inputHash, installation.generation, JSON.stringify(installation));
+    return installation;
+  });
+}
+
+/**
+ * Record a verified delivery, and — where nothing else ever could — let it be
+ * the evidence that the registration exists.
+ *
+ * Every other provider proves a registration by inspecting it: the runner reads
+ * the webhook back, compares its destination and events, and only then is the
+ * registration `current`. A provider whose `create` is manual and whose
+ * `inspect` is unsupported offers no such read, so an installation waiting for
+ * inspection would sit in **Action required** forever while meetings arrived
+ * perfectly well. The delivery itself is better evidence than an inspection
+ * anyway — it is signed with the secret Rally generated, so it proves the
+ * registration exists, points here, and carries the right key, which is more
+ * than reading a row back proves.
+ *
+ * Keyed on the facet's support declaration, never on a provider name: what
+ * makes a delivery sufficient is that nothing else is available, and the facet
+ * is where that is stated.
+ */
+export function recordInstallationDelivery(storage: DurableObjectStorage, input: InstallationDelivery): ConnectorInstallation | null {
+  return storage.transactionSync(() => {
+    const installation = readInstallation(storage, input.connectionId);
+    if (!installation) return null;
+    // Deliveries can arrive out of order; the last-received time only moves
+    // forward, so a late one never rewinds what Settings shows.
+    const advanced = !installation.lastReceivedAt || installation.lastReceivedAt < input.receivedAt;
+    if (advanced) installation.lastReceivedAt = input.receivedAt;
+    let changed = advanced;
+    const verifiableOnlyByDelivery = input.registrationSupport?.create === "manual"
+      && input.registrationSupport.inspect === "unsupported";
+    // A disabled connection is in cleanup: a delivery that somehow reaches it
+    // must not restore an installation the administrator removed.
+    if (verifiableOnlyByDelivery && enabled(storage, input.connectionId)) {
+      for (const registration of installation.registrations) {
+        if (registration.action === "remove" || registration.state === "removed" || registration.state === "current") continue;
+        registration.state = "current";
+        registration.verifiedAt = input.receivedAt;
+        registration.error = null;
+        changed = true;
+      }
+      const coversSelection = installation.selectedEvents.every((event) => installation.registrations
+        .some((item) => item.state === "current" && item.events.includes(event)));
+      if (coversSelection && installation.registrations.every((item) => item.state === "current" || item.state === "removed")) {
+        installation.state = "current";
+        installation.error = null;
+        installation.appliedVersion = installation.desiredVersion;
+      }
+    }
+    if (!changed) return installation;
+    save(storage, installation);
     return installation;
   });
 }

@@ -286,6 +286,16 @@ One of four.
 | `note.edited` | No | A revision to a note already reported. |
 | `note.access_granted` | No | A permission change, not something that happened. |
 
+## Fireflies
+
+One of two. Fireflies reports the same meeting twice, minutes apart, and only
+the second report has anything written about it.
+
+| Activity type | Digestible | Reason |
+| --- | --- | --- |
+| `meeting.summarized` | Yes | The meeting as a person would recount it: overview, action items, the things decided. This is the meeting arriving. |
+| `meeting.transcribed` | No | The same meeting a few minutes earlier, with the words captured and nothing concluded from them. Digesting both would tell somebody about one call twice, and the later one is the useful half. |
+
 ## X
 
 None of none. X is read-only through a shared account and ingests no activity at
