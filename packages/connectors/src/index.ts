@@ -640,7 +640,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "gmail.create_draft",
-    description: "Create a Gmail draft for the authorized user and return its id and a link to open it. Drafts are not sent. To reply inside an existing thread, pass both that thread's `threadId` and the original message's RFC `Message-ID` as `inReplyTo`, taking both from the same search hit; a `threadId` without an `inReplyTo` is rejected.",
+    description: "Create a Gmail draft for the authorized user and return its id and a link to open it. Drafts are not sent. Omit `threadId` and `inReplyTo` to start a new conversation. To reply inside an existing thread, pass both that thread's `threadId` and the original message's RFC `Message-ID` as `inReplyTo`, taking both from the same search hit; a `threadId` without an `inReplyTo` is rejected.",
     capability: "gmail.draft",
     mode: "write",
     idempotency: "record_before_execute",
@@ -648,7 +648,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "gmail.send",
-    description: "Send an email immediately as the authorized user; it leaves the mailbox and cannot be recalled. Threading works as it does for a draft: pass the thread's `threadId` together with the original message's RFC `Message-ID` as `inReplyTo`. Create a draft instead when a person is expected to review the message first.",
+    description: "Send an email immediately as the authorized user; it leaves the mailbox and cannot be recalled. Omit `threadId` and `inReplyTo` to start a new conversation. Threading works as it does for a draft: to reply inside an existing thread, pass that thread's `threadId` together with the original message's RFC `Message-ID` as `inReplyTo`. Create a draft instead when a person is expected to review the message first.",
     capability: "gmail.send",
     mode: "write",
     idempotency: "record_before_execute",
@@ -1163,9 +1163,15 @@ const EmailArgsSchema = z.strictObject({
   references: z.array(RfcMessageIdSchema).max(50).default([])
 }).superRefine((value, context) => {
   if (value.threadId && !value.inReplyTo) {
+    // Both repairs, because only one of them is usually right and it is not the
+    // one this used to name. Told solely to supply the Message-ID, a model
+    // sending a brand-new email — which has no message to reply to, and so no
+    // legitimate id — either invents one and mis-threads the mail, or gives up
+    // and reports the tool as broken. Dropping the stray `threadId` is the fix
+    // in that case, and it was the branch the message never mentioned.
     context.addIssue({
       code: "custom",
-      message: "A Gmail threaded reply requires the original message's RFC Message-ID",
+      message: "Omit threadId to start a new email conversation, or, to reply inside an existing thread, also pass that thread's original message RFC Message-ID as inReplyTo. Never invent a Message-ID.",
       path: ["inReplyTo"]
     });
   }
