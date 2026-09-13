@@ -1975,10 +1975,14 @@ describe("connectors", () => {
     // is advice it cannot take: the model either invents an id and mis-threads
     // the mail, or reports the tool as broken. Dropping the stray threadId is
     // the repair that applies, so the refusal has to offer it.
-    const message = String(adapter.validateToolInput?.("gmail.send", args)?.issues?.[0]?.message ?? "");
-    expect(message).toContain("Omit threadId to start a new email conversation");
-    expect(message).toContain("inReplyTo");
-    expect(message).toContain("Never invent a Message-ID");
+    const issues = adapter.validateToolInput?.("gmail.send", args)?.issues ?? [];
+    // Selected by path rather than position, which also pins where the refusal
+    // is reported: the harness renders `<path>: <message>`, so it has to name
+    // the field the first instruction tells the model to drop.
+    const issue = issues.find((candidate) => candidate.path.join(".") === "threadId");
+    expect(issue?.message).toContain("Omit threadId to start a new email conversation");
+    expect(issue?.message).toContain("inReplyTo");
+    expect(issue?.message).toContain("Never invent a Message-ID");
 
     // A new message with neither field is not the error's business at all.
     expect(adapter.validateToolInput?.("gmail.send", {

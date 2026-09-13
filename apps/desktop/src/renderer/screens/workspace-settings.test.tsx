@@ -1786,7 +1786,7 @@ describe('Workspace settings', () => {
     expect(within(dialog).getByLabelText('Webhook signing secret')).toHaveValue('whsec_rotated-secret');
   });
 
-  it('lets a member refresh their own personal connection but not a workspace one', async () => {
+  it('hides connection refresh actions from non-admin members', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000010',
       connectorType: 'google',
@@ -1808,12 +1808,9 @@ describe('Workspace settings', () => {
 
     expect(await screen.findByText('Google · sam@example.com')).toBeVisible();
     expect(screen.getByText('Linear · Rally')).toBeVisible();
-    // Their own connection is theirs to repair as well as to delete; offering
-    // only Delete made starting over the sole recovery from a stale credential.
-    expect(screen.getByRole('button', { name: 'Refresh Google · sam@example.com' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Delete Google · sam@example.com' })).toBeVisible();
-    // The workspace connection stays admin-only in both actions.
+    expect(screen.queryByRole('button', { name: 'Refresh Google · sam@example.com' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Refresh Linear · Rally' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete Google · sam@example.com' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Delete Linear · Rally' })).not.toBeInTheDocument();
   });
 
