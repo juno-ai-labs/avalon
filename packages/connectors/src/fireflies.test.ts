@@ -286,10 +286,34 @@ describe('Fireflies workspace tools', () => {
 });
 
 describe('Fireflies provider failures', () => {
-  const withError = (error: Record<string, unknown>) => createFirefliesConnector({
+  // HTTP 500, not 200. Fireflies' documentation describes the `errors` array and
+  // says nothing about the status; the live endpoint answers a rejected key with
+  // 500 and that array, checked before the query is even parsed (observed
+  // 2026-09-13). These fixtures returned 200, which is why the mapper looked
+  // correct while production never reached it. The status is a parameter here so
+  // a future provider change is a one-line edit rather than a rewrite.
+  const withError = (error: Record<string, unknown>, status = 500) => createFirefliesConnector({
     redirectUri,
-    // Fireflies answers an application error with HTTP 200 and an errors array.
-    fetch: async () => Response.json({ errors: [error] }),
+    fetch: async () => Response.json({ errors: [error] }, { status }),
+  });
+
+  it('reports a rejected key from the exact response Fireflies sends, status and all', async () => {
+    // Captured verbatim from https://api.fireflies.ai/graphql on 2026-09-13 with
+    // no valid key. Recorded rather than paraphrased because the status is the
+    // part a hand-written fixture gets wrong, and getting it wrong here means a
+    // revoked key reads as "Fireflies did not respond, retry" and the connection
+    // never asks to be reconnected.
+    const live = {
+      errors: [{
+        friendly: true,
+        code: 'auth_failed',
+        message: 'An error occurred while authenticating your request. Please recheck your API key and try again. If this persists, please contact Fireflies support.',
+        extensions: { code: 'auth_failed' },
+      }],
+    };
+    const adapter = createFirefliesConnector({ redirectUri, fetch: async () => Response.json(live, { status: 500 }) });
+    await expect(adapter.executeTool('get_meeting_summary', { meetingId: 'meeting-1' }, { connection: connection(), principal, signal: neverAborts() }))
+      .rejects.toMatchObject({ code: 'unauthorized', details: { reason: 'auth_failed', reconnectRequired: true } });
   });
 
   it.each([
@@ -354,7 +378,7 @@ describe('Fireflies provider failures', () => {
       ok: true, message: 'Fireflies API key is valid for bob@acme.test',
       warning: 'Check the workspace installation for verified webhook delivery status',
     });
-    const revoked = createFirefliesConnector({ redirectUri, fetch: async () => Response.json({ errors: [{ code: 'auth_failed' }] }) });
+    const revoked = createFirefliesConnector({ redirectUri, fetch: async () => Response.json({ errors: [{ code: 'auth_failed' }] }, { status: 500 }) });
     await expect(revoked.healthCheck(connection(), neverAborts())).resolves.toMatchObject({ ok: false, reconnectRequired: true });
   });
 });
