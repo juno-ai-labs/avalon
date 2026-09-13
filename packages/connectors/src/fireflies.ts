@@ -269,7 +269,23 @@ const TranscriptSentencesSchema = TranscriptRowSchema.extend({
  * is what the workspace connection's read authority *is* — reviewable here,
  * field by field, rather than inferred from whatever the model asked for.
  */
-const SEARCH_MEETINGS_DOCUMENT = `query RallyFirefliesSearchMeetings($keyword: String, $scope: TranscriptsQueryScope, $fromDate: DateTime, $toDate: DateTime, $participants: [String], $hostEmail: String, $limit: Int, $skip: Int) {
+/**
+ * Variable types are the ones `Query.transcripts` actually declares, read by
+ * introspection against the live schema on 2026-09-13:
+ *
+ *   scope: String          — **not** an enum. `TranscriptsQueryScope` is a type
+ *                            the documentation names and the schema does not
+ *                            have, and declaring it failed every search with
+ *                            `GRAPHQL_VALIDATION_FAILED`.
+ *   participants: [String!] — inner non-null; `[String]` is rejected as
+ *                            "used in position expecting type [String!]".
+ *
+ * The accepted `scope` values come from the provider's own constraint message:
+ * "scope must be one of the following values: title, sentences, all", alongside
+ * "keyword is required when scope is provided" — which is why the pin below
+ * travels with the keyword rather than on its own.
+ */
+const SEARCH_MEETINGS_DOCUMENT = `query RallyFirefliesSearchMeetings($keyword: String, $scope: String, $fromDate: DateTime, $toDate: DateTime, $participants: [String!], $hostEmail: String, $limit: Int, $skip: Int) {
   transcripts(keyword: $keyword, scope: $scope, fromDate: $fromDate, toDate: $toDate, participants: $participants, host_email: $hostEmail, limit: $limit, skip: $skip) {
     id
     title

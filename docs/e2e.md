@@ -705,6 +705,22 @@ binding.
 Needs a live Fireflies workspace, an account that records meetings, and control
 of that account's Webhooks V2 page. None of it is reachable offline.
 
+**Run the read half first, with a key alone** — no workspace, no dashboard, no
+webhook:
+
+```bash
+FIREFLIES_API_KEY=… pnpm --filter @rally/connectors exec vitest run src/fireflies-live.test.ts
+```
+
+It drives the shipped adapter against the live API and skips itself without the
+variable, so it costs CI nothing. It exists because the first time it was run it
+found two schema faults the whole offline suite agreed were fine: the search
+document declared a variable type Fireflies documents and does not have, which
+invalidated *every* search, and an inner-nullability mismatch beside it. Anything
+it reports is wrong before the steps below are worth attempting. It prints
+shapes, codes and counts and never meeting content, so it is safe to paste into
+a ticket.
+
 1. As a Rally owner or administrator, open **Connections** and start **Connect for workspace** on Fireflies. Paste a deliberately wrong key first: the form stays open with the key intact, says the key was rejected, and no connection appears in the list. Paste the real key: the row reads `Fireflies · <account email>`, states that Rally cannot tell which meetings the key covers, and the setup stage shows the endpoint URL, a signing secret, and the Fireflies steps. Close and reopen Settings, then click **Connect for workspace** again: it resumes the same pending installation rather than creating a second one, and does not re-reveal the secret. Open **Manage events**: the installation reads **Needs attention** with no last event. Press **Test**: the credential reports healthy while the unverified installation stays a warning, not a failure.
 2. From a fresh ad-hoc work stream started by a different member, ask about a recent meeting. Confirm the agent discovers and loads the Fireflies plugin, searches, and reads the summary before the transcript. Ask for a long meeting's transcript and confirm it pages to `nextOffset: null` and stops. Ask it to share or rename a meeting and confirm it says that must be done in Fireflies.
 3. In Fireflies' Webhooks V2 page, paste Rally's endpoint URL and signing secret, subscribe `meeting.transcribed` and `meeting.summarized`, and save. Record a short meeting. Confirm the `meeting.transcribed` delivery moves the installation to **Connected** with a last-received time, and the `meeting.summarized` delivery produces exactly one digestible activity whose hydrated content carries the summary. Subscribe `meeting.bot_joined` as well, record another meeting, and confirm that delivery is rejected and does not appear as activity.
