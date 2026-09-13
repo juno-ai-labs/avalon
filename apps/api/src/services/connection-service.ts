@@ -69,7 +69,7 @@ import {
 } from "../lib/desktop-handoff";
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { createRegionRoutedState } from "../lib/region-routed-state";
-import { withAuthorizedConnection, withUnstoredConnectorCredential } from "./connector-connection-access";
+import { validateUnstoredConnectorCredential, withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { logWarn } from "../observability/logger";
 import { GitHubRoutingService } from "./github-routing-service";
@@ -275,7 +275,12 @@ type ConnectorInstallationProvider = z.infer<typeof ConnectorInstallationProvide
  */
 function workspaceInstallationDisplayName(providerName: string, credentials: Record<string, unknown>): string {
   const account = stringField(credentials, "providerAccountName");
-  return account ? `${providerName} · ${account}` : `${providerName} workspace events`;
+  // Bounded and flattened like every other provider-derived label: the account
+  // half is whatever the provider returned, the reservation refuses anything
+  // over 180 characters, and this string is rendered into the model's plugin
+  // catalogue a line at a time.
+  return (account ? `${providerName} · ${account}` : `${providerName} workspace events`)
+    .replace(/\s+/gu, " ").trim().slice(0, 180);
 }
 
 const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, readonly string[]>> = {
@@ -1634,6 +1639,7 @@ export class ConnectionService {
       || connection.connector_type === "notion"
       || connection.connector_type === "slack"
       || (connection.connector_type === "ashby" && connection.scope === "personal")
+      || (connection.connector_type === "fireflies" && connection.scope === "personal")
       || (connection.connector_type === "granola" && connection.scope === "personal")
     ) {
       return this.beginProvider(connection.connector_type, {
@@ -2193,10 +2199,14 @@ export class ConnectionService {
     // and before anything is written: a refused key leaves no row and no
     // registration behind.
     if (management.support.create === "manual") {
-      await withUnstoredConnectorCredential({
+      // `any`, not `??`: the route always supplies the request's signal, so the
+      // fallback alone was a timeout that could never fire and a hung provider
+      // read that was never bounded.
+      const signals = [AbortSignal.timeout(20_000), ...(input.signal ? [input.signal] : [])];
+      await validateUnstoredConnectorCredential(management, {
         id, workspaceId: auth.workspaceId, scope: "workspace", ownerUserId: null, credentials,
         grantedScopes: [management.capability], config: { region: this.env.AVALON_REGION }, cursor: {},
-      }, (authorized) => management.validate(authorized, input.signal ?? AbortSignal.timeout(20_000)))
+      }, AbortSignal.any(signals))
         .catch((error: unknown) => {
           if (error instanceof ConnectorError && (error.code === "unauthorized" || error.code === "invalid_configuration")) {
             throw new ApiError(422, "connector_credential_rejected", `${adapter.manifest.displayName} rejected this key. Check that you copied the whole key from the provider, then try again.`);
@@ -2245,7 +2255,7 @@ export class ConnectionService {
       ? registrations.flatMap((registration) => {
         const secret = registration.activeSecretRef ? credentials[registration.activeSecretRef] : null;
         return typeof secret === "string"
-          ? [{ destination: registration.destination, events: registration.events, signingSecret: secret, instructions: management.manualInstructions }]
+          ? [{ destination: registration.destination, signingSecret: secret }]
           : [];
       })[0] ?? null
       : null;
@@ -2265,6 +2275,17 @@ export class ConnectionService {
       }
       await this.disable(id);
       return this.installation(id);
+    }
+    // Adopting an existing webhook by its provider id only means anything where
+    // the provider can be asked about it afterwards. A facet that declares no
+    // reconciliation would store a claim nothing can ever check, and the stored
+    // id then reads as "Rally created this webhook" everywhere downstream —
+    // including the cleanup advice, which would start offering to delete a
+    // webhook through an API the provider does not have.
+    if (input.action === "reconcile"
+      && this.registry().get(connection.connector_type).installationManagement?.support.reconcileCreate === "unsupported") {
+      throw new ApiError(422, "connector_reconciliation_unsupported",
+        "This provider cannot confirm a webhook Rally did not create. Remove this connection and connect workspace events again.");
     }
     let installation: ConnectorInstallation;
     try {
@@ -2335,6 +2356,7 @@ export class ConnectionService {
         rotation: "stable", rotationGeneration: 0, activeSecretRef: "webhookSigningSecret", pendingSecretRef: null }],
       createdAt: at, updatedAt: at, lastReceivedAt: null, error: null });
     return object.createConnectorInstallation({ installation, userId: this.requireAuth().userId, inputHash: "granola-existing-connection",
+      displayName: String(connection.display_name),
       credentials: { ciphertext: String(connection.encrypted_credentials), iv: String(connection.credential_iv), keyVersion: Number(connection.credential_key_version || 1) },
       capability: GranolaCapabilities.workspaceRead, adopt: true }).catch((error: unknown) => { throw installationActionError(error); });
   }
@@ -2734,6 +2756,7 @@ export class ConnectionService {
     // as every other host-signed provider's.
     let envelope: Awaited<ReturnType<typeof source.verify>> | null = null;
     let authorizedEvents: readonly string[] | null = null;
+    let verifyingRegistrationKey: string | null = null;
     for (const registration of installation.registrations) {
       if (registration.state === "removed") continue;
       const references = [registration.activeSecretRef, ...(registration.verificationPolicy === "active_and_pending" ? [registration.pendingSecretRef] : [])];
@@ -2748,12 +2771,20 @@ export class ConnectionService {
           });
         } catch (error) {
           if (!(error instanceof ConnectorError) || error.code !== "invalid_signature") throw error;
+          // A body that verified against this secret but is simply too old is
+          // not a wrong key: trying the remaining secrets would burn HMAC work
+          // and then blame the administrator's signing secret for what is a
+          // clock or a replay. Stop here and say which it was.
+          if (error.details !== null && typeof error.details === "object" && "reason" in error.details && error.details.reason === "stale_timestamp") {
+            throw new ApiError(401, "webhook_timestamp_outside_window",
+              "This Fireflies delivery is signed correctly but its timestamp is outside the accepted window");
+          }
         }
         if (envelope) break;
       }
-      if (envelope) { authorizedEvents = registration.events; break; }
+      if (envelope) { authorizedEvents = registration.events; verifyingRegistrationKey = registration.key; break; }
     }
-    if (!envelope || !authorizedEvents) throw new ApiError(401, "invalid_signature", "Fireflies webhook signature is invalid");
+    if (!envelope || !authorizedEvents || !verifyingRegistrationKey) throw new ApiError(401, "invalid_signature", "Fireflies webhook signature is invalid");
     // Both refusals land before the receipt, so neither writes anything and
     // neither can stand in as the installation's verifying delivery. They are
     // different conditions: an event this connector does not handle at all —
@@ -2789,6 +2820,7 @@ export class ConnectionService {
     // so this is what moves the installation from Action required to Current.
     await (await this.workspaceObject(connection.workspace_id)).receiveConnectorInstallationEvent({
       workspaceId: connection.workspace_id, connectionId, receivedAt,
+      registrationKey: verifyingRegistrationKey,
       registrationSupport: { create: management.support.create, inspect: management.support.inspect },
     });
     return { duplicate: receipt.outcome === "duplicate" || accepted.duplicate, activityId: accepted.activityId };
@@ -3882,6 +3914,18 @@ function verifiedIdentityConfig(
     handle: null,
     verifiedEmail: null,
     identityDisplayName: null,
+  };
+  // Fireflies' personal scope is the hosted-MCP pass-through, so its account id
+  // is the resource URL — the same shape as a configured MCP server, and for the
+  // same reason: the authorization publishes no user identity, so there is none
+  // to join on. Falling through would split the URL on its scheme colon and
+  // record every Fireflies member's tenant as "https".
+  if (provider === "fireflies") return {
+    providerTenantId: providerAccountId,
+    providerUserId: null,
+    handle: null,
+    verifiedEmail: stringField(credentials, "verifiedEmail") ?? stringField(credentials, "userEmail"),
+    identityDisplayName: stringField(credentials, "providerAccountName"),
   };
   if (provider === "granola") return {
     providerTenantId: stringField(credentials, "workspaceId") ?? providerAccountId,

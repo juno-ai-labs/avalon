@@ -1167,7 +1167,7 @@ const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53 = [
  * A table missing from this list loses its rows. The next parent rebuild
  * declares its own inventory again, from the schema as of that version.
  */
-const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55 = [
+export const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55 = [
   ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53,
   "connector_installations",
 ] as const;

@@ -1064,33 +1064,21 @@ rest are automatable.
 
 ## Open questions
 
-1. **Is Super Admin coverage detectable from the API?** The modal's
-   post-verification coverage sentence (key design decision 5) needs either a
-   queryable signal (e.g. a field on `user`) or the honest fallback wording.
-   Affects modal copy only; does not block the build.
-2. **Does the Webhooks V2 page hold more than one URL per account?** If it
-   holds one, a customer already sending Fireflies events to another tool
-   cannot also send them to Rally, and the Action-required copy should say
-   so. Verify in a Fireflies account before writing the copy; does not block
-   the build.
-3. **Personal MCP tool drift.** Fireflies marks several MCP tools
+Questions 1, 2 and 6 were answered while building and are recorded in the
+decision log above; what remains is genuinely still open.
+
+1. **Personal MCP tool drift.** Fireflies marks several MCP tools
    experimental; the pass-through's surface hash already detects change, but
    we should decide whether a changed surface re-prompts activation
    acknowledgement. Follows the general hosted-MCP answer; does not block.
-4. **`meeting.transcribed` promotion.** If real workspaces disable Fireflies
+2. **`meeting.transcribed` promotion.** If real workspaces disable Fireflies
    AI summaries, `meeting.summarized` never fires and their meetings produce
    no digestible activity. If support requests show this, promote
    `meeting.transcribed` to digestible for connections where no summary
    arrives. A decision-log entry when evidence exists.
-5. **When is a missed delivery worth a poll?** Fireflies documents no webhook
+3. **When is a missed delivery worth a poll?** Fireflies documents no webhook
    retry, and this PRD makes a gap visible rather than closing it. The poll
    that would close it is recorded in non-goal 8; what promotes it into scope
    is support evidence of dropped deliveries — a stale last-received time on
    an installation whose account is still recording — and a decision-log
    entry when that happens. Does not block the build.
-6. **Does Fireflies issue a refresh token without an `offline_access`
-   scope?** Its authorization server advertises the `refresh_token` grant but
-   only the `profile` and `email` scopes, whereas Granola needs an explicit
-   `offline_access`. If no refresh token comes back, a personal connection
-   needs re-authorization when its access token expires. Verify at build;
-   affects the personal scope's reconnect frequency, not its design.

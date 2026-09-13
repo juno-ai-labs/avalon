@@ -52,6 +52,7 @@ async function fixture(provider: 'ashby' | 'granola' = 'ashby') {
     }), userId: crypto.randomUUID(), inputHash: 'recovery-test-input-digest',
     credentials: { ...await encryptString(JSON.stringify(credentials), envelopeKey, connectionId), keyVersion: 1 },
     capability: provider === 'ashby' ? 'ashby.workspace.events' : 'granola.workspace.read',
+    displayName: `${provider} workspace events`,
   };
   await stub.createConnectorInstallation(input);
   const coordinates = { workspaceId, connectionId };

@@ -26,6 +26,10 @@ export const ConnectorConnectionCardCatalog = {
   },
   github: { capabilityPrefixes: [], iconName: "github", providerType: "github", scopes: ["personal", "workspace"] },
   ashby: { capabilityPrefixes: [], iconName: "ashby", providerType: "ashby", scopes: ["personal"] },
+  // Personal only, like Ashby and Granola: the workspace scope is an
+  // administrator pasting a key into Settings, which is not something a card in
+  // a transcript can offer a participant.
+  fireflies: { capabilityPrefixes: [], iconName: "fireflies", providerType: "fireflies", scopes: ["personal"] },
   granola: { capabilityPrefixes: [], iconName: "granola", providerType: "granola", scopes: ["personal"] },
   linear: { capabilityPrefixes: [], iconName: "linear", providerType: "linear", scopes: ["personal", "workspace"] },
   slack: { capabilityPrefixes: [], iconName: "slack", providerType: "slack", scopes: ["personal", "workspace"] },
