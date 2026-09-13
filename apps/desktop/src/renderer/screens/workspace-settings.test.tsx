@@ -1409,7 +1409,7 @@ describe('Workspace settings', () => {
     api.connectorInstallation.mockResolvedValue({ installation: null });
     fireEvent.change(within(dialog).getByLabelText('Workspace API key'), { target: { value: `grn_${'a'.repeat(24)}` } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Connect for workspace' }));
-    await screen.findByRole('dialog', { name: 'Workspace event installation' });
+    await screen.findByRole('dialog', { name: 'Workspace events' });
     expect(api.connectorInstallation).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000018');
     expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('button', { name: 'Manage events for Granola workspace events', hidden: true })).toBeInTheDocument();

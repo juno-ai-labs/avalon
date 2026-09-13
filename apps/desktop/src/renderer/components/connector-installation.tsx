@@ -1,4 +1,4 @@
-import { AshbyEventLabels } from "@rally/contracts";
+import { AshbyEventLabels, type ConnectorInstallation } from "@rally/contracts";
 import { useState, useSyncExternalStore } from 'react';
 import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { RallyApi } from '../lib/api';
@@ -21,6 +21,16 @@ const installationEventLabels: Record<string, string> = {
   'note.regenerated': 'Note regenerated',
 };
 const eventLabel = (event: string) => installationEventLabels[event] ?? event;
+
+const installationStatus: Record<ConnectorInstallation['state'], { title: string; description: string }> = {
+  setting_up: { title: 'Setting up', description: 'Rally is connecting your workspace events.' },
+  current: { title: 'Connected', description: 'Your event subscriptions are connected.' },
+  updating: { title: 'Updating', description: 'Rally is updating your event subscriptions.' },
+  action_required: { title: 'Needs attention', description: 'Some events may not reach Rally. Test the connection, or get help if the issue continues.' },
+  failed: { title: 'Couldn’t connect', description: 'Test the connection to check access and try to fix the problem.' },
+  cleanup_pending: { title: 'Disconnected', description: 'Rally has stopped receiving events. Removing the subscriptions from your provider still needs attention.' },
+  disconnected: { title: 'Disconnected', description: 'Rally is no longer receiving events from this connection.' },
+};
 
 /** A failed response can follow a durable reservation; recover it before offering another setup. */
 export function useWorkspaceInstallationRecovery(api: RallyApi | null, provider: 'ashby' | 'granola', onRecovered: (connectionId: string) => void) {
@@ -78,6 +88,7 @@ export function AshbyWorkspaceSetup({ api, attemptId, onSuccess, onClose, onReco
 export function ConnectorInstallationDetails({ api, connectionId, connectionEnabled = false, onClose }: { api: RallyApi; connectionId: string; connectionEnabled?: boolean; onClose: () => void }) {
   const cache = useQueryClient();
   const online = useSyncExternalStore(subscribeOnline, readOnline);
+  const [advanced, setAdvanced] = useState(false);
   const [providerId, setProviderId] = useState('');
   const [replacementKey, setReplacementKey] = useState('');
   const [registrationKey, setRegistrationKey] = useState('');
@@ -98,42 +109,63 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
   });
   const installation = query.data?.installation;
   const reconcilableRegistrations = installation?.registrations.filter((registration) => !registration.providerId && ['unknown', 'action_required', 'dispatched'].includes(registration.state)) ?? [];
-  return <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Workspace event installation" description="Provider registrations and recovery for this shared workspace connection."
+  const active = installation && installation.state !== 'cleanup_pending' && installation.state !== 'disconnected';
+  const needsHelp = installation && ['action_required', 'failed', 'cleanup_pending'].includes(installation.state);
+  return <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Workspace events" description="Rally manages event subscriptions for this connection."
     footer={<Button onClick={onClose}>Close</Button>}>
     {!online && <InlineError>Connection management is unavailable while offline. Saved status may be out of date.</InlineError>}
-    {query.isPending && <p>Loading installation…</p>}
+    {query.isPending && <p>Loading connection…</p>}
     {query.error && <InlineError>{query.error.message}</InlineError>}
-    {query.data && !installation && <><p>This existing connection has not been adopted yet. Test inspects and adopts its existing webhook, repairing the approved configuration when supported.</p>{connectionEnabled && <Button disabled={!online || test.isPending} onClick={() => test.mutate()}>Test</Button>}</>}
+    {query.data && !installation && <><p>Test this connection to check that workspace events can reach Rally.</p>{connectionEnabled && <Button disabled={!online || test.isPending} onClick={() => test.mutate()}>Test</Button>}</>}
     {installation && <>
-      <p role="status">Status: {installation.state.replaceAll('_', ' ')}. Configuration {installation.appliedVersion ?? 'not verified'} / {installation.desiredVersion}.</p>
-      <p>Last event received: {installation.lastReceivedAt ? new Date(installation.lastReceivedAt).toLocaleString() : 'None recorded'}.</p>
-      {installation.error && <InlineError>{installation.error}</InlineError>}
-      {installation.registrations.map((registration) => <section className="settings-list-card" style={{ padding: '1rem', marginBlock: '0.75rem' }} key={registration.key}>
-        <h3>{registration.events.map(eventLabel).join(', ')}</h3>
-        <p>{registration.state.replaceAll('_', ' ')} · {registration.enabled === null ? 'Enabled state unknown' : registration.enabled ? 'Enabled' : 'Disabled'}</p>
-        <p>Provider ID: {registration.providerId ?? 'Not confirmed'}</p>
-        <p style={{ overflowWrap: 'anywhere' }}>Destination: {registration.destination}</p>
-        <p>Last verified: {registration.verifiedAt ? new Date(registration.verifiedAt).toLocaleString() : 'Not verified'}. Signing key: {registration.rotation}.</p>
-        {registration.error && <InlineError>{registration.error}</InlineError>}
-      </section>)}
-      {installation.state !== 'cleanup_pending' && installation.state !== 'disconnected' && <details><summary>Replace workspace API key</summary>
-        <p>Use a key from the same provider organization with webhook management access. Existing subscriptions and signing keys are preserved. Unknown provider outcomes still require inspection.</p>
-        <label className="form-field"><span>New API key</span><input type="password" autoComplete="off" value={replacementKey} disabled={!online || replaceKey.isPending} onChange={(event) => setReplacementKey(event.currentTarget.value)} /></label>
-        <Button disabled={!online || !replacementKey.trim() || replaceKey.isPending} onClick={() => replaceKey.mutate()}>Replace API key</Button>
-        {replaceKey.error && <InlineError>{replaceKey.error.message}</InlineError>}
-      </details>}
-      <div className="provider-actions"><Button disabled={!online || query.isFetching} onClick={() => void query.refetch()}>Refresh status</Button>{installation.state !== 'cleanup_pending' && installation.state !== 'disconnected' && <Button disabled={!online || test.isPending} onClick={() => test.mutate()}>Test</Button>}</div>
-      {installation.state !== 'cleanup_pending' && installation.state !== 'disconnected' && <><p>Test checks credentials and repairs the approved webhook configuration when supported.</p><details><summary>Signing-key rotation guidance</summary><p>To replace the signing key, disconnect this workspace connection, finish cleanup of the recorded webhooks (or remove them in the provider dashboard), then connect workspace events again. Delivery is interrupted until the new registrations are verified. Reading this guidance changes no key or provider setting.</p></details></>}
-      {installation.state !== 'cleanup_pending' && installation.state !== 'disconnected' && reconcilableRegistrations.length > 0 && <>
-        <p>A create response is unconfirmed. Inspect the exact destination in the provider dashboard before supplying its ID. Retrying setup could create another webhook.</p>
-        <label className="form-field"><span>Registration</span><select value={registrationKey} onChange={(event) => { setRegistrationKey(event.currentTarget.value); setProviderId(''); }}><option value="">Choose registration</option>{reconcilableRegistrations.map((registration) => <option key={registration.key} value={registration.key} title={registration.events.map(eventLabel).join(', ')}>{installation.provider === 'granola' && registration.events.length > 1 ? 'Granola note events' : registration.events.map(eventLabel).join(', ')}</option>)}</select></label>
-        <label className="form-field"><span>Existing provider webhook ID</span><input value={providerId} onChange={(event) => setProviderId(event.currentTarget.value)} /></label>
-        <Button disabled={!online || !reconcilableRegistrations.some((registration) => registration.key === registrationKey) || !providerId.trim() || change.isPending} onClick={() => change.mutate('reconcile')}>Verify existing webhook</Button>
+      <h3 role="status">{installationStatus[installation.state].title}</h3>
+      <p>{installationStatus[installation.state].description}</p>
+      {active && <>
+        <p>Last event received: {installation.lastReceivedAt ? new Date(installation.lastReceivedAt).toLocaleString() : 'None yet'}.</p>
+        <Button className="button-primary" disabled={!online || test.isPending} onClick={() => test.mutate()}>{test.isPending ? 'Testing…' : 'Test'}</Button>
+        <p>Test checks access and attempts to repair event delivery.</p>
       </>}
-      {installation.state === 'cleanup_pending' && !installation.cleanupCredentialForgotten && <><p>Rally has disabled this connection. The recorded registrations still require removal. Forgetting the local cleanup credential leaves provider removal to your administrator.</p><Button disabled={!online || change.isPending} onClick={() => change.mutate('repair')}>Retry cleanup</Button><Button disabled={!online || change.isPending} onClick={() => change.mutate('forget_cleanup')}>Forget local cleanup credential</Button></>}
+      {installation.state === 'cleanup_pending' && !installation.cleanupCredentialForgotten && <Button disabled={!online || change.isPending} onClick={() => change.mutate('repair')}>Retry cleanup</Button>}
+      {needsHelp && <Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/contact/')}>Get help</Button>}
     </>}
     {test.data && <p role="status">{test.data.message}</p>}
     {test.error && <InlineError>{test.error.message}</InlineError>}
     {change.error && <InlineError>{change.error.message}</InlineError>}
+    {installation && <>
+      <div style={{ marginBlockStart: '1rem' }}><Button aria-expanded={advanced} onClick={() => setAdvanced((value) => !value)}>Advanced</Button></div>
+      {advanced && <section aria-label="Advanced connection settings">
+        <p>Technical details and recovery tools for workspace administrators and support.</p>
+        <Button disabled={!online || query.isFetching} onClick={() => void query.refetch()}>Refresh status</Button>
+        {active && <details><summary>Replace workspace API key</summary>
+          <p>Use a key from the same provider organization with webhook management access. Existing subscriptions and signing keys are preserved. Unknown provider outcomes still require inspection.</p>
+          <label className="form-field"><span>New API key</span><input type="password" autoComplete="off" value={replacementKey} disabled={!online || replaceKey.isPending} onChange={(event) => setReplacementKey(event.currentTarget.value)} /></label>
+          <Button disabled={!online || !replacementKey.trim() || replaceKey.isPending} onClick={() => replaceKey.mutate()}>Replace API key</Button>
+          {replaceKey.error && <InlineError>{replaceKey.error.message}</InlineError>}
+        </details>}
+        {active && <details><summary>Signing-key rotation guidance</summary><p>To replace the signing key, disconnect this workspace connection, finish cleanup of the recorded webhooks (or remove them in the provider dashboard), then connect workspace events again. Delivery is interrupted until the new registrations are verified. Reading this guidance changes no key or provider setting.</p></details>}
+        {active && reconcilableRegistrations.length > 0 && <>
+          <p>A create response is unconfirmed. Inspect the exact destination in the provider dashboard before supplying its ID. Retrying setup could create another webhook.</p>
+          <label className="form-field"><span>Registration</span><select value={registrationKey} onChange={(event) => { setRegistrationKey(event.currentTarget.value); setProviderId(''); }}><option value="">Choose registration</option>{reconcilableRegistrations.map((registration) => <option key={registration.key} value={registration.key} title={registration.events.map(eventLabel).join(', ')}>{installation.provider === 'granola' && registration.events.length > 1 ? 'Granola note events' : registration.events.map(eventLabel).join(', ')}</option>)}</select></label>
+          <label className="form-field"><span>Existing provider webhook ID</span><input value={providerId} onChange={(event) => setProviderId(event.currentTarget.value)} /></label>
+          <Button disabled={!online || !reconcilableRegistrations.some((registration) => registration.key === registrationKey) || !providerId.trim() || change.isPending} onClick={() => change.mutate('reconcile')}>Verify existing webhook</Button>
+        </>}
+        {installation.state === 'cleanup_pending' && !installation.cleanupCredentialForgotten && <>
+          <p>Forgetting the local cleanup credential leaves subscription removal to your provider administrator.</p>
+          <Button disabled={!online || change.isPending} onClick={() => change.mutate('forget_cleanup')}>Forget local cleanup credential</Button>
+        </>}
+        <details><summary>Subscription details</summary>
+          <p>Configuration {installation.appliedVersion ?? 'not verified'} / {installation.desiredVersion}.</p>
+          {installation.error && <InlineError>{installation.error}</InlineError>}
+          {installation.registrations.map((registration) => <section className="settings-list-card" style={{ padding: '1rem', marginBlock: '0.75rem' }} key={registration.key}>
+            <h3>{registration.events.map(eventLabel).join(', ')}</h3>
+            <p>{registration.state.replaceAll('_', ' ')} · {registration.enabled === null ? 'Enabled state unknown' : registration.enabled ? 'Enabled' : 'Disabled'}</p>
+            <p>Provider ID: {registration.providerId ?? 'Not confirmed'}</p>
+            <p style={{ overflowWrap: 'anywhere' }}>Destination: {registration.destination}</p>
+            <p>Last verified: {registration.verifiedAt ? new Date(registration.verifiedAt).toLocaleString() : 'Not verified'}. Signing key: {registration.rotation}.</p>
+            {registration.error && <InlineError>{registration.error}</InlineError>}
+          </section>)}
+        </details>
+      </section>}
+    </>}
   </Modal>;
 }

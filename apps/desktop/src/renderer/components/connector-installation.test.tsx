@@ -27,14 +27,34 @@ function show(element: React.ReactNode) {
 }
 
 describe('workspace event controls', () => {
+  it.each(['current', 'action_required'] as const)('keeps %s technical recovery controls out of the main view', async (state) => {
+    const api = new RallyApi('https://api.example.test', null);
+    vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: { ...installation(), state,
+      registrations: [registration('applicationSubmit', state === 'current' ? 'current' : 'unknown')] } });
+    const test = vi.spyOn(api, 'testConnection');
+    const change = vi.spyOn(api, 'changeConnectorInstallation');
+    show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
+    await screen.findByText(state === 'current' ? 'Connected' : 'Needs attention');
+    expect(screen.getByRole('button', { name: 'Test' })).toBeVisible();
+    expect(screen.queryByLabelText('Existing provider webhook ID')).toBeNull();
+    expect(screen.queryByText('Replace workspace API key')).toBeNull();
+    expect(screen.queryByText(/Configuration/u)).toBeNull();
+    expect(screen.queryByText(/Destination:/u)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
+    expect(screen.getByRole('button', { name: 'Advanced' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Replace workspace API key')).toBeVisible();
+    expect(test).not.toHaveBeenCalled(); expect(change).not.toHaveBeenCalled();
+  });
+
   it('reads installation status without repair and reserves repair for explicit Test', async () => {
     const api = new RallyApi('https://api.example.test', null);
     const read = vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: installation() });
     const change = vi.spyOn(api, 'changeConnectorInstallation');
     const test = vi.spyOn(api, 'testConnection').mockResolvedValue({ ok: true, message: 'Verified' });
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
-    await screen.findByText(/Status: setting up/u);
+    await screen.findByText('Setting up');
     expect(change).not.toHaveBeenCalled(); expect(test).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
     fireEvent.click(screen.getByText('Signing-key rotation guidance'));
     expect(change).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
@@ -54,10 +74,10 @@ describe('workspace event controls', () => {
       return { ok: true, message: 'Existing webhook verified' };
     });
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} connectionEnabled onClose={() => {}} />);
-    await screen.findByText(/has not been adopted/u);
+    await screen.findByText(/Test this connection/u);
     expect(test).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Test' }));
-    await screen.findByText(/Status: current/u);
+    await screen.findByText('Connected');
     expect(test).toHaveBeenCalledWith(connectionId);
   });
 
@@ -66,7 +86,7 @@ describe('workspace event controls', () => {
     vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: installation() });
     const test = vi.spyOn(api, 'testConnection');
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
-    await screen.findByText(/Status: setting up/u);
+    await screen.findByText('Setting up');
     act(() => onlineManager.setOnline(false));
     expect(screen.getByRole('button', { name: 'Test' }).hasAttribute('disabled')).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Test' }));
@@ -79,7 +99,8 @@ describe('workspace event controls', () => {
     vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: { ...installation(), state: 'cleanup_pending', cleanupCredentialForgotten: true,
       error: 'Remove remaining registrations in the provider dashboard.' } });
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
-    await screen.findByText('Remove remaining registrations in the provider dashboard.');
+    await screen.findByText('Disconnected');
+    expect(screen.getByRole('button', { name: 'Get help' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Retry cleanup' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Test' })).toBeNull();
   });
@@ -138,6 +159,7 @@ describe('workspace event controls', () => {
     vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: data });
     const change = vi.spyOn(api, 'changeConnectorInstallation').mockResolvedValue({ installation: data });
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
     const select = await screen.findByRole('combobox', { name: 'Registration' });
     expect([...select.querySelectorAll('option')].map((option) => option.value)).toEqual(['', 'applicationSubmit', 'candidateStageChange', 'dispatched']);
     fireEvent.change(select, { target: { value: 'applicationSubmit' } });
@@ -156,6 +178,8 @@ describe('workspace event controls', () => {
     vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: { ...installation(), provider: 'granola', registrations:
       [{ ...registration('notes', 'unknown'), events: ['note.access_granted', 'note.edited', 'note.generated', 'note.regenerated'] }] } });
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
+    fireEvent.click(screen.getByText('Subscription details'));
     const fullLabel = 'Note access granted, Note edited, Note generated, Note regenerated';
     expect(await screen.findByRole('heading', { name: fullLabel })).toBeVisible();
     expect(screen.getByRole('option', { name: 'Granola note events' })).toHaveAttribute('title', fullLabel);

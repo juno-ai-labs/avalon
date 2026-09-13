@@ -41,6 +41,11 @@ If setup reserves an installation but its response is lost, Settings reloads the
 workspace connections and opens the saved installation. It does not change the
 attempt identity and submit corrected inputs against that reservation. A failed
 recovery lookup blocks further setup until Find existing installation succeeds.
+The main management window shows plain connection status, the last event, and
+explicit Test; trouble states offer Get help. Technical diagnostics, provider IDs,
+URLs, key replacement, signing guidance and reconciliation live under Advanced.
+Subscription details are collapsed separately so a 27-event installation does
+not bury the recovery controls. Opening Advanced performs no mutation.
 Reconciliation offers only unresolved eligible registrations and clears the
 submitted provider identity after success.
 
@@ -75,7 +80,7 @@ failure cannot skip that teardown. A host-side cleanup authorization/decryption
 failure is failed work; only dispatch to the provider makes its outcome uncertain.
 Expected installation action refusals return stable 404/409 API errors.
 
-An administrator can replace the API key in Manage events. Read-only provider
+An administrator can replace the API key in Manage events → Advanced. Read-only provider
 validation precedes an atomic replacement fenced by installation generation.
 Credential settlement advances that generation, and replacement reads the
 generation before reloading the envelope it will preserve. Existing signing material and registration IDs
@@ -279,9 +284,9 @@ action. An administrator's explicit Test adopts an existing Granola connection.
 
 ### 2026-09-12 — Reserve and record workspace installations before provider I/O
 
-**What changed:** WorkspaceDO owns installation attempts, exact provider dispatch receipts and separate cleanup authority. Ashby and Granola share one runner; maintenance freezes reviewed registration diffs and updates target outcomes independently. Early Resume leaves unprepared targets to the queued frozen configuration, and setup response recovery opens the existing reservation. New Ashby connections automatically register the documented event catalog, without customer subscription selection.
+**What changed:** WorkspaceDO owns installation attempts, exact provider dispatch receipts and separate cleanup authority. Ashby and Granola share one runner; maintenance freezes reviewed registration diffs and updates target outcomes independently. Early Resume leaves unprepared targets to the queued frozen configuration, and setup response recovery opens the existing reservation. New Ashby connections automatically register the documented event catalog, without customer subscription selection. The management window puts status and explicit Test first; provider diagnostics and recovery controls are advanced.
 
-**Why:** Subscription checkboxes exposed provider plumbing when users should choose automation triggers instead; the user requested automatic coverage on 2026-09-13. The direct Granola create/repair/delete path could neither retain uncertain creates nor clean up after local disablement. A generation that does not advance with credential settlement cannot protect the newer envelope from an in-flight replacement. Repeated disablement must preserve the only credential that can remove the remote endpoint. Adoption or Queue failures must not strand local authority or enabled schedules, and a host-side credential failure must not pretend a provider delete was dispatched.
+**Why:** A registration-level console overwhelmed ordinary connection management, so technical controls now require opening Advanced. Subscription checkboxes exposed provider plumbing when users should choose automation triggers instead; the user requested automatic coverage on 2026-09-13. The direct Granola create/repair/delete path could neither retain uncertain creates nor clean up after local disablement. A generation that does not advance with credential settlement cannot protect the newer envelope from an in-flight replacement. Repeated disablement must preserve the only credential that can remove the remote endpoint. Adoption or Queue failures must not strand local authority or enabled schedules, and a host-side credential failure must not pretend a provider delete was dispatched.
 
 **Considered and rejected:** Blind create retries, a second legacy Granola mutation path and speculative secret-overlap intervals. None preserves the provider identity and verification evidence needed to reconcile uncertainty. Whole-operation JSON rewrites also lose concurrent target progress. Stamping an operation identity before applying its frozen configuration would make an early Resume silently report the old configuration as current.
 
