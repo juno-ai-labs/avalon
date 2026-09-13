@@ -1,7 +1,7 @@
 import { HttpsUrlSchema } from "./url-schemas";
 import { z } from "zod";
 
-export const ConnectorInstallationProviderSchema = z.enum(["ashby", "granola"]);
+export const ConnectorInstallationProviderSchema = z.enum(["ashby", "fireflies", "granola"]);
 export const ConnectorRegistrationSchema = z.strictObject({
   key: z.string().min(1), providerId: z.string().min(1).nullable(), events: z.array(z.string().min(1)).min(1),
   adoptingExistingDestination: z.boolean().default(false),

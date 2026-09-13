@@ -41,6 +41,24 @@ type ConnectionAccessEnv = Pick<Env,
  * `ensureFreshConnectorCredentials` persists the tokens it rotates itself, so
  * a refresh here is durable even when the operation later fails.
  */
+/**
+ * Read-only validation of a credential no connection holds yet.
+ *
+ * The door above exists because a stored credential can be stale, and only a
+ * refresh against its row can say otherwise. Neither applies to a key an
+ * administrator pasted a moment ago: there is no row to refresh from, nothing
+ * to persist, and nothing that could have expired in between. The brand is
+ * minted directly for that one case, and the operation must be a read the
+ * provider's own facet declares — `validate` — so a failed setup leaves nothing
+ * behind at the provider either.
+ */
+export async function withUnstoredConnectorCredential<T>(
+  connection: ConnectorConnectionContext,
+  operation: (authorized: AuthorizedConnectorConnection) => Promise<T>,
+): Promise<T> {
+  return operation(authorizedConnection(connection));
+}
+
 export async function withAuthorizedConnection<T>(
   env: ConnectionAccessEnv,
   input: {

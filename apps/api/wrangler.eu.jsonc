@@ -26,6 +26,11 @@
     "TERMINAL_REGION_CAPABILITY": "supported",
     "TERMINAL_EMERGENCY_DISABLED": "false",
     "LINEAR_NATIVE_AGENT_ENABLED": "false",
+    // The Fireflies connector's rollout gate for this region. Not a secret and
+    // not a credential: both of Fireflies' credentials are the customer's, so
+    // there is nothing whose absence could gate it. Anything but "true" leaves
+    // the type out of the connector catalog and refuses creation here.
+    "FIREFLIES_CONNECTOR_ENABLED": "true",
     "ALLOWED_ORIGINS": "app://rallywithai,app://avalon",
     "DESKTOP_DEEP_LINK_URI": "rallywithai://auth/complete",
     "OPENROUTER_PRIMARY_MODEL": "x-ai/grok-4.3",

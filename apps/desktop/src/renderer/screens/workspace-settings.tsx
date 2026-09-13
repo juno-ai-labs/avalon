@@ -1,4 +1,4 @@
-import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstallationRecovery } from '../components/connector-installation';
+import { AshbyWorkspaceSetup, ConnectorInstallationDetails, FirefliesWorkspaceSetup, useWorkspaceInstallationRecovery } from '../components/connector-installation';
 import { ServerCog } from 'lucide-react';
 import { connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 import { PersonalSetup } from './guided-onboarding';
@@ -73,6 +73,7 @@ type ConnectionFilter = 'all' | 'connected' | 'not_connected';
 
 const reconnectableConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
   'ashby',
+  'fireflies',
   'google',
   'github',
   'granola',
@@ -237,7 +238,7 @@ function connectionSetting(connection: WorkstreamConnection, admin: boolean) {
     label: connection.displayName, description: 'Manage this installed connection.',
     options: [
       ...(admin && reconnectableConnectorTypes.has(connection.connectorType)
-        && !(['ashby', 'granola'].includes(connection.connectorType) && connection.scope === 'workspace') ? ['Refresh', 'Reconnect'] : []),
+        && !(['ashby', 'fireflies', 'granola'].includes(connection.connectorType) && connection.scope === 'workspace') ? ['Refresh', 'Reconnect'] : []),
       ...(connection.scope === 'you' || admin ? ['Delete', 'Disconnect'] : []),
       ...(admin && connection.connectorType === 'generic_webhook' ? ['Refresh', 'Webhook signing secret'] : []),
     ],
@@ -335,7 +336,7 @@ function providerHasActivePersonalConnection(
   provider: (typeof connectorProviders)[number],
   connections: WorkstreamConnection[],
 ): boolean {
-  return (provider.provider === 'x' || provider.provider === 'ashby' || provider.provider === 'granola') && connections.some((connection) =>
+  return (provider.provider === 'x' || provider.provider === 'ashby' || provider.provider === 'fireflies' || provider.provider === 'granola') && connections.some((connection) =>
     connection.connectorType === provider.provider &&
     connection.scope === 'you' &&
     connection.status !== 'disabled',
@@ -413,6 +414,8 @@ export function WorkspaceSettingsScreen({
   const [granolaWorkspaceModalOpen, setGranolaWorkspaceModalOpen] = useState(false);
   const [ashbySetupKey, setAshbySetupKey] = useState(() => crypto.randomUUID());
   const [ashbyWorkspaceOpen, setAshbyWorkspaceOpen] = useState(false);
+  const [firefliesSetupKey, setFirefliesSetupKey] = useState(() => crypto.randomUUID());
+  const [firefliesWorkspaceOpen, setFirefliesWorkspaceOpen] = useState(false);
   const [installationTarget, setInstallationTarget] = useState<string | null>(null);
   const [granolaSetupKey, setGranolaSetupKey] = useState(() => crypto.randomUUID());
   const [granolaWorkspaceApiKey, setGranolaWorkspaceApiKey] = useState('');
@@ -638,7 +641,7 @@ export function WorkspaceSettingsScreen({
     staleTime: 30_000,
   });
   const connectProvider = useMutation({
-    mutationFn: async (input: { provider: 'ashby' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+    mutationFn: async (input: { provider: 'ashby' | 'fireflies' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
       if (input.provider === 'x') {
         await api!.createXConnection(input.capabilities);
         return { kind: 'direct' as const };
@@ -1528,11 +1531,11 @@ export function WorkspaceSettingsScreen({
                                   : toolCountByConnection.get(connection.id)?.data ?? 'Loading…'}</td>
                                 <td>
                                   <span className="settings-connection-actions">
-                                    {isAdmin && connection.scope === 'workspace' && ['ashby', 'granola'].includes(connection.connectorType) && (
+                                    {isAdmin && connection.scope === 'workspace' && ['ashby', 'fireflies', 'granola'].includes(connection.connectorType) && (
                                       <Button aria-label={`Manage events for ${connection.displayName}`} onClick={() => setInstallationTarget(connection.id)}>Manage events</Button>
                                     )}
                                     {(isAdmin || connection.scope === 'you') && reconnectableConnectorTypes.has(connection.connectorType)
-                                      && !(['ashby', 'granola'].includes(connection.connectorType) && connection.scope === 'workspace') && (
+                                      && !(['ashby', 'fireflies', 'granola'].includes(connection.connectorType) && connection.scope === 'workspace') && (
                                       <ConnectionIconAction
                                         disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
                                         icon={<RefreshCcw aria-hidden="true" size={14} />}
@@ -1612,7 +1615,7 @@ export function WorkspaceSettingsScreen({
                         && providerHasActivePersonalConnection(provider, connections.data ?? []);
                       const hasActiveWorkspaceConnection = provider.provider !== 'generic_webhook'
                         && providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
-                      const personalConnectionStateUnavailable = ['ashby', 'granola'].includes(provider.provider) && (connections.isLoading || connections.isError);
+                      const personalConnectionStateUnavailable = ['ashby', 'fireflies', 'granola'].includes(provider.provider) && (connections.isLoading || connections.isError);
                       const personalConnectDisabled = !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
                       const personalConnectTitle = hasActivePersonalConnection
                         ? `A ${provider.name} personal connection is already installed. Manage it above.`
@@ -1623,7 +1626,7 @@ export function WorkspaceSettingsScreen({
                           : provider.provider === 'granola' && connections.isError
                             ? 'Installed personal connections could not be loaded.'
                             : undefined;
-                      const workspaceConnectDisabled = !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
+                      const workspaceConnectDisabled = !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || firefliesWorkspaceOpen || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
                       const workspaceConnectTitle = hasActiveWorkspaceConnection
                         ? `A ${provider.name} workspace connection is already installed. Manage it above.`
                         : !providerAvailable && !connectorCatalog.isLoading
@@ -1646,6 +1649,8 @@ export function WorkspaceSettingsScreen({
                           <p>{provider.description}</p>
                           {provider.provider === 'ashby' && <p>Personal account: {hasActivePersonalConnection ? 'Connected' : 'Not connected'}. Workspace events: {hasActiveWorkspaceConnection ? 'Configured — manage delivery above' : 'Not configured'}.</p>}
                           {provider.provider === 'ashby' && <p>Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account. <Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/connectors/ashby/')}>Ashby setup guide ↗</Button></p>}
+                          {provider.provider === 'fireflies' && <p>Personal account: {hasActivePersonalConnection ? 'Connected' : 'Not connected'}. Workspace meetings: {hasActiveWorkspaceConnection ? 'Configured — manage delivery above' : 'Not configured'}.</p>}
+                          {provider.provider === 'fireflies' && <p>Connecting the workspace needs one step in Fireflies afterwards; Rally shows it once the key is accepted. <Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/connectors/fireflies/')}>Fireflies setup guide ↗</Button></p>}
                           {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (
                             <p className="settings-search-guidance" role="status">
                               {searchTarget.definition.label} is part of setup. Choose the appropriate connection scope below.
@@ -1687,6 +1692,10 @@ export function WorkspaceSettingsScreen({
                                   }
                                   if (provider.provider === 'ashby') {
                                     setAshbyWorkspaceOpen(true);
+                                    return;
+                                  }
+                                  if (provider.provider === 'fireflies') {
+                                    setFirefliesWorkspaceOpen(true);
                                     return;
                                   }
                                   if (provider.provider === 'granola') {
@@ -2367,6 +2376,7 @@ export function WorkspaceSettingsScreen({
           {connectCustomMcp.error && <InlineError>{connectCustomMcp.error.message}</InlineError>}
         </Modal>
         {api && ashbyWorkspaceOpen && <AshbyWorkspaceSetup api={api} attemptId={ashbySetupKey} onSuccess={() => setAshbySetupKey(crypto.randomUUID())} onClose={() => setAshbyWorkspaceOpen(false)} onRecovered={setInstallationTarget} />}
+        {api && firefliesWorkspaceOpen && <FirefliesWorkspaceSetup api={api} attemptId={firefliesSetupKey} onSuccess={() => setFirefliesSetupKey(crypto.randomUUID())} onClose={() => setFirefliesWorkspaceOpen(false)} onRecovered={setInstallationTarget} />}
         {api && installationTarget && <ConnectorInstallationDetails api={api} connectionId={installationTarget} connectionEnabled={connections.data?.some((connection) => connection.id === installationTarget && connection.status !== 'disabled') ?? false} onClose={() => setInstallationTarget(null)} />}
         <Modal
           description="A workspace-wide Granola connection requires a Workspace API key. Personal Granola connections use browser sign-in and do not need a key."
@@ -2375,7 +2385,7 @@ export function WorkspaceSettingsScreen({
               <Button onClick={() => setGranolaWorkspaceModalOpen(false)}>Cancel</Button>
               <Button
                 className="button-primary"
-                disabled={!/^grn_[\x21-\x7E]{1,508}$/u.test(granolaWorkspaceApiKey.trim()) || createGranolaWorkspaceConnection.isPending || granolaRecovery.isPending || granolaRecovery.isError}
+                disabled={!/^grn_[\x21-\x7E]{1,508}$/u.test(granolaWorkspaceApiKey.trim()) || createGranolaWorkspaceConnection.isPending || firefliesWorkspaceOpen || granolaRecovery.isPending || granolaRecovery.isError}
                 onClick={() => createGranolaWorkspaceConnection.mutate()}
               >
                 {createGranolaWorkspaceConnection.isPending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <LockKeyhole aria-hidden="true" size={14} />}
