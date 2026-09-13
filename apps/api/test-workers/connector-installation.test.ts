@@ -45,7 +45,7 @@ async function fixture(region: 'global' | 'eu' = env.AVALON_REGION) {
         stepId: crypto.randomUUID(), verifiedAt: null, error: null, rotation: 'stable', rotationGeneration: 0,
         activeSecretRef: 'signing', pendingSecretRef: null }],
     }), userId: crypto.randomUUID(), inputHash: 'test-keyed-input-digest',
-    credentials: { ciphertext: 'encrypted-provider-key', iv: 'iv', keyVersion: 1 }, capability: 'ashby.workspace.events',
+    credentials: { ciphertext: 'encrypted-provider-key', iv: 'iv', keyVersion: 1 }, capability: 'ashby.workspace.events', displayName: 'Ashby workspace events',
   };
   return { stub, input, workspaceId, connectionId };
 }

@@ -37,5 +37,19 @@ export function planConnectorInstallation(installation: ConnectorInstallation, m
       state: !existing.providerId ? 'removed' : existing.providerIdVerified && management.support.remove === 'automatic' ? 'pending' : 'action_required',
       error: management.support.remove === 'automatic' ? null : management.manualInstructions });
   }
+  // A provider that automates none of the steps this plan just scheduled cannot
+  // have it applied: every registration it would create or remove is the
+  // administrator's to carry out in the provider's own dashboard. Read off the
+  // facet rather than the registrations' current states, which for an already
+  // working installation are all `current` and say nothing about what the next
+  // change would need. Without this, fleet maintenance would mint a fresh
+  // signing secret for a replacement registration while the administrator's
+  // dashboard still held the old one — and setup reveals a secret once, so
+  // there would be no way to recover the new one.
+  const unautomated = registrations.find((registration) => registration.action !== 'inspect'
+    && management.support[registration.action] !== 'automatic');
+  if (unautomated) {
+    return { selectedEvents, registrations, manual: management.manualInstructions };
+  }
   return { selectedEvents, registrations, manual: null };
 }

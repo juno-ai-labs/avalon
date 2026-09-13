@@ -80,7 +80,7 @@ const GOOGLE_MAIL_CALENDAR_CAPABILITIES = [
 interface ConnectionRow extends Record<string, unknown> {
   id: string;
   workspace_id: string;
-  connector_type: "google";
+  connector_type: string;
   scope: "personal" | "workspace";
   owner_user_id: string | null;
   granted_scopes_json: string;
@@ -619,6 +619,30 @@ function childWorkflowInput(parent = workflowInput()): WorkstreamWorkflowInput {
 }
 
 describe("connector tools selected for harness runs", () => {
+  it("skips a connection whose connector this deployment does not configure, rather than failing the run", async () => {
+    // A rollout gate turned back off leaves its rows in place on purpose, so
+    // `registry.get` has a type it has never heard of. Throwing here does not
+    // cost that connector its tools — it costs the workspace every conversation,
+    // which makes the gate unusable in the one direction it exists for.
+    const database = new ToolSelectionDatabase([
+      {
+        id: WORKSPACE_CONNECTION_ID,
+        workspace_id: WORKSPACE_ID,
+        connector_type: "fireflies",
+        scope: "workspace",
+        owner_user_id: null,
+        granted_scopes_json: JSON.stringify(["fireflies.workspace.read"]),
+        status: "healthy",
+        created_at: "2026-09-12T12:00:00.000Z",
+        model_plugin_id: "plugin_fireflies_one",
+      },
+    ]);
+    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    expect(selected.plugins.some((plugin) => plugin.modelId === "plugin_fireflies_one")).toBe(false);
+    // The rest of the run is untouched: the built-in plugins are all still here.
+    expect(selected.builtinPluginIds.size).toBeGreaterThan(0);
+  });
+
   it("registers multimodal generation only when the main Azure inference deployment is configured", async () => {
     const database = new ToolSelectionDatabase([]);
     const withoutAzure = await __integrationTesting.loadHarnessTools(env(database), workflowInput());

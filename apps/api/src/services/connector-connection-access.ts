@@ -47,18 +47,29 @@ type ConnectionAccessEnv = Pick<Env,
  * The door above exists because a stored credential can be stale, and only a
  * refresh against its row can say otherwise. Neither applies to a key an
  * administrator pasted a moment ago: there is no row to refresh from, nothing
- * to persist, and nothing that could have expired in between. The brand is
- * minted directly for that one case, and the operation must be a read the
- * provider's own facet declares — `validate` — so a failed setup leaves nothing
- * behind at the provider either.
+ * to persist, and nothing that could have expired in between.
+ *
+ * It takes the facet and makes the call itself rather than handing the brand to
+ * a callback. An earlier version did hand it over, with a comment saying the
+ * operation had to be `validate` — which made the promise the seam exists to
+ * enforce into a thing a caller had to remember, inside the one module the
+ * lint rule exempts. Here there is nothing to misuse: the only call this can
+ * make is the read the provider's own facet declares, so a failed setup leaves
+ * nothing behind at the provider either.
  */
-export async function withUnstoredConnectorCredential<T>(
+export async function validateUnstoredConnectorCredential(
+  management: Pick<ConnectorInstallationManagement, "support" | "validate">,
   connection: ConnectorConnectionContext,
-  operation: (authorized: AuthorizedConnectorConnection) => Promise<T>,
-): Promise<T> {
-  return operation(authorizedConnection(connection));
+  signal: AbortSignal,
+): Promise<void> {
+  if (management.support.create !== "manual") throw new Error("unstored_validation_not_applicable");
+  await management.validate(authorizedConnection(connection), signal);
 }
 
+/**
+ * The one door through which a *stored* connector credential reaches an
+ * adapter: see the contract above.
+ */
 export async function withAuthorizedConnection<T>(
   env: ConnectionAccessEnv,
   input: {

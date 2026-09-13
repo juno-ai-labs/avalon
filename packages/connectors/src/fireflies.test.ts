@@ -455,17 +455,28 @@ describe('Fireflies webhook ingestion', () => {
 
   it('verifies a raw body exactly, with no algorithm downgrade', async () => {
     const bytes = new TextEncoder().encode(body);
-    await expect(verifyFirefliesSignature(signingSecret, bytes, await signature(body, signingSecret))).resolves.toBeUndefined();
-    await expect(verifyFirefliesSignature(signingSecret, bytes, (await signature(body, signingSecret)).toUpperCase()))
-      .rejects.toBeInstanceOf(ConnectorError);
-    await expect(verifyFirefliesSignature('', bytes, await signature(body, signingSecret))).rejects.toBeInstanceOf(ConnectorError);
+    const valid = await signature(body, signingSecret);
+    await expect(verifyFirefliesSignature(signingSecret, bytes, valid)).resolves.toBeUndefined();
+    // Fireflies documents no hex casing, so both spellings of the same digest
+    // are the same signature. What must not be accepted is a different digest.
+    await expect(verifyFirefliesSignature(signingSecret, bytes, `sha256=${valid.slice('sha256='.length).toUpperCase()}`))
+      .resolves.toBeUndefined();
+    await expect(verifyFirefliesSignature(signingSecret, bytes, valid.replace(/^sha256=/u, 'SHA1=')))
+      .rejects.toMatchObject({ code: 'invalid_signature' });
+    await expect(verifyFirefliesSignature(signingSecret, bytes, await signature(`${body} `, signingSecret)))
+      .rejects.toMatchObject({ code: 'invalid_signature' });
+    // The facet refuses a missing secret earlier, with `invalid_configuration`;
+    // reaching this helper without one is a signature that cannot be checked.
+    await expect(verifyFirefliesSignature('', bytes, valid)).rejects.toMatchObject({ code: 'invalid_signature' });
   });
 });
 
 describe('Fireflies personal scope', () => {
   it('pins OAuth to the provider origin and refuses a workspace authorization', async () => {
+    const origins: string[] = [];
     const adapter = createFirefliesConnector({ redirectUri, fetch: async (input) => {
       const url = new URL(String(input));
+      origins.push(url.origin);
       if (url.pathname.includes('oauth-protected-resource')) {
         return Response.json({ resource: 'https://api.fireflies.ai/mcp', authorization_servers: ['https://evil.example.test/'], scopes_supported: ['profile', 'email'] });
       }
@@ -473,7 +484,13 @@ describe('Fireflies personal scope', () => {
     } });
     await expect(adapter.beginAuthorization!({ connectionScope: 'workspace', state: 's', codeChallenge: 'c' }))
       .rejects.toMatchObject({ code: 'invalid_configuration' });
-    await expect(adapter.beginAuthorization!({ connectionScope: 'personal', state: 's', codeChallenge: 'c' })).rejects.toBeInstanceOf(ConnectorError);
+    await expect(adapter.beginAuthorization!({ connectionScope: 'personal', state: 's', codeChallenge: 'c' }))
+      .rejects.toMatchObject({ code: 'invalid_configuration' });
+    // The code is what separates the pin from an ordinary transport failure —
+    // without it this passes whether or not the pin exists, because a throwing
+    // fetch also surfaces as a ConnectorError. The origins are the proof that
+    // Rally's client registration never left for whoever answered discovery.
+    expect([...new Set(origins)]).toEqual(['https://api.fireflies.ai']);
   });
 
   it('asks for no scope Fireflies does not publish, and reports a missing refresh token as reconnect-required', async () => {

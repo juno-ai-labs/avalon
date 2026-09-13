@@ -44,10 +44,10 @@ export const connectorProviders = [
   },
   {
     id: 'fireflies' as const,
-    provider: 'fireflies' as const,
+    provider: ConnectorConnectionCardCatalog.fireflies.providerType,
     name: 'Fireflies',
     description: "Your own Fireflies meetings through its live tools, or the team's transcripts and summaries through an admin API key.",
-    mark: 'fireflies' as const,
+    mark: ConnectorConnectionCardCatalog.fireflies.iconName,
     scopes: ['you', 'workspace'] as const,
     personalCapabilities: ['fireflies.personal.read'],
     capabilities: ['fireflies.workspace.read'],

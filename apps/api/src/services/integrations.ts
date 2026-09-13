@@ -6017,7 +6017,23 @@ async function loadHarnessTools(
       (input.executionPrincipal.type === "user" && scope === "personal" && row.owner_user_id === input.executionPrincipal.userId);
     if (!eligible) continue;
     if (scope === "personal" && (input.executionPrincipal.type !== "user" || row.owner_user_id !== input.executionPrincipal.userId)) continue;
-    const adapter = registry.get(String(row.connector_type));
+    // A connection whose connector this deployment does not configure is
+    // skipped, not a throw. A rollout gate turned back off leaves its rows in
+    // place deliberately, and `registry.get` throws on an unregistered type —
+    // so without this the flip would take every conversation in the workspace
+    // down, not just that connector's tools. The sidekick loader above has
+    // carried the same guard since it hit this for a locally absent secret.
+    let adapter: ReturnType<typeof registry.get>;
+    try {
+      adapter = registry.get(String(row.connector_type));
+    } catch (error) {
+      logStructuredEvent(env, "warn", "harness_connector_unavailable", {
+        connector_type: String(row.connector_type),
+        connection_id: connectionId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+      continue;
+    }
     const grantedScopes = parseJson<string[]>(row.granted_scopes_json, []);
     const pluginId = `connection:${connectionId}`;
     const modelPluginId = String(row.model_plugin_id ?? "");

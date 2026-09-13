@@ -1152,7 +1152,7 @@ delivery is made visible rather than compensated: Fireflies documents no retry,
 so a last-received time that stops moving is the signal. Coverage is stated as
 unknown because the provider exposes no way to know it.
 
-PR: the Fireflies connector. Design:
+PR #738. Design:
 [Fireflies connector](PRDs/2026-08-14_fireflies-connector/prd.md).
 
 ### 2026-09-12 — Ashby and shared workspace installation ownership

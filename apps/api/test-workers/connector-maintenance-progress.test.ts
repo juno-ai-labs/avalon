@@ -45,7 +45,7 @@ async function frozenOperation() {
       }),
       userId: crypto.randomUUID(), inputHash: `progress-fixture-${index}`,
       credentials: { ciphertext: 'unused-encrypted-key', iv: 'unused-iv', keyVersion: 1 },
-      capability: 'ashby.workspace.events',
+      capability: 'ashby.workspace.events', displayName: 'Ashby workspace events',
     });
     await env.DB.prepare(`INSERT INTO connector_ingress_routes
       VALUES (?, ?, ?, 'ashby', 'workspace', 'active')`)

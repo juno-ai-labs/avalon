@@ -416,7 +416,11 @@ or Drive access. Revoked and expired grants become an explicit reconnect state.
 ### Workspace installation and cleanup authority
 
 Ashby and Granola workspace setup binds an administrator's attempt and input
-digest to a reserved connection before provider mutations. API keys and signing
+digest to a reserved connection before provider mutations. A provider whose
+`create` is manual inverts that order: Fireflies' pasted key is validated
+read-only *before* anything is reserved, because the create that would otherwise
+reject it never happens, so without this a bad key would reserve a connection
+and only report itself when somebody pressed Test. API keys and signing
 material use the connection-bound regional credential envelope. Replacement
 validates provider access and checks both generation and the current envelope
 before committing, so a racing settlement cannot overwrite a newer API key.
@@ -437,6 +441,20 @@ actor-attributed audit records without keys or candidate content. See
 Generic webhooks use an endpoint-specific secret, a timestamped HMAC-SHA256
 signature, a bounded replay window, a stored receipt, schema validation, size
 limits, and provider dedupe keys.
+
+Fireflies signs the body and nothing else: no timestamp header, no delivery id.
+Rally verifies HMAC-SHA256 over the exact raw bytes against a single
+`X-Hub-Signature` header — after the size cap and before any decode — then
+anchors the replay window on the timestamp **inside** the signed body, which is
+the only value in a Fireflies delivery an attacker replaying a capture cannot
+move. With no delivery id the ingress receipt is keyed on the hash of those
+bytes, so a replay is byte-identical and a genuinely new delivery never is. A
+body that verifies but is stale is reported as its own failure rather than as an
+invalid signature, so an administrator is not sent to rotate a secret when the
+cause is a clock. The signing secret is **host-generated and revealed exactly
+once**, at setup, because the provider has no registration API and the
+administrator has to carry it to a dashboard by hand: it is absent from every
+read path afterwards and is replaced by reconnecting, not by asking again.
 
 Ashby verifies the exact raw body with HMAC-SHA256 before decoding, parsing or
 regional persistence. Both dedicated ingress and regional receipt enforce the

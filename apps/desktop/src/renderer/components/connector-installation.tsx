@@ -104,7 +104,7 @@ export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, on
   const online = useSyncExternalStore(subscribeOnline, readOnline);
   const [apiKey, setApiKey] = useState('');
   const [registration, setRegistration] = useState<{ destination: string; signingSecret: string; account: string } | null>(null);
-  const [copied, setCopied] = useState<'destination' | 'secret' | null>(null);
+  const [copied, setCopied] = useState<'destination' | 'secret' | 'failed' | null>(null);
   const recovery = useWorkspaceInstallationRecovery(api, 'fireflies', (connectionId) => {
     setApiKey('');
     onSuccess();
@@ -131,14 +131,15 @@ export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, on
     onError: () => recovery.mutate(),
   });
   if (registration) {
-    return <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Finish in Fireflies"
+    return <Modal open dismissible={false} onOpenChange={(open) => { if (!open) onClose(); }} title="Finish in Fireflies"
       description="Rally can't register this webhook for you — Fireflies has no API for it."
       footer={<Button className="button-primary" onClick={onClose}>Done</Button>}>
       <p role="status">{registration.account} is connected. The meeting tools work now; these steps are what makes finished meetings arrive as activity.</p>
       <Button onClick={() => void desktopBridge().openExternal('https://app.fireflies.ai/integrations/api/webhook')}>Open Fireflies' Webhooks V2 page ↗</Button>
-      {/* Numbered inline: the app resets list markers globally, so an ordinary
-          `ol` renders as four unnumbered lines that read as one paragraph. */}
-      <ol style={{ listStyle: 'decimal', paddingInlineStart: '1.5rem' }}>
+      {/* The marker and the spacing live in `.dialog-body ol`, beside the rule
+          that restores paragraph separation: the app resets both globally, and
+          every dialog with a list was otherwise patching it inline. */}
+      <ol>
         <li>Paste the endpoint URL below into <strong>Webhook URL</strong>, and the signing secret into <strong>Signing Secret</strong>.</li>
         <li>Subscribe <code>meeting.transcribed</code> and <code>meeting.summarized</code>. Leave <code>meeting.bot_joined</code> unselected.</li>
         <li>Save.</li>
@@ -146,21 +147,39 @@ export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, on
       {/* Copied rather than read: a connection URL is longer than the field,
           and the secret is deliberately the one thing nobody should retype. */}
       <label className="form-field"><span>Endpoint URL</span><input aria-label="Fireflies endpoint URL" readOnly spellCheck={false} value={registration.destination} /></label>
-      <Button onClick={() => { void desktopBridge().copyText(registration.destination); setCopied('destination'); }}>
+      <Button onClick={() => { void desktopBridge().copyText(registration.destination).then(() => setCopied('destination')).catch(() => setCopied('failed')); }}>
         {copied === 'destination' ? 'Endpoint copied' : 'Copy endpoint'}
       </Button>
       <label className="form-field"><span>Signing secret</span><input aria-label="Fireflies signing secret" readOnly spellCheck={false} type="password" value={registration.signingSecret} /></label>
-      <Button onClick={() => { void desktopBridge().copyText(registration.signingSecret); setCopied('secret'); }}>
+      <Button onClick={() => { void desktopBridge().copyText(registration.signingSecret).then(() => setCopied('secret')).catch(() => setCopied('failed')); }}>
         {copied === 'secret' ? 'Secret copied' : 'Copy signing secret'}
       </Button>
+      {/* Said out loud rather than left to a label that silently never changes:
+          the clipboard refuses often enough (an unfocused window, a denied
+          permission) and this secret cannot be read back off the screen, so a
+          copy that failed has to be a thing the administrator is told about. */}
+      <p aria-live="polite">{copied === 'failed'
+        ? 'Copying failed. Select the value in the field and copy it by hand before closing.'
+        : copied ? 'Copied to the clipboard.' : ''}</p>
       <p><strong>Copy the signing secret now.</strong> Rally will not show it again; replacing it means removing this connection and connecting again.</p>
-      <p>Fireflies holds one webhook URL per account, so this replaces any URL already configured there.</p>
-      <p>Until this is done, no meetings reach Rally. Once it is, a finished meeting shows up within a couple of minutes. Rally can't check this for you — the installation changes to Current when the first meeting arrives.</p>
+      {/* The one consequence that reaches a system the administrator is not
+          looking at: Fireflies keeps a single URL, so saving this silently
+          stops meetings reaching whichever workspace held it before. */}
+      <div className="dialog-callout">
+        <p><strong>This replaces any webhook URL already on that page.</strong> Fireflies holds one per account, so if another Rally workspace is connected to this Fireflies account, it stops receiving meetings.</p>
+      </div>
+      <p>Until this is done, no meetings reach Rally. Rally can't check it for you — the connection changes to <strong>Connected</strong> when the first meeting arrives, usually within a couple of minutes of one finishing.</p>
     </Modal>;
   }
-  return <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Connect Fireflies for workspace"
-    description="One admin API key lets every work stream in this workspace read the connected account's meetings."
-    footer={<><Button onClick={onClose}>Cancel</Button><Button className="button-primary" disabled={!online || !apiKey.trim() || setup.isPending || recovery.isPending || recovery.isError} onClick={() => setup.mutate()}>{setup.isPending ? 'Connecting…' : 'Connect'}</Button></>}>
+  // Dismissal is refused while the setup is in flight. The mutation does not
+  // stop when its observer goes away, so a Cancel here would let the request
+  // succeed against an unmounted component — creating the connection and
+  // discarding the signing secret the next stage exists to show, which cannot
+  // be asked for again.
+  const pending = setup.isPending || recovery.isPending;
+  return <Modal open dismissible={!pending} onOpenChange={(open) => { if (!open && !pending) onClose(); }} title="Connect Fireflies for workspace"
+    description="One admin API key lets every work stream in this workspace read the connected account's meetings. One more step in Fireflies finishes it."
+    footer={<><Button disabled={pending} onClick={onClose}>Cancel</Button><Button className="button-primary" disabled={!online || !apiKey.trim() || setup.isPending || recovery.isPending || recovery.isError} onClick={() => setup.mutate()}>{setup.isPending ? 'Connecting…' : 'Connect'}</Button></>}>
     {!online && <InlineError>Connection management is unavailable while offline.</InlineError>}
     <p>In Fireflies, open Integrations → Fireflies API and copy the key. Paste it here, never in a work stream. The key stays encrypted in this workspace's Rally region; Fireflies processes meetings outside it.</p>
     <Button onClick={() => void desktopBridge().openExternal('https://docs.fireflies.ai/fundamentals/authorization')}>Open Fireflies' API key guide ↗</Button>

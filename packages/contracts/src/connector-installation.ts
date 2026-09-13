@@ -2,6 +2,13 @@ import { HttpsUrlSchema } from "./url-schemas";
 import { z } from "zod";
 
 export const ConnectorInstallationProviderSchema = z.enum(["ashby", "fireflies", "granola"]);
+/**
+ * The same set as a plain array, because "this provider has an installation
+ * facet" is a question five surfaces ask and each one had written the list out
+ * by hand. A connector added to the enum and missed in one of those copies used
+ * to produce a silently wrong button rather than a type error.
+ */
+export const ConnectorInstallationProviders = ConnectorInstallationProviderSchema.options;
 export const ConnectorRegistrationSchema = z.strictObject({
   key: z.string().min(1), providerId: z.string().min(1).nullable(), events: z.array(z.string().min(1)).min(1),
   adoptingExistingDestination: z.boolean().default(false),
