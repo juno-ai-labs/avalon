@@ -28,6 +28,7 @@ const supportConnectorPages = [
   { provider: 'generic_webhook', slug: 'inbound-webhook', title: 'Inbound webhook' },
   { provider: 'x', slug: 'x', title: 'Public X' },
   { provider: 'custom_mcp', slug: 'custom-mcp', title: 'Custom MCP server' },
+  { provider: 'ashby', slug: 'ashby', title: 'Ashby' },
 ] as const;
 
 const supportPagePaths = [

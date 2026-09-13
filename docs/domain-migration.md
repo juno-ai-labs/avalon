@@ -36,7 +36,7 @@ deep-link scheme, and the work-stream email domain.
 
 ## How it works
 
-### The ten hostnames
+### The migrated hostnames
 
 | Canonical hostname | Serves | Superseded hostname, still served |
 | --- | --- | --- |
@@ -55,6 +55,16 @@ Eight are attached to a Worker by a `routes` entry, listing the Rally pattern
 and the Avalon pattern side by side. `automation.` is mail only and carries no
 Worker route. `downloads.` is an R2 custom domain, configured outside this
 repository.
+
+### New Ashby hostname
+
+`ashby.rallywith.ai` is a new hostname with no Avalon predecessor. Its custom
+domain belongs to `avalon-connector-ashby-global`, configured by
+`apps/api/wrangler.ashby.global.jsonc`. It must not also be assigned to the Global
+API Worker. The dedicated entry point routes exact signed webhook bytes to the
+owning regional service and serves no connection-management or model endpoints.
+OAuth callbacks stay on the regional API hosts. Granola registrations retain their
+existing regional API URLs; adoption does not rewrite provider subscriptions.
 
 ### What is canonical, and what that means
 

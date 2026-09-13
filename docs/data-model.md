@@ -706,6 +706,26 @@ column catalog; what follows is only what WorkspaceDO still holds.
 
 ### Connectors and activities
 
+- `WorkspaceDO.connector_installations` owns a connection's unique setup attempt,
+  initiating user and input digest, generation, typed registration document, and
+  separate cleanup credential envelope. `connector_installation_steps` records
+  exact dispatched intents and outcomes so an uncertain provider create cannot
+  be replayed as a fresh create. Both tables are typed-only object authority.
+  WorkspaceDO migrations 53/54 add Ashby discriminators and installation state;
+  partial unique indexes permit one active Ashby workspace connection and one
+  active personal connection per owner/workspace. Credentials are replaced only
+  against the current generation and envelope; cleanup never restores ordinary
+  access. See [installation lifecycle](connector-installation-lifecycle.md).
+- Global D1 `ashby_connection_routes` maps only connection ID to region, active or
+  disabled status, and update time (migration 0104). The regional
+  `connector_ingress_routes` projection then resolves the owning workspace.
+  Neither directory contains provider credentials or payloads.
+- Regional D1 `connector_maintenance_operations` stores an operation ID and a
+  validated JSON document with the frozen regional selection, operator identity,
+  planned registration changes and per-target progress (migration 0105). This
+  administrative operation record is distinct from installation authority.
+  Atomic JSON-path updates preserve concurrent target outcomes; cancellation
+  fences later lifecycle work.
 - `connector_connections` owns scope, encrypted provider credentials,
   capabilities, cursors, and health. Migration
   `0072_notion_connection_scope_split.sql` uses the capability dialect to move
@@ -739,7 +759,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
   only once, so a row that is not written as the card is posted can never be
   recovered — see [`workstream-links.md`](workstream-links.md).
 - `WorkspaceDO.webhook_receipts` stores connection-scoped signed-delivery replay
-  receipts for generic and Granola webhooks. `provider_webhook_receipts` remains
+  receipts for generic, Granola and Ashby webhooks. `provider_webhook_receipts` remains
   in D1 only for a provider-global delivery that may precede/fan out across the
   workspace routes it matches.
 - `WorkspaceDO.workspace_connector_events` stores the complete authoritative
@@ -1028,7 +1048,24 @@ table. That is a cross-authority join; callers commit the local fact first and
 perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
+The connector connection rebuild inventory is frozen through WorkspaceDO v53.
+Version 54 adds `connector_installations` with a non-cascading connection foreign
+key; a later parent rebuild must declare a new dependent inventory including it,
+without editing v31/v53 statements or their stored fingerprints.
+
 ## Changelog
+
+### 2026-09-12 — WorkspaceDO owns connector installations and dispatch receipts
+
+**What changed:** Object migrations 53/54 add Ashby discriminators and typed installation/step tables. D1 migrations 0104/0105 add opaque routing and frozen regional maintenance operations.
+
+**Why:** Remote create uncertainty and cleanup after disablement need durable intent and credential ownership beside the connection. Fleet progress must survive concurrent Queue deliveries without overwriting sibling results.
+
+**Considered and rejected:** Storing canonical installation state in routing D1 or rewriting the entire maintenance document for one target. Those split authority or lose concurrent progress.
+
+**Consequences:** Installations and exact step receipts remain WorkspaceDO authority; D1 operation records do not grant provider access. Preserve generation/envelope fences and cleanup ciphertext until verified removal or explicit forgetting. See [lifecycle invariants](connector-installation-lifecycle.md#invariants).
+
+PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
 
 ### 2026-09-11 — A resource can be reachable without being enumerated
 
