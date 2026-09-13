@@ -147,14 +147,14 @@ Production mutation results and final gate counts are recorded in [plan.md](plan
 Each mutation is temporary, runs only its affected test file, and is restored
 before final validation. These are regression proofs, not live Ashby acceptance.
 
-Native Electron inspection includes the updated [legacy Granola Test](evidence/legacy-granola-test.png),
-[rotation guidance](evidence/rotation-guidance.png),
-[personal prerequisite guide](evidence/personal-prerequisites.png), and
-[recovery/permission denial](evidence/installation-recovery.png).
-Additional native captures show [failed recovery lookup](evidence/setup-recovery-read-failure.png),
-[recovered installation](evidence/setup-recovered-installation.png),
-[connection-specific actions](evidence/workspace-event-actions.png), and
-[Granola recovery](evidence/granola-friendly-events.png). Inspection caught a
+Native Electron inspection includes the updated legacy Granola Test,
+rotation guidance,
+personal prerequisite guide, and
+recovery/permission denial.
+Additional native captures show failed recovery lookup,
+recovered installation,
+connection-specific actions, and
+Granola recovery. Inspection caught a
 clipped four-event selector label; the compact Granola note events option now
 fits while the full event list remains in its heading and title.
 All captures use synthetic public status metadata.
@@ -188,6 +188,21 @@ No undocumented availability API or error classification is invented.
 
 The full test suite passes (870 real-workerd tests). Four representative
 production mutations fail at the expected assertions; details and scoped counts
-are in [plan.md](plan.md). The native setup screenshot and local public support
-copy were inspected. This follow-up does not claim live Ashby compatibility or
+are in [plan.md](plan.md). The native setup window and local public support copy were inspected. This follow-up does not claim live Ashby compatibility or
 resolve the separate first-deployment ordering issue.
+
+## Simple management follow-up — 2026-09-13
+
+The user's screenshot review found that normal installation management exposed
+provider internals without a useful hierarchy. The primary view now shows status,
+last delivery and explicit Test, with a help link on trouble states. Advanced
+contains API-key replacement, signing guidance and unresolved-create recovery;
+provider registration diagnostics are separately collapsed. Cleanup retry remains
+contextual, while forgetting the cleanup credential is advanced. No backend
+permission or provider behavior changed.
+
+The focused renderer suites pass 163 tests, including hidden-by-default controls,
+read-only expansion, explicit Test, offline handling, reconciliation and legacy
+Granola adoption. Lint/typecheck, docs validation, site build and native/public
+visual inspection pass. All ten committed screenshot files and PR image embeds
+were removed at the user's request; visual QA continues locally.

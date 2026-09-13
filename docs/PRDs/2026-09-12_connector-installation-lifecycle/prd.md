@@ -525,6 +525,22 @@ changing event identity, so dedupe must preserve one logical signal. Existing
 explicit event grants remain bounded; no undocumented payload fields, recruiting
 REST tools, automatic beta compatibility claim, or live acceptance is introduced.
 
+### 2026-09-13 — Keep technical installation controls out of the main view
+
+**Decided:** Workspace event management shows a plain status, last event, and
+explicit Test, with help when attention is needed. Advanced settings contain
+credential replacement, signing-key guidance, registration diagnostics and manual
+reconciliation. Cleanup retry appears only for incomplete removal; forgetting the
+cleanup credential remains advanced. Screenshots are removed from the PR.
+
+**Why:** The user found the registration-level console confusing even as an
+engineer. Ordinary connection management should not require understanding provider
+IDs, callback URLs or signing-key state.
+
+**Changes:** This changes presentation, not installation authority or recovery
+semantics. Opening either view remains read-only. Explicit Test retains repair
+followed by healthCheck. Visual inspection is still performed locally.
+
 ## Key design decisions
 
 1. **Extract from Granola while adding Ashby.** Two real providers test the

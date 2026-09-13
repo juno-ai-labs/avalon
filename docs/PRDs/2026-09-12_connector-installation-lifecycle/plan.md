@@ -220,8 +220,8 @@ All production mutations are restored. Final gate typecheck also caught two
 new renderer fixtures using an unnormalized status and missing plugin identity;
 the fixtures now match the API client contract.
 
-Native Electron captures: [workspace setup](evidence/workspace-setup.png) and
-[installation recovery and permission denial](evidence/installation-recovery.png).
+Native Electron captures: workspace setup and
+installation recovery and permission denial.
 These are synthetic public-status fixtures, not evidence of live provider success.
 
 
@@ -253,8 +253,7 @@ Validation: full `pnpm test` passed (API Node 2,919, workerd 870, desktop
 2,902; other packages passed), along with lint, typecheck, Global/EU/Ashby
 build/startup checks and the site build. The new route file passes 17 tests;
 Ashby adapter tests pass 34; installation UI tests pass 9. Native Electron setup
-and the local public support page were inspected. The refreshed setup capture
-shows no event checkboxes.
+and the local public support page were inspected. Native setup inspection confirms no event checkboxes.
 
 Representative production breaks in `connector-installation-routes.test.ts`
 failed as required, then were reverted:
@@ -269,3 +268,22 @@ failed as required, then were reverted:
 Live acceptance remains unavailable, including organization eligibility for the
 email beta, actual payloads across the catalog, and the confidential audience.
 No provider credentials, deployment, or fleet operation were used.
+
+
+## Follow-up — Simple event management (2026-09-13)
+
+- [x] Show plain status and explained Test in the main view; offer help on failure.
+- [x] Move credential replacement, technical diagnostics and manual recovery to
+  Advanced, with the full subscription list collapsed separately.
+- [x] Remove screenshots and image links from the PR and its changed files.
+- [x] Verify the relevant renderer tests, lint/typecheck and native window;
+  update the existing PR without adding screenshots.
+
+The provider lifecycle and launch acceptance gates are unchanged.
+
+Validation: 163 renderer tests passed across installation controls and workspace
+settings; lint, typecheck, docs validation and the site build passed. Native
+Electron showed connected and needs-attention views plus advanced recovery for a
+synthetic 27-subscription installation. Opening Advanced made no provider write.
+The support page was inspected locally. Screenshots are temporary local QA files
+and are not attached to the PR or committed.
