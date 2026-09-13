@@ -229,7 +229,19 @@ The workspace's alarm stops an idle running sandbox after five minutes,
 archives it after sixty minutes, and deletes it after thirty days. Daytona's
 15-minute auto-stop is only a provider backstop. Due transitions use a bounded
 object-local claim that outlives the provider request limit and reconcile
-observed provider state after ambiguous calls. Before stop
+observed provider state after ambiguous calls.
+
+**Acquisition reads the provider's state back before reusing a sandbox the row
+already names**, because the backstop — and any transition the alarm did not
+run — moves the sandbox without moving the row. What Daytona reports decides
+the acquisition: `running` is used and its deadlines refreshed, `stopped` or
+`archived` is started, `starting` is a retry, and a sandbox Daytona has
+destroyed, errored, or no longer has at all is replaced by a fresh generation
+under the same lease. That last case is why the read-back exists rather than a
+report: archiving releases a sandbox's runner, so a file or command call on one
+answers `404 … does not have a runner`, and an `archived` row has no pending
+deadline for the lifecycle pass to reconcile — the dead id would otherwise be
+retried by every later run until the thirty-day expiry. Before stop
 or deletion Rally saves a bounded Git diff (or a summary when the diff is too
 large) as a generated resource. Filesystem archives are not copied to R2; after
 expiry a participant explicitly starts fresh and the next tool gets a new root.
@@ -639,7 +651,8 @@ utility additionally supplies one fixed `operation_detail`: `path.resolve`,
 `file.inspect`, `file.read_page`, `file.replace`, `file.apply_patch`,
 `file.temp_cleanup`, `resource.publish.inspect_before`,
 `resource.publish.inspect_after`, `resource.import.inspect`,
-`resource.import.finalize`, `repository.bootstrap`, `instructions.probe`, one
+`resource.import.stage`, `resource.import.finalize`, `repository.bootstrap`,
+`instructions.probe`, one
 of the six `repository.publish.*` inspection phases, `lifecycle.final_diff`,
 `lifecycle.backup`, or `lifecycle.backup_cleanup`.
 
@@ -689,6 +702,49 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-13 — Acquisition asks Daytona what the sandbox is, and replaces one it has lost
+
+**What changed:** `TerminalSandboxCoordinator.acquire` no longer branches on
+`lifecycle_state` for a row that already names a sandbox. It reads the provider
+state back once per acquisition and drives from that — use `running`, start
+`stopped` or `archived`, retry `starting`, and replace a sandbox reported
+`expired`, `failed`, or absent by bumping the generation through
+`replaceGeneration` and provisioning its successor under the same lease. The
+replacement emits `terminal_sandbox_replaced_after_loss` and a `start_fresh`
+acquisition action. A start that throws re-observes before deciding, so a
+restore still in flight is a retry rather than a discarded workspace, and
+provider failures leave acquisition as a typed `sandbox_unavailable` instead of
+Daytona's own text.
+
+**Why:** A work stream that published a site could never update it again. The
+row said `running` while Daytona had auto-archived the sandbox, archiving
+releases the runner, and every file and command call answered `404 Sandbox with
+ID … does not have a runner`. Nothing recovered: the raw provider error went to
+the model, which reported a platform outage and advised waiting, and an
+`archived` row has no pending deadline for the lifecycle pass to act on, so the
+dead id survived to the thirty-day expiry. The two schedules were always going
+to diverge — Rally stops at five minutes and archives at sixty, Daytona stops at
+fifteen and archives at sixty on its own clock — and the row was being trusted
+as though only Rally could move the sandbox.
+
+**Considered and rejected:** *Reporting the loss and letting a participant start
+fresh*, which is what the error strings have always said to do — except that
+`startFresh` is behind no route and refuses any state but `expired` or `failed`,
+so the advice named a repair nobody could perform. *Replacing on any failed
+start*, which would discard a workspace for a restore that merely outran its
+own deadline. *Trusting the row and retrying the tool*, which is the behavior
+this replaces.
+
+**What a future change has to respect:** the read-back is one provider GET per
+acquisition — once per harness run, not once per tool, because the run-local
+acquisition cache still holds — and every branch below it must decide from the
+observed state rather than the row. A replacement is destructive by design: it
+costs the run its scratch files, which is acceptable only because nothing
+durable lives solely in a sandbox. If that ever stops being true — a file the
+product cannot reconstruct from R2, the repository, or the final diff — this
+path needs a preservation step before `replaceGeneration`, not a quieter
+failure.
 
 ### 2026-09-11 — A work-stream Sidekick publishes into the room that owns it
 

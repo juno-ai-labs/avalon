@@ -7,7 +7,10 @@ import {
   type TerminalClock,
 } from "../src/services/terminal/coordinator";
 import { TERMINAL_OPERATION_LEASE_MS } from "../src/durable-objects/workstream-terminal-storage";
-import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
+import type {
+  TerminalSandboxProvider,
+  TerminalSandboxState,
+} from "../src/services/terminal/daytona-provider";
 import { compileTerminalNetworkPolicy } from "../src/services/terminal/network-policy";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
@@ -124,6 +127,27 @@ function context(userId = USER_ID): HarnessToolContext {
   };
 }
 
+/**
+ * What the provider reports for one sandbox.
+ *
+ * Acquisition reads the provider's state back rather than trusting the row, so
+ * a test about a stopped or archived workspace has to say so on both sides; a
+ * fixture that always answers "running" would prove the read-back never
+ * happened.
+ */
+function observeProviderState(
+  provider: TerminalSandboxProvider,
+  id: string,
+  state: TerminalSandboxState,
+): void {
+  vi.mocked(provider.getSandbox).mockImplementation(async (requested) => ({
+    id,
+    name: requested,
+    state,
+    domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
+  }));
+}
+
 describe("Terminal sandbox coordinator", () => {
   it("creates lazily on first tool use and reuses one sandbox per work stream", async () => {
     const { objectStore, env,  provider, clock } = fixture();
@@ -218,6 +242,7 @@ describe("Terminal sandbox coordinator", () => {
       objectStore,
       "UPDATE terminal_workspace SET lifecycle_state = 'stopped' WHERE id = 1",
     );
+    observeProviderState(provider, "sandbox-1", "stopped");
     advance(10);
 
     const acquired = await coordinator.acquire(context());
@@ -231,6 +256,78 @@ describe("Terminal sandbox coordinator", () => {
       archive_due_at: Date.parse("2026-08-13T13:10:00.000Z"),
       expire_due_at: Date.parse("2026-09-12T12:10:00.000Z"),
     });
+  });
+
+  it("starts a sandbox Daytona archived while the row still claimed it was running", async () => {
+    const { objectStore, env, provider, clock, advance } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    // Daytona auto-stops at fifteen minutes and auto-archives an hour later on
+    // its own schedule. Rally's transition never ran, so the row still says
+    // running over a sandbox whose runner archiving released.
+    observeProviderState(provider, "sandbox-1", "archived");
+    advance(90);
+
+    const acquired = await coordinator.acquire(context());
+
+    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(acquired).toMatchObject({ providerSandboxId: "sandbox-1", state: "running" });
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("replaces a sandbox the provider no longer has instead of failing every later run", async () => {
+    const { objectStore, env, provider, clock, advance } = fixture();
+    const acquisitionObserved = vi.fn(async () => undefined);
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider,
+      clock,
+      undefined,
+      false,
+      acquisitionObserved,
+    );
+    await coordinator.acquire(context());
+    workstreamObjectRun(
+      objectStore,
+      "UPDATE terminal_workspace SET lifecycle_state = 'archived' WHERE id = 1",
+    );
+    const missing = new Error("Sandbox with ID sandbox-1 does not have a runner") as Error & { status: number };
+    missing.status = 404;
+    vi.mocked(provider.getSandbox).mockRejectedValue(missing);
+    advance(70);
+
+    const acquired = await coordinator.acquire(context());
+
+    expect(acquired).toMatchObject({ providerSandboxId: "sandbox-2", generation: 2, state: "running" });
+    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
+    expect(acquisitionObserved).toHaveBeenLastCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ action: "start_fresh", localFilesRetained: false }),
+    );
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT lifecycle_state, sandbox_id FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ lifecycle_state: "running", sandbox_id: "sandbox-2" });
+  });
+
+  it("keeps a sandbox the provider still holds when one start attempt fails", async () => {
+    const { objectStore, env, provider, clock, advance } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    workstreamObjectRun(
+      objectStore,
+      "UPDATE terminal_workspace SET lifecycle_state = 'archived' WHERE id = 1",
+    );
+    // A restore that outran the start call's own deadline is still on its way.
+    observeProviderState(provider, "sandbox-1", "archived");
+    vi.mocked(provider.startSandbox).mockRejectedValue(new Error("timed out"));
+    advance(70);
+
+    await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable" });
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT sandbox_id FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ sandbox_id: "sandbox-1" });
   });
 
   it("serializes mutating runs with the durable operation lease", async () => {

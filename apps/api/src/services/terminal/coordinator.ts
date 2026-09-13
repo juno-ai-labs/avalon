@@ -2,6 +2,7 @@ import type { HarnessToolContext } from "@rally/agent-harness";
 import { newId } from "@rally/db";
 
 import { sha256 } from "../../lib/crypto";
+import { logStructuredEvent } from "../../observability/logger";
 import {
   executionPrincipalKey,
 } from "../workstream-resource-visibility";
@@ -72,7 +73,7 @@ export interface TerminalSandboxMutationLease {
 }
 
 export interface TerminalAcquisitionObservation {
-  action: "start" | "restore" | "repository_replace";
+  action: "start" | "restore" | "repository_replace" | "start_fresh";
   durationMs: number;
   repositorySelected: boolean;
   localFilesRetained: boolean;
@@ -107,9 +108,21 @@ function requireStableName(row: TerminalSandboxRecord): string {
 function providerStateError(state: TerminalSandboxState): TerminalToolError {
   return new TerminalToolError(
     "sandbox_unavailable",
-    `The Terminal sandbox could not be made ready (provider state: ${state}). Retry the tool; if it persists, start a fresh Terminal workspace.`,
-    { reason: `Retry once after Daytona leaves its ${state} state; if it persists, start a fresh Terminal workspace.` },
+    `The Terminal sandbox could not be made ready (provider state: ${state}). Retry the tool; Rally replaces the workspace itself once Daytona reports it lost.`,
+    { retryAfterMs: 5_000, reason: `Retry once after Daytona leaves its ${state} state.` },
   );
+}
+
+/**
+ * A provider state Rally cannot use and cannot wait out.
+ *
+ * `expired` is Daytona's destroyed sandbox and `failed` covers its error
+ * states — including an archived sandbox whose restore found no completed
+ * backup. Neither becomes usable by retrying, and the row would otherwise name
+ * it until the thirty-day expiry.
+ */
+function isLostProviderSandbox(state: TerminalSandboxState): boolean {
+  return state === "expired" || state === "failed";
 }
 
 function parseEffectiveDomains(policy: WorkspaceTerminalNetworkPolicy): string[] {
@@ -226,11 +239,7 @@ export class TerminalSandboxCoordinator {
     }
     row = await this.claimOperation(context, row, now);
     let telemetryAction: TerminalAcquisitionObservation["action"] | null =
-      row.lifecycleState === "stopped" || row.lifecycleState === "archived"
-        ? "restore"
-        : row.lifecycleState === "running" && row.sandboxId
-          ? null
-          : "start";
+      row.sandboxId ? null : "start";
     let localFilesRetained = Boolean(row.sandboxId);
 
     const importedResourceRevoked = await this.hasRevokedImportedResource(context, row);
@@ -246,21 +255,18 @@ export class TerminalSandboxCoordinator {
 
     if (!row.sandboxId) {
       row = await this.createReservedSandbox(context, row, domains, now);
-    } else if (row.lifecycleState === "stopped" || row.lifecycleState === "archived") {
-      await this.provider.startSandbox(row.sandboxId);
-      await this.setRunning(context, row, now);
-      row = { ...row, lifecycleState: "running", version: row.version + 1 };
-    } else if (row.lifecycleState !== "running") {
-      const observed = await this.provider.getSandbox(row.sandboxId);
-      if (observed.state === "stopped" || observed.state === "archived") {
-        await this.provider.startSandbox(row.sandboxId);
-      } else if (observed.state !== "running") {
-        throw providerStateError(observed.state);
-      }
-      await this.setRunning(context, row, now);
-      row = { ...row, lifecycleState: "running", version: row.version + 1 };
     } else {
-      await this.refreshDeadlines(context, row, now);
+      const resumed = await this.resumeProviderSandbox(
+        context,
+        row,
+        authorityFingerprint,
+        policy.revision,
+        domains,
+        now,
+      );
+      row = resumed.row;
+      telemetryAction = resumed.action ?? telemetryAction;
+      if (resumed.action === "start_fresh") localFilesRetained = false;
     }
 
     const currentPolicy = await this.loadOrCreatePolicy(context.workspaceId, nowIso);
@@ -676,6 +682,158 @@ export class TerminalSandboxCoordinator {
       now,
     });
     return { ...row, sandboxId: created.id, lifecycleState: "running", version: row.version + 1 };
+  }
+
+  /**
+   * Make the provider sandbox this row names actually running, driven by what
+   * Daytona reports rather than by what the row last recorded.
+   *
+   * The row carries Rally's intent; only the provider knows the state, and the
+   * two drift. Daytona auto-stops a sandbox after fifteen idle minutes and
+   * auto-archives it an hour later on its own schedule, so a transition Rally's
+   * alarm never ran — deferred behind a live run, lost with a run that died
+   * mid-operation — leaves the row claiming `running` over a sandbox that has
+   * been archived. Archiving releases the runner, so the first file or command
+   * call answers `404 … does not have a runner`, and because nothing moves the
+   * row, every later run repeats it. Reading the state back costs one provider
+   * GET per acquisition — once per harness run, not once per tool — and it is
+   * what turns that silent divergence into a start.
+   *
+   * A sandbox the provider has lost is replaced here rather than reported,
+   * because reporting it is what made this permanent: an `archived` row has no
+   * pending deadline, so the lifecycle pass has nothing to reconcile and the
+   * dead id survives to the thirty-day expiry. Nothing durable lives only
+   * inside a sandbox — published resources, the repository branch, and the
+   * final diff are all outside it — so a replacement costs the run its scratch
+   * files and gives back a workspace that works.
+   */
+  private async resumeProviderSandbox(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+    authorityFingerprint: string,
+    networkRevision: number,
+    domains: string[],
+    now: number,
+  ): Promise<{
+    row: TerminalSandboxRecord;
+    action: TerminalAcquisitionObservation["action"] | null;
+  }> {
+    const sandboxId = row.sandboxId!;
+    const replaceLost = async (): Promise<{
+      row: TerminalSandboxRecord;
+      action: TerminalAcquisitionObservation["action"];
+    }> => ({
+      row: await this.replaceLostSandbox(
+        context,
+        row,
+        authorityFingerprint,
+        networkRevision,
+        domains,
+        now,
+      ),
+      action: "start_fresh",
+    });
+    const observed = await this.observeProviderSandbox(sandboxId);
+    if (!observed || isLostProviderSandbox(observed.state)) return replaceLost();
+    if (observed.state === "running") {
+      if (row.lifecycleState === "running") {
+        await this.refreshDeadlines(context, row, now);
+        return { row, action: null };
+      }
+      await this.setRunning(context, row, now);
+      return {
+        row: { ...row, lifecycleState: "running", version: row.version + 1 },
+        action: "restore",
+      };
+    }
+    // `starting` is Daytona mid-transition, including the restore of an archive
+    // that outlasts one start call. Waiting it out inside the tool would hold
+    // the run against a provider deadline Rally does not set; the model retries.
+    if (observed.state === "starting") throw providerStateError(observed.state);
+    try {
+      await this.provider.startSandbox(sandboxId);
+    } catch (error) {
+      // A start that throws has not said what became of the sandbox. Ask,
+      // rather than treating every failure as a lost workspace: a restore that
+      // ran past the start call's own deadline is still on its way, and
+      // discarding the files for that would make this method cause the loss it
+      // exists to recover from.
+      const settled = await this.observeProviderSandbox(sandboxId);
+      if (!settled || isLostProviderSandbox(settled.state)) return replaceLost();
+      if (settled.state !== "running") throw providerStateError(settled.state);
+      logStructuredEvent(this.env, "info", "terminal_sandbox_start_settled_after_error", {
+        workspace_id: context.workspaceId,
+        workstream_id: context.workstreamId,
+        harness_run_id: context.harnessRunId,
+        sandbox_generation: row.generation,
+        reason: error instanceof Error ? error.name : "unknown",
+      });
+    }
+    await this.setRunning(context, row, now);
+    return {
+      row: { ...row, lifecycleState: "running", version: row.version + 1 },
+      action: "restore",
+    };
+  }
+
+  /**
+   * What the provider says this sandbox is, or `null` when it no longer has one.
+   *
+   * A provider that cannot be reached is not a lost sandbox and must not be
+   * treated as one: the caller replaces what this reports absent.
+   */
+  private async observeProviderSandbox(
+    sandboxId: string,
+  ): Promise<TerminalSandboxSnapshot | null> {
+    try {
+      return await this.provider.getSandbox(sandboxId);
+    } catch (error) {
+      if (isTerminalProviderNotFound(error)) return null;
+      throw new TerminalToolError(
+        "sandbox_unavailable",
+        "Rally could not reach Daytona to check this Terminal workspace. Retry the tool.",
+        { retryAfterMs: 5_000, reason: "Retry once; the provider did not answer." },
+      );
+    }
+  }
+
+  /**
+   * Retire a generation whose sandbox the provider lost, and provision its
+   * successor under the same lease.
+   *
+   * `replaceGeneration` is the authority path repository replacement already
+   * uses: it bumps the generation, clears the sandbox id, and drops the
+   * imported-resource rows that named files in the sandbox that is gone. The
+   * delete is best effort — the sandbox is already absent or unusable, and a
+   * provider that will not answer a delete must not keep the work stream
+   * pinned to a workspace it cannot start.
+   */
+  private async replaceLostSandbox(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+    authorityFingerprint: string,
+    networkRevision: number,
+    domains: string[],
+    now: number,
+  ): Promise<TerminalSandboxRecord> {
+    logStructuredEvent(this.env, "warn", "terminal_sandbox_replaced_after_loss", {
+      workspace_id: context.workspaceId,
+      workstream_id: context.workstreamId,
+      harness_run_id: context.harnessRunId,
+      sandbox_generation: row.generation,
+      lifecycle_state: row.lifecycleState,
+    });
+    if (row.sandboxId) await this.provider.deleteSandbox(row.sandboxId).catch(() => undefined);
+    const replaced = await this.terminal(context).replaceGeneration({
+      generation: row.generation,
+      authorityFingerprint,
+      networkRevision,
+      runId: context.harnessRunId,
+      operationLeaseExpiresAt: this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS,
+      ...deadlines(this.clock.now()),
+      now,
+    });
+    return this.createReservedSandbox(context, replaced, domains, now);
   }
 
   private async replaceForAuthority(
