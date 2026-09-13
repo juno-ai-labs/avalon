@@ -8,9 +8,9 @@ name: Deploy Avalon API
 # ledger and applied after that region has the compatible replacement Worker.
 #
 # The Global Worker holds named service bindings into EU entrypoints, so EU is
-# always deployed first. A release that introduces a brand-new cross-region
-# entrypoint is the documented three-stage bootstrap exception and must be run
-# by hand — never deploy a caller before its target entrypoint exists.
+# normally deployed first. The Ashby preflight detects a missing Global router
+# and bootstraps Global before EU once, after checking its existing EU targets.
+# Later releases retain EU-first order. Never upload a caller before its target exists.
 #
 # Prerequisites this workflow does not perform (one-time, per the runbook):
 # unrelated regional resource creation, confirming each configured D1 ID belongs
@@ -53,6 +53,8 @@ on:
       - "scripts/check-regional-health.mjs"
       - "scripts/check-workspace-handoff-site.mjs"
       - "scripts/select-api-deploy-mode.mjs"
+      - "scripts/select-ashby-deploy-order.mjs"
+      - "scripts/deploy-api-direct-region.mjs"
   workflow_dispatch:
     inputs:
       ref:
@@ -60,7 +62,7 @@ on:
         required: false
         type: string
       regions:
-        description: Regions to deploy; EU always precedes Global
+        description: Regions to deploy; first Ashby rollout requires both regions
         required: true
         default: eu-and-global
         type: choice
@@ -123,6 +125,7 @@ jobs:
               pnpm --filter @rally/api build:terminal:eu &&
               pnpm --filter @rally/api build:telemetry &&
               pnpm --filter @rally/api check:telemetry-startup-boundary &&
+              pnpm --filter @rally/api build:ashby &&
               pnpm --filter @rally/api build:pricing &&
               pnpm --filter @rally/api build:artifacts &&
               pnpm --filter @rally/api build:artifacts:eu &&
@@ -305,6 +308,14 @@ jobs:
       # All preflights run on the pinned Node but before any third-party code
       # is installed: they import nothing outside this repository, and they are
       # the first use of the production token in this job.
+      - name: Select Ashby deployment order from active regional entrypoints
+        id: ashby_order
+        run: |
+          set -euo pipefail
+          selection="$(node scripts/select-ashby-deploy-order.mjs)"
+          echo "bootstrap_global=$(jq -r .bootstrapGlobal <<< "$selection")" >> "$GITHUB_OUTPUT"
+          echo "$selection"
+
       - name: Require every R2 bucket declared by the regional Wrangler configs
         run: node scripts/check-cloudflare-r2-buckets.mjs
 
@@ -383,6 +394,13 @@ jobs:
           DEPLOY_SHA: ${{ needs.verify.outputs.verified_sha }}
         run: |
           set -euo pipefail
+          # EU version upload itself resolves its new Global service binding.
+          # Skip both upload lanes and use direct deploy for the bootstrap release.
+          if [ "${{ steps.ashby_order.outputs.bootstrap_global }}" = "true" ]; then
+            echo "mode=direct" >> "$GITHUB_OUTPUT"
+            echo "reason=Global Ashby router must exist before EU upload" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           deployed_sha() {
             local config="$1"
             local deployment version_id versions tag
@@ -560,7 +578,19 @@ jobs:
           tags: avalon-crash-symbolicator:warm
           cache-from: type=gha,scope=crash-symbolicator
 
-      # EU precedes Global because Global binds named EU entrypoints.
+      # Only the first Ashby release takes this path. No caller is uploaded yet:
+      # bootstrap forces direct mode. Any deployment/health/export failure stops EU.
+      - name: Bootstrap Global Ashby router before EU
+        if: steps.ashby_order.outputs.bootstrap_global == 'true'
+        env:
+          DEPLOY_SHA: ${{ needs.verify.outputs.verified_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/deploy-api-direct-region.mjs global
+          node scripts/check-regional-health.mjs global
+          node scripts/select-ashby-deploy-order.mjs --require-global-router
+
+      # Ordinary releases keep EU first because Global binds named EU entrypoints.
       - name: Deploy the EU Worker
         if: env.DEPLOY_EU == 'true'
         env:
@@ -585,12 +615,7 @@ jobs:
             promote_version wrangler.terminal.eu.jsonc "${{ steps.upload_eu.outputs.eu_terminal }}"
             promote_version .wrangler.lakehouses.eu.json "${{ steps.upload_eu.outputs.eu_api }}"
           else
-            for config in wrangler.artifacts.eu.jsonc wrangler.documents.eu.jsonc wrangler.terminal.eu.jsonc .wrangler.lakehouses.eu.json; do
-              pnpm --filter @rally/api exec wrangler deploy \
-                --config "$config" \
-                --tag "$DEPLOY_SHA" \
-                --message "Verified GitHub deployment $DEPLOY_SHA"
-            done
+            node scripts/deploy-api-direct-region.mjs eu
           fi
 
       - name: Verify EU health before Global promotion
@@ -598,7 +623,7 @@ jobs:
         run: node scripts/check-regional-health.mjs eu
 
       - name: Deploy the Global Worker
-        if: env.DEPLOY_GLOBAL == 'true'
+        if: env.DEPLOY_GLOBAL == 'true' && steps.ashby_order.outputs.bootstrap_global != 'true'
         env:
           DEPLOY_SHA: ${{ needs.verify.outputs.verified_sha }}
         run: |
@@ -622,12 +647,7 @@ jobs:
             promote_version wrangler.pricing.global.jsonc "${{ steps.upload_global.outputs.global_pricing }}"
             promote_version .wrangler.lakehouses.global.json "${{ steps.upload_global.outputs.global_api }}"
           else
-            for config in wrangler.artifacts.global.jsonc wrangler.documents.global.jsonc wrangler.terminal.global.jsonc wrangler.telemetry.global.jsonc wrangler.pricing.global.jsonc .wrangler.lakehouses.global.json; do
-              pnpm --filter @rally/api exec wrangler deploy \
-                --config "$config" \
-                --tag "$DEPLOY_SHA" \
-                --message "Verified GitHub deployment $DEPLOY_SHA"
-            done
+            node scripts/deploy-api-direct-region.mjs global
           fi
 
       - name: Verify Global health before schema retirement
@@ -657,6 +677,17 @@ jobs:
           if [ "$DEPLOY_EU" = "true" ]; then regions="$regions eu"; fi
           if [ "$DEPLOY_GLOBAL" = "true" ]; then regions="$regions global"; fi
           node scripts/check-regional-health.mjs $regions
+
+      - name: Deploy dedicated Ashby ingress after both regional entrypoints
+        if: env.DEPLOY_EU == 'true' && env.DEPLOY_GLOBAL == 'true'
+        run: pnpm --filter @rally/api exec wrangler deploy --config wrangler.ashby.global.jsonc
+
+      - name: Verify dedicated Ashby ingress and its regional dependencies
+        if: env.DEPLOY_EU == 'true' && env.DEPLOY_GLOBAL == 'true'
+        env:
+          # The existing checker accepts a base URL override and requires HTTP 200/ok:true.
+          AVALON_GLOBAL_API_URL: https://ashby.rallywith.ai
+        run: node scripts/check-regional-health.mjs global
 
       # The MCP binds both regional API entrypoints. It is deliberately last:
       # a first release cannot make its caller live until both named targets

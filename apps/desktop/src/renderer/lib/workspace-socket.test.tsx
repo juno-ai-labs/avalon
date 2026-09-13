@@ -461,6 +461,7 @@ describe('WorkspaceSocketProvider', () => {
       ['workspace-invitations'],
       ['connections'],
       ['connector-catalog'],
+      ['connector-installation'],
       ['github-repository-access'],
       ['terminal-workspace-settings'],
       ['digest-schedule'],

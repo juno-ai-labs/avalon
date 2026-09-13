@@ -98,6 +98,8 @@ import {
 import { newId, nowIso } from "@rally/db";
 import {
   connectorCapabilitySupportsScope,
+  AshbyCapabilities,
+  AshbyWorkspaceAgentPresentation,
   CUSTOM_MCP_DISPLAY_NAME,
   ConnectorError,
   GoogleFileWriteAuthorizationGuidance,
@@ -6391,6 +6393,11 @@ function connectorPluginPresentation(
   wirePrefix: string,
   fallback: { displayName: string; description: string; searchAliases: string[]; systemMessage: string },
 ): { displayName: string; description: string; searchAliases: string[]; systemMessage: string } {
+  if (connectorType === "ashby") {
+    return grantedScopes.includes(AshbyCapabilities.workspaceEvents)
+      ? { ...fallback, ...AshbyWorkspaceAgentPresentation }
+      : { ...fallback, displayName: "Ashby personal account" };
+  }
   if (connectorType !== "google") return fallback;
 
   const granted = new Set(grantedScopes);

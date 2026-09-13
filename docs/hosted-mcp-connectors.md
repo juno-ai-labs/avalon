@@ -3,12 +3,18 @@
 The hosted-MCP module turns a remote Streamable HTTP MCP server into a Rally
 personal connector without copying the server's tool catalog into source. The
 server remains authoritative for tool names, descriptions, and JSON Schemas;
-Rally owns OAuth, tenancy, activation, safety classification, write confirmation,
+Rally owns OAuth, tenancy, activation, safety classification, conservative write execution,
 receipts, credential rotation, and transport limits.
 
 Use this document when adding a hosted MCP provider or changing how a live MCP
 tool reaches the model. Provider-specific workspace APIs and webhook ingestion
 remain in [`connectors.md`](connectors.md).
+
+Rally never asks users to confirm a tool call. Read and write tools execute
+within existing authorization. The `write` classification below controls serial
+execution, durable receipts, read-only child eligibility and uncertain-outcome
+handling; it is not a human approval gate. Earlier wording claiming otherwise
+was incorrect and must not be used to introduce confirmations.
 
 ## Where the code lives
 
@@ -18,7 +24,7 @@ remain in [`connectors.md`](connectors.md).
 | `packages/connectors/src/types.ts` | `ConnectorDynamicAgentTools`, the adapter facet that declares which grants and connection scopes use a live tool surface. |
 | `apps/api/src/services/integrations.ts` | Converts a dynamic connector facet into one connection-specific `HarnessPlugin.loadTools`, validates the live surface against the frozen grant, and routes execution back to the adapter. |
 | `packages/agent-harness/src/bind-runtime.ts` | Loads the tools after authorization at `load_plugin`, replaces the empty deferred plugin in the Bind registry, and caches that surface for the run. |
-| `packages/connectors/src/{granola,slack,notion}.ts` | Small provider declarations: endpoint, accepted capability, token accessor/refresh wrapper, and the personal-versus-workspace branch. |
+| `packages/connectors/src/{ashby,granola,slack,notion}.ts` | Small provider declarations: endpoint, accepted capability, token accessor/refresh wrapper, and the personal-versus-workspace branch. |
 
 ## How it works
 
@@ -64,6 +70,13 @@ code plus PKCE, and refresh. No endpoint, fetch policy, or response limit is
 declared twice. A provider with its own OAuth dialect, such as Slack, omits the
 block, keeps that credential code, and still uses the same pass-through object
 for live tools.
+
+Ashby uses this same helper with `https://mcp.ashbyhq.com/mcp/v1`, personal
+capability `ashby.personal.mcp`, and authorization origin
+`https://mcp-auth.ashbyhq.com`. Its live catalog is never checked in. Workspace
+API keys and webhook management are a separate authorization path and do not
+enter the MCP transport. See [provider prerequisites](provider-apps.md#ashby-personal-oauth-and-workspace-api-keys)
+for metadata observations and outstanding live acceptance.
 
 ### Discovery and activation
 
@@ -122,11 +135,11 @@ while every newly opened MCP session uses the Rally initialization identity.
   definition receives exactly one capability already granted to that
   connection and valid for its scope. Remote metadata can change a schema; it
   cannot widen Rally tenancy or capability scope.
-- **Every provider-authored tool is a confirmed write.** MCP annotations are
-  hints, not contracts, so even `readOnlyHint: true` cannot bypass confirmation
+- **Every provider-authored tool is a potential write.** MCP annotations are
+  hints, not contracts, so even `readOnlyHint: true` cannot bypass execution safeguards
   or a record-before-execute receipt. A future read classification must come
   from a separate Rally-authored policy; guessing from names or trusting a
-  provider hint can turn a newly introduced mutation into an unconfirmed action.
+  provider hint can turn a newly introduced mutation into an unsafely replayed action.
 - **A remote schema may not sink the request it arrives in.** A hosted server's
   `inputSchema` reaches the model verbatim, and a root-level combinator makes a
   provider reject the **whole request, every tool** — a run's core tools taken
@@ -246,7 +259,7 @@ OAuth metadata is accepted only over HTTPS and every advertised authorization,
 token, and registration endpoint must share an explicitly allowed origin.
 Embedded URL credentials are rejected. Access and refresh tokens are never
 model-visible. Dynamic tools still pass through normal argument validation,
-principal reauthorization, confirmation policy, durable receipt planning, and
+principal reauthorization, execution policy, durable receipt planning, and
 result persistence.
 
 ## Operations

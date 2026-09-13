@@ -78,6 +78,23 @@ The Connections pane ends at the connector grid, without a page-level success
 or error log. Connection status remains on the cards, and setup dialogs retain
 their own validation feedback.
 
+Ashby setup exposes the exact labels **Connect for me** and
+**Connect for workspace**; the latter requires workspace administration. Exact
+searches for either label filter by the available scope. API-key searches reveal the setup entry point rather than creating a connection.
+Workspace setup has no event selection: Rally manages Ashby subscriptions
+automatically, while automations choose which event types they use.
+Personal owners can refresh their own OAuth connection. Administrators manage
+Ashby and Granola installations through **Manage events**. The main view shows
+plain status, the last event and explained **Test**, with **Get help** when needed.
+**Advanced** contains saved-status refresh, API-key replacement and technical
+recovery; subscription diagnostics are collapsed separately. Cleanup retry is
+shown only when provider removal is incomplete. A legacy Granola connection offers Test before adoption. Rotation
+guidance is local information and does not change installation state. The
+workspace connection notification refreshes both list and installation queries,
+so open details do not retain a pre-repair snapshot. Management is unavailable
+offline; [installation lifecycle](connector-installation-lifecycle.md) owns its
+authorization and provider effects.
+
 ## Invariants
 
 - Labels and descriptions belong to definitions. Duplicating them in a keyword
@@ -125,6 +142,18 @@ authorization. Real Electron checks cover positioning, keyboard navigation,
 scrolling and both appearances.
 
 ## Changelog
+
+### 2026-09-12 — Separate Ashby personal setup from shared event installation
+
+**What changed:** The catalogue exposes exact scope-specific Connect labels and searchable Ashby key controls and automatic event subscriptions. Manage events shows status and explained Test, keeping key replacement and technical recovery in Advanced; personal owners can refresh their own OAuth grant.
+
+**Why:** Setup and recovery must preserve personal versus administrator authority, and reading registration status or rotation instructions must not mutate the provider. Open details must follow the same pushed state as the connection list.
+
+**Considered and rejected:** Fuzzy scope-label matches that expose workspace-only results, automatic repair during status display, or a rotation-guidance request that marks a current installation as failed.
+
+**Consequences:** Availability and search share scope rules; workspace updates invalidate both connection and installation reads. Legacy Granola rows expose adoption through Test. Management actions remain unavailable offline.
+
+PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
 
 ### 2026-09-10 — Internet access becomes its own page, and one strip draws every exclusive choice
 

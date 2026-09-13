@@ -56,7 +56,7 @@ test("every allowlisted pattern is one this file has reasoned about", () => {
   // adding one here is deliberately not optional.
   assert.equal(
     allowlistRegexes(config).length,
-    2,
+    3,
     "a new .gitleaks.toml allowlist pattern needs a test in this file proving what it still rejects",
   );
 });
@@ -114,4 +114,17 @@ test("the Access audience exception admits exactly one reviewed identifier", () 
   assert.doesNotMatch(`${reviewed}a`, allowlist);
   assert.doesNotMatch(`a${reviewed}`, allowlist);
   assert.doesNotMatch(reviewed.slice(0, 63), allowlist);
+});
+
+
+test("the Granola fixture exception admits only the encoded synthetic phrase", () => {
+  const patterns = allowlistRegexes(config).filter((pattern) => pattern.includes("whsec_"));
+  assert.equal(patterns.length, 1);
+  const allowlist = new RegExp(patterns[0], "u");
+  const fixture = `whsec_${Buffer.from("provider-issued-secret").toString("base64")}`;
+  assert.match(fixture, allowlist);
+  assert.doesNotMatch(`whsec_${Buffer.from("different-provider-secret").toString("base64")}`, allowlist);
+  assert.doesNotMatch(`${fixture}a`, allowlist);
+  assert.doesNotMatch(`a${fixture}`, allowlist);
+  assert.doesNotMatch(fixture.slice(0, -1), allowlist);
 });

@@ -25,6 +25,13 @@ watches, and written to the activity log — it just never interrupts anybody on
 a schedule. Most of what a provider emits is operational, and that is the normal
 case rather than a failure.
 
+## Ashby
+
+| Activity type | Digestible? | Why |
+| --- | --- | --- |
+| `applicationSubmit` | No | Recruiting trigger evidence for explicitly bound automations; not general workspace digest news. |
+| `candidateStageChange` | No | Application progression is operational recruiting data, not a workspace-wide announcement. |
+
 ## GitHub
 
 Thirty of ninety-one. The loudest connector Rally has: continuous integration

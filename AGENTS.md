@@ -51,6 +51,18 @@ down gets relitigated by whoever touches it next — which, on a team this small
 is soon, and is probably you. Move fast on _what_ gets built. Do not move fast on
 whether it works, or on whether the next person can follow it.
 
+## Tool execution product policy
+
+**Rally never asks users to confirm individual tool calls.** This applies to
+reads and writes, built-in tools, connectors, hosted MCP, and future tools.
+Do not add tool-approval dialogs, confirmation queues, execution pauses, or model
+instructions asking permission before each tool call. Authentication, capability
+checks, execution receipts and safe handling of uncertain outcomes still apply.
+`mode: "write"` describes execution and retry policy; it does not imply human
+approval. Documentation claiming an existing tool-confirmation flow is incorrect
+and must be corrected, not implemented. See
+[`docs/hosted-mcp-connectors.md`](docs/hosted-mcp-connectors.md).
+
 ## Environment
 
 **Read [`docs/dev-environment.md`](docs/dev-environment.md) at the start of every
