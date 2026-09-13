@@ -103,9 +103,10 @@ const FIREFLIES_EVENT_TITLES: Record<FirefliesEventType, string> = {
  * integration.
  */
 export const FIREFLIES_MANUAL_INSTRUCTIONS = [
-  "Open Fireflies' Webhooks V2 configuration page at https://app.fireflies.ai/integrations/api/webhook.",
-  "Paste Rally's endpoint URL into Webhook URL and Rally's signing secret into Signing Secret.",
-  "Subscribe meeting.transcribed and meeting.summarized. Leave meeting.bot_joined unselected — Rally rejects it.",
+  "Open Fireflies' Webhooks page at https://app.fireflies.ai/integrations/api/webhook and select Configure.",
+  "In Webhook Configuration, paste Rally's endpoint URL into Webhook URL and Rally's signing secret into Signing Secret.",
+  "Fireflies labels that field optional. Rally requires it: without the secret every delivery is rejected, so a webhook saved without one sends nothing Rally will accept.",
+  "Under Event Subscriptions, select both Meeting Transcribed and Meeting Summarized. Leave Meeting Bot Joined unselected — Rally rejects it.",
   "Save. Fireflies holds one webhook URL per account, so this replaces any URL already configured there.",
   "Send a test event from that page. Rally can't check the page itself; the connection changes to Connected when the test event, or the first meeting, arrives.",
 ].join(" ");

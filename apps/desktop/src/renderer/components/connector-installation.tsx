@@ -135,15 +135,25 @@ export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, on
       description="Rally can't register this webhook for you — Fireflies has no API for it."
       footer={<Button className="button-primary" onClick={onClose}>Done</Button>}>
       <p role="status">{registration.account} is connected. The meeting tools work now; these steps are what makes finished meetings arrive as activity.</p>
-      <Button onClick={() => void desktopBridge().openExternal('https://app.fireflies.ai/integrations/api/webhook')}>Open Fireflies' Webhooks V2 page ↗</Button>
+      <Button onClick={() => void desktopBridge().openExternal('https://app.fireflies.ai/integrations/api/webhook')}>Open Fireflies' Webhooks page ↗</Button>
       {/* The marker and the spacing live in `.dialog-body ol`, beside the rule
           that restores paragraph separation: the app resets both globally, and
           every dialog with a list was otherwise patching it inline. */}
+      {/* Every bold string below is the label Fireflies actually puts on screen,
+          not the wire name behind it: an administrator is matching words to a
+          form, and `meeting.transcribed` appears nowhere in that form. */}
       <ol>
+        <li>Select <strong>Configure</strong>.</li>
         <li>Paste the endpoint URL below into <strong>Webhook URL</strong>, and the signing secret into <strong>Signing Secret</strong>.</li>
-        <li>Subscribe <code>meeting.transcribed</code> and <code>meeting.summarized</code>. Leave <code>meeting.bot_joined</code> unselected.</li>
-        <li>Save.</li>
+        <li>Under <strong>Event Subscriptions</strong>, tick both <strong>Meeting Transcribed</strong> and <strong>Meeting Summarized</strong>. Leave <strong>Meeting Bot Joined</strong> unticked — Rally rejects it.</li>
+        <li><strong>Save</strong>.</li>
       </ol>
+      {/* Fireflies marks the secret optional and Rally does not accept an
+          unsigned delivery, so this is the step that silently costs somebody an
+          afternoon: the webhook saves, meetings finish, and nothing arrives. */}
+      <div className="dialog-callout">
+        <p><strong>Fireflies labels the signing secret optional. Rally requires it.</strong> A webhook saved without one delivers nothing Rally will accept.</p>
+      </div>
       {/* Copied rather than read: a connection URL is longer than the field,
           and the secret is deliberately the one thing nobody should retype. */}
       <label className="form-field"><span>Endpoint URL</span><input aria-label="Fireflies endpoint URL" readOnly spellCheck={false} value={registration.destination} /></label>
