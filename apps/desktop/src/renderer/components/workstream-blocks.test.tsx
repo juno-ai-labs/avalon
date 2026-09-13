@@ -434,21 +434,31 @@ describe('MessageBlock human identity', () => {
     expect(screen.getByText('Client-only mention rendering')).toBeInTheDocument();
   });
 
-  it('gives an attachment-only turn the same in-flight wrapper as one with text', () => {
+  it('marks an attachment-only turn in flight on its attachment card', () => {
     // The bubble is drawn only for a turn with text, and a send can be
-    // attachments alone. The shimmer hangs off the content wrapper so that turn
-    // is not the one message that goes out saying nothing about itself.
+    // attachments alone. The in-flight sweep is painted per surface — the
+    // bubble, and each attachment tile or card — so the card is the one surface
+    // this turn has for it, and the turn is not the one message that goes out
+    // saying nothing about itself.
     render(
       <MessageBlock
         {...actions}
         currentUserId="user-adam"
-        message={{ ...baseMessage, deliveryState: 'sending', text: '' }}
+        loadAttachmentContent={async () => new Blob(['text'])}
+        message={{
+          ...baseMessage,
+          deliveryState: 'sending',
+          text: '',
+          attachments: [{ id: 'file', fileName: 'notes.txt', mimeType: 'text/plain', sizeBytes: 4, contentAvailable: true, createdAt: baseMessage.createdAt }],
+        }}
+        onOpenAttachment={vi.fn()}
       />,
     );
 
     const inFlight = screen.getByLabelText('Sending message');
+    expect(inFlight).toHaveClass('is-sending');
     expect(inFlight.querySelector('.human-message-bubble')).not.toBeInTheDocument();
-    expect(inFlight.querySelector('.human-message-content')).toBeInTheDocument();
+    expect(inFlight.querySelector('.attachment-file-card')).toBeInTheDocument();
   });
 
   it('names the signed-in person over their own prompt, like every other turn', () => {

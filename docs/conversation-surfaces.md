@@ -615,6 +615,37 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-13 — The in-flight sweep is painted on each surface of a turn, not on its wrapper
+
+**What changed:** The shimmer that marks a person's turn as still in flight
+paints on each surface the turn draws — the message bubble, and every
+attachment image cell, media tile and file card — instead of on the
+`.human-message-content` wrapper around them. The overlay is inset to its
+surface and inherits the surface's corner radius, and it travels by animating
+`background-position` over a gradient tile four times the surface's width, the
+construction the tool-activity label's shimmer already uses, rather than by
+translating a full-width pseudo-element under the wrapper's `overflow: hidden`.
+
+**Why:** The wrapper is a rectangle. It takes in the hover-action slot laid out
+under the bubble and the corners the bubble's radius cuts away, so the sweep
+read as a grey block behind the pill rather than a light passing over it. It
+had been put on the wrapper deliberately, so that a send made of attachments
+and no text still carried a cue; keying the sweep on each surface keeps that
+cue without the box.
+
+**Considered and rejected:** Keeping the transform sweep and clipping it with
+`overflow: hidden` or `clip-path` on each surface. That makes every surface a
+clipping box for the length of the send — a file card's controls and any
+focus ring inside it would be cut — where the tiled-background overlay clips
+only itself.
+
+**Consequences:** A new attachment surface rendered inside a person's turn has
+to be added to the selector list at `.human-message.is-sending` in `app.css`,
+or a send made of that kind of attachment alone goes out with no in-flight
+cue. The band's stop percentages and the 400% tile hold together: the band has
+to sit clear of the surface at both ends of its travel, and the comment above
+the rule carries the arithmetic.
+
 ### 2026-09-12 — The composer writes lists, and stops hiding text behind the plus
 
 **What changed:** Two things about a multi-line draft, delivered together
