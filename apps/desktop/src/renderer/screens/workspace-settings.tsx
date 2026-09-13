@@ -229,28 +229,13 @@ function providerSetting(provider: { id: string; name: string; description: stri
     ],
   });
 }
-/**
- * Who may re-authorize a connection.
- *
- * A personal connection is its owner's to repair for the same reason it is
- * theirs to delete: it holds their provider identity and nobody else can use
- * it. Gated on `admin` alone this asked a plain member to solve a stale
- * credential by deleting the connection and starting over, because Delete
- * below already admitted them and Refresh did not — the narrower recovery was
- * the one withheld. Workspace scope stays admin-only, which is what that gate
- * was actually protecting.
- */
-function canReconnectConnection(connection: WorkstreamConnection, admin: boolean): boolean {
-  return (connection.scope === 'you' || admin)
-    && reconnectableConnectorTypes.has(connection.connectorType)
-    && !(connection.connectorType === 'granola' && connection.scope === 'workspace');
-}
 function connectionSetting(connection: WorkstreamConnection, admin: boolean) {
   return defineSetting({
     id: 'connection:' + connection.id, section: 'connections', kind: 'custom',
     label: connection.displayName, description: 'Manage this installed connection.',
     options: [
-      ...(canReconnectConnection(connection, admin) ? ['Refresh', 'Reconnect'] : []),
+      ...(admin && reconnectableConnectorTypes.has(connection.connectorType)
+        && !(connection.connectorType === 'granola' && connection.scope === 'workspace') ? ['Refresh', 'Reconnect'] : []),
       ...(connection.scope === 'you' || admin ? ['Delete', 'Disconnect'] : []),
       ...(admin && connection.connectorType === 'generic_webhook' ? ['Refresh', 'Webhook signing secret'] : []),
     ],
@@ -1523,7 +1508,8 @@ export function WorkspaceSettingsScreen({
                                   : toolCountByConnection.get(connection.id)?.data ?? 'Loading…'}</td>
                                 <td>
                                   <span className="settings-connection-actions">
-                                    {canReconnectConnection(connection, isAdmin) && (
+                                    {isAdmin && reconnectableConnectorTypes.has(connection.connectorType)
+                                      && !(connection.connectorType === 'granola' && connection.scope === 'workspace') && (
                                       <ConnectionIconAction
                                         disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
                                         icon={<RefreshCcw aria-hidden="true" size={14} />}

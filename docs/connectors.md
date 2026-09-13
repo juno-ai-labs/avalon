@@ -2,16 +2,10 @@
 
 Connectors are typed adapters behind a registry. A manifest declares OAuth needs, supported personal/workspace scopes, activity and resource types, tools, polling, webhooks, and watches. The adapter owns provider protocol details; Rally owns tenancy, execution principals, persistence, retries, schedules, and audit.
 
-**Only `needs_reconnect` means an authorization needs renewing, and every
-surface reads the column that way.** Generic `error` states, such as a failed
-background poll, are treated as healthy because they do not establish anything
-about the grant; `disabled` remains distinct, and the stored polling diagnosis
-is retained for investigation. The desktop shows **Reconnect required** for
-`needs_reconnect` alone, `resolveUserDelivery` drops a destination only for
-`disabled`, and the agent-facing `core_get_connector_connection_state` reports
-an `error` row as `connected`. A surface that reads `error` as broken will
-contradict the others rather than protect anybody: nothing clears the flag on a
-later successful poll, so it outlives the failure that set it.
+The desktop shows **Reconnect required** only for `needs_reconnect`. Generic
+`error` states, such as a failed background poll, display as healthy because
+they do not establish that authorization needs renewing. `disabled` remains
+distinct. The stored polling diagnosis is retained for investigation.
 
 OAuth deliberately crosses one authority boundary. Regional D1 owns the
 single-use encrypted `oauth_states` row because the callback must be validated
@@ -52,9 +46,7 @@ The model never supplies the authorization URL or requested capability list,
 and the card's presence is not evidence that OAuth completed. A paired read
 tool resolves the same catalog id and scope against caller-visible WorkspaceDO
 rows, returning durable `connected`, `reconnect_required`, `not_connected`, or
-`unavailable` state without pretending to have made a fresh provider call. It
-maps that state by the rule above: `healthy` or `error` is `connected`, and only
-`needs_reconnect` is `reconnect_required`.
+`unavailable` state without pretending to have made a fresh provider call.
 
 The started tool fact retains the validated catalog id and scope, and transcript
 lifecycle updates carry that safe input into the terminal fact. The feed can
@@ -1022,39 +1014,6 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
-
-### 2026-09-13 — `error` is not a reconnect signal, on any surface
-
-**What changed:** `core_get_connector_connection_state` reports a connection
-whose row is `error` as `connected` rather than `reconnect_required`; only
-`needs_reconnect` now produces that verdict. A personal connection's owner may
-refresh it in Settings without being a workspace admin. Gmail's refusal of a
-`threadId` sent without an `inReplyTo` names both repairs instead of one.
-
-**Why:** A Gmail poll timeout wrote `error`, and nothing clears that flag on a
-later successful poll — `commitConnectorCursor` deliberately leaves the status
-to the paths that know something about the grant. The agent-facing read was the
-only surface treating the flag as evidence, so a working connection produced a
-run that refused to send mail and presented a recovery card, while that same
-card read **Connected** off the same row and therefore rendered no button at
-all. The desktop and `resolveUserDelivery` had each already reached the
-opposite conclusion about this column; this makes the third surface agree
-rather than adding a fourth interpretation.
-
-**Alternative rejected:** Clearing `error` on a successful poll. A poll
-succeeding says nothing about a scope it never exercised, which is the reasoning
-`commitConnectorCursor` already records, and it would have left the divergence
-in place for every row between the failure and the next poll. Also rejected:
-surfacing `error` in the desktop's status badge, which would make Rally louder
-about a diagnosis that does not tell a person to do anything.
-
-**Consequences:** A genuinely broken authorization is still caught, because the
-provider's own refusal is what marks `needs_reconnect` through
-`withAuthorizedConnection`. An `error` row now reaches a run's tools exactly as
-a healthy one does — which it always did, since tool loading never gated on
-status — and the failure surfaces at the call rather than before it. The
-Settings refresh gate keeps workspace scope admin-only; only personal scope
-opened, matching the Delete action beside it.
 
 ### 2026-09-11 — Agent-presented connection cards reuse the one OAuth authority
 
