@@ -613,12 +613,17 @@ window on the in-body timestamp — the only replay anchor Fireflies signs — t
 an ingress receipt keyed on the hash of those bytes, since Fireflies sends no
 delivery id. A post failing any of it is rejected with no row written anywhere.
 A verified delivery of `meeting.bot_joined`, or of anything else this connector
-does not handle, is refused before the receipt.
+does not handle, is refused before the receipt. The one exception is the
+dashboard's **Send test event**, an undocumented `event: "test"` delivery
+observed live: signed and timestamped like a meeting but naming a placeholder,
+it is answered `200 { ping: true }` with no receipt, payload, or activity
+written, and it counts as the registration's verifying delivery.
 
 Registration is the customer's: Fireflies exposes no webhook API at all, so the
 adapter declares create, update, remove and rotate manual and inspect and
 reconcile unsupported, Rally generates the signing secret and shows it once at
-setup, and the first verified delivery is what makes the installation current.
+setup, and the first verified delivery — the dashboard's test event, or the
+first meeting — is what makes the installation current.
 [Installation lifecycle](connector-installation-lifecycle.md) owns that path.
 Both scopes are gated region by region on the non-secret
 `FIREFLIES_CONNECTOR_ENABLED` variable; unset, the type is absent from the
@@ -1122,6 +1127,32 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-13 — Fireflies' test event verifies the installation
+
+**What changed:** A signed Fireflies delivery whose event is `test` — what the
+Webhooks V2 page's **Send test event** button sends — is answered
+`200 { ping: true }` and recorded as the registration's verifying delivery,
+with no receipt, payload, or activity written. Setup copy tells the
+administrator to press that button.
+
+**Why:** The connector shipped on research that found no test ping, so the
+first real meeting was the only verification. Fireflies has one now, and the
+first administrator to press it got `400 unsupported_webhook_event` back —
+Fireflies' page reported the webhook as failing on a setup that was correct,
+and Rally could not say otherwise until a meeting finished. The ping proves
+what a meeting would: the URL reaches this connection and the secret matches.
+
+**Considered and rejected:** Acknowledging the test with 2xx but leaving the
+installation **Action required** until a meeting, which keeps Fireflies' page
+green while Rally's Settings still says otherwise. Letting any verified but
+unhandled event verify, which would let a `meeting.bot_joined` subscription
+nobody asked for stand as evidence.
+
+**Consequences:** The test event's shape is undocumented and asserted from one
+live observation; `FIREFLIES_TEST_EVENT` is where a change in it shows up.
+`lastReceivedAt` moves on a test event too, so a last-received time is
+evidence of reachability, not of a meeting.
 
 ### 2026-09-13 — Fireflies connects a meeting record Rally cannot register itself
 

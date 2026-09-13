@@ -78,6 +78,14 @@ export const FirefliesCapabilities = {
 
 export const FirefliesEventTypes = ["meeting.transcribed", "meeting.summarized"] as const;
 export type FirefliesEventType = (typeof FirefliesEventTypes)[number];
+/**
+ * What the "Send test event" button on Fireflies' Webhooks V2 page delivers:
+ * `{ event: "test", timestamp, meeting_id: "test_00000000" }`, signed like any
+ * other delivery and carrying no meeting. Undocumented — observed live on
+ * 2026-09-13 — so the shape is asserted here rather than in the schema, and a
+ * meeting id is required of it only because the body carries one.
+ */
+export const FIREFLIES_TEST_EVENT = "test";
 
 const FIREFLIES_EVENT_TITLES: Record<FirefliesEventType, string> = {
   "meeting.transcribed": "Fireflies meeting transcribed",
@@ -99,7 +107,7 @@ export const FIREFLIES_MANUAL_INSTRUCTIONS = [
   "Paste Rally's endpoint URL into Webhook URL and Rally's signing secret into Signing Secret.",
   "Subscribe meeting.transcribed and meeting.summarized. Leave meeting.bot_joined unselected — Rally rejects it.",
   "Save. Fireflies holds one webhook URL per account, so this replaces any URL already configured there.",
-  "Rally can't check this for you. This changes to Connected when the first meeting arrives.",
+  "Send a test event from that page. Rally can't check the page itself; the connection changes to Connected when the test event, or the first meeting, arrives.",
 ].join(" ");
 
 export const firefliesTools: ToolDefinition[] = (() => {
@@ -617,6 +625,10 @@ export function createFirefliesConnector(config: FirefliesConnectorConfig): Conn
           throw new ConnectorError("unauthorized", "Fireflies activity webhooks require a workspace connection");
         }
         const event = FirefliesWebhookEventSchema.parse(envelope.event);
+        // The dashboard's test event names no meeting, so there is nothing to
+        // normalize: the host answers it and records the delivery as the
+        // registration's verification, the same way Ashby's ping is swallowed.
+        if (event.event === FIREFLIES_TEST_EVENT) return null;
         // Rejected after verification, exactly as Granola's ingress does: an
         // unsubscribed or unknown event is authenticated but not something this
         // connector handles, and admitting it would put an unreviewed event
