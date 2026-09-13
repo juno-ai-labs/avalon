@@ -1902,3 +1902,52 @@ describe('the shared shell primitives and the artifact pane', () => {
     expect(main).not.toContain('PREVIEW_CORNER_RADIUS');
   });
 });
+
+/**
+ * The sweep that marks a person's turn as still in flight is keyed on a
+ * selector list of the surfaces a turn draws — the bubble and the three
+ * attachment surfaces — written twice, in the animated rule and its
+ * reduced-motion twin, and jsdom applies none of it. These pin what a
+ * screenshot pass proved: the list, on both rules; the tiled-background
+ * construction rather than a transform, which would carry the overlay's own
+ * corners off the surface; the travel; the band taken from the surface's ink;
+ * and that nothing hangs off the content wrapper any more, which is the
+ * rectangle the sweep used to fill.
+ */
+describe('in-flight sweep', () => {
+  const surfaces = ':is(.human-message-bubble, .message-attachment-image-cell, .attachment-media-tile, .attachment-file-card)';
+  const sweep = `.human-message.is-sending ${surfaces}::after`;
+
+  it('paints the sweep on each surface of a sending turn and not on its wrapper', () => {
+    const declarations = rule(sweep);
+    expect(declarations).toContain('animation: message-sending-shimmer 1.8s ease-in-out infinite;');
+    expect(declarations).toContain('background-size: 400% 100%;');
+    expect(declarations).toContain('border-radius: inherit;');
+    expect(declarations).toContain('inset: 0;');
+    expect(declarations).toContain('pointer-events: none;');
+    expect(declarations).not.toContain('transform');
+    expect(rule('.human-message.is-sending .human-message-bubble')).toContain('position: relative;');
+    expect(rule('.human-message.is-sending .human-message-content')).toBeNull();
+    expect(rule('.human-message.is-sending .human-message-content::after')).toBeNull();
+  });
+
+  it('travels an upright band of the surface\'s own ink over two and a half widths', () => {
+    expect(rule(sweep)).toContain('--sweep-ink: color-mix(in srgb, currentColor 5%, transparent);');
+    expect(rule(sweep)).toContain(
+      'background: linear-gradient(to right, transparent 43.75%, var(--sweep-ink) 48.75%, var(--sweep-ink) 51.25%, transparent 56.25%);',
+    );
+    expect(stylesheet).toContain(
+      '@keyframes message-sending-shimmer {\n  from { background-position: 100% 0; }\n  to { background-position: calc(100% / 6) 0; }\n}',
+    );
+  });
+
+  it('parks the same ink on the same surfaces under reduced motion', () => {
+    const block = stylesheet.match(
+      /@media \(prefers-reduced-motion: reduce\) \{\n {2}\.human-message\.is-sending[\s\S]*?\n\}\n/u,
+    )?.[0] ?? '';
+    expect(block).not.toBe('');
+    const parked = ruleWithin(block, sweep);
+    expect(parked).toContain('background: var(--sweep-ink);');
+    expect(parked).not.toContain('animation');
+  });
+});
