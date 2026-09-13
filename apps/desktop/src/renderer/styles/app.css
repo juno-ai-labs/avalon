@@ -5576,8 +5576,10 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    of 2.5%, a tenth: the same band the transform sweep carried. Confined to the
    middle of a tile four times the surface's width, it is clear of the surface at
    both ends of the travel: at `100%` the tile starts 3W to the left and the band
-   ends at -0.75W, and at `0%` the band starts at 1.75W, so the pause at either
-   end of the ease parks nothing on the surface.
+   ends at -0.75W, and at `16⅔%` the band starts at 1.25W, so the pause at either
+   end of the ease parks nothing on the surface. The travel stops a sixth short
+   of `0%` so that it is 2.5W, the transform sweep's: the band crosses the
+   surface at the speed, and for the share of each cycle, that it did before.
 
    The band is upright, where the transform sweep's was tilted 15°. A tilt
    spreads the band's edges sideways by the surface's height times the tilt's
@@ -5586,10 +5588,20 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    keeps a tilted band clear at the ends of the travel: past about five times
    as tall as wide, with this tile, a tinted corner stayed parked through each
    pause. Upright, the stops are in the surface's width alone and the clearance
-   holds for every shape. */
+   holds for every shape.
+
+   The band is a twentieth of the surface's own ink, not the shimmer token. The
+   token is a dark tint for light surfaces, white in the dark theme, and a
+   person's bubble is the one surface whose fill does not follow the theme: it
+   is dark, or the sender's profile colour, in both, so the token's tint sat on
+   it at under a level in 255 and the cue was all but gone once the wrapper's
+   strip stopped carrying it. Ink is light on a dark or coloured bubble and dark
+   on a light card, so the band contrasts by construction on every surface; the
+   twentieth is the token's own alpha. */
 .human-message.is-sending :is(.human-message-bubble, .message-attachment-image-cell, .attachment-media-tile, .attachment-file-card)::after {
+  --sweep-ink: color-mix(in srgb, currentColor 5%, transparent);
   animation: message-sending-shimmer 1.8s ease-in-out infinite;
-  background: linear-gradient(to right, transparent 43.75%, var(--av-sys-color-shimmer-default) 48.75%, var(--av-sys-color-shimmer-default) 51.25%, transparent 56.25%);
+  background: linear-gradient(to right, transparent 43.75%, var(--sweep-ink) 48.75%, var(--sweep-ink) 51.25%, transparent 56.25%);
   background-size: 400% 100%;
   border-radius: inherit;
   content: '';
@@ -5600,7 +5612,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 @keyframes message-sending-shimmer {
   from { background-position: 100% 0; }
-  to { background-position: 0% 0; }
+  to { background-position: calc(100% / 6) 0; }
 }
 
 /* The global reduced-motion block runs every animation once at 0.001ms, and this
@@ -5608,12 +5620,12 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    of `0%`, where the band sits off the surface's right edge and the overlay
    paints nothing. That would leave an in-flight turn as the settled row at 0.82 —
    indistinguishable from a turn the room has already admitted, and *less* marked
-   than a queued one, which also carries a pill. So the tint is parked over each
+   than a queued one, which also carries a pill. So the ink is parked over each
    surface instead of travelling across it: the same colour, stationary, and
    stated as geometry rather than as an animation that has been switched off. */
 @media (prefers-reduced-motion: reduce) {
   .human-message.is-sending :is(.human-message-bubble, .message-attachment-image-cell, .attachment-media-tile, .attachment-file-card)::after {
-    background: var(--av-sys-color-shimmer-default);
+    background: var(--sweep-ink);
   }
 }
 
