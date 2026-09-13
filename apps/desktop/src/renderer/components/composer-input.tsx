@@ -26,6 +26,14 @@ import {
   type AgentModelOverride,
 } from '../lib/agent-models';
 import { isComposingKeyEvent } from '../lib/ime';
+import {
+  continueListAtCaret,
+  type DraftEdit,
+  type ListMarkerKind,
+  selectionTouchesListItem,
+  shiftListAtCaret,
+  toggleListAtSelection,
+} from '../lib/markdown-lists';
 import { normalizeMentionLabels, splitMentionHighlights } from '../lib/mention-highlight';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { appendDictationTranscript, useRealtimeDictation } from '../lib/use-realtime-dictation';
@@ -168,6 +176,58 @@ interface ComposerInputProps {
 function setForwardedRef<T>(ref: Ref<T>, value: T | null): void {
   if (typeof ref === 'function') ref(value);
   else if (ref) ref.current = value;
+}
+
+/**
+ * Apply a list edit to the live field, through the field's own editing command
+ * rather than by handing the parent a new string.
+ *
+ * `execCommand` is what puts the change on the textarea's undo stack: ⌘Z after
+ * Enter takes the bullet back off instead of clearing the whole draft, and
+ * these are keys somebody presses a dozen times in one message. It also fires a
+ * native `input` event, so React's `onChange` runs exactly as it does for a
+ * typed character and every consumer downstream of it — `onValueChange`, the
+ * draft cache, the mention rebase that carries `@Name` spans through an edit —
+ * sees one ordinary edit rather than a wholesale replacement.
+ *
+ * Every operation in `markdown-lists` rewrites line prefixes, so however many
+ * lines it touched the change is one contiguous span: the common head and tail
+ * locate it, and what is left between them is what gets inserted. Returns false
+ * where the command is unavailable or refused — jsdom has neither — and the
+ * caller falls back to replacing the draft outright.
+ */
+function applyDraftEdit(textarea: HTMLTextAreaElement, edit: DraftEdit): boolean {
+  const previous = textarea.value;
+  let head = 0;
+  while (head < previous.length && head < edit.text.length && previous[head] === edit.text[head]) head += 1;
+  let tail = 0;
+  while (
+    tail < previous.length - head && tail < edit.text.length - head
+    && previous[previous.length - tail - 1] === edit.text[edit.text.length - tail - 1]
+  ) tail += 1;
+  const insert = edit.text.slice(head, edit.text.length - tail);
+  if (typeof document.execCommand !== 'function') return false;
+  textarea.setSelectionRange(head, previous.length - tail);
+  // `insertText` with nothing to insert is not a delete in every engine; the
+  // command that removes a selection is the one that says so.
+  if (!document.execCommand(insert === '' ? 'delete' : 'insertText', false, insert)) return false;
+  textarea.setSelectionRange(edit.selectionStart, edit.selectionEnd);
+  return true;
+}
+
+/**
+ * The two list shortcuts, as Slack, Google Docs and Word all spell them:
+ * ⌘⇧8 for bullets, ⌘⇧7 for numbers, on Control off macOS.
+ *
+ * Matched on `code` rather than `key` because with Shift held the digit row
+ * reports `*` and `&` — and only on a layout that puts them there. The physical
+ * key is what the shortcut is, so the physical key is what is read.
+ */
+function listShortcutKind(event: KeyboardEvent<HTMLTextAreaElement>): ListMarkerKind | null {
+  if (!event.shiftKey || !(event.metaKey || event.ctrlKey) || event.altKey) return null;
+  if (event.code === 'Digit8') return 'bulleted';
+  if (event.code === 'Digit7') return 'numbered';
+  return null;
 }
 
 /** Stable empty default so the highlight memo is not invalidated every render. */
@@ -422,6 +482,46 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
     onMention();
   };
 
+  /**
+   * Put a list edit into the field, or report that there was none to put.
+   *
+   * `false` is the whole contract with the keyboard: it means the operation
+   * declined, and the keystroke is then left to do whatever it would have done
+   * — insert a newline, move focus to the next control. That is what keeps Tab
+   * from trapping anybody in the composer.
+   */
+  const runListEdit = (edit: DraftEdit | null): boolean => {
+    const textarea = textareaRef.current;
+    if (!edit || !textarea) return false;
+    if (!applyDraftEdit(textarea, edit)) {
+      onValueChange(edit.text);
+      requestAnimationFrame(() => textarea.setSelectionRange(edit.selectionStart, edit.selectionEnd));
+    }
+    resizeTextarea(edit.text);
+    return true;
+  };
+
+  /**
+   * The list keys, read off the live field rather than off `value`: the caret
+   * offsets come from the DOM, so the text they index into has to as well.
+   */
+  const runListKey = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+    const textarea = textareaRef.current;
+    if (!textarea || dictationEditingBlocked) return false;
+    const { selectionStart, selectionEnd, value: live } = textarea;
+    if (event.key === 'Enter') return runListEdit(continueListAtCaret(live, selectionStart, selectionEnd));
+    if (event.key === 'Tab') {
+      runListEdit(shiftListAtCaret(live, selectionStart, selectionEnd, event.shiftKey ? 'out' : 'in'));
+      // On whether the caret is in a list, not on whether the draft moved: at
+      // the depth cap and at the margin the shift does nothing, and handing the
+      // key back there would take the caret out of the field mid-list, which is
+      // the one thing about Tab people notice.
+      return selectionTouchesListItem(live, selectionStart, selectionEnd);
+    }
+    const kind = listShortcutKind(event);
+    return kind !== null && runListEdit(toggleListAtSelection(live, selectionStart, selectionEnd, kind));
+  };
+
   const dictationButton = (idleLabel: string): React.JSX.Element => (
     <IconButton
       aria-pressed={dictationActive}
@@ -532,15 +632,17 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
               // act on one. See `lib/ime.ts`.
               if (isComposingKeyEvent(event.nativeEvent)) return;
               onKeyDown?.(event);
-              if (
-                !event.defaultPrevented
-                && event.key === 'Enter'
-                && !event.shiftKey
-                && (shouldSubmitOnEnter?.() ?? true)
-              ) {
+              if (event.defaultPrevented) return;
+              if (event.key === 'Enter' && !event.shiftKey && (shouldSubmitOnEnter?.() ?? true)) {
                 event.preventDefault();
                 void submit();
+                return;
               }
+              // Last, so sending always wins the plain Enter and the host keeps
+              // first refusal on every key. An Enter that reaches here is the
+              // one that was going to insert a newline, which is the keystroke
+              // a list is carried on by.
+              if (runListKey(event)) event.preventDefault();
             }}
             onScroll={syncHighlightScroll}
             onSelect={onSelect}

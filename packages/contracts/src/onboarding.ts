@@ -61,7 +61,7 @@ export const UpdateAccountOnboardingSchema = z.strictObject({
   introduced: z.literal(true).optional(),
   presentation: PersonalPresentationSchema.omit({ revision: true }).optional(),
 });
-export const OnboardingConnectorIdSchema = z.enum(['google-mail-calendar', 'google-drive-workspace', 'github', 'granola', 'linear', 'slack', 'notion', 'custom-mcp', 'generic-webhook', 'x']);
+export const OnboardingConnectorIdSchema = z.enum(['google-mail-calendar', 'google-drive-workspace', 'github', 'ashby', 'granola', 'linear', 'slack', 'notion', 'custom-mcp', 'generic-webhook', 'x']);
 export const OnboardingConnectorSelectionSchema = z.templateLiteral([z.enum(['workspace', 'you']), ':', OnboardingConnectorIdSchema]);
 export const OnboardingJourneySchema = z.object({
   path: z.enum(['creator', 'member']),

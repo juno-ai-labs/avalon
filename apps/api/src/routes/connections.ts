@@ -1,3 +1,8 @@
+import { readBoundedRequestBytes } from "../lib/bounded-request-body";
+import { ashbyWebhookMaxBytes } from "../lib/ashby-ingress";
+import { AshbyIngestionResultSchema } from "../services/ashby-routing-service";
+import { ConnectorInstallationReadResponseSchema, ConnectorInstallationMutationResponseSchema, ConnectorInstallationSetupResponseSchema, ConnectionTestResponseSchema } from "@rally/contracts";
+import { AshbyEventSelectionSchema } from "@rally/connectors";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
 import { zValidator } from "../middleware/validation";
@@ -86,7 +91,8 @@ const granolaStart = z.object({
   scope: z.literal("personal"),
   capabilities: z.array(z.literal("granola.personal.read")).length(1),
 });
-const granolaWorkspace = z.object({
+const granolaWorkspace = z.strictObject({
+  idempotencyKey: z.string().uuid().optional(),
   apiKey: z.string().trim().regex(/^grn_[\x21-\x7E]{1,508}$/u),
   capabilities: z.array(z.literal("granola.workspace.read")).length(1),
 });
@@ -140,11 +146,6 @@ const slackLink = z.object({ token: z.string().min(20).max(500) });
 const ConnectionPageSchema = z.object({ items: z.array(ConnectionSchema) });
 const ConnectorCatalogSchema = z.object({ availableConnectorTypes: z.array(z.string().min(1)) });
 const CreatedConnectionSchema = z.object({ connection: ConnectionSchema });
-const ConnectionTestSchema = z.object({
-  ok: z.boolean(),
-  message: z.string(),
-  reconnectRequired: z.boolean().optional(),
-});
 const WebhookCredentialsSchema = z.object({
   endpoint: z.string().min(1),
   signingSecret: z.string().min(1),
@@ -226,6 +227,22 @@ connectionRoutes.post("/notion/start", zValidator("json", notionStart), async (c
     }),
   )));
 });
+connectionRoutes.post("/ashby/start", zValidator("json", z.strictObject({ scope: z.literal("personal"), capabilities: z.array(z.literal("ashby.personal.mcp")).length(1) })), async (c) => {
+  const service = new ConnectionService(c.env, getAuth(c));
+  return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(c, service,
+    await service.beginProvider("ashby", { ...c.req.valid("json"), desktopHandoffVersion: desktopHandoffVersion(c) }))));
+});
+const AshbyWebhookResponseSchema = AshbyIngestionResultSchema;
+connectionRoutes.post("/ashby/workspace", zValidator("json", z.strictObject({
+  apiKey: z.string().trim().min(1), idempotencyKey: z.string().uuid(), events: AshbyEventSelectionSchema.optional(),
+})), async (c) => c.json(ConnectorInstallationSetupResponseSchema.parse(await new ConnectionService(c.env, getAuth(c)).createWorkspaceInstallation({ provider: "ashby", ...c.req.valid("json") })), 201));
+connectionRoutes.post("/:id/installation/api-key", zValidator("param", idParam), zValidator("json", z.strictObject({ apiKey: z.string().trim().min(1) })), async (c) =>
+  c.json(ConnectorInstallationMutationResponseSchema.parse(await new ConnectionService(c.env, getAuth(c)).replaceInstallationApiKey(c.req.valid("param").id, c.req.valid("json").apiKey, c.req.raw.signal))));
+connectionRoutes.get("/:id/installation", zValidator("param", idParam), async (c) =>
+  c.json(ConnectorInstallationReadResponseSchema.parse(await new ConnectionService(c.env, getAuth(c)).installation(c.req.valid("param").id))));
+connectionRoutes.post("/:id/installation", zValidator("param", idParam), zValidator("json", z.strictObject({
+  action: z.enum(["repair", "disconnect", "forget_cleanup", "reconcile", "rotate"]), key: z.string().optional(), providerId: z.string().optional(),
+})), async (c) => c.json(ConnectorInstallationMutationResponseSchema.parse(await new ConnectionService(c.env, getAuth(c)).changeInstallation(c.req.valid("param").id, c.req.valid("json")))));
 connectionRoutes.post("/granola/start", zValidator("json", granolaStart), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
@@ -304,7 +321,7 @@ connectionRoutes.post("/:id/reconnect", zValidator("param", idParam), async (c) 
   )));
 });
 connectionRoutes.post("/:id/test", zValidator("param", idParam), async (c) =>
-  c.json(ConnectionTestSchema.parse(await new ConnectionService(c.env, getAuth(c)).test(c.req.valid("param").id))),
+  c.json(ConnectionTestResponseSchema.parse(await new ConnectionService(c.env, getAuth(c)).test(c.req.valid("param").id))),
 );
 connectionRoutes.get("/:id/github/repository-access", zValidator("param", idParam), async (c) =>
   c.json(GitHubRepositoryAccessSettingsSchema.parse(
@@ -465,6 +482,10 @@ connectionCallbackRoutes.get("/custom-mcp/callback", zValidator("query", googleC
   return connectorCallback(c, "custom_mcp", query, (service, code, state) =>
     service.completeProvider("custom_mcp", code, state));
 });
+connectionCallbackRoutes.get("/ashby/callback", zValidator("query", googleCallback), async (c) => {
+  const query = c.req.valid("query");
+  return connectorCallback(c, "ashby", query, (service, code, state) => service.completeProvider("ashby", code, state));
+});
 connectionCallbackRoutes.get("/granola/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
   return connectorCallback(c, "granola", query, (service, code, state) => service.completeProvider("granola", code, state));
@@ -515,6 +536,12 @@ webhookIngestionRoutes.post("/notion", async (c) => {
   // deliveries consistently with 200 so setup and normal delivery semantics
   // do not depend on whether a receipt was already present.
   return c.json(WebhookIngestionSchema.parse(result), 200);
+});
+webhookIngestionRoutes.post("/ashby/:id", zValidator("param", idParam), async (c) => {
+  const body = await readBoundedRequestBytes(c.req.raw, ashbyWebhookMaxBytes(c.env));
+  const id = c.req.valid("param").id;
+  const result = await new ConnectionService(c.env).ingestAshbyWebhook(id, body, c.req.raw.headers);
+  return c.json(AshbyWebhookResponseSchema.parse(result), 200);
 });
 webhookIngestionRoutes.post("/granola/:id", zValidator("param", idParam), async (c) => {
   const result = await new ConnectionService(c.env).ingestGranolaWebhook(

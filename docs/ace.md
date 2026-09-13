@@ -18,7 +18,7 @@ membership. It sends no invitation email yet. [Private access](private-access.md
 owns that lifecycle and the remaining distribution work.
 
 Timed links use an operator-chosen local date/time and permit repeat downloads
-until that deadline. Both generation actions share the current lifetime choice, defaulting to timed mode. Requests and grant history are searched server-side and paged in groups of 50. Access-protected same-origin actions revoke grants and relay acknowledgement recovery to the Global operator API. The existing `demos` role also authorizes these acquisition recovery actions; it does not authorize telemetry administration.
+until that deadline. Both generation actions share the current lifetime choice, defaulting to timed mode. Requests and grant history are searched server-side and paged in groups of 50. Access-protected same-origin actions revoke grants and relay acknowledgement recovery to the Global operator API. The existing `demos` role also authorizes these acquisition recovery actions; it does not authorize telemetry administration. The same regional credential also authorizes the reviewed connector-maintenance command described in [connector installation lifecycle](connector-installation-lifecycle.md#operator-maintenance); telemetry and read-only engineering credentials cannot use it.
 
 ## Where the code lives
 
@@ -451,6 +451,18 @@ contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only change
 do not publish a new Ace bundle.
 
 ## Changelog
+
+### 2026-09-12 — Use the existing operator identity for connector maintenance
+
+**What changed:** Regional maintenance routes admit the existing Ace demos operator identity for preview, apply, status, resume and cancel; no Ace UI is added.
+
+**Why:** The product owner selected the existing operator identity for reviewed connector maintenance, while read-only engineering access must remain insufficient for provider writes.
+
+**Considered and rejected:** A new permanent administrative secret or arbitrary provider-request/SQL capability.
+
+**Consequences:** Maintenance freezes a reviewed regional selection and records operator attribution. Deployment and a real fleet operation require their own authorization; follow [lifecycle operations](connector-installation-lifecycle.md#operations).
+
+PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
 
 ### 2026-09-10 — New demo casts colleagues from a dropdown
 

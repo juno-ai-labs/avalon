@@ -40,12 +40,18 @@ function canonicalJson(value: unknown): string {
 export async function workspaceConnectorEventPayloadHash(
   event: WorkspaceConnectorEvent,
 ): Promise<string> {
+  // Ashby's email-change signal keeps its action ID on retry but renews the
+  // watermark. Retain each raw delivery in R2; compare the normalized candidate
+  // signal here, so renewed delivery metadata does not conflict with that ID.
+  const renewableSignal = event.activity.provider === "ashby"
+    && event.activity.eventType === "candidateRecentEmailMessagesUpdated";
   const content = {
     ...event,
     activity: {
       ...event.activity,
       id: "",
       receivedAt: "",
+      ...(renewableSignal ? { payloadRef: "", rawContentHash: "" } : {}),
     },
   };
   return `sha256:${await sha256Hex(canonicalJson(content))}`;

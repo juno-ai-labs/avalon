@@ -597,10 +597,9 @@ describe("provider writes", () => {
       .resolves.toMatchObject({ ok: true, message: expect.stringContaining("webhook endpoint is disabled") });
     expect(methods.some((call) => call.startsWith("PATCH"))).toBe(false);
 
-    methods.length = 0;
-    await expect(adapter.repair!(connection, AbortSignal.timeout(5_000)))
-      .resolves.toMatchObject({ repaired: true });
-    expect(methods.some((call) => call.startsWith("PATCH"))).toBe(true);
+    // Provider writes are covered by the generation-fenced installation runner.
+    expect(adapter.repair).toBeUndefined();
+    expect(adapter.revoke).toBeUndefined();
   });
 });
 
