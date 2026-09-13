@@ -434,21 +434,56 @@ describe('MessageBlock human identity', () => {
     expect(screen.getByText('Client-only mention rendering')).toBeInTheDocument();
   });
 
-  it('gives an attachment-only turn the same in-flight wrapper as one with text', () => {
+  it('renders the surface the in-flight sweep keys on for an attachment-only turn', () => {
     // The bubble is drawn only for a turn with text, and a send can be
-    // attachments alone. The shimmer hangs off the content wrapper so that turn
-    // is not the one message that goes out saying nothing about itself.
+    // attachments alone. The in-flight sweep is painted per surface — the
+    // bubble, and each attachment tile or card — so the card is the one surface
+    // this turn has for it. jsdom applies no stylesheet, so what is proved here
+    // is the markup: the article is marked in flight and the card is rendered
+    // inside it. That the sweep is keyed on the card is `app.css`'s selector
+    // list, covered by the screenshot pass rather than by this test.
     render(
       <MessageBlock
         {...actions}
         currentUserId="user-adam"
-        message={{ ...baseMessage, deliveryState: 'sending', text: '' }}
+        loadAttachmentContent={async () => new Blob(['text'])}
+        message={{
+          ...baseMessage,
+          deliveryState: 'sending',
+          text: '',
+          attachments: [{ id: 'file', fileName: 'notes.txt', mimeType: 'text/plain', sizeBytes: 4, contentAvailable: true, createdAt: baseMessage.createdAt }],
+        }}
+        onOpenAttachment={vi.fn()}
       />,
     );
 
     const inFlight = screen.getByLabelText('Sending message');
+    expect(inFlight).toHaveClass('is-sending');
     expect(inFlight.querySelector('.human-message-bubble')).not.toBeInTheDocument();
-    expect(inFlight.querySelector('.human-message-content')).toBeInTheDocument();
+    expect(inFlight.querySelector('.attachment-file-card')).toBeInTheDocument();
+  });
+
+  it('renders both the bubble and the attachment card for an in-flight turn with text and a file', () => {
+    // The sweep is painted per surface, so a turn with words and a file has
+    // two, and a render that fell back to one or the other would still pass
+    // the two single-surface cases above.
+    render(
+      <MessageBlock
+        {...actions}
+        currentUserId="user-adam"
+        loadAttachmentContent={async () => new Blob(['text'])}
+        message={{
+          ...baseMessage,
+          deliveryState: 'sending',
+          attachments: [{ id: 'file', fileName: 'notes.txt', mimeType: 'text/plain', sizeBytes: 4, contentAvailable: true, createdAt: baseMessage.createdAt }],
+        }}
+        onOpenAttachment={vi.fn()}
+      />,
+    );
+
+    const inFlight = screen.getByLabelText('Sending message');
+    expect(inFlight.querySelector('.human-message-bubble')).toBeInTheDocument();
+    expect(inFlight.querySelector('.attachment-file-card')).toBeInTheDocument();
   });
 
   it('names the signed-in person over their own prompt, like every other turn', () => {
