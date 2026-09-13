@@ -534,8 +534,10 @@ Normalization retains regional payload references and extracts only documented
 application/candidate/job identity fields. The email beta renews its watermark on
 retry: only that signal excludes delivery-specific raw hash/reference from the
 canonical comparison, retaining candidate identity and every raw R2 delivery.
-No email fetching is added. Events remain restricted: workspace automation admission awaits the authorized
-confidential-payload review. Live provider acceptance remains outstanding.
+No email fetching is added. Administrator-authorized workspace events use the
+existing workspace audience and deterministic automation matching. Personal MCP
+permissions remain separate. Live provider behavior is unverified without an
+Ashby test organization; that does not disable workspace automation.
 
 The dedicated `ashby.rallywith.ai` Worker forwards unchanged signed bytes to the
 owning regional API. Credentials, signature verification, payload persistence,
@@ -1066,7 +1068,7 @@ fixture table instead, where it is reviewable.
 
 **Considered and rejected:** Adding recruiting REST tools to the workspace grant or retaining a parallel Granola repair/revoke path. Both would blur the authority the new lifecycle separates.
 
-**Consequences:** Keep inventory and health read-only, preserve existing Granola subscriptions on adoption, and use the [installation lifecycle](connector-installation-lifecycle.md) for mutations. Ashby events remain restricted until confidential-payload acceptance.
+**Consequences:** Keep inventory and health read-only, preserve existing Granola subscriptions on adoption, and use the [installation lifecycle](connector-installation-lifecycle.md) for mutations. Ashby organization events use the workspace audience authorized by the connecting administrator; normalized fields remain limited to event metadata and IDs.
 
 PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
 

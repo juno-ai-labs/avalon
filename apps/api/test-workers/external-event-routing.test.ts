@@ -20,11 +20,13 @@
  * The automation's registrations are written to WorkspaceDO directly rather
  * than through `apply`: applying an event trigger validates the rules against
  * the connector's manifest, and the test Worker configures no Slack connector.
+ * The Ashby case instead applies its actual connector rule against the manifest.
  * A watched work stream's registrations are written the same way; in
  * production WorkspaceDO derives them from the work stream's resource links.
  */
 
 import { env } from "cloudflare:workers";
+import { authorizedConnection, createAshbyConnector, AshbyCapabilities } from "@rally/connectors";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -34,6 +36,7 @@ import {
   asUserId,
   asWorkspaceId,
   WorkspaceExternalEventMatchResultSchema,
+  AutomationSetEvaluatorRulesInputV1Schema,
   type AutomationDraft,
 } from "@rally/contracts";
 
@@ -332,6 +335,58 @@ beforeEach(async () => {
 });
 
 describe("external event routing", () => {
+  it.each(["applicationSubmit", "candidateStageChange"] as const)("routes a signed Ashby %s to a workspace automation exactly once", async (eventType) => {
+    // Ashby's HTTP/installation boundary is covered in connector-installation-routes.
+    // Here the real adapter, WorkspaceDO matcher, Queue consumer and AutomationDO
+    // must produce a run. The existing model double lets that run finish locally.
+    const ashbyConnectionId = crypto.randomUUID();
+    await runInDurableObject(workspace(), (_instance: WorkspaceDO, state) => {
+      state.storage.sql.exec(`INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         status, config_json, granted_scopes_json, created_at, updated_at, model_plugin_id)
+        VALUES (?, ?, 'ashby', 'workspace', NULL, 'Ashby events', 'healthy', ?, '["ashby.workspace.events"]', ?, ?, 'plugin_ashby')`,
+      ashbyConnectionId, WORKSPACE_ID, JSON.stringify({ selectedEvents: [eventType] }), NOW, NOW);
+    });
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
+      scope: "workspace", owningWorkstreamId: null, automationId: AUTOMATION_ID });
+    await automation().submitDefinition({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID,
+      draft: { ...DEFINITION, name: "Ashby watcher", suggestedScope: "workspace",
+        triggers: [{ type: "connector_activity", connectorType: "ashby", sourceBindingKey: "ashby_events",
+          suggestedSourcePluginId: "plugin_ashby", eventTypes: [eventType], deterministicFilters: {} }] },
+      evaluatorRules: AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: [{ evaluatorKey: "ashby_event",
+        source: { sourceBindingKey: "ashby_events", suggestedSourcePluginId: "plugin_ashby",
+          event: { kind: "event_type", eventType } }, when: { kind: "always" } }] }), submittedByRunId: null });
+    const detail = await runInDurableObject(automation(), (instance: AutomationDO) => instance.apply({
+      workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID,
+      actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: false },
+    }));
+    expect(detail).toMatchObject({ lifecycle: "active", connectorBindings: { plugin_ashby: ashbyConnectionId } });
+    const facet = createAshbyConnector({ redirectUri: "https://api.example.test/connections/ashby/callback" }).webhookActivity!;
+    const rawBody = JSON.stringify({ action: eventType, webhookActionId: "ashby-action",
+      data: { application: { id: "application-id", candidate: { id: "candidate-id", name: "Private candidate" } } } });
+    const secret = "ashby-routing-test-secret";
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const signature = [...new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawBody)))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const verified = await facet.verify({ rawBody, headers: new Headers({ "Ashby-Signature": `sha256=${signature}` }),
+      verificationSecret: secret, receivedAt: NOW, now: Date.parse(NOW), maxBytes: new TextEncoder().encode(rawBody).length });
+    const activity = facet.normalize(authorizedConnection({ id: ashbyConnectionId, workspaceId: WORKSPACE_ID,
+      scope: "workspace", ownerUserId: null, grantedScopes: [AshbyCapabilities.workspaceEvents],
+      credentials: {}, config: { selectedEvents: [eventType], region: "global" }, cursor: {} }),
+    { ...verified, event: { ...verified.event as object, observedAt: NOW } }, "regional-payload-reference");
+    expect(activity).not.toBeNull();
+    await workspace().ingestConnectorEvent({ workspaceId: WORKSPACE_ID, ingressEventId: EVENT_ID,
+      payloadHash: `sha256:${verified.bodyHash}`, event: { connectorType: "ashby", activity: { ...activity!, id: EVENT_ID, externalPeople: [] } } });
+    const matched = await match(EVENT_ID);
+    expect(matched.deliveries).toHaveLength(1);
+    expect(matched.deliveries[0]).toMatchObject({ destination: { kind: "automation", automationId: AUTOMATION_ID },
+      event: { eventType, audienceKind: "workspace" } });
+    expect(JSON.stringify(matched.deliveries)).not.toContain("Private candidate");
+    expect(await consumeEffectBodies(TEST_ENV, matched.deliveries)).toEqual({ acked: 1, retried: 0 });
+    expect(await consumeEffectBodies(TEST_ENV, matched.deliveries)).toEqual({ acked: 1, retried: 0 });
+    expect(await automationRuns()).toEqual([{ occurrence_key: `external:${EVENT_ID}`, state: expect.any(String) }]);
+    await settleAdmittedRun();
+  });
+
   it("rejects stale registration effects and keeps retry activation boundaries stable", async () => {
     const project = (sourceGeneration: number, eventType: string) => workspace().applyExternalEventRegistrations({
       schemaVersion: 1, workspaceId: WORKSPACE_ID, sourceGeneration,

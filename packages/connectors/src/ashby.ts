@@ -193,9 +193,9 @@ export function createAshbyConnector(config: AshbyConnectorConfig): ConnectorAda
           occurredAt: event.observedAt, receivedAt: new Date(now()).toISOString(),
           title: AshbyEventLabels[eventType],
           summary: "", textSnippet: "", payloadRef,
-          // The PRD's confidential-payload authorization review is a release
-          // gate. Until verified, admit durably without widening its audience.
-          visibility: { workspaceAutomationAllowed: false }, targetUserIds: [],
+          // Administrator-authorized organization events use the shared workspace
+          // automation audience; provider content stays in the regional payload.
+          visibility: { kind: "workspace" }, targetUserIds: [],
           entityKeys: application?.id ? [`ashby:application:${application.id}`] : emailCandidate ? [`ashby:candidate:${emailCandidate.id}`] : [],
           dedupeKey: JSON.stringify([envelope.deliveryId, envelope.eventType]), rawContentHash: envelope.bodyHash,
           metadata: { timestampMeaning: "first_observed", ...(emailCandidate ? { candidateId: emailCandidate.id } : {}), ...(application?.candidate ? { candidateId: application.candidate.id } : {}),
