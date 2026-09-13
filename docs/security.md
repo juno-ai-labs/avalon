@@ -443,7 +443,11 @@ regional persistence. Both dedicated ingress and regional receipt enforce the
 existing `PROVIDER_WEBHOOK_MAX_BYTES` limit (1,000,000 bytes when unset;
 2,000,000 in all three checked-in Wrangler configs), before buffering/forwarding
 on ingress. Host-derived content hashes bind replay identity
-to the same bytes. Normalized recruiting events remain restricted pending an
+to the same bytes except Ashby's email-change signal, whose documented retry
+renews its watermark. That event compares normalized candidate identity while
+retaining each raw delivery and its actual hash regionally; changed candidate
+identity still conflicts. New setup discloses automatic organization event
+subscriptions rather than offering a subset picker. Normalized recruiting events remain restricted pending an
 authorized confidential-payload review; receiving a workspace webhook does not
 grant its contents to workspace automations.
 

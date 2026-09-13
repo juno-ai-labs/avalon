@@ -2139,13 +2139,13 @@ export class ConnectionService {
     return { connection };
   }
 
-  async createWorkspaceInstallation(input: { provider: "ashby" | "granola"; apiKey: string; idempotencyKey: string; events: string[] }) {
+  async createWorkspaceInstallation(input: { provider: "ashby" | "granola"; apiKey: string; idempotencyKey: string; events?: string[] | undefined }) {
     const telemetryStartedAt = Date.now();
     const auth = this.requireAuth(); this.assertScopeAllowed("workspace");
     const adapter = this.registry().get(input.provider);
     const management = adapter.installationManagement;
     if (!management) throw new ApiError(422, "installation_unavailable", "Workspace installation is unavailable");
-    const events = input.provider === "ashby" ? AshbyEventSelectionSchema.parse(input.events).sort() : [...management.events];
+    const events = input.provider === "ashby" ? AshbyEventSelectionSchema.parse(input.events ?? [...management.events]).sort() : [...management.events];
     const id = newId(); const at = nowIso(); const apiKey = input.apiKey.trim();
     if (!apiKey) throw new ApiError(422, "api_key_required", "Enter a provider API key");
     const destination = input.provider === "ashby" ? ashbyIngressUrl(this.env, id) : new URL(`/ingest/${input.provider}/${id}`, this.env.PUBLIC_API_BASE_URL).toString();

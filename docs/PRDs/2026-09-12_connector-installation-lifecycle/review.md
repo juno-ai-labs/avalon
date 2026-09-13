@@ -170,3 +170,24 @@ provider management and MCP still execute in the regional API. See the exact
 remaining checks in [plan.md](plan.md). The first deployment also needs a
 Global router bootstrap before the automatic EU-first path can safely merge; no
 bootstrap or deployment was authorized or performed.
+
+## Automatic subscription follow-up — 2026-09-13
+
+The user's later instruction replaces the original two-event setup choice with
+all 27 documented business event subscriptions. The shared vocabulary drives
+installation defaults, operational trigger discovery and readable status labels;
+setup takes only the API key. Existing explicit grants remain bounded and ping
+remains transport-only. No recruiting REST tools or individual tool confirmations
+are added.
+
+The email-change beta is handled as a candidate signal. Its renewable delivery
+watermark cannot cause a canonical identity conflict, but a changed candidate
+still does. Raw deliveries retain their actual hashes and distinct regional R2
+objects. A provider rejection stays visible and does not stop other registrations.
+No undocumented availability API or error classification is invented.
+
+The full test suite passes (870 real-workerd tests). Four representative
+production mutations fail at the expected assertions; details and scoped counts
+are in [plan.md](plan.md). The native setup screenshot and local public support
+copy were inspected. This follow-up does not claim live Ashby compatibility or
+resolve the separate first-deployment ordering issue.

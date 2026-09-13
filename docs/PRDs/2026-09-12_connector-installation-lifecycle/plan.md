@@ -58,7 +58,7 @@ interruption, ambiguous creation, and no-write Granola adoption runtime coverage
   event types, and admit through existing regional payload/Queue processing.
 - [ ] Preserve `(webhookActionId, action)` identity and stable occurrence semantics;
   normalize only verified IDs and the approved minimal data/audience mapping.
-- [x] Expose the two operational closed-filter triggers to event-only connection
+- [x] Expose operational closed-filter triggers to event-only connection
   authoring without REST recruiting tools, automatic automations, or watches.
 
 Gate: Global/EU isolation, replay and conflicting bytes, related actions, disabled
@@ -85,7 +85,7 @@ retirement, stale completion, cleanup capability, and resumability tests.
 ## Phase 5 — Product surfaces and owning documentation
 
 - [x] One searchable Ashby catalog entry with independent personal/workspace
-  setup, prerequisites, privacy disclosure, event selection, and readiness.
+  setup, prerequisites, privacy disclosure, automatic subscriptions, and readiness.
 - [x] Preserve setup identity across retries/reopen; show stage, partial failure,
   verification and delivery times, action required, repair, and cleanup pending.
 - [x] Add personal OAuth conversation cards and reconnect, shared tool counts,
@@ -169,7 +169,8 @@ launch readiness until an authorized account can establish:
 1. Personal OAuth/DCR, refresh, reconnect, actual tool inventory and recruiting
    query/update behavior in Global and EU, including revoked access and no tool
    confirmations on the configured medium fallback model.
-2. API-key permissions, signed ping and both selected organization events,
+2. API-key permissions, signed ping and the documented 27-event catalog,
+   including organization availability and renewed-watermark retries for the email beta,
    provider enable/disable behavior, redelivery, and API-key replacement against
    the same organization. `apiKey.info` proves read access; webhook creation proves
    write access. No undocumented permission-string conversion is assumed.
@@ -229,3 +230,42 @@ encoding of `provider-issued-secret`. A literal-only anchored exception and a
 regression rejecting other/longer keys preserve the scan boundary. The pinned
 CI Gitleaks version scanned 3,783 local commits with no leaks. Script tests now
 pass 447 cases; application test/build results above remain unchanged.
+
+
+## Follow-up — Automatic complete event subscriptions (2026-09-13)
+
+- [x] Share the documented 27-event vocabulary and readable labels; default new
+  workspace setup to all events while retaining existing explicit grants.
+- [x] Remove the event selection form/search entry and describe automatic events.
+- [x] Normalize the expanded event catalog through existing signed ingress and
+  Queue processing without inventing provider record fields or REST tools.
+- [x] Handle the documented beta email signal's changing retry watermark without
+  duplicate logical events or weakening identity conflicts for other events.
+- [x] Prove all-event setup, partial provider failure, signed delivery and beta
+  retry behavior on workerd, plus meaningful production mutation proofs.
+- [x] Inspect the simplified native Settings form; update owning docs and PR,
+  run quality gates, and retain live acceptance as outstanding.
+
+EU retirement will not block this work. The existing first-rollout ordering issue
+is still unresolved and is not made safe by these subscription changes.
+
+Validation: full `pnpm test` passed (API Node 2,919, workerd 870, desktop
+2,902; other packages passed), along with lint, typecheck, Global/EU/Ashby
+build/startup checks and the site build. The new route file passes 17 tests;
+Ashby adapter tests pass 34; installation UI tests pass 9. Native Electron setup
+and the local public support page were inspected. The refreshed setup capture
+shows no event checkboxes.
+
+Representative production breaks in `connector-installation-routes.test.ts`
+failed as required, then were reverted:
+
+| Break | Observed failure |
+| --- | --- |
+| Default setup to the old two-event subset | 2 registrations instead of 27 |
+| Drop normalization of `jobCreate` | Signed ingress returns 400 instead of 200 |
+| Compare renewed email delivery raw bytes | Only 1 accepted ingress receipt instead of 2 |
+| Stop the runner after an uncertain provider write | Only 5 registrations current instead of 26 |
+
+Live acceptance remains unavailable, including organization eligibility for the
+email beta, actual payloads across the catalog, and the confidential audience.
+No provider credentials, deployment, or fleet operation were used.

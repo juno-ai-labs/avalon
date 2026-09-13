@@ -1,3 +1,4 @@
+import { AshbyEventLabels } from "@rally/contracts";
 import { useState, useSyncExternalStore } from 'react';
 import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { RallyApi } from '../lib/api';
@@ -12,12 +13,8 @@ function requireOnline() {
   if (!readOnline()) throw new Error('Connection management is unavailable while offline. Try again when connected.');
 }
 
-const eventChoices = [
-  { value: 'applicationSubmit', label: 'Application submitted' },
-  { value: 'candidateStageChange', label: 'Application stage changed' },
-] as const;
 const installationEventLabels: Record<string, string> = {
-  ...Object.fromEntries(eventChoices.map(({ value, label }) => [value, label])),
+  ...AshbyEventLabels,
   'note.access_granted': 'Note access granted',
   'note.edited': 'Note edited',
   'note.generated': 'Note generated',
@@ -46,7 +43,6 @@ export function AshbyWorkspaceSetup({ api, attemptId, onSuccess, onClose, onReco
   const cache = useQueryClient();
   const online = useSyncExternalStore(subscribeOnline, readOnline);
   const [apiKey, setApiKey] = useState('');
-  const [events, setEvents] = useState<string[]>(eventChoices.map((event) => event.value));
   const recovery = useWorkspaceInstallationRecovery(api, 'ashby', (connectionId) => {
     setApiKey('');
     onSuccess();
@@ -55,7 +51,7 @@ export function AshbyWorkspaceSetup({ api, attemptId, onSuccess, onClose, onReco
   });
   const setup = useMutation({
     networkMode: 'always',
-    mutationFn: () => { requireOnline(); return api.createAshbyWorkspaceConnection(apiKey.trim(), events, attemptId); },
+    mutationFn: () => { requireOnline(); return api.createAshbyWorkspaceConnection(apiKey.trim(), attemptId); },
     onSuccess: () => {
       setApiKey('');
       onSuccess();
@@ -65,14 +61,13 @@ export function AshbyWorkspaceSetup({ api, attemptId, onSuccess, onClose, onReco
     onError: () => recovery.mutate(),
   });
   return <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Connect Ashby for workspace"
-    description="One shared connection receives your Ashby organization's selected events. Personal Ashby sign-in does not create webhooks."
-    footer={<><Button onClick={onClose}>Cancel</Button><Button className="button-primary" disabled={!online || !apiKey.trim() || !events.length || setup.isPending || recovery.isPending || recovery.isError} onClick={() => setup.mutate()}>{setup.isPending ? 'Setting up…' : 'Connect for workspace'}</Button></>}>
+    description="One shared connection receives your Ashby organization's recruiting events automatically. Personal Ashby sign-in does not create webhooks."
+    footer={<><Button onClick={onClose}>Cancel</Button><Button className="button-primary" disabled={!online || !apiKey.trim() || setup.isPending || recovery.isPending || recovery.isError} onClick={() => setup.mutate()}>{setup.isPending ? 'Setting up…' : 'Connect for workspace'}</Button></>}>
     {!online && <InlineError>Connection management is unavailable while offline.</InlineError>}
     <p>In Ashby Admin → Integrations, create an API key with Read API Keys (apiKeysRead) and Write API Keys (apiKeysWrite) permissions. Paste it here, never in a work stream. The key stays encrypted in this workspace's Rally region. Ashby processes requests and delivers organization events outside Rally's regional storage boundary.</p>
-    <p>These events concern the organization, including recruiting records whose visibility may differ from a personal query. Review the selected event scope with your Ashby administrator.</p>
+    <p>These events concern the organization, including recruiting records whose visibility may differ from a personal query. Rally manages event subscriptions automatically; choose the events you want to act on when creating automations.</p>
     <Button onClick={() => void desktopBridge().openExternal('https://developers.ashbyhq.com/docs/authentication')}>Open Ashby's API key guide ↗</Button>
     <label className="form-field"><span><SettingLabel setting={settings.ashbyKey} /></span><input autoFocus autoComplete="off" type="password" value={apiKey} disabled={!online || setup.isPending} onChange={(event) => setApiKey(event.currentTarget.value)} /></label>
-    <fieldset disabled={!online || setup.isPending}><legend><SettingLabel setting={settings.ashbyEvents} /></legend>{eventChoices.map((choice) => <label className="form-field" key={choice.value}><span><input type="checkbox" checked={events.includes(choice.value)} onChange={(event) => { const checked = event.currentTarget.checked; setEvents((previous) => checked ? [...previous, choice.value] : previous.filter((value) => value !== choice.value)); }} /> {choice.label}</span></label>)}</fieldset>
     <p>Workspace events do not provide recruiting query or update tools. Connect your account separately for personal tools.</p>
     {setup.error && <InlineError>{setup.error.message}</InlineError>}
     {recovery.isPending && <p role="status">Checking for an existing workspace installation…</p>}

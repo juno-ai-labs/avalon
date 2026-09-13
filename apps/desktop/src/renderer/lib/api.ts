@@ -2079,9 +2079,9 @@ export class RallyApi {
     });
   }
 
-  async createAshbyWorkspaceConnection(apiKey: string, events: string[], idempotencyKey: string) {
+  async createAshbyWorkspaceConnection(apiKey: string, idempotencyKey: string) {
     return this.request('/connections/ashby/workspace', {
-      method: 'POST', body: { apiKey, events, idempotencyKey },
+      method: 'POST', body: { apiKey, idempotencyKey },
       schema: ConnectorInstallationSetupResponseSchema,
     });
   }

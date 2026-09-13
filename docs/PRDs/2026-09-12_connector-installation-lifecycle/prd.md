@@ -506,6 +506,25 @@ live OAuth/tools, provider delivery/recovery and confidential audience acceptanc
 outstanding in the plan. Both personal queries and workspace events remain
 required for launch. No deployment, fleet operation or merge was performed.
 
+### 2026-09-13 — Subscribe automatically to the documented Ashby event catalog
+
+**Decided:** The user explicitly expanded initial workspace subscriptions from two
+events to all documented Ashby business events and removed event selection from
+connection setup. Connection authorization covers the reviewed catalog; automation
+triggers choose which notifications matter. Personal MCP remains independent.
+
+**Why:** Choosing provider notification types is unnecessary setup work. A shared
+connection should receive the available organization notifications without asking
+administrators to understand webhook mechanics.
+
+**Changes:** Default new setup to the 27 documented webhook.create event types,
+excluding technical ping. Remove desktop event checkboxes and their search setting.
+Retain per-registration verification and visible partial failures, including the
+organization-dependent email beta event. Its retry watermark changes without
+changing event identity, so dedupe must preserve one logical signal. Existing
+explicit event grants remain bounded; no undocumented payload fields, recruiting
+REST tools, automatic beta compatibility claim, or live acceptance is introduced.
+
 ## Key design decisions
 
 1. **Extract from Granola while adding Ashby.** Two real providers test the

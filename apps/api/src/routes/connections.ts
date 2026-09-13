@@ -234,7 +234,7 @@ connectionRoutes.post("/ashby/start", zValidator("json", z.strictObject({ scope:
 });
 const AshbyWebhookResponseSchema = AshbyIngestionResultSchema;
 connectionRoutes.post("/ashby/workspace", zValidator("json", z.strictObject({
-  apiKey: z.string().trim().min(1), idempotencyKey: z.string().uuid(), events: AshbyEventSelectionSchema,
+  apiKey: z.string().trim().min(1), idempotencyKey: z.string().uuid(), events: AshbyEventSelectionSchema.optional(),
 })), async (c) => c.json(ConnectorInstallationSetupResponseSchema.parse(await new ConnectionService(c.env, getAuth(c)).createWorkspaceInstallation({ provider: "ashby", ...c.req.valid("json") })), 201));
 connectionRoutes.post("/:id/installation/api-key", zValidator("param", idParam), zValidator("json", z.strictObject({ apiKey: z.string().trim().min(1) })), async (c) =>
   c.json(ConnectorInstallationMutationResponseSchema.parse(await new ConnectionService(c.env, getAuth(c)).replaceInstallationApiKey(c.req.valid("param").id, c.req.valid("json").apiKey, c.req.raw.signal))));
