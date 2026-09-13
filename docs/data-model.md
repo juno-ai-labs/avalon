@@ -711,9 +711,10 @@ column catalog; what follows is only what WorkspaceDO still holds.
   separate cleanup credential envelope. `connector_installation_steps` records
   exact dispatched intents and outcomes so an uncertain provider create cannot
   be replayed as a fresh create. Both tables are typed-only object authority.
-  WorkspaceDO migrations 53/54 add Ashby discriminators and installation state;
-  partial unique indexes permit one active Ashby workspace connection and one
-  active personal connection per owner/workspace. Credentials are replaced only
+  WorkspaceDO migrations 53/54/55 add Ashby discriminators, installation state,
+  and Fireflies to both connector vocabularies; partial unique indexes permit one
+  active Ashby workspace connection, one active Fireflies workspace connection,
+  and one active personal connection of each per owner/workspace. Credentials are replaced only
   against the current generation and envelope; cleanup never restores ordinary
   access. See [installation lifecycle](connector-installation-lifecycle.md).
 - Global D1 `ashby_connection_routes` maps only connection ID to region, active or
@@ -1048,12 +1049,45 @@ table. That is a cross-authority join; callers commit the local fact first and
 perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
-The connector connection rebuild inventory is frozen through WorkspaceDO v53.
-Version 54 adds `connector_installations` with a non-cascading connection foreign
-key; a later parent rebuild must declare a new dependent inventory including it,
-without editing v31/v53 statements or their stored fingerprints.
+The connector connection rebuild inventory is frozen through WorkspaceDO v55,
+whose list is `CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55` in `workspace-do.ts`.
+Each version's list stays exactly as the migration that used it left it — a
+later rebuild declares its own, without editing v31/v53/v55 statements or their
+stored fingerprints. `apps/api/test/connector-connection-dependents.test.ts`
+derives the true set from `PRAGMA foreign_key_list` over the migrated schema and
+fails when a table referencing `connector_connections` is added without being
+declared, which is the failure that otherwise waits until the next rebuild drops
+its rows.
 
 ## Changelog
+
+### 2026-09-13 — Rebuilding a referenced parent empties its dependents first
+
+**What changed:** WorkspaceDO migration 55 admits `fireflies` to
+`connector_connections.connector_type` and `connector_oauth_attempts.provider`,
+adds the two Fireflies cardinality indexes, and declares
+`CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55` — v53's list plus
+`connector_installations`. Unlike v31 and v53 it deletes every held dependent
+*before* replacing the parent.
+
+**Why:** `connector_installations` (v54) declares its connection foreign key with
+no `ON DELETE` action, so the implicit delete inside `DROP TABLE
+connector_connections` does not empty it — it **aborts the drop**, inside a
+`transactionSync` group, on objects that have already committed earlier groups.
+The published recipe in `durable-object-sqlite.md` said to replace the parent and
+then restore the dependents, which is the order that fails; it now carries the
+correction. The alternative considered and rejected was
+`foreignKeys: "disabled_during_rebuild"`, which is a silent no-op inside an
+object event and would have hidden the problem rather than solved it.
+
+**What a future change must respect:** each version's dependent list is frozen
+with the migration that used it, so a later rebuild declares a new one rather
+than extending v55's; and `apps/api/test/connector-connection-dependents.test.ts`
+now derives the true set from the schema, so a new table referencing
+`connector_connections` fails a test on the day it is added rather than on the
+day somebody rebuilds the parent. A dependent whose foreign key *does* declare a
+cascade still needs the explicit delete: relying on which of the two a table
+happens to use is how the next recipe goes wrong.
 
 ### 2026-09-12 — WorkspaceDO owns connector installations and dispatch receipts
 
@@ -1357,10 +1391,10 @@ suite would notice a column quietly not carried across. Holding rows instead
 means the migration never names a dependent's shape at all.
 
 **Consequences:** A future change to `connector_connections`' own shape should
-copy this recipe rather than the disabled-foreign-keys mode, and
-`CONNECTOR_CONNECTION_DEPENDENTS` in `workspace-do.ts` is the list it depends on
-— a new table referencing `connector_connections` has to be added there or its
-rows will be lost by the next such rebuild.
+copy this recipe rather than the disabled-foreign-keys mode, declaring its own
+frozen dependent list in `workspace-do.ts` — the per-version constants are named
+`CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V<n>`, and v55 below records what the
+recipe itself had to gain.
 
 ### 2026-08-31 — Platform identity routes become plural and setup replay becomes durable
 

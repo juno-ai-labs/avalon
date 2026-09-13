@@ -15,6 +15,8 @@ function requireOnline() {
 
 const installationEventLabels: Record<string, string> = {
   ...AshbyEventLabels,
+  'meeting.transcribed': 'Meeting transcribed',
+  'meeting.summarized': 'Meeting summarized',
   'note.access_granted': 'Note access granted',
   'note.edited': 'Note edited',
   'note.generated': 'Note generated',
@@ -33,7 +35,7 @@ const installationStatus: Record<ConnectorInstallation['state'], { title: string
 };
 
 /** A failed response can follow a durable reservation; recover it before offering another setup. */
-export function useWorkspaceInstallationRecovery(api: RallyApi | null, provider: 'ashby' | 'granola', onRecovered: (connectionId: string) => void) {
+export function useWorkspaceInstallationRecovery(api: RallyApi | null, provider: 'ashby' | 'fireflies' | 'granola', onRecovered: (connectionId: string) => void) {
   const cache = useQueryClient();
   return useMutation({
     networkMode: 'always',
@@ -85,6 +87,111 @@ export function AshbyWorkspaceSetup({ api, attemptId, onSuccess, onClose, onReco
   </Modal>;
 }
 
+/**
+ * Fireflies setup, which is two stages rather than one modal.
+ *
+ * The first is a key and a button — no event checkboxes, because the event set
+ * is the connector's rather than the administrator's to choose, and no consent
+ * box, because the statements above the button are things to read rather than
+ * things to tick. The second exists because Fireflies has no webhook API at
+ * all: Rally generates the endpoint and the signing secret, shows them once,
+ * and the administrator carries them to the Fireflies dashboard. The secret is
+ * never shown again, which is why the modal will not close from the backdrop
+ * while it is on screen.
+ */
+export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, onRecovered }: { api: RallyApi; attemptId: string; onSuccess: () => void; onClose: () => void; onRecovered: (connectionId: string) => void }) {
+  const cache = useQueryClient();
+  const online = useSyncExternalStore(subscribeOnline, readOnline);
+  const [apiKey, setApiKey] = useState('');
+  const [registration, setRegistration] = useState<{ destination: string; signingSecret: string; account: string } | null>(null);
+  const [copied, setCopied] = useState<'destination' | 'secret' | 'failed' | null>(null);
+  const recovery = useWorkspaceInstallationRecovery(api, 'fireflies', (connectionId) => {
+    setApiKey('');
+    onSuccess();
+    onRecovered(connectionId);
+    onClose();
+  });
+  const setup = useMutation({
+    networkMode: 'always',
+    mutationFn: () => { requireOnline(); return api.createFirefliesWorkspaceConnection(apiKey.trim(), attemptId); },
+    onSuccess: (result) => {
+      setApiKey('');
+      onSuccess();
+      void cache.invalidateQueries({ queryKey: ['connections'] });
+      if (result.manualRegistration) {
+        setRegistration({
+          destination: result.manualRegistration.destination,
+          signingSecret: result.manualRegistration.signingSecret,
+          account: result.connection.displayName,
+        });
+        return;
+      }
+      onClose();
+    },
+    onError: () => recovery.mutate(),
+  });
+  if (registration) {
+    return <Modal open dismissible={false} onOpenChange={(open) => { if (!open) onClose(); }} title="Finish in Fireflies"
+      description="Rally can't register this webhook for you — Fireflies has no API for it."
+      footer={<Button className="button-primary" onClick={onClose}>Done</Button>}>
+      <p role="status">{registration.account} is connected. The meeting tools work now; these steps are what makes finished meetings arrive as activity.</p>
+      <Button onClick={() => void desktopBridge().openExternal('https://app.fireflies.ai/integrations/api/webhook')}>Open Fireflies' Webhooks V2 page ↗</Button>
+      {/* The marker and the spacing live in `.dialog-body ol`, beside the rule
+          that restores paragraph separation: the app resets both globally, and
+          every dialog with a list was otherwise patching it inline. */}
+      <ol>
+        <li>Paste the endpoint URL below into <strong>Webhook URL</strong>, and the signing secret into <strong>Signing Secret</strong>.</li>
+        <li>Subscribe <code>meeting.transcribed</code> and <code>meeting.summarized</code>. Leave <code>meeting.bot_joined</code> unselected.</li>
+        <li>Save.</li>
+      </ol>
+      {/* Copied rather than read: a connection URL is longer than the field,
+          and the secret is deliberately the one thing nobody should retype. */}
+      <label className="form-field"><span>Endpoint URL</span><input aria-label="Fireflies endpoint URL" readOnly spellCheck={false} value={registration.destination} /></label>
+      <Button onClick={() => { void desktopBridge().copyText(registration.destination).then(() => setCopied('destination')).catch(() => setCopied('failed')); }}>
+        {copied === 'destination' ? 'Endpoint copied' : 'Copy endpoint'}
+      </Button>
+      <label className="form-field"><span>Signing secret</span><input aria-label="Fireflies signing secret" readOnly spellCheck={false} type="password" value={registration.signingSecret} /></label>
+      <Button onClick={() => { void desktopBridge().copyText(registration.signingSecret).then(() => setCopied('secret')).catch(() => setCopied('failed')); }}>
+        {copied === 'secret' ? 'Secret copied' : 'Copy signing secret'}
+      </Button>
+      {/* Said out loud rather than left to a label that silently never changes:
+          the clipboard refuses often enough (an unfocused window, a denied
+          permission) and this secret cannot be read back off the screen, so a
+          copy that failed has to be a thing the administrator is told about. */}
+      <p aria-live="polite">{copied === 'failed'
+        ? 'Copying failed. Select the value in the field and copy it by hand before closing.'
+        : copied ? 'Copied to the clipboard.' : ''}</p>
+      <p><strong>Copy the signing secret now.</strong> Rally will not show it again; replacing it means removing this connection and connecting again.</p>
+      {/* The one consequence that reaches a system the administrator is not
+          looking at: Fireflies keeps a single URL, so saving this silently
+          stops meetings reaching whichever workspace held it before. */}
+      <div className="dialog-callout">
+        <p><strong>This replaces any webhook URL already on that page.</strong> Fireflies holds one per account, so if another Rally workspace is connected to this Fireflies account, it stops receiving meetings.</p>
+      </div>
+      <p>Until this is done, no meetings reach Rally. Rally can't check it for you — the connection changes to <strong>Connected</strong> when the first meeting arrives, usually within a couple of minutes of one finishing.</p>
+    </Modal>;
+  }
+  // Dismissal is refused while the setup is in flight. The mutation does not
+  // stop when its observer goes away, so a Cancel here would let the request
+  // succeed against an unmounted component — creating the connection and
+  // discarding the signing secret the next stage exists to show, which cannot
+  // be asked for again.
+  const pending = setup.isPending || recovery.isPending;
+  return <Modal open dismissible={!pending} onOpenChange={(open) => { if (!open && !pending) onClose(); }} title="Connect Fireflies for workspace"
+    description="One admin API key lets every work stream in this workspace read the connected account's meetings. One more step in Fireflies finishes it."
+    footer={<><Button disabled={pending} onClick={onClose}>Cancel</Button><Button className="button-primary" disabled={!online || !apiKey.trim() || setup.isPending || recovery.isPending || recovery.isError} onClick={() => setup.mutate()}>{setup.isPending ? 'Connecting…' : 'Connect'}</Button></>}>
+    {!online && <InlineError>Connection management is unavailable while offline.</InlineError>}
+    <p>In Fireflies, open Integrations → Fireflies API and copy the key. Paste it here, never in a work stream. The key stays encrypted in this workspace's Rally region; Fireflies processes meetings outside it.</p>
+    <Button onClick={() => void desktopBridge().openExternal('https://docs.fireflies.ai/fundamentals/authorization')}>Open Fireflies' API key guide ↗</Button>
+    <label className="form-field"><span><SettingLabel setting={settings.firefliesKey} /></span><input autoFocus autoComplete="off" type="password" value={apiKey} disabled={!online || setup.isPending} onChange={(event) => setApiKey(event.currentTarget.value)} /></label>
+    <p>Every member of this workspace will be able to read these meetings through the agent.</p>
+    <p>Rally cannot tell which meetings this key covers; if searches come back empty for other people's calls, the key only sees its own account. Rally will hear about meetings this account organizes.</p>
+    {setup.error && <InlineError>{setup.error.message}</InlineError>}
+    {recovery.isPending && <p role="status">Checking for an existing workspace installation…</p>}
+    {recovery.error && <><InlineError>Existing installations could not be checked. Check again before retrying setup.</InlineError><Button disabled={!online || recovery.isPending} onClick={() => recovery.mutate()}>Find existing installation</Button></>}
+  </Modal>;
+}
+
 export function ConnectorInstallationDetails({ api, connectionId, connectionEnabled = false, onClose }: { api: RallyApi; connectionId: string; connectionEnabled?: boolean; onClose: () => void }) {
   const cache = useQueryClient();
   const online = useSyncExternalStore(subscribeOnline, readOnline);
@@ -125,7 +232,16 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
         <Button className="button-primary" disabled={!online || test.isPending} onClick={() => test.mutate()}>{test.isPending ? 'Testing…' : 'Test'}</Button>
         <p>Test checks access and attempts to repair event delivery.</p>
       </>}
-      {installation.state === 'cleanup_pending' && !installation.cleanupCredentialForgotten && <Button disabled={!online || change.isPending} onClick={() => change.mutate('repair')}>Retry cleanup</Button>}
+      {installation.state === 'cleanup_pending' && installation.registrations.every((registration) => !registration.providerId) && (
+        // Keyed on the registrations carrying no provider identity, which is
+        // what a provider with no webhook API leaves behind: there is nothing
+        // for Rally to delete, so Retry cleanup would be a button that cannot
+        // do anything. Say what the administrator has to do instead.
+        <p role="status">Rally can't remove the webhook from your provider for you. Delete it there, or leave it — deliveries to a removed connection are rejected.</p>
+      )}
+      {installation.state === 'cleanup_pending' && !installation.cleanupCredentialForgotten
+        && installation.registrations.some((registration) => registration.providerId)
+        && <Button disabled={!online || change.isPending} onClick={() => change.mutate('repair')}>Retry cleanup</Button>}
       {needsHelp && <Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/contact/')}>Get help</Button>}
     </>}
     {test.data && <p role="status">{test.data.message}</p>}

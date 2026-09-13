@@ -158,6 +158,8 @@ function connectorTypeForName(displayName: string): string | null {
   if (name.startsWith('github')) return 'github';
   if (name.startsWith('notion')) return 'notion';
   if (name.startsWith('linear')) return 'linear';
+  if (name.startsWith('ashby')) return 'ashby';
+  if (name.startsWith('fireflies')) return 'fireflies';
   if (name.startsWith('granola')) return 'granola';
   // Exactly "X", which is the connector's whole manifest name. A prefix match
   // on one letter would claim every later connector that starts with it.

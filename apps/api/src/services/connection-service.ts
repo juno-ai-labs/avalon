@@ -1,6 +1,7 @@
 import { ashbyIngressUrl } from "../lib/ashby-ingress";
 import { registerAshbyRoute } from "./ashby-routing-service";
-import { ConnectorInstallationSchema, type ConnectorInstallation } from "@rally/contracts";
+import { ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
+import { TELEMETRY_CONNECTOR_TYPES, type TelemetryConnectorType } from "@rally/contracts/telemetry";
 import { AshbyEventSelectionSchema } from "@rally/connectors";
 import { enqueueConnectorInstallation, runConnectorInstallation } from "./connector-installation-service";
 import { withDeadline } from "../lib/deadline";
@@ -10,12 +11,14 @@ import {
   CUSTOM_MCP_CONNECTOR_TYPE,
   ConnectorError,
   CustomMcpCapabilities,
+  FirefliesCapabilities,
   GoogleCapabilityScopes,
   GranolaCapabilities,
   LinearCapabilityScopes,
   SlackCapabilityScopes,
   SlackWorkspaceCapabilities,
   assertGitHubCapabilitiesGranted,
+  isFirefliesEventType,
   connectorCapabilitySupportsScope,
   createWebhookSecret,
   discoverGitHubConnectionRepositories,
@@ -66,7 +69,7 @@ import {
 } from "../lib/desktop-handoff";
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { createRegionRoutedState } from "../lib/region-routed-state";
-import { withAuthorizedConnection } from "./connector-connection-access";
+import { validateUnstoredConnectorCredential, withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { logWarn } from "../observability/logger";
 import { GitHubRoutingService } from "./github-routing-service";
@@ -235,16 +238,17 @@ function connectorFailureMessage(error: unknown): string {
   return message.replace(/[\p{Cc}\p{Cf}]+/gu, " ").trim().slice(0, 500);
 }
 
-const TELEMETRY_CONNECTOR_TYPES = new Set([
-  "ashby", "custom_mcp", "generic_webhook", "github", "google", "granola", "linear", "notion", "slack", "x",
-]);
-
-type TelemetryConnectorType =
-  "ashby" | "custom_mcp" | "generic_webhook" | "github" | "google" | "granola" | "linear" | "notion" | "slack" | "x";
+/**
+ * Derived from the contract rather than restated. A second literal list drifts
+ * the first time a connector is added: every telemetry schema keys on the
+ * contract's enum, so a type this file admitted but that one did not would be
+ * rejected at the telemetry boundary rather than here.
+ */
+const TELEMETRY_CONNECTOR_TYPE_SET: ReadonlySet<string> = new Set(TELEMETRY_CONNECTOR_TYPES);
 
 function telemetryConnector(value: unknown): TelemetryConnectorType | null {
   const connector = String(value);
-  return TELEMETRY_CONNECTOR_TYPES.has(connector) ? connector as TelemetryConnectorType : null;
+  return TELEMETRY_CONNECTOR_TYPE_SET.has(connector) ? connector as TelemetryConnectorType : null;
 }
 
 function telemetryConnectionHealth(value: unknown): "healthy" | "needs_reconnect" | "error" | "disabled" | "unknown" {
@@ -258,6 +262,27 @@ export interface GitHubSetupResult {
   workspaceId: string;
 }
 
+type ConnectorInstallationProvider = z.infer<typeof ConnectorInstallationProviderSchema>;
+
+/**
+ * What Settings calls a workspace installation's connection.
+ *
+ * A provider whose credential names an account gets the compound
+ * `Provider · account` shape, so an administrator reading the row knows *whose*
+ * meetings or records it can see — which for a key-scoped connector is the
+ * whole question. A provider whose validation reports no account keeps the
+ * plain events label the first two shipped with.
+ */
+function workspaceInstallationDisplayName(providerName: string, credentials: Record<string, unknown>): string {
+  const account = stringField(credentials, "providerAccountName");
+  // Bounded and flattened like every other provider-derived label: the account
+  // half is whatever the provider returned, the reservation refuses anything
+  // over 180 characters, and this string is rendered into the model's plugin
+  // catalogue a line at a time.
+  return (account ? `${providerName} · ${account}` : `${providerName} workspace events`)
+    .replace(/\s+/gu, " ").trim().slice(0, 180);
+}
+
 const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, readonly string[]>> = {
   // A configured server publishes its own scopes through protected-resource
   // metadata, and Rally asks for exactly those. There is no Rally-authored
@@ -265,6 +290,13 @@ const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, re
   ashby: { "ashby.personal.mcp": [] },
   custom_mcp: {
     [CustomMcpCapabilities.tools]: [],
+  },
+  // Fireflies' authorization server advertises exactly `profile` and `email`
+  // and nothing capability-shaped, so neither grant maps onto an extra scope:
+  // the pass-through asks for what discovery publishes and no more.
+  fireflies: {
+    [FirefliesCapabilities.personalRead]: [],
+    [FirefliesCapabilities.workspaceRead]: [],
   },
   granola: {
     [GranolaCapabilities.personalRead]: ["mcp", "offline_access"],
@@ -1607,6 +1639,7 @@ export class ConnectionService {
       || connection.connector_type === "notion"
       || connection.connector_type === "slack"
       || (connection.connector_type === "ashby" && connection.scope === "personal")
+      || (connection.connector_type === "fireflies" && connection.scope === "personal")
       || (connection.connector_type === "granola" && connection.scope === "personal")
     ) {
       return this.beginProvider(connection.connector_type, {
@@ -2139,7 +2172,7 @@ export class ConnectionService {
     return { connection };
   }
 
-  async createWorkspaceInstallation(input: { provider: "ashby" | "granola"; apiKey: string; idempotencyKey: string; events?: string[] | undefined }) {
+  async createWorkspaceInstallation(input: { provider: ConnectorInstallationProvider; apiKey: string; idempotencyKey: string; events?: string[] | undefined; signal?: AbortSignal }) {
     const telemetryStartedAt = Date.now();
     const auth = this.requireAuth(); this.assertScopeAllowed("workspace");
     const adapter = this.registry().get(input.provider);
@@ -2158,6 +2191,32 @@ export class ConnectionService {
         state: "pending", action: "create", stepId: crypto.randomUUID(), verifiedAt: null, error: null,
         rotation: "stable", rotationGeneration: 0, activeSecretRef: secretRef, pendingSecretRef: null };
     });
+    // A provider whose create is automatic has its key validated by the runner,
+    // immediately before the create it would otherwise attempt with it. A
+    // manual create never reaches that call, so without this a rejected key
+    // reserves a connection, sends the administrator off to the provider's
+    // dashboard, and only reports itself when somebody presses Test. Read-only,
+    // and before anything is written: a refused key leaves no row and no
+    // registration behind.
+    if (management.support.create === "manual") {
+      // `any`, not `??`: the route always supplies the request's signal, so the
+      // fallback alone was a timeout that could never fire and a hung provider
+      // read that was never bounded.
+      const signals = [AbortSignal.timeout(20_000), ...(input.signal ? [input.signal] : [])];
+      await validateUnstoredConnectorCredential(management, {
+        id, workspaceId: auth.workspaceId, scope: "workspace", ownerUserId: null, credentials,
+        grantedScopes: [management.capability], config: { region: this.env.AVALON_REGION }, cursor: {},
+      }, AbortSignal.any(signals))
+        .catch((error: unknown) => {
+          if (error instanceof ConnectorError && (error.code === "unauthorized" || error.code === "invalid_configuration")) {
+            throw new ApiError(422, "connector_credential_rejected", `${adapter.manifest.displayName} rejected this key. Check that you copied the whole key from the provider, then try again.`);
+          }
+          if (error instanceof ConnectorError) {
+            throw new ApiError(502, "connector_unreachable", `${adapter.manifest.displayName} could not be reached to check this key. Try again in a moment.`);
+          }
+          throw error;
+        });
+    }
     const proposed = ConnectorInstallationSchema.parse({ connectionId: id, workspaceId: auth.workspaceId, provider: input.provider,
       attemptId: input.idempotencyKey, generation: 1, desiredVersion: management.version, appliedVersion: null,
       state: "setting_up", selectedEvents: events, registrations, createdAt: at, updatedAt: at, lastReceivedAt: null, error: null });
@@ -2170,6 +2229,7 @@ export class ConnectionService {
     try {
       installation = await (await this.workspaceObject(auth.workspaceId)).createConnectorInstallation({ installation: proposed,
         userId: auth.userId, inputHash: fingerprint, capability: management.capability,
+        displayName: workspaceInstallationDisplayName(adapter.manifest.displayName, credentials),
         credentials: { ...encrypted, keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1) } });
     } catch (error) {
       if (error instanceof Error && /idempotency_conflict|installation_exists/u.test(error.message)) throw new ApiError(409, "connector_setup_conflict", "This setup key has different inputs, or workspace events are already configured. Reopen the existing installation.");
@@ -2184,7 +2244,22 @@ export class ConnectionService {
     await publishConnectorWorkspaceSync(this.env, auth.workspaceId);
     const connection = (await this.list()).find((item) => item.id === installation.connectionId);
     if (!connection) throw new ApiError(409, "connector_setup_superseded", "The connection changed during setup. Reload Settings.");
-    return { installation, connection };
+    // The one moment the signing secret is allowed to leave the region in
+    // plaintext, and only for a provider whose registration nobody but the
+    // administrator can perform. A replayed setup returns the existing
+    // installation and no secret: the material below belongs to the attempt
+    // that generated it, and a lost one is replaced by reconnecting.
+    const manualRegistration = installation.connectionId === id
+      && management.support.create === "manual"
+      && management.signingSecretSource === "host"
+      ? registrations.flatMap((registration) => {
+        const secret = registration.activeSecretRef ? credentials[registration.activeSecretRef] : null;
+        return typeof secret === "string"
+          ? [{ destination: registration.destination, signingSecret: secret }]
+          : [];
+      })[0] ?? null
+      : null;
+    return { installation, connection, manualRegistration };
   }
 
   async installation(id: string) {
@@ -2200,6 +2275,17 @@ export class ConnectionService {
       }
       await this.disable(id);
       return this.installation(id);
+    }
+    // Adopting an existing webhook by its provider id only means anything where
+    // the provider can be asked about it afterwards. A facet that declares no
+    // reconciliation would store a claim nothing can ever check, and the stored
+    // id then reads as "Rally created this webhook" everywhere downstream —
+    // including the cleanup advice, which would start offering to delete a
+    // webhook through an API the provider does not have.
+    if (input.action === "reconcile"
+      && this.registry().get(connection.connector_type).installationManagement?.support.reconcileCreate === "unsupported") {
+      throw new ApiError(422, "connector_reconciliation_unsupported",
+        "This provider cannot confirm a webhook Rally did not create. Remove this connection and connect workspace events again.");
     }
     let installation: ConnectorInstallation;
     try {
@@ -2270,6 +2356,7 @@ export class ConnectionService {
         rotation: "stable", rotationGeneration: 0, activeSecretRef: "webhookSigningSecret", pendingSecretRef: null }],
       createdAt: at, updatedAt: at, lastReceivedAt: null, error: null });
     return object.createConnectorInstallation({ installation, userId: this.requireAuth().userId, inputHash: "granola-existing-connection",
+      displayName: String(connection.display_name),
       credentials: { ciphertext: String(connection.encrypted_credentials), iv: String(connection.credential_iv), keyVersion: Number(connection.credential_key_version || 1) },
       capability: GranolaCapabilities.workspaceRead, adopt: true }).catch((error: unknown) => { throw installationActionError(error); });
   }
@@ -2590,7 +2677,9 @@ export class ConnectionService {
     const context = await this.context(connection); context.config.region = this.env.AVALON_REGION;
     const installation = await (await this.workspaceObject(connection.workspace_id)).connectorInstallation({ workspaceId: connection.workspace_id, connectionId });
     if (!installation) throw new ApiError(401, "installation_unavailable", "Ashby installation is unavailable");
-    const source = this.registry().get("ashby").webhookActivity!;
+    const ashbyAdapter = this.registry().get("ashby");
+    const source = ashbyAdapter.webhookActivity!;
+    const ashbyManagement = ashbyAdapter.installationManagement!;
     let text: string;
     try { text = new TextDecoder("utf-8", { fatal: true }).decode(rawBody); }
     catch { throw new ApiError(400, "invalid_webhook_encoding", "Ashby webhook must be valid UTF-8"); }
@@ -2624,8 +2713,117 @@ export class ConnectionService {
     const normalized = source.normalize(context, { ...envelope, event: { ...event, observedAt: receipt.firstObservedAt ?? receivedAt } }, payloadKey);
     if (!normalized) throw new ApiError(400, "invalid_event", "Ashby event could not be normalized");
     const accepted = await persistNormalizedActivity(this.env, normalized, "ashby");
-    await (await this.workspaceObject(connection.workspace_id)).receiveConnectorInstallationEvent({ workspaceId: connection.workspace_id, connectionId, receivedAt });
+    await (await this.workspaceObject(connection.workspace_id)).receiveConnectorInstallationEvent({
+      workspaceId: connection.workspace_id, connectionId, receivedAt,
+      registrationSupport: { create: ashbyManagement.support.create, inspect: ashbyManagement.support.inspect },
+    });
     return { duplicate: receipt.outcome === "duplicate", activityId: accepted.activityId };
+  }
+
+  /**
+   * A Fireflies delivery: a signed change signal naming one meeting.
+   *
+   * Verification happens against the exact bytes, before anything is parsed and
+   * before any row exists — a post that fails it leaves nothing behind, because
+   * a receipt written for an unauthenticated caller would be a per-connection
+   * write anyone who knows the URL could perform. What passes is acknowledged
+   * only once the queue send is durable: Fireflies wants a 2xx inside ten
+   * seconds and documents no retry, so the read of the meeting itself waits for
+   * the consumer rather than sitting inside that window.
+   */
+  async ingestFirefliesWebhook(connectionId: string, rawBody: Uint8Array, headers: Headers) {
+    const maxBytes = numericEnv(this.env, "PROVIDER_WEBHOOK_MAX_BYTES", 1_000_000);
+    if (rawBody.byteLength > maxBytes) throw new ApiError(413, "webhook_too_large", "Fireflies webhook exceeds the configured limit");
+    await this.routeIngressConnection(connectionId, "fireflies");
+    const connection = await this.env.DB.prepare(
+      "SELECT * FROM connector_connections WHERE id = ? AND connector_type = 'fireflies' AND scope = 'workspace' AND status <> 'disabled'",
+    ).bind(connectionId).first<StoredConnection>();
+    if (!connection) throw new ApiError(404, "connection_not_found", "Fireflies workspace connection not found");
+    const context = await this.context(connection); context.config.region = this.env.AVALON_REGION;
+    const installation = await (await this.workspaceObject(connection.workspace_id)).connectorInstallation({ workspaceId: connection.workspace_id, connectionId });
+    if (!installation) throw new ApiError(401, "installation_unavailable", "Fireflies installation is unavailable");
+    const adapter = this.registry().get("fireflies");
+    const source = adapter.webhookActivity;
+    const management = adapter.installationManagement;
+    if (!source || !management) throw new ApiError(500, "webhook_source_unavailable", "Fireflies webhook ingestion is unavailable");
+    let text: string;
+    try { text = new TextDecoder("utf-8", { fatal: true }).decode(rawBody); }
+    catch { throw new ApiError(400, "invalid_webhook_encoding", "Fireflies webhook must be valid UTF-8"); }
+    const receivedAt = nowIso();
+    // The registration's own secret, and any pending one its verification
+    // policy still accepts. One grouped registration is what Fireflies' single
+    // dashboard URL can express, but reading the list keeps the loop the same
+    // as every other host-signed provider's.
+    let envelope: Awaited<ReturnType<typeof source.verify>> | null = null;
+    let authorizedEvents: readonly string[] | null = null;
+    let verifyingRegistrationKey: string | null = null;
+    for (const registration of installation.registrations) {
+      if (registration.state === "removed") continue;
+      const references = [registration.activeSecretRef, ...(registration.verificationPolicy === "active_and_pending" ? [registration.pendingSecretRef] : [])];
+      for (const reference of references) {
+        const secret = reference ? context.credentials[reference] : null;
+        if (typeof secret !== "string") continue;
+        try {
+          envelope = await source.verify({
+            rawBody: text, rawBodyBytes: rawBody, headers, receivedAt, now: Date.now(), maxBytes,
+            verificationSecret: secret,
+            replayWindowMs: numericEnv(this.env, "WEBHOOK_REPLAY_WINDOW_SECONDS", 300) * 1_000,
+          });
+        } catch (error) {
+          if (!(error instanceof ConnectorError) || error.code !== "invalid_signature") throw error;
+          // A body that verified against this secret but is simply too old is
+          // not a wrong key: trying the remaining secrets would burn HMAC work
+          // and then blame the administrator's signing secret for what is a
+          // clock or a replay. Stop here and say which it was.
+          if (error.details !== null && typeof error.details === "object" && "reason" in error.details && error.details.reason === "stale_timestamp") {
+            throw new ApiError(401, "webhook_timestamp_outside_window",
+              "This Fireflies delivery is signed correctly but its timestamp is outside the accepted window");
+          }
+        }
+        if (envelope) break;
+      }
+      if (envelope) { authorizedEvents = registration.events; verifyingRegistrationKey = registration.key; break; }
+    }
+    if (!envelope || !authorizedEvents || !verifyingRegistrationKey) throw new ApiError(401, "invalid_signature", "Fireflies webhook signature is invalid");
+    // Both refusals land before the receipt, so neither writes anything and
+    // neither can stand in as the installation's verifying delivery. They are
+    // different conditions: an event this connector does not handle at all —
+    // `meeting.bot_joined`, or whatever Fireflies adds next — is the customer
+    // having subscribed something Rally never asked for, while a handled event
+    // outside this registration's grant is an authorization question.
+    if (!isFirefliesEventType(envelope.eventType)) {
+      throw new ApiError(400, "unsupported_webhook_event", "This Fireflies event is not one Rally subscribes to");
+    }
+    if (!authorizedEvents.includes(envelope.eventType) || !installation.selectedEvents.includes(envelope.eventType)) {
+      throw new ApiError(401, "event_not_authorized", "This signing key does not authorize this event");
+    }
+    const receipt = WorkspaceWebhookReceiptClaimResultSchema.parse(
+      await (await this.workspaceObject(connection.workspace_id)).claimWebhookReceipt({
+        workspaceId: connection.workspace_id, receiptId: newId(), connectionId,
+        // Fireflies sends no delivery id, so the receipt is the hash of the
+        // bytes it signed. A replay is byte-identical; a real second delivery
+        // never is, because its timestamp moves.
+        signatureHash: envelope.receiptKey ?? envelope.bodyHash, receivedAt,
+        expiresAt: new Date(Date.now() + 4 * 24 * 60 * 60 * 1_000).toISOString(),
+        // No `eventIdentity`: that exists to recover a first-observed time for
+        // a provider whose retries carry no stable timestamp. Fireflies signs
+        // the moment the event fired into the body, so a replay carries the
+        // original time by construction and there is nothing to recover.
+      }),
+    );
+    const payloadKey = `${this.env.AVALON_REGION}/${connection.workspace_id}/activities/fireflies/${connectionId}/${envelope.bodyHash}.json`;
+    await this.env.PAYLOADS.put(payloadKey, rawBody, { httpMetadata: { contentType: "application/json" } });
+    const normalized = source.normalize(context, envelope, payloadKey);
+    if (!normalized) throw new ApiError(400, "unsupported_webhook_event", "Fireflies webhook event is not supported");
+    const accepted = await persistNormalizedActivity(this.env, normalized, "fireflies");
+    // The delivery is the verification: Fireflies exposes nothing to inspect,
+    // so this is what moves the installation from Action required to Current.
+    await (await this.workspaceObject(connection.workspace_id)).receiveConnectorInstallationEvent({
+      workspaceId: connection.workspace_id, connectionId, receivedAt,
+      registrationKey: verifyingRegistrationKey,
+      registrationSupport: { create: management.support.create, inspect: management.support.inspect },
+    });
+    return { duplicate: receipt.outcome === "duplicate" || accepted.duplicate, activityId: accepted.activityId };
   }
 
   async ingestGranolaWebhook(
@@ -3716,6 +3914,18 @@ function verifiedIdentityConfig(
     handle: null,
     verifiedEmail: null,
     identityDisplayName: null,
+  };
+  // Fireflies' personal scope is the hosted-MCP pass-through, so its account id
+  // is the resource URL — the same shape as a configured MCP server, and for the
+  // same reason: the authorization publishes no user identity, so there is none
+  // to join on. Falling through would split the URL on its scheme colon and
+  // record every Fireflies member's tenant as "https".
+  if (provider === "fireflies") return {
+    providerTenantId: providerAccountId,
+    providerUserId: null,
+    handle: null,
+    verifiedEmail: stringField(credentials, "verifiedEmail") ?? stringField(credentials, "userEmail"),
+    identityDisplayName: stringField(credentials, "providerAccountName"),
   };
   if (provider === "granola") return {
     providerTenantId: stringField(credentials, "workspaceId") ?? providerAccountId,

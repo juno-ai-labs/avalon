@@ -1964,7 +1964,7 @@ export class RallyApi {
   }
 
   async startProviderConnection(
-    provider: 'ashby' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack',
+    provider: 'ashby' | 'fireflies' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack',
     scope: 'you' | 'workspace',
     capabilities: string[],
   ): Promise<ConnectorOAuthStart> {
@@ -2086,6 +2086,22 @@ export class RallyApi {
     });
   }
 
+  /**
+   * The response carries the endpoint URL and signing secret the administrator
+   * has to paste into Fireflies, and it is the only time Rally will hand them
+   * over. Nothing here writes either to disk.
+   */
+  async createFirefliesWorkspaceConnection(apiKey: string, idempotencyKey: string) {
+    reportTelemetryProductIntent({
+      kind: 'connector_setup_requested_v2', connector: 'fireflies', scope: 'workspace',
+      method: 'api_key', capabilityCount: telemetryCountBucket(1),
+    });
+    return this.request('/connections/fireflies/workspace', {
+      method: 'POST', body: { apiKey, idempotencyKey },
+      schema: ConnectorInstallationSetupResponseSchema,
+    });
+  }
+
   async connectorInstallation(connectionId: string) {
     return this.request(`/connections/${connectionId}/installation`, {
       schema: ConnectorInstallationReadResponseSchema,
@@ -2163,7 +2179,7 @@ export class RallyApi {
 
   async reconnectConnection(
     id: string,
-    provider?: 'ashby' | 'google' | 'github' | 'linear' | 'notion' | 'slack',
+    provider?: 'ashby' | 'fireflies' | 'google' | 'github' | 'linear' | 'notion' | 'slack',
     scope: 'you' | 'workspace' = 'you',
     capabilityCount = 0,
   ): Promise<ConnectorOAuthStart> {

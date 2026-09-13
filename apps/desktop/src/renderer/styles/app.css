@@ -4912,6 +4912,23 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .run-duration { color: var(--av-ref-color-neutral-9); font-size: 9px; text-align: right; }
 .form-field { display: grid; gap: 6px; min-width: 0; }
 .dialog-body > .form-field + .form-field { margin-top: 16px; }
+/* Tailwind's preflight zeroes paragraph margins and list markers, and the
+   dialog body sets no gap of its own, so consecutive paragraphs render as one
+   wall of text and a numbered list loses its numbers. Both were being patched
+   inline, once per dialog that noticed; this is the one place they belong. */
+.dialog-body > p + p { margin-top: 10px; }
+.dialog-body ol { list-style: decimal; margin: 10px 0; padding-inline-start: 1.5rem; }
+.dialog-body ol > li + li { margin-top: 6px; }
+/* The one consequence in a setup dialog that damages something the person is
+   not currently looking at. It reads as prose otherwise. */
+.dialog-callout {
+  background: var(--av-sys-color-surface-sunken);
+  border: 1px solid var(--av-sys-color-border-subtle);
+  border-radius: var(--av-cmp-control-radius);
+  margin-top: 12px;
+  padding: 10px 12px;
+}
+.dialog-callout > p { margin: 0; }
 .form-field > small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); line-height: 20px; }
 .form-field > select { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-sys-color-border-default); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); min-height: 36px; min-width: 0; padding: 6px 10px; width: 100%; }
 .form-field > span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }

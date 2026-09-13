@@ -30,7 +30,7 @@ describe('connector installation claim generation', () => {
         rotation: 'stable', rotationGeneration: 0, activeSecretRef: 'signing', pendingSecretRef: null }],
     });
     await stub.createConnectorInstallation({ installation, userId: crypto.randomUUID(), inputHash: 'unchanged-step-generation-fixture',
-      capability: 'ashby.workspace.events', credentials: { ciphertext: 'not-decrypted-by-claim', iv: 'unused-iv', keyVersion: 1 } });
+      capability: 'ashby.workspace.events', displayName: 'Ashby workspace events', credentials: { ciphertext: 'not-decrypted-by-claim', iv: 'unused-iv', keyVersion: 1 } });
     // A reviewed plan can retain a pending registration verbatim while moving
     // the installation generation. No state or step-ID check may mask its fence.
     const prepared = await stub.prepareConnectorInstallationMaintenance({ workspaceId, connectionId,
