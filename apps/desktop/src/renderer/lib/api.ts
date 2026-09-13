@@ -1027,8 +1027,8 @@ export class RallyApi {
     return mapAutomationDetail(raw);
   }
 
-  async deleteAutomation(id: string): Promise<void> {
-    await this.requestVoid(`/sidekicks/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  async archiveAutomation(id: string): Promise<void> {
+    await this.requestVoid(`/sidekicks/${encodeURIComponent(id)}/archive`, { method: 'POST' });
   }
 
   /**

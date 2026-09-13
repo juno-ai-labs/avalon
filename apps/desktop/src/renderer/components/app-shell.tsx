@@ -685,14 +685,14 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           // sidebar's sort key is deliberately left alone here.
           patchCachedWorkstream(queryClient, updated.id, { scope: updated.scope, updatedAt: updated.updatedAt });
         }}
-        onDeleteAutomation={async (automation) => {
+        onArchiveAutomation={async (automation) => {
           if (!api) return;
-          await api.deleteAutomation(automation.id);
-          // Deleting closes any run that was opened ahead of its planned time,
+          await api.archiveAutomation(automation.id);
+          // Archiving closes any run that was opened ahead of its planned time,
           // so the work-stream list is stale too — and that one is not pushed
           // off the automation write the way the automation list is.
           await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-          // Leaving the deleted automation's route replaces it rather than
+          // Leaving the archived Sidekick's route replaces it rather than
           // pushing, so Back cannot return to it, and the detail query goes
           // with it so nothing can render the automation from cache.
           leaveAutomationScreen(automation.id);
