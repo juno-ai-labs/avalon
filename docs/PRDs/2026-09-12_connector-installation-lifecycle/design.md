@@ -336,9 +336,10 @@ Normalization uses `NormalizedActivitySchema` and preserves these invariants:
   requirements, not an assumption that the webhook has a timestamp field.
 - Emit only the approved normalized field allowlist and bounded text. Preserve
   the raw verified body behind regional `payloadRef`; never inline it into
-  processing pointers, logs, or model tool descriptions. Final payload/visibility
-  mapping remains the PRD's explicit release gate. Candidate confidentiality is
-  not resolved by assigning `visibility.scope = "workspace"` indiscriminately.
+  processing pointers, logs, or model tool descriptions. The September 13 product
+  decision authorizes these normalized organization notifications for workspace
+  automations through the standard workspace audience. This does not widen the
+  normalized field allowlist or confer personal MCP access.
 - Do not produce verified `externalPeople` identity bindings or target members
   from provider claims. Apply the existing event audience and authorization
   rules. Workspace event access is never evidence of personal MCP access.

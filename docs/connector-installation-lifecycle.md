@@ -140,9 +140,14 @@ candidate signal, excluding only its raw hash and payload reference from the
 logical hash. Every raw delivery retains its actual hash and separate R2 object;
 a changed candidate under the same action ID still conflicts. No email REST
 refresh or recruiting tool is introduced.
-The approved confidential-payload authorization review remains a release gate:
-normalized Ashby events currently have restricted visibility and do not run
-workspace automations. This is not launch completion.
+The connecting administrator authorizes organization event notifications for the
+Rally workspace. Normalized Ashby events use the existing workspace audience and
+can trigger matching automations through the ordinary Queue and occurrence-dedupe
+path. There is no provider-acceptance toggle or special Ashby automation gate.
+Personal MCP remains independently authorized. Raw provider fields are not added
+to normalized summaries or trigger messages. Actual provider compatibility still
+requires an authorized Ashby organization; unavailable access does not disable
+this implemented automation path.
 
 Fleet maintenance uses the existing Ace `demos` operator credential identified
 by the user. The new route is repository implementation, not a deployed permission
@@ -291,6 +296,6 @@ action. An administrator's explicit Test adopts an existing Granola connection.
 
 **Considered and rejected:** Blind create retries, a second legacy Granola mutation path and speculative secret-overlap intervals. None preserves the provider identity and verification evidence needed to reconcile uncertainty. Whole-operation JSON rewrites also lose concurrent target progress. Stamping an operation identity before applying its frozen configuration would make an early Resume silently report the old configuration as current.
 
-**Consequences:** Every late response must settle against its dispatched intent; unknown or unsigned installations require action, never assumed success. Replacement removal waits for verified successors. Cleanup cannot restore ordinary access; credential settlement advances the generation that replacement reads before its envelope, and manual rotation guidance does not mutate state. Test repair records its acting administrator, and operator requests record their current caller rather than attributing later actions to the preview author. Live provider and confidential-event acceptance remain outstanding.
+**Consequences:** Every late response must settle against its dispatched intent; unknown or unsigned installations require action, never assumed success. Replacement removal waits for verified successors. Cleanup cannot restore ordinary access; credential settlement advances the generation that replacement reads before its envelope, and manual rotation guidance does not mutate state. Test repair records its acting administrator, and operator requests record their current caller rather than attributing later actions to the preview author. The user explicitly authorized workspace automation for organization events; live provider compatibility remains unverified without an Ashby organization.
 
 PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).

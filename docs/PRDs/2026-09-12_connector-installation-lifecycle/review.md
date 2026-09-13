@@ -163,10 +163,10 @@ All captures use synthetic public status metadata.
 ## Acceptance that remains unavailable
 
 The absence of an authorized Ashby organization prevents live OAuth, real tool
-inventory/execution, provider webhook/recovery and confidential-event audience
-acceptance. The PRD remains in progress. Ashby workspace automation admission is
-restricted until the audience is verified; personal queries and usable workspace
-events are both required for launch. The dedicated Worker isolates ingress only;
+inventory/execution, provider webhook/recovery and actual payload acceptance.
+The PRD remains in progress. The user authorized organization notifications for
+workspace automation on September 13; the blanket admission block was removed.
+Personal queries and usable workspace events are both required for launch. The dedicated Worker isolates ingress only;
 provider management and MCP still execute in the regional API. See the exact
 remaining checks in [plan.md](plan.md). The workflow automatically handles the
 first Global router deployment before EU; no bootstrap or deployment was performed.
@@ -220,3 +220,12 @@ production mutation proofs caught missing ordering/failure barriers. Detailed
 evidence and the unavailable live Cloudflare credential check are in
 [plan.md](plan.md#automatic-deployment-ordering--2026-09-13). No deployment or
 merge was performed; live Ashby acceptance is still outstanding.
+
+## Workspace automation follow-up — 2026-09-13
+
+The user's explicit workspace-audience decision supersedes the earlier blanket
+Ashby automation restriction. The adapter now uses the shared workspace audience;
+all other connector visibility checks remain unchanged. Actual Ashby rules apply
+and signed events produce deduplicated runs in real workerd. The restored-block
+mutation fails both new cases; see [plan.md](plan.md#workspace-automation-enabled--2026-09-13)
+for verification and the unavailable provider checks.

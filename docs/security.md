@@ -447,9 +447,11 @@ to the same bytes except Ashby's email-change signal, whose documented retry
 renews its watermark. That event compares normalized candidate identity while
 retaining each raw delivery and its actual hash regionally; changed candidate
 identity still conflicts. New setup discloses automatic organization event
-subscriptions rather than offering a subset picker. Normalized recruiting events remain restricted pending an
-authorized confidential-payload review; receiving a workspace webhook does not
-grant its contents to workspace automations.
+subscriptions rather than offering a subset picker. The administrator authorizes
+normalized organization notifications for the Rally workspace, including matching
+workspace automations. That audience does not inherit individual Ashby MCP
+permissions. Names and recruiting content stay out of normalized event summaries
+and automation trigger messages; raw payload storage remains regional.
 
 Granola webhooks are verified using the Standard Webhooks `webhook-id`,
 `webhook-timestamp`, and `webhook-signature` headers over the exact raw request
@@ -895,7 +897,7 @@ incident response that may prompt it.
 
 **Considered and rejected:** Reusing ordinary credential authorization for cleanup, blindly retrying uncertain creates, or widening event grants through operator maintenance.
 
-**Consequences:** Cleanup remains removal-only; repeat disconnect preserves it and forgetting leaves manual provider work. Raw-byte signature/size checks precede persistence, and confidential Ashby events remain restricted. The [lifecycle owner](connector-installation-lifecycle.md) records recovery details.
+**Consequences:** Cleanup remains removal-only; repeat disconnect preserves it and forgetting leaves manual provider work. Raw-byte signature/size checks precede persistence, and Ashby workspace notifications use the administrator-authorized workspace audience and retain the normalized field allowlist. The [lifecycle owner](connector-installation-lifecycle.md) records recovery details.
 
 The full-history secret scan permits exactly the Granola test key encoding of
 `provider-issued-secret`; it grants no provider authority. Its anchored literal

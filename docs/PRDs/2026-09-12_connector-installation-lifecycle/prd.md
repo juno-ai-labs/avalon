@@ -558,6 +558,24 @@ fail on unknown metadata or a circular dependency, and test both initial and
 normal ordering with failure barriers. Live deployment and provider acceptance
 remain outstanding.
 
+### 2026-09-13 — Enable workspace events for automations
+
+**Decided:** The user explicitly rejected the blanket Ashby automation block.
+An administrator connecting organization events authorizes their normalized
+notifications for Rally workspace automations. Use the existing workspace
+audience, deterministic matcher, Queue delivery and occurrence deduplication.
+Personal MCP authority remains separate and the normalized field allowlist stays
+unchanged. No feature flag or live-acceptance gate disables event execution.
+
+**Why:** Receiving events without letting them trigger automations does not
+satisfy the requested connector. An Ashby account is unavailable; that limits
+provider verification, not independent implementation or automated testing.
+
+**Changes:** This supersedes the earlier requirement to withhold workspace activity
+pending confidential-payload acceptance. Actual OAuth, webhook behavior and payloads
+remain unverified against Ashby. The PRD remains in progress without claiming those
+checks succeeded. No deployment or merge is authorized by this change.
+
 ## Key design decisions
 
 1. **Extract from Granola while adding Ashby.** Two real providers test the

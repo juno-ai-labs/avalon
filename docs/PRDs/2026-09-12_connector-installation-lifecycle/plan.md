@@ -174,10 +174,10 @@ launch readiness until an authorized account can establish:
    provider enable/disable behavior, redelivery, and API-key replacement against
    the same organization. `apiKey.info` proves read access; webhook creation proves
    write access. No undocumented permission-string conversion is assumed.
-3. The actual confidential payload and allowed workspace audience. Current Ashby
-   activities contain verified IDs only and deny workspace automation admission.
-   Both event-driven automation and personal tools are required for launch; this
-   restriction is an outstanding acceptance dependency, not a feature flag.
+3. Actual provider payloads, including confidential records, against the normalized
+   field allowlist. The user authorized the workspace audience for organization
+   events; matching automations are enabled. Live payload verification remains
+   unavailable without a test account and is not an implementation gate.
 4. Existing Granola credentials, exact callback URLs, all four existing event
    subscriptions, provider recovery and removal in authorized test workspaces.
 5. Signing-key cutover where the provider supplies verifiable evidence. Current
@@ -312,3 +312,21 @@ and the deployment/health path remain to be exercised with the existing CI
 production credential when deployment is separately authorized. No deployment,
 merge, provider repair or fleet action was performed. The PRD remains in progress
 because the Ashby test organization and required live acceptance are unavailable.
+
+## Workspace automation enabled — 2026-09-13
+
+The user explicitly authorized organization notifications for workspace
+automations and rejected the blanket acceptance-dependent block. Ashby now emits
+the ordinary workspace audience, preserving the normalized field allowlist,
+independent personal MCP permissions, configured event selection and normal
+occurrence deduplication. No provider account or feature flag gates this path.
+
+Verification: 34 Ashby adapter tests and 29 real-workerd tests across installation
+routes, external-event rules and routing passed. The new routing cases apply a
+real Ashby automation definition, verify signed applicationSubmit and
+candidateStageChange payloads, match through WorkspaceDO, consume the delivery
+Queue message and observe one AutomationDO run despite repeat delivery. Model
+inference uses the existing provider double and the admitted runs settle locally.
+Reintroducing the production visibility block made both new cases fail with zero
+matched deliveries; the block was removed again. Provider HTTP compatibility
+remains unverified because no authorized Ashby organization is available.
