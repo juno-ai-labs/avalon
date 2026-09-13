@@ -84,9 +84,11 @@ searches for either label filter by the available scope. API-key searches reveal
 Workspace setup has no event selection: Rally manages Ashby subscriptions
 automatically, while automations choose which event types they use.
 Personal owners can refresh their own OAuth connection. Administrators manage
-Ashby and Granola installations through **Manage events**: saved status reads
-are separate from the explained **Test** action, API-key replacement and cleanup
-recovery. A legacy Granola connection offers Test before adoption. Rotation
+Ashby and Granola installations through **Manage events**. The main view shows
+plain status, the last event and explained **Test**, with **Get help** when needed.
+**Advanced** contains saved-status refresh, API-key replacement and technical
+recovery; subscription diagnostics are collapsed separately. Cleanup retry is
+shown only when provider removal is incomplete. A legacy Granola connection offers Test before adoption. Rotation
 guidance is local information and does not change installation state. The
 workspace connection notification refreshes both list and installation queries,
 so open details do not retain a pre-repair snapshot. Management is unavailable
@@ -143,7 +145,7 @@ scrolling and both appearances.
 
 ### 2026-09-12 — Separate Ashby personal setup from shared event installation
 
-**What changed:** The catalogue exposes exact scope-specific Connect labels and searchable Ashby key controls and automatic event subscriptions. Manage events separates status, explained Test, key replacement and recovery; personal owners can refresh their own OAuth grant.
+**What changed:** The catalogue exposes exact scope-specific Connect labels and searchable Ashby key controls and automatic event subscriptions. Manage events shows status and explained Test, keeping key replacement and technical recovery in Advanced; personal owners can refresh their own OAuth grant.
 
 **Why:** Setup and recovery must preserve personal versus administrator authority, and reading registration status or rotation instructions must not mutate the provider. Open details must follow the same pushed state as the connection list.
 
