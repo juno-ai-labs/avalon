@@ -7679,17 +7679,9 @@ async function readConnectorConnectionState(
     return capabilities.some((capability) =>
       catalog.capabilityPrefixes.some((prefix) => capability.startsWith(prefix)));
   });
-  // `error` reads as connected, which is the same verdict the desktop and
-  // `resolveUserDelivery` already reach from this column. Only `needs_reconnect`
-  // is evidence that an authorization needs renewing; `error` is a generic
-  // diagnosis a failed background poll writes, and a successful poll
-  // deliberately does not clear it (see `commitConnectorCursor`). Counting it as
-  // `reconnect_required` here made this the one surface that called a working
-  // connection broken: the card rendered **Connected** off the same row while
-  // the agent refused the task and showed a recovery card with no action on it.
-  const state = matching.some((row) => row.status === "healthy" || row.status === "error")
+  const state = matching.some((row) => row.status === "healthy")
     ? "connected"
-    : matching.some((row) => row.status === "needs_reconnect")
+    : matching.some((row) => row.status === "needs_reconnect" || row.status === "error")
       ? "reconnect_required"
       : "not_connected";
   return ConnectorConnectionStateResultSchema.parse({ ...request, state });

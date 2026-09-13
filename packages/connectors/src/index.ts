@@ -1169,10 +1169,14 @@ const EmailArgsSchema = z.strictObject({
     // legitimate id — either invents one and mis-threads the mail, or gives up
     // and reports the tool as broken. Dropping the stray `threadId` is the fix
     // in that case, and it was the branch the message never mentioned.
+    // Reported against `threadId`, the field the primary repair removes. The
+    // harness renders an issue as `<path>: <message>`, so hanging this on
+    // `inReplyTo` told the model to fix one field in a sentence whose first
+    // instruction is to drop a different one.
     context.addIssue({
       code: "custom",
       message: "Omit threadId to start a new email conversation, or, to reply inside an existing thread, also pass that thread's original message RFC Message-ID as inReplyTo. Never invent a Message-ID.",
-      path: ["inReplyTo"]
+      path: ["threadId"]
     });
   }
 });
