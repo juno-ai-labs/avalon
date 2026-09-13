@@ -1,4 +1,4 @@
-import { asUserId } from "@rally/contracts";
+import { artifactAssetKey, asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -216,6 +216,133 @@ function fixture(
 }
 
 describe("Terminal resource bridge", () => {
+  /**
+   * A published static site, as the bucket holds it: the manifest the resource
+   * row points at, and one version-immutable object per asset.
+   */
+  function publishedSite(state: ReturnType<typeof fixture>, files: Array<[string, string]>) {
+    const assets = files.map(([path, body]) => ({
+      path,
+      contentType: path.endsWith(".css") ? "text/css; charset=utf-8" : "text/html; charset=utf-8",
+      sizeBytes: new TextEncoder().encode(body).byteLength,
+      sha256: "b".repeat(64),
+    }));
+    for (const [path, body] of files) {
+      state.objects.set(artifactAssetKey(ARTIFACT, 3, path), new TextEncoder().encode(body));
+    }
+    const contentDigest = sha256Hex(new TextEncoder().encode(JSON.stringify(
+      assets.map((asset) => [asset.path, asset.sha256]),
+    )));
+    const manifest = new TextEncoder().encode(JSON.stringify({
+      version: 1,
+      artifactId: ARTIFACT,
+      artifactVersion: 3,
+      mode: "static",
+      stateful: false,
+      serverModuleSha256: null,
+      assets,
+      totalBytes: assets.reduce((total, asset) => total + asset.sizeBytes, 0),
+      publishedAt: "2026-08-13T00:00:00.000Z",
+    }));
+    state.objects.set("site-manifest", manifest);
+    return contentDigest;
+  }
+
+  function attachSiteResource(state: ReturnType<typeof fixture>, manifestDigest: string) {
+    state.database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
+          content_ref, content_sha256, metadata_json, attachment_status, model_content_status,
+          created_at, updated_at)
+       VALUES (?, ?, 'generated_site', 'avalon_generated', ?, 'Wedding site',
+               'application/vnd.rally.site-manifest+json', 'site-manifest', ?,
+               '{"sourcePath":"wedding-site"}', 'attached', 'unsupported',
+               '2026-08-13', '2026-08-13')`,
+    ).run(RESOURCE, W, `terminal:${S}:wedding-site`, manifestDigest);
+    state.objectStore.prepare(
+      `INSERT INTO workstream_resource_links
+         (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+       VALUES (?, ?, 0, 'generated', ?, ?, ?)`,
+    ).run(RESOURCE, U, JSON.stringify({ id: RESOURCE }), Date.parse("2026-08-13"), Date.parse("2026-08-13"));
+  }
+
+  it("materializes a published site's own source so a run can revise what is served", async () => {
+    const state = fixture();
+    const contentDigest = await publishedSite(state, [
+      ["index.html", "<h1>Wedding</h1>"],
+      ["assets/app.css", "h1{color:red}"],
+    ]);
+    attachSiteResource(state, contentDigest);
+    vi.mocked(state.provider.runUtilityCommand).mockImplementation(async (_id, input) => (
+      input.operation === "resource.import.finalize"
+        ? { exitCode: 0, stdout: "2\n", stderr: "" }
+        : { exitCode: 0, stdout: "", stderr: "" }
+    ));
+
+    await expect(state.bridge.importResource(
+      context,
+      { resourceId: RESOURCE, destinationPath: ".rally-output/wedding-site", overwrite: true },
+      ".rally-output/wedding-site",
+      1,
+      "sandbox",
+      state.provider,
+    )).resolves.toMatchObject({
+      resourceId: RESOURCE,
+      filePath: ".rally-output/wedding-site",
+      outcome: "created",
+      fileCount: 2,
+      sizeBytes: 29,
+      sourceSha256: contentDigest,
+    });
+
+    // Both files, under the staging tree rather than over the destination.
+    expect(state.provider.writeFile).toHaveBeenCalledWith(
+      "sandbox",
+      expect.stringMatching(/^\/workspace\/\.rally\/tmp\/[^/]+\/index\.html$/u),
+      new TextEncoder().encode("<h1>Wedding</h1>"),
+      context.signal,
+    );
+    expect(state.provider.writeFile).toHaveBeenCalledWith(
+      "sandbox",
+      expect.stringMatching(/^\/workspace\/\.rally\/tmp\/[^/]+\/assets\/app\.css$/u),
+      new TextEncoder().encode("h1{color:red}"),
+      context.signal,
+    );
+    // A nested asset needs its staging parent before the upload lands.
+    expect(state.provider.runUtilityCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
+      operation: "resource.import.stage",
+      command: expect.stringContaining("'assets'"),
+    }));
+    expect(workstreamObjectGet(
+      state.objectStore,
+      `SELECT destination_path, source_sha256, state, imported_at IS NOT NULL AS imported
+         FROM terminal_imported_resources`,
+    )).toEqual({
+      destination_path: ".rally-output/wedding-site",
+      source_sha256: contentDigest,
+      state: "completed",
+      imported: 1,
+    });
+  });
+
+  it("sends an automatic site import to the path that republishes the same site", async () => {
+    const state = fixture();
+    attachSiteResource(state, await publishedSite(state, [["index.html", "<h1>Wedding</h1>"]]));
+
+    await expect(state.bridge.importResource(
+      context,
+      { resourceId: RESOURCE },
+      `.rally/resources/${RESOURCE}/resource`,
+      1,
+      "sandbox",
+      state.provider,
+    )).rejects.toMatchObject({
+      code: "destination_required",
+      details: { reason: 'Retry with destinationPath: ".rally-output/wedding-site".' },
+    });
+    expect(state.provider.writeFile).not.toHaveBeenCalled();
+  });
+
   it("upgrades an unchanged legacy site on its next publish", async () => {
     const state = fixture();
     const fileSha256 = "b".repeat(64);
