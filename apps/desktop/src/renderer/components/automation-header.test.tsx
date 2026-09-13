@@ -43,7 +43,7 @@ function actions() {
   return {
     onPause: vi.fn<() => void>(),
     onResume: vi.fn<() => void>(),
-    onDelete: vi.fn<() => Promise<void>>(async () => undefined),
+    onArchive: vi.fn<() => Promise<void>>(async () => undefined),
     onRunNow: vi.fn<() => void>(),
     onAppearanceChange: vi.fn<AutomationHeaderProps['onAppearanceChange']>(async () => undefined),
   };
@@ -162,7 +162,7 @@ describe('AutomationHeader', () => {
     expect(paused.onRunNow).not.toHaveBeenCalled();
   });
 
-  it('deletes only after the confirmation dialog, and keeps a failure in it', async () => {
+  it('archives only after confirmation, explains retention, and keeps a failure in the dialog', async () => {
     const handlers = renderHeader({
       ...draft,
       status: 'active',
@@ -171,23 +171,23 @@ describe('AutomationHeader', () => {
       currentDefinitionRevision: 1,
       acceptedDefinitionRevision: 1,
     });
-    handlers.onDelete.mockRejectedValueOnce(new Error('The automation is still finishing a run.'));
+    handlers.onArchive.mockRejectedValueOnce(new Error('The automation is still finishing a run.'));
 
-    // The sidebar always asked; the header fired the tombstone from a menu
-    // item with no question. Same dialog, same copy, on both.
     fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete Sidekick' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Delete Sidekick' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive Sidekick' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive Sidekick' });
     expect(within(dialog).getByText('Weekly changelog')).toBeVisible();
-    expect(handlers.onDelete).not.toHaveBeenCalled();
+    expect(within(dialog).getByText(/conversation and past runs will be kept/u)).toBeVisible();
+    expect(within(dialog).getByText(/does not offer a way to unarchive Sidekicks yet/u)).toBeVisible();
+    expect(handlers.onArchive).not.toHaveBeenCalled();
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive' }));
     expect(await within(dialog).findByText('The automation is still finishing a run.')).toBeVisible();
-    expect(handlers.onDelete).toHaveBeenCalledOnce();
+    expect(handlers.onArchive).toHaveBeenCalledOnce();
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete Sidekick' })).not.toBeInTheDocument());
-    expect(handlers.onDelete).toHaveBeenCalledTimes(2);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive Sidekick' })).not.toBeInTheDocument());
+    expect(handlers.onArchive).toHaveBeenCalledTimes(2);
   });
 
   it('keeps runs off the initial page and shows them only through More and Run history', async () => {

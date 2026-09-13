@@ -419,7 +419,7 @@ instructions name is the run's own work with its connector tools.
 | --- | --- | --- |
 | `pause` | a manager | `runs` in `pending`, `running`, or `needs_input` become `stopped`; `lifecycle = 'paused'`, `paused_by = 'person'`; schedule and run alarm entries cancelled; the workspace's registrations replaced with `[]`; sidebar row enqueued |
 | `resume` | a manager | each schedule's next due instant recomputed from now (a paused automation does not fire what it slept through), `lifecycle = 'active'`, `paused_by` cleared, alarms re-armed, the accepted evaluator projection re-registered with a fresh sequence boundary; refused with `sidekick_room_archived` while the owning room is archived |
-| `remove` (`DELETE`) | a manager | open runs stopped, `lifecycle = 'deleted'`, alarms cancelled, registrations replaced with `[]`; the object is kept, and `authorizeViewer` answers unauthorized and archived from then on |
+| `archive` (`POST /sidekicks/:id/archive`; legacy `DELETE` remains for installed clients) | a manager | open runs stopped, stored `lifecycle = 'deleted'`, alarms cancelled, registrations replaced with `[]`; the object, conversation, and run history are kept, and `authorizeViewer` answers unauthorized and archived from then on. `deleted` is the compatibility tombstone name, not a claim that retained data was destroyed. There is no unarchive operation or archived-Sidekick browser yet. |
 | `setOwningRoomArchived` | `WorkspaceDO`, from a directory effect that archived or unarchived the owning room | archiving pauses an `active` automation with `paused_by = 'room_archive'`; unarchiving resumes only an automation the archive paused, so a person's pause is never undone by somebody unarchiving the room. The Worker's viewer decision reports `archived` while the room is, which makes the automation's conversation and runs read-only |
 
 Who may manage (`assertManager`): the author or the run-as principal; for a
@@ -730,6 +730,28 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-13 — Removing a Sidekick is presented as archive
+
+**What changed:** The current client calls the retained tombstone transition
+**Archive Sidekick** and sends `POST /sidekicks/:id/archive`. The confirmation
+states that schedules stop while the conversation and run history remain. The
+legacy `DELETE` route still reaches the same transition for installed clients;
+the persisted lifecycle remains `deleted`, and no archive browser or unarchive
+operation was added.
+
+**Why:** The operation never destroyed the Sidekick object or its historical
+data, so “Delete” overstated what happened and hid the retention semantics from
+the person making the choice.
+
+**Considered:** Renaming the stored lifecycle to `archived` now would require a
+schema and projection migration without changing any behavior available in the
+product. The compatibility tombstone is kept until a future unarchive design
+needs to make archived objects addressable again.
+
+**Consequences:** New clients use an archive-shaped API and vocabulary. Old
+clients continue to work, archived Sidekicks remain absent from the library,
+and restoration remains deliberately unavailable.
 
 ### 2026-09-11 — A Sidekick's result names the Sidekick, and its documents land in the room
 

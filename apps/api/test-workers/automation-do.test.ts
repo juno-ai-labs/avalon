@@ -797,7 +797,7 @@ describe("AutomationDO", () => {
     expect((await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID })).items)
       .toEqual([]);
     await expect(runInDurableObject(automationStub(), (instance: AutomationDO) =>
-      instance.readDetail({ ...addressed(), actor: actor() }))).rejects.toThrow("This Sidekick was deleted");
+      instance.readDetail({ ...addressed(), actor: actor() }))).rejects.toThrow("This Sidekick was archived");
   });
 
   it("refuses management by a member who is neither author nor principal", async () => {
