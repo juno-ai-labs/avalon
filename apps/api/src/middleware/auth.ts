@@ -158,7 +158,10 @@ export const requireIdentityAuth: MiddlewareHandler<HonoAppEnv> = async (c, next
 };
 
 export const requireAuth: MiddlewareHandler<HonoAppEnv> = async (c, next) => {
-  const auth = await timedAuthenticate(c);
+  // Root-mounted `requireIdentityAuth` writes this request-local value before
+  // protected routes reach us. The fallback keeps this middleware correct when
+  // mounted alone; every new request still checks revocation.
+  const auth = c.get("auth") ?? await timedAuthenticate(c);
   if (!auth.workspaceId || !auth.role) {
     throw new ApiError(403, "workspace_setup_required", "Choose or join a workspace to continue");
   }
