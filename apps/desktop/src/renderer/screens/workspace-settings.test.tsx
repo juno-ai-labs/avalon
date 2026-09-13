@@ -23,6 +23,7 @@ const api = vi.hoisted(() => ({
   updateGitHubRepositoryAccessSettings: vi.fn(),
   getAvailableConnectorTypes: vi.fn(),
   createGranolaWorkspaceConnection: vi.fn(),
+  connectorInstallation: vi.fn(),
   createWebhookConnection: vi.fn(),
   rotateWebhookSecret: vi.fn(),
   createXConnection: vi.fn(),
@@ -442,12 +443,12 @@ describe('Workspace settings', () => {
     renderSettings();
     await screen.findByRole('navigation', { name: 'Settings sections' });
     const search = screen.getByRole('searchbox', { name: 'Search settings' });
-    fireEvent.change(search, { target: { value: 'Connect workspace' } });
+    fireEvent.change(search, { target: { value: 'Connect for workspace' } });
     expect(document.querySelector('[data-setting-result="provider:google-mail-calendar"]')).toBeNull();
-    fireEvent.change(search, { target: { value: 'Connect only for me' } });
+    fireEvent.change(search, { target: { value: 'Connect for me' } });
     expect(document.querySelector('[data-setting-result="provider:x"]')).toBeNull();
     fireEvent.keyDown(search, { key: 'Escape', isComposing: true });
-    expect(search).toHaveValue('Connect only for me');
+    expect(search).toHaveValue('Connect for me');
     fireEvent.keyDown(search, { key: 'Escape' });
     expect(search).toHaveValue('');
   });
@@ -675,7 +676,7 @@ describe('Workspace settings', () => {
     openSettingsSection('Connections');
 
     const card = (await screen.findByText('Custom MCP server')).closest('article');
-    fireEvent.click(await enabledConnectAction(card!, 'Connect workspace'));
+    fireEvent.click(await enabledConnectAction(card!, 'Connect for workspace'));
     // The labels carry their help text too, so each matcher is anchored on the
     // field's own name rather than the whole string.
     fireEvent.change(screen.getByLabelText(/^Name/u), { target: { value: 'Acme docs' } });
@@ -719,7 +720,7 @@ describe('Workspace settings', () => {
     openSettingsSection('Connections');
 
     const card = (await screen.findByText('Custom MCP server')).closest('article');
-    fireEvent.click(await enabledConnectAction(card!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(card!, 'Connect for me'));
     fireEvent.change(screen.getByLabelText(/^Name/u), { target: { value: 'My docs' } });
     fireEvent.change(screen.getByLabelText(/^Server URL/u), {
       target: { value: 'https://mcp.acme.test/mcp' },
@@ -1037,7 +1038,7 @@ describe('Workspace settings', () => {
 
     const mailCard = (await screen.findByText('Google Mail + Calendar', undefined, { timeout: 10_000 })).closest('article');
     expect(mailCard).not.toBeNull();
-    expect(within(mailCard!).queryByRole('button', { name: 'Connect workspace' })).not.toBeInTheDocument();
+    expect(within(mailCard!).queryByRole('button', { name: 'Connect for workspace' })).not.toBeInTheDocument();
     // The card's name renders from the static provider list, but the button
     // stays disabled until the connector catalog answers — `providerAvailable`
     // is `catalog.data?.includes(...) ?? false`. Clicking before then is a
@@ -1045,7 +1046,7 @@ describe('Workspace settings', () => {
     // "Number of calls: 0" rather than anything naming the real cause. Every
     // other connect click in this file already waits for this; this one did
     // not, and lost the race on a loaded machine.
-    fireEvent.click(await enabledConnectAction(mailCard!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(mailCard!, 'Connect for me'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'google',
       'you',
@@ -1054,7 +1055,7 @@ describe('Workspace settings', () => {
 
     const driveCard = screen.getByText('Google Drive + Docs + Sheets').closest('article');
     expect(driveCard).not.toBeNull();
-    fireEvent.click(await enabledConnectAction(driveCard!, 'Connect workspace'));
+    fireEvent.click(await enabledConnectAction(driveCard!, 'Connect for workspace'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
       'google',
       'workspace',
@@ -1069,8 +1070,8 @@ describe('Workspace settings', () => {
 
     const driveCard = (await screen.findByText('Google Drive + Docs + Sheets')).closest('article');
     expect(driveCard).not.toBeNull();
-    const personalButton = await enabledConnectAction(driveCard!, 'Connect only for me');
-    const workspaceButton = await enabledConnectAction(driveCard!, 'Connect workspace');
+    const personalButton = await enabledConnectAction(driveCard!, 'Connect for me');
+    const workspaceButton = await enabledConnectAction(driveCard!, 'Connect for workspace');
 
     fireEvent.focus(personalButton);
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
@@ -1101,9 +1102,9 @@ describe('Workspace settings', () => {
 
     const driveCard = (await screen.findByText('Google Drive + Docs + Sheets')).closest('article');
     expect(driveCard).not.toBeNull();
-    const workspaceButton = within(driveCard!).getByRole('button', { name: 'Connect workspace' });
+    const workspaceButton = within(driveCard!).getByRole('button', { name: 'Connect for workspace' });
     await waitFor(() => expect(workspaceButton).toHaveAttribute('aria-disabled', 'true'));
-    expect(workspaceButton).toHaveAccessibleName('Connect workspace');
+    expect(workspaceButton).toHaveAccessibleName('Connect for workspace');
 
     fireEvent.focus(workspaceButton);
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
@@ -1118,14 +1119,14 @@ describe('Workspace settings', () => {
     const notionCard = (await screen.findByText('Notion')).closest('article');
     expect(notionCard).not.toBeNull();
     expect(screen.getByText(/workspace automations use only the connections explicitly bound to them/iu)).toBeVisible();
-    const personalButton = await enabledConnectAction(notionCard!, 'Connect only for me');
+    const personalButton = await enabledConnectAction(notionCard!, 'Connect for me');
     fireEvent.click(personalButton);
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'notion',
       'you',
       ['notion.personal.mcp'],
     ));
-    const workspaceButton = await enabledConnectAction(notionCard!, 'Connect workspace');
+    const workspaceButton = await enabledConnectAction(notionCard!, 'Connect for workspace');
     fireEvent.click(workspaceButton);
 
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
@@ -1148,10 +1149,10 @@ describe('Workspace settings', () => {
     openSettingsSection('Connections');
 
     const mailCard = (await screen.findByText('Google Mail + Calendar')).closest('article');
-    fireEvent.click(await enabledConnectAction(mailCard!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(mailCard!, 'Connect for me'));
 
     await waitFor(() => expect(api.getConnectorOAuthAttempt).toHaveBeenCalledWith('a'.repeat(43)));
-    await enabledConnectAction(mailCard!, 'Connect only for me');
+    await enabledConnectAction(mailCard!, 'Connect for me');
     expect(screen.queryByText('Google authorization was cancelled.')).not.toBeInTheDocument();
     expect(api.getConnectorOAuthAttempt).toHaveBeenCalledWith('a'.repeat(43));
   });
@@ -1280,7 +1281,7 @@ describe('Workspace settings', () => {
     openSettingsSection('Connections');
 
     const mailCard = (await screen.findByText('Google Mail + Calendar')).closest('article');
-    fireEvent.click(await enabledConnectAction(mailCard!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(mailCard!, 'Connect for me'));
 
     expect(await within(mailCard!).findByText('Waiting…')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Refresh Google · adam@example.com' }))
@@ -1293,14 +1294,14 @@ describe('Workspace settings', () => {
 
     const linearCard = (await screen.findByText('Linear')).closest('article');
     expect(linearCard).not.toBeNull();
-    fireEvent.click(await enabledConnectAction(linearCard!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(linearCard!, 'Connect for me'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'linear',
       'you',
       ['linear.read', 'linear.issue.create', 'linear.comment.create', 'linear.write'],
     ));
 
-    fireEvent.click(await enabledConnectAction(linearCard!, 'Connect workspace'));
+    fireEvent.click(await enabledConnectAction(linearCard!, 'Connect for workspace'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
       'linear',
       'workspace',
@@ -1323,14 +1324,14 @@ describe('Workspace settings', () => {
     // the workspace button below already does is needed here too. Without it
     // this click can land on a still-disabled button and go nowhere, which is
     // what it did once under a loaded `pnpm test`.
-    fireEvent.click(await enabledConnectAction(slackCard!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(slackCard!, 'Connect for me'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'slack',
       'you',
       ['slack.personal.mcp'],
     ));
 
-    fireEvent.click(await enabledConnectAction(slackCard!, 'Connect workspace'));
+    fireEvent.click(await enabledConnectAction(slackCard!, 'Connect for workspace'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
       'slack',
       'workspace',
@@ -1362,14 +1363,14 @@ describe('Workspace settings', () => {
     const granolaCard = (await screen.findByText('Granola')).closest('article');
     expect(granolaCard).not.toBeNull();
 
-    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for me'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'granola',
       'you',
       ['granola.personal.read'],
     ));
 
-    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect workspace'));
+    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for workspace'));
 
     const dialog = await screen.findByRole('dialog', { name: 'Connect Granola workspace' });
     expect(within(dialog).getByRole('heading', { name: 'Generate the key in Granola' })).toBeVisible();
@@ -1387,11 +1388,31 @@ describe('Workspace settings', () => {
 
     const apiKey = `grn_${'a'.repeat(24)}`;
     fireEvent.change(apiKeyInput, { target: { value: apiKey } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect workspace' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect for workspace' }));
 
-    await waitFor(() => expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledWith(apiKey));
+    await waitFor(() => expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledWith(apiKey, expect.any(String)));
     expect(await screen.findByText('No personal connections yet')).toBeVisible();
     expect(screen.getByText('No workspace connections yet')).toBeVisible();
+  });
+
+  it('opens the existing Granola installation when setup loses its response', async () => {
+    renderSettings();
+    openSettingsSection('Connections');
+    const granolaCard = (await screen.findByText('Granola')).closest('article');
+    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for workspace'));
+    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola workspace' });
+    api.createGranolaWorkspaceConnection.mockRejectedValue(new Error('Response lost'));
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000018', connectorType: 'granola', scope: 'workspace',
+      displayName: 'Granola workspace events', capabilities: ['granola.workspace.read'], status: 'error',
+    }]);
+    api.connectorInstallation.mockResolvedValue({ installation: null });
+    fireEvent.change(within(dialog).getByLabelText('Workspace API key'), { target: { value: `grn_${'a'.repeat(24)}` } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect for workspace' }));
+    await screen.findByRole('dialog', { name: 'Workspace events' });
+    expect(api.connectorInstallation).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000018');
+    expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Manage events for Granola workspace events', hidden: true })).toBeInTheDocument();
   });
 
   it('offers the read-only X connector only at workspace scope', async () => {
@@ -1400,9 +1421,9 @@ describe('Workspace settings', () => {
 
     const xCard = (await screen.findByText('Public X via TwitterAPI.io')).closest('article');
     expect(xCard).not.toBeNull();
-    expect(within(xCard!).queryByRole('button', { name: 'Connect only for me' })).not.toBeInTheDocument();
+    expect(within(xCard!).queryByRole('button', { name: 'Connect for me' })).not.toBeInTheDocument();
 
-    fireEvent.click(await enabledConnectAction(xCard!, 'Connect workspace'));
+    fireEvent.click(await enabledConnectAction(xCard!, 'Connect for workspace'));
     await waitFor(() => expect(api.createXConnection).toHaveBeenCalledWith(['x.read']));
     expect(api.startProviderConnection).not.toHaveBeenCalledWith('x', expect.anything(), expect.anything());
   });
@@ -1413,7 +1434,7 @@ describe('Workspace settings', () => {
 
     const webhookCard = (await screen.findByText('Inbound webhook')).closest('article');
     expect(webhookCard).not.toBeNull();
-    fireEvent.click(await enabledConnectAction(webhookCard!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(webhookCard!, 'Connect for me'));
 
     const dialog = await screen.findByRole('dialog', { name: 'Create inbound webhook' });
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Support intake' } });
@@ -1446,7 +1467,7 @@ describe('Workspace settings', () => {
     const xCard = (await screen.findByText('Public X via TwitterAPI.io')).closest('article');
     expect(xCard).not.toBeNull();
     expect(within(xCard!).getByText('Unavailable')).toBeVisible();
-    const connect = within(xCard!).getByRole('button', { name: 'Connect workspace' });
+    const connect = within(xCard!).getByRole('button', { name: 'Connect for workspace' });
     expect(connect).toHaveAttribute('aria-disabled', 'true');
     fireEvent.focus(connect);
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
@@ -1470,8 +1491,8 @@ describe('Workspace settings', () => {
 
     const xCard = (await screen.findByText('Public X via TwitterAPI.io')).closest('article');
     expect(xCard).not.toBeNull();
-    expect(within(xCard!).queryByRole('button', { name: 'Connect only for me' })).not.toBeInTheDocument();
-    const workspaceButton = within(xCard!).getByRole('button', { name: 'Connect workspace' });
+    expect(within(xCard!).queryByRole('button', { name: 'Connect for me' })).not.toBeInTheDocument();
+    const workspaceButton = within(xCard!).getByRole('button', { name: 'Connect for workspace' });
     await waitFor(() => {
       expect(workspaceButton).toHaveAttribute('aria-disabled', 'true');
     });
@@ -1497,10 +1518,10 @@ describe('Workspace settings', () => {
       const slackCard = (await screen.findByText('Slack')).closest('article');
       expect(slackCard).not.toBeNull();
       await waitFor(() => {
-        expect(within(slackCard!).getByRole('button', { name: 'Connect only for me' })).toBeEnabled();
+        expect(within(slackCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled();
       });
       expect(within(slackCard!).queryByRole('button', { name: 'Connect another workspace' })).not.toBeInTheDocument();
-      const workspaceButton = within(slackCard!).getByRole('button', { name: 'Connect workspace' });
+      const workspaceButton = within(slackCard!).getByRole('button', { name: 'Connect for workspace' });
       await waitFor(() => expect(workspaceButton).toHaveAttribute('aria-disabled', 'true'));
       fireEvent.click(workspaceButton);
       expect(api.startProviderConnection).not.toHaveBeenCalled();
@@ -1523,7 +1544,7 @@ describe('Workspace settings', () => {
 
     const slackCard = (await screen.findByText('Slack')).closest('article');
     expect(slackCard).not.toBeNull();
-    const workspaceButton = await enabledConnectAction(slackCard!, 'Connect workspace');
+    const workspaceButton = await enabledConnectAction(slackCard!, 'Connect for workspace');
     fireEvent.click(workspaceButton);
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'slack',
@@ -1551,8 +1572,8 @@ describe('Workspace settings', () => {
       const linearCard = (await screen.findByText('Linear')).closest('article');
       expect(linearCard).not.toBeNull();
       // The catalog query gates enablement; `findByText` resolves before it.
-      await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect only for me' })).toBeEnabled());
-      const workspaceButton = within(linearCard!).getByRole('button', { name: 'Connect workspace' });
+      await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
+      const workspaceButton = within(linearCard!).getByRole('button', { name: 'Connect for workspace' });
       await waitFor(() => expect(workspaceButton).toHaveAttribute('aria-disabled', 'true'));
       fireEvent.click(workspaceButton);
       expect(api.startProviderConnection).not.toHaveBeenCalled();
@@ -1575,7 +1596,7 @@ describe('Workspace settings', () => {
 
     const linearCard = (await screen.findByText('Linear')).closest('article');
     expect(linearCard).not.toBeNull();
-    const workspaceButton = await enabledConnectAction(linearCard!, 'Connect workspace');
+    const workspaceButton = await enabledConnectAction(linearCard!, 'Connect for workspace');
     fireEvent.click(workspaceButton);
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'linear',
@@ -1606,13 +1627,13 @@ describe('Workspace settings', () => {
 
     const driveCard = (await screen.findByText('Google Drive + Docs + Sheets')).closest('article');
     expect(driveCard).not.toBeNull();
-    await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect workspace' }))
+    await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect for workspace' }))
       .toHaveAttribute('aria-disabled', 'true'));
-    await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect only for me' })).toBeEnabled());
+    await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
 
     const linearCard = screen.getByText('Linear').closest('article');
     expect(linearCard).not.toBeNull();
-    await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled());
+    await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect for workspace' })).toBeEnabled());
   });
 
   it('lets members connect Linear personally without offering a workspace installation', async () => {
@@ -1621,8 +1642,8 @@ describe('Workspace settings', () => {
 
     const linearCard = (await screen.findByText('Linear')).closest('article');
     expect(linearCard).not.toBeNull();
-    await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect only for me' })).toBeEnabled());
-    expect(within(linearCard!).queryByRole('button', { name: 'Connect workspace' })).not.toBeInTheDocument();
+    await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
+    expect(within(linearCard!).queryByRole('button', { name: 'Connect for workspace' })).not.toBeInTheDocument();
   });
 
   it('does not request tool inventories for disabled connections', async () => {
@@ -1786,7 +1807,7 @@ describe('Workspace settings', () => {
     expect(within(dialog).getByLabelText('Webhook signing secret')).toHaveValue('whsec_rotated-secret');
   });
 
-  it('hides connection refresh actions from non-admin members', async () => {
+  it('allows members to refresh their personal connections while hiding workspace controls', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000010',
       connectorType: 'google',
@@ -1808,7 +1829,7 @@ describe('Workspace settings', () => {
 
     expect(await screen.findByText('Google · sam@example.com')).toBeVisible();
     expect(screen.getByText('Linear · Rally')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Refresh Google · sam@example.com' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh Google · sam@example.com' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Refresh Linear · Rally' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delete Google · sam@example.com' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Delete Linear · Rally' })).not.toBeInTheDocument();
@@ -2667,7 +2688,7 @@ describe('Closing the settings window with Escape', () => {
     openSettingsSection('Connections');
 
     const granolaCard = (await screen.findByText('Granola')).closest('article');
-    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect workspace'));
+    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for workspace'));
     const dialog = await screen.findByRole('dialog', { name: 'Connect Granola workspace' });
 
     // Radix closes the dialog on this keystroke itself. The window listener sees

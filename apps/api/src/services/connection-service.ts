@@ -1,3 +1,8 @@
+import { ashbyIngressUrl } from "../lib/ashby-ingress";
+import { registerAshbyRoute } from "./ashby-routing-service";
+import { ConnectorInstallationSchema, type ConnectorInstallation } from "@rally/contracts";
+import { AshbyEventSelectionSchema } from "@rally/connectors";
+import { enqueueConnectorInstallation, runConnectorInstallation } from "./connector-installation-service";
 import { withDeadline } from "../lib/deadline";
 import { dynamicConnectorCapability, stableConnectionWireName, validateDynamicConnectorTools } from "./connector-tool-inventory";
 import { RALLY_HEADERS } from "@rally/contracts/http-headers";
@@ -12,9 +17,7 @@ import {
   SlackWorkspaceCapabilities,
   assertGitHubCapabilitiesGranted,
   connectorCapabilitySupportsScope,
-  createGranolaWebhookEndpoint,
   createWebhookSecret,
-  deleteGranolaWebhookEndpoint,
   discoverGitHubConnectionRepositories,
   getGitHubInstallation,
   githubRepositoryAccessPolicy,
@@ -42,7 +45,7 @@ import type {
 import { CustomMcpConnectionConfigSchema, asUserId, asWorkspaceId } from "@rally/contracts";
 import { addWorkspaceTarget } from "@rally/contracts/workspace-target";
 import { newId, nowIso } from "@rally/db";
-import type { z } from "zod";
+import { z } from "zod";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from "../telemetry/api-emitter";
 import { linearNativeAgentEnabled, numericEnv } from "../env";
@@ -233,11 +236,11 @@ function connectorFailureMessage(error: unknown): string {
 }
 
 const TELEMETRY_CONNECTOR_TYPES = new Set([
-  "custom_mcp", "generic_webhook", "github", "google", "granola", "linear", "notion", "slack", "x",
+  "ashby", "custom_mcp", "generic_webhook", "github", "google", "granola", "linear", "notion", "slack", "x",
 ]);
 
 type TelemetryConnectorType =
-  "custom_mcp" | "generic_webhook" | "github" | "google" | "granola" | "linear" | "notion" | "slack" | "x";
+  "ashby" | "custom_mcp" | "generic_webhook" | "github" | "google" | "granola" | "linear" | "notion" | "slack" | "x";
 
 function telemetryConnector(value: unknown): TelemetryConnectorType | null {
   const connector = String(value);
@@ -259,6 +262,7 @@ const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, re
   // A configured server publishes its own scopes through protected-resource
   // metadata, and Rally asks for exactly those. There is no Rally-authored
   // scope vocabulary to map a capability onto here.
+  ashby: { "ashby.personal.mcp": [] },
   custom_mcp: {
     [CustomMcpCapabilities.tools]: [],
   },
@@ -1163,6 +1167,10 @@ export class ConnectionService {
         throw new ApiError(409, "connector_account_mismatch", `Reconnect the same ${adapter.manifest.displayName} account`);
       }
       existingCredentials = (await this.context(existing)).credentials;
+    } else if (provider === "ashby") {
+      existing = await this.env.DB.prepare("SELECT * FROM connector_connections WHERE workspace_id = ? AND owner_user_id = ? AND connector_type = 'ashby' AND scope = 'personal' AND status <> 'disabled'")
+        .bind(row.workspace_id, row.user_id).first<StoredConnection>();
+      if (existing) { connectionId = existing.id; existingCredentials = (await this.context(existing)).credentials; }
     } else if (provider === "linear") {
       // Starting "Connect" twice for the same Linear identity should repair the
       // existing authorization rather than create two competing webhook/tool
@@ -1297,6 +1305,9 @@ export class ConnectionService {
           at,
         ), attemptId, connectionId);
       } catch (error) {
+        if (provider === "ashby" && isUniqueConstraintError(error)) {
+          throw new ApiError(409, "ashby_connection_exists", "Your Ashby account is already connected. Reopen its connection in Settings.");
+        }
         if (provider === "linear" && isUniqueConstraintError(error)) {
           throw new ApiError(
             409,
@@ -1595,6 +1606,7 @@ export class ConnectionService {
       connection.connector_type === "linear"
       || connection.connector_type === "notion"
       || connection.connector_type === "slack"
+      || (connection.connector_type === "ashby" && connection.scope === "personal")
       || (connection.connector_type === "granola" && connection.scope === "personal")
     ) {
       return this.beginProvider(connection.connector_type, {
@@ -1617,9 +1629,17 @@ export class ConnectionService {
 
   async test(id: string) {
     const connection = await this.loadAuthorized(id);
+    await this.adoptGranolaInstallation(connection);
+    const managed = connection.scope === "workspace" && this.registry().get(connection.connector_type).installationManagement ? await (await this.workspaceObject(connection.workspace_id)).connectorInstallation({ workspaceId: connection.workspace_id, connectionId: id }) : null;
     const previousHealth = telemetryConnectionHealth(connection.status);
     const context = await this.context(connection);
-    const adapter = this.registry().get(connection.connector_type);
+    const baseAdapter = this.registry().get(connection.connector_type);
+    const adapter = managed ? { ...baseAdapter, repair: async (_connection: ConnectorConnectionContext, signal: AbortSignal) => {
+      const repaired = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, action: "repair" });
+      await this.recordInstallationAudit(repaired, "connector.installation.repair");
+      const result = await runConnectorInstallation(this.env, connection.workspace_id, id, signal);
+      return { repaired: result?.state === "current", message: result?.state === "current" ? "Approved webhook configuration is verified" : "Webhook repair needs attention; inspect installation details" };
+    } } : baseAdapter;
     let result: { ok: boolean; message: string; reconnectRequired?: boolean };
     let repairOutcome: string | null = null;
     try {
@@ -1745,7 +1765,7 @@ export class ConnectionService {
     }
     if (repairOutcome) result = { ...result, message: `${result.message}. ${repairOutcome}` };
     await this.env.DB.prepare(
-      `UPDATE connector_connections SET status = ?, error_json = ?, updated_at = ? WHERE id = ?`,
+      `UPDATE connector_connections SET status = ?, error_json = ?, updated_at = ? WHERE id = ? AND status <> 'disabled'`,
     ).bind(
       result.ok ? "healthy" : result.reconnectRequired ? "needs_reconnect" : "error",
       result.ok ? null : JSON.stringify({ message: result.message, reconnectRequired: result.reconnectRequired ?? false }),
@@ -1769,9 +1789,18 @@ export class ConnectionService {
     // Google OAuth revocation is project-wide for the token grant. A regional
     // database cannot prove that no sibling connection exists in another
     // region, so disabling one Google connection must remain a local action.
-    const mayRevokeRemotely = connection.connector_type !== "google";
     let remoteRevocation: "skipped" | "succeeded" | "failed" = "skipped";
     try {
+      await this.adoptGranolaInstallation(connection);
+      const managedInstallation = connection.scope === "workspace" && adapter.installationManagement
+        ? await (await this.workspaceObject(connection.workspace_id)).connectorInstallation({ workspaceId: connection.workspace_id, connectionId: id }) : null;
+      if (managedInstallation) {
+        const installation = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, action: "disconnect" });
+        await this.recordInstallationAudit(installation, "connector.installation.disconnect");
+        await enqueueConnectorInstallation(this.env, installation);
+        await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
+      }
+      const mayRevokeRemotely = connection.connector_type !== "google" && !managedInstallation;
       if (mayRevokeRemotely && adapter.revoke) {
         const signal = AbortSignal.timeout(15_000);
         await withAuthorizedConnection(
@@ -2110,94 +2139,139 @@ export class ConnectionService {
     return { connection };
   }
 
-  async createGranolaWorkspace(input: { apiKey: string; capabilities: string[] }) {
+  async createWorkspaceInstallation(input: { provider: "ashby" | "granola"; apiKey: string; idempotencyKey: string; events?: string[] | undefined }) {
     const telemetryStartedAt = Date.now();
-    const auth = this.requireAuth();
-    this.assertScopeAllowed("workspace");
-    const capabilities = [...new Set(input.capabilities)];
-    if (capabilities.length !== 1 || capabilities[0] !== GranolaCapabilities.workspaceRead) {
-      throw new ApiError(422, "invalid_connector_capabilities", "Choose the Granola workspace read capability");
-    }
-    const existing = await this.env.DB.prepare(
-      `SELECT id FROM connector_connections
-       WHERE workspace_id = ? AND connector_type = 'granola' AND scope = 'workspace'
-         AND status <> 'disabled' LIMIT 1`,
-    ).bind(auth.workspaceId).first<{ id: string }>();
-    if (existing) throw new ApiError(409, "granola_workspace_connection_exists", "A Granola workspace connection already exists");
-
-    const id = newId();
-    const apiKey = input.apiKey.trim();
-    const webhookUrl = new URL(`/ingest/granola/${id}`, this.env.PUBLIC_API_BASE_URL).toString();
-    const webhook = await createGranolaWebhookEndpoint(
-      apiKey,
-      webhookUrl,
-      AbortSignal.timeout(15_000),
-    );
+    const auth = this.requireAuth(); this.assertScopeAllowed("workspace");
+    const adapter = this.registry().get(input.provider);
+    const management = adapter.installationManagement;
+    if (!management) throw new ApiError(422, "installation_unavailable", "Workspace installation is unavailable");
+    const events = input.provider === "ashby" ? AshbyEventSelectionSchema.parse(input.events ?? [...management.events]).sort() : [...management.events];
+    const id = newId(); const at = nowIso(); const apiKey = input.apiKey.trim();
+    if (!apiKey) throw new ApiError(422, "api_key_required", "Enter a provider API key");
+    const destination = input.provider === "ashby" ? ashbyIngressUrl(this.env, id) : new URL(`/ingest/${input.provider}/${id}`, this.env.PUBLIC_API_BASE_URL).toString();
+    const credentials: Record<string, unknown> = { apiKey };
+    const groups = management.grouping === "single_event" ? events.map((event) => [event]) : [events];
+    const registrations = groups.map((selected) => {
+      const key = selected.join("+"); const secretRef = `webhook_secret:${key}`;
+      if (management.signingSecretSource === "host") credentials[secretRef] = randomToken(32);
+      return { key, providerId: null, events: selected, destination, enabled: null,
+        state: "pending", action: "create", stepId: crypto.randomUUID(), verifiedAt: null, error: null,
+        rotation: "stable", rotationGeneration: 0, activeSecretRef: secretRef, pendingSecretRef: null };
+    });
+    const proposed = ConnectorInstallationSchema.parse({ connectionId: id, workspaceId: auth.workspaceId, provider: input.provider,
+      attemptId: input.idempotencyKey, generation: 1, desiredVersion: management.version, appliedVersion: null,
+      state: "setting_up", selectedEvents: events, registrations, createdAt: at, updatedAt: at, lastReceivedAt: null, error: null });
+    const encrypted = await encryptString(JSON.stringify(credentials), this.env.CONNECTOR_CREDENTIALS_KEY, id);
+    // Keyed hash prevents a stored fingerprint becoming an offline API-key oracle.
+    const fingerprintKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(this.env.CONNECTOR_CREDENTIALS_KEY), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const fingerprint = Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", fingerprintKey,
+      new TextEncoder().encode(JSON.stringify([auth.workspaceId, auth.userId, input.provider, "workspace", events, apiKey])))), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    let installation: ConnectorInstallation;
     try {
-      const credentials = {
-        apiKey,
-        webhookEndpointId: webhook.id,
-        webhookSigningSecret: webhook.signingSecret,
-      };
-      const encrypted = await encryptString(
-        JSON.stringify(credentials),
-        this.env.CONNECTOR_CREDENTIALS_KEY,
-        id,
-      );
-      const providerAccountId = `workspace:${(await sha256(apiKey)).slice(0, 32)}`;
-      const at = nowIso();
-      const modelPluginId = await this.allocateModelPluginId(auth.workspaceId, "granola");
-      await this.env.DB.prepare(
-          `INSERT INTO connector_connections
-           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
-            display_name, encrypted_credentials, credential_iv, credential_key_version,
-            granted_scopes_json, model_plugin_id, status, cursor_json, config_json,
-            created_at, updated_at)
-           VALUES (?, ?, 'granola', 'workspace', NULL, ?, 'Granola workspace', ?, ?, ?, ?, ?,
-                   'healthy', '{}', '{}', ?, ?)`,
-        ).bind(
-          id,
-          auth.workspaceId,
-          providerAccountId,
-          encrypted.ciphertext,
-          encrypted.iv,
-          Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-          JSON.stringify(capabilities),
-          modelPluginId,
-          at,
-          at,
-        ).run();
-      await this.env.DB.prepare(
-          `INSERT INTO audit_events
-           (id, workspace_id, actor_type, actor_user_id, action, target_type, target_id, metadata_json, created_at)
-           VALUES (?, ?, 'user', ?, 'connector.authorized', 'connector_connection', ?, ?, ?)`,
-        ).bind(
-          newId(),
-          auth.workspaceId,
-          auth.userId,
-          id,
-          JSON.stringify({ provider: "granola", scope: "workspace", capabilities }),
-          at,
-        ).run();
-      await this.syncConnectorIngressRoute(id);
+      installation = await (await this.workspaceObject(auth.workspaceId)).createConnectorInstallation({ installation: proposed,
+        userId: auth.userId, inputHash: fingerprint, capability: management.capability,
+        credentials: { ...encrypted, keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1) } });
     } catch (error) {
-      try {
-        await deleteGranolaWebhookEndpoint(apiKey, webhook.id, AbortSignal.timeout(10_000));
-      } catch {
-        // The original persistence error is authoritative. Granola admins can
-        // remove a rare orphaned endpoint from connector settings.
-      }
+      if (error instanceof Error && /idempotency_conflict|installation_exists/u.test(error.message)) throw new ApiError(409, "connector_setup_conflict", "This setup key has different inputs, or workspace events are already configured. Reopen the existing installation.");
       throw error;
     }
-    const connection = (await this.list()).find((item) => item.id === id);
-    if (!connection) throw new ApiError(500, "connection_write_failed", "The Granola connection could not be loaded");
-    await this.emitConnectorSetupCompleted(
-      await this.loadAuthorized(id),
-      "api_key",
-      Date.now() - telemetryStartedAt,
-      false,
-    ).catch(() => undefined);
-    return { connection };
+    await this.recordInstallationAudit(installation, "connector.authorized", "setup");
+    if (installation.connectionId === id) {
+      await this.emitConnectorSetupCompleted(await this.loadAuthorized(id), "api_key", Date.now() - telemetryStartedAt, false).catch(() => undefined);
+    }
+    await this.syncConnectorIngressRoute(installation.connectionId);
+    await enqueueConnectorInstallation(this.env, installation);
+    await publishConnectorWorkspaceSync(this.env, auth.workspaceId);
+    const connection = (await this.list()).find((item) => item.id === installation.connectionId);
+    if (!connection) throw new ApiError(409, "connector_setup_superseded", "The connection changed during setup. Reload Settings.");
+    return { installation, connection };
+  }
+
+  async installation(id: string) {
+    const connection = await this.loadAuthorized(id);
+    return { installation: await (await this.workspaceObject(connection.workspace_id)).connectorInstallation({ workspaceId: connection.workspace_id, connectionId: id }) };
+  }
+
+  async changeInstallation(id: string, input: { action: "repair" | "disconnect" | "forget_cleanup" | "reconcile" | "rotate"; key?: string | undefined; providerId?: string | undefined }) {
+    const connection = await this.loadAuthorized(id); this.assertScopeAllowed("workspace");
+    if (input.action === "disconnect") {
+      if (!(await this.installation(id)).installation) {
+        throw new ApiError(404, "connector_installation_not_found", "This connection has no workspace event installation");
+      }
+      await this.disable(id);
+      return this.installation(id);
+    }
+    let installation: ConnectorInstallation;
+    try {
+      installation = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, ...input });
+    } catch (error) { throw installationActionError(error); }
+    await this.recordInstallationAudit(installation, `connector.installation.${input.action}`);
+    await this.syncConnectorIngressRoute(id);
+    await enqueueConnectorInstallation(this.env, installation);
+    await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
+    return { installation };
+  }
+
+  async replaceInstallationApiKey(id: string, apiKey: string, signal: AbortSignal) {
+    const connection = await this.loadAuthorized(id); this.assertScopeAllowed("workspace");
+    if (connection.scope !== "workspace" || connection.status === "disabled") throw new ApiError(409, "connector_disabled", "Only an enabled workspace event connection can replace its API key");
+    const adapter = this.registry().get(connection.connector_type);
+    if (!adapter.installationManagement) throw new ApiError(422, "installation_unavailable", "This connector does not manage workspace event credentials");
+    await this.adoptGranolaInstallation(connection);
+    const object = await this.workspaceObject(connection.workspace_id);
+    const installation = await object.connectorInstallation({ workspaceId: connection.workspace_id, connectionId: id });
+    if (!installation) throw new ApiError(409, "installation_unavailable", "Adopt the existing connection with Test first");
+    // Pair the envelope read with the generation observed before it. Credential
+    // settlement advances that generation, so validation cannot overwrite a
+    // newly returned webhook secret or rotation result with this snapshot.
+    const freshConnection = await this.loadAuthorized(id);
+    const context = await this.context(freshConnection);
+    let replacement: Record<string, unknown> | null = null;
+    await withAuthorizedConnection(this.env, { connection: context, adapter, signal }, async (authorized) => {
+      const credentials = { ...authorized.credentials, apiKey: apiKey.trim() };
+      await adapter.installationManagement!.validate({ ...authorized, credentials }, signal);
+      replacement = credentials;
+    });
+    if (!replacement) throw new ApiError(409, "credential_replacement_unavailable", "The replacement credential could not be validated");
+    const encrypted = await encryptString(JSON.stringify(replacement), this.env.CONNECTOR_CREDENTIALS_KEY, id);
+    let updated: ConnectorInstallation;
+    try {
+      updated = await object.replaceConnectorInstallationCredentials({ workspaceId: connection.workspace_id, connectionId: id,
+        generation: installation.generation, credentials: { ...encrypted, keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1) } });
+    } catch (error) {
+      throw installationActionError(error);
+    }
+    await this.recordInstallationAudit(updated, "connector.credentials.replaced");
+    await enqueueConnectorInstallation(this.env, updated);
+    await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
+    return { installation: updated };
+  }
+
+  async createGranolaWorkspace(input: { apiKey: string; capabilities: string[]; idempotencyKey?: string | undefined }) {
+    if (input.capabilities.length !== 1 || input.capabilities[0] !== GranolaCapabilities.workspaceRead) throw new ApiError(422, "invalid_connector_capabilities", "Choose the Granola workspace capability");
+    return this.createWorkspaceInstallation({ provider: "granola", apiKey: input.apiKey, idempotencyKey: input.idempotencyKey ?? crypto.randomUUID(),
+      events: ["note.access_granted", "note.edited", "note.generated", "note.regenerated"] });
+  }
+
+  private async adoptGranolaInstallation(connection: StoredConnection) {
+    if (connection.connector_type !== "granola" || connection.scope !== "workspace" || connection.status === "disabled") return null;
+    const object = await this.workspaceObject(connection.workspace_id);
+    const current = await object.connectorInstallation({ workspaceId: connection.workspace_id, connectionId: connection.id });
+    if (current) return current;
+    const context = await this.context(connection);
+    const at = nowIso(); const events = ["note.access_granted", "note.edited", "note.generated", "note.regenerated"];
+    const providerId = stringField(context.credentials, "webhookEndpointId");
+    const installation = ConnectorInstallationSchema.parse({ connectionId: connection.id, workspaceId: connection.workspace_id, provider: "granola",
+      attemptId: crypto.randomUUID(), generation: 1, desiredVersion: 1, appliedVersion: null, state: "setting_up", selectedEvents: events,
+      registrations: [{ key: events.join("+"), providerId, events, adoptingExistingDestination: true,
+        destination: new URL(`/ingest/granola/${connection.id}`, this.env.PUBLIC_API_BASE_URL).toString(), enabled: null,
+        state: providerId ? "pending" : "action_required", action: "inspect", stepId: crypto.randomUUID(), verifiedAt: null,
+        error: providerId ? null : "The existing webhook ID is missing. Inspect Granola before reconciling.",
+        rotation: "stable", rotationGeneration: 0, activeSecretRef: "webhookSigningSecret", pendingSecretRef: null }],
+      createdAt: at, updatedAt: at, lastReceivedAt: null, error: null });
+    return object.createConnectorInstallation({ installation, userId: this.requireAuth().userId, inputHash: "granola-existing-connection",
+      credentials: { ciphertext: String(connection.encrypted_credentials), iv: String(connection.credential_iv), keyVersion: Number(connection.credential_key_version || 1) },
+      capability: GranolaCapabilities.workspaceRead, adopt: true }).catch((error: unknown) => { throw installationActionError(error); });
   }
 
   /**
@@ -2505,6 +2579,53 @@ export class ConnectionService {
       (authorized) => adapter.healthCheck(authorized, AbortSignal.timeout(20_000)),
     );
     if (!health.ok) throw new ConnectorError("unsupported_capability", health.message);
+  }
+
+  async ingestAshbyWebhook(connectionId: string, rawBody: Uint8Array, headers: Headers) {
+    const maxBytes = numericEnv(this.env, "PROVIDER_WEBHOOK_MAX_BYTES", 1_000_000);
+    if (rawBody.byteLength > maxBytes) throw new ApiError(413, "webhook_too_large", "Ashby webhook exceeds the configured limit");
+    await this.routeIngressConnection(connectionId, "ashby");
+    const connection = await this.env.DB.prepare("SELECT * FROM connector_connections WHERE id = ? AND connector_type = 'ashby' AND scope = 'workspace' AND status <> 'disabled'").bind(connectionId).first<StoredConnection>();
+    if (!connection) throw new ApiError(404, "connection_not_found", "Ashby workspace event connection not found");
+    const context = await this.context(connection); context.config.region = this.env.AVALON_REGION;
+    const installation = await (await this.workspaceObject(connection.workspace_id)).connectorInstallation({ workspaceId: connection.workspace_id, connectionId });
+    if (!installation) throw new ApiError(401, "installation_unavailable", "Ashby installation is unavailable");
+    const source = this.registry().get("ashby").webhookActivity!;
+    let text: string;
+    try { text = new TextDecoder("utf-8", { fatal: true }).decode(rawBody); }
+    catch { throw new ApiError(400, "invalid_webhook_encoding", "Ashby webhook must be valid UTF-8"); }
+    const receivedAt = nowIso();
+    let envelope: Awaited<ReturnType<typeof source.verify>> | null = null;
+    for (const registration of installation.registrations) {
+      if (registration.state === "removed") continue;
+      const references = [registration.activeSecretRef, ...(registration.verificationPolicy === "active_and_pending" ? [registration.pendingSecretRef] : [])];
+      for (const reference of references) {
+        const secret = reference ? context.credentials[reference] : null;
+        if (typeof secret !== "string") continue;
+        try { envelope = await source.verify({ rawBody: text, rawBodyBytes: rawBody, headers, receivedAt, now: Date.now(), maxBytes, verificationSecret: secret }); }
+        catch (error) { if (!(error instanceof ConnectorError) || error.code !== "invalid_signature") throw error; }
+        if (envelope) break;
+      }
+      if (envelope) {
+        if (envelope.eventType !== "ping" && !registration.events.includes(envelope.eventType)) throw new ApiError(401, "event_not_authorized", "This signing key does not authorize this event");
+        break;
+      }
+    }
+    if (!envelope) throw new ApiError(401, "invalid_signature", "Ashby webhook signature is invalid");
+    if (envelope.eventType === "ping") return { ping: true };
+    if (!installation.selectedEvents.includes(envelope.eventType)) throw new ApiError(401, "event_not_authorized", "This Ashby event was not selected");
+    const receipt = await (await this.workspaceObject(connection.workspace_id)).claimWebhookReceipt({ workspaceId: connection.workspace_id,
+      receiptId: newId(), connectionId, signatureHash: envelope.receiptKey!, receivedAt,
+      expiresAt: new Date(Date.now() + 4 * 24 * 60 * 60 * 1_000).toISOString(),
+      eventIdentity: { providerEventId: envelope.deliveryId, eventType: envelope.eventType } });
+    const payloadKey = `${this.env.AVALON_REGION}/${connection.workspace_id}/activities/ashby/${connectionId}/${await sha256(envelope.receiptKey!)}/${envelope.bodyHash}.json`;
+    await this.env.PAYLOADS.put(payloadKey, rawBody, { httpMetadata: { contentType: "application/json" } });
+    const event = z.record(z.string(), z.unknown()).parse(envelope.event);
+    const normalized = source.normalize(context, { ...envelope, event: { ...event, observedAt: receipt.firstObservedAt ?? receivedAt } }, payloadKey);
+    if (!normalized) throw new ApiError(400, "invalid_event", "Ashby event could not be normalized");
+    const accepted = await persistNormalizedActivity(this.env, normalized, "ashby");
+    await (await this.workspaceObject(connection.workspace_id)).receiveConnectorInstallationEvent({ workspaceId: connection.workspace_id, connectionId, receivedAt });
+    return { duplicate: receipt.outcome === "duplicate", activityId: accepted.activityId };
   }
 
   async ingestGranolaWebhook(
@@ -2966,6 +3087,9 @@ export class ConnectionService {
          FROM connector_connections WHERE id = ?`,
     ).bind(connectionId).first<ConnectorIngressRouteSource>();
     if (!connection) return;
+    if (connection.connector_type === "ashby" && connection.scope === "workspace") {
+      await registerAshbyRoute(this.env, { connectionId, region: this.env.AVALON_REGION, status: connection.status === "disabled" ? "disabled" : "active" });
+    }
     const route = connectorIngressRouteValues(connection, this.env.AVALON_REGION);
     await workspaceRegionalDatabase(this.env).prepare(
       `INSERT INTO connector_ingress_routes (
@@ -3272,6 +3396,19 @@ export class ConnectionService {
     ).bind(workspaceId, connectionId, at, at, JSON.stringify(rows)).run();
   }
 
+  private async recordInstallationAudit(installation: ConnectorInstallation, action: string, phase = String(installation.generation)): Promise<void> {
+    const auth = this.requireAuth();
+    const operationKey = `${installation.connectionId}:${action}:${phase}`;
+    await this.env.DB.prepare(`INSERT INTO audit_events
+      (id, workspace_id, actor_type, actor_user_id, action, target_type, target_id, metadata_json, created_at)
+      SELECT ?, ?, 'user', ?, ?, 'connector_connection', ?, ?, ?
+      WHERE NOT EXISTS (SELECT 1 FROM audit_events WHERE workspace_id = ? AND target_id = ?
+        AND action = ? AND actor_user_id = ? AND json_extract(metadata_json, '$.operationKey') = ?)`)
+      .bind(newId(), auth.workspaceId, auth.userId, action, installation.connectionId,
+        JSON.stringify({ operationKey, provider: installation.provider, generation: installation.generation }), nowIso(),
+        auth.workspaceId, installation.connectionId, action, auth.userId, operationKey).run();
+  }
+
   private async recordConnectionAudit(
     workspaceId: string,
     userId: string,
@@ -3471,6 +3608,21 @@ export class ConnectionService {
   private async refreshScheduler(workspaceId: string): Promise<void> {
     await refreshWorkspaceSchedule(this.env, workspaceId);
   }
+}
+
+function installationActionError(error: unknown): unknown {
+  if (!(error instanceof Error)) return error;
+  const refusals = [
+    ["connector_installation_not_found", "This connection has no workspace event installation"],
+    ["connector_still_enabled", "Disconnect this connection before forgetting its cleanup credential"],
+    ["connector_disabled", "This connection is disconnected"],
+    ["connector_cleanup_credential_unavailable", "The cleanup credential is unavailable. Remove the recorded webhook in the provider dashboard"],
+    ["connector_reconciliation_invalid", "Choose an unresolved registration and supply its provider webhook ID"],
+    ["connector_adoption_invalid", "The existing workspace connection changed. Reload its status before trying again"],
+    ["connector_installation_superseded", "The connection changed during this operation. Reload its status before trying again"],
+  ] as const;
+  const refusal = refusals.find(([code]) => error.message.includes(code));
+  return refusal ? new ApiError(refusal[0] === "connector_installation_not_found" ? 404 : 409, refusal[0], refusal[1]) : error;
 }
 
 function parseJson<T>(value: unknown, fallback: T): T {

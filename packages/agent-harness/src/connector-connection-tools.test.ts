@@ -30,7 +30,7 @@ describe("connector connection tool guidance", () => {
     expect(schema.required).toEqual(["connectorId", "scope"]);
     expect(schema.additionalProperties).toBe(false);
     expect(schema.properties?.connectorId?.description)
-      .toContain("Personal only: google-mail-calendar, granola.");
+      .toContain("Personal only: google-mail-calendar, ashby, granola.");
     expect(schema.properties?.scope?.description)
       .toBe("Use personal for the current user's account. Use workspace only for an id described as personal or workspace.");
     expect(AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION.inputSchema).toEqual(schema);

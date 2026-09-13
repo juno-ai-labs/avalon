@@ -47,6 +47,30 @@ A connector review therefore asks whether each ingestion, read, and retention pa
 is purpose-bound, authorization-preserving, and bounded — not whether the
 implementation literally stores zero copies.
 
+### Ashby personal OAuth and workspace API keys
+
+Ashby personal authorization uses resource `https://mcp.ashbyhq.com/mcp/v1`
+and allowed authorization origin `https://mcp-auth.ashbyhq.com`. Public metadata
+advertises issuer `/oidc`, registration `/oidc/reg`, authorization `/oidc/auth`,
+token `/oidc/token`, PKCE S256 and scopes `openid`, `mcp`, `offline_access`.
+The shared hosted-MCP helper discovers these values; this is metadata evidence,
+not successful live DCR or sign-in acceptance. Regional callbacks are
+`https://api.rallywith.ai/connections/ashby/callback` and
+`https://eu.api.rallywith.ai/connections/ashby/callback`. Ashby's beta MCP service
+requires organization opt-in and eligible account access.
+
+Workspace event setup independently uses an administrator-provided API key with
+`apiKeysRead` and `apiKeysWrite` permissions, using Basic authentication for
+`apiKey.info` and `webhook.create/info/update/delete`. It does not use OAuth to
+register subscriptions or add a server secret. New setup automatically registers
+the 27 business event types documented by [webhook.create](https://developers.ashbyhq.com/reference/webhookcreate-1),
+without a customer event picker. The email-change beta may be unavailable for an
+organization; a refused registration remains visible while others continue. See [Ashby authentication](https://developers.ashbyhq.com/docs/authentication)
+and [API key information](https://developers.ashbyhq.com/reference/apikeyinfo).
+The new public webhook hostname belongs to the dedicated Ashby ingress Worker;
+[installation lifecycle](connector-installation-lifecycle.md) owns setup,
+recovery and the outstanding live-account/confidential-payload acceptance.
+
 ### Google OAuth clients and APIs
 
 Google platform identity and Google connector consent use **two separate** Google
@@ -441,6 +465,18 @@ repository. What can be:
   what this document says. A change here that is not exercised there is unverified.
 
 ## Changelog
+
+### 2026-09-12 — Ashby metadata and independent webhook management
+
+**What changed:** Ashby personal authorization uses discovered hosted-MCP metadata and regional callbacks. Workspace event setup independently accepts a customer API key.
+
+**Why:** The provider exposes different authorization mechanisms for personal tools and organization webhook management; successful metadata discovery is not evidence of live account eligibility or DCR compatibility.
+
+**Considered and rejected:** Using personal OAuth to register organization subscriptions or treating public metadata as completed account acceptance.
+
+**Consequences:** Keep workspace API keys separate from personal MCP credentials and preserve the stated API-key prerequisites. No new provider-wide secret is required; live OAuth, delivery and confidential-payload acceptance remain open.
+
+PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
 
 ### 2026-09-01 — Google preset grants stopped inheriting earlier scopes
 

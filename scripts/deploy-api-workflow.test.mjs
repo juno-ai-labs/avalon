@@ -163,8 +163,8 @@ test('profiles all static service artifacts and uploads both regional sets befor
   assert.ok(buildEu < uploadEu && buildGlobal < uploadEu && buildTelemetry < uploadEu);
   assert.ok(uploadEu < deployEu && uploadGlobal < deployEu);
   assert.ok(deployEu < euHealth && euHealth < deployGlobal);
-  assert.match(workflow, /wrangler\.documents\.eu\.jsonc wrangler\.terminal\.eu\.jsonc \.wrangler\.lakehouses\.eu\.json/u);
-  assert.match(workflow, /wrangler\.documents\.global\.jsonc wrangler\.terminal\.global\.jsonc wrangler\.telemetry\.global\.jsonc wrangler\.pricing\.global\.jsonc \.wrangler\.lakehouses\.global\.json/u);
+  assert.match(workflow, /node scripts\/deploy-api-direct-region\.mjs eu/u);
+  assert.match(workflow, /node scripts\/deploy-api-direct-region\.mjs global/u);
   assert.match(workflow, /WRANGLER_OUTPUT_FILE_PATH="\$output_file"[\s\S]+\.version_id/u);
   assert.match(workflow, /wrangler versions deploy[\s\S]+--version-id "\$version_id"/u);
   assert.doesNotMatch(workflow, /versions deploy[\s\S]{0,200}--version-tag/u);

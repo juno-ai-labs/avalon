@@ -63,6 +63,7 @@ export {
 } from "./hosted-mcp";
 import { createCustomMcpConnector, type CustomMcpConnectorConfig } from "./custom-mcp";
 import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
+import { createAshbyConnector, type AshbyConnectorConfig } from "./ashby";
 import { createGranolaConnector, type GranolaConnectorConfig } from "./granola";
 import { createLinearConnector, type LinearConnectorConfig } from "./linear";
 import { createNotionConnector, type NotionConnectorConfig } from "./notion";
@@ -4910,6 +4911,19 @@ export class ConnectorRegistry {
           `Connector ${manifest.type} implements webhook activity but does not declare it`,
         );
       }
+      const installation = adapter.installationManagement;
+      if (installation && (!Number.isInteger(installation.version) || installation.version < 1
+        || !manifest.supportedScopes.includes("workspace")
+        || !manifest.capabilities.some((capability) => capability.id === installation.capability)
+        || !["host", "provider"].includes(installation.signingSecretSource)
+        || typeof installation.canUpdateDestination !== "boolean"
+        || (installation.canUpdateDestination && installation.support.update !== "automatic")
+        || installation.events.length === 0 || new Set(installation.events).size !== installation.events.length
+        || installation.events.some((event) => !manifest.activityTypes.includes(event))
+        || (installation.support.update === "automatic" && !installation.update)
+        || (installation.support.rotate === "automatic" && !installation.rotation))) {
+        throw new ConnectorError("invalid_configuration", `Connector ${manifest.type} installation management is inconsistent with its manifest`);
+      }
       const plugin = adapter.agentPlugin;
       if (plugin.providerType !== manifest.type) {
         throw new ConnectorError(
@@ -5051,6 +5065,7 @@ export function connectorSupportsSurface(
 export function createConnectorRegistry(input: {
   observer?: ConnectorObserver;
   customMcp?: CustomMcpConnectorConfig;
+  ashby?: AshbyConnectorConfig;
   granola?: GranolaConnectorConfig;
   google?: GoogleConnectorConfig;
   github?: GitHubConnectorConfig;
@@ -5067,6 +5082,10 @@ export function createConnectorRegistry(input: {
       input.customMcp.fetch ?? globalThis.fetch,
       input.observer,
     ),
+  }));
+  if (input.ashby) adapters.push(createAshbyConnector({
+    ...input.ashby,
+    fetch: instrumentConnectorFetch("ashby", input.ashby.fetch ?? globalThis.fetch, input.observer),
   }));
   if (input.granola) adapters.push(createGranolaConnector({
     ...input.granola,
@@ -5393,3 +5412,7 @@ export const __testing = {
   hmacHex,
   serializeEmail
 };
+
+export { createAshbyConnector, AshbyCapabilities, AshbyEventTypes, AshbyEventSelectionSchema, AshbyAgentPluginDescriptor, AshbyWorkspaceAgentPresentation, verifyAshbyWebhook, type AshbyConnectorConfig } from "./ashby";
+
+export type { ConnectorInstallationManagement, ConnectorRegistration } from "./installation";

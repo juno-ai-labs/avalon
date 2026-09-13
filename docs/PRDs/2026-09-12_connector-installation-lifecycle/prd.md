@@ -481,7 +481,100 @@ connection remains personal authority. Maintenance never turns one into the othe
 
 ## Decision log
 
-None yet.
+### 2026-09-12 — Explicit user clarifications supersede the proposed confirmation, labels and ingress design
+
+**Decided:** Rally never asks for per-tool confirmation, including writes.
+The shared hosted-MCP write classification governs retries and receipts only.
+Use **Connect for me** and administrator-only **Connect for workspace** as
+independent actions. Serve `ashby.rallywith.ai` with a dedicated connector Worker,
+while preserving Granola callback URLs and subscriptions. Reuse the existing
+Ace operator credential for explicitly authorized maintenance routes. These
+clarifications supersede conflicting proposal text above and in the original
+acceptance table; no agent should implement the historical confirmation flow.
+
+**Why:** The user explicitly selected the labels and rejected tool confirmations.
+They approved dedicated connector Workers because API startup and bundle size
+had already caused an engineering incident, and selected the existing operator
+identity. No authorized Ashby organization is available for live acceptance.
+
+**Changes:** Settings, onboarding, public guidance and agent instructions reflect
+those decisions. The dedicated Worker isolates ingress; provider management and
+MCP remain regional API work, so this change does not reduce the main API bundle.
+Global must expose the new routing entrypoint before EU's first deployment binds
+to it. Complete independent implementation and automated tests while keeping
+live OAuth/tools, provider delivery/recovery and confidential audience acceptance
+outstanding in the plan. Both personal queries and workspace events remain
+required for launch. No deployment, fleet operation or merge was performed.
+
+### 2026-09-13 — Subscribe automatically to the documented Ashby event catalog
+
+**Decided:** The user explicitly expanded initial workspace subscriptions from two
+events to all documented Ashby business events and removed event selection from
+connection setup. Connection authorization covers the reviewed catalog; automation
+triggers choose which notifications matter. Personal MCP remains independent.
+
+**Why:** Choosing provider notification types is unnecessary setup work. A shared
+connection should receive the available organization notifications without asking
+administrators to understand webhook mechanics.
+
+**Changes:** Default new setup to the 27 documented webhook.create event types,
+excluding technical ping. Remove desktop event checkboxes and their search setting.
+Retain per-registration verification and visible partial failures, including the
+organization-dependent email beta event. Its retry watermark changes without
+changing event identity, so dedupe must preserve one logical signal. Existing
+explicit event grants remain bounded; no undocumented payload fields, recruiting
+REST tools, automatic beta compatibility claim, or live acceptance is introduced.
+
+### 2026-09-13 — Keep technical installation controls out of the main view
+
+**Decided:** Workspace event management shows a plain status, last event, and
+explicit Test, with help when attention is needed. Advanced settings contain
+credential replacement, signing-key guidance, registration diagnostics and manual
+reconciliation. Cleanup retry appears only for incomplete removal; forgetting the
+cleanup credential remains advanced. Screenshots are removed from the PR.
+
+**Why:** The user found the registration-level console confusing even as an
+engineer. Ordinary connection management should not require understanding provider
+IDs, callback URLs or signing-key state.
+
+**Changes:** This changes presentation, not installation authority or recovery
+semantics. Opening either view remains read-only. Explicit Test retains repair
+followed by healthCheck. Visual inspection is still performed locally.
+
+### 2026-09-13 — Automate the first regional deployment
+
+**Decided:** The normal API workflow inspects active Cloudflare exports and
+bootstraps Global first only when the new Ashby router is absent, after proving
+its existing EU dependencies. Health and export verification precede EU; shared
+ingress follows both regions. Later releases retain EU-first order. A partial
+EU-only request cannot implicitly deploy Global.
+
+**Why:** EU retirement will take time and must not block this connector. Requiring
+a manual pre-merge bootstrap would make ordinary deployment unsafe. The user
+authorized the workflow fix and PR update, without authorizing deployment or merge.
+
+**Changes:** Reuse direct regional deployment commands and existing health checks;
+fail on unknown metadata or a circular dependency, and test both initial and
+normal ordering with failure barriers. Live deployment and provider acceptance
+remain outstanding.
+
+### 2026-09-13 — Enable workspace events for automations
+
+**Decided:** The user explicitly rejected the blanket Ashby automation block.
+An administrator connecting organization events authorizes their normalized
+notifications for Rally workspace automations. Use the existing workspace
+audience, deterministic matcher, Queue delivery and occurrence deduplication.
+Personal MCP authority remains separate and the normalized field allowlist stays
+unchanged. No feature flag or live-acceptance gate disables event execution.
+
+**Why:** Receiving events without letting them trigger automations does not
+satisfy the requested connector. An Ashby account is unavailable; that limits
+provider verification, not independent implementation or automated testing.
+
+**Changes:** This supersedes the earlier requirement to withhold workspace activity
+pending confidential-payload acceptance. Actual OAuth, webhook behavior and payloads
+remain unverified against Ashby. The PRD remains in progress without claiming those
+checks succeeded. No deployment or merge is authorized by this change.
 
 ## Key design decisions
 
