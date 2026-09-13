@@ -1,5 +1,7 @@
+import type { HarnessToolContext } from "@rally/agent-harness";
 import {
   AttachmentKindSchema,
+  type ArtifactManifest,
   ArtifactManifestSchema,
   type ArtifactHostnameStub,
   SITE_MANIFEST_MIME_TYPE,
@@ -21,10 +23,22 @@ import { createResourceObjectPort } from "../../runtime/resource-port";
 import { allocateResourceSlugBesideCreation } from "../resource-slug";
 import { ensureArtifactHostname } from "../artifact-hostname";
 import { putStagedResourceObject, releaseStagedResourceObject } from "../resource-object-cleanup";
-import { loadVisibleWorkstreamResourcesByIds } from "../workstream-resource-visibility";
+import {
+  loadVisibleWorkstreamResourcesByIds,
+  type VisibleWorkstreamResourceRow,
+} from "../workstream-resource-visibility";
+import { TERMINAL_OUTPUT_DIRECTORY } from "./contract";
 import type { TerminalPortFactory } from "./object-port";
-import type { TerminalSandboxProvider } from "./provider-contract";
+import {
+  terminalShellQuote as shellQuote,
+  type TerminalSandboxProvider,
+} from "./provider-contract";
 import type { TerminalResourceBridge } from "./runtime";
+import {
+  importTreeFailure,
+  materializeTreeCommand,
+  readArtifactVersionFiles,
+} from "./site-import";
 import {
   existingArtifactForResource,
   pointArtifactAtVersion,
@@ -34,6 +48,7 @@ import {
 import {
   requireTerminalEffectIntent,
   TerminalToolError,
+  type TerminalImportResourceOutput,
   type TerminalPublishedResourceOutput,
   type TerminalPublishedSiteOutput,
 } from "./tools";
@@ -51,6 +66,26 @@ interface PublishedRow {
 
 function fileName(path: string): string {
   return path.split("/").at(-1) || "resource";
+}
+
+/**
+ * Where a site publishes from, spelled as an `import_resource` destination.
+ *
+ * The two tools measure paths from different roots — publication from
+ * `$AVALON_RESOURCE_DIR`, every other path from the workspace root — so the
+ * round trip only closes if the suggestion carries the output directory. A
+ * site whose stored metadata predates `sourcePath` still gets a usable
+ * directory rather than no answer.
+ */
+function sitePublishPath(row: VisibleWorkstreamResourceRow): string {
+  const fallback = `${TERMINAL_OUTPUT_DIRECTORY}/site`;
+  try {
+    const metadata = JSON.parse(row.metadata_json ?? "{}") as { sourcePath?: unknown };
+    const sourcePath = typeof metadata.sourcePath === "string" ? metadata.sourcePath : null;
+    return sourcePath ? `${TERMINAL_OUTPUT_DIRECTORY}/${sourcePath}` : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 /**
@@ -358,6 +393,165 @@ export function createTerminalResourceBridge(
       ...input,
     });
   };
+  /**
+   * Materialize a published site's own source back into the sandbox.
+   *
+   * This is the half of the revision loop that was specified and never
+   * connected. `site-import.ts` has read a version's files out of the bucket
+   * and staged the tree since sites shipped, `import_resource` has documented
+   * `destinationPath` as a site's directory root and `overwrite` as whole-tree
+   * replacement, and the sites skill tells a run to re-import before editing —
+   * but nothing called any of it, so a site fell through to the single-file
+   * path below and the model received the manifest that indexes the site
+   * instead of the site. A run could then only rewrite from memory and
+   * republish, which is not a revision of what is being served.
+   *
+   * The version imported is the one the resource points at, not whatever an
+   * earlier sandbox happened to hold, so an edit starts from what viewers see.
+   */
+  const importSiteTree = async (
+    context: HarnessToolContext,
+    row: VisibleWorkstreamResourceRow,
+    destination: string,
+    overwrite: boolean,
+    sandboxGeneration: number,
+    providerSandboxId: string,
+    provider: TerminalSandboxProvider,
+  ): Promise<TerminalImportResourceOutput> => {
+    const stored = row.content_ref ? await env.PAYLOADS.get(row.content_ref) : null;
+    if (!stored) {
+      throw new TerminalToolError(
+        "resource_not_importable",
+        "This site's manifest is temporarily unavailable. Retry the import; the site keeps serving its current version either way.",
+        { reason: "Retry the import once." },
+      );
+    }
+    const manifestBytes = new Uint8Array(await stored.arrayBuffer());
+    const digest = await sha256Hex(manifestBytes);
+    if (row.content_sha256 && digest !== row.content_sha256) {
+      throw new TerminalToolError(
+        "resource_hash_mismatch",
+        "The site's stored manifest changed while importing. Re-list the work-stream resources and retry from its current version.",
+        { reason: "Re-list work-stream resources and retry the import." },
+      );
+    }
+    let manifest: ArtifactManifest;
+    try {
+      manifest = ArtifactManifestSchema.parse(
+        JSON.parse(new TextDecoder().decode(manifestBytes)) as unknown,
+      );
+    } catch {
+      throw new TerminalToolError(
+        "resource_not_importable",
+        "This site's manifest could not be read, so Rally cannot reconstruct its source. Publish a fresh directory at the site's path to replace it.",
+        { reason: "Publish a fresh directory at the site's path." },
+      );
+    }
+    // Throws `resource_not_importable` for a version whose bytes are gone,
+    // rather than materializing part of a tree.
+    const files = await readArtifactVersionFiles(env, manifest);
+    const totalBytes = files.reduce((total, file) => total + file.bytes.byteLength, 0);
+    const absolute = `/workspace/${destination}`;
+    const staging = `/workspace/.rally/tmp/${newId()}`;
+    const plannedAt = Date.now();
+    await terminalPort(context.workspaceId, context.workstreamId)
+      .recordImportedResource({
+        sandboxGeneration,
+        resourceId: row.id,
+        destinationPath: destination,
+        sourceSha256: digest,
+        sizeBytes: totalBytes,
+        state: "planned",
+        importedAt: null,
+        now: plannedAt,
+      });
+    const cleanupStaging = async (): Promise<void> => {
+      await provider.runUtilityCommand(providerSandboxId, {
+        operation: "file.temp_cleanup",
+        command: `rm -rf -- ${shellQuote(staging)}`,
+        cwd: "/workspace",
+        timeoutMs: 10_000,
+      }).catch(() => undefined);
+    };
+    // One command, not one per directory: it makes every staging parent the
+    // uploads need and answers whether the destination is already there, which
+    // is the only thing separating a created import from a replacing one.
+    const parents = [...new Set(files
+      .map((file) => file.path.split("/").slice(0, -1).join("/"))
+      .filter(Boolean))];
+    const prepared = await provider.runUtilityCommand(providerSandboxId, {
+      operation: "resource.import.stage",
+      command: [
+        `staging=${shellQuote(staging)}`,
+        `destination=${shellQuote(absolute)}`,
+        `mkdir -p -- "$staging"${parents.map((parent) => ` "$staging"/${shellQuote(parent)}`).join("")} || exit 46`,
+        'if [ -e "$destination" ]; then printf "exists\\n"; fi',
+      ].join("\n"),
+      cwd: "/workspace",
+      timeoutMs: 30_000,
+    });
+    if (prepared.exitCode !== 0) {
+      await cleanupStaging();
+      throw new TerminalToolError(
+        "resource_import_failed",
+        "The site's files could not be staged in the workspace. Retry the import.",
+        { reason: "Retry the import." },
+      );
+    }
+    const replaced = prepared.stdout.trim() === "exists";
+    try {
+      for (const file of files) {
+        await provider.writeFile(
+          providerSandboxId,
+          `${staging}/${file.path}`,
+          file.bytes,
+          context.signal,
+        );
+      }
+    } catch (error) {
+      await cleanupStaging();
+      throw error;
+    }
+    const materialized = await provider.runUtilityCommand(providerSandboxId, {
+      operation: "resource.import.finalize",
+      command: materializeTreeCommand({ destination: absolute, staging, overwrite }),
+      cwd: "/workspace",
+      timeoutMs: 60_000,
+    });
+    const failure = importTreeFailure(materialized.exitCode);
+    if (failure) {
+      await cleanupStaging();
+      throw failure;
+    }
+    const written = Number(materialized.stdout.trim());
+    if (!Number.isSafeInteger(written) || written !== files.length) {
+      await cleanupStaging();
+      throw new TerminalToolError(
+        "resource_import_failed",
+        "Daytona did not confirm every file of the site's source. Retry the import before editing, so a partial tree is not republished as a version.",
+        { reason: "Retry the import before editing the site." },
+      );
+    }
+    const importedAt = Date.now();
+    await terminalPort(context.workspaceId, context.workstreamId)
+      .completeImportedResource({
+        sandboxGeneration,
+        resourceId: row.id,
+        destinationPath: destination,
+        sourceSha256: digest,
+        importedAt,
+        now: importedAt,
+      });
+    return {
+      resourceId: row.id,
+      filePath: destination,
+      outcome: replaced ? "replaced" : "created",
+      mimeType: row.mime_type ?? SITE_MANIFEST_MIME_TYPE,
+      sizeBytes: totalBytes,
+      sourceSha256: digest,
+      fileCount: files.length,
+    };
+  };
   return {
     async importResource(context, input, destinationPath, sandboxGeneration, providerSandboxId, provider) {
       const rows = await loadVisibleWorkstreamResourcesByIds(
@@ -376,6 +570,31 @@ export function createTerminalResourceBridge(
           "resource_not_found",
           "That resource is no longer attached or visible to this run. Call workstream_list_resources to choose a currently visible resource, then retry import_resource.",
           { reason: "Call workstream_list_resources and choose a currently visible resource ID." },
+        );
+      }
+      if (row.resource_type === "generated_site") {
+        // Deterministic placement exists to give a *file* import provenance: a
+        // fixed path, a digest, and a reuse when they match. A tree has no
+        // single body to match, and the path a site wants is not Rally's to
+        // pick anyway — it is the one the site publishes from, because
+        // republishing that path is what updates this site rather than minting
+        // a second one at a second URL.
+        if (!("destinationPath" in input)) {
+          const suggestion = sitePublishPath(row);
+          throw new TerminalToolError(
+            "destination_required",
+            `Importing a site needs an explicit destinationPath naming the directory to materialize its files into. Use ${suggestion}, then publish that same path to update this site; a different path would mint a second site at a second URL.`,
+            { field: "destinationPath", reason: `Retry with destinationPath: "${suggestion}".` },
+          );
+        }
+        return importSiteTree(
+          context,
+          row,
+          destinationPath,
+          input.overwrite === true,
+          sandboxGeneration,
+          providerSandboxId,
+          provider,
         );
       }
       if (!row.content_ref) {
