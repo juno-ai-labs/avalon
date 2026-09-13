@@ -186,7 +186,7 @@ export {
   FirefliesPersonalAgentPresentation,
   FIREFLIES_MANUAL_INSTRUCTIONS,
   FIREFLIES_MCP_URL,
-  firefliesTool,
+  firefliesTools,
   type FirefliesConnectorConfig,
   type FirefliesEventType,
   type VerifiedFirefliesWebhook,
