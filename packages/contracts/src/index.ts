@@ -911,9 +911,7 @@ export const ConnectorInstallationMutationResponseSchema = z.object({ installati
  */
 export const ConnectorManualRegistrationSchema = z.strictObject({
   destination: HttpsUrlSchema,
-  events: z.array(z.string().min(1)).min(1),
   signingSecret: z.string().min(1).max(512),
-  instructions: z.string().min(1).max(4_000),
 });
 export type ConnectorManualRegistration = z.infer<typeof ConnectorManualRegistrationSchema>;
 export const ConnectorInstallationSetupResponseSchema = z.object({
@@ -3860,6 +3858,6 @@ export { safeParseSocketEvent, isUnknownSocketEvent } from "./socket-events";
 export const ClientSocketEventTypeSchema = z.union(ClientSocketEventSchema.options.map((event) => event.shape.type));
 export const WorkspaceSocketClientEventTypeSchema = z.union(WorkspaceSocketClientEventSchema.options.map((event) => event.shape.type));
 
-export { ConnectorInstallationSchema, ConnectorInstallationProviderSchema, ConnectorRegistrationSchema, type ConnectorInstallation, type InstallationRegistration } from "./connector-installation";
+export { ConnectorInstallationSchema, ConnectorInstallationProviderSchema, ConnectorInstallationProviders, ConnectorRegistrationSchema, type ConnectorInstallation, type InstallationRegistration } from "./connector-installation";
 
 export { AshbyEventTypes, AshbyEventLabels } from "./ashby-events";

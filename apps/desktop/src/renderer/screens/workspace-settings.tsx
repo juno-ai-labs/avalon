@@ -40,6 +40,7 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react';
+import { ConnectorInstallationProviders } from '@rally/contracts';
 import type {
   ConnectorOAuthStart,
   CustomMcpToolPolicy,
@@ -70,6 +71,19 @@ import type {
 
 type SettingsSection = DesktopSettingsSection;
 type ConnectionFilter = 'all' | 'connected' | 'not_connected';
+
+/**
+ * Whether Rally manages this provider's workspace event subscriptions.
+ *
+ * Read off the contract's own enum rather than written out here: five places on
+ * this screen asked the same question and each held its own copy of the list, so
+ * a connector added to the contract and missed in one of them produced a button
+ * that was silently wrong rather than a type error.
+ */
+const installationProviders = new Set<string>(ConnectorInstallationProviders);
+function hasInstallationFacet(connectorType: string): boolean {
+  return installationProviders.has(connectorType);
+}
 
 const reconnectableConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
   'ashby',
@@ -238,7 +252,7 @@ function connectionSetting(connection: WorkstreamConnection, admin: boolean) {
     label: connection.displayName, description: 'Manage this installed connection.',
     options: [
       ...(admin && reconnectableConnectorTypes.has(connection.connectorType)
-        && !(['ashby', 'fireflies', 'granola'].includes(connection.connectorType) && connection.scope === 'workspace') ? ['Refresh', 'Reconnect'] : []),
+        && !(hasInstallationFacet(connection.connectorType) && connection.scope === 'workspace') ? ['Refresh', 'Reconnect'] : []),
       ...(connection.scope === 'you' || admin ? ['Delete', 'Disconnect'] : []),
       ...(admin && connection.connectorType === 'generic_webhook' ? ['Refresh', 'Webhook signing secret'] : []),
     ],
@@ -336,7 +350,7 @@ function providerHasActivePersonalConnection(
   provider: (typeof connectorProviders)[number],
   connections: WorkstreamConnection[],
 ): boolean {
-  return (provider.provider === 'x' || provider.provider === 'ashby' || provider.provider === 'fireflies' || provider.provider === 'granola') && connections.some((connection) =>
+  return (provider.provider === 'x' || hasInstallationFacet(provider.provider)) && connections.some((connection) =>
     connection.connectorType === provider.provider &&
     connection.scope === 'you' &&
     connection.status !== 'disabled',
@@ -1531,11 +1545,11 @@ export function WorkspaceSettingsScreen({
                                   : toolCountByConnection.get(connection.id)?.data ?? 'Loading…'}</td>
                                 <td>
                                   <span className="settings-connection-actions">
-                                    {isAdmin && connection.scope === 'workspace' && ['ashby', 'fireflies', 'granola'].includes(connection.connectorType) && (
+                                    {isAdmin && connection.scope === 'workspace' && hasInstallationFacet(connection.connectorType) && (
                                       <Button aria-label={`Manage events for ${connection.displayName}`} onClick={() => setInstallationTarget(connection.id)}>Manage events</Button>
                                     )}
                                     {(isAdmin || connection.scope === 'you') && reconnectableConnectorTypes.has(connection.connectorType)
-                                      && !(['ashby', 'fireflies', 'granola'].includes(connection.connectorType) && connection.scope === 'workspace') && (
+                                      && !(hasInstallationFacet(connection.connectorType) && connection.scope === 'workspace') && (
                                       <ConnectionIconAction
                                         disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
                                         icon={<RefreshCcw aria-hidden="true" size={14} />}
@@ -1615,18 +1629,18 @@ export function WorkspaceSettingsScreen({
                         && providerHasActivePersonalConnection(provider, connections.data ?? []);
                       const hasActiveWorkspaceConnection = provider.provider !== 'generic_webhook'
                         && providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
-                      const personalConnectionStateUnavailable = ['ashby', 'fireflies', 'granola'].includes(provider.provider) && (connections.isLoading || connections.isError);
+                      const personalConnectionStateUnavailable = hasInstallationFacet(provider.provider) && (connections.isLoading || connections.isError);
                       const personalConnectDisabled = !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
                       const personalConnectTitle = hasActivePersonalConnection
                         ? `A ${provider.name} personal connection is already installed. Manage it above.`
                         : !providerAvailable && !connectorCatalog.isLoading
                           ? `${provider.name} is not configured in this Rally region.`
-                        : provider.provider === 'granola' && connections.isLoading
+                        : personalConnectionStateUnavailable && connections.isLoading
                           ? 'Checking installed personal connections…'
-                          : provider.provider === 'granola' && connections.isError
+                          : personalConnectionStateUnavailable && connections.isError
                             ? 'Installed personal connections could not be loaded.'
                             : undefined;
-                      const workspaceConnectDisabled = !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || firefliesWorkspaceOpen || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
+                      const workspaceConnectDisabled = !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
                       const workspaceConnectTitle = hasActiveWorkspaceConnection
                         ? `A ${provider.name} workspace connection is already installed. Manage it above.`
                         : !providerAvailable && !connectorCatalog.isLoading
@@ -2385,7 +2399,7 @@ export function WorkspaceSettingsScreen({
               <Button onClick={() => setGranolaWorkspaceModalOpen(false)}>Cancel</Button>
               <Button
                 className="button-primary"
-                disabled={!/^grn_[\x21-\x7E]{1,508}$/u.test(granolaWorkspaceApiKey.trim()) || createGranolaWorkspaceConnection.isPending || firefliesWorkspaceOpen || granolaRecovery.isPending || granolaRecovery.isError}
+                disabled={!/^grn_[\x21-\x7E]{1,508}$/u.test(granolaWorkspaceApiKey.trim()) || createGranolaWorkspaceConnection.isPending || granolaRecovery.isPending || granolaRecovery.isError}
                 onClick={() => createGranolaWorkspaceConnection.mutate()}
               >
                 {createGranolaWorkspaceConnection.isPending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <LockKeyhole aria-hidden="true" size={14} />}

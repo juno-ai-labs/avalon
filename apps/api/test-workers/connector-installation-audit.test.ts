@@ -85,7 +85,7 @@ describe('connector administrative audit', () => {
       }),
       userId: installerId, inputHash: 'audit-fixture',
       credentials: { ...await encryptString(JSON.stringify({ apiKey: 'fixture-api-key', signing: 'fixture-signing-secret' }), key, connectionId), keyVersion: 1 },
-      capability: 'ashby.workspace.events',
+      capability: 'ashby.workspace.events', displayName: 'Ashby workspace events',
     });
     const provider = vi.fn(async (input: string | URL | Request) => {
       const url = new URL(input instanceof Request ? input.url : input);

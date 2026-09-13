@@ -364,13 +364,34 @@ reaches.
 
 **Consequences:** A facet that declares create manual and inspect unsupported is
 declaring that its first verified delivery is its verification; nothing else
-about the lifecycle changes for it. A disabled connection is excluded, so a late
-delivery cannot revive a removed installation. Because that provider's
-registrations carry no provider identity, disconnect leaves cleanup pending with
-nothing Rally can remove, and the management window says so rather than offering
-a retry that cannot act.
+about the lifecycle changes for it. A delivery verifies only the registration
+whose signing secret actually checked the bytes — the ingress names it — so a
+grouped provider is unaffected and a `single_event` one cannot have a delivery
+for one event vouch for a subscription nobody ticked. A disabled connection is
+excluded, so a late delivery cannot revive a removed installation, and a claimed
+step keeps its registration until it settles.
 
-PR: the Fireflies connector. Design:
+Three things follow for a provider that automates nothing. Its registrations
+carry no provider identity, so disconnect leaves cleanup pending with nothing
+Rally can remove, and the management window says so rather than offering a retry
+that cannot act. `repair` schedules no step for it, so the installation's state
+is recomputed from its registrations instead of being told work is queued —
+otherwise Test moved a working installation to **Updating** and nothing ever
+settled it back. And reconciling a provider id is refused where the facet
+declares `reconcileCreate: "unsupported"`: storing one would make the
+registration read as a webhook Rally created, and the cleanup advice would start
+offering to delete it through an API the provider does not have.
+
+**What a future change must respect:** `registrationSupport` and
+`registrationKey` on the delivery are deliberately optional. A deploy is not
+atomic, so during the rollout window an older Worker calls the newer object
+without them; requiring either would reject a delivery that used to be accepted.
+Absent means "this establishes nothing", which is exactly what that older Worker
+expects. The gate they feed is on every provider's delivery path, including
+Ashby's, and `apps/api/test-workers/connector-installation-fireflies.test.ts`
+holds a test that fails if it is removed.
+
+PR #738. Design:
 [Fireflies connector](PRDs/2026-08-14_fireflies-connector/prd.md).
 
 ### 2026-09-12 — Reserve and record workspace installations before provider I/O

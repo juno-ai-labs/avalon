@@ -71,6 +71,31 @@ The new public webhook hostname belongs to the dedicated Ashby ingress Worker;
 [installation lifecycle](connector-installation-lifecycle.md) owns setup,
 recovery and the outstanding live-account/confidential-payload acceptance.
 
+### Fireflies personal OAuth and workspace API keys
+
+Fireflies personal authorization uses resource `https://api.fireflies.ai/mcp`,
+with the allowed authorization origin pinned to that same origin — the adapter
+does not trust the authorization server the protected-resource document
+advertises. Public metadata, re-read live on 2026-09-13, advertises dynamic
+client registration, PKCE S256, a `refresh_token` grant, and
+`scopes_supported: ["profile", "email"]`. **There is no `offline_access`**, so
+Rally asks for none, and an authorization that comes back without a refresh
+token is reported as reconnect-required rather than silently treated as
+renewable — this is the first provider where that is the expected path rather
+than a fault. As with Ashby, this is metadata evidence, not live sign-in
+acceptance. Regional callbacks are
+`https://api.rallywith.ai/connections/fireflies/callback` and
+`https://eu.api.rallywith.ai/connections/fireflies/callback`.
+
+Workspace setup is a separate authorization path that never touches the MCP
+transport: an administrator pastes an API key from Integrations → Fireflies API,
+which the adapter validates with a `user` query before anything is stored. There
+is **no webhook API at all** — registration is a human step in the provider's
+own Webhooks V2 page, which holds one URL per account, and the ingress URL comes
+from the region's own `PUBLIC_API_BASE_URL` rather than a shared ingress host.
+[installation lifecycle](connector-installation-lifecycle.md) owns what follows,
+including why a verified delivery stands in for an inspection here.
+
 ### Google OAuth clients and APIs
 
 Google platform identity and Google connector consent use **two separate** Google

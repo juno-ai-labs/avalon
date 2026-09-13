@@ -1,5 +1,4 @@
 import { providerWebhookMaxBytes, readBoundedRequestBytes } from "../lib/bounded-request-body";
-import { ashbyWebhookMaxBytes } from "../lib/ashby-ingress";
 import { AshbyIngestionResultSchema } from "../services/ashby-routing-service";
 import { ConnectorInstallationReadResponseSchema, ConnectorInstallationMutationResponseSchema, ConnectorInstallationSetupResponseSchema, ConnectionTestResponseSchema } from "@rally/contracts";
 import { AshbyEventSelectionSchema } from "@rally/connectors";
@@ -95,9 +94,8 @@ const firefliesStart = z.object({
 // validate here beyond a non-empty string. The provider's own `user` query is
 // the check, and setup runs it before anything is stored.
 const firefliesWorkspace = z.strictObject({
-  apiKey: z.string().trim().min(1).max(4_096),
+  apiKey: z.string().trim().min(1),
   idempotencyKey: z.string().uuid(),
-  capabilities: z.array(z.literal("fireflies.workspace.read")).length(1),
 });
 const granolaStart = z.object({
   scope: z.literal("personal"),
@@ -571,7 +569,7 @@ webhookIngestionRoutes.post("/notion", async (c) => {
   return c.json(WebhookIngestionSchema.parse(result), 200);
 });
 webhookIngestionRoutes.post("/ashby/:id", zValidator("param", idParam), async (c) => {
-  const body = await readBoundedRequestBytes(c.req.raw, ashbyWebhookMaxBytes(c.env));
+  const body = await readBoundedRequestBytes(c.req.raw, providerWebhookMaxBytes(c.env));
   const id = c.req.valid("param").id;
   const result = await new ConnectionService(c.env).ingestAshbyWebhook(id, body, c.req.raw.headers);
   return c.json(AshbyWebhookResponseSchema.parse(result), 200);

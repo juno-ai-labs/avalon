@@ -2097,7 +2097,7 @@ export class RallyApi {
       method: 'api_key', capabilityCount: telemetryCountBucket(1),
     });
     return this.request('/connections/fireflies/workspace', {
-      method: 'POST', body: { apiKey, idempotencyKey, capabilities: ['fireflies.workspace.read'] },
+      method: 'POST', body: { apiKey, idempotencyKey },
       schema: ConnectorInstallationSetupResponseSchema,
     });
   }
