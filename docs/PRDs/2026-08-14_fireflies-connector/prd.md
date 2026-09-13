@@ -11,9 +11,10 @@
 > Read alongside [`connectors.md`](../../connectors.md),
 > [`hosted-mcp-connectors.md`](../../hosted-mcp-connectors.md),
 > [`agent-tools.md`](../../agent-tools.md), and
-> [the connector installation lifecycle PRD](../2026-09-12_connector-installation-lifecycle/prd.md),
-> whose setup, verification, maintenance, and removal lifecycle for
-> customer-managed webhooks this connector adopts.
+> [`connector-installation-lifecycle.md`](../../connector-installation-lifecycle.md)
+> — the shipped setup, verification, maintenance, and removal lifecycle for
+> customer-managed webhooks this connector adopts, proposed in
+> [the connector installation lifecycle PRD](../2026-09-12_connector-installation-lifecycle/prd.md).
 
 ## Summary
 
@@ -184,9 +185,17 @@ the key's fingerprint — instead of starting a second one:
    shows up within a couple of minutes."
 3. **Verified by delivery.** The installation moves from **Action required**
    to **Current** on the first delivery that passes signature verification,
-   and shows a last-received time from then on. Fireflies offers no test
-   ping, so the meeting the admin records next is the test, and the
-   Action-required copy says that too.
+   and shows a last-received time from then on. This is the one extension
+   Fireflies needs from the shipped lifecycle: today a verified delivery
+   updates only the installation's last-received time, and a registration
+   becomes current through inspection, which Fireflies cannot offer. For a
+   registration whose create is manual and whose inspect is unsupported, the
+   ingress hook that records the delivery also marks the registration and
+   the installation current, with the delivery time as `verifiedAt` — the
+   provider's delivery *is* the verification evidence, which is the standard
+   the lifecycle sets for itself. Fireflies offers no test ping, so the
+   meeting the admin records next is the test, and the Action-required copy
+   says that too.
 
 The form reports what the connection sees **after** verification rather than
 asking the admin to evaluate a plan-tier conditional before it: "Connected as
@@ -203,33 +212,36 @@ name is `Fireflies · <account email>`, following the `Google · <label>`
 compound shape.
 
 The row shows credential health (`healthy`, `needs_reconnect`) and the
-webhook installation state (**Action required**, **Current**, **Failed**,
-**Disconnected — cleanup pending**) as two separate facts, per the
-lifecycle's rule that an unfinished installation must not hide a usable tool
-connection. It offers **Test**, **Update key**, **Show setup / Rotate
-secret**, and **Remove**:
+webhook installation state — the lifecycle's own states: **Setting up**,
+**Action required**, **Current**, **Failed**, **Cleanup pending**,
+**Disconnected** — as two separate facts, per the lifecycle's rule that an
+unfinished installation must not hide a usable tool connection. The
+management window is the lifecycle's: status and the last received event up
+front, **Test**, **Get help** in the trouble states, and under **Advanced**
+the stable endpoint URL, the setup instructions, **Update key**, and the
+signing guidance. **Remove** is the connection's own action.
 
 - **Test** is the standard path: `adapter.repair`, then `healthCheck`. Repair
   is a no-op for Fireflies — there is no remote registration Rally can
   restore — and the health check verifies the key and reports an unverified
   installation as a `warning`, never as a failure of the credential.
 - **Update key** replaces the credential on the *existing* connection — the
-  lifecycle's credential-replacement path, which invalidates any pending
-  maintenance and touches nothing at Fireflies — so the connection id,
-  endpoint URL, and signing secret survive a revoked key. A
+  lifecycle's credential replacement, validated read-only first and fenced by
+  the installation generation, which touches nothing at Fireflies — so the
+  connection id, endpoint URL, and signing secret survive a revoked key. A
   `needs_reconnect` badge on a workspace connection points here.
-- **Show setup / Rotate secret** reopens the Action-required instructions
-  with the stable endpoint URL, and issues a fresh secret when asked.
-  Rotation is pending-plus-active (key design decision 7): the previous secret
-  keeps verifying deliveries until the first delivery signed with the new one
-  arrives, then it is retired, and the instructions say to paste the new
-  secret into Fireflies before that happens.
+- **Signing guidance** is the lifecycle's manual-replacement text, since
+  Fireflies declares rotation manual (key design decision 7): remove the
+  connection, delete the webhook in Fireflies, connect again and paste the
+  new URL and secret — and it names the delivery gap in between. Reading it
+  changes nothing; a current installation stays current.
 - **Remove** disables the connection at once and leaves the installation in
-  **Disconnected — cleanup pending** with the one step Rally cannot take:
-  delete the webhook in Fireflies. The retired route rejects any delivery
-  that still arrives, so a webhook left behind is harmless. The warning
-  reads: "Rally can't remove the webhook from Fireflies for you. Delete it
-  there, or leave it — deliveries to a removed connection are rejected."
+  **Cleanup pending** with the one step Rally cannot take: delete the
+  webhook in Fireflies. **Forget local cleanup credential** moves it to
+  **Disconnected**. The retired route rejects any delivery that still
+  arrives, so a webhook left behind is harmless. The warning reads: "Rally
+  can't remove the webhook from Fireflies for you. Delete it there, or leave
+  it — deliveries to a removed connection are rejected."
 
 Card and row states: default (Connect actions; workspace button admin-gated),
 already-connected (connect action disabled with the standard "already
@@ -406,20 +418,26 @@ None yet.
    poll-authoritative designs of the earlier revisions, for the reasons
    above.
 7. **The signing secret is Rally-generated, mandatory, shown in the setup
-   stage, and rotated pending-plus-active — a recorded exception to "secrets
-   never reach the desktop".** Fireflies webhook registration is manual, so
-   the admin must see the plaintext, in the setup stage and in a rotation's
-   response only; it never appears in `GET /connections`, `config_json`,
-   display names, audit data, or logs, and a lost secret is rotated, never
-   re-revealed. Because Rally cannot see when the admin pastes a rotated
-   secret into Fireflies, rotation keeps the previous secret verifying until
-   the first delivery signed with the new one arrives, then retires it — the
-   lifecycle's pending-versus-active verification material. Rejected:
-   invalidating the old secret immediately, as the generic webhook does — for
-   a provider with no registration API that guarantees a delivery gap between
-   issuing and pasting. Unsigned posts to Rally's endpoint are rejected even
-   though Fireflies treats the secret as optional. Rejected: accepting
-   unsigned webhooks — the endpoint would ingest attacker-authored events.
+   stage, and replaced by reconnecting — a recorded exception to "secrets
+   never reach the desktop".** The facet declares `signingSecretSource:
+   "host"`, as Ashby's does. Fireflies webhook registration is manual, so the
+   admin must see the plaintext, in the setup stage only; it never appears
+   in `GET /connections`, `config_json`, display names, audit data, or logs,
+   and a lost secret is never re-revealed. Rotation is declared manual, and
+   the shipped lifecycle's manual replacement applies: remove the connection,
+   delete the webhook in Fireflies, connect again — with the delivery gap
+   named in the guidance. An earlier revision of this PRD kept the previous
+   secret verifying until the first delivery signed with the new one arrived.
+   That is not a guessed time window — it is delivery evidence, the standard
+   the facet's `rotation` block sets with `verificationPolicy:
+   "active_and_pending"` — but no provider uses that block yet, its evidence
+   would need the same ingress hook as key design decision 11's verified
+   delivery, and being the first caller of rotation machinery the lifecycle
+   review already questioned is not this connector's job. Deferred: seamless
+   rotation lands when that hook exists and a rotation is actually asked
+   for. Unsigned posts to Rally's endpoint are rejected even though Fireflies
+   treats the secret as optional. Rejected: accepting unsigned webhooks — the
+   endpoint would ingest attacker-authored events.
 8. **The personal scope ships the provider's full live surface, writes
    included, and says so.** Rejected: filtering the MCP catalog to read-only
    tools — [`hosted-mcp-connectors.md`](../../hosted-mcp-connectors.md)
@@ -451,19 +469,28 @@ None yet.
     are snake_case verb-noun (`search_meetings`, `get_meeting_summary`,
     `get_transcript`) so the transcript-prose verb scan recognizes them;
     activity types are unprefixed (`meeting.summarized`) following Granola.
-11. **Every Fireflies registration operation is declared manual, and
-    inspection unsupported.** The adapter's management facet states create,
-    update, and remove as manual steps with exact instructions, and inspect
-    and reconcile as unsupported, because Fireflies exposes no webhook API at
-    all ([research](research.md)). The lifecycle then handles the
-    consequences without Fireflies-specific code: an installation is Current
-    only after a verified delivery; a fleet maintenance preview that changes
-    the destination URL or the event set lists every Fireflies workspace as
-    customer action and applies nothing to Fireflies; disconnect leaves
-    cleanup pending with the one manual removal step. Rejected: driving the
-    Fireflies dashboard by browser automation, or letting a checkbox stand
-    for verification — the lifecycle PRD rejects both, and a checkbox would
-    report meetings flowing when none can.
+11. **Every Fireflies registration operation is declared manual or
+    unsupported.** The adapter's `installationManagement` facet — the shape
+    Ashby and Granola ship — declares `grouping: "grouped"` (one registration
+    carries both events), `signingSecretSource: "host"`,
+    `canUpdateDestination: false`, and `support: { create: "manual",
+    inspect: "unsupported", update: "manual", remove: "manual", rotate:
+    "manual", reconcileCreate: "unsupported" }`, with the paste-and-save
+    steps as its `manualInstructions` and a `user` query as `validate`;
+    `create`, `inspect`, and `remove` refuse with the manual instruction,
+    because Fireflies exposes no webhook API at all
+    ([research](research.md)). The lifecycle then handles the consequences
+    without Fireflies-specific code — a fleet maintenance preview that
+    changes the destination URL or the event set lists every Fireflies
+    workspace as customer action and applies nothing to Fireflies; disconnect
+    leaves cleanup pending with the one manual removal step — with one
+    exception it does not yet handle: nothing but a delivery can ever verify
+    a manual registration, so the ingress hook that records a verified
+    delivery has to mark such a registration current (**Product behavior**,
+    stage 3). Rejected: driving the Fireflies dashboard by browser
+    automation, or letting a checkbox stand for verification — the lifecycle
+    rejects both, and a checkbox would report meetings flowing when none
+    can.
 12. **Meeting content is hydrated after admission, not inside the webhook.**
     Rejected: reading the meeting over GraphQL in the webhook handler so the
     activity carries the summary at insert — it puts a provider round trip
@@ -491,46 +518,59 @@ Connector rows do not live in regional D1. Migration
 SQLite tables (`workspace-domain-schema.ts`), reached through
 `withWorkspaceRuntimeDatabase`. Their type vocabularies are CHECK
 constraints, and SQLite cannot widen a CHECK in place, so admitting
-`'fireflies'` is **one WorkspaceDO migration** — version 53 at time of
-writing; re-check the highest version in `workspace-do.ts` at merge — written
-to the rules in [`durable-object-sqlite.md`](../../durable-object-sqlite.md):
+`'fireflies'` is **one WorkspaceDO migration** — version 54 at time of
+writing, 53 having admitted Ashby; re-check the highest version in
+`workspace-do.ts` at merge — written to the rules in
+[`durable-object-sqlite.md`](../../durable-object-sqlite.md):
 
-- **Copy WorkspaceDO migration 31, not the retired D1 recipe.** Migration 31
-  is the worked example for exactly this change (it admitted `custom_mcp`):
-  every dependent named in `CONNECTOR_CONNECTION_DEPENDENTS` is copied to a
-  scratch table; the parent is recreated with the widened CHECK and its rows
-  copied across; the old parent is dropped, which cascades through the
-  dependents — the reason they were held; the replacement is renamed into
-  place with its indexes and workspace identity fences; and the dependents
-  are emptied and restored from their copies. All of it runs with foreign
-  keys enforced. `foreignKeys: "disabled_during_rebuild"` must not be used —
-  `PRAGMA foreign_keys = OFF` is silently a no-op once an object event has
-  touched SQLite — and the migration never restates a dependent's schema.
-  `connector_oauth_attempts` is one of those dependents and gets its own
-  `provider` CHECK widened in the same migration, as migration 31 did. The
-  proof is a populated workerd upgrade test in the shape of
+- **Copy WorkspaceDO migration 53, not the retired D1 recipe.** Migration 53
+  is the worked example for exactly this change (it admitted `ashby`, as 31
+  admitted `custom_mcp`): every dependent named in the migration's own
+  dependents list — 53's is `CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53`,
+  and Fireflies' must name every table referencing `connector_connections`
+  as of its own version, because a table missing from it loses its rows —
+  is copied to a scratch table; the parent is recreated with the widened
+  CHECK and its rows copied across; the old parent is dropped, which
+  cascades through the dependents — the reason they were held; the
+  replacement is renamed into place with its indexes and workspace identity
+  fences; and the dependents are emptied and restored from their copies. All
+  of it runs with foreign keys enforced. `foreignKeys:
+  "disabled_during_rebuild"` must not be used — `PRAGMA foreign_keys = OFF`
+  is silently a no-op once an object event has touched SQLite — and the
+  migration never restates a dependent's schema. `connector_oauth_attempts`
+  is one of those dependents and gets its own `provider` CHECK widened in
+  the same migration, as 53 did. The proof is a populated workerd upgrade
+  test in the shape of
   `apps/api/test-workers/workstream-schema-migration.test.ts`: rows in the
   parent and in a cascading dependent before the upgrade, the same rows and a
   clean `foreign_key_check` after it.
-- **Cardinality is enforced by the create path, not by an index.** Granola's
-  D1 partial unique indexes did not survive the move to WorkspaceDO; on
-  `main`, one active Granola workspace connection per workspace is the
-  connection service's existence check (409
-  `granola_workspace_connection_exists`), and one active personal connection
-  per member per workspace is what the shared personal OAuth completion path
-  keeps. Fireflies does the same — the lifecycle's setup stage carries the
-  workspace check — and adds no index for it.
+- **Cardinality is a partial unique index in Ashby's shape, plus the create
+  path's 409 in front of it.** Granola's D1 indexes did not survive the move
+  to WorkspaceDO and its cardinality is a create-path check today; migration
+  53 restored the index form for Ashby, and Fireflies follows Ashby, in the
+  same migration: `fireflies_workspace_connection_unique` on
+  `connector_connections(workspace_id) WHERE connector_type = 'fireflies'
+  AND scope = 'workspace' AND status <> 'disabled'`, and
+  `fireflies_personal_connection_unique` on
+  `connector_connections(workspace_id, owner_user_id) WHERE connector_type =
+  'fireflies' AND scope = 'personal' AND status <> 'disabled'`. The
+  lifecycle's setup stage keeps the existence check so a second admin gets a
+  409 rather than a constraint error, and a disabled row never blocks
+  reconnecting.
 - Add `'fireflies'` to `ConnectorOAuthProviders` in
-  `packages/contracts/src/connector-oauth-providers.ts`.
+  `packages/contracts/src/connector-oauth-providers.ts` and to
+  `ConnectorInstallationProviderSchema` in
+  `packages/contracts/src/connector-installation.ts`, which today admits only
+  `ashby` and `granola`.
 - `encrypted_credentials` holds, AES-GCM-sealed with `credential_key_version`
-  as today: the API key and the active — and, during a rotation, the pending
-  — webhook signing secret (workspace), or the MCP OAuth token set (personal).
+  as today: the API key and the webhook signing secret the registration's
+  `activeSecretRef` names (workspace), or the MCP OAuth token set (personal).
 - The webhook installation's state — desired and applied configuration
-  versions, the registration's logical key with no provider id (Fireflies
-  issues none), its verification state, last-verified and last-received
-  times, and any pending maintenance step — lives in the lifecycle's
-  WorkspaceDO records. This PRD adds no `connector_connections` column and no
-  `cursor_json` content for it.
+  versions, generation, the registration's logical key with no provider id
+  (Fireflies issues none), its state and `verifiedAt`, `lastReceivedAt`, and
+  any pending step — lives in the lifecycle's `connector_installations`
+  document and `connector_installation_steps` rows in WorkspaceDO. This PRD
+  adds no `connector_connections` column and no `cursor_json` content for it.
 - Activity identity: `provider_event_id = <meeting_id>`,
   `dedupe_key = fireflies:<meeting_id>:<event>`, resource entity keys
   `fireflies:meeting:<id>` under a `fireflies_meeting` resource type; the
@@ -556,7 +596,8 @@ activities are authoritative in the owning workspace's regional WorkspaceDO,
 with credentials encrypted with that region's `CONNECTOR_CREDENTIALS_KEY_*`;
 regional D1 holds only routing and identity — the directory that maps a
 connection's ingress route and an OAuth callback to the workspace that owns
-them — and never a connector row, credential, or activity body, per the
+them — plus the lifecycle's frozen operator maintenance operations, and
+never a connector row, credential, or activity body, per the
 no-fallback rule in [`data-model.md`](../../data-model.md). The ingestion
 endpoint is served by each
 regional Worker, and the URL shown in the connect modal is the owning
@@ -576,10 +617,8 @@ is a customer's processor decision, as with Granola and Notion. The
   audit data.
 - The webhook signing secret is the one deliberate, recorded exception to
   plaintext-never-reaches-the-desktop: it appears in exactly the setup stage
-  and the rotate response (key design decision 7) and nowhere else. During a
-  rotation two secrets verify — the active one and the pending one — and the
-  active one is retired the first time a delivery verifies against the
-  pending one.
+  (key design decision 7) and nowhere else. One active secret verifies;
+  replacing it means reconnecting.
 - Every provider call takes the branded `AuthorizedConnectorConnection` minted
   only by `withAuthorizedConnection`; personal OAuth tokens refresh behind the
   connection row's existing refresh lease, with rejection classified by
@@ -604,11 +643,12 @@ is a customer's processor decision, as with Granola and Notion. The
   instructions, activity title and summary are truncated to the standard
   connector bounds before storage, and both plugin system messages carry the
   untrusted-data clause.
-- Post-disable cleanup needs no retained credential: there is nothing for
-  Rally to delete at Fireflies, so the lifecycle's cleanup-only credential
-  snapshot is not taken for this provider, the disabled connection's
-  credentials are removed at once, and the manual removal step is shown
-  instead.
+- Post-disable cleanup can do nothing here: the cleanup-only credential
+  snapshot the lifecycle captures at disconnect authorizes removal of exact
+  recorded provider ids, and a Fireflies installation records none, so the
+  snapshot authorizes nothing and **Forget local cleanup credential** clears
+  it. The disabled connection's ordinary credentials are removed at once, and
+  the manual removal step is shown instead.
 - The personal scope's live catalog includes Fireflies-authored write tools
   (`fireflies_share_meeting`, `fireflies_revoke_meeting_access`,
   `fireflies_update_meeting_title`, `fireflies_move_meeting`,
@@ -882,11 +922,13 @@ read and has to be added in three places, all in the same change:
 `.env.example` gains it too, with the one-line comment its neighbours carry,
 since local development reads it the same way.
 
-This connector ships after the connector installation lifecycle from
-[the Ashby PRD](../2026-09-12_connector-installation-lifecycle/prd.md), whose
-manual completion path it depends on. It is that lifecycle's first
-all-manual provider, and it stands in for the synthetic provider in that
-PRD's "manual capability" acceptance row.
+This connector builds on the connector installation lifecycle now on `main`
+([`connector-installation-lifecycle.md`](../../connector-installation-lifecycle.md))
+and needs one extension of it — the verified-delivery hook in key design
+decision 11 — which lands in the same change as the adapter, with its own
+changelog entry in that document. It is the lifecycle's first all-manual
+provider, and it stands in for the synthetic provider in the lifecycle PRD's
+"manual capability" acceptance row.
 
 The desktop `connectorProviders` card ships in the same release
 that enables the variable (a card whose type is absent from the catalog
@@ -898,8 +940,9 @@ surface region-wide while retaining rows; per-connection rollback is
 `connector_type` value is inert.
 
 When implementation ships, `docs/connectors.md` gains the Fireflies section
-and changelog entry, the lifecycle's module document gains Fireflies as its
-manual-provider example, and `docs/connector-digestibility.md` gains the
+and changelog entry, `docs/connector-installation-lifecycle.md` gains
+Fireflies as its manual-provider example and the changelog entry for the
+verified-delivery hook, and `docs/connector-digestibility.md` gains the
 `meeting.summarized` (digestible) and `meeting.transcribed` (operational)
 rows — the latter is a CI gate, since `digestibility-doc.test.ts` keeps that
 document and the manifests in step.
@@ -940,10 +983,11 @@ rest are automatable.
 7. An unsigned, mis-signed, oversized, or stale-timestamped post to
    `/ingest/fireflies/:id` is rejected with no row written; a replayed valid
    post ingests at most once (receipt dedupe).
-8. Rotation: after **Rotate secret**, a delivery signed with the old secret is
-   still admitted until one signed with the new secret arrives, after which
-   the old secret is refused; a delivery signed with neither is rejected
-   throughout.
+8. Secret replacement: the signing guidance describes remove, delete in
+   Fireflies, connect again; after the reconnect, a delivery signed with the
+   old secret to the new connection's route is rejected and one signed with
+   the new secret is admitted; reading the guidance leaves a current
+   installation current.
 9. Unsetting `FIREFLIES_CONNECTOR_ENABLED` in one region removes `fireflies`
    from that region's catalog and tool surface; existing rows are retained
    and other regions are unaffected.
