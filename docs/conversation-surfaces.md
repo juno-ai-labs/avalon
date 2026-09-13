@@ -475,7 +475,17 @@ family. A new automation is created by `POST /automations` before its
 conversation is opened, so its page starts on a durable id. Socket snapshots remain authoritative after reconnect;
 local optimistic rows are reconciled by stable client turn IDs.
 
-Delivered attachments follow the message body and precede its action row. Every
+Delivered attachments follow the message body and precede its action row. A
+person's turn still in flight (`deliveryState: 'sending'`) is that same row at
+0.82 opacity with a light sweeping across each surface it draws — the bubble,
+and each attachment image cell, media tile and file card — painted by
+`app.css` under `.human-message.is-sending` as an overlay that inherits the
+surface's corner, in a twentieth of the surface's own ink so it shows on a dark
+or profile-coloured bubble as well as on a light card. The sweep is keyed on a
+selector list naming those four surfaces, once in the animated rule and once in
+its reduced-motion twin, and `app.css.node.test.ts` pins both: a new attachment
+surface has to be added to both lists, or a send made of that attachment alone
+goes out with no in-flight cue. Every
 turn's identity line is `MessageByline`, one component for the assistant's turn,
 a colleague's, the reader's own and a settled elicitation answer, so the name and
 the time carry one size and one pair of greys whoever is speaking; what tells
@@ -614,6 +624,51 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-13 — The in-flight sweep is painted on each surface of a turn, not on its wrapper
+
+**What changed:** The shimmer that marks a person's turn as still in flight
+paints on each surface the turn draws — the message bubble, and every
+attachment image cell, media tile and file card — instead of on the
+`.human-message-content` wrapper around them. The overlay is inset to its
+surface and inherits the surface's corner radius, and it travels by animating
+`background-position` over a gradient tile four times the surface's width, the
+construction the tool-activity label's shimmer already uses, rather than by
+translating a full-width pseudo-element under the wrapper's `overflow: hidden`.
+The band is upright where it was tilted 15°: a tilt spreads the band sideways
+by the surface's height, which for the bubble is unbounded against its width,
+so no tile width kept a tilted band clear of a tall, narrow bubble at the ends
+of its travel, and a tinted corner stayed parked there through each pause. The
+travel is the transform sweep's 2.5 widths, so the band crosses at the speed
+and for the share of the cycle it did before. And the band is a twentieth of
+the surface's own ink rather than the shimmer token: the token is a dark tint
+for light surfaces (white in the dark theme), and a person's bubble is dark or
+profile-coloured in both themes, so on it the token was invisible once the
+wrapper's light strip stopped carrying the sweep. The body above describes the
+result; this supersedes the wrapper scoping the 2026-09-02 entry below records.
+
+**Why:** The wrapper is a rectangle. It takes in the hover-action slot laid out
+under the bubble and the corners the bubble's radius cuts away, so the sweep
+read as a grey block behind the pill rather than a light passing over it. It
+had been put on the wrapper deliberately, so that a send made of attachments
+and no text still carried a cue; keying the sweep on each surface keeps that
+cue without the box.
+
+**Considered and rejected:** Keeping the transform sweep and clipping it with
+`overflow: hidden` or `clip-path` on each surface. That makes every surface a
+clipping box for the length of the send — a file card's controls and any
+focus ring inside it would be cut — where the tiled-background overlay clips
+only itself.
+
+**Consequences:** A new attachment surface rendered inside a person's turn has
+to be added to the selector list at `.human-message.is-sending` in `app.css`,
+or a send made of that kind of attachment alone goes out with no in-flight
+cue. The band's stop percentages, the 400% tile and the upright band hold
+together: the band has to sit clear of the surface at both ends of its travel,
+a tilt gives that clearance a height term nothing can bound, and the comment
+above the rule carries the arithmetic.
+
+Shipped in [#739](https://github.com/juno-ai-labs/avalon/pull/739).
 
 ### 2026-09-12 — The composer writes lists, and stops hiding text behind the plus
 
@@ -2960,6 +3015,11 @@ attachments alone, and the bubble is drawn only for a turn with text. Under
 across it, because the global reduced-motion block would otherwise run it once
 at 0.001ms and leave it clipped outside the wrapper — an in-flight turn with no
 cue at all, and less marked than a queued one.
+
+*Superseded on 2026-09-13.* The sweep no longer hangs off the wrapper, and the
+sending state writes no `overflow` on anything: it is painted on each surface
+the turn draws, and clips itself to that surface's corner. The 2026-09-13 entry
+above has the mechanism and why the wrapper was left.
 
 ### 2026-09-01 — An automation's result is a message in the room, named Automation
 

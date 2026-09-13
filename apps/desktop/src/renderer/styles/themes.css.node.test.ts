@@ -336,6 +336,11 @@ describe('token references', () => {
     // can hear the layout settle. Neither is a theme's to set.
     '--sidebar-layout-motion', '--sidebar-compact',
     '--turn-bubble-radius',
+    // The in-flight sweep's band, a twentieth of the surface's own ink: it is
+    // derived from `currentColor` on the surface it paints, so one rule reads
+    // light on a dark or profile-coloured bubble and dark on a light card. A
+    // decision about the surface it sits on, not a theme's palette.
+    '--sweep-ink',
     // The widest a turn is ever drawn, and the field beneath it, which is a
     // fraction of that: the feed's layout arithmetic — the measure a column of
     // conversation is built from — rather than an appearance either theme
