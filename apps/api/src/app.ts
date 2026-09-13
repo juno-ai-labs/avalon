@@ -138,6 +138,8 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route('/internal/workspaces', workspaceOperatorRoutes);
 
   const identityApi = new Hono<HonoAppEnv>();
+  // Both sub-apps are root-mounted. Hono runs their wildcard middleware in
+  // order for protected routes, so `requireAuth` reuses this identity result.
   identityApi.use("*", requireIdentityAuth);
   identityApi.route("/onboarding", onboardingRoutes);
   identityApi.route("/feature-flags", featureFlagRoutes);
