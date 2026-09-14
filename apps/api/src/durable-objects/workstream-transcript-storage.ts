@@ -2570,13 +2570,18 @@ export class WorkstreamTranscriptStorage {
   }
 
   pendingTranscriptInputs(): PendingTranscriptInput[] {
-    return new SubstreamLoopStorage(this.storage).pendingInputs()
-      .map((pending) => this.hydratePendingTranscriptInput(pending));
+    const loops = new SubstreamLoopStorage(this.storage);
+    const pending = loops.pendingInputs();
+    const activatingInputId = loops.activatingInputId(pending);
+    return pending.map((row) => this.hydratePendingTranscriptInput(row, activatingInputId));
   }
 
   pendingTranscriptInput(inputId: string): PendingTranscriptInput | null {
-    const pending = new SubstreamLoopStorage(this.storage).input(inputId);
-    return pending ? this.hydratePendingTranscriptInput(pending) : null;
+    const loops = new SubstreamLoopStorage(this.storage);
+    const pending = loops.input(inputId);
+    return pending
+      ? this.hydratePendingTranscriptInput(pending, loops.activatingInputId())
+      : null;
   }
 
   transcriptActivity(activityId: string, snapshotAt = Date.now()): TranscriptActivity | null {
@@ -2589,13 +2594,17 @@ export class WorkstreamTranscriptStorage {
     return row ? this.hydrateActivities([row], snapshotAt)[0] ?? null : null;
   }
 
-  private hydratePendingTranscriptInput(pending: PendingLoopInputRow): PendingTranscriptInput {
+  private hydratePendingTranscriptInput(
+    pending: PendingLoopInputRow,
+    activatingInputId: string | null,
+  ): PendingTranscriptInput {
     const material = parsePendingInputMaterial(pending);
     return PendingTranscriptInputSchema.parse({
         inputId: pending.input_id,
         futureTurnId: pending.prepared_turn_id,
         inputSequence: Number(pending.input_sequence),
         deliveryMode: pending.mode,
+        queued: pending.input_id !== activatingInputId,
         afterTranscriptSequence: Number(pending.admitted_after_transcript_sequence),
         actor: pending.actor,
         authorUserId: pending.author_user_id,

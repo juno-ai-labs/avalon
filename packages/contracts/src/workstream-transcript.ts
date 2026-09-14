@@ -245,6 +245,19 @@ export const PendingTranscriptInputSchema = z.object({
   futureTurnId: z.string().min(1),
   inputSequence: z.number().int().positive(),
   deliveryMode: z.enum(["steer", "queue"]),
+  /**
+   * Whether anything is ahead of this input. False for the one input an idle
+   * loop is about to promote — it starts the next turn rather than waiting for
+   * one, so no surface may present it as queued.
+   *
+   * `deliveryMode` is the intent the sender asked for and says nothing about
+   * this: every human message is admitted through the same mailbox, so a
+   * message into a quiet room and a message behind a running turn arrive here
+   * looking identical. Defaulted rather than required so a client reading an
+   * authority that predates the field keeps the old always-queued reading
+   * instead of failing the frame.
+   */
+  queued: z.boolean().default(true),
   afterTranscriptSequence: z.number().int().nonnegative(),
   actor: z.enum(["human", "external", "system"]),
   authorUserId: z.string().nullable(),

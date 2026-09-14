@@ -808,7 +808,12 @@ export function pendingTranscriptInputOverlay(
       })),
       attachments: input.block.attachments?.map((attachment) => ({ ...attachment })),
       createdAt: input.admittedAtUtc,
-      deliveryState: input.deliveryMode === 'steer' ? 'steer_pending' : 'queue_pending',
+      // `queued` rather than `deliveryMode`: the mode is the intent the sender
+      // asked for, and the input an idle loop is about to promote is not
+      // waiting for anything whichever mode it carries.
+      deliveryState: input.queued
+        ? (input.deliveryMode === 'steer' ? 'steer_pending' : 'queue_pending')
+        : 'sending',
     },
   };
 }
@@ -826,8 +831,17 @@ export function pendingOverlayInputId(overlay: TranscriptOverlay): string | unde
 }
 
 /**
- * Pending loop inputs, plus an in-flight send while the harness is running.
- * Those rows live on the composer, not in the transcript.
+ * Waiting loop inputs, plus a send into a busy room the object has not answered
+ * yet. Those rows live on the composer, not in the transcript.
+ *
+ * `harnessRunning` decides only the second case, and only until the receipt
+ * lands: it is the work stream's `exact_state`, written when a workflow starts
+ * rather than when the loop takes the input, so it is a guess about what the
+ * room will do with a message still in flight. Once the object has answered,
+ * `deliveryState` carries its answer — `sending` then means a message nothing
+ * is ahead of, which belongs in the transcript however busy the room looks
+ * from here. Reading the guess over the answer is what put every sent message
+ * on the composer for as long as promotion took.
  */
 export function isComposerQueueOverlay(
   overlay: TranscriptOverlay,
@@ -835,7 +849,10 @@ export function isComposerQueueOverlay(
 ): boolean {
   const state = overlay.message.deliveryState;
   if (state === 'steer_pending' || state === 'queue_pending') return true;
-  return options.harnessRunning && state === 'sending';
+  return options.harnessRunning
+    && state === 'sending'
+    && overlay.provenance.source === 'client_command'
+    && overlay.provenance.phase === 'sending';
 }
 
 /** Visible composer-queue rows in promotion order; sending rows without a sequence sit last. */

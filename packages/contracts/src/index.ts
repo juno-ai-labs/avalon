@@ -2559,6 +2559,19 @@ export const WorkstreamMessageAdmissionReceiptSchema = z.strictObject({
     createdAt: TimestampSchema,
   }),
   deliveryState: WorkstreamMessageDeliveryStateSchema,
+  /**
+   * Whether the admitted message waits behind work already in flight. Read it
+   * only for a `pending` message: a `canonical` one is already delivered
+   * history, and every producer here sends `false` with it.
+   *
+   * `deliveryState` answers a different question — whether the turn is durable
+   * canonical history yet — and every human message is `pending` there,
+   * including one admitted into a quiet room that starts its turn immediately.
+   * A sender that read queueing out of `deliveryState` therefore announced a
+   * queue for every message it sent. Defaulted for the same reason as
+   * `PendingTranscriptInputSchema.queued`.
+   */
+  queued: z.boolean().default(true),
 });
 
 const WorkstreamSocketCommandErrorSchema = z.strictObject({

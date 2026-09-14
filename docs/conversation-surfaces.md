@@ -284,7 +284,15 @@ control or a bleed derived from something else, and says which in a comment.
 Sharing stops at product semantics. Work streams retain participants, unread,
 resource, run, and steering controls. The in-flight pending queue is one of
 those: it attaches to the work-stream composer, not to the shared
-`ComposerInput`. An automation's page keeps its lifecycle controls (apply,
+`ComposerInput`. What it shows is the object's answer, not the surface's guess:
+`isComposerQueueOverlay` takes a row whose `deliveryState` is `steer_pending` or
+`queue_pending`, which the pending-input and admission paths set only when the
+room said `queued`, plus a send this room has not answered yet while it looks
+busy. A row the object called unqueued is `sending` and belongs in the
+transcript, whatever `harnessStatus` says — that flag is the work stream's
+`exact_state`, written when a workflow starts rather than when the loop takes
+the input. [`workstream-durable-object.md`](workstream-durable-object.md#queueing-and-steering)
+owns `queued` and what decides it. An automation's page keeps its lifecycle controls (apply,
 pause, resume, delete, run now, the run-history dialog) outside the feed rather than
 inside it. Neither host may smuggle those controls through an optional common
 prop.
@@ -3073,6 +3081,26 @@ already said. A citation chip resolves against a work stream's resources and
 opens the rail; a draft has neither, so a citation there degrades to its label
 text. That is the "sharing stops at product semantics" line, not a gap left
 open.
+
+### 2026-09-14 — The composer queue shows what the room called queued
+
+**What changed:** a composer-queue row is now a row the object said is waiting.
+`isComposerQueueOverlay` reads `queued` through the overlay's `deliveryState`
+instead of inferring a queue from `deliveryMode` or from the receipt's
+`pending`, and the `harnessRunning` clause is narrowed to a send this room has
+not answered yet, so it can no longer overrule an answer that has arrived.
+
+**Why:** every message a person sent appeared on the composer as **Queued** for
+as long as the room took to promote it, including in a room with nothing
+running. [`workstream-durable-object.md`](workstream-durable-object.md#changelog)
+has the full entry: the field this surface was reading could not tell the two
+cases apart, and the field that can is new.
+
+**Consequences:** a pending input nothing is ahead of renders as a sending row
+in the transcript rather than a composer row, so the message does not move
+between the two on its way to canonical. Anything else that wants to know
+whether a message is waiting asks `queued`; `deliveryMode` answers what the
+sender asked for and nothing about the room.
 
 ### 2026-09-01 — A queued row renders the transcript's Markdown, clipped to one line
 

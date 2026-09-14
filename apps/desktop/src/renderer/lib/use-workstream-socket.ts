@@ -139,7 +139,7 @@ export interface WorkstreamSocketConnection {
 }
 
 export type AcceptedWorkstreamTurn = WorkstreamMessageAdmissionReceipt['turn']
-  & Pick<WorkstreamMessageAdmissionReceipt, 'deliveryState'>;
+  & Pick<WorkstreamMessageAdmissionReceipt, 'deliveryState' | 'queued'>;
 
 type CreateMessageSocketCommand = Extract<ClientSocketEvent, { type: 'create_message' }>;
 type SubstreamMutationCommand = Extract<ClientSocketEvent, { operationId: string }>;
@@ -1105,7 +1105,7 @@ export function useWorkstreamSocket(
         const result = await trace.step('command_round_trip', () => submitSubstreamCommand(command));
         if (result.command !== 'create_message') throw new Error('substream_command_receipt_mismatch');
         trace.end();
-        return { ...result.turn, deliveryState: result.deliveryState };
+        return { ...result.turn, deliveryState: result.deliveryState, queued: result.queued };
       } catch (error) {
         trace.end({ outcome: 'failed' });
         throw error;

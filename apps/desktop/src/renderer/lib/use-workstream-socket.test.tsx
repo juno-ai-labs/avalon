@@ -268,6 +268,7 @@ function pendingInput(sequence: number, text: string): PendingTranscriptInput {
     futureTurnId: inputId,
     inputSequence: sequence,
     deliveryMode: 'queue',
+    queued: true,
     afterTranscriptSequence: 0,
     actor: 'human',
     authorUserId: 'user-1',
@@ -1028,6 +1029,7 @@ describe('useWorkstreamSocket', () => {
       clientMessageId,
       createdAt: '2026-08-17T12:00:01.000Z',
       deliveryState: 'canonical' as const,
+      queued: false as const,
     };
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
@@ -1084,6 +1086,7 @@ describe('useWorkstreamSocket', () => {
         createdAt: acceptedTurn.createdAt,
       },
       deliveryState: 'canonical',
+      queued: false,
     }));
     await expect(admission).resolves.toEqual(acceptedTurn);
   });

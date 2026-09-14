@@ -2158,6 +2158,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return ExternalMessageAdmissionResultSchema.parse({
       turn: result.turn,
       deliveryState: result.deliveryState,
+      queued: result.queued,
     });
   }
 
@@ -5253,6 +5254,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           clientMessageId: command.payload.clientMessageId,
           turn: result.turn,
           deliveryState: result.deliveryState,
+          queued: result.queued,
         });
         span.mark("workstream.room.create_message.respond");
       } catch (error) {
@@ -5316,7 +5318,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
     span.setAttributes({ "rally.message.deduplicated": !result.inserted });
-    return { turn: result.turn, deliveryState: result.deliveryState };
+    return { turn: result.turn, deliveryState: result.deliveryState, queued: result.queued };
   }
 
   /**

@@ -137,10 +137,20 @@ const headerWorkstream: WorkstreamDetail = {
 
 describe('running work-stream message delivery', () => {
   it('keeps accepted pending messages visibly pending until canonical promotion', () => {
-    expect(acceptedMessageOverlayDeliveryState('pending', 'steer')).toBe('steer_pending');
-    expect(acceptedMessageOverlayDeliveryState('pending', 'queue')).toBe('queue_pending');
-    expect(acceptedMessageOverlayDeliveryState('pending', undefined)).toBe('queue_pending');
-    expect(acceptedMessageOverlayDeliveryState('canonical', 'queue')).toBeUndefined();
+    expect(acceptedMessageOverlayDeliveryState('pending', 'steer', true)).toBe('steer_pending');
+    expect(acceptedMessageOverlayDeliveryState('pending', 'queue', true)).toBe('queue_pending');
+    expect(acceptedMessageOverlayDeliveryState('pending', undefined, true)).toBe('queue_pending');
+    expect(acceptedMessageOverlayDeliveryState('canonical', 'queue', false)).toBeUndefined();
+  });
+
+  it('leaves a message nothing is ahead of sending rather than queued', () => {
+    // The room admits every human message through the same mailbox, so
+    // `pending` alone cannot separate a message waiting behind a running turn
+    // from one starting the next turn now. Reading the queue out of it put a
+    // Queued row on the composer for every message anybody sent.
+    expect(acceptedMessageOverlayDeliveryState('pending', undefined, false)).toBe('sending');
+    expect(acceptedMessageOverlayDeliveryState('pending', 'steer', false)).toBe('sending');
+    expect(acceptedMessageOverlayDeliveryState('pending', 'queue', false)).toBe('sending');
   });
 
   it('queues a message for the in-flight loop without a delivery dropdown', async () => {
