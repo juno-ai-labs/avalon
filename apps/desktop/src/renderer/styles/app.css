@@ -343,6 +343,22 @@ pre {
   color: var(--av-sys-color-danger-base);
 }
 
+/* A copy control's outcome lives in its glyph: after the click the tooltip is
+   closed and the glyph is what the person is looking at, so the check and the
+   alert take a colour that says which one it is, through hover and focus alike
+   so the state does not vanish under the pointer that produced it. */
+.copy-button-copied,
+.copy-button-copied:hover:not(:disabled),
+.copy-button-copied:focus-visible {
+  color: var(--av-sys-color-success-base);
+}
+
+.copy-button-failed,
+.copy-button-failed:hover:not(:disabled),
+.copy-button-failed:focus-visible {
+  color: var(--av-sys-color-danger-base);
+}
+
 .text-button {
   align-items: center;
   background: none;
@@ -2687,7 +2703,6 @@ pre {
 .settings-custom-mcp-header-row .form-field { margin: 0; }
 .webhook-secret-result { display: grid; gap: 10px; padding: 14px; }
 .webhook-secret-result > p { margin: 0; }
-.webhook-secret-result > .button { justify-self: start; }
 .webhook-secret-result > small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); overflow-wrap: anywhere; }
 .connection-provider-dot { background: var(--av-ref-color-neutral-7); border-radius: 50%; height: 7px; width: 7px; }
 .connection-provider-dot.healthy { background: var(--av-sys-color-success-base); }
@@ -3845,6 +3860,7 @@ pre {
 .run-failure-copy p,
 .run-stopped-copy p { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .run-failure-copy code { display: block; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.run-failure-request { align-items: center; color: var(--av-sys-color-text-muted); font-size: 12px; margin-top: var(--space-1); }
 .run-failure-actions { flex-wrap: wrap; gap: var(--space-2); grid-column: 2; }
 .run-failure-actions .button { border-radius: 999px; min-height: 36px; padding: var(--space-2) var(--space-3); white-space: normal; }
 /* The control rests above the composer, never in it. Both edges of the dock are
@@ -4706,7 +4722,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 /* The data view is ordinary Rally UI rather than a page, so it keeps the
    gutter the full-bleed preview gives up. */
 .site-data { display: flex; flex-direction: column; gap: 8px; min-height: 0; padding: 16px; }
-.site-data-export { align-self: flex-start; }
+.site-data-toolbar { align-items: center; display: flex; gap: 8px; justify-content: space-between; }
 /* Its own scroller: a model-designed schema can be any width, and a table that
    widened the rail would push the transcript around. The edge and the corner
    are `.inset-surface`'s; only the scrolling is this rule's. */
@@ -4917,6 +4933,9 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    wall of text and a numbered list loses its numbers. Both were being patched
    inline, once per dialog that noticed; this is the one place they belong. */
 .dialog-body > p + p { margin-top: 10px; }
+/* A paragraph that follows a field is a paragraph, not the field's caption:
+   the copy controls that used to sit between the two carried the gap. */
+.dialog-body > .form-field + p { margin-top: 10px; }
 .dialog-body ol { list-style: decimal; margin: 10px 0; padding-inline-start: 1.5rem; }
 .dialog-body ol > li + li { margin-top: 6px; }
 /* The one consequence in a setup dialog that damages something the person is
@@ -4931,10 +4950,17 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .dialog-callout > p { margin: 0; }
 .form-field > small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); line-height: 20px; }
 .form-field > select { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-sys-color-border-default); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); min-height: 36px; min-width: 0; padding: 6px 10px; width: 100%; }
-.form-field > span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
+.form-field > span,
+.form-field > label { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 .form-field > input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); outline: 0; padding: 9px 10px; width: 100%; }
 .form-field > input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
 .form-field textarea { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); line-height: 1.5; outline: 0; padding: 10px; resize: vertical; width: 100%; }
+/* A value shown to be copied: the caption spans the row, and the field shares
+   it with the copy control beside it rather than carrying a sentence under it.
+   The control is `.icon-button`'s 30px against the field's taller box, so the
+   row centres the two. */
+.copy-field { align-items: center; column-gap: 6px; grid-template-columns: minmax(0, 1fr) auto; }
+.copy-field > label { grid-column: 1 / -1; }
 .granola-key-guide { background: var(--av-sys-color-surface-default); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); margin-bottom: 16px; padding: 13px 14px; }
 .granola-key-guide h3 { color: var(--av-sys-color-text-default); font-size: var(--av-cmp-control-font-size); margin: 0; }
 .granola-key-guide ol { color: var(--av-sys-color-text-subtle); font-size: var(--av-cmp-control-font-size); line-height: 1.5; margin: 9px 0; padding-left: 19px; }

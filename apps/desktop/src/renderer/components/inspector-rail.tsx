@@ -4,11 +4,8 @@ import * as Dialog from '@radix-ui/react-dialog';
 import {
   Archive,
   ArrowLeft,
-  Check,
   ChevronRight,
   ChevronsRight,
-  CircleAlert,
-  Copy,
   ExternalLink,
   Eye,
   History,
@@ -23,7 +20,6 @@ import { DetailHeaderActionsHost } from './detail-header-actions';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { formatDateTime, formatSparseRelativeDate } from '../lib/format';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../lib/resource-preview';
-import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import type {
   ResourceVersion,
@@ -33,6 +29,7 @@ import type {
 import { type RailInspector, type RailVariant, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { ResourceIcon } from './markdown-citations';
+import { CopyButton } from './copy-button';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, Modal } from './primitives';
 import { SiteResourceDetail, type SiteResourceDetailProps } from './site-resource-detail';
 import { MarkdownBody } from './workstream-blocks';
@@ -192,35 +189,10 @@ function ContextContent({
   | 'onToggleWatch'
 >): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
-  const [emailCopyState, setEmailCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
-
-  useEffect(() => {
-    setEmailCopyState('idle');
-  }, [workstream?.id]);
-
-  useEffect(() => {
-    if (emailCopyState === 'idle') return;
-    const reset = window.setTimeout(() => setEmailCopyState('idle'), 2_000);
-    return () => window.clearTimeout(reset);
-  }, [emailCopyState]);
 
   if (!workstream) return <EmptyState title="No work stream selected" description="Open a work stream to inspect its context." />;
   const sources = workstream.resources.filter((resource) => resource.direction === 'source');
   const artifacts = workstream.resources.filter((resource) => resource.direction === 'artifact');
-
-  const copyEmailAddress = async (): Promise<void> => {
-    if (!workstream.emailAddress) return;
-    try {
-      await desktopBridge().copyText(workstream.emailAddress);
-      reportTelemetryProductIntent({
-        kind: 'content_copied', contentType: 'workstream_email', resourceType: 'workstream',
-        resourceId: workstream.id,
-      });
-      setEmailCopyState('copied');
-    } catch {
-      setEmailCopyState('failed');
-    }
-  };
 
   return (
     <div className="rail-sections">
@@ -271,32 +243,18 @@ function ContextContent({
                   beside it; the title carries the rest. */}
               <dd className="copy-detail">
                 <span title={workstream.emailAddress}>{workstream.emailAddress}</span>
-                <IconButton
-                  label={emailCopyState === 'copied'
-                    ? 'Work-stream email address copied'
-                    : emailCopyState === 'failed'
-                      ? 'Copy failed; retry work-stream email address'
-                      : 'Copy work-stream email address'}
-                  onClick={() => void copyEmailAddress()}
-                  title={emailCopyState === 'copied'
-                    ? 'Copied'
-                    : emailCopyState === 'failed'
-                      ? 'Copy failed — click to retry'
-                      : 'Copy work-stream email address'}
-                >
-                  {emailCopyState === 'copied'
-                    ? <Check aria-hidden="true" size={12} />
-                    : emailCopyState === 'failed'
-                      ? <CircleAlert aria-hidden="true" size={12} />
-                      : <Copy aria-hidden="true" size={12} />}
-                </IconButton>
-                <span aria-live="polite" className="sr-only" role="status">
-                  {emailCopyState === 'copied'
-                    ? 'Work-stream email address copied.'
-                    : emailCopyState === 'failed'
-                      ? 'The work-stream email address could not be copied.'
-                      : ''}
-                </span>
+                {/* Keyed on the stream: a check earned by one stream's address
+                    must not still be showing over the next stream's. */}
+                <CopyButton
+                  key={workstream.id}
+                  label="Copy work-stream email address"
+                  onCopied={() => reportTelemetryProductIntent({
+                    kind: 'content_copied', contentType: 'workstream_email', resourceType: 'workstream',
+                    resourceId: workstream.id,
+                  })}
+                  size={12}
+                  value={workstream.emailAddress}
+                />
               </dd>
             </div>
           )}
@@ -323,14 +281,16 @@ function ContextContent({
                 <dt>Work-stream ID</dt>
                 <dd className="copy-detail">
                   <span className="mono">{workstream.id}</span>
-                  <IconButton label="Copy work-stream ID" onClick={() => {
-                    void desktopBridge().copyText(workstream.id)
-                      .then(() => reportTelemetryProductIntent({
-                        kind: 'content_copied', contentType: 'workstream_id', resourceType: 'workstream',
-                        resourceId: workstream.id,
-                      }))
-                      .catch(() => undefined);
-                  }}><Copy size={12} /></IconButton>
+                  <CopyButton
+                    key={workstream.id}
+                    label="Copy work-stream ID"
+                    onCopied={() => reportTelemetryProductIntent({
+                      kind: 'content_copied', contentType: 'workstream_id', resourceType: 'workstream',
+                      resourceId: workstream.id,
+                    })}
+                    size={12}
+                    value={workstream.id}
+                  />
                 </dd>
               </div>
             </>
