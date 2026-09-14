@@ -1027,8 +1027,17 @@ export class RallyApi {
     return mapAutomationDetail(raw);
   }
 
-  async deleteAutomation(id: string): Promise<void> {
-    await this.requestVoid(`/sidekicks/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  async archiveAutomation(id: string): Promise<void> {
+    const path = `/sidekicks/${encodeURIComponent(id)}`;
+    try {
+      await this.requestVoid(`${path}/archive`, { method: 'POST' });
+    } catch (error) {
+      // During a rolling API deployment, the previous Worker knows the same
+      // retained tombstone only as DELETE. A route miss proves the POST did
+      // not reach a mutation; every domain 404 remains a real archive failure.
+      if (!(error instanceof ApiError && error.status === 404 && error.code === 'not_found')) throw error;
+      await this.requestVoid(path, { method: 'DELETE' });
+    }
   }
 
   /**

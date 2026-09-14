@@ -593,6 +593,47 @@ describe('Rally API wire adapter', () => {
     expect(secondHeaders.get('Idempotency-Key')).toBe(firstHeaders.get('Idempotency-Key'));
   });
 
+  it('archives a Sidekick through the archive endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.archiveAutomation(automationId)).resolves.toBeUndefined();
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      `https://api.rally.test/sidekicks/${automationId}/archive`,
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });
+  });
+
+  it('falls back to the legacy delete route only when the archive route is missing', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ error: { code: 'not_found', message: 'The requested API route does not exist' } }, { status: 404 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.archiveAutomation(automationId)).resolves.toBeUndefined();
+
+    expect(fetchMock.mock.calls.map((call) => [String(call[0]), call[1]?.method])).toEqual([
+      [`https://api.rally.test/sidekicks/${automationId}/archive`, 'POST'],
+      [`https://api.rally.test/sidekicks/${automationId}`, 'DELETE'],
+    ]);
+  });
+
+  it('does not retry a domain-level missing Sidekick response through delete', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({
+      error: { code: 'sidekick_not_found', message: 'This Sidekick was archived' },
+    }, { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.archiveAutomation(automationId)).rejects.toMatchObject({
+      code: 'sidekick_not_found',
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it('renames a work stream through the typed update endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(json({ ...detail, title: 'Launch planning' }));
     vi.stubGlobal('fetch', fetchMock);

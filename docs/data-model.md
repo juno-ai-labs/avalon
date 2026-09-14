@@ -982,12 +982,13 @@ has a document, and the column notes above point at it rather than restating it:
 - **`workspace_workstream_pins.position` is not uniquely indexed**, because any intermediate
   state of the dense rewrite collides with itself. Uniqueness is a property the
   rewrite maintains, not one the database enforces.
-- **A deleted automation's object is kept forever.** Its lifecycle moves to
-  `deleted` and its directory row records that; the object itself is never
-  destroyed, because its run history, its conversations, its memory scope, and
-  the permanent Global email tombstone all still name it. Its conversations
-  become unreadable rather than deleted: `authorizeViewer` answers unauthorized
-  and archived from then on.
+- **An archived Sidekick's object is kept forever.** Its stored lifecycle moves
+  to the compatibility tombstone `deleted` and its directory row records that;
+  the object itself is never destroyed, because its run history, its
+  conversations, its memory scope, and the permanent Global email tombstone all
+  still name it. Its conversations become unreadable rather than deleted:
+  `authorizeViewer` answers unauthorized and archived from then on. Rally does
+  not currently expose an archived-Sidekick browser or an unarchive operation.
 - **A `system_kind` work stream refuses a scope change** with
   `scope_change_unsupported`. That is deliberate, not a missing case.
 - **A migration deployed ahead of the code that needs it is the safe order; the
