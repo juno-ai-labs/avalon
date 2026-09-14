@@ -25,3 +25,6 @@ export function regionConfiguration(region: Region): RegionConfiguration {
 export function isConfiguredRegion(value: unknown): value is Region {
   return typeof value === 'string' && Object.hasOwn(regions, value);
 }
+
+/** Requests that act on a deployment must name one this build can reach. */
+export const ConfiguredRegionSchema = RegionSchema.refine(isConfiguredRegion, 'Region is not configured');

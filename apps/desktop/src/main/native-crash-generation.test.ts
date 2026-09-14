@@ -27,6 +27,26 @@ afterEach(async () => {
 });
 
 describe('native crash generation lifecycle', () => {
+  it('purges upload generations belonging to a retired deployment', async () => {
+    const rootDirectory = await scratchDirectory();
+    const generationId = '00000000-0000-7000-8000-000000000001';
+    const directory = join(rootDirectory, 'upload', 'retired-deployment', generationId);
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, 'manifest.json'), JSON.stringify({
+      version: 1, generationId, route: 'retired-deployment', runtime,
+      createdAt: '2026-08-01T00:00:00.000Z', deleteAfter: '2026-08-15T00:00:00.000Z',
+      invalidatedAt: null,
+    }));
+    await writeFile(join(directory, 'crash.dmp'), 'opaque crash bytes');
+    const result = await prepareNativeCrashGeneration({
+      rootDirectory, route: null, runtime,
+      generationId: '00000000-0000-7000-8000-000000000002',
+      now: new Date('2026-08-16T00:00:00.000Z'),
+    });
+    expect(result.purgedGenerationIds).toContain(generationId);
+    await expect(access(directory)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('creates a route-final active database with an externally readable absolute deadline', async () => {
     const rootDirectory = await scratchDirectory();
     const result = await prepareNativeCrashGeneration({

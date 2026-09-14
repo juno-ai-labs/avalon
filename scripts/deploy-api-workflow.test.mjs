@@ -283,3 +283,12 @@ test('deploys the Managed OAuth engineering MCP only after configured APIs are h
   assert.match(provisioner, /body\.result_info\?\.total_pages/u);
   assert.match(provisioner, /cloudflareList\(\s*`\/access\/apps\/\$\{encodeURIComponent\(ace\.id\)\}\/policies`/u);
 });
+
+test('deployment workflows include their shared region configuration inputs', async () => {
+  for (const name of ['deploy-api', 'deploy-ace', 'deploy-site', 'deploy-migration-tracker']) {
+    const workflow = await readFile(join(repositoryDirectory, `.github/workflows/${name}.yml`), 'utf8');
+    const paths = workflow.slice(workflow.indexOf('    paths:'), workflow.indexOf('  workflow_dispatch:'));
+    assert.ok(paths.includes('"config/regions.json"'), `${name} must deploy region-map changes`);
+    if (name !== 'deploy-site') assert.ok(paths.includes('"scripts/regions.mjs"'), `${name} must deploy the script adapter`);
+  }
+});

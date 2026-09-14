@@ -9,6 +9,8 @@ on:
     branches:
       - main
     paths:
+      - "config/regions.json"
+      - "scripts/regions.mjs"
       # Everything the Worker bundle or its schema is built from. A merge that
       # touches only docs, the desktop app, or the site does not redeploy.
       - "apps/api/**"

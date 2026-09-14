@@ -10,6 +10,17 @@ import {
 } from './device-preferences';
 
 describe('device preferences', () => {
+  it('drops a retired deployment while preserving the other device preferences', () => {
+    window.localStorage.setItem(DEVICE_PREFERENCES_STORAGE_KEY, JSON.stringify({
+      version: 1, selectedRegion: 'retired-deployment', workspaceName: 'Research',
+      microphoneDeviceId: 'mic-1', theme: { family: 'default', mode: 'dark' },
+    }));
+    expect(readDevicePreferences()).toMatchObject({
+      version: 1, workspaceName: 'Research', microphoneDeviceId: 'mic-1', theme: 'dark',
+    });
+    expect(readDevicePreferences().selectedRegion).toBeUndefined();
+  });
+
   beforeEach(() => window.localStorage.clear());
 
   it('stores renderer preferences in one versioned record', () => {

@@ -1,4 +1,4 @@
-import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
+import { configuredRegions, isConfiguredRegion, regionConfiguration } from "@rally/contracts/regions";
 import type { Region } from "@rally/contracts/regions";
 /**
  * Turning "force this class" into one queue message per Durable Object.
@@ -38,17 +38,14 @@ const QUEUE_SEND_BATCH = 100;
  * The command queue for each region, or `undefined` where this Worker holds no
  * binding — the normal state in local development and in the workerd suite.
  *
- * Two bindings selected by region is the one branch on region this repository
- * allows in code. The usual rule, from `docs/choosing-queues-or-rpc.md`, is to
- * keep one binding name across both regional configs so region selection stays
- * deployment configuration; that rule is written for a Worker deployed once per
- * region. This one is deployed once for the account and addresses both, so the
- * selection has nowhere else to live.
+ * This account-wide Worker selects the configured deployment binding. Retired
+ * deployments have no queue and their objects are counted as unroutable.
  */
 export function migrationCommandQueue(
   env: Env,
   region: Region,
 ): Queue<DurableObjectMigrationCommand> | undefined {
+  if (!isConfiguredRegion(region)) return undefined;
   return env[`${regionConfiguration(region).bindingPrefix}_MIGRATION_COMMAND_QUEUE`];
 }
 

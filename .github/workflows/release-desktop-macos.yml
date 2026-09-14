@@ -21,6 +21,7 @@ on:
     # to compute for very large pushes; when it cannot, the workflow runs, and
     # the planner's check for work since the last release decides instead.
     paths:
+      - 'config/regions.json'
       - 'apps/desktop/**'
       - 'packages/contracts/**'
       - 'package.json'

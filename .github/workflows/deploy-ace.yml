@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
     paths:
+      - "config/regions.json"
+      - "scripts/regions.mjs"
       # The Worker, browser bundle, package/configuration, and every future
       # runtime asset live below apps/ace. Tests stay on CI and do not change
       # the deployed application.
