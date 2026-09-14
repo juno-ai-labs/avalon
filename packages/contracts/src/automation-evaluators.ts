@@ -132,50 +132,62 @@ export const ExternalEventPredicateLeafV1Schema = z.union([
  * "A or B" writes two rules, which is also how they are stored and matched, one
  * registration each.
  *
- * `always` is "every event of this type"; `matching` is "every leaf holds".
+ * This is the **stored** spelling, and `all` is deliberately unchanged. Three
+ * columns hold it — `definition_revisions.evaluator_rules_json` and
+ * `automation.evaluator_projection_json` on SidekickDO, and
+ * `workspace_external_event_registrations.evaluator_json` on WorkspaceDO, the
+ * last parsed by `matchExternalEventDestinations` on the delivery path of every
+ * incoming event and the middle one replayed by the `sidekick_publication`
+ * alarm and by `resumeFromPause`. Worker versions are deployed gradually and
+ * can be rolled back ([api-worker-deployment.md](../../../docs/api-worker-deployment.md)),
+ * so a version serving beside or after this one must be able to read anything
+ * this one writes. Renaming the discriminant *here* would write rows the
+ * previous version cannot parse, and that failure is not a degraded read — it
+ * throws mid-match, and every event-driven Sidekick stops waking.
+ *
+ * The rename that this spelling reads as ambiguous is therefore confined to the
+ * model's side of the boundary; see `ModelFacingExternalEventPredicateV1Schema`.
  */
-const CanonicalExternalEventPredicateV1Schema = z.union([
+export const ExternalEventPredicateV1Schema = z.union([
   z.strictObject({ kind: z.literal("always") }),
   z.strictObject({
-    kind: z.literal("matching"),
+    kind: z.literal("all"),
     allOf: z.array(ExternalEventPredicateLeafV1Schema).min(1),
   }),
 ]);
 
 /**
- * `matching` was spelled `all` before this rename, and rows written under that
- * spelling are still in production: `evaluator_rules_json` on SidekickDO's
- * `definition_revisions`, and `evaluator_json` on WorkspaceDO's
- * `workspace_external_event_registrations`, which
- * `matchExternalEventDestinations` parses on the delivery path of every
- * incoming event. A stored `all` that stopped parsing would not degrade — it
- * would throw mid-match, and every event-driven Sidekick registered before the
- * rename would silently stop waking.
+ * What the drafting model writes, and the one place `matching` exists.
  *
- * So the legacy spelling is accepted here and nowhere else. Mapping it *before*
- * validation rather than admitting it as a third union branch is what keeps it
- * from spreading: every reader downstream sees only `matching`, and
- * `z.toJSONSchema(…, { io: "input" })` — which is what `set_evaluator_rules`
- * hands the drafting model — renders the canonical union alone, so the
- * discriminant this rename exists to disambiguate is never offered back to the
- * model under both names.
+ * `all` and `always` sit next to each other in a grammar the model authors
+ * through `set_evaluator_rules`, and read as near-synonyms: `all` means "every
+ * one of these leaves holds", `always` means "every event of this type". The
+ * ambiguity landed in authored rules rather than in review comments, so the
+ * conjunction is `matching` on the side the model reads.
  *
- * Dropping it requires that no stored row spell it `all` any more: a migration
- * rewriting both columns in every region, or proof that every revision and
- * registration predating the rename has since been rewritten by a normal
- * accept/reconcile. Deleting this preprocess without one of those is a silent
- * outage, not a failed parse anyone would see in review.
+ * It is a `transform` and not a second stored spelling, which is what keeps the
+ * two apart in the only two places that matter. `z.toJSONSchema(…, { io:
+ * "input" })` — how `set_evaluator_rules` is described to the model — renders a
+ * transform's *input*, so the tool offers `matching` and never `all`; parsing
+ * yields the *output*, so nothing downstream of a draft, and nothing written to
+ * any of the three columns above, spells it anything but `all`.
+ *
+ * A future change may rename the stored spelling too, but only once no Worker
+ * version that predates it can still serve or be rolled back to — and then this
+ * transform becomes an identity and should be deleted rather than left to
+ * suggest the two ever disagreed.
  */
-const LEGACY_MATCHING_PREDICATE_KIND = "all";
-
-export const ExternalEventPredicateV1Schema = z.preprocess((raw) => {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
-  const { kind, ...rest } = raw as Record<string, unknown>;
-  if (kind !== LEGACY_MATCHING_PREDICATE_KIND) return raw;
-  // Only the discriminant is rewritten; every other key is left exactly as
-  // stored, so the strict object below still refuses anything it would have.
-  return { kind: "matching", ...rest };
-}, CanonicalExternalEventPredicateV1Schema);
+export const ModelFacingExternalEventPredicateV1Schema = z.union([
+  z.strictObject({ kind: z.literal("always") }),
+  z.strictObject({
+    kind: z.literal("matching"),
+    allOf: z.array(ExternalEventPredicateLeafV1Schema).min(1),
+  }),
+]).transform((predicate): z.infer<typeof ExternalEventPredicateV1Schema> => (
+  predicate.kind === "matching"
+    ? { kind: "all", allOf: predicate.allOf }
+    : predicate
+));
 
 export const ExternalEventEvaluatorV1Schema = z.strictObject({
   evaluatorId: IdSchema.brand<"ExternalEventEvaluatorId">(),
@@ -242,12 +254,11 @@ export const DraftExternalEventEvaluatorV1Schema = z.strictObject({
   when: ExternalEventPredicateV1Schema,
 });
 
-export const AutomationSetEvaluatorRulesInputV1Schema = z.strictObject({
-  schemaVersion: z.literal(1)
-    .describe("Always 1. It fixes how the rules below are read, so a rule set written for a later shape is refused rather than half-understood."),
-  evaluators: z.array(DraftExternalEventEvaluatorV1Schema)
-    .describe("The complete set of rules deciding which external events wake this Sidekick. It replaces every rule the draft currently has rather than adding to it, so send the whole set each time and send [] to clear it. Each rule needs an `evaluatorKey` unique within the set."),
-}).superRefine((value, context) => {
+/** One definition of the uniqueness rule, so the two spellings cannot drift. */
+function assertUniqueEvaluatorKeys(
+  value: { evaluators: ReadonlyArray<{ evaluatorKey: string }> },
+  context: z.core.$RefinementCtx,
+): void {
   const keys = new Set<string>();
   value.evaluators.forEach((evaluator, index) => {
     if (keys.has(evaluator.evaluatorKey)) {
@@ -259,7 +270,42 @@ export const AutomationSetEvaluatorRulesInputV1Schema = z.strictObject({
     }
     keys.add(evaluator.evaluatorKey);
   });
-});
+}
+
+export const AutomationSetEvaluatorRulesInputV1Schema = z.strictObject({
+  schemaVersion: z.literal(1)
+    .describe("Always 1. It fixes how the rules below are read, so a rule set written for a later shape is refused rather than half-understood."),
+  evaluators: z.array(DraftExternalEventEvaluatorV1Schema)
+    .describe("The complete set of rules deciding which external events wake this Sidekick. It replaces every rule the draft currently has rather than adding to it, so send the whole set each time and send [] to clear it. Each rule needs an `evaluatorKey` unique within the set."),
+}).superRefine(assertUniqueEvaluatorKeys);
+
+/**
+ * The same rule set as `AutomationSetEvaluatorRulesInputV1Schema`, in the
+ * spelling the drafting model writes.
+ *
+ * It exists for two jobs and no others: rendering `set_evaluator_rules`'s tool
+ * schema, where `z.toJSONSchema(…, { io: "input" })` must show `matching`, and
+ * parsing that tool's arguments, where the transform yields the stored shape.
+ * Everything past the tool — the host port, the object's request schema, the
+ * re-parse of `evaluator_rules_json` in `apply` — takes the stored schema,
+ * because by then the value has already been through here.
+ *
+ * Keeping the pair this narrow is deliberate. An earlier attempt pointed the
+ * draft evaluator itself at the model-facing predicate, which made the one
+ * schema asymmetric: four callers re-parsing a *stored* set with it were then
+ * parsing `all` against a union that had been narrowed to `matching`, and
+ * `apply` threw on every accepted event-driven Sidekick. The workers suite
+ * caught it. The boundary is one tool call wide, so the schema that spans it
+ * should be too.
+ */
+export const AutomationSetEvaluatorRulesModelInputV1Schema = z.strictObject({
+  schemaVersion: z.literal(1)
+    .describe("Always 1. It fixes how the rules below are read, so a rule set written for a later shape is refused rather than half-understood."),
+  evaluators: z.array(DraftExternalEventEvaluatorV1Schema.extend({
+    when: ModelFacingExternalEventPredicateV1Schema,
+  }))
+    .describe("The complete set of rules deciding which external events wake this Sidekick. It replaces every rule the draft currently has rather than adding to it, so send the whole set each time and send [] to clear it. Each rule needs an `evaluatorKey` unique within the set."),
+}).superRefine(assertUniqueEvaluatorKeys);
 
 export const ExternalEventDestinationSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("automation"), automationId: IdSchema }),
@@ -390,6 +436,7 @@ export type ExternalEventEvaluatorV1 = z.infer<typeof ExternalEventEvaluatorV1Sc
 export type AutomationExternalEvaluatorSetV1 = z.infer<typeof AutomationExternalEvaluatorSetV1Schema>;
 export type DraftExternalEventEvaluatorV1 = z.infer<typeof DraftExternalEventEvaluatorV1Schema>;
 export type AutomationSetEvaluatorRulesInputV1 = z.infer<typeof AutomationSetEvaluatorRulesInputV1Schema>;
+export type AutomationSetEvaluatorRulesModelInputV1 = z.infer<typeof AutomationSetEvaluatorRulesModelInputV1Schema>;
 export type ExternalEventRegistrationProjectionV1 = z.infer<typeof ExternalEventRegistrationProjectionV1Schema>;
 export type WorkspaceExternalEventDeliveryQueueMessage = z.infer<typeof WorkspaceExternalEventDeliveryQueueMessageSchema>;
 export type ConnectorActivityTriggerDescriptorV2 = z.infer<typeof ConnectorActivityTriggerDescriptorV2Schema>;

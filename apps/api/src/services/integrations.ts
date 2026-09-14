@@ -75,6 +75,7 @@ import {
   type AutomationDraft,
   type AutomationSetEvaluatorRulesInputV1,
   AutomationSetEvaluatorRulesInputV1Schema,
+  AutomationSetEvaluatorRulesModelInputV1Schema,
   automationBindableResourceTypes,
   type HarnessFailureCode,
   type AutomationPluginActivity,
@@ -1771,7 +1772,9 @@ function createAvalonAutomationsPlugin(
             inspectedPluginIds.add(pluginId);
           }
         } else if (plan.canonicalToolName === "set_evaluator_rules") {
-          const restored = AutomationSetEvaluatorRulesInputV1Schema.safeParse(
+          // The receipt holds the tool's arguments, so this is the model's
+          // spelling and not the stored one.
+          const restored = AutomationSetEvaluatorRulesModelInputV1Schema.safeParse(
             withoutUnusableDraftResourceIds(raw, catalog),
           );
           if (restored.success) {
