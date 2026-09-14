@@ -36,9 +36,11 @@ bindings keep their existing `<prefix>_<capability>` convention. Global's
 existing bindings and resources retain their names.
 
 Physical placement is separate configuration: jurisdiction, initial affinities,
-and the longitude split used to select one affinity at creation. Global retains
+and the longitude split used to select from a west/east affinity pair at creation. Global retains
 its current jurisdiction and persisted placement. Changing placement is not a
-method for relocating an existing object hierarchy.
+method for relocating an existing object hierarchy. The application validates the
+region/affinity pairing against configuration; SQLite preserves placement immutability
+without embedding a second copy of deployment configuration.
 
 ## Invariants
 
@@ -62,7 +64,9 @@ existing workspaces between deployments are outside this change.
 
 ## Failure modes and limits
 
-Missing configuration or a required bridge makes that destination unavailable.
+Actionable onboarding requests validate configured membership; persisted identifiers
+remain representable after retirement. Missing configuration or a required bridge
+makes that destination unavailable.
 Existing service error handling, delivery receipts, and retry behavior apply.
 This mechanism introduces no new limits or approval flows.
 
@@ -74,6 +78,9 @@ check row preservation. Local startup and ordinary smoke checks run Global.
 Visible onboarding changes are inspected in Electron.
 
 ## Operations
+
+Deployment workflows and the desktop release planner include the shared region map
+as an input, so configuration-only edits are shipped.
 
 Use the configured region list for local startup and health checks. Preserve
 resource IDs when editing Wrangler configuration. Retirement stops a workspace's

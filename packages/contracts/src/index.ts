@@ -133,8 +133,8 @@ export {
 export { parseDesktopDeepLinkIntent, type DesktopDeepLinkIntent } from "./desktop-deep-link-intent";
 
 export const TimestampSchema = z.string().datetime({ offset: true });
-export { RegionSchema, configuredRegions, regionConfiguration, isConfiguredRegion } from "./regions";
-import { RegionSchema } from "./regions";
+export { RegionSchema, ConfiguredRegionSchema, configuredRegions, regionConfiguration, isConfiguredRegion } from "./regions";
+import { RegionSchema, ConfiguredRegionSchema } from "./regions";
 
 /**
  * Branded identifiers.
@@ -366,9 +366,9 @@ export const WorkspaceOnboardingStateSchema = z.object({
 }));
 export const CreateWorkspaceRequestSchema = z.object({
   name: z.string().trim().min(2).max(120),
-  region: RegionSchema
+  region: ConfiguredRegionSchema
 });
-export const OnboardingRegionRequestSchema = z.object({ region: RegionSchema });
+export const OnboardingRegionRequestSchema = z.object({ region: ConfiguredRegionSchema });
 export const ActivateWorkspaceRequestSchema = OnboardingRegionRequestSchema.extend({
   workspaceId: IdSchema
 });

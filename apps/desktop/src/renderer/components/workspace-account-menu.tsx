@@ -60,10 +60,7 @@ export interface WorkspaceAccountMenuProps {
   presentation?: 'workspace' | 'grok';
 }
 
-/** The two data regions, as the compact tag on a row and the caption under
- * the account's email. `global` is the region key of the US data region — the
- * key predates deployment isolation, and stored sessions and workspace records carry
- * it, so only its name changes. */
+/** Deployment tags disambiguate workspaces when multiple deployments are configured. */
 function regionLabel(region: RallyRegion): string {
   return region;
 }
@@ -368,7 +365,7 @@ export function WorkspaceAccountMenu({
               <>
                 <DropdownMenu.Label className="menu-label">
                   <span>{currentUser.email}</span>
-                  <small>{regionLabel(activeWorkspace.region)} workspace</small>
+                  <small>Workspace</small>
                 </DropdownMenu.Label>
                 <DropdownMenu.Separator className="menu-separator" />
                 <DropdownMenu.Item asChild className="menu-item">

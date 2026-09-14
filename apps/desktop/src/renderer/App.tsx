@@ -114,7 +114,7 @@ function ServiceSetupState({
         </dl>
         <div className="setup-guidance">
           <strong>Local development</strong>
-          <p>Start the Cloudflare API for this region and confirm the safe <code>VITE_API_GLOBAL_URL</code> value in <code>.env.local</code>. Server API keys must not use a <code>VITE_</code> prefix.</p>
+          <p>Start the Cloudflare API for this region and confirm this deployment’s API URL in <code>.env.local</code>. Server API keys must not use a <code>VITE_</code> prefix.</p>
         </div>
         <div className="setup-actions">
           <Button onClick={() => void signOut()}>Return to sign in</Button>

@@ -37,6 +37,13 @@ async function probe(overrides: Record<string, unknown> = {}): Promise<Response>
 }
 
 describe("the health probe's environment-contract check", () => {
+  it('does not exempt an unconfigured region from the login readiness check', async () => {
+    vi.mocked(assertEnvContract).mockImplementation(() => undefined);
+    const response = await probe({ AVALON_REGION: 'missing-region', GOOGLE_OAUTH_CLIENT_ID: '', GOOGLE_OAUTH_CLIENT_SECRET: '' });
+    const body = await response.json() as { checks: { googleLoginOAuth: { ok: boolean; message: string } } };
+    expect(body.checks.googleLoginOAuth).toEqual({ ok: false, message: 'not configured' });
+  });
+
   it("reports the contract as satisfied when the assertion passes", async () => {
     vi.mocked(assertEnvContract).mockImplementation(() => undefined);
 

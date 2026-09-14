@@ -1,3 +1,4 @@
+import { isConfiguredRegion } from "@rally/contracts/regions";
 import { configuredRegions } from "@rally/contracts/regions";
 import { regionalBindings } from "../lib/regional-bindings";
 import { Hono } from "hono";
@@ -154,7 +155,7 @@ healthRoutes.get("/", async (c) => {
   // case where this probe most needs to complain, and the env contract holds
   // one to every rule. `/health` is reachable when the region is invalid
   // precisely so it can say so, and it must not answer "not required" then.
-  if (c.env.AVALON_REGION === "global") {
+  if (!isConfiguredRegion(c.env.AVALON_REGION) || c.env.AVALON_REGION === "global") {
     // Global, and any region too malformed to read — the state this probe most
     // needs to complain in, since the entrypoint is failing on this very key
     // while `/health` stays exempt so it can say so.

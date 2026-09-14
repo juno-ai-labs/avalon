@@ -16,7 +16,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DurableObjectMigrationCommand } from "@rally/contracts/durable-object-migrations";
 
-import { dispatchableRegions, dispatchMigrationRun } from "../src/dispatch";
+import { dispatchableRegions, dispatchMigrationRun, migrationCommandQueue } from "../src/dispatch";
 import type { Env } from "../src/env";
 import type { InventoryNamespace } from "../src/protocol";
 import { REGISTRY_OBJECT_NAME } from "../src/registry";
@@ -362,4 +362,8 @@ describe("dispatchMigrationRun", () => {
     expect(queues.global.batches).toHaveLength(50);
     expect(new Set(queues.global.batches)).toEqual(new Set([100]));
   });
+});
+
+it('treats a retired deployment as an unavailable queue', () => {
+  expect(migrationCommandQueue(boundEnv().env, 'retired-deployment')).toBeUndefined();
 });
