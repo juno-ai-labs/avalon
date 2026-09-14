@@ -58,10 +58,10 @@ Delivers goal 2.
 
 - Add a `SlackReactionTicker` Durable Object holding the session key, the
   rotation cursor, and the last-placed reaction, with an alarm-driven advance.
-- Bind it in `apps/api/wrangler.global.jsonc` and `apps/api/wrangler.eu.jsonc`
-  with a migration tag in both.
+
 - Start it once the session is established; clear its alarm from the terminal
   transition in phase 2.
+
 - Make the ticker fail safe: a lost or never-started ticker leaves the outcome
   reaction correct, because delivery remains the authority.
 

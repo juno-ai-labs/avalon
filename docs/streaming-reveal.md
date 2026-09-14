@@ -170,8 +170,6 @@ body, canonical projection depending on overlay identity, a global transcript
 sort, a segment key that churns, a `mentions` default that mints a new array per
 render — multiplies at 60 commits a second, not 8.
 
-## Changelog
-
 ### 2026-09-08 — Park pacing on the frame that drains the buffer
 
 **What changed:** Draining and hidden flushes park both timing clocks and clear

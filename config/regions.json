@@ -1,0 +1,16 @@
+{
+  "global": {
+    "apiUrl": "https://api.rallywith.ai",
+    "localApiUrl": "http://127.0.0.1:8787",
+    "bindingPrefix": "GLOBAL",
+    "jurisdiction": "us",
+    "affinities": [
+      "wnam",
+      "enam"
+    ],
+    "longitudeSplit": -100,
+    "artifactSuffix": "g",
+    "searchRegion": "gcp-us-west1",
+    "workerName": "avalon-api-global"
+  }
+}

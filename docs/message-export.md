@@ -280,8 +280,6 @@ Two traps:
   that renders an agent turn also needs `desktopServicesAvailable` in its
   `../lib/platform` mock, or the buttons throw on render.
 
-## Changelog
-
 ### 2026-08-30 — Mermaid diagrams save as source
 
 **What changed:** A `mermaid` fence remains the ordinary highlighted code block

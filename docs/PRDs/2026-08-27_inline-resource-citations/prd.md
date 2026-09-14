@@ -292,8 +292,6 @@ add an affordance to content participants already see; opening one is
 viewing and creates no participation; no channel, search, or global
 surface appears. No clause moves.
 
-## Decision log
-
 ### 2026-08-28 — A saved card keeps the source list the transcript drops
 
 **Decided:** The footnote lift is conditional on the surface. The transcript

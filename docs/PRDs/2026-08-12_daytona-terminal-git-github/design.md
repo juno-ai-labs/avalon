@@ -303,8 +303,6 @@ and OpenCode commit
 | Grok Build | `run_terminal_cmd` with foreground/background result variants, streamed deltas, output files, task status, and kill | Dedicated read, exact replace, list, grep, patch, OpenCode-compatible, and experimental hash-line variants | Ordinary `git`/`gh`; worktrees, PR observation, and MCP live above the command tool | Whole-process sandbox and permissions are distinct; background completion should notify rather than encourage polling |
 | OpenCode | `bash` with command, timeout, and workdir; no stdin; bounded tail plus saved full output | Dedicated read, exact edit, write, glob, grep, and marker-format patch | Its current prompt explicitly directs GitHub work to `gh` and keeps Git/PR safety rules in the shell prompt | Current permission rules are approvals, not an OS sandbox; typed file path checks are stronger than shell-text inference |
 
-### Codex
-
 #### Shell commands
 
 OpenAI's public Responses API shell contract uses paired `shell_call` and
@@ -433,8 +431,6 @@ separate approval/authority layer. It does not expose `session_id`,
 `write_stdin`, or a PTY at launch. Bind owns continuation and returns one final
 command result after Daytona signals completion.
 
-### Claude Code
-
 #### Bash commands
 
 Claude Code's hook and Agent SDK documentation exposes this input shape:
@@ -556,8 +552,6 @@ orchestration and Git commands. It relies on a single active mutating Terminal
 run, atomic exact-match/context checks, and internal reconciliation hashes rather
 than model-visible revisions. It also applies Daytona's isolation to every
 process and keeps GitHub write authority out of the general command path.
-
-### Grok Build
 
 #### Terminal commands
 
@@ -729,8 +723,6 @@ model-visible background flag, task IDs, polling, and monitors at launch because
 Bind can suspend and auto-resume the same tool call. The task-input failure is
 still preserved as a warning: related tool schemas must not disagree on singular
 versus plural identity fields.
-
-### OpenCode
 
 #### Bash commands
 

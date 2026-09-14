@@ -39,8 +39,6 @@ socket hooks' first frame.
 | `apps/desktop/src/renderer/screens/project-space.tsx` | Shows the card over a project painted from the seeded directory. |
 | `apps/desktop/src/renderer/components/workstream-composer.tsx` | `sendBlocked`: everything but sending. |
 
-## How it works
-
 ### The store and its slices
 
 The database is opened through `createIndexedDbStore`, the same best-effort,
@@ -423,8 +421,6 @@ however many frames a run delivers, and a structured clone of an opening window
 is small. The cost that would grow is the persisted transcript, and
 `openingTranscriptSnapshot` is what keeps it from growing with a reader's
 scrolling.
-
-## Changelog
 
 ### 2026-09-10 — A space, a stream, and a substream open from what the device last saw
 

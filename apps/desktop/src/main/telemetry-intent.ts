@@ -1,3 +1,4 @@
+import { isConfiguredRegion } from "@rally/contracts/regions";
 import { TELEMETRY_EVENTS } from '@rally/contracts/telemetry';
 
 import type { DesktopTelemetryProductIntent } from '../common/desktop';
@@ -27,14 +28,14 @@ export function parseTelemetryProductIntent(value: unknown): DesktopTelemetryPro
   switch (candidate['kind']) {
     case 'onboarding_region_selected':
       if (exact('kind', 'selectedRegion', 'entrypoint')
-        && (region === 'global' || region === 'eu')
+        && isConfiguredRegion(region)
         && (entrypoint === 'first_run' || entrypoint === 'settings' || entrypoint === 'invitation')) {
         return { kind: 'onboarding_region_selected', selectedRegion: region, entrypoint };
       }
       break;
     case 'workspace_create_requested':
       if (exact('kind', 'selectedRegion', 'entrypoint', 'operationId')
-        && (region === 'global' || region === 'eu')
+        && isConfiguredRegion(region)
         && (entrypoint === 'first_run' || entrypoint === 'settings')
         && typeof operationId === 'string' && UUID_V7_PATTERN.test(operationId)) {
         return { kind: 'workspace_create_requested', selectedRegion: region, entrypoint, operationId };
@@ -42,7 +43,7 @@ export function parseTelemetryProductIntent(value: unknown): DesktopTelemetryPro
       break;
     case 'workspace_activation_requested':
       if (exact('kind', 'selectedRegion', 'entrypoint', 'operationId')
-        && (region === 'global' || region === 'eu')
+        && isConfiguredRegion(region)
         && (entrypoint === 'invitation' || entrypoint === 'workspace_switcher')
         && typeof operationId === 'string' && UUID_V7_PATTERN.test(operationId)) {
         return { kind: 'workspace_activation_requested', selectedRegion: region, entrypoint, operationId };

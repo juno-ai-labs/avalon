@@ -61,7 +61,7 @@ interruption, ambiguous creation, and no-write Granola adoption runtime coverage
 - [x] Expose operational closed-filter triggers to event-only connection
   authoring without REST recruiting tools, automatic automations, or watches.
 
-Gate: Global/EU isolation, replay and conflicting bytes, related actions, disabled
+Gate: configured deployment isolation, replay and conflicting bytes, related actions, disabled
 and retired authority, Queue handoff failure, MCP/event independence.
 
 ## Phase 4 — Maintenance, rotation, recovery, and removal
@@ -103,7 +103,7 @@ checks; no credentials in API views, desktop persistence, search, or logs.
   break, revert the break, then rerun the affected file.
 - [x] Run repo-wide lint and typecheck, relevant Node and real-workerd suites,
   required script/build checks, and the full tests when warranted by scope.
-- [ ] Exercise authorized Ashby and Granola test accounts in both regions,
+- [ ] Exercise authorized Ashby and Granola test accounts in configured deployments,
   including OAuth/refresh, events, adoption, recovery, and provider cutover.
 - [ ] Run live recruiting and no-confirmation acceptance on the configured medium
   fallback model using the observed catalog, recording sanitized metadata only.
@@ -148,7 +148,7 @@ PR creation and review were subsequently authorized. Deployment and merge remain
   is inferred from these screenshots. Ashby and Granola public support pages were
   also inspected in a visible browser.
 - Script suite: 447 pass. Desktop release invariants: 140 pass. Typecheck passes.
-  Lint (zero warnings), docs check, site build, and Global/EU/Ashby dry-run
+  Lint (zero warnings), docs check, site build, and configured deployment/Ashby dry-run
   builds and local startup checks pass.
 - Final `pnpm test` passes: API Node 273 files / 2,919 tests; real workerd
   87 files / 867 tests; desktop 191 files / 2,903 tests; and every other package.
@@ -167,27 +167,26 @@ No Ashby test organization is available. Do not mark this PRD completed or claim
 launch readiness until an authorized account can establish:
 
 1. Personal OAuth/DCR, refresh, reconnect, actual tool inventory and recruiting
-   query/update behavior in Global and EU, including revoked access and no tool
+   query/update behavior in configured deployments, including revoked access and no tool
    confirmations on the configured medium fallback model.
+
 2. API-key permissions, signed ping and the documented 27-event catalog,
    including organization availability and renewed-watermark retries for the email beta,
    provider enable/disable behavior, redelivery, and API-key replacement against
    the same organization. `apiKey.info` proves read access; webhook creation proves
    write access. No undocumented permission-string conversion is assumed.
+
 3. Actual provider payloads, including confidential records, against the normalized
    field allowlist. The user authorized the workspace audience for organization
    events; matching automations are enabled. Live payload verification remains
    unavailable without a test account and is not an implementation gate.
+
 4. Existing Granola credentials, exact callback URLs, all four existing event
    subscriptions, provider recovery and removal in authorized test workspaces.
+
 5. Signing-key cutover where the provider supplies verifiable evidence. Current
    Ashby/Granola controls give explicit manual recreation guidance with a stated
    delivery gap; they do not claim verified automatic rotation.
-6. After a separate deployment request, dedicated-domain/service-binding behavior
-   and actual regional Worker startup acceptance. The first rollout requires a
-   Global router before EU can bind the new entrypoint; the workflow now detects
-   and performs that ordering automatically, then deploys dedicated ingress after
-   both regional health checks. No bootstrap or deployment was performed.
 
 ## Review evidence
 
@@ -224,13 +223,11 @@ Native Electron captures: workspace setup and
 installation recovery and permission denial.
 These are synthetic public-status fixtures, not evidence of live provider success.
 
-
 CI follow-up: its full-history Gitleaks scan flagged the synthetic Granola fixture
 encoding of `provider-issued-secret`. A literal-only anchored exception and a
 regression rejecting other/longer keys preserve the scan boundary. The pinned
 CI Gitleaks version scanned 3,783 local commits with no leaks. Script tests now
 pass 447 cases; application test/build results above remain unchanged.
-
 
 ## Follow-up — Automatic complete event subscriptions (2026-09-13)
 
@@ -246,11 +243,8 @@ pass 447 cases; application test/build results above remain unchanged.
 - [x] Inspect the simplified native Settings form; update owning docs and PR,
   run quality gates, and retain live acceptance as outstanding.
 
-EU retirement will not block this work. The existing first-rollout ordering issue
-is still unresolved and is not made safe by these subscription changes.
-
 Validation: full `pnpm test` passed (API Node 2,919, workerd 870, desktop
-2,902; other packages passed), along with lint, typecheck, Global/EU/Ashby
+2,902; other packages passed), along with lint, typecheck, configured deployment/Ashby
 build/startup checks and the site build. The new route file passes 17 tests;
 Ashby adapter tests pass 34; installation UI tests pass 9. Native Electron setup
 and the local public support page were inspected. Native setup inspection confirms no event checkboxes.
@@ -268,7 +262,6 @@ failed as required, then were reverted:
 Live acceptance remains unavailable, including organization eligibility for the
 email beta, actual payloads across the catalog, and the confidential audience.
 No provider credentials, deployment, or fleet operation were used.
-
 
 ## Follow-up — Simple event management (2026-09-13)
 
@@ -289,22 +282,6 @@ The support page was inspected locally. Screenshots are temporary local QA files
 and are not attached to the PR or committed.
 
 ## Automatic deployment ordering — 2026-09-13
-
-The API workflow now inspects active Cloudflare exports before resource changes.
-A missing Global Ashby router selects direct Global bootstrap after proving its
-existing EU dependencies. Global deployment, health and router verification must
-succeed before EU runs; shared ingress follows both healthy regions and has its
-own health probe. Both-region version uploads remain ahead of promotion on later
-ordinary releases. EU-only first setup is refused without deploying Global.
-Retries after Global bootstrap return to EU-first order, and Worker-first D1
-migration barriers remain intact. No manual pre-merge bootstrap is required.
-
-Validation: `pnpm test:scripts` passed 460 tests, including 13 new control-plane
-and executable workflow tests. Lint (zero warnings), typecheck, docs check and the
-final seven-test workflow file passed. Five production mutation proofs failed
-for their intended reasons and were reverted: ignoring a missing Global export,
-skipping the EU target check, skipping bootstrap Global health, ignoring a failed
-Worker deployment, and permitting version uploads before bootstrap.
 
 The attempted read-only live preflight stopped before any network request because
 the local Cloudflare credential entries are empty. Actual active-export inspection

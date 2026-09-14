@@ -29,8 +29,6 @@ at the transcript text the client already holds.
 | `apps/api/src/services/control-tower-flags.ts` | The one resolver for the refresh cadence, read by both the client's `GET /feature-flags` answer and the live prompt. Clamps and logs what Flagship serves. |
 | `packages/contracts/src/index.ts` | `CONTROL_TOWER_REFRESH_SECONDS` — the cadence default and its bounds, defined once for every reader — plus `GenerateNoteNotesRequest`, `NoteDetail`, `NoteTranscriptSegment`, and the `recentTranscript` bound. |
 
-## How it works
-
 ### The refresh loop
 
 While dictation is listening, the recording screen sets a single timer for the
@@ -336,8 +334,6 @@ test rerenders to make the transition happen. And the fallback is asserted
 against `CONTROL_TOWER_REFRESH_SECONDS` rather than a literal, so a default
 changed in the contract cannot leave the client on the old one.
 
-## Open questions
-
 ### Should generation move to the server?
 
 Today the client is the whole schedule. The recording screen decides when a
@@ -409,8 +405,6 @@ enthusiastic clients and a corrupted briefing. Note that part 3 is what turns th
 served cadence into an enforced one: the flag already exists and the server
 already reads it, so that step is a scheduler and a budget rather than a new
 knob.
-
-## Changelog
 
 ### 2026-09-01 — The note list pages instead of stopping at 250
 

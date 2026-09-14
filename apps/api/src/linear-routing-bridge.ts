@@ -10,7 +10,7 @@ import {
   parseRpcInput,
 } from "./lib/rpc-contracts";
 
-/** Internal EU-to-Global route-registration surface; it has no public URL. */
+/** Internal Regional-to-Global route-registration surface; it has no public URL. */
 export class LinearRoutingBridge extends WorkerEntrypoint<Env> {
   registerLinearRoute(input: unknown) {
     return serializeLinearRpcResult(() =>

@@ -5,7 +5,7 @@ import { env } from 'cloudflare:workers';
 import { reset, runInDurableObject, createMessageBatch, createExecutionContext, getQueueResult } from 'cloudflare:test';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { asUserId, asWorkspaceId, asWorkstreamId } from '@rally/contracts';
-import migration from '../../../packages/db/migrations/0106_user_push_devices.sql?raw';
+import migration from '../../../packages/db/migrations/0107_user_push_devices.sql?raw';
 import { workspaceDOName } from '../src/durable-objects/names';
 import { deliverPush, consumePushDeliveryQueue } from '../src/queues/push-delivery-consumer';
 import { splitSqlStatements } from '../src/lib/sql-statements';

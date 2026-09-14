@@ -1,3 +1,5 @@
+import { regions, isConfiguredRegion } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 /**
  * The registry: one Durable Object holding everything the tracker knows.
  *
@@ -83,10 +85,7 @@ const MIGRATION_RUN_TARGET_LIMIT = 5_000;
  * added to the account does not silently acquire a region. An object whose
  * script is not here is counted as unroutable and shown, never guessed at.
  */
-export const REGION_BY_SCRIPT_NAME: Readonly<Record<string, "global" | "eu">> = {
-  "avalon-api-global": "global",
-  "avalon-api-eu": "eu",
-};
+export const REGION_BY_SCRIPT_NAME: Readonly<Record<string, Region>> = Object.fromEntries(Object.entries(regions).map(([region, config]) => [config.workerName, region]));
 
 /**
  * `COALESCE(reported region, region implied by the script name)`, as SQL.
@@ -630,8 +629,8 @@ export class MigrationRegistry extends DurableObject<Env> {
       // `component` and `region`. Grouping the namespaces by class instead
       // would make retirement account-wide, and the same classes are deployed
       // in both regions — deleting a class from `avalon-api-global` while
-      // `avalon-api-eu` still runs it would leave the global component looking
-      // live because the EU namespace is. A component whose objects have no
+      // another deployment still runs it would leave the global component looking
+      // live because the regional namespace is. A component whose objects have no
       // namespace yet has no evidence either way, and defaults to live.
       `${RESOLVED_OBJECTS}
        SELECT c.component, c.region, c.class_name, c.latest_version,
@@ -809,7 +808,7 @@ export class MigrationRegistry extends DurableObject<Env> {
         ORDER BY class_name, region`,
     ).toArray().map((row) => ({
       className: row.class_name,
-      region: row.region === "eu" ? "eu" : "global",
+      region: row.region,
       objects: row.objects,
       behind: row.behind,
       failed: row.failed,
@@ -884,7 +883,7 @@ export class MigrationRegistry extends DurableObject<Env> {
     ).toArray().map((row): MigrationTarget => ({
       objectId: row.object_id,
       objectName: row.object_name,
-      region: row.region === "eu" ? "eu" : "global",
+      region: row.region,
     }));
 
     const routable = matched.matched - matched.unroutable;
@@ -953,7 +952,7 @@ export class MigrationRegistry extends DurableObject<Env> {
     ).toArray().map((row): MigrationRun => ({
       runId: row.run_id,
       className: row.class_name,
-      region: row.region === "global" || row.region === "eu" ? row.region : null,
+      region: isConfiguredRegion(row.region) ? row.region : null,
       requestedBy: row.requested_by,
       requestedAt: row.requested_at,
       matched: row.matched_count,

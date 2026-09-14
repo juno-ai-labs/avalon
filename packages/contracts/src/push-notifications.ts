@@ -1,3 +1,4 @@
+import { RegionSchema } from "./regions";
 import { z } from "zod";
 import { HttpsUrlSchema } from "./url-schemas";
 
@@ -14,7 +15,7 @@ export const RegisterPushDeviceRequestSchema = z.object({
 });
 export type RegisterPushDeviceRequest = z.infer<typeof RegisterPushDeviceRequestSchema>;
 export const PushDeliveryMessageSchema = z.object({
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   workspaceId: z.string(),
   recipientUserId: z.string(),
   intentId: z.string(),
@@ -25,6 +26,6 @@ export const PushNotificationDataSchema = z.object({
   kind: z.enum(["mention", "participant_added"]),
   url: HttpsUrlSchema,
   workspaceId: z.string(),
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
 });
 export type PushNotificationData = z.infer<typeof PushNotificationDataSchema>;

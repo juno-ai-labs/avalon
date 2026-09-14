@@ -14,7 +14,7 @@ import { requireWorkstreamIngress } from "./services/workstream-authority";
 /**
  * Account-internal RPC surface used by the shared Global GitHub ingress. It
  * deliberately exposes no public HTTP route and hands exact request bytes to
- * the EU regional webhook service.
+ * the regional webhook service.
  */
 export class GitHubRegionalBridge extends WorkerEntrypoint<Env> {
   setupGitHub(input: unknown) {

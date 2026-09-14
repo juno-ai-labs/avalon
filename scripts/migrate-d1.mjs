@@ -1,7 +1,7 @@
 // The one script that migrates D1 — every region, local or hosted.
 //
 //   node scripts/migrate-d1.mjs                     # every region, local
-//   node scripts/migrate-d1.mjs --region eu         # one region, local
+//   node scripts/migrate-d1.mjs --region global         # one region, local
 //   node scripts/migrate-d1.mjs --remote            # every region, hosted
 //   node scripts/migrate-d1.mjs --remote --list     # what is pending, hosted
 //
@@ -194,19 +194,7 @@ export function wranglerArguments({ region, config, binding, remote }, command, 
   return ["exec", "wrangler", "d1", ...command, binding, ...args, ...location, "--config", config];
 }
 
-/**
- * Refuses a local run whose region has no `.dev.vars.<region>`.
- *
- * Regions are discovered from the Wrangler configs, but `scripts/sync-dev-env.mjs`
- * still generates env files for a hardcoded `global` and `eu`. A third region is
- * therefore discovered here and handed an `--env-file` nothing created, and
- * Wrangler's own message for that names the file rather than the reason. This
- * says which command is behind and which region it has never heard of.
- *
- * Unifying the two region sets is the real fix and is not this script's to make:
- * `sync-dev-env.mjs` carries per-region ports and `_GLOBAL`/`_EU` key suffixes
- * that a discovered region has no answer for yet.
- */
+/** Require the local environment files produced by env:sync before invoking Wrangler. */
 export function assertRegionalEnvFilesExist(targets, directory = API_DIRECTORY) {
   const missing = targets
     .filter((target) => !target.remote)
@@ -214,8 +202,8 @@ export function assertRegionalEnvFilesExist(targets, directory = API_DIRECTORY) 
     .filter((region) => !existsSync(join(directory, `.dev.vars.${region}`)));
   if (missing.length === 0) return;
   throw new Error(`No apps/api/.dev.vars.${missing[0]} for the discovered region `
-    + `${missing.join(", ")}. \`pnpm env:sync\` generates regional env files for global and eu only, `
-    + "so a region added through its Wrangler config needs adding there too.");
+    + `${missing.join(", ")}. \`pnpm env:sync\` generates regional env files for configured deployments, `
+    + "so add this deployment to config/regions.json and run env:sync.");
 }
 
 /**

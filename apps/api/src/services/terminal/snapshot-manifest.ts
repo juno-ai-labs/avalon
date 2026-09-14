@@ -1,3 +1,4 @@
+import { regions } from "@rally/contracts/regions";
 import { Buffer } from "node:buffer";
 
 export interface TerminalSnapshotProbe {
@@ -204,8 +205,7 @@ export function terminalBaselineHostAcceptanceCommand(): string {
     "https://github.com/",
     "https://raw.githubusercontent.com/github/gitignore/main/README.md",
     "https://objects.githubusercontent.com/",
-    "https://api.rallywith.ai/health",
-    "https://eu.api.rallywith.ai/health",
+    ...Object.values(regions).map(({ apiUrl }) => `${apiUrl}/health`),
     "https://astral.sh/",
     "https://get.pnpm.io/install.sh",
     "https://pypi.org/simple/six/",

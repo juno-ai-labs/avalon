@@ -20,35 +20,15 @@ the [WorkerEntrypoint RPC model](https://developers.cloudflare.com/workers/runti
 [RPC lifecycle and disposal](https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/),
 and [Versions and gradual deployments](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/).
 
-Global additionally binds the existing `avalon-desktop-releases` R2 bucket as
-`DESKTOP_RELEASES` for [private downloads](private-access.md). Apply
-regional migration 0101 before releasing the Global API, then Ace and the site.
-EU has no installer binding or public intake route in this first slice. Global requires the Turnstile secret and a finite approved rate-limit binding before production acquisition opens; the four application limits must also be finite. See [private-access operations](private-access.md#operations).
-
-## Sidekick staged deployment
-
-PR #583 deploys both class exports while retaining `AutomationDO` at v9. After
-verifying that release in both regions, deploy the tracker with both class names
-accepted, then apply the API rename release EU first and Global second. It appends
-v10, updates the binding class and migration-report identity, and accepts queued
-legacy commands through a compatibility dispatcher. Only after namespace IDs and
-existing objects are verified may a third release remove the old Worker export.
-See [the lifecycle rollout](automation-lifecycle.md#class-rename-deployment).
-
 ## Where the code lives
 
 | Surface | Entrypoint and config | Responsibility |
 | --- | --- | --- |
 | Ashby ingress | `src/ashby-ingress-worker.ts`, `wrangler.ashby.global.jsonc` | Dedicated public connector domain; opaque regional lookup and exact signed-byte forwarding. |
-| Regional API | `src/index.ts`, `wrangler.{eu,global}.jsonc` | HTTP, events, Durable Objects, Workflows, routing bridges, and product authority. |
-| Document processor | `src/document-processing-worker.ts`, `wrangler.documents.{eu,global}.jsonc` | PDF.js text extraction, animated-GIF storyboards, and TIFF decoding. |
-| Terminal provider | `src/terminal-provider-worker.ts`, `wrangler.terminal.{eu,global}.jsonc` | Daytona SDK calls behind the `TerminalSandboxProvider` contract. |
 | Telemetry delivery | `src/telemetry-delivery-worker.ts`, `wrangler.telemetry.global.jsonc` | Global-only destination adapters for already approved telemetry, crash, and profile rows; PostHog is the first adapter. |
 | Inference pricing | `src/inference-pricing-worker.ts`, `wrangler.pricing.global.jsonc` | Hourly OpenRouter endpoint-price averages written to the shared regional KV namespace. |
 | Contracts | `src/services/document-processing-contract.ts`, `src/services/terminal/provider-rpc-contract.ts`, `src/telemetry/telemetry-delivery-contract.ts` | Typed RPC inputs and outputs imported by caller and callee. |
 | Rollout | `.github/workflows/deploy-api.yml` | Profiles, version upload, migration ordering, promotion, health, and retained evidence. |
-
-## How it works
 
 ### Dedicated Ashby ingress
 
@@ -60,44 +40,23 @@ credentials, verification, and canonical Queue admission remain regional. This
 isolates ingress startup, while shared provider/lifecycle code remains in the API
 artifact and must not be described as removed from it.
 
-The normal deployment workflow handles the first rollout automatically.
-`scripts/select-ashby-deploy-order.mjs` reads Cloudflare's active Global version
-metadata. If `AshbyRoutingBridge` is absent, it checks that the current EU
-versions export every EU entrypoint named by the Global config, then selects a
-direct Global-first release. Both version-upload lanes are skipped because even
-uploading EU would resolve its missing Global target. After ordinary migrations,
-Global services and API deploy once; Global health and a fresh router-export
-check must pass before EU deploys. Worker-first migrations still wait for both
-compatible regional Workers. The dedicated ingress deploys last.
-
-Later releases, including retries after a successful Global bootstrap, use the
-existing EU-first order and deployment-mode selection. A split deployment counts
-as ready only when every serving version exports the router. Missing or malformed
-control-plane metadata fails the preflight; it is not evidence that an export is
-absent. EU-only dispatch before bootstrap stops with instructions to select both
-regions, without deploying unselected Global. This is specific to Ashby's one-way
-new dependency: a missing EU target in Global's config stops the release instead
-of attempting a circular bootstrap. No manual Global-only rollout is required.
-The metadata contracts are Cloudflare's [List Deployments](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/list/)
-and [Get Version Detail](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/versions/methods/get/).
-
-The workflow deploys Ashby ingress only after both regional APIs pass health,
+The workflow deploys Ashby ingress only after the configured API pass health,
 then probes `https://ashby.rallywith.ai/health` with the existing health checker's
-URL override and retry policy. Its own `/health` calls all three named targets,
+URL override and retry policy. Its own `/health` calls its configured named targets,
 checks their regions, and verifies the Global directory is readable; missing
 bindings, a missing routing migration or misrouted bridges return 503. Partial regional
 recovery leaves the shared ingress deployment unchanged. No new stored secret or
 per-customer deployment is involved. Existing Granola webhook URLs stay on their
 original regional receivers. Local UI work can use regional ingestion directly;
 shared-host acceptance uses the dedicated Worker and its configured bindings.
-The dedicated and both regional configs set `PROVIDER_WEBHOOK_MAX_BYTES` to
+The dedicated and regional configs set `PROVIDER_WEBHOOK_MAX_BYTES` to
 2,000,000 bytes; the shared reader defaults to 1,000,000 when unset and rejects
 oversized bodies before buffering or RPC forwarding. This reuses the existing
 provider ingress policy.
 
 ### Search indexing and capture
 
-Both regional API configurations declare the `BROWSER` Browser Run binding for asynchronous conversation-link capture. The existing activity Queue consumer centralizes lexical indexing, Qwen tokenization, chunking, and embeddings in the regional API Worker. The tokenizer dependency is statically imported; the pinned public model assets ship in the bundle and are inflated synchronously on first use, once per isolate rather than once per Queue delivery. Parsing remains outside module startup. The BPE input cache is cleared after every token count. Both regions use the shared code policy of 512 tokens per chunk and 128 tokens of sliding-window overlap; there are no chunk-budget environment variables. Turbopuffer credentials are server secrets: production uses `TURBO_PUFFER_PROD_API_KEY`, development uses `TURBO_PUFFER_DEV_API_KEY`. Deploying these bindings does not backfill dormant objects; the [text-search operations procedure](text-search.md#operations) covers the separate migration wake and Queue verification.
+Both regional API configurations declare the `BROWSER` Browser Run binding for asynchronous conversation-link capture. The existing activity Queue consumer centralizes lexical indexing, Qwen tokenization, chunking, and embeddings in the regional API Worker. The tokenizer dependency is statically imported; the pinned public model assets ship in the bundle and are inflated synchronously on first use, once per isolate rather than once per Queue delivery. Parsing remains outside module startup. The BPE input cache is cleared after every token count. Configured deployments use the shared code policy of 512 tokens per chunk and 128 tokens of sliding-window overlap; there are no chunk-budget environment variables. Turbopuffer credentials are server secrets: production uses `TURBO_PUFFER_PROD_API_KEY`, development uses `TURBO_PUFFER_DEV_API_KEY`. Deploying these bindings does not backfill dormant objects; the [text-search operations procedure](text-search.md#operations) covers the separate migration wake and Queue verification.
 
 Every Worker has one complete static dependency graph. Both regional APIs bind
 to `DOCUMENT_PROCESSOR` and `TERMINAL_PROVIDER`; Global also binds to
@@ -127,15 +86,6 @@ provider Worker creates its own `AbortController`, observes the caller's signal,
 and closes the callback before returning. A pre-aborted input is carried
 explicitly so the provider-side signal is aborted before Daytona I/O begins.
 
-Telemetry-delivery RPC transfers only telemetry, crash, and profile rows that
-the Global API has already admitted and sanitized. D1 outboxes, policy, circuit
-state, delivery receipts, and retries remain API authority. The API passes its
-existing PostHog token and host through the private call during the first
-service bootstrap; the delivery Worker stores no secret or row. Each method
-returns an outcome keyed by destination, so a future fan-out can persist one
-sink's success while retrying another. EU has neither the binding nor a PostHog
-secret.
-
 RPC exceptions are not a product protocol: Cloudflare preserves standard error
 names and messages but not custom own properties. Every Terminal method
 therefore returns a discriminated success/error value. The provider Worker
@@ -144,53 +94,42 @@ submission callbacks return typed `TerminalToolError` refusals by value. The API
 reconstructs the local error types that existing cleanup, recovery, and tool
 logic consumes.
 
-Local development starts EU's three configs and Global's four configs in one
-Wrangler multi-Worker session. Tests inject contract implementations where a
-provider cannot run, while build checks compile and profile every real
-entrypoint.
-`pnpm --filter @rally/api dev:pricing` separately exposes the scheduled handler
-locally through Wrangler's scheduled-event test route.
-
 ## Invariants and contracts
 
 - Production code, tests, and scripts use static imports. A dynamic `import()`
   is not a startup strategy.
+
 - The capability Workers own compute only. D1, R2, Durable Object namespaces,
   schedules, claims, and product state remain in the regional API.
+
 - Service methods are explicit and typed. Do not replace them with an untyped
   operation string or generic JSON endpoint.
+
 - New Global telemetry destination adapters extend `TELEMETRY_DELIVERY` and
   return their own outcome. Do not create one private Worker per vendor; that
   would recreate deployment and startup fragmentation at the destination layer.
+
 - The document, Terminal, and Global telemetry-delivery services must deploy before the API
   version that binds to or calls them. A service change remains compatible with
   the previous API until the regional API promotion is healthy.
-- EU services are separate from Global services. Payloads and provider calls do
-  not cross regions through these bindings.
+
 - The Global pricing Worker is the only OpenRouter pricing-cache writer. API
-  inference in both regions reads the shared public-metadata KV and never
+  inference in configured deployments reads the shared public-metadata KV and never
   refreshes provider pricing inline.
-- All selected versions are uploaded successfully before ordinary promotion.
-  EU services and API promote and pass health before Global promotion.
+
 - Every successful version is tagged with the immutable Git SHA that passed the
   workflow's complete verification matrix.
+
 - Promotion uses the unique version IDs captured from that workflow attempt,
   never the non-unique Git SHA tag. A retry can safely upload another set.
+
 - The engineering MCP is a consumer of named entrypoints in both regional API
   Workers. It deploys only after both selected regions are healthy; a partial
   regional recovery leaves the existing MCP version untouched.
 
-## Boundaries and non-goals
+Global resource names, IDs, placement, and jurisdiction stay unchanged. Deploy a named service before its caller; apply destructive migrations only after the compatible API is serving.
 
-The split follows heavyweight, stateless provider libraries. The shared
-telemetry-delivery service is the convergence point for Global destination
-adapters, while the regional API remains the durable acceptance and retry
-authority. The analytics lakehouse still uses its existing independent
-Queue/Pipeline consumer; moving that lifecycle is deferred until it can preserve
-independent acknowledgement, replay, and EU non-export. This change does not
-split Hono routes by fashion, duplicate secrets at rest, or move Durable Object
-namespaces. A future Durable Object service split is a separate data migration
-using Cloudflare's staged transfer protocol.
+## Boundaries and non-goals
 
 The public API remains one logical service per region. Capability Workers are
 internal implementation boundaries, not user-facing APIs and not independently
@@ -202,82 +141,69 @@ selected product regions.
   Cloudflare's hard startup budget. Inspect its retained CPU profile and move a
   coherent stateless capability behind a typed service boundary; do not retry
   until timing happens to pass.
+
 - A missing target Worker makes caller deployment fail. The workflow deploys or
   uploads target services first.
+
 - If any ordinary version upload fails, no region is promoted.
-- If EU promotion or EU health fails, Global remains unchanged.
-- If Global fails after EU succeeds, leave the verified EU set live and roll
-  Global forward or explicitly restore its prior tagged set.
+
 - A failed pricing cron leaves every prior valid per-model KV record usable. A
   missing or malformed record makes Bind omit that Azure candidate rather than
   send an unpriced request.
+
 - Cloudflare Versions cannot apply Durable Object migrations or update a
   Container image. A Wrangler-config or Crash Symbolicator change therefore
   uses direct service-first deployment. An untagged or divergent production
   baseline also fails safe to direct mode.
+
 - No repository-authored millisecond ceiling is used. Local CPUs differ from
   Cloudflare's; the platform upload is authoritative and the structural service
   boundaries are machine-independent.
 
+A missing binding or failed health check stops the release through the existing workflow gates. No provisioning generator or new policy layer is introduced.
+
 ## Testing
 
-- `pnpm --filter @rally/api build`, `build:eu`, `build:documents`,
-  `build:documents:eu`, `build:terminal`, `build:terminal:eu`,
-  `build:telemetry`, and `build:pricing` dry-run and profile all eight static
-  artifacts.
 - `pnpm --filter @rally/api check:telemetry-startup-boundary` reads Wrangler's
   emitted bundles and requires the PostHog SDK, core, and adapter modules to be
-  absent from both regional APIs. The provider build and production-entrypoint
+  absent from configured regional APIs. The provider build and production-entrypoint
   tests prove the private Worker independently without freezing its SDK internals.
+
 - Attachment tests run the same statically imported codec implementation behind
   an injected document-processing contract.
+
 - Terminal provider tests continue to prove Daytona behavior directly; RPC
   client tests prove session reuse, callback, cancellation, and argument
   delegation. A real-workerd auxiliary Service Binding proves `RpcTarget`
   state and retained callbacks survive the entrypoint call that created them.
+
 - A real-workerd telemetry-delivery Service Binding test proves typed telemetry and nested
   crash rows cross the RPC boundary by value; adapter tests still inspect the
   exact destination payloads without a provider network call.
-- `node --test scripts/deploy-api-workflow.test.mjs` proves service-first
-  upload, the hourly Global cron and shared KV binding, EU-before-Global health,
-  and migration placement.
+
 - PR CI retains the new telemetry-delivery Worker profile for seven days; deployment
   retains all eight exact-artifact profiles on success or failure.
 
+Run lint, typecheck, the affected script and runtime tests, and the repository suite when shared contracts change. Dry-run builds exercise each static graph.
+
 ## Regional impact
 
-Each region has two private Workers and two Service Bindings. Global additionally
-has one private telemetry-delivery Worker and binding, plus one route-less scheduled Worker
-bound to the same pricing KV both APIs read. The delivery service adds no stored
-secret; its caller passes the existing Global PostHog token over RPC. These Workers add
-no routes, databases, buckets, queues, or Durable Object namespaces.
-Service calls execute at the caller's Cloudflare location. EU remains first
-because Global also carries named bindings to EU API entrypoints, and EU data
-retains its existing no-Global-fallback policy.
+Global is the only configured deployment. Additional deployments need configuration and provisioned Wrangler bindings.
 
 ## Operations
 
-Normal production rollout is `deploy-api.yml`. It builds and profiles all
-selected service graphs, materializes Global lakehouse bindings, discovers the
-active source tags, and selects one mode:
-
-- **Versioned:** upload every selected document, Terminal, telemetry-delivery, pricing, and
-  API version with no traffic and capture its immutable version ID; apply
-  migration-first D1 changes; promote those exact EU IDs service-first; prove
-  EU health; promote the exact Global IDs; apply Worker-first retirements; prove
-  both.
 - **Direct:** for first creation, Wrangler or Container state changes, or an
   unknown/divergent baseline, deploy each regional service before its API and
   retain the same health barriers.
 
-The manual `deploy:eu` and `deploy:global` scripts use the same service-first
-order but do not provide the cross-region pre-upload transaction. Use them only
-for a deliberate operator recovery.
+Normal production rollout is `deploy-api.yml`. It builds and profiles all
+selected service graphs, materializes Global lakehouse bindings, discovers the
+active source tags, and selects versioned promotion or a service-first direct deployment when platform changes require it. The `0106_configurable_regions.sql` migration runs after the compatible Worker because it removes retired telemetry tables.
 
-After a full two-region rollout, the workflow provisions and deploys the
+After the configured deployment is healthy, the workflow provisions and deploys the
 Access-protected engineering MCP. This ordering is also the first-release
 bootstrap for `EngineeringInspectionBridge`: the caller cannot go live before
-both named entrypoints exist. See [`engineering-mcp.md`](engineering-mcp.md).
+all named entrypoints exist. See [`engineering-mcp.md`](engineering-mcp.md).
 
 ## Performance and cost
 
@@ -353,23 +279,19 @@ The pricing graph runs once per hour in Global and performs sixteen OpenRouter
 catalog reads plus sixteen small KV writes; inference performs only the KV reads
 for Azure-bound models in its route plan.
 
-## Changelog
+### 2026-09-14 — Configurable deployment isolation
+
+The release deploys Global capability services and API, applies Worker-first migrations, verifies health, then updates shared ingress and administrative callers. The small deployment map drives application routing; Wrangler still owns hosted resources. The one-time geographical bootstrap ordering is removed because there is only one configured deployment.
 
 ### 2026-09-12 — Give Ashby public ingress its own startup graph
 
-**What changed:** Ashby receives a dedicated entry point/domain and build assertion, deployed after both regional API health barriers. It enforces the existing provider body-size setting before forwarding, and its health endpoint verifies the routing table and both regional ingress contracts. The workflow detects active router exports and automatically bootstraps Global before EU on the first release, with health/export barriers and no duplicate Global deployment.
-
 **Why:** The user requested connector Workers after API startup and bundle growth had already cost an engineering day. The public ingress graph must stay independent while credentials and product authority remain regional.
-
-**Considered and rejected:** Adding a domain alias to the Global API, which would evaluate the same graph, or claiming that an ingress-only split removes shared provider/lifecycle code. A manual pre-merge bootstrap would make an ordinary merge unsafe and block work on EU retirement; permanent Global-first ordering would break existing EU dependencies. Active export inspection keeps the exception automatic and temporary.
 
 **Consequences:** Keep the ingress free of API, registry and agent imports. Apply the same configured provider body limit before buffering/RPC and in regional ingress. Both bridges must exist before ingress deployment; partial regional recovery leaves the shared deployment unchanged.
 
 PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
 
 ### 2026-09-09 — Bound and recover early-access operations
-
-**What changed:** Global acquisition now runs a fail-closed pre-database guard in `worker-events.ts`. A finite approved `ACCESS_EDGE_RATE_LIMITER` binding and four finite application limits, plus `TURNSTILE_SECRET_KEY`, are required for production acquisition. The Global recovery router uses the existing Ace operator credential. No EU acquisition or cross-region provider credentials are introduced.
 
 **Why:** Public acquisition needs predictable failure and recoverable operator actions before launch, without imposing account approval or building a campaign system.
 
@@ -389,10 +311,6 @@ that ordering themselves.
 the site first would expose a broken form. For this first rollout, dispatch the
 verified API revision through the existing deployment workflow and confirm its
 health before merging the site/Ace change; later merge deployments are idempotent.
-
-**Consequences:** Verify `rally.ai` in Resend and the `hello@example.com` reply mailbox.
-EU receives schema but no public intake/download binding. See
-[private access](private-access.md) for operational limits and erasure.
 
 ### 2026-09-06 — Bundle and share the search tokenizer
 
@@ -572,12 +490,6 @@ fan-out can keep acknowledgement and retry independent. Deployment builds,
 profiles, uploads, and promotes that service before the Global API, bringing the
 release to eight static artifacts.
 
-**Why:** The API artifact from the workspace-handoff release passed every local
-gate but Cloudflare rejected its production upload with error 10021. The same
-provider graph was also initialized in EU even though EU policy forbids PostHog
-delivery. Isolating that coherent stateless graph gives both regional APIs
-structural startup margin and makes the residency boundary visible in Wrangler.
-
 **Considered and rejected:** Retrying the unchanged upload leaves the one-second
 platform race intact. Request-time imports violate Rally's static-import rule
 and move initialization into customer traffic. Shaving individual adapter
@@ -588,16 +500,6 @@ deploy workflow cannot provision a secret onto a Worker that does not exist yet;
 the existing secret can cross the private call without creating another stored
 secret.
 
-**Consequences:** Global destination delivery now adds one private invocation
-and subrequest per attempted batch. Policy, D1 outboxes, retries, circuits, and
-receipts remain in the API; the delivery Worker is stateless. New Global
-destination adapters extend this Worker and add an independent result instead
-of creating a destination-specific service. The analytics lakehouse retains its
-current Queue/Pipeline lifecycle until that move can preserve failure
-independence. The RPC contract must stay backward-compatible through
-service-first rollout. EU has no delivery binding, PostHog SDK graph, or secret,
-and this change requires no data migration.
-
 Shipped in #471.
 
 ### 2026-08-30 — Disambiguate the engineering MCP deployment script
@@ -607,7 +509,7 @@ deployment script with pnpm's explicit `run deploy` form, and its workflow test
 requires that exact command.
 
 **Why:** Pnpm 11 treated the prior filtered `deploy` invocation as pnpm's own
-package-deployment command and stopped after both regional APIs were healthy,
+package-deployment command and stopped after the configured API were healthy,
 before the MCP provisioner or OAuth probe could run.
 
 **Considered and rejected:** Renaming the package script would avoid the command
@@ -623,7 +525,7 @@ the regional health barrier.
 ### 2026-08-30 — Deploy the engineering MCP after the regional API barrier
 
 **What changed:** The verified build now dry-runs the engineering MCP, and a
-full release deploys it only after EU and Global API health. The post-deploy
+full release deploys it only after configured deployments API health. The post-deploy
 probe requires Cloudflare Access's non-browser OAuth challenge.
 
 **Why:** The MCP binds a named inspection entrypoint in both regional API
@@ -668,12 +570,6 @@ The realtime-transcription deployment has no OpenRouter model ID and therefore
 no key in this cache.
 
 ### 2026-08-30 — Heavy providers become typed regional services
-
-**What changed:** PDF/image codecs and the Daytona SDK moved into two private,
-statically imported Workers per region. The API calls them through typed RPC,
-Terminal keeps one disposable `RpcTarget` provider session per harness run, all
-six artifacts receive startup profiles, and deployment uploads or deploys
-services before each regional API with an EU health barrier before Global.
 
 **Why:** An unchanged, fully verified API bundle alternated between successful
 uploads and Cloudflare error 10021 because the monolithic startup graph crossed

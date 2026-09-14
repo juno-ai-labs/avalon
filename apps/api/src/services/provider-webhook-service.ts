@@ -1375,9 +1375,9 @@ export class ProviderWebhookService {
    * Records the verification token the shared ingress captured.
    *
    * One public Notion connection means one subscription and one challenge, sent
-   * to whichever host is registered. EU never receives that request and could
+   * to whichever host is registered. regional never receives that request and could
    * not otherwise verify a forwarded delivery for itself — so Global replicates
-   * the token rather than have EU trust the hop. The one-time setup nonce was
+   * the token rather than have regional trust the hop. The one-time setup nonce was
    * consumed where the challenge arrived; this is reachable only over the
    * account-internal bridge and has no URL of its own.
    */

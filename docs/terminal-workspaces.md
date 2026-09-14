@@ -29,8 +29,6 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/durable-objects/workstream-terminal-storage.ts`, `workstream-terminal-protocol.ts` | The only reader and writer of those tables, and the operation contract derived from it. |
 | `apps/api/src/services/terminal/object-port.ts` | The Worker-side handle every Terminal service holds instead of a database. |
 
-## How it works
-
 ### Loading and allocation
 
 `rally:terminal` is a built-in deferred plugin. Bind can discover it without
@@ -500,7 +498,7 @@ reconciliation facts and never authorize a request.
 
 All Terminal local rows, regional resource bytes, generated logs/diffs, GitHub App
 installation-token creation, and tool execution records stay in the workspace's
-owning Rally region. Daytona is one shared environment: both the Global and EU
+owning Rally region. Daytona is one shared environment: both the configured deployments
 Workers are `supported` on `DAYTONA_TARGET=us` and the same `rally-terminal-1`
 snapshot. Sandbox files therefore run on that one Daytona fleet regardless of
 the Rally workspace region. That is a subprocessor exception, not a Rally
@@ -574,7 +572,7 @@ reconciliation.
 
 ### The owned snapshot and its weekly rebuild
 
-Both regions create sandboxes from `rally-terminal-1`, built by
+Configured deployments create sandboxes from `rally-terminal-1`, built by
 `pnpm --filter @rally/api terminal:build-snapshot` from the base image pinned
 as `TERMINAL_SNAPSHOT_BASE_IMAGE` in `snapshot-manifest.ts`
 (`daytonaio/sandbox:0.9.0`; the environment variable of the same name
@@ -710,8 +708,6 @@ custom image can remove installation time but cannot remove the fail-closed
 runtime contract. Compare at least the same target/region and include create,
 warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
-
-## Changelog
 
 ### 2026-09-13 — Acquisition asks Daytona what the sandbox is, and replaces one it has lost
 
@@ -962,7 +958,7 @@ system message is asserted verbatim in `terminal-contract.test.ts`, and its
 directory literals are pinned to the exported constants, so a wording change
 edits both and a moved directory fails the test rather than the prompt.
 
-### 2026-09-08 — Both regions create sandboxes from the Rally-owned snapshot
+### 2026-09-08 — Configured deployments create sandboxes from the Rally-owned snapshot
 
 **What changed:** `DAYTONA_TERMINAL_SNAPSHOT` is `rally-terminal-1` in both
 regional Wrangler configs. The snapshot was built by `terminal:build-snapshot`
@@ -1009,7 +1005,7 @@ two operations on one sandbox, which the blocking version could never produce.
 The workflow interpolated a
 dispatch input into shell in a job holding the Daytona key, and a pull request
 opened with `GITHUB_TOKEN` runs no CI, which for the one automated change to
-both regions' production config meant merging ungated.
+configured deployments' production config meant merging ungated.
 
 **Considered and rejected:** Landing the branch first and letting the weekly
 rebuild open the adoption pull request: two merges for one outcome, and the
@@ -1242,33 +1238,6 @@ fail-closed; anything added to `TERMINAL_SNAPSHOT_PROBES` must stay independent
 of the others, because they no longer run in a defined order. The probe now
 writes into `/workspace/.rally/tmp`, which the bootstrap already owns and the
 probe already asserts.
-
-### 2026-08-30 — EU Terminal is a supported regional deployment
-
-**What changed:** The EU Worker declares `TERMINAL_REGION_CAPABILITY=supported`
-and keeps `DAYTONA_TARGET=us`, the same Daytona environment Global already
-uses. Onboarding no longer tells people Terminal is unavailable in the
-European Union.
-
-**Why:** EU workspaces were shipping without a sandbox while Global had one.
-Rally operates Daytona as a single environment, not a second regional sandbox
-fleet, so enabling EU Terminal means pointing that Worker at the existing
-`us` target rather than inventing a separate Daytona region.
-
-**Considered and rejected:** Declaring `DAYTONA_TARGET=eu` from Daytona's
-published region list. Rally does not run a separate EU Daytona setting;
-treating the two Rally regions as two Daytona fleets would have advertised a
-target the account does not use. Also rejected was leaving the onboarding
-copy in place after the Worker gate opened: the notice is hardcoded, so it
-would have kept telling people the capability was missing after it was not.
-
-**Consequences:** EU sandbox files run on the same Daytona fleet as Global.
-Rally-owned Terminal rows, resource bytes, and GitHub tokens stay in the EU
-Worker. EU uses the same Daytona project key as Global, set as its own Worker
-secret — Cloudflare cannot copy `DAYTONA_API_KEY` from Global. Runtime still
-degrades to `unsupported` if that EU secret (or another required Daytona
-value) is absent. Settings continues to read availability from the regional
-API rather than from hardcoded copy.
 
 ### 2026-08-29 — The Terminal network policy moves behind typed WorkspaceDO methods
 
@@ -1964,7 +1933,7 @@ caller may repeat only a typed not-committed Terminal operation; receipt
 failures retain conservative
 write guidance; stale cards converge from receipt authority; and latency
 consumers can distinguish provider work from acquisition and total wait. The
-production matrix must still be rerun in both regions after deployment.
+production matrix must still be rerun in configured deployments after deployment.
 
 ### 2026-08-21 — Terminal writes republish the directory deadline again, and policy transitions keep their per-path lease semantics
 

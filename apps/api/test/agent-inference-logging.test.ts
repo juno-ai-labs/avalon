@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it, vi } from "vitest";
 import type { InferenceRequestEvent } from "@rally/agent-harness";
 import { createAgentInferenceLogger } from "../src/services/agent-inference-logging";
@@ -109,9 +110,9 @@ describe("agent inference logging", () => {
     logged.mockRestore();
   });
 
-  it("gives EU the same reason it gives Global, which archives nothing", async () => {
+  it("gives enterprise the same reason it gives Global, which archives nothing", async () => {
     const { env, put } = fixture();
-    env.AVALON_REGION = "eu";
+    env.AVALON_REGION = "enterprise";
     env.LOG_LEVEL = "info";
     const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
     const logger = createAgentInferenceLogger(env, {
@@ -138,13 +139,13 @@ describe("agent inference logging", () => {
       },
     });
 
-    // EU inference is deliberately never archived, so the regional log row is
+    // enterprise inference is deliberately never archived, so the regional log row is
     // the only account of the refusal there will ever be. It carries the same
     // string Global's does.
     expect(put).not.toHaveBeenCalled();
     expect(logged.mock.calls[0]![0]).toMatchObject({
       event: "agent_inference_attempt_failed",
-      region: "eu",
+      region: "enterprise",
       provider_error_code: "invalid_function_parameters",
       provider_error_detail: '{"error":{"message":"Invalid schema for function \'table_query\'."}}',
     });

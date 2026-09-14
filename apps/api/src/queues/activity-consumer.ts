@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import { ConnectorMaintenanceQueueSchema, runConnectorMaintenance } from "../services/connector-maintenance-service";
 import { ConnectorInstallationQueueSchema, runConnectorInstallation } from "../services/connector-installation-service";
 import { SearchAuthorizationPushJobSchema, pushSearchAuthorization } from '../services/search-authorization';
@@ -62,7 +63,7 @@ import { WorkstreamService } from "../services/workstream-service";
 interface ActivityRow {
   id: string;
   workspace_id: string;
-  workspace_region: "global" | "eu";
+  workspace_region: Region;
   connection_id: string;
   connector_type: string;
   connection_scope: "personal" | "workspace";
@@ -177,7 +178,7 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
   ).bind(staleBefore, env.AVALON_REGION, Math.max(1, Math.min(limit, 100))).all<{
     id: string;
     workspace_id: string;
-    region: "global" | "eu";
+    region: Region;
     processing_status: "pending" | "failed";
     connector_event_attempt: number;
   }>();

@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { AshbyEventTypes, AshbyEventLabels, asWorkspaceId } from '@rally/contracts';
 import { describe, expect, it } from 'vitest';
 import { createAshbyConnector, verifyAshbyWebhook, AshbyCapabilities } from './ashby';
@@ -49,7 +50,7 @@ describe('Ashby protocol', () => {
     await expect(adapter.dynamicAgentTools!.discover(connection('workspace'), neverAborts())).rejects.toMatchObject({ code: 'unsupported_capability' });
   });
 
-  it.each(['https://api.rallywith.ai', 'https://eu.api.rallywith.ai'])('uses discovered OAuth metadata and rotates a personal grant for %s without webhook calls', async (origin) => {
+  it.each(['https://api.rallywith.ai', 'https://enterprise.api.rallywith.ai'])('uses discovered OAuth metadata and rotates a personal grant for %s without webhook calls', async (origin) => {
     const redirect = `${origin}/connections/ashby/callback`;
     const calls: URL[] = [];
     const adapter = createAshbyConnector({ redirectUri: redirect, fetch: async (input, init) => {

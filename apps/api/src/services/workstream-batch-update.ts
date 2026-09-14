@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import {
   ApplyWorkstreamBatchRequestSchema,
   WorkstreamBatchAcceptedSchema,
@@ -28,7 +29,7 @@ const QUEUE_SEND_BATCH_SIZE = 50;
 
 export const WorkstreamBatchUpdateQueueMessageSchema = z.strictObject({
   kind: z.literal("workstream_batch_update"),
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   operationId: z.string().uuid(),
   requestHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
   workspaceId: z.string().uuid(),

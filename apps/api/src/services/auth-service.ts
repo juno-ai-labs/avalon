@@ -1,3 +1,4 @@
+import { isConfiguredRegion } from "@rally/contracts/regions";
 import { createRemoteJWKSet, jwtVerify, SignJWT } from "jose";
 import { newId, nowIso } from "@rally/db";
 import { asUserId, asWorkspaceId, type Region, type Session } from "@rally/contracts";
@@ -98,7 +99,7 @@ export async function verifyAccessToken(env: Env, token: string): Promise<Omit<I
       typeof payload.sub !== "string" ||
       typeof payload.sid !== "string" ||
       (payload.wid !== null && payload.wid !== undefined && typeof payload.wid !== "string") ||
-      (payload.region !== "global" && payload.region !== "eu")
+      !isConfiguredRegion(payload.region)
     ) {
       throw new Error("Incomplete session claims");
     }
@@ -228,7 +229,7 @@ export class AuthService {
         DEVELOPMENT_WORKSPACE_ID,
         workspaceName.trim(),
         this.env.AVALON_REGION,
-        this.env.AVALON_REGION === "eu" ? "Europe/London" : "America/Los_Angeles",
+        "America/Los_Angeles",
         DEVELOPMENT_USER_ID,
         at,
         at,

@@ -70,7 +70,7 @@ account.
 here** — the guard means the event never reaches a success path to count. The
 argument for doing it now is that the flow is already built and already fails at
 its last step: invitations are created, emailed, previewed, deep-linked, and
-discovered across both regions, and the only thing missing between that machinery
+discovered across configured deployments, and the only thing missing between that machinery
 and a working second membership is the guard and a place to put the result.
 
 ## Goals
@@ -134,8 +134,6 @@ and a working second membership is the guard and a place to put the result.
    keeps the active workspace on screen and preserves drafts, but opening another
    workspace waits for a network connection.
 
-## Product behavior
-
 ### The mocks, and how much of them to follow
 
 The surfaces below are drawn at
@@ -179,7 +177,7 @@ before it is built.
 ### Signing in for the first time
 
 Unchanged. Google sign-in produces an identity-scoped session at the Global
-endpoint, and discovery asks both regions what this email belongs to. With no
+endpoint, and discovery asks configured deployments what this email belongs to. With no
 membership and no invitation, the person names a workspace and picks its region.
 With invitations and no membership, they see them and accept or decline. The one
 difference at the end: the account session is **kept** rather than revoked, and
@@ -191,18 +189,13 @@ The account button at the foot of the sidebar already shows the person's name
 over the current workspace name. Its menu gains a workspace list above the
 existing label:
 
-- **One row per workspace** the account belongs to, ordered by this device's
-  most-recently-active history, with a check against the active one. A new device
-  has no history and uses discovery's stable membership order until the person
-  switches. Each row shows the workspace name, its attention count, and — only
-  when the account holds workspaces in more than one region — a `Global` or
-  `European Union` tag, so the region is visible exactly when it distinguishes two
-  rows.
 - **One row per pending invitation** addressed to this person's email, reading
   *Join <workspace name>*, with the inviter's name beneath it. Accepting joins
   and switches; declining removes the row.
+
 - **Create a workspace**, which opens the existing workspace-setup form with the
   region choice, now reachable from inside a signed-in session.
+
 - Then the existing separator, the email/region label for the *active*
   workspace, **Settings…**, and **Sign out**.
 
@@ -297,12 +290,6 @@ workspace nobody is looking at.
 
 ### Creating another workspace
 
-**Create a workspace** opens the same form first-run uses: a name, and Global or
-European Union, with the standing note that the region cannot be changed later. On
-success, the new workspace is created with the person as its owner, the switcher
-moves to it, and the app opens the empty-workspace sidebar it opens for any new
-workspace.
-
 Only one workspace creation or invitation acceptance may be in flight for an
 account at a time. A second attempt while one is running answers *Workspace setup
 is already in progress* rather than creating two workspaces, which is what the
@@ -339,7 +326,7 @@ a modal naming the workspace, who invited them, and the role, with **Join** and
 invitation pending and puts it in the account menu.
 
 **From the account menu.** Pending invitations discovered for this email appear
-as rows, from both regions. Accept and decline behave as they do on first run.
+as rows, from configured deployments. Accept and decline behave as they do on first run.
 
 **Failures.** An invitation that was revoked, expired, or already used answers
 *This invitation is invalid, expired, or no longer available* and drops out of
@@ -438,38 +425,27 @@ describes discovery resolving to a single workspace; and
 uses one workspace per authenticated user and that "workspace switching is
 deferred". The switcher is the thing all three said was not being built.
 
-## Decision log
-
-- **2026-09-01 — Regional user UUIDs are not account identity.** Discovery and
-  invitation routing link the same Google account by verified email; Global and
-  EU may mint different user UUIDs.
 - **2026-09-01 — One setup intent keeps one operation ID.** Identity refresh and
   transport retries reuse the original UUIDv7 so the durable journal, rather
   than a new request, decides replay.
+
 - **2026-09-01 — Departure confirms one named outcome.** The desktop sends
   `leave` or `abandon`; a changed membership shape returns `409` and requires a
   new confirmation.
+
 - **2026-09-01 — Recording and workspace transitions exclude each other in both
   directions.** Main owns the pending transition as well as live capture so the
   losing operation is refused before either authority changes.
+
 - **2026-09-01 — Sign-out is local-first.** Local authority and drafts are erased
   before best-effort remote revocation, so a slow or unreachable region cannot
   prolong access on the device.
+
 - **2026-09-01 — Abandonment is an AutomationAgent operational fence.** Every
   compiler/provider, schedule, provisioning, and outbox lane checks regional D1
   before external work; an already-addressed object cannot outlive the workspace.
 
 ## Key design decisions
-
-1. **The device holds one account session plus one session per workspace.**
-   Rejected: a single session re-bound to a different workspace on each switch.
-   Sessions are regional — an EU session talks to `eu.api.rallywith.ai` and cannot
-   reach the Global control plane at all, and `PlatformOnboardingService` refuses
-   any caller whose region is not `global`. A single re-bound session therefore
-   could not switch *out* of an EU workspace without a fresh sign-in. Keeping the
-   identity-scoped account session is also the smaller trust surface: it can read
-   discovery and nothing else, which is already true of it today for the minutes it
-   currently lives.
 
 2. **Workspace recency is device-local; the server stores no default.** Rejected:
    a `default_workspace_id` on `users`. The device keeps an ordered recency entry
@@ -478,20 +454,6 @@ deferred". The switcher is the thing all three said was not being built.
    server-side default is a second thing that can disagree with what the person
    last did on this device.
 
-3. **`platform_workspace_bindings` is a reconciled route registry, not membership
-   authority.** It becomes one row per account and workspace route, with
-   `pending`, `active`, and `inactive` states, and at most one pending row per
-   account. Regional `workspace_members` remains the authority. After both regions
-   answer successfully, Global discovery reconciles the active routes against the
-   complete membership lists it already receives, marking a missing route
-   inactive; a failed or partial discovery changes no route. Activation always
-   rechecks regional membership, so a stale active route between reconciliations
-   grants nothing.
-   Rejected: an EU-to-Global removal message, which adds a cross-region lifecycle
-   only to make a cache immediately tidy; deleting the registry, which loses the
-   opaque placement route; and keeping a single "current workspace" row that every
-   switch has to write.
-
 4. **Background attention is polled; only the active workspace holds a socket.**
    Rejected: a WorkspaceDO socket per workspace. Exactly one WorkspaceDO socket is
    what keeps it in Chromium and out of the brokered swarm, and a socket per
@@ -499,13 +461,6 @@ deferred". The switcher is the thing all three said was not being built.
    at. A poll is also the option that is cheapest to reverse: if the counts turn
    out to need to be live, the socket can be added later without unwinding
    anything.
-
-5. **Each workspace's counts are answered by its own region.** Rejected: one
-   Global endpoint that aggregates both regions. A count of an EU workspace's
-   unread work streams is EU workspace data about an EU member; assembling it in
-   Global would put it on the wrong side of the boundary for a menu label. The
-   desktop already holds a session per region it has a workspace in, so it asks
-   each region for its own.
 
 6. **A workspace is abandoned rather than deleted.** Rejected: building deletion
    now (non-goal 1), and rejected: no exit at all, which would make "create a
@@ -585,24 +540,19 @@ credential and profile as one-element sets.
 
 ## Regional impact
 
-Nothing new crosses the boundary. Discovery already asks both regional Workers,
+Nothing new crosses the boundary. Discovery already asks configured regional Workers,
 over the named RPC bridge, what an identity belongs to, and already returns
 memberships and invitations from both — that is the mechanism this change stops
 throwing away. What is new is only that the answer may hold more than one entry.
 
-- The switcher may list workspaces in Global and in the European Union at the
-  same time. Each row's session, socket, and attention fetch address only that
-  workspace's regional API base URL. There is no request that names two regions.
 - Attention counts never leave their region (design decision 5).
-- The Global route registry keeps what it keeps today per binding: opaque
-  workspace id, region, and placement affinity. It gains rows and an inactive
-  lifecycle. A regional leave or removal sends no new EU-to-Global message;
-  ordinary discovery reconciles the route from the membership answer it already
-  receives.
+
 - Workspace setup sends the same opaque operation id over the existing regional
   onboarding RPC. Its request hash remains in Global, and no workspace name or
   invitation address is added to the control-plane operation row.
+
 - Region selection stays per workspace, at creation, and immutable.
+
 - The identity endpoint is still one and still Global.
 
 ## Security and trust model
@@ -682,41 +632,43 @@ Walk these in a real window, per the repository's rule on visible changes:
 
 1. Two accounts, one workspace each. A invites B; B accepts from the emailed link
    while signed in; B ends in two workspaces and can switch between them.
-2. B creates a third workspace in the other region from the account menu, and
-   switches Global → European Union → Global. The sidebar redraws each time, and
-   no work-stream or workspace-product request addresses the region just left —
-   the only traffic to it is that workspace's own attention fetch.
+
 3. B has an unread mention in workspace 1 while looking at workspace 2. The
    account button shows a dot and workspace 1's row shows `1`. Opening it clears
    both.
+
 4. A removes B from workspace 1 while B is in workspace 2. Workspace 1's row
    disappears without a dialog after the `session_revoked`/`workspace_access_denied`
    path, B's next visit is impossible, and the following discovery marks its
    Global route inactive.
+
 5. B leaves workspace 3 as its sole member and confirms **Leave and close** while
    another device holds a live session. Both devices' sockets close, ordinary
    requests and refresh are refused, pending invitations cannot race the close,
    and signing in again does not surface it.
+
 6. A create response is lost after the regional write commits. Retrying with the
    same client operation id returns the same workspace and membership; the
    switcher, Global bindings, and regional operation journal each contain one.
    Reusing that id with a different name, action, or invitation is refused.
-7. One account has a Global and an EU binding. Inserting either route leaves the
-   other's placement affinity unchanged, and migrating an existing single row
-   produces the same two valid routes after the second is added.
+
 8. B signs out online with three workspace credentials plus the account
    credential stored. Every successful logout call revokes its server session,
    and the credential, profile, and draft stores are empty.
+
 9. B signs out with one region unreachable. Local credential, profile, and draft
    stores are still empty; the failed server revocation is reported as cleanup
    failure rather than claimed as complete.
+
 10. Lockdown mode is enabled with three credentials stored. The whole set is
     re-encrypted under `safeStorage`, and disabling Lockdown or clearing credentials
     leaves none behind.
+
 11. The machine goes offline with two workspaces known. Counts hold their last
     value with the *last updated* line, selecting the background workspace reads
     *Connect to open this workspace*, the active workspace stays on screen, and no
     credential is discarded.
+
 12. With the flag off, and separately from an older desktop build, an account with
     two memberships opens one compatible workspace instead of failing onboarding.
 

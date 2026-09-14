@@ -29,8 +29,6 @@ weeks ago.
 | [`apps/api/src/services/workstream-resource-inventory.ts`](../apps/api/src/services/workstream-resource-inventory.ts) | Fixed-order authorized totals and natural-language attachment-kind groups appended to a live checkpoint. |
 | [`apps/api/src/durable-objects/workstream-object-schema.ts`](../apps/api/src/durable-objects/workstream-object-schema.ts) | Principal-scoped `transcript_compaction_checkpoints`, the reconnect-only `active_agent_compaction` singleton, plus the monotonic local resource-inventory revision and relationship triggers. |
 
-## How it works
-
 ### Deciding to compact
 
 Live context size comes only from OpenRouter's returned usage for the last
@@ -293,8 +291,6 @@ results.
   than giving it a budget it can measure against. Setting an explicit cap would
   make the instruction concrete, at the cost of a number that has to be right for
   every routed model.
-
-## Changelog
 
 ### 2026-09-09 — Resident context moves into the prefix at the compaction, and out of the summary
 

@@ -1,3 +1,4 @@
+import "../../../../tests/isolated-region";
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -76,11 +77,11 @@ describe('TelemetrySpool', () => {
     const directory = await root();
     const spool = new TelemetrySpool({ rootDirectory: directory, maxRows: 10, maxBytes: 100_000 });
     await spool.enqueue({
-      route: 'eu', accountEpochId: uuid7('20'), event: envelope(uuid7('21')),
+      route: 'enterprise', accountEpochId: uuid7('20'), event: envelope(uuid7('21')),
       acceptedAt: new Date('2026-08-01T00:00:00.000Z'),
     });
     await spool.enqueue({
-      route: 'eu', accountEpochId: uuid7('20'), event: envelope(uuid7('22')),
+      route: 'enterprise', accountEpochId: uuid7('20'), event: envelope(uuid7('22')),
       acceptedAt: new Date('2026-08-10T00:00:00.000Z'),
     });
     await writeFile(join(directory, 'rows', `${uuid7('22')}.json`), '{broken', 'utf8');

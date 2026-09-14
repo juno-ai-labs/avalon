@@ -1,3 +1,5 @@
+import { RegionSchema } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 import { IdSchema } from '@rally/contracts';
 import { TelemetryEnvelopeSchema, type TelemetryEnvelope } from "@rally/contracts/telemetry";
 import { z } from "zod";
@@ -7,7 +9,7 @@ import { ensurePersonAnalyticsId, ensureWorkspaceAnalyticsId } from './authentic
 
 const AnonymousTelemetryProjectionSchema = z.strictObject({
   event: TelemetryEnvelopeSchema,
-  route: z.literal("eu"),
+  route: RegionSchema,
   routingBasis: z.enum(["ip_geolocation", "geolocation_fallback"]),
   analyticsSubjectId: z.string().uuid(),
   subjectUserId: z.null(),
@@ -16,7 +18,7 @@ const AnonymousTelemetryProjectionSchema = z.strictObject({
 
 export interface AnonymousTelemetryProjection {
   event: TelemetryEnvelope;
-  route: "global" | "eu";
+  route: Region;
   routingBasis: "ip_geolocation" | "geolocation_fallback";
   analyticsSubjectId: string;
   subjectUserId: null;
@@ -30,7 +32,7 @@ export interface RegionalTelemetryBridgeRpcBinding {
 
 const ApiOutcomeProjectionSchema = z.strictObject({
   event: TelemetryEnvelopeSchema,
-  route: z.literal('eu'),
+  route: RegionSchema,
   subjectUserId: IdSchema,
   workspaceId: IdSchema.nullable(),
 });
@@ -48,7 +50,7 @@ export async function acceptApiOutcomeProjection(
   input: unknown,
 ): Promise<TelemetryAcceptanceResult> {
   const parsed = ApiOutcomeProjectionSchema.parse(input);
-  if (parsed.event.source !== 'api' || parsed.event.context.region !== 'eu') {
+  if (parsed.event.source !== 'api' || parsed.event.context.region !== env.AVALON_REGION) {
     throw new Error('telemetry_api_projection_forbidden');
   }
   const personAnalyticsId = await ensurePersonAnalyticsId(env, parsed.subjectUserId);
@@ -56,7 +58,7 @@ export async function acceptApiOutcomeProjection(
     ? await ensureWorkspaceAnalyticsId(env, parsed.workspaceId)
     : null;
   return new TelemetryCollector(env).accept(parsed.event as TelemetryEnvelope, {
-    route: 'eu',
+    route: env.AVALON_REGION,
     routingBasis: 'explicit_selection',
     analyticsSubjectId: personAnalyticsId,
     subjectUserId: parsed.subjectUserId,

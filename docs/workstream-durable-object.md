@@ -53,7 +53,6 @@ and transactional. Removed Sidekicks keep their reservation so a name present in
 earlier transcript turns cannot later select a different Sidekick. Renames update
 catalog descriptions while retaining the assigned tool name.
 
-
 Substream migration 43 adds `sidekick_attachments` (conversation-owned, deduplicated
 by Sidekick) and `sidekick_execution_skills` (admitted snapshots and activation
 refs pinned to an execution). Only main-substream loading attaches; removal
@@ -124,7 +123,6 @@ Accepted feed upgrades report accept duration and instance age at handler entry.
 workerd's clock; it does not identify which caller woke an instance. The edge
 strips these internal headers and records time outside acceptance, including
 constructor/readiness and queueing. See [socket timing](performance-tracing.md#what-room_upgrade-contains).
-
 
 ### Durable search delivery
 
@@ -260,16 +258,6 @@ became typed; every object that existed before schema v39 reads
 `parent_kind = 'workstream'` from the column default, which is the whole of the
 identity migration. `substreamLoopId(parentId, substreamId)` derives the loop
 identity the same way.
-
-The name is not a residency boundary. Staging and production first restrict the
-namespace to `us` or `eu`, derive the ID from that restricted namespace, and
-only then call `get()` with the workspace's persisted first-placement affinity.
-At workspace creation, request longitude selects `wnam`/`enam` within the US
-jurisdiction or `weur`/`eeur` within the EU jurisdiction. The Global binding,
-regional workspace row, and `WorkspaceDO.workspace_identity` retain that value;
-every descendant lookup reads the regional immutable projection. The same name
-identifies a different object in an unrestricted, US, and EU namespace. Binding,
-jurisdiction, and name together determine the Durable Object identity.
 
 **The parent decides; the child holds the transcript.** A `SubstreamAgent` is
 one ordered transcript and one Bind loop. It does not decide who may read it or
@@ -1194,7 +1182,7 @@ where the object landed. See
 ### Retired maintenance-window cutover
 
 The one-time D1-to-object authority cutover (drain -> import -> verify ->
-activate -> open) completed in both regions, and its machinery — the cron
+activate -> open) completed in configured deployments, and its machinery — the cron
 importer, the per-object import RPCs, and the deploy workflow's cutover steps —
 has been deleted. What deliberately survives it: the `workstream_authority_control`
 row (read on every request, fails closed when missing), the
@@ -1210,7 +1198,6 @@ misrouted product statement now fails because the table or column is absent.
 - **Exactly one object name owns each region/workspace/work-stream/substream tuple.** A second naming formula forks ordering and storage.
 - **Every callable method on these classes is fenced by the retirement gate, and an unclassified one refuses on a retired object.** `applyRetirementGate` wraps the prototype chain at module load; a method retirement's own walk needs is permitted, a Queue-delivered effect receiver answers a terminal acknowledgement, and a Queue consumer, Workflow or cron pass that meets a refusal acknowledges it. [`workspace-retirement.md`](workspace-retirement.md) owns the dispositions; read it before adding an RPC or an effect receiver to any of these classes.
 - **Every workspace-scoped stub is resolved through `durableObjectStubForWorkspace`.** It combines the hard jurisdiction lock with the parent's immutable affinity; only non-workspace regional singletons use the fallback resolver. ESLint rejects direct namespace and low-level resolver bypasses.
-- **The object jurisdiction matches the immutable workspace region.** Product-object constructors fail closed when `ctx.id.jurisdiction` is not `us` for Global or `eu` for EU.
 - **`WorkstreamDO` and `AutomationDO` run no model and own no transcript.** Putting an agent in a parent recreates one serialization bottleneck across substreams.
 - **A conversation's parent decides who may read it; the conversation decides who may write.** The Worker asks the parent's `authorizeViewer` and seats the reader, and the socket admission carries the parent's decision down as `parentKind` and `parentArchived`. Answering a read from the conversation's participant list alone would hide an automation's chat from a workspace member the automation admits.
 - **A child never writes to *the conversation* after its parent's archive.** The parent reports `archived`, the ticket carries it, the conversation object refuses writes on that socket with `409 conversation_parent_archived`, and the Worker's `writableClient` refuses REST writes. A write path that admits on the participant row alone lets a run keep changing a room that was closed. The reader's own `member_attention` row is outside this: it records what that person has read rather than changing the room, an archived automation's conversation stays readable, and its read-state route therefore resolves a read-authorized client deliberately.
@@ -1313,132 +1300,6 @@ pnpm --filter @rally/api test
 pnpm lint
 pnpm typecheck
 ```
-
-`apps/api/test/workstream-object-schema.test.ts` covers append-only object-local
-schema history and compaction singleton lifecycle. The real runtime suite uses
-`apps/api/vitest.workers.config.ts` with Cloudflare's current Vitest pool and
-`runInDurableObject`, `runDurableObjectAlarm`, `listDurableObjectIds`, and
-`evictDurableObject`. `test-workers/durable-object-runtime.test.ts` exercises
-constructor migrations, per-object SQL isolation across eviction, keep-alive
-alarms, `WorkstreamDO` aggregation and metadata snapshots, hibernating workspace
-and work-stream control sockets, foreground presence across WorkspaceDO eviction
-plus inaccessible-work-stream rejection, typed native-RPC success/conflict envelopes,
-complete initial directory delivery across all four live execution states even
-past 1,250 combined rows, presence-free proactive feed subscriptions,
-snapshot-fenced canonical transcript ranges without room-cursor movement,
-range revocation, compaction recovery, socket revocation across all current roles,
-obsolete queued run coalescing and stale-arrival rejection,
-ticket replay, and retired message-page refusal. Direct child message admission,
-its private receipt, and hibernation resend are covered in
-`test-workers/message-to-output-pipeline.test.ts`, as is the manual retry:
-one case scripts a run that answers, calls a tool, and dies on the next step, so
-the newest conversation turn is the assistant turn it failed on rather than the
-member message that started it — the shape every other retry case here misses,
-and the one that held the fence contract wrong for as long as it did. Two more
-cover a retry across runs that share a `created_at` and the diagnostics a socket
-command leaves behind when it throws something that is not an `ApiError`.
-`test-workers/participant-notification.test.ts` covers what seating somebody
-enqueues, on both the create and the add-afterwards paths, plus identity-bearing
-mentions and attachment descriptors in an opening message, and member-authored
-elicitation answers. Existing-room cases use runtime bootstrap plus the
-system-provision `provision` path;
-create-effect cases invoke `initialize` without activating its admitted run; and
-the elicitation case seeds a settled parent run. The distinct create ids still
-prevent accidental replay, while the replay case reuses `CREATE_REPLAY_ID`
-across its own two opens because replay is what it asserts.
-`test-workers/unseen-workstream-state.test.ts` covers
-self-removal, removal of another participant by a member, and the transactional
-final-participant refusal on real Durable Object SQLite. `test-workers/message-authority.test.ts` and
-`test-workers/scheduling-authority.test.ts` cover typed part plus participant-turn
-atomicity and malformed object-boundary inputs; the runtime suite proves a
-subscribed socket receives a typed external append without reconnecting.
-`apps/desktop/src/renderer/lib/transcript.test.ts` covers author, mention, and
-attachment flattening, routed identity bridging, and elicitation collapse. The
-participant-notification suite is also where the
-one trap in asserting on effects is recorded: **never assert on the child's own
-`durable_outbox` after an alarm could have fired.** A commit arms the child's
-alarm for the current instant and the alarm sends and then deletes, so an
-assertion against that table races the drain and gets quietly greener the fewer
-effects a path enqueues; an absence assertion written that way passes vacuously.
-The test Worker binds `ACTIVITY_QUEUE` as a producer only, so a drained outbox
-goes nowhere on its own. `test-workers/helpers/conversation-effects.ts` drives
-the two legs by hand instead: `pendingChildEffects` and `pendingParentEffects`
-read what an object has queued, `deliverChildEffects`, `deliverParentEffects`,
-and `deliverEffectsToWorkspace` hand exactly that to the real
-`consumeActivityQueue` and delete the rows the way a successful `sendBatch`
-would, `consumeEffectBodies` feeds arbitrary bodies to the consumer, and
-`parentStubFor` resolves a parent of either kind. What the *real* drain does
-with the rows is proved once, in `test-workers/conversation-effect-queue.test.ts`
-(a product mutation leaves a pending row, `runDurableObjectAlarm` empties the
-outbox while `projection_keys` keeps the version, the sent body reaches the
-parent and then the workspace through the consumer, two children sum into one
-viewer row, an automation's child produces no `parent_effect` row, an oversized
-envelope is dropped); every other test only needs the effects to arrive.
-`test-workers/conversation-creation.test.ts` proves the provisional directory
-row exists with the parent's first version before any alarm fires.
-`test-workers/conversation-identity-migration.test.ts` seeds a v38 root and
-proves an existing object reads `parent_kind = 'workstream'` under its unchanged
-name while a fresh object bootstrapped as `automation` refuses a different
-kind. `test-workers/conversation-parent-contract.test.ts` exercises
-`authorizeViewer` on both parents through the real ticket route, including the
-archived-parent read-only refusal on a child substream. The automation parent
-itself is covered by `test-workers/automation-do.test.ts`,
-`automation-post-result.test.ts`, and `automation-directory.test.ts`, listed in
-[`automation-lifecycle.md`](automation-lifecycle.md#testing). On Node,
-`test/conversation-effect-service.test.ts` covers the consumer's handoff of a
-parent effect into WorkspaceDO and the notification intents behind it,
-`test/workstream-socket-warm.test.ts` covers `ConversationService.socketTicket`
-and the main-substream warm-up it defers, `test/run-authority-validity.test.ts`
-covers the run's `readRunState` check, and `test/scoped-memory.test.ts` covers
-the `automation` memory scope keyed by the parent id.
-`test-workers/workstream-schema-migration.test.ts` upgrades a populated v32
-foreign-key graph through real workerd storage and proves canonical content and
-relations survive with an empty `foreign_key_check`. Node tests cover migration
-rollback, grouped-failure resume, execution-mode/hash drift and ahead versions,
-normalized product SQL, canonical replay deduplication and fenced same-row tool
-settlement, authorization — including
-the product API's session and connector principals in
-`test/workstream-room-authorization.test.ts` —
-effect idempotency, streaming checkpoints, and renderer socket switching.
-`test-workers/message-to-output-pipeline.test.ts` asserts the exact public
-canonical/pending admission envelope across first admission, pending replay,
-promotion, and external elicitation delivery while separately inspecting the
-private activation state. `test-workers/substream-message-queue.test.ts` takes
-the queue itself: three messages admitted during one run each get their own
-cycle in admission order and none of them appears in the running turn's model
-array; a drag reorders promotion rather than only the composer's list; a
-duplicate client message id admits one input and one run; and a queued message
-survives the run it waited on failing mid-stream, being stopped, and the object
-being replaced before its activation runs. Its last two cases are the
-head-of-line gate from both sides — a message admitted behind an unsettled one
-is *hidden rather than dropped* and both are delivered in order, and a
-preparation that fails terminally releases the queue behind it instead of
-holding the substream. Both suites share one deterministic OpenRouter boundary
-in `test-workers/helpers/scripted-provider.ts`; the queue suite's first shape
-used a scripted *refusal* to fail a run and quietly poisoned every later test in
-the file, because a refusal opens the provider circuit for that model across the
-isolate. Fail a run mid-stream instead when what follows it matters. `test/slack-workspace-assignment.test.ts` proves a
-connector replay returns the same pending turn and creates one deterministic
-audit row. `packages/contracts/src/index.test.ts` rejects the retired
-execution-shaped socket receipt, and
-`apps/desktop/src/renderer/lib/workspace-socket.test.tsx` proves pending state
-survives reconnect and reaches the composer acknowledgement.
-Desktop tests cover canonical range merging, paged-history retention across a
-snapshot refresh, rejection and retry of an in-flight old-fence range,
-stream-specific completion, reconnect queueing, range errors, scroll
-threshold/anchor preservation and compaction reconciliation. `scripts/durable-object-native-rpc.test.mjs`
-proves the custom lint rule rejects direct, computed, aliased, optional, and
-typed-stub internal fetches without flagging unrelated HTTP clients.
-`scripts/durable-object-sync-transaction.test.mjs` proves explicit async and
-type-resolvable indirect Promise callbacks are rejected at all three
-synchronous transaction boundaries while ordinary synchronous SQL remains
-valid. Dynamically dispatched calls whose return has been erased to `unknown`
-or `any` still require review; the rule cannot reconstruct discarded type
-information.
-`test/runtime-components.test.ts` covers US/EU resolution, location-hint
-arguments, local workerd behavior, and jurisdiction mismatch rejection.
-`pnpm test:scripts` covers the ESLint rule's direct, computed, optional, aliased,
-destructured, and typed-namespace bypass cases.
 
 Do not replace workerd lifecycle tests with hand-made state objects. Focused
 Node repository tests may use `node:sqlite`, but their `DurableObjectState`
@@ -1645,20 +1506,6 @@ tag is immutable history.
 [`durable-object-alarms.md`](durable-object-alarms.md) records what the deletion
 cost and what replaces it.
 
-## Regional impact
-
-Every object is selected through the workspace's immutable region and affinity.
-Staging and production Global objects use the US jurisdiction with `wnam` or
-`enam`; EU objects use the EU jurisdiction with `weur` or `eeur`. Creation uses
-the initiating request longitude. `wnam` and `weur` are defaults only for
-preexisting migrations, background creation, or missing Cloudflare metadata.
-Jurisdiction is a storage/execution guarantee; the hint is best effort and only
-affects the first `get()`. Product constructors verify the actual jurisdiction.
-Local workerd omits both options because it does not implement jurisdictional
-namespaces. EU D1/R2/Queues process EU workspace data. The global registry
-carries only routing/identity metadata; no transcript, token frame, connector
-payload, notification body, or full Workflow input crosses it.
-
 ## Security and trust model
 
 Socket query parameters are not credentials. The edge verifies signed tickets
@@ -1721,8 +1568,6 @@ it as `connectorType`, separately from the participant-facing `label`. Existing
 rows retain null and their original labels; later activity revisions preserve
 the type when an older caller omits it. This lets the desktop distinguish custom
 MCP identity without trusting the saved name or reading WorkspaceDO on replay.
-
-## Changelog
 
 ### 2026-09-14 — An open question takes its answer out of turn, and parks the rest of the queue
 
@@ -1966,7 +1811,6 @@ post-commit hook for the compaction (the projection is durable before it runs).
 
 **Considered and rejected:** Remote command reauthorization, child unread aggregation into Main, and a second queue. Lifecycle retries reuse the parent's durable alarm and existing retry interval. A failed delivery remains pending; archive restoration is currently API-only.
 
-
 ### 2026-09-08 — Forward child notifications without merging attention
 
 WorkstreamDO now forwards person notifications from private children and stores
@@ -2010,7 +1854,6 @@ after removal. Reservations persist even when a Sidekick becomes unavailable;
 access still depends on the current authorized execution snapshot. The real
 workerd Sidekick load/restore test in `automation-do.test.ts` verifies that a
 renamed Sidekick retains its original name in the next execution.
-
 
 ### 2026-09-08 — Shared work-stream appearance
 
@@ -3440,7 +3283,6 @@ Their transcript anchor is reserved alongside `input_sequence` before any
 external preparation await, so completion timing cannot invert their rendered
 order or make them swap when canonicalized.
 
-
 #### Required behavior is mapped to the focused shipping contract
 
 **What changed:** The module testing section now points to the PRD's concise
@@ -3462,7 +3304,6 @@ and observable-failure gaps harder to see.
 bounded-range gaps now have named real-workerd and Desktop implementations. Existing named
 tests still require exact-head execution, and new or modified tests still
 require the repository's deliberate-break proof.
-
 
 #### Terminal receipts close execution-owned activity intervals
 
@@ -3728,7 +3569,6 @@ terminalization makes the singleton idle. A receipt cannot remain running behind
 an idle loop, a failed preview always rolls back to its status pill, and pending
 replay compares one immutable prepared value.
 
-
 #### Persistent loop state owns admission, recovery, and transcript delivery
 
 **What changed:** The cutover adds one `substream_loops` singleton, immutable
@@ -3893,7 +3733,6 @@ inside the first pending transaction, and every shipped migration through v32
 remains fingerprint-pinned. The populated v32 upgrade fixture must retain each
 seeded transcript relation and operational receipt rather than relying only on
 an empty final `foreign_key_check`.
-
 
 #### Ordered turns and explicit overlays replace compatibility messages
 
@@ -4586,7 +4425,7 @@ both mint the same identities (`participant:<work stream>:<user>:<epoch>` and
 `participant_added:<…>`), with a literal zero epoch at creation because the rows
 are inserted by the same call. The notification carries `titleIsProvisional`, and
 the Slack and email templates use it to avoid quoting a title the naming agent has
-not written yet. The two person-notification emails and both regions' Resend
+not written yet. The two person-notification emails and configured deployments' Resend
 sender display names now say Rally.
 
 **Why:** the 2026-08-22 entry below, *Being added to a work stream tells the
@@ -4690,7 +4529,6 @@ from child outbox through actual parent-row removal. Every notification branch
 must end in a terminal, deferred, or failure event with content-free IDs and a
 stable reason; Queue acknowledgement alone must never be presented as provider
 delivery.
-
 
 ### 2026-08-25 — Automation opens stay on their authorized workspace state
 
@@ -5108,7 +4946,6 @@ selected work stream's current authority. Private reader identity comes only
 from active participant rows. Direct SQL audience writes remain subject to the
 accepted-content triggers; do not replace them with a service-only check.
 
-
 ### 2026-08-24 — What a review found in the scheduling slice, and one test that was proving nothing
 
 **What changed:** five fixes, from a review of the rebased slice.
@@ -5293,7 +5130,6 @@ published terminal set, while `terminal` records the run's own state in the
 object's vocabulary. The two events answer different questions and are spelled
 accordingly.
 
-
 ### 2026-08-24 — Four regressions a review caught, and the edits that caused them
 
 **`admitRun` threw where the retired trigger had swallowed.**
@@ -5376,7 +5212,6 @@ above it, and it checks both directions against real storage — the classified
 operations move the `workstream` row, and the unclassified ones leave it byte
 for byte unchanged.
 
-
 ### 2026-08-23 — Three of the six harness-run views retire, and why the other three cannot
 
 **What changed:** migration 23 drops `_runtime_run_scopes`,
@@ -5416,7 +5251,6 @@ The value costs a vector search to compute, so the read and the write cannot be
 one operation; freezing recall exists so every replay of an attempt sees the
 same memories, which makes the row the run will actually use the only useful
 answer to give a loser.
-
 
 ### 2026-08-23 — The callers outside the runtime, and what a half-converted path costs
 
@@ -5464,7 +5298,6 @@ guard the routed version lacked — it will not report `failed` over a work stre
 some other live run still holds. That case is unreachable from where it is
 called today, because the admission immediately before it superseded everything
 else. The guard is there for when that stops being true.
-
 
 ### 2026-08-23 — Terminalization and the reaper, and the end of the changes count
 
@@ -5514,7 +5347,6 @@ for a stated reason.** `persistHarnessFinalMessage` and
 an object-local one — and is the one place a terminalization instant crosses
 back into ISO-8601 text.
 
-
 ### 2026-08-23 — The sub-agent concurrency cap is removed, not renamed
 
 **What changed:** `HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS` is gone — the env
@@ -5548,7 +5380,6 @@ makes: each block owns its own run and therefore its own chain budget, so a work
 stream with *N* blocks can reach *N* × (`maxChainRuns` - 1). If that ever needs
 bounding, bound it where blocks are dispatched rather than by reviving a
 per-child cap here.
-
 
 ### 2026-08-23 — The sub-agent family finishes, and two fences nothing was holding
 
@@ -5588,7 +5419,6 @@ the storage class in the object's words, where `stopped` is `cancelled`;
 `TERMINAL_STATUSES` in the runtime is the published spelling. Which applies
 depends on whether the value came off a `RunRow` or out of a published payload,
 and `storedRunStatus`/`publishedRunStatus` are the only sanctioned crossings.
-
 
 ### 2026-08-23 — Sub-agent admission, and a cap that stopped meaning what it says
 
@@ -5633,7 +5463,6 @@ it had just written. It now composes `inlineChildOwnership` with the write in
 one transaction, which is also why the two share a precedence rather than
 restating it.
 
-
 ### 2026-08-23 — The sub-agent's double fence, and a substream the fixture forgot
 
 **What changed:** `assertInlineChildAttemptOwned` and `recordInferenceAttempt`
@@ -5665,7 +5494,6 @@ substream, so a child sharing its parent's substream is a `UNIQUE` violation
 rather than a queued run. The first version of this change's fixture put the
 child in substream `0` and the constraint caught it; `admitInlineChildAttempt`
 must create the substream row when it converts.
-
 
 ### 2026-08-23 — The lease stops being a join, and the sidebar write it had lost
 
@@ -6357,7 +6185,6 @@ reports workerd's `rowsWritten` rather than a trigger's counter, and
 `rowsWritten` counts index writes: the workerd suite pins that at 2 for a
 one-row update of an indexed column, because a caller moving a statement off a
 view and keeping an `=== 1` check would be wrong in exactly that way.
-
 
 ### 2026-08-22 — `tool_position` is a high-water mark, not a row count
 
@@ -7140,7 +6967,7 @@ letting a failed origin-resource attach fail the create, restoring the
 contract the legacy arm kept.
 
 **Why:** Production is fully cut over — `workstream_authority_control.phase =
-'durable_object_open'` in both regions — and local development reaches the
+'durable_object_open'` in configured deployments — and local development reaches the
 same state via `pnpm db:open-authority`. The legacy arms were reachable only
 on a local stack that skipped that step, a configuration that is no longer
 supported; such calls must fail loudly, not silently run 2,000 lines of code
@@ -7169,8 +6996,6 @@ member-visible surface. The launch failure path — member-safe copy persisted,
 diagnostics logged — is pinned there too. Anything sending product SQL to D1
 outside the DO port now fails on an absent table or column and is a routing bug
 by definition, not a phase.
-
-
 
 ### 2026-08-20 — The object creation path schedules the first naming pass
 
@@ -7203,8 +7028,6 @@ test that appeared to cover it was removed rather than kept for show.
 means what it says again, and a naming failure is a logged event rather than
 a permanent shimmer.
 
-
-
 ### 2026-08-20 — The messages trigger absorbs replayed durable writes
 
 **What changed:** Schema v5 rebuilds `_runtime_messages_insert` with a second
@@ -7233,8 +7056,6 @@ conflict target survives the view-to-table column mapping.
 load-bearing and documented: an INSTEAD OF trigger owns every conflict its
 table can raise. `runtime-compat-views.test.ts` replays a durable write
 through the real trigger and fails against the bare-INSERT body.
-
-
 
 ### 2026-08-20 — Work-stream authority outranks the workspace router, and the resources view becomes selectable
 
@@ -7275,8 +7096,6 @@ this incident carried the same catch-all code. Every layer that converts an
 error into a member-safe shape now records what it stripped first — three of
 the four hours this took were spent making silent failures speak, and each
 speaking layer then named the next defect within minutes.
-
-
 
 ### 2026-08-20 — Timestamps round-trip exactly, and the pipeline is tested end to end
 
@@ -7325,8 +7144,6 @@ their next run's settlement. The dense round-trip sweep in
 `agent-run-dispatch-queue.test.ts` fails deterministically against
 truncation (248 of 500 timestamps), so the defect cannot return quietly.
 
-
-
 ### 2026-08-20 — A run whose executor is gone no longer wedges its substream
 
 **What changed:** Before a claimed dispatch starts, the drain terminalizes runs
@@ -7363,8 +7180,6 @@ the reap is safe while another run is legitimately in flight, because that run
 has a dispatch. A work stream wedged by an earlier build heals on its next
 message rather than needing an operator. `test-workers/agent-run-dispatch-reliability.test.ts`
 holds both cases against real alarms, real storage, and real eviction.
-
-
 
 ### 2026-08-20 — A leased dispatch, and an alarm derived only from the rows
 
@@ -7734,7 +7549,7 @@ defect the quarantine exists to surface).
 
 ### 2026-08-19 — The authority cutover campaign machinery is retired
 
-**What changed:** With both regions permanently at `durable_object_open`, the
+**What changed:** With configured deployments permanently at `durable_object_open`, the
 one-time campaign code is deleted: the cron importer
 (`workstream-authority-migration.ts`), the object-side import machinery
 (`workstream-authority-import.ts`, `workspace-product-import.ts`,
@@ -8235,13 +8050,6 @@ publication; main `SubstreamAgent("0")` emits fenced refresh signals and serves
 the canonical runtime SQL used by each block agent. Both agent classes share
 custom keep-alive and single-flight drain primitives.
 
-Workspace creation now derives a west/east affinity from Cloudflare request
-longitude, persists it in the Global binding, regional D1 workspace projection,
-and WorkspaceDO SQL, and supplies it to every WorkstreamDO, SubstreamAgent, and
-workspace scheduler lookup. The US/EU jurisdiction remains the hard boundary.
-The routing ESLint rule rejects both direct namespace calls and the low-level
-region-only resolver.
-
 WorkspaceDO now keeps one persistent Electron socket with a bounded SQL
 topic-version log and workspace-scoped message commands. WorkstreamDO now serves
 complete revisioned common/viewer metadata over its own hibernating socket.
@@ -8314,30 +8122,10 @@ both control objects.
 
 ### 2026-08-17 — Control/data planes use jurisdictional IDs and hinted first placement
 
-**What changed:** All workspace, work-stream, substream, scheduler, and crash
-processor lookups use one resolver that selects `jurisdiction("us")` or
-`jurisdiction("eu")`, derives the name-based ID there, and supplies a `wnam` or
-`weur` location hint on every possible first `get()`. Product object constructors
-validate `ctx.id.jurisdiction`, and ESLint rejects direct or aliased namespace
-operations. The architecture now explicitly defines parent objects as the
-control plane and direct `SubstreamAgent` traffic as the data plane.
-
-**Why:** The previous EU-only helper left Global objects unrestricted, and three
-effect-delivery paths bypassed it. Cloudflare maps the same name to different
-jurisdictional IDs and honors a hint only on the first lookup, so partial use is
-not a safety boundary. Routing data-plane streams through parents would also
-undo the sharding benefit of one agent object per substream.
-
 **Considered and rejected:** Region-prefixed names without jurisdiction locks,
 hints only on creation endpoints, and parent-proxied feed traffic. They
 respectively provide no placement guarantee, miss background first lookups, and
 make a control object the shared throughput bottleneck.
-
-**Consequences:** The maintenance import creates/populates the US/EU locked
-target graph. A preexisting unrestricted Global object is a different identity
-and cannot be a serving fallback. Hints improve initial latency but remain best
-effort; future moves require an explicit migration. Local tests validate
-arguments and invariants while skipping unsupported workerd jurisdictions.
 
 ### 2026-08-17 — Per-substream agent objects replace the one-room boundary, persistence is SQL-only, and a maintenance cutover makes object SQL authoritative
 

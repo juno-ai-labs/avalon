@@ -1,3 +1,5 @@
+import { RegionSchema } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 import type { NormalizedActivity, ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 import { createHostedMcpPassthrough } from "./hosted-mcp";
@@ -1284,6 +1286,6 @@ function toSnakeCase(value: string): string {
   return value.replace(/([a-z0-9])([A-Z])/gu, "$1_$2").replace(/[^a-z0-9]+/giu, "_").replace(/^_+|_+$/gu, "").toLowerCase();
 }
 
-function regionFromConnection(connection: ConnectorConnectionContext): "global" | "eu" {
-  return connection.config.region === "eu" ? "eu" : "global";
+function regionFromConnection(connection: ConnectorConnectionContext): Region {
+  return RegionSchema.parse(connection.config.region ?? "global");
 }

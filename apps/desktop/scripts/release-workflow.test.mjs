@@ -155,7 +155,7 @@ test('the packaged Crashpad fixture cannot expire before its upload assertion', 
   );
 });
 
-test('private telemetry artifacts are published to both isolated regional telemetry buckets but excluded from the app', async () => {
+test('private telemetry artifacts are published to the configured telemetry bucket but excluded from the app', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const builder = await readFile(join(repositoryDirectory, 'apps/desktop/electron-builder.yml'), 'utf8');
   const built = workflow.indexOf('- name: Build, sign, notarize, staple, and verify');
@@ -164,8 +164,7 @@ test('private telemetry artifacts are published to both isolated regional teleme
 
   assert.match(builder, /- "!out\/\*\*\/\*\.map"/u);
   assert.match(workflow, /RALLY_GLOBAL_TELEMETRY_R2_BUCKET:/u);
-  assert.match(workflow, /RALLY_EU_TELEMETRY_R2_BUCKET:/u);
-  assert.doesNotMatch(workflow, /RALLY_(?:GLOBAL|EU)_PAYLOADS_R2_BUCKET:/u);
+  assert.doesNotMatch(workflow, /RALLY_GLOBAL_PAYLOADS_R2_BUCKET:/u);
   assert.match(workflow, /cargo install dump_syms --version 2\.3\.7 --locked/u);
   assert.match(workflow, /pnpm --filter @rally\/desktop telemetry:publish-artifacts/u);
   assert.ok(built < symbols, 'symbols must be extracted from the exact packaged application');

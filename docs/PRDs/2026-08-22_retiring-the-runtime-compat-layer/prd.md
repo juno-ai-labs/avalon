@@ -259,8 +259,6 @@ None yet.
    over-publishing costs an outbox row, under-publishing strands the scheduler.
    Later slices copy that shape rather than re-deciding it.
 
-## Data model
-
 ### What exists today
 
 Two wrappers, installed at 116 call sites across 40 files:
@@ -864,12 +862,6 @@ Steps 1–3 are mechanical after the first slice; step 4 is the work.
 8. The subsystem's module document gains a changelog entry.
 
 ## Regional impact
-
-None. Both routers resolve a stub in the caller's own region via
-`durableObjectStubForWorkspace`, and every converted port does the same. No
-statement crosses a regional boundary today and none will; the object migrations
-are applied per region by the same ledger that applies every other one, so
-Global and the European Union converge independently and identically.
 
 The one thing to hold: `substreamAgentName` takes `env.AVALON_REGION`, so a port
 built with the wrong `Env` reaches a name that does not exist rather than

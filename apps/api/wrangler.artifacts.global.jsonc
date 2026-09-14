@@ -23,8 +23,7 @@
   // free while a dotted `*.g.rallyusercontent.com` would fail the TLS handshake
   // on every artifact open until Advanced Certificate Manager was bought. The
   // region rides inside the label instead — `<stub>-g` — which keeps one
-  // wildcard per zone and keeps the region-distinct routing that stops an EU
-  // artifact's bytes ever transiting a Global Worker.
+  // wildcard per zone and routes artifacts directly to their owning deployment.
   "routes": [
     { "pattern": "*-g.rallyusercontent.com/*", "zone_name": "rallyusercontent.com" }
   ],

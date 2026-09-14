@@ -54,17 +54,6 @@ test("the Notion ingress URL is serialized and derived from the region's own API
   );
 });
 
-test("the Global control plane addresses the local EU Worker", () => {
-  assert.ok(
-    workerKeys.has("EU_PUBLIC_API_BASE_URL"),
-    "EU_PUBLIC_API_BASE_URL must be written to Global's .dev.vars for cross-region onboarding",
-  );
-  assert.match(
-    source,
-    /regional\.EU_PUBLIC_API_BASE_URL\s*=\s*local\.EU_PUBLIC_API_BASE_URL\s*\|\|\s*local\.PUBLIC_API_BASE_URL_EU\s*\|\|\s*"http:\/\/127\.0\.0\.1:8788";/u,
-    "Global development onboarding must validate EU sessions against the local EU Worker",
-  );
-});
 
 test("Daytona Terminal configuration reaches each regional development Worker", () => {
   const regionalizable = new Set(
@@ -86,6 +75,6 @@ test("Daytona Terminal configuration reaches each regional development Worker", 
   assert.deepEqual(
     expected.filter((key) => !regionalizable.has(key)),
     [],
-    "Terminal configuration must support independent Global and EU values",
+    "Terminal configuration must support independent configured deployment values",
   );
 });

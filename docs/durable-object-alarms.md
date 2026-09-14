@@ -38,8 +38,6 @@ remain separate from this effect-ordering fence.
 | `apps/api/src/durable-objects/workstream-do.ts` | Adopts it for the parent outbox, whose deadline stays derived. |
 | `apps/api/src/durable-objects/automation-do.ts` | Adopts it for one automation: two stored kinds, `automation_schedule` and `automation_run`, and the same derived parent-outbox lane `WorkstreamDO` has. |
 
-## How it works
-
 ### Two kinds of wake reason
 
 An object declares what it wants woken for in one of two ways, and the base
@@ -505,8 +503,6 @@ completion or failure names the phase active when the continuation ended. Do
 not join on workspace ids or alarm keys within these phase rows: neither is
 emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
-
-## Changelog
 
 ### 2026-09-11 — Unfurl expiry uses the sweep's timestamp format
 

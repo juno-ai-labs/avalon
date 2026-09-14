@@ -10,7 +10,6 @@
 
 No single benchmark product fits Rally's boundary.
 
-- PostHog is a strong first product-analysis destination for Global and can accept server-routed product and exception events, but it should not own collection policy, regional routing, native dumps, or Rally's event contract. The current US-only instance cannot receive EU telemetry under the approved product policy.
 - Segment provides the clearest model for a canonical event envelope, source/destination separation, message identity, timestamp normalization, and protocol governance. Rally needs a narrow internal version of those ideas, not a general CDP.
 - Sentry and Bugsnag establish the minimum viable bar for crash reporting: very-early initialization, main and renderer coverage, native minidumps, private symbols/source maps, issue grouping, safe breadcrumbs, launch-crash detection, release adoption, crash-free sessions/users, and explicit accounting for rate-limited data.
 - Snowplow and RudderStack show why schemas and tracking plans belong in source control, why invalid events need an observable failure path, and why destination transforms should be policy-aware.
@@ -18,14 +17,10 @@ No single benchmark product fits Rally's boundary.
 - Amplitude demonstrates the power and danger of autocapture. Its own privacy guidance supports Rally's conclusion that a content-rich desktop should prefer explicit semantic instrumentation and a tiny automatic reliability baseline.
 - Honeycomb reinforces high-cardinality structured correlation and the separation between manual business context and automatic technical instrumentation.
 
-The recommended architecture is a Rally-owned regional collector and crash pipeline with PostHog behind a Global-only destination adapter and an isolated internal sink for EU. This is “Segment-like” in contract and routing, not in product breadth.
-
 ## Capability comparison
 
 | Product | Strongest relevant capabilities | Risk or mismatch for Rally | What Rally adopts |
 | --- | --- | --- | --- |
-| PostHog | Product analytics, funnels, retention, cohorts, exceptions, experiments, EU Cloud, data controls | Renderer SDK can load optional bundles; autocapture/replay can collect UI content; native crash workflow is not its core contract; provider administration is separate from Rally's internal lifecycle | Global product destination, server-side capture, exception summaries, experiment exposure convention; no EU forwarding until Rally has an approved EU-specific instance |
-| Cloudflare Analytics Engine | Cheap high-cardinality operational aggregates queried with SQL | Adaptive sampling prevents exact event history; three-month retention misses EU's 13-month analytics window; Customer Metadata Boundary does not provide the needed EU availability guarantee | Continue only existing content-free service operations; create no EU telemetry dataset or duplicate in V1 |
 | Segment | Canonical envelope, source/destination routing, message IDs, four timestamps, Protocols tracking plans, validation, transformations, regional offering | Full CDP and identity/audience product are unnecessary; direct client source would weaken Rally's regional and privacy enforcement | Envelope, timestamp normalization, source authority, adapters, deterministic IDs, validation |
 | Sentry | Electron SDK, native minidumps, issue grouping, breadcrumbs, source maps/debug IDs, releases, crash-free sessions/users, scrubbing | A second vendor and potentially a second crash data store; rich automatic breadcrumbs can over-collect; detailed native residency needs diligence | Crash coverage bar, fingerprints, releases, safe breadcrumbs, symbol pipeline, crash-free measures |
 | Bugsnag | Electron main/renderer coverage, launch crashes, explicit session semantics, stability targets, release adoption, configurable minidump endpoint | Similar second-vendor and privacy diligence; automatic breadcrumbs need restriction | Launch-window semantics, session stability denominator, rate-limit transparency, feature/release correlation |
@@ -35,11 +30,7 @@ The recommended architecture is a Rally-owned regional collector and crash pipel
 | Amplitude | Hybrid autocapture plus precision tracking, schema governance, privacy levels, fail-closed replay behavior | Click autocapture includes displayed element text; replay/URL capture is high risk for Rally content | Explicit business events; fail-closed detailed diagnostics; no DOM autocapture |
 | Honeycomb | High-cardinality structured events, trace/log correlation, manual business attributes, OTel collection | An observability product does not replace product analytics or crash management | Rich opaque correlation IDs and manual semantic context without content |
 
-## PostHog
-
 ### Integration surface
-
-PostHog accepts individual and batch events over its public capture API. A project token is intended to be public; secrecy is not the reason to proxy it. Rally's reason to proxy is stronger: regional selection, server-assigned identity, consent enforcement, schema validation, durable delivery, centralized redaction, and destination replaceability. The [capture API](https://posthog.com/docs/api/capture) requires an API key, distinct ID, and event name, supports batches below its documented size limit, and exposes different US and EU hosts.
 
 The [JavaScript SDK](https://posthog.com/docs/libraries/js) specifically notes Electron's restriction on remote-code loading. Its no-external builds either disable or prebundle optional features such as replay, surveys, and exception capture. That makes a direct Electron integration technically possible, but still undesirable in Rally's renderer: it duplicates policy and delivery logic, increases bundle and CSP complexity, and creates an easy path to turn on content-rich collection.
 
@@ -57,8 +48,6 @@ Readable production stacks require build-time source-map handling. PostHog's [so
 
 ### Privacy and residency
 
-PostHog documents an [EU Cloud deployment in Frankfurt and project IP controls](https://posthog.com/docs/privacy/data-storage). Its [product analytics privacy controls](https://posthog.com/docs/product-analytics/privacy) include IP disabling, `before_send`, cookieless modes, and opt-out. Rally does not depend on those separately administered settings: its regional API must discard IP and prohibited properties before forwarding.
-
 Session replay deserves a separate warning. PostHog says inputs are masked by default while general text is not necessarily masked unless maximum-privacy options such as full text masking are configured. Its [replay privacy documentation](https://posthog.com/docs/session-replay/privacy) also highlights the risk of network bodies and headers. Rally does not enable replay in this PRD.
 
 PostHog's [privacy policy](https://posthog.com/privacy) currently describes provider-side choices for Customer Content, while the [PostHog Trust Center](https://trust.posthog.com) provides its security and compliance materials. Those contract, access, retention, deletion, profile, and product/model-development settings belong to a separate provider-administration process. This PRD uses the successful destination acknowledgement as its boundary and does not make PostHog configuration part of Rally's internal telemetry lifecycle or launch gates.
@@ -69,15 +58,7 @@ Rally does not need to move runtime flags from Flagship. PostHog documents [expe
 
 ### PostHog decision
 
-Use the current US PostHog project as the first product-analysis destination for Global only. Keep EU product and crash telemetry in Rally's isolated Cloudflare-backed internal path until an EU-specific PostHog instance receives a new approval. Do not embed PostHog in the renderer, store native dumps in it, make it the consent authority, or design the canonical event schema around PostHog property names.
-
 Research into PostHog informs the payload boundary and adapter contract, but provider-side retention, deletion, access, profiles, and issue workflow are deliberately out of scope after PostHog acknowledges delivery.
-
-## Cloudflare Analytics Engine
-
-Workers Analytics Engine is optimized for high-cardinality aggregate queries, not an exact telemetry ledger. Cloudflare documents [adaptive sampling at both write and query time](https://developers.cloudflare.com/analytics/analytics-engine/sampling/), including that individual records and exact event sequences are not guaranteed to be recoverable. Its [limits](https://developers.cloudflare.com/analytics/analytics-engine/limits/) retain data for three months, shorter than Rally's 13-month EU semantic-event requirement. Cloudflare's [Data Localization compatibility table](https://developers.cloudflare.com/data-localization/compatibility/) lists Workers Analytics Engine with a Customer Metadata Boundary caveat that logs/analytics are unavailable outside the US region, so it cannot supply the desired EU locality guarantee.
-
-V1 therefore creates no Analytics Engine dataset or binding for EU product telemetry, crash reports, fingerprint contributions, or duplicated operational rollups. The canonical EU sink can compute its initial operational views directly, avoiding two sources of truth. Existing content-free service-operation rows remain separate. If demonstrated volume later makes aggregate reads too expensive, a dedicated identifier-free Analytics Engine dataset may be considered as an optional operational cache, never as the canonical sink.
 
 ## Twilio Segment
 
@@ -119,10 +100,6 @@ Sentry's [breadcrumb documentation](https://docs.sentry.io/platforms/javascript/
 Sentry exposes organizational [PII and data-scrubbing controls](https://docs.sentry.io/api/organizations/update-an-organization/), including IP scrubbing and advanced rules. Rally similarly needs both client-side minimization and server-side enforcement. Client scrubbing alone cannot protect against a compromised or outdated desktop; provider scrubbing alone sends prohibited data across the boundary before removal.
 
 Sentry's API uses region-specific domains including US and Germany in its [API reference](https://docs.sentry.io/api/). A production vendor evaluation would still need to establish where attachments, relay processing, source artifacts, backups, support access, and derived issue data reside.
-
-### Sentry decision
-
-Do not add Sentry as a production destination in this PRD. Use it as the acceptance benchmark and retain it as a Global fallback if building symbolication, issue operations, and regional support access proves disproportionately expensive. The current EU policy prohibits sending EU crash data to an external US service. Choosing the custom path means the implementation cannot declare victory at “dump uploaded”; it must deliver grouping, release health, symbols, privacy, access, retention, and support workflow.
 
 ## Electron Crashpad
 
@@ -210,6 +187,5 @@ The PRD keeps the architecture custom because Rally already has a strong regiona
 - Release artifacts are private, immutable, matched by debug/build identity, and uploaded before release.
 - Crash-free measures disclose loss, sampling, and rate limiting.
 - Destination acknowledgement cannot extend or restart a Rally-controlled retention clock.
-- EU/Global applies to the full lifecycle, not just the ingest URL.
 - Destination mappings and replays preserve event identity and adapter version.
 - Public-site collection remains absent from V1 and requires a separate PRD.

@@ -29,7 +29,6 @@ content; excerpts, titles and archive state are served from the index within the
 projection's staleness window rather than reloaded from their owners.
 The operation-level and pagination contracts are detailed in [authorization](authorization.md).
 
-
 ## Sidekick authoring and loading
 
 Conversational publication resolves the current workspace membership role and
@@ -69,8 +68,6 @@ The renderer socket-ticket lint rule follows immutable awaited ticket aliases,
 including transcription tickets acquired before capture setup finishes. Aliases
 from shadowed or reassigned bindings are rejected; the constructor remains
 checked instead of carrying a local lint suppression.
-
-## How it works
 
 ### Trust boundaries
 
@@ -404,7 +401,7 @@ This is retry safety, not a broad approval gate.
 Provider refresh tokens remain in the regional backend, encrypted with AES-GCM and
 additional authenticated data tied to the connection ID. Key version is stored
 beside ciphertext so rotation can decrypt with an old key and re-encrypt with the
-active key. Global and EU deployments use independent keys. Rotation itself is in
+active key. configured deployments deployments use independent keys. Rotation itself is in
 [Operations](#operations).
 
 Granola Workspace API keys and the signing secrets returned while registering
@@ -635,14 +632,6 @@ Audit events cover sign-in and session changes, membership, connector
 authorization and revocation, external writes, automation changes, suggestion
 decisions, and administrative actions.
 
-Telemetry logs and rejection/audit rows contain fixed states, codes, counts, and
-opaque IDs only. Verified Global name/email and current workspace name are sent by
-explicit profile jobs so staff can identify and contact users; they are never
-copied onto each event or crash. A sanitized JavaScript/native report may reach
-Global PostHog, but raw minidumps, memory fragments, source excerpts, absolute
-paths, symbols, and source maps stay in Rally's dedicated regional bucket. EU
-telemetry never reaches PostHog or Analytics Engine.
-
 ### Secrets
 
 Local server keys live only in ignored `.env.local`. Renderer-safe values are an
@@ -650,15 +639,6 @@ explicit `VITE_` allowlist containing API base URLs and the protocol name. Hoste
 secrets, including `RESEND_API_KEY`, use separate Cloudflare secrets per region.
 Cloudflare administrative credentials are local deployment inputs and never Worker
 bindings.
-
-`TELEMETRY_CAPABILITY_SIGNING_KEY` is an independent Global-only Worker secret
-used for short-lived, route-bound pre-auth telemetry capability. EU presents a
-capability to the narrow `GLOBAL_TELEMETRY_CONTROL` RPC and receives no key or
-Global destination identity. `POSTHOG_PROJECT_TOKEN` also exists only in Global.
-Neither secret is exposed through a `VITE_` variable, preload, renderer bundle,
-Crashpad URL, multipart field, log, or support audit. The
-`CRASH_SYMBOLICATOR` Container receives one Worker-scoped dump and artifact stream;
-it has no R2 credentials and no network egress.
 
 `TELEMETRY_OPERATORS_JSON` is an independent secret in each region. Its bearer
 tokens never cross regions or enter URLs; its stored principal is the only source
@@ -693,26 +673,29 @@ costs one comment and widens nothing. Where an exception is genuinely warranted,
 bound it on the thing a placeholder cannot fake, and add the bound to
 `scripts/gitleaks-allowlist.test.mjs`.
 
-## Invariants
-
 - **The renderer never receives a secret.** No provider credentials, native PKCE
   verifiers, OpenRouter keys, Cloudflare administration keys, raw `ipcRenderer`,
   Node integration, or arbitrary navigation. A capability added to the preload
   bridge is a capability added to every page the renderer could ever be tricked
   into loading.
+
 - **Every IPC argument is parsed before use**, and every exposed handler is
   validated against a live Rally window and its pinned renderer origin.
+
 - **A plaintext preference is never authority to unwrap a protected envelope.** An
   off Lockdown preference beside a Lockdown envelope deletes the local credentials
   and forces sign-in; it does not export the session.
+
 - **Every write to `application-settings.json` goes through the one shared queue
   and re-reads before merging.** Two owners serializing on different primitives is
   how a lost update becomes a credential deletion on the next launch.
+
 - **Model-authored web content is never same-origin with the application, the
   API, or another artifact.** A live artifact serves from a per-artifact
   subdomain of a registrable domain that is not `rallywith.ai`, so it is never
   cookie-adjacent to the product apex and one artifact cannot read another's
   storage, cookies, or DOM.
+
 - **Separate artifact origins do not close cross-artifact CSRF, and the serving
   Worker does.** Every artifact is a subdomain of one registrable domain, so two
   artifacts are same-*site*: `SameSite` does not stop script in one sending a
@@ -721,6 +704,7 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   response. Admission is by fetch metadata — `same-origin`, or `none` for a
   genuine top-level `GET` — refused before untrusted code runs, and refused for
   GETs too, because artifact code may treat any method as a write.
+
 - **A new ticket audience never issues a ticket in a URL.** Cloudflare records
   whole URLs into the invocation log, Logpush, and traces, and no redaction here
   reaches them. An artifact's access code travels in a fragment, which a browser
@@ -728,22 +712,28 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   that never serves artifact content — so no artifact document is ever loaded at
   a location that held it. Single-use redemption bounds replay; it does not keep
   a secret out of a log, and is not on its own compliance.
+
 - **Nothing that protects data is scoped by a feature flag.** Flag targeting is a
   product scope; a flag that cannot be evaluated keeps its last answer, which is
   the wrong failure mode for a confidentiality boundary.
+
 - **Every API resource query includes `workspace_id`; every mutation additionally
   resolves membership role.** Knowing an ID authorizes nothing.
+
 - **Every connector tool checks execution principal, connection scope, granted
   capability, and resource visibility** — at execution, not only at admission.
+
 - **A Terminal sandbox generation is reused only under its exact frozen authority
   fingerprint, and never receives a GitHub write or R2 credential.** Filesystem
   persistence cannot become a way around later revocation.
+
 - **A current client never sends a socket ticket in a URL, and a new ticket
   audience never issues one there.** Cloudflare records whole request URLs into
   the invocation log, the Logpush export, and trace spans, and no redaction in
   this repository can reach them. Legacy issuer response fields exist only for
   old desktop compatibility and must be removed at the declared compatibility
   cutoff rather than copied to any later role.
+
 - **A prepared feed admission is usable only by its exact signed ticket and
   object authority generation.** It is in memory, never a second durable
   credential; it is revalidated against D1 during ticket transit, natural
@@ -751,53 +741,59 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   loses it, and every miss falls back to current regional session/membership
   authorization. The room retains only one preparation, and the durable ticket
   receipt remains the one-use decision.
+
 - **A native WebSocket in the renderer is constructed only from a URL an
   authenticated ticket endpoint returned; Electron's work-stream broker is
   narrower still.** Its typed IPC accepts only configured regional
   WorkstreamDO/SubstreamAgent paths from main or Sidekicks windows, and main supplies the
   application Origin.
+
 - **A URL schema names its accepted scheme contract explicitly.** Bare Zod URL
   validation accepts `javascript:` and `data:`.
+
 - **Every desktop HTTP header is covered by the regional CORS allowlist and an
   exact preflight test.** A header implemented only in the renderer cannot reach
   the Worker.
+
 - **A request-validation log retains shape, never rejected content.** Route,
   target, field path, issue code, JSON keys, array positions, and empty
   containers are operational metadata; every logged body leaf is `"***"` or
   `-1`, and raw values, Zod messages, regexes, and unmasked request bodies do not
   enter the log.
+
 - **A document built out of model output is never same-origin with the
   application.** The exported message card gets `rallywithai-export://`, no preload,
   and a policy that forbids script; putting it on `app://rallywithai` would buy one
   fewer scheme at the price of the boundary.
+
 - **A webhook is verified against its exact raw body before anything parses,
   stores, or queues it.**
+
 - **A tool call is a proposal, never an instruction.** Name, schema, principal,
   capability, limits, and idempotency state are all checked before execution.
+
 - **An inbound email address is a routing identifier, never an authenticator.** The
   From match against active workspace membership is the only control on a
   mail-started run: since 2026-09-03 such a run holds the same connector and web
   tools as every other automation run, so a spoofed From that passes the screen
   steers a run that can write and send. The changelog entry of that date records
   why the tool filter came out and what stands in its place.
+
 - **An invitation token exists in D1 only as a SHA-256 hash**, and never in a query
   string, log, audit event, or Resend tag.
+
 - **A Gitleaks exception is a bounded pattern**, never a path exemption or a
   fingerprint, and it ships with a case in
   `scripts/gitleaks-allowlist.test.mjs` proving it still rejects real material.
+
 - **Crashpad's live database is opaque.** Invalidation changes only its sibling
   generation manifest; deletion, enumeration, and upload occur after rotation on a
   later launch.
+
 - **Opt-out is enforced at creation, regional acceptance, and destination
   delivery.** Attributable undelivered product, diagnostic, identify, profile, and
   crash work is suppressed or deleted; already delivered destination data is
   outside Rally's internal lifecycle.
-- **EU telemetry has no cross-region fallback.** A routing, storage, processing,
-  or support-access failure is handled inside EU and never by copying the payload
-  to Global.
-- **Public-site routing happens before persistent analytics identity.** Global
-  may read a first-party random epoch; affirmative EU traffic uses an in-memory
-  page epoch and never reads the Global identifier.
 
 ## Boundary
 
@@ -908,8 +904,7 @@ regional secret `CONNECTOR_CREDENTIALS_KEYS_JSON` temporarily maps every
 still-referenced old numeric version to its old key. Reads decrypt with the row
 version and opportunistically rewrite the row with the active key. Operators
 remove an old mapping only after confirming no regional
-`connector_connections.credential_key_version` rows still reference it. Global and
-EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
+`connector_connections.credential_key_version` rows still reference it. Deployments rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Apple notifications
@@ -1236,11 +1231,6 @@ revocation for the captured sessions.
 a fresh Google sign-in, and encrypting only the active credential would leave
 background workspace authority outside the Lockdown promise.
 
-**Considered and rejected:** One rebindable refresh token and one encrypted file
-per workspace. The former cannot cross from EU to Global discovery; the latter
-creates several independently committed files whose active pointer can disagree
-after a crash.
-
 **Consequences:** Exact-credential refresh failure removes one workspace without
 touching siblings. A failed online logout is reported, but local sign-out still
 deletes the complete set and all drafts. The preload gains only scoped actions;
@@ -1513,7 +1503,7 @@ compatibility surface rather than a label.
 **Consequences:** `app://avalon` stays in the allowlist until shipped clients
 carrying it are gone; removing it is a decision about installed builds.
 `apps/api/test/domain-migration-config.test.ts` asserts both origins are listed
-in both regions, so dropping one fails on the edit. The origin policy is
+in configured deployments, so dropping one fails on the edit. The origin policy is
 otherwise unchanged — it still admits exact origins only, and CORS remains not
 authorization. See [`domain-migration.md`](domain-migration.md).
 ### 2026-08-25 — The origin allowlist admits both site zones
@@ -1665,11 +1655,6 @@ changes and must not expose token plaintext in commands, output, or logs.
 
 ### 2026-08-13 — Public-site and Lockdown telemetry observe without gaining provider, handoff, or transition authority
 
-**What changed:** The exact API origin allowlist now includes Rally's two
-production site origins. The site can obtain a content-free route and a signed
-anonymous capability, then send only registered site events. EU identity remains
-in memory; Global may retain a first-party random epoch.
-
 The main process contributes Lockdown enabled/available state to the bounded
 settings snapshot and reports previous, requested, and applied booleans only
 after an in-app transition succeeds.
@@ -1699,14 +1684,14 @@ setting enum, and cannot influence migration, rollback, or session recovery.
 
 **What changed:** The regional API admits `X-Rally-Operation-Id` in its explicit
 CORS header allowlist, and app-origin preflight tests cover the desktop mutation
-header in both Global and EU. Connector telemetry-version negotiation
+header in both configured deployments. Connector telemetry-version negotiation
 deliberately uses a query marker rather than another header. Caught renderer
 transport failures use the existing sanitized, main-owned exception route
 rather than a new renderer destination.
 
 **Why:** Chromium stops a request at preflight when any renderer header is absent
 from the Worker allowlist. Operation correlation must therefore be admitted in
-both regions. The connector version marker avoids expanding that preflight
+configured deployments. The connector version marker avoids expanding that preflight
 contract and remains safe while the independently deployed desktop and API
 briefly run different revisions.
 
@@ -1714,12 +1699,6 @@ briefly run different revisions.
 correlation, or adding a direct renderer PostHog client. Those respectively widen
 the accepted browser boundary, lose idempotent intent/outcome correlation, or
 place provider authority in the untrusted renderer.
-
-**Consequences:** New renderer request headers must update both the narrow Worker
-allowlist and its production-shaped preflight test. CORS failures remain ordinary
-failed product actions; bounded diagnostic telemetry observes them without
-changing or replaying the request or misclassifying them as process-health
-transitions, and EU diagnostics do not cross regions.
 
 ### 2026-08-13 — Telemetry keeps provider, operator, and raw-crash authority in main and the regional Worker
 
@@ -1733,11 +1712,6 @@ Main creates an owner-only route-final parent around the Crashpad database,
 stores only sparse lifecycle metadata beside it, invalidates the whole
 generation without touching the live database, and deletes malformed or expired
 generations instead of inferring policy.
-
-Restricted telemetry HTTP operations authenticate a per-region bearer token to
-a fixed operator UUID and `support`/`security` role. EU does not hold the
-onboarding capability-signing key; it asks the narrow Global control RPC to
-authorize or close a route-bound journey.
 
 **Why:** Electron crash dumps can contain memory and customer content, while a
 renderer can be compromised independently of main. Product analytics also needs
@@ -1753,24 +1727,6 @@ An internal helper is not an authorization boundary, and request fields cannot
 prove an operator's identity or role. Sharing the signing key across regions
 also widened a one-direction capability into authority held by both data
 planes.
-
-**Considered and rejected:** Direct PostHog/Sentry SDKs in the renderer, a
-token or dump path in preload, Crashpad URL upload, reading the live crash
-database, shared product/telemetry R2, and an EU fallback to US infrastructure.
-Each widens an untrusted boundary or makes region/opt-out/deletion
-unenforceable. For operator access: reusing desktop sessions, accepting
-operator metadata from the request, a public internal-debug route, and
-provisioning the same key in both regions. None gives the regional, auditable,
-least-authority boundary raw crash access requires.
-
-**Consequences:** Main and the regional Worker are the only telemetry
-authorities; raw bytes require audited regional access and never reach logs or
-PostHog. PostHog-side governance remains operational configuration outside
-Rally's internal retention lifecycle. Operator tokens are independent regional
-secrets, raw access reasons are role-bound, and audit rows derive their
-principal server-side. Future EU journey operations receive only route/epoch
-control results from Global and must never receive key material or destination
-identity.
 
 **Future changes must preserve:** No credential enters a Crashpad URL or local
 generation, no renderer learns a dump path, invalidation remains durable and

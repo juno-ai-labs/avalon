@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -347,32 +348,32 @@ describe("inference lakehouse", () => {
     });
   });
 
-  it("does not archive EU inference while EU analytics export is deferred", async () => {
+  it("archives inference for another configured deployment", async () => {
     const { env, objects, pointers, delivered } = fixture();
-    env.AVALON_REGION = "eu";
+    env.AVALON_REGION = "enterprise";
 
     await captureStreamingInferenceRequest(env, {
       source: "workstream",
-      workspaceId: "workspace-eu",
-      workstreamId: "workstream-eu",
+      workspaceId: "workspace-enterprise",
+      workstreamId: "workstream-enterprise",
       substreamId: "0",
     }, {
-      inferenceRequestId: "eu-request-1",
-      turnId: "turn-eu",
+      inferenceRequestId: "enterprise-request-1",
+      turnId: "turn-enterprise",
       model: "canonical/model",
       provider: "openrouter",
       providerInvocationModel: "provider/model",
       cursor: { structuredOutputAttempt: 0, stageIndex: 0, candidateIndex: 0, endpointAttempt: 0 },
       payload: {
         model: "provider/model",
-        messages: [{ role: "user", content: "must stay out of analytics storage" }],
+        messages: [{ role: "user", content: "a synthetic inference request" }],
         stream: true,
         stream_options: { include_usage: true },
       },
     });
 
-    expect(objects.size).toBe(0);
-    expect(pointers).toEqual([]);
+    expect(objects.size).toBe(1);
+    expect(pointers).toHaveLength(1);
     expect(delivered).toEqual([]);
   });
 
@@ -433,13 +434,13 @@ describe("inference lakehouse", () => {
       messages: [
         { id: "bad", timestamp: new Date(), body: { nope: true }, attempts: 1, ack, retry },
         {
-          id: "eu",
+          id: "enterprise",
           timestamp: new Date(),
           body: {
             schemaVersion: 1,
-            eventId: "eu-event",
-            region: "eu",
-            objectKey: "inference-lakehouse/records/eu-event.json",
+            eventId: "enterprise-event",
+            region: "enterprise",
+            objectKey: "inference-lakehouse/records/enterprise-event.json",
             payloadSha256: "a".repeat(43),
             payloadBytes: 12,
             capturedAt: "2026-08-24T12:00:00.000Z",

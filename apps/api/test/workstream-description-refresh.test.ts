@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -146,7 +147,7 @@ function fixture(options: {
  * gates are looking for, so a test that wants an evaluation gets one.
  */
 const DRIFTING_MESSAGE =
-  "The 3-D Secure migration for our EU issuers needs a rollout plan, and issuer "
+  "The 3-D Secure migration for our enterprise issuers needs a rollout plan, and issuer "
   + "sandbox coverage is still short of the acquirer requirements we agreed.";
 /**
  * Substantial conversation that raises nothing the description does not already
@@ -246,14 +247,14 @@ describe("description proposal guards", () => {
   const current = "Look into the payment error Morgan reported on Monday.";
 
   it("applies a confident, specific rewrite", () => {
-    expect(judgeDescriptionProposal(rewrite("Track the 3-D Secure migration for EU card issuers."), current)).toEqual({
+    expect(judgeDescriptionProposal(rewrite("Track the 3-D Secure migration for enterprise card issuers."), current)).toEqual({
       status: "rewritten",
-      description: "Track the 3-D Secure migration for EU card issuers.",
+      description: "Track the 3-D Secure migration for enterprise card issuers.",
     });
   });
 
   it("keeps the saved description when the model is not confident", () => {
-    expect(judgeDescriptionProposal(rewrite("Track the 3-D Secure migration for EU card issuers.", 0.79), current))
+    expect(judgeDescriptionProposal(rewrite("Track the 3-D Secure migration for enterprise card issuers.", 0.79), current))
       .toEqual({ status: "kept" });
   });
 
@@ -308,7 +309,7 @@ describe("work-stream description refresh", () => {
       descriptionSource: "authored",
       proposal: {
         decision: "rewrite",
-        description: "Track the 3-D Secure migration for EU card issuers.",
+        description: "Track the 3-D Secure migration for enterprise card issuers.",
         confidence: 0.92,
         reasoning: "The work stream now runs the migration, not the original bug.",
       },
@@ -317,15 +318,15 @@ describe("work-stream description refresh", () => {
 
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({
       status: "rewritten",
-      description: "Track the 3-D Secure migration for EU card issuers.",
+      description: "Track the 3-D Secure migration for enterprise card issuers.",
     });
-    expect(objective(objectStore)).toBe("Track the 3-D Secure migration for EU card issuers.");
+    expect(objective(objectStore)).toBe("Track the 3-D Secure migration for enterprise card issuers.");
     expect(workstreamObjectRootRow(objectStore, "description_source"))
       .toMatchObject({ description_source: "derived" });
     expect(refreshRow(objectStore)).toMatchObject({
       decision: "rewritten",
       previous_description: "Look into the payment error Morgan reported on Monday.",
-      description: "Track the 3-D Secure migration for EU card issuers.",
+      description: "Track the 3-D Secure migration for enterprise card issuers.",
     });
   });
 
@@ -342,11 +343,11 @@ describe("work-stream description refresh", () => {
     const { objectStore, env } = fixture({
       proposal: () => {
         applyWorkstreamObjectRootFields(objectStore, {
-          description: "Run the EU payments incident review.",
+          description: "Run the enterprise payments incident review.",
         });
         return {
           decision: "rewrite",
-          description: "Track the 3-D Secure migration for EU card issuers.",
+          description: "Track the 3-D Secure migration for enterprise card issuers.",
           confidence: 0.95,
           reasoning: "The work moved.",
         };
@@ -356,14 +357,14 @@ describe("work-stream description refresh", () => {
 
     expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
       .toEqual({ status: "rejected", code: "description_changed_during_evaluation" });
-    expect(objective(objectStore)).toBe("Run the EU payments incident review.");
+    expect(objective(objectStore)).toBe("Run the enterprise payments incident review.");
     expect(refreshRow(objectStore)).toMatchObject({
       decision: "rejected",
       rejection_code: "description_changed_during_evaluation",
       previous_description: "Look into the payment error Morgan reported on Monday.",
       // What is in force afterwards is the other writer's text, not the text
       // this evaluation read.
-      description: "Run the EU payments incident review.",
+      description: "Run the enterprise payments incident review.",
     });
   });
 
@@ -575,7 +576,7 @@ describe("what it takes to spend a model call", () => {
 
     proposal = {
       decision: "rewrite",
-      description: "Track the 3-D Secure migration for EU card issuers.",
+      description: "Track the 3-D Secure migration for enterprise card issuers.",
       confidence: 0.95,
       reasoning: "The work moved.",
     };
@@ -587,7 +588,7 @@ describe("what it takes to spend a model call", () => {
 });
 
 describe("measuring what is new in a conversation", () => {
-  const description = "Resolve the EU checkout authorization failures Morgan reported.";
+  const description = "Resolve the enterprise checkout authorization failures Morgan reported.";
   const title = "Checkout";
 
   it("counts a subject the description does not name", () => {
@@ -604,7 +605,7 @@ describe("measuring what is new in a conversation", () => {
 
   it("counts nothing when the conversation restates the description", () => {
     expect(countNovelSubjectTerms({
-      newText: "The EU checkout authorization failures Morgan reported are still failures in EU checkout.",
+      newText: "The enterprise checkout authorization failures Morgan reported are still failures in enterprise checkout.",
       description,
       title,
     })).toBe(0);

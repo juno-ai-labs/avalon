@@ -35,22 +35,21 @@ Four pressures, all present now:
 
 1. **Migration cadence.** The schema changes almost every other pull request —
    76 migration files already — and every one of them rides a
-   deploy pipeline that applies SQL to both regions *before* deploying either
+   deploy pipeline that applies SQL to configured deployments *before* deploying either
    Worker. That ordering is correct and still bit us: the window where the
    previous Worker writes into the new schema turned `0063`'s fail-open default
    into mis-marked production rows, and the runbook now carries a section
    explaining the hazard. The migration *number sequence* has also already
    collided six times across merged branches. The procedure is carrying more
    operational weight than a prototype schema should ever need.
+
 2. **Isolation is query discipline.** Invariant 1 of the data model — every
    tenant-owned table carries `workspace_id`, every lookup includes it — is
    enforced at roughly 460 `workspace_id = ?` predicates today (447 in
    `apps/api/src`, 13 in `packages/db/src`), and each new query is a new
    opportunity to omit one. The document itself calls such an omission "a
    cross-tenant read waiting for an ID to leak."
-3. **Capacity has a shared ceiling.** All Global workspaces share one 10 GB D1
-   database, and all EU workspaces another. Any single workspace's growth
-   spends everyone's headroom.
+
 4. **The compliance road ahead.** The Google Mail + Calendar connector puts
    Rally on the path to a CASA assessment for restricted OAuth scopes, and an
    ISO 27001 posture is a matter of time for a product asking businesses to
@@ -61,25 +60,26 @@ Now is the cheapest this change will ever be: the only users are the team, the
 data is disposable, and every week adds queries, tables, and cron sweeps to the
 surface that has to move.
 
-## Goals
-
 1. Every workspace's product state lives in its own database, in its
    workspace's region, and the workspace registry is the complete inventory of
    those databases.
+
 2. A request's data access is scoped to one workspace's database by
    construction: the handle services receive *is* the tenant boundary, and no
    code path constructs a handle from request-controlled input.
+
 3. A schema change ships in the pull request that needs it and deploys as one
    artifact with the code; no operator migration step exists for workspace
    data, and no deployed code version ever reads a workspace schema from a
    different version.
+
 4. A migration failure affects exactly one workspace and fails closed; every
    other workspace serves normally.
+
 5. A single workspace can be restored to a point in time, exported, and
    deleted — completely, database and all — without touching any other
    workspace.
-6. EU workspace databases are created in and confined to the EU jurisdiction
-   by the same mechanism that pins EU Durable Objects today.
+
 7. Local development and CI keep single-command setup: creating a local
    workspace produces a correctly migrated local database with no separate
    migrate step.
@@ -138,7 +138,7 @@ behavior that does change:
 ## Impact on the product contract
 
 None — this refines infrastructure beneath the existing contract. The brief's
-required outcomes that touch this layer — Global/EU signup routing, workspace
+required outcomes that touch this layer — configured deployment signup routing, workspace
 region selection at creation, typed tools only, audited external writes — are
 preserved unchanged; the region boundary and identity flow described in the
 brief are untouched. The public trust-center wording about regional
@@ -155,7 +155,7 @@ None yet.
    D1 database.** D1 bindings are static and capped (~5,000 per script), so
    dynamic tenants cannot bind; querying per-tenant D1 over the HTTP API needs
    an account-scoped token in the Worker (forbidden by the security rules, and
-   one credential spanning both regions' tenants), pays an HTTPS round trip
+   one credential spanning configured deployments' tenants), pays an HTTPS round trip
    per query, and leaves fleet schema migration as a self-built orchestrator —
    Cloudflare offers **no managed migration service** for D1
    ([`research.md`](./research.md)). The Durable Object is the engine D1 is
@@ -264,23 +264,6 @@ table assignment):
 changes from "every query includes `workspace_id`" to "tenant scope is the
 database handle, resolved only from the session."
 
-## Regional impact
-
-The Global/EU boundary is preserved and sharpened. Workspace database objects
-are named through the existing shared namespace helper, so EU workspaces'
-databases are created with `jurisdiction("eu")` — the same mechanism, and the
-same residency semantics, as the EU's `WorkstreamRoom` and
-`WorkspaceScheduler` objects today. That helper's one existing softening
-carries over: in local development it returns the unpinned namespace, because
-Miniflare does not implement jurisdictions — the documented dev-only tradeoff
-that goal 7's single-command setup continues to lean on, never a production
-path. The control-plane databases remain exactly
-the two regional D1 databases that exist now, holding no workspace content.
-Nothing new crosses the boundary; the named-RPC bridges, shared provider
-ingresses, and the identity flow are untouched. The standing caveat in
-`regionalization.md` — logical and storage isolation, not a certified claim
-about every subprocessor — carries over verbatim.
-
 ## Security and trust model
 
 **Isolation moves from discipline to structure.** The workspace data path can
@@ -296,7 +279,7 @@ query discipline; it is small, slow-moving, and enumerable.
 **No new credentials exist.** The chosen design adds zero secrets to either
 Worker — the decisive contrast with the per-tenant-D1 alternative, whose
 account-scoped API token would have been a standing Worker credential able to
-read every tenant in both regions, violating the rule that Cloudflare
+read every tenant in configured deployments, violating the rule that Cloudflare
 administration credentials never become Worker variables.
 
 **One surface becomes security-critical and is named as such:** the
@@ -388,7 +371,7 @@ re-imported. After the window, fix forward.
 
 - The e2e smoke and the manual desktop acceptance flows (sidebar, signup,
   invitations, settings, realtime recovery, dictation) pass unchanged against
-  the cutover deploy, in both regions.
+  the cutover deploy, in configured deployments.
 - Creating a workspace in each region and exercising a work stream, an
   automation run, a connector poll, and a digest shows correct behavior with
   the regional D1 databases' moved tables receiving zero reads or writes.
@@ -400,4 +383,3 @@ re-imported. After the window, fix forward.
 - `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:scripts`, and both
   Wrangler dry-run builds stay green with the migration-step suite replacing
   the SQL-file suite for workspace schema.
-

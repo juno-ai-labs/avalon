@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../../common/desktop';
 import { RallyApi } from './api';
@@ -10,7 +11,7 @@ const invitationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2';
 const session: DesktopSession = {
   accessToken: 'access-token-longer-than-twenty-characters',
   expiresAt: timestamp,
-  apiBaseUrl: 'https://eu.api.rallywith.ai',
+  apiBaseUrl: 'https://enterprise.api.rallywith.ai',
   user: {
     id: userId,
     email: 'owner@example.com',
@@ -19,7 +20,7 @@ const session: DesktopSession = {
   workspace: {
     id: workspaceId,
     name: 'Europe Research',
-    region: 'eu',
+    region: 'enterprise',
     role: 'owner',
   },
 };
@@ -39,9 +40,9 @@ describe('organization and invitation API routing', () => {
       .mockResolvedValueOnce(json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=organization' }))
       .mockResolvedValueOnce(json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=invitation' }));
     vi.stubGlobal('fetch', fetchMock);
-    const api = new RallyApi('https://eu.api.rallywith.ai', null);
+    const api = new RallyApi('https://enterprise.api.rallywith.ai', null);
     const organizationUrl = new URL(await api.beginGoogleLogin(
-      'eu',
+      'enterprise',
       'rallywithai://auth/complete',
       {
         workspaceName: 'Europe Research',
@@ -52,7 +53,7 @@ describe('organization and invitation API routing', () => {
     expect(organizationUrl.origin).toBe('https://accounts.google.com');
     expect(organizationUrl.searchParams.get('state')).toBe('organization');
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
-      region: 'eu',
+      region: 'enterprise',
       returnUri: 'rallywithai://auth/complete',
       workspaceName: 'Europe Research',
       desktopAttemptId: 'a'.repeat(43),
@@ -60,7 +61,7 @@ describe('organization and invitation API routing', () => {
     });
 
     const invitationUrl = new URL(await api.beginGoogleLogin(
-      'eu',
+      'enterprise',
       'rallywithai://auth/complete',
       {
         invitationToken: 'invite-token-longer-than-twenty-characters',
@@ -71,7 +72,7 @@ describe('organization and invitation API routing', () => {
     expect(invitationUrl.searchParams.get('state')).toBe('invitation');
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
       invitationToken: 'invite-token-longer-than-twenty-characters',
-      region: 'eu',
+      region: 'enterprise',
       returnUri: 'rallywithai://auth/complete',
       desktopAttemptId: 'b'.repeat(43),
       desktopCodeChallenge: 'd'.repeat(43),
@@ -83,22 +84,22 @@ describe('organization and invitation API routing', () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(json({
       workspaceId,
       workspaceName: 'Europe Research',
-      region: 'eu',
+      region: 'enterprise',
       email: 'invitee@example.com',
       role: 'member',
       expiresAt: '2026-08-08T01:00:00.000Z',
     }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const api = new RallyApi('https://eu.api.rallywith.ai', null);
+    const api = new RallyApi('https://enterprise.api.rallywith.ai', null);
     await expect(api.getInvitationPreview(token)).resolves.toMatchObject({
       workspaceId,
-      region: 'eu',
+      region: 'enterprise',
       role: 'member',
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      `https://eu.api.rallywith.ai/auth/invitations/preview?token=${encodeURIComponent(token)}`,
+      `https://enterprise.api.rallywith.ai/auth/invitations/preview?token=${encodeURIComponent(token)}`,
       expect.objectContaining({ method: 'GET' }),
     );
   });
@@ -115,17 +116,17 @@ describe('organization and invitation API routing', () => {
         acceptedAt: null,
         createdAt: timestamp,
       },
-      inviteUrl: 'https://rallywith.ai/invite/#region=eu&token=invite-token',
+      inviteUrl: 'https://rallywith.ai/invite/#region=enterprise&token=invite-token',
       emailDelivery: 'sent',
     }, { status: 201 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const api = new RallyApi('https://eu.api.rallywith.ai', session);
+    const api = new RallyApi('https://enterprise.api.rallywith.ai', session);
     await expect(api.createWorkspaceInvitation('admin@example.com', 'admin'))
       .resolves.toMatchObject({ invitation: { role: 'admin' } });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://eu.api.rallywith.ai/workspace/invitations',
+      'https://enterprise.api.rallywith.ai/workspace/invitations',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ email: 'admin@example.com', role: 'admin' }),
@@ -140,7 +141,7 @@ describe('organization and invitation API routing', () => {
       id: workspaceId,
       name: 'Europe Research',
       slug: 'europe-research',
-      region: 'eu',
+      region: 'enterprise',
       role: 'admin',
       timezone: 'Europe/London',
       createdAt: timestamp,
@@ -151,10 +152,10 @@ describe('organization and invitation API routing', () => {
       ...session,
       workspace: { ...session.workspace!, role: 'member' },
     };
-    const api = new RallyApi('https://eu.api.rallywith.ai', staleSession);
+    const api = new RallyApi('https://enterprise.api.rallywith.ai', staleSession);
 
     await expect(api.getWorkspace()).resolves.toMatchObject({
-      region: 'eu',
+      region: 'enterprise',
       currentUser: { id: userId, role: 'admin' },
     });
   });

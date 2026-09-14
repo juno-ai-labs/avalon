@@ -1,3 +1,6 @@
+import { RegionSchema } from "@rally/contracts/regions";
+import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
+import { regionalBindings } from "../lib/regional-bindings";
 import { AccountOnboardingSchema, PersonalPresentationSchema } from '@rally/contracts';
 import { publishWorkspaceSync } from './workspace-realtime-service';
 import {
@@ -59,7 +62,7 @@ const regionalPendingInvitationSchema = PendingWorkspaceInvitationSchema.extend(
 type RegionalWorkspace = z.infer<typeof regionalWorkspaceSchema>;
 
 const regionalDiscoverySchema = z.object({
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   workspaces: z.array(regionalWorkspaceSchema),
   invitations: z.array(regionalPendingInvitationSchema),
 });
@@ -266,7 +269,7 @@ function sameDestination(
   return value.region === region && value.workspaceId === workspaceId;
 }
 
-/** Regional data-plane operations called either directly for Global or by RPC for EU. */
+/** Regional data-plane operations called either directly for Global or by RPC for regional. */
 export class RegionalOnboardingService implements RegionalIdentityBridgeBinding {
   constructor(private readonly env: Env) {}
 
@@ -414,7 +417,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
         input.name,
         slug,
         this.env.AVALON_REGION,
-        this.env.AVALON_REGION === "eu" ? "Europe/London" : "America/Los_Angeles",
+        "America/Los_Angeles",
         input.placementAffinity,
         userId,
         at,
@@ -830,7 +833,7 @@ export class D1PlatformBindingStore implements PlatformBindingStore {
     }
     const at = this.now().toISOString();
     // Diagnostic deadline for operators and observability only. Unknown RPC
-    // outcomes are never reclaimed automatically because the old EU action
+    // outcomes are never reclaimed automatically because the old regional action
     // could still commit after an apparent timeout.
     const expiresAt = new Date(this.now().getTime() + 2 * 60_000).toISOString();
     await this.db.prepare(
@@ -985,15 +988,14 @@ export class PlatformOnboardingService {
     dependencies: PlatformOnboardingDependencies = {},
   ) {
     this.requireGlobalControlPlane();
-    const euRpc = env.EU_IDENTITY_BRIDGE;
-    const eu = dependencies.gateways?.eu ?? (euRpc ? new RegionalIdentityBridgeClient(euRpc) : undefined);
-    if (!eu) {
-      throw new ApiError(503, "regional_onboarding_unavailable", "The European Union onboarding service is unavailable");
-    }
-    this.gateways = {
-      global: dependencies.gateways?.global ?? new RegionalOnboardingService(env),
-      eu,
-    };
+    this.gateways = Object.fromEntries(configuredRegions.map((region) => {
+      const injected = dependencies.gateways?.[region];
+      if (injected) return [region, injected];
+      if (region === env.AVALON_REGION) return [region, new RegionalOnboardingService(env)];
+      const bridge = regionalBindings(env, region).identity;
+      if (!bridge) throw new ApiError(503, "regional_onboarding_unavailable", "A regional onboarding service is unavailable");
+      return [region, new RegionalIdentityBridgeClient(bridge)];
+    }));
     this.bindings = dependencies.bindings ?? new D1PlatformBindingStore(env.DB);
     this.operations = dependencies.operations ?? new D1PlatformOperationStore(env.DB);
     this.createId = dependencies.newId ?? newId;
@@ -1068,7 +1070,7 @@ export class PlatformOnboardingService {
       workspaceId,
       placementAffinity,
       operationId,
-      (regionalOperationId, preference) => this.gateways[region].create({
+      (regionalOperationId, preference) => this.gateway(region).create({
         identity,
         operationId: regionalOperationId,
         workspaceId: asWorkspaceId(workspaceId),
@@ -1136,7 +1138,7 @@ export class PlatformOnboardingService {
       operation.workspace_id,
       operation.placement_affinity,
       operationId,
-      (regionalOperationId, preference) => this.gateways[region].accept({
+      (regionalOperationId, preference) => this.gateway(region).accept({
         identity,
         operationId: regionalOperationId,
         workspaceId: asWorkspaceId(operation.workspace_id),
@@ -1149,7 +1151,7 @@ export class PlatformOnboardingService {
 
   async declineInvitation(invitationId: string, region: Region): Promise<void> {
     const identity = await this.loadPlatformIdentity();
-    await this.gateways[region].decline({ identity, invitationId });
+    await this.gateway(region).decline({ identity, invitationId });
   }
 
   private requireGlobalControlPlane(): void {
@@ -1204,12 +1206,15 @@ export class PlatformOnboardingService {
     });
   }
 
+  private gateway(region: Region): RegionalIdentityBridgeBinding {
+    const gateway = this.gateways[region];
+    if (!gateway) throw new ApiError(503, "regional_onboarding_unavailable", "The region is unavailable");
+    return gateway;
+  }
+
   private async discover(identity: PlatformIdentity): Promise<RegionalDiscovery[]> {
     try {
-      return await Promise.all([
-        this.gateways.global.discover(identity),
-        this.gateways.eu.discover(identity),
-      ]);
+      return await Promise.all(Object.values(this.gateways).map((gateway) => gateway.discover(identity)));
     } catch (error) {
       if (error instanceof ApiError) throw error;
       throw new ApiError(503, "regional_onboarding_unavailable", "A regional onboarding service is unavailable");
@@ -1310,7 +1315,7 @@ export class PlatformOnboardingService {
       identity.platformUserId,
     );
     const operationId = this.createId();
-    const session = await this.gateways[region].activate({
+    const session = await this.gateway(region).activate({
       identity,
       operationId,
       workspaceId: asWorkspaceId(workspaceId),
@@ -1350,10 +1355,10 @@ export class PlatformOnboardingService {
     originalError: unknown,
   ): Promise<Session> {
     try {
-      const discovery = await this.gateways[region].discover(identity);
+      const discovery = await this.gateway(region).discover(identity);
       const membership = discovery.workspaces.find((item) => item.id === workspaceId && item.region === region);
       if (membership?.placementAffinity === placementAffinity) {
-        return this.gateways[region].activate({
+        return this.gateway(region).activate({
           identity,
           operationId,
           workspaceId: asWorkspaceId(workspaceId),
@@ -1385,9 +1390,9 @@ export class PlatformOnboardingService {
 
   private apiBaseForRegion(region: Region): string {
     if (region === "global") return this.env.PUBLIC_API_BASE_URL.replace(/\/$/u, "");
-    const configured = this.env.EU_PUBLIC_API_BASE_URL?.replace(/\/$/u, "");
-    if (!configured) throw new ApiError(503, "regional_onboarding_unavailable", "The European Union API endpoint is not configured");
-    return configured;
+    const configuration = regionConfiguration(region);
+    return this.env.APP_ENV === "development" || this.env.APP_ENV === "test"
+      ? configuration.localApiUrl : configuration.apiUrl;
   }
 }
 

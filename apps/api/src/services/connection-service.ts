@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import { ashbyIngressUrl } from "../lib/ashby-ingress";
 import { registerAshbyRoute } from "./ashby-routing-service";
 import { ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
@@ -169,7 +170,7 @@ interface ConnectorIngressRouteSource {
 
 function connectorIngressRouteValues(
   connection: ConnectorIngressRouteSource,
-  region: "global" | "eu",
+  region: Region,
 ) {
   const config = parseJson<Record<string, unknown>>(connection.config_json, {});
   const providerUserId = typeof config.providerUserId === "string"

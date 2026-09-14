@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import { WorkstreamSchema } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -446,7 +447,7 @@ describe('Rally API wire adapter', () => {
       error: {
         code: 'region_mismatch',
         message: 'Use the selected regional service.',
-        details: { expected: 'eu' },
+        details: { expected: 'enterprise' },
       },
     }, { status: 409 })));
     const api = new RallyApi('https://api.rally.test', session);
@@ -455,7 +456,7 @@ describe('Rally API wire adapter', () => {
       status: 409,
       code: 'region_mismatch',
       message: 'Use the selected regional service.',
-      details: { expected: 'eu' },
+      details: { expected: 'enterprise' },
     };
     await expect(api.getWorkspace()).rejects.toMatchObject(expected);
   });

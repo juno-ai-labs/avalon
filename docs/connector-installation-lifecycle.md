@@ -267,31 +267,10 @@ The exact remaining checks are tracked in the
 
 ## Regional impact
 
-Ashby has a separate deployment at `ashby.rallywith.ai`, using
-`apps/api/src/ashby-ingress-worker.ts` and `wrangler.ashby.global.jsonc`. Its public
-entry point imports neither the API application nor the connector registry or
-agent runtime. Its `/health` verifies its three named dependencies, regional identities and
-the Global route table, without provider repair. It looks up an opaque connection's region and forwards unchanged
-signed bytes through a named regional binding. The API HTTP receiver is regional
-only; the dedicated Worker is the sole shared-host forwarding path. First
-deployment automatically bootstraps the Global router before EU when its active
-export is missing, then deploys dedicated ingress after both regional health checks;
-see the [deployment guide](api-worker-deployment.md#dedicated-ashby-ingress).
-Credentials, verification, Queue
-admission, and canonical event processing remain under regional authority.
-This first boundary isolates public ingress startup; it does not remove shared
-hosted-MCP or lifecycle code from the API bundle. Provider protocol extraction
-and emitted-bundle verification must be evaluated separately before claiming an
-API startup reduction. The user requested dedicated Workers after API bundle
-size/startup had already consumed an engineering day. Aliasing another domain
-to the same API Worker was rejected for that reason.
-
 Granola keeps its existing callback/subscription URLs and credentials. A read-only
 Cloudflare inspection on 2026-09-12 found no Granola DNS record/custom domain in
 `rallywith.ai` or `with-avalon.com`; the existing source registers regional API
 webhook URLs. No DNS or deployment was changed by this implementation task.
-
-## Operations
 
 ### Operator maintenance
 
@@ -334,8 +313,6 @@ and actual operator execution remain outside this implementation task.
 Only the reviewed version present in the deployed provider declaration is accepted.
 Unknown provider outcomes and not-yet-adopted Granola connections report customer
 action. An administrator's explicit Test adopts an existing Granola connection.
-
-## Changelog
 
 ### 2026-09-13 — A verified delivery is the evidence a manual registration cannot otherwise produce
 

@@ -317,8 +317,6 @@ stating before the mechanism exists.
 - Don't invent a second, special reply shape for a canonical-state request; two
   shapes for one truth diverge.
 
-## Ordering and de-duplication
-
 ### Duplicates are normal, and arrival order proves nothing
 
 **Two sockets will tell you the same thing, and which one gets there first is a
@@ -849,8 +847,6 @@ surface. This is event-driven revalidation, not polling and not a second socket.
   checklist for the REST half of this boundary.
 - [`workstream-creation.md`](workstream-creation.md) — the create path, and what
   the caller is made to wait for.
-
-## Changelog
 
 ### 2026-09-11 — Connector recovery follows the existing workspace socket
 

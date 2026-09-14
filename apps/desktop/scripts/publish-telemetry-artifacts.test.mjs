@@ -9,7 +9,6 @@ import { publishTelemetryArtifacts } from './publish-telemetry-artifacts.mjs';
 
 const runtimeEnvironment = {
   RALLY_GLOBAL_TELEMETRY_R2_BUCKET: 'rally-global-telemetry',
-  RALLY_EU_TELEMETRY_R2_BUCKET: 'rally-eu-telemetry',
   CLOUDFLARE_ACCOUNT_ID: 'test-account',
   CLOUDFLARE_API_TOKEN: 'test-token',
 };
@@ -171,8 +170,8 @@ test('publishes every private artifact and verifies upload metadata in each regi
     });
 
     const targets = [...api.objects.keys()].sort();
-    assert.equal(targets.length, 10);
-    for (const bucket of ['rally-global-telemetry', 'rally-eu-telemetry']) {
+    assert.equal(targets.length, 5);
+    for (const bucket of ['rally-global-telemetry']) {
       for (const process of ['main', 'preload', 'renderer']) {
         assert.ok(targets.includes(
           `${bucket}/telemetry/javascript-symbols/1.96.0/1.96.0/${process}/index.js.map`,
@@ -186,7 +185,7 @@ test('publishes every private artifact and verifies upload metadata in each regi
       ));
     }
     const inventoryGets = api.calls.filter(({ method }) => method === 'GET');
-    assert.equal(inventoryGets.length, 10);
+    assert.equal(inventoryGets.length, 5);
     assert.equal(
       inventoryGets.every(({ cacheControl, perPage, prefix }) => (
         cacheControl === 'no-cache' && perPage === '2' && prefix?.startsWith('telemetry/')
@@ -204,11 +203,7 @@ test('publishes every private artifact and verifies upload metadata in each regi
         .every(({ jurisdiction }) => jurisdiction === null),
       true,
     );
-    assert.equal(
-      api.calls.filter(({ target }) => target.startsWith('rally-eu-telemetry/'))
-        .every(({ jurisdiction }) => jurisdiction === 'eu'),
-      true,
-    );
+
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -254,27 +249,7 @@ test('fails closed before upload when a packaged process source map is missing',
   }
 });
 
-test('rejects shared regional buckets and a post-upload inventory mismatch', async () => {
-  const first = await fixture();
-  const firstApi = objectApi();
-  try {
-    await assert.rejects(
-      publishTelemetryArtifacts({
-        desktopDirectory: first.desktopDirectory,
-        environment: {
-          ...runtimeEnvironment,
-          RALLY_EU_TELEMETRY_R2_BUCKET: runtimeEnvironment.RALLY_GLOBAL_TELEMETRY_R2_BUCKET,
-        },
-        fetchImpl: firstApi.fetchImpl,
-        runCommand: commandRunner().runCommand,
-        temporaryRoot: first.root,
-      }),
-      /require distinct buckets/u,
-    );
-  } finally {
-    await rm(first.root, { recursive: true, force: true });
-  }
-
+test('rejects a post-upload inventory mismatch', async () => {
   const second = await fixture();
   const secondApi = objectApi({ corruptInventory: true });
   try {

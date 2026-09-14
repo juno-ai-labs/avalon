@@ -66,8 +66,7 @@
     // ceiling of 5,000 a second. The batch settings are on the consumer side,
     // in apps/api/wrangler.<region>.jsonc.
     "producers": [
-      { "binding": "GLOBAL_MIGRATION_COMMAND_QUEUE", "queue": "avalon-global-migration-commands" },
-      { "binding": "EU_MIGRATION_COMMAND_QUEUE", "queue": "avalon-eu-migration-commands" }
+      { "binding": "GLOBAL_MIGRATION_COMMAND_QUEUE", "queue": "avalon-global-migration-commands" }
     ],
     "consumers": [
       {

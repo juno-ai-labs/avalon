@@ -46,7 +46,7 @@ fi
 
 run_step "pnpm install" pnpm install --frozen-lockfile || exit 0
 
-# The desktop renderer reads VITE_API_GLOBAL_URL and VITE_API_EU_URL from
+# The desktop renderer reads configured VITE_API_<binding-prefix>_URL values from
 # .env.local. The API does not need the file — sync-dev-env.mjs defaults
 # APP_ENV and RALLY_DEV_AUTH and generates its own signing material — but
 # seeding it from the example costs nothing and makes the desktop path work.

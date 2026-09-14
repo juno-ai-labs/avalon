@@ -9,6 +9,7 @@ on:
     branches:
       - main
     paths:
+      - "config/regions.json"
       - "apps/site/**"
       # The site compiles shared contracts in: auth-handoff validates OAuth
       # callbacks against ConnectorOAuthProviders, so adding a provider must

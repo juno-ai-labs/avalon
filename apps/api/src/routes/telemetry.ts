@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AnonymousTelemetryBatchSchema,
@@ -53,17 +54,17 @@ publicTelemetryRoutes.get("/route", async (c) => {
   if (c.env.AVALON_REGION !== "global") {
     throw new ApiError(404, "not_found", "The requested API route does not exist");
   }
-  const cf = c.req.raw.cf as { country?: string; isEUCountry?: string | boolean | null } | undefined;
+
   c.header("Cache-Control", "no-store");
   return c.json(TelemetryRouteResponseSchema.parse(
-    await new TelemetryBootstrapService(c.env).route(cf?.country, cf?.isEUCountry),
+    await new TelemetryBootstrapService(c.env).route(),
   ));
 });
 
 const CrashUploadMetadataSchema = z.strictObject({
   uploadId: z.string().uuid().refine((value) => value[14] === "7"),
   installationId: z.string().uuid().refine((value) => value[14] === "7"),
-  route: z.enum(["global", "eu"]),
+  route: RegionSchema,
   release: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u),
   buildId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u),
   platform: z.enum(["darwin", "win32", "linux"]),
@@ -151,7 +152,7 @@ publicTelemetryRoutes.post(
     if (c.env.AVALON_REGION !== "global") {
       throw new ApiError(404, "not_found", "The requested API route does not exist");
     }
-    const cf = c.req.raw.cf as { country?: string; isEUCountry?: string | boolean | null } | undefined;
+
     const edgeAddress = c.req.header('cf-connecting-ip');
     if (edgeAddress && !await consumeTelemetryRateLimit(
       c.env,
@@ -163,9 +164,7 @@ publicTelemetryRoutes.post(
     try {
       response = await new TelemetryBootstrapService(c.env).bootstrap(
         c.req.valid("json").anonymousEpochId,
-        cf?.country,
         c.req.valid("json").routeToken,
-        cf?.isEUCountry,
       );
     } catch (error) {
       const code = error instanceof Error ? error.message : 'telemetry_bootstrap_failed';

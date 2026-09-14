@@ -2,7 +2,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Env } from "./env";
 import { acceptAnonymousTelemetryProjection, acceptApiOutcomeProjection } from "./telemetry/regional-bridge";
 
-/** Exact Global-to-EU projection for already-routed anonymous onboarding events. */
+/** Exact Cross-deployment projection for already-routed anonymous onboarding events. */
 export class TelemetryRegionalBridge extends WorkerEntrypoint<Env> {
   acceptAnonymous(input: unknown) {
     return acceptAnonymousTelemetryProjection(this.env, input);

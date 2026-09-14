@@ -1,3 +1,4 @@
+import { configuredRegions } from "./regions.mjs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -5,8 +6,8 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
 const region = process.argv[2];
-if (region !== "global" && region !== "eu") {
-  throw new Error("Usage: node scripts/seed-local-region.mjs <global|eu>");
+if (!configuredRegions.includes(region)) {
+  throw new Error("Usage: node scripts/seed-local-region.mjs <region>");
 }
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");

@@ -41,8 +41,6 @@ source of truth for retry, replay, and compaction recovery.
 | `packages/db/migrations/0073_attachment_derivative_lifecycle.sql` | Adds source identity, derivative lifecycle, tenant-scoped receipts/object cleanup, principal-scoped checkpoints, and the monotonic work-stream inventory revision. |
 | `packages/agent-harness/src/tool-activity.ts` | Human-facing transcript prose for attachment tool wire names. |
 
-## How it works
-
 ### Member search projection
 
 The member Files and Artifacts tabs search resource names, descriptions, and full available text derivatives through Turbopuffer. `resource-search-text.ts` defines the canonical field order for both indexing and match offsets. The source adapter returns this text to the shared Queue Worker pipeline; attachments have no separate chunking or embedding policy. Resource triggers enqueue reindexing when extraction or metadata changes; missing derivatives do not silently become truncated bodies. Search admits each resource batch through current resource and attachment authority before loading canonical excerpts. See [text search](text-search.md).
@@ -589,7 +587,7 @@ authoritative.
 
 ## Regional impact
 
-Contracts, lifecycle, and conversion execute identically in both regions. Cursor
+Contracts, lifecycle, and conversion execute identically in configured deployments. Cursor
 signing happens inside the Worker that handles the owning regional run. Existing
 originals and model derivatives remain in that region's R2 bucket;
 WorkspaceDO owns lifecycle/outbox rows and SubstreamAgent owns work-stream
@@ -640,8 +638,6 @@ lazy and reused by exact original hash plus extractor version; only scanned PDFs
 need the injected provider OCR path. Index storage grows with bounded chunks and
 terms rather than duplicating attachment text. Future changes must preserve those
 cheap discovery and continuation paths.
-
-## Changelog
 
 ### 2026-09-11 — An attachment is reachable and advertised, separately
 
