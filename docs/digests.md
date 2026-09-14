@@ -693,7 +693,25 @@ visible change to the email template is looked at through
 [Looking at it](#looking-at-it), which also names the two rendering failures the
 preview does *not* reproduce on its own.
 
+## Device notification transport
+
+Mention and seating intents now also enqueue regional Apple push when the
+recipient's flag is enabled and a live device exists. Slack still sends;
+email is sent only when Slack did not send and push was not enqueued. Both the
+intent processor and push consumer use `notificationDeliveryContext`, preserving
+existing audience and projection semantics. [Apple push](push-notifications.md)
+owns device registration, provider delivery and retry receipts.
+
 ## Changelog
+
+### 2026-09-14 — Share notification eligibility with Apple push
+
+Push now consumes the same durable intents and eligibility function as Slack and
+email. Successfully queued push keeps the payload until the existing intent
+retention expires, because clearing it at producer settlement would strand an
+asynchronous delivery. Slack remains independent; email is the fallback when
+neither Slack nor push accepts the notification.
+
 
 ### 2026-09-09 — Seek directly to the activity cursor
 

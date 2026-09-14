@@ -288,6 +288,14 @@ Nothing here exercises DNS, certificates, or a provider registration. Those fail
 only in production, which is why they are runbook steps with an explicit order
 rather than assertions.
 
+## Apple association
+
+The Apple association is another hostname-coupled release surface. Only
+`rallywith.ai` and `www.rallywith.ai` appear in desktop associated-domain
+entitlements. Moving either requires serving the association on the new host
+before releasing the corresponding entitlement; legacy origins remain browser
+handoffs. See [work-stream links](workstream-links.md#apple-universal-links).
+
 ## Changelog
 
 ### 2026-08-27 — The raster pipeline regenerates from the new vector

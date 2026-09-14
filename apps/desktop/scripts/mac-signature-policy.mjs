@@ -51,3 +51,21 @@ export function assertEmbeddedUpdateConfig(contents) {
     throw new Error(`Embedded app-update.yml URL must be exactly ${RALLY_UPDATE_URL}`);
   }
 }
+
+export function assertPushProvisioning(profile, entitlements, now = Date.now()) {
+  const domains = ['applinks:rallywith.ai', 'applinks:www.rallywith.ai'];
+  if (!profile.TeamIdentifier?.includes('7ZLT6A8W25')
+    || profile.Entitlements?.['com.apple.application-identifier'] !== '7ZLT6A8W25.ai.rallywith.desktop'
+    || profile.Entitlements?.['com.apple.developer.aps-environment'] !== 'production'
+    || !(Date.parse(profile.ExpirationDate) > now)) throw new Error('Push provisioning profile has the wrong app, team, environment, or is expired');
+  const allowedDomains = profile.Entitlements['com.apple.developer.associated-domains'];
+  if (!Array.isArray(allowedDomains) || (!allowedDomains.includes('*') && domains.some((domain) => !allowedDomains.includes(domain)))) {
+    throw new Error('Provisioning profile does not allow Rally associated domains');
+  }
+  const keys = Object.keys(entitlements).filter((key) => !['com.apple.developer.aps-environment', 'com.apple.developer.associated-domains', 'com.apple.application-identifier', 'com.apple.developer.team-identifier'].includes(key));
+  assertExactNestedEntitlements(keys, 'Main app');
+  if (entitlements['com.apple.developer.aps-environment'] !== 'production'
+    || JSON.stringify([...entitlements['com.apple.developer.associated-domains'] ?? []].sort()) !== JSON.stringify(domains.sort())) {
+    throw new Error('Main app must carry production push and exactly the Rally associated domains');
+  }
+}

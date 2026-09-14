@@ -76,3 +76,17 @@ test('embedded updater is pinned to the stable arm64 channel', () => {
     /exactly one generic/u,
   );
 });
+
+
+test('push profile must match the app capabilities and remain valid', async () => {
+  const { assertPushProvisioning, NESTED_COMPONENT_ENTITLEMENTS } = await import('./mac-signature-policy.mjs');
+  const entitlements = {
+    ...Object.fromEntries(NESTED_COMPONENT_ENTITLEMENTS.map(key => [key, true])),
+    'com.apple.developer.aps-environment': 'production',
+    'com.apple.developer.associated-domains': ['applinks:rallywith.ai', 'applinks:www.rallywith.ai'],
+  };
+  const profile = { TeamIdentifier: ['7ZLT6A8W25'], ExpirationDate: '2099-01-01', Entitlements: { ...entitlements, 'com.apple.application-identifier': '7ZLT6A8W25.ai.rallywith.desktop' } };
+  assert.doesNotThrow(() => assertPushProvisioning(profile, entitlements));
+  assert.throws(() => assertPushProvisioning({ ...profile, ExpirationDate: '2020-01-01' }, entitlements), /expired/);
+  assert.throws(() => assertPushProvisioning(profile, { ...entitlements, 'com.apple.developer.aps-environment': 'sandbox' }), /production push/);
+});

@@ -912,6 +912,16 @@ remove an old mapping only after confirming no regional
 EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
+## Apple notifications
+
+Apple device registrations reuse authenticated workspace sessions and the regional
+D1 control plane. The existing notification access decision runs again when the
+queue consumer sends. The native bridge handles permission state and explicit
+notification responses; main validates the work-stream link through the shared
+parser before navigation. Only the main app gains Push Notifications and
+Associated Domains entitlements; helpers retain their existing entitlement set.
+[Apple push](push-notifications.md) owns provisioning and release verification.
+
 ## Changelog
 
 ### 2026-09-12 — Authenticate once within each HTTP request

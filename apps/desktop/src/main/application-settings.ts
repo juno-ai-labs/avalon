@@ -7,6 +7,8 @@ import { defaultThemeChoice, parseThemeChoice, type ThemeChoice } from '../commo
 const APPLICATION_SETTINGS_FILE_NAME = 'application-settings.json';
 
 export interface StoredApplicationSettings {
+  pushNotificationsEnabled: boolean;
+  pushInstallationId: string | null;
   lockdownMode: boolean;
   debugEnabled: boolean;
   /** Whether the Rally status item is in the macOS menu bar. */
@@ -46,6 +48,8 @@ interface StoredApplicationSettingsFile extends StoredApplicationSettings {
 }
 
 export const defaultStoredApplicationSettings: StoredApplicationSettings = {
+  pushNotificationsEnabled: true,
+  pushInstallationId: null,
   lockdownMode: false,
   debugEnabled: false,
   menuBarEnabled: true,
@@ -62,6 +66,8 @@ export function parseStoredApplicationSettings(value: unknown): StoredApplicatio
   }
   const candidate = value as {
     version?: unknown;
+    pushNotificationsEnabled?: unknown;
+    pushInstallationId?: unknown;
     lockdownMode?: unknown;
     debugEnabled?: unknown;
     menuBarEnabled?: unknown;
@@ -77,6 +83,8 @@ export function parseStoredApplicationSettings(value: unknown): StoredApplicatio
   // Preferences written before the Developer section carry no debug field. An
   // unreadable value falls back to off rather than discarding Lockdown mode.
   return {
+    pushNotificationsEnabled: candidate.pushNotificationsEnabled !== false,
+    pushInstallationId: typeof candidate.pushInstallationId === "string" ? candidate.pushInstallationId : null,
     lockdownMode: candidate.lockdownMode,
     debugEnabled: candidate.debugEnabled === true,
     // The menu bar item ships on, so a file written before it existed — and any
