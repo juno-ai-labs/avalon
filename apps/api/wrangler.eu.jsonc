@@ -22,7 +22,7 @@
     "SLACK_INGRESS_BASE_URL": "https://slack.rallywith.ai",
     "DAYTONA_API_URL": "https://app.daytona.io/api",
     "DAYTONA_TARGET": "us",
-    "DAYTONA_TERMINAL_SNAPSHOT": "rally-terminal-1",
+    "DAYTONA_TERMINAL_SNAPSHOT": "rally-terminal-20260914-0610",
     "TERMINAL_REGION_CAPABILITY": "supported",
     "TERMINAL_EMERGENCY_DISABLED": "false",
     "LINEAR_NATIVE_AGENT_ENABLED": "false",
