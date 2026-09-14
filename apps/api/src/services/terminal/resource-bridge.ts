@@ -69,23 +69,38 @@ function fileName(path: string): string {
 }
 
 /**
- * Where a site publishes from, spelled as an `import_resource` destination.
+ * Where a site publishes from, spelled as an `import_resource` destination, or
+ * `null` when the row cannot say.
  *
  * The two tools measure paths from different roots — publication from
  * `$AVALON_RESOURCE_DIR`, every other path from the workspace root — so the
- * round trip only closes if the suggestion carries the output directory. A
- * site whose stored metadata predates `sourcePath` still gets a usable
- * directory rather than no answer.
+ * round trip only closes if the suggestion carries the output directory.
+ *
+ * Both sources are the site's real identity: `metadata_json.sourcePath`, and
+ * the path half of `provider_resource_id`, which *is* what a republish is keyed
+ * to. There is deliberately no generic fallback. A guess like
+ * `.rally-output/site` reads as an answer and is one for the model, which would
+ * then publish to a path that mints a second site at a second URL — the exact
+ * failure the refusal exists to prevent. A row that can name neither gets no
+ * suggestion and says so.
  */
-function sitePublishPath(row: VisibleWorkstreamResourceRow): string {
-  const fallback = `${TERMINAL_OUTPUT_DIRECTORY}/site`;
+function sitePublishPath(row: VisibleWorkstreamResourceRow): string | null {
+  let sourcePath: string | null = null;
   try {
     const metadata = JSON.parse(row.metadata_json ?? "{}") as { sourcePath?: unknown };
-    const sourcePath = typeof metadata.sourcePath === "string" ? metadata.sourcePath : null;
-    return sourcePath ? `${TERMINAL_OUTPUT_DIRECTORY}/${sourcePath}` : fallback;
+    if (typeof metadata.sourcePath === "string" && metadata.sourcePath) sourcePath = metadata.sourcePath;
   } catch {
-    return fallback;
+    // A row whose metadata will not parse still has its identity below.
   }
+  if (!sourcePath) {
+    const identity = typeof row.provider_resource_id === "string" ? row.provider_resource_id : "";
+    const match = /^terminal:[^:]+:(?!sha256:)(.+)$/su.exec(identity);
+    // The digest form deliberately does not round-trip: it exists because the
+    // path was too long to store, and `sourcePath` is where the readable value
+    // lives for exactly those rows.
+    sourcePath = match?.[1] ?? null;
+  }
+  return sourcePath ? `${TERMINAL_OUTPUT_DIRECTORY}/${sourcePath}` : null;
 }
 
 /**
@@ -430,11 +445,22 @@ export function createTerminalResourceBridge(
     // A site's `content_sha256` is publication's digest over the *file list*,
     // not over the manifest bytes — the manifest carries a version number and a
     // timestamp, so hashing it would make every republish look like a content
-    // change. The durable import record therefore stores the same digest
-    // publication stored, which is what identifies the version that was
-    // materialized; hashing the manifest here instead would record a value
-    // nothing else in the product can be compared against.
-    const digest = row.content_sha256 ?? await sha256Hex(manifestBytes);
+    // change. The durable import record stores the digest publication stored,
+    // which is what identifies the version that was materialized.
+    //
+    // There is no fallback. Hashing the manifest instead would record a value
+    // nothing in the product can compare against, which is worse than refusing:
+    // publication writes this column on every site and `publishedOutput`
+    // already refuses a published row without it, so a site that reaches here
+    // without one is malformed rather than merely old.
+    const digest = row.content_sha256;
+    if (!digest) {
+      throw new TerminalToolError(
+        "resource_not_importable",
+        "Rally could not verify which version of this site is published, so it cannot reconstruct its source. Publish a fresh directory at the site's path to replace it.",
+        { reason: "Publish a fresh directory at the site's path." },
+      );
+    }
     let manifest: ArtifactManifest;
     try {
       manifest = ArtifactManifestSchema.parse(
@@ -453,18 +479,6 @@ export function createTerminalResourceBridge(
     const totalBytes = files.reduce((total, file) => total + file.bytes.byteLength, 0);
     const absolute = `/workspace/${destination}`;
     const staging = `/workspace/.rally/tmp/${newId()}`;
-    const plannedAt = Date.now();
-    await terminalPort(context.workspaceId, context.workstreamId)
-      .recordImportedResource({
-        sandboxGeneration,
-        resourceId: row.id,
-        destinationPath: destination,
-        sourceSha256: digest,
-        sizeBytes: totalBytes,
-        state: "planned",
-        importedAt: null,
-        now: plannedAt,
-      });
     const cleanupStaging = async (): Promise<void> => {
       await provider.runUtilityCommand(providerSandboxId, {
         operation: "file.temp_cleanup",
@@ -474,8 +488,9 @@ export function createTerminalResourceBridge(
       }).catch(() => undefined);
     };
     // One command, not one per directory: it makes every staging parent the
-    // uploads need and answers whether the destination is already there, which
-    // is the only thing separating a created import from a replacing one.
+    // uploads need and reports what is already at the destination — which
+    // separates a created import from a replacing one, and decides the two
+    // refusals below.
     const parents = [...new Set(files
       .map((file) => file.path.split("/").slice(0, -1).join("/"))
       .filter(Boolean))];
@@ -485,7 +500,9 @@ export function createTerminalResourceBridge(
         `staging=${shellQuote(staging)}`,
         `destination=${shellQuote(absolute)}`,
         `mkdir -p -- "$staging"${parents.map((parent) => ` "$staging"/${shellQuote(parent)}`).join("")} || exit 46`,
-        'if [ -e "$destination" ]; then printf "exists\\n"; fi',
+        'if [ -e "$destination" ] && [ ! -d "$destination" ]; then printf "occupied\\n"',
+        'elif [ -d "$destination" ] && [ -n "$(ls -A "$destination" 2>/dev/null)" ]; then printf "exists\\n"',
+        'fi',
       ].join("\n"),
       cwd: "/workspace",
       timeoutMs: 30_000,
@@ -498,7 +515,31 @@ export function createTerminalResourceBridge(
         { reason: "Retry the import." },
       );
     }
-    const replaced = prepared.stdout.trim() === "exists";
+    const occupancy = prepared.stdout.trim();
+    // Both refusals happen here, before any durable row and before a byte
+    // moves. `materializeTreeCommand` raises the same two conditions as its own
+    // last guard, but reaching them there would mean a `planned` import row
+    // already existed for a call that changed nothing — and the next
+    // acquisition reads any row that is not `completed` as a revoked import,
+    // which replaces the sandbox and discards the work stream's files. A
+    // refusal must cost nothing.
+    if (occupancy === "occupied" || (occupancy === "exists" && !overwrite)) {
+      await cleanupStaging();
+      throw importTreeFailure(occupancy === "occupied" ? 45 : 44)!;
+    }
+    const replaced = occupancy === "exists";
+    const plannedAt = Date.now();
+    await terminalPort(context.workspaceId, context.workstreamId)
+      .recordImportedResource({
+        sandboxGeneration,
+        resourceId: row.id,
+        destinationPath: destination,
+        sourceSha256: digest,
+        sizeBytes: totalBytes,
+        state: "planned",
+        importedAt: null,
+        now: plannedAt,
+      });
     try {
       for (const file of files) {
         await provider.writeFile(
@@ -583,8 +624,15 @@ export function createTerminalResourceBridge(
           const suggestion = sitePublishPath(row);
           throw new TerminalToolError(
             "destination_required",
-            `Importing a site needs an explicit destinationPath naming the directory to materialize its files into. Use ${suggestion}, then publish that same path to update this site; a different path would mint a second site at a second URL.`,
-            { field: "destinationPath", reason: `Retry with destinationPath: "${suggestion}".` },
+            suggestion
+              ? `Importing a site needs an explicit destinationPath naming the directory to materialize its files into. Use ${suggestion}, then publish that same path to update this site; a different path would mint a second site at a second URL.`
+              : "Importing a site needs an explicit destinationPath naming the directory to materialize its files into. Rally cannot recover the path this site publishes from, so choose the one this work stream last published it from — publishing a different path would mint a second site at a second URL.",
+            {
+              field: "destinationPath",
+              reason: suggestion
+                ? `Retry with destinationPath: "${suggestion}".`
+                : "Retry with the destinationPath this site was published from.",
+            },
           );
         }
         return importSiteTree(

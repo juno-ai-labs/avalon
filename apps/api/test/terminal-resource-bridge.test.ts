@@ -325,6 +325,37 @@ describe("Terminal resource bridge", () => {
     });
   });
 
+  it("leaves no durable import behind when it refuses an occupied destination", async () => {
+    const state = fixture();
+    attachSiteResource(state, await publishedSite(state, [["index.html", "<h1>Wedding</h1>"]]));
+    // The destination is the site's own publish path, which is exactly what
+    // already exists whenever this sandbox published it — so this refusal is
+    // the likely first retry, not an edge case.
+    vi.mocked(state.provider.runUtilityCommand).mockImplementation(async (_id, input) => (
+      input.operation === "resource.import.stage"
+        ? { exitCode: 0, stdout: "exists\n", stderr: "" }
+        : { exitCode: 0, stdout: "", stderr: "" }
+    ));
+
+    await expect(state.bridge.importResource(
+      context,
+      { resourceId: RESOURCE, destinationPath: ".rally-output/wedding-site" },
+      ".rally-output/wedding-site",
+      1,
+      "sandbox",
+      state.provider,
+    )).rejects.toMatchObject({ code: "destination_exists" });
+
+    // A planned row is read by the next acquisition as a revoked import, which
+    // replaces the sandbox and discards the work stream's files. A call that
+    // changed nothing must not cost that.
+    expect(workstreamObjectGet(
+      state.objectStore,
+      "SELECT COUNT(*) AS rows FROM terminal_imported_resources",
+    )).toEqual({ rows: 0 });
+    expect(state.provider.writeFile).not.toHaveBeenCalled();
+  });
+
   it("sends an automatic site import to the path that republishes the same site", async () => {
     const state = fixture();
     attachSiteResource(state, await publishedSite(state, [["index.html", "<h1>Wedding</h1>"]]));

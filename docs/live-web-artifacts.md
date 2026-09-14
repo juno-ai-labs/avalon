@@ -110,8 +110,13 @@ from.
 `overwrite` is **whole-tree replacement, never a merge**. Merging would leave
 behind files a later version deleted, and the next publish would ship them back
 as though somebody had restored them on purpose. The tree is staged beside the
-destination and moved into place, so a failure partway leaves the previous tree
-intact.
+destination, the existing directory is renamed aside rather than deleted, and
+the staged tree is moved into place — so an install that fails puts the previous
+tree back, and only an install that succeeded removes it. A refusal costs
+nothing: the destination is inspected while the staging directory is created,
+before any durable import row exists and before a byte moves, because a
+`planned` row that outlives a refused call reads to the next acquisition as a
+revoked import and replaces the whole sandbox.
 
 The one manifest asset source import deliberately omits is a preview marked
 `generated: true`. It is Rally's derived output, not model-authored source;
@@ -548,7 +553,13 @@ path that mints a second one.
 **What a future change has to respect:** the import is whole-tree replacement
 and the publish path is the identity. Anything that changes where a site
 materializes has to keep those two the same path, or a revision becomes a fork
-with a live URL pointing at the version nobody edits.
+with a live URL pointing at the version nobody edits. Two orderings inside it
+are load-bearing, both found in review: a refusal is raised before the durable
+`planned` row, because the next acquisition reads any import row that is not
+`completed` as a revoked resource and replaces the sandbox — so a call that
+changed nothing would cost the work stream its files; and the destination is
+renamed aside rather than deleted, because `rm -rf` followed by a move that
+fails had already destroyed the tree it was replacing, local edits included.
 
 ### 2026-09-12 — Inspect artifacts without creating navigation grants
 
