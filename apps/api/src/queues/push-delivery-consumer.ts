@@ -34,7 +34,7 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
     ? `${effect.authorNameSnapshot} mentioned you in ${effect.workstreamTitleSnapshot}`
     : `${effect.actorNameSnapshot} added you to ${effect.workstreamTitleSnapshot}`;
   const body = effect.kind === "mention_notification" ? effect.messageText : effect.workstreamObjectiveSnapshot ?? "";
-  const payload = renderPushPayload({ title, body, threadKey: childId ?? row.workstreamId, data: {
+  const payload = renderPushPayload({ title, body, threadKey: row.workstreamId, data: {
     v: 1, kind: row.notificationKind, region: env.AVALON_REGION, workspaceId: row.workspaceId,
     url: workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { region: env.AVALON_REGION, workspaceId: row.workspaceId,
       workstreamId: row.workstreamId, ...(childId ? { substreamId: childId } : {}) }),
