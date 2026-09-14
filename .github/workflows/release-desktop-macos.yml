@@ -283,9 +283,9 @@ jobs:
         env:
           RALLY_MAC_PROVISIONING_PROFILE: ${{ secrets.RALLY_MAC_PROVISIONING_PROFILE }}
         run: |
+          test -n "$RALLY_MAC_PROVISIONING_PROFILE"
           RALLY_MAC_PROVISIONING_PROFILE_PATH="$RUNNER_TEMP/rally.provisionprofile"
           echo "RALLY_MAC_PROVISIONING_PROFILE_PATH=$RALLY_MAC_PROVISIONING_PROFILE_PATH" >> "$GITHUB_ENV"
-          test -n "$RALLY_MAC_PROVISIONING_PROFILE"
           printf '%s' "$RALLY_MAC_PROVISIONING_PROFILE" | openssl base64 -d -A > "$RALLY_MAC_PROVISIONING_PROFILE_PATH"
 
       - name: Verify live Apple association before desktop release
