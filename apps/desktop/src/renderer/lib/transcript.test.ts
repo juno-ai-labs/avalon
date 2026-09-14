@@ -34,6 +34,7 @@ import {
   isComposerQueueOverlay,
   pendingOverlayInputId,
   pendingTranscriptInputOverlay,
+  type TranscriptOverlay,
 } from './transcript';
 
 const base = {
@@ -3189,6 +3190,92 @@ describe('composer queue overlays', () => {
     expect(overlay.queueSequence).toBe(3);
     expect(pendingOverlayInputId(overlay)).toBe(pendingHuman.inputId);
     expect(isComposerQueueOverlay(overlay, { harnessRunning: false })).toBe(true);
+  });
+
+  it('answers the question a pending elicitation response closes instead of queueing a blank row', () => {
+    const questionId = '00000000-0000-7000-8000-0000000000f1';
+    const answered = {
+      id: questionId,
+      workstreamId: '00000000-0000-7000-8000-0000000000f2',
+      harnessRunId: '00000000-0000-7000-8000-0000000000f3',
+      prompt: 'Which ownership scope?',
+      responseType: 'multi_select' as const,
+      options: [{ value: 'workspace', label: 'Workspace', description: null }],
+      minimumSelections: 1,
+      maximumSelections: 1,
+      targetUserId: null,
+      status: 'answered' as const,
+      answer: ['workspace'],
+      answeredByUserId: '00000000-0000-7000-8000-0000000000f4',
+      createdAt: '2026-08-05T11:59:00.000Z',
+      answeredAt: '2026-08-05T12:00:00.000Z',
+    };
+    const overlay = pendingTranscriptInputOverlay({
+      ...pendingHuman,
+      inputId: '00000000-0000-7000-8000-000000000104',
+      futureTurnId: '00000000-0000-7000-8000-000000000104',
+      clientMessageId: `elicitation-response:${questionId}`,
+      block: {
+        ...pendingHuman.block,
+        blockId: 'block-4',
+        text: '',
+        messageType: 'elicitation' as const,
+        structuredContent: { kind: 'elicitation_response', elicitation: answered },
+      },
+    }, 'workstream-one', { source: 'socket_snapshot', snapshotId: 'snapshot-1' });
+
+    // Not a queued message: it is the answer, and it says so where the
+    // question is rather than as a row on the composer.
+    expect(isComposerQueueOverlay(overlay, { harnessRunning: true })).toBe(false);
+    expect(overlay.message.deliveryState).toBeUndefined();
+    expect(overlay.message).toMatchObject({
+      messageType: 'elicitation',
+      elicitation: { id: questionId, status: 'answered' },
+    });
+    // The feed is composed, not upserted: the canonical question turn carries
+    // the status frozen at `open`, and both rows share one message id, so the
+    // answer has to replace that row rather than land beside it.
+    const open = {
+      ...createElicitationMessage({
+        ...base,
+        id: overlay.message.id,
+        authorType: 'agent',
+        elicitation: { ...overlay.message.elicitation!, status: 'open', answer: null },
+      }),
+      transcriptSequence: 4,
+      transcriptTurnId: 'question-turn',
+    };
+    const composed = composeTranscript([open], [overlay]);
+    expect(composed).toHaveLength(1);
+    expect(composed[0]).toMatchObject({
+      id: overlay.message.id,
+      transcriptSequence: 4,
+      elicitation: { status: 'answered', answer: ['workspace'] },
+    });
+  });
+
+  it('keeps the reorder id on a send the room has accepted but not yet snapshotted', () => {
+    // The shape `conversation-surface` writes when `createMessage` resolves: it
+    // keeps the optimistic overlay's identity, gains the server turn id, and
+    // becomes a queued row — but it carries no `queueSequence`, because only a
+    // reorder or the next snapshot ever assigns one. It is a draggable row for
+    // that whole window, and keying "is this a queue row?" on the sequence
+    // dropped it into the non-draggable `sending` bucket at the bottom.
+    const accepted: TranscriptOverlay = {
+      identity: { type: 'client_message', clientMessageId: 'client-accepted', turnId: 'turn-1' },
+      provenance: { source: 'client_command', phase: 'accepted' },
+      position: { afterTranscriptSequence: 4, eventSequence: 91 },
+      message: createTextMessage({
+        ...base,
+        id: 'turn-1',
+        clientMessageId: 'client-accepted',
+        authorType: 'human',
+        text: 'Just accepted',
+        deliveryState: 'queue_pending',
+      }),
+    };
+    expect(pendingOverlayInputId(accepted)).toBe('turn-1');
+    expect(isComposerQueueOverlay(accepted, { harnessRunning: true })).toBe(true);
   });
 
   it('sorts the composer queue by queueSequence and parks sending rows last', () => {
