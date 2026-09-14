@@ -45,6 +45,7 @@ import {
 } from "../src/durable-objects/workstream-transcript-storage";
 import type { Env } from "../src/env";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
+import { WorkstreamDirectoryService } from "../src/services/workstream-directory-service";
 import {
   admitFixturePendingInput,
   seedParticipantMessage,
@@ -1450,7 +1451,7 @@ describe("Durable Objects in the Workers runtime", () => {
     return socket;
   }
 
-  it("persists per-user access ordering and pushes it across sessions", async () => {
+  it("orders workspace-scoped rows by personal access across REST and WebSocket lists", async () => {
     await seedOpenAuthority();
     const otherUserId = asUserId("00000000-0000-7000-8000-00000000040a");
     const otherSessionId = `${SESSION_ID}-presence`;
@@ -1555,6 +1556,31 @@ describe("Durable Objects in the Workers runtime", () => {
       const page = await workspace.listWorkstreams(request);
       expect(page.items[0]?.id).toBe(WORKSTREAM_ID);
       expect(page.items[0]?.lastAccessedAt).not.toBeNull();
+      const restPage = await new WorkstreamDirectoryService(env, {
+        sessionId: SESSION_ID,
+        userId: USER_ID,
+        workspaceId: WORKSPACE_ID,
+        region: "global",
+        role: "member",
+      }).list(20);
+      expect(restPage.items.map(({ id, scope }) => ({ id, scope }))).toEqual([
+        { id: WORKSTREAM_ID, scope: "workspace" },
+        { id: newerId, scope: "workspace" },
+      ]);
+      const socketPagePromise = nextMessageOfType(peer, "workspace_workstream_page");
+      peer.send(JSON.stringify({
+        type: "list_workstreams",
+        requestId: "00000000-0000-7000-8000-000000000418",
+        limit: 20,
+        includeSystem: false,
+      }));
+      const socketPage = await socketPagePromise as {
+        items: Array<{ id: string; scope: string }>;
+      };
+      expect(socketPage.items.map(({ id, scope }) => ({ id, scope }))).toEqual([
+        { id: WORKSTREAM_ID, scope: "workspace" },
+        { id: newerId, scope: "workspace" },
+      ]);
       const legacyPage = await workspace.listWorkstreams({ ...request,
         before: `${Date.parse("2026-08-28T20:00:00.000Z")}:${newerId}` });
       expect(legacyPage.items[0]?.id).toBe(WORKSTREAM_ID);
