@@ -15,15 +15,15 @@ export const REALTIME_SOCKET_IPC_CHANNELS = {
 
 export const MAX_WEBSOCKET_CLOSE_REASON_BYTES = 123;
 
-const REALTIME_SOCKET_HANDSHAKE_PHASES = new Set<DesktopRealtimeSocketHandshakePhase>([
-  'proxy_resolution',
-  'dns',
-  'tcp',
-  'tls',
-  'edge_upgrade',
-  'proxy_connect_tls_edge',
-  'route_failed',
-]);
+const REALTIME_SOCKET_HANDSHAKE_PHASES = {
+  proxy_resolution: true,
+  dns: true,
+  tcp: true,
+  tls: true,
+  edge_upgrade: true,
+  proxy_connect_tls_edge: true,
+  route_failed: true,
+} satisfies Record<DesktopRealtimeSocketHandshakePhase, true>;
 
 /** The application-supplied close codes accepted by WHATWG WebSocket. */
 export function validWebSocketCloseCode(code: number): boolean {
@@ -49,7 +49,7 @@ export function parseRealtimeSocketEvent(rawEvent: unknown): DesktopRealtimeSock
   if (event['type'] === 'handshake_phase'
     && hasOnlyKeys('type', 'socketId', 'phase', 'durationMs', 'routeIndex', 'proxied')
     && typeof phase === 'string'
-    && REALTIME_SOCKET_HANDSHAKE_PHASES.has(phase as DesktopRealtimeSocketHandshakePhase)
+    && Object.hasOwn(REALTIME_SOCKET_HANDSHAKE_PHASES, phase)
     && typeof event['durationMs'] === 'number'
     && Number.isFinite(event['durationMs'])
     && event['durationMs'] >= 0
