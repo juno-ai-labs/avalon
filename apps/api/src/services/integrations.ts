@@ -6282,14 +6282,6 @@ function forgetCredentialPluginActivation(
 }
 
 /**
- * Render a credential plugin from trusted connector code and the credential's
- * granted capability IDs. Provider account labels and resource content must
- * never enter the model's plugin catalog. Google is one transport adapter for
- * several product connectors, so presenting every credential as merely
- * "Google" makes Gmail and Drive impossible to distinguish during progressive
- * disclosure.
- */
-/**
  * One concrete call per hard-won lesson, in this connection's own tool names.
  *
  * Each example exists because its absence produced a real failure: an address
@@ -6415,6 +6407,14 @@ function transcriptPluginPresentation(
   };
 }
 
+/**
+ * Render a credential plugin from trusted connector code and the credential's
+ * granted capability IDs. Provider account labels and resource content must
+ * never enter the model's plugin catalog. Google is one transport adapter for
+ * several product connectors, so presenting every credential as merely
+ * "Google" makes Gmail and Drive impossible to distinguish during progressive
+ * disclosure.
+ */
 function connectorPluginPresentation(
   connectorType: string,
   grantedScopes: readonly string[],
