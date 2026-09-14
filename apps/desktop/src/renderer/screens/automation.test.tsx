@@ -1,16 +1,18 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import type { AutomationDetail } from '../lib/types';
 import { AutomationScreen } from './automation';
 
 const getAutomation = vi.hoisted(() => vi.fn());
 const getAutomationRuns = vi.hoisted(() => vi.fn());
 const setAutomationAppearance = vi.hoisted(() => vi.fn());
+const archiveAutomation = vi.hoisted(() => vi.fn());
 vi.mock('../lib/app-session', () => ({
-  useAppSession: () => ({ api: { getAutomation, getAutomationRuns, setAutomationAppearance } }),
+  useAppSession: () => ({ api: { archiveAutomation, getAutomation, getAutomationRuns, setAutomationAppearance } }),
 }));
 // The conversation beside the profile is its own surface with its own sockets,
 // and none of it is what this file is about.
@@ -54,7 +56,10 @@ function renderScreen(client: QueryClient) {
     <QueryClientProvider client={client}>
       <Tooltip.Provider>
         <MemoryRouter initialEntries={[`/sidekicks/${SIDEKICK_ID}`]}>
-          <Routes><Route element={<AutomationScreen />} path="/sidekicks/:id" /></Routes>
+          <Routes>
+            <Route element={<AutomationScreen />} path="/sidekicks/:id" />
+            <Route element={<div>Sidekicks library</div>} path="/sidekicks" />
+          </Routes>
         </MemoryRouter>
       </Tooltip.Provider>
     </QueryClientProvider>,
@@ -65,6 +70,25 @@ beforeEach(() => {
   getAutomation.mockReset().mockResolvedValue(detail());
   getAutomationRuns.mockReset().mockResolvedValue([]);
   setAutomationAppearance.mockReset();
+  archiveAutomation.mockReset().mockResolvedValue(undefined);
+});
+
+describe('AutomationScreen archival', () => {
+  it('refreshes work streams and leaves the archived Sidekick route', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    setCachedWorkstreams(client, []);
+    renderScreen(client);
+    await showProfile();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive Sidekick' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Archive Sidekick' }))
+      .getByRole('button', { name: 'Archive' }));
+
+    await screen.findByText('Sidekicks library');
+    expect(archiveAutomation).toHaveBeenCalledWith(SIDEKICK_ID);
+    expect(client.getQueryState(['workstreams'])?.isInvalidated).toBe(true);
+  });
 });
 
 describe('AutomationScreen appearance saving', () => {
