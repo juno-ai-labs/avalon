@@ -666,3 +666,20 @@ test('the Ubuntu verification job can write and freeze the version bump', async 
   assert.match(verifyJob, /^ {4}outputs:\n {6}release_commit: \$\{\{ steps\.release_commit\.outputs\.sha \}\}$/mu);
   assert.match(verifyJob, /git push origin HEAD:main/u);
 });
+
+
+test('job-level environment expressions use only pre-runner contexts', async () => {
+  const directory = join(repositoryDirectory, '.github/workflows');
+  for (const file of await readdir(directory)) {
+    if (!/\.ya?ml$/u.test(file)) continue;
+    const lines = (await readFile(join(directory, file), 'utf8')).split('\n');
+    let inJobEnvironment = false;
+    for (const [index, line] of lines.entries()) {
+      if (/^ {4}env:\s*$/u.test(line)) { inJobEnvironment = true; continue; }
+      if (!inJobEnvironment) continue;
+      if (line.trim() && !/^ {6}/u.test(line)) { inJobEnvironment = false; continue; }
+      assert.doesNotMatch(line, /\$\{\{[^}]*\b(?:runner|steps|job|env)\./u,
+        `${file}:${index + 1}: job-level env cannot use a per-step context`);
+    }
+  }
+});
