@@ -550,15 +550,6 @@ function runDefinition(database: ToolSelectionDatabase): AutomationRunDefinition
 }
 
 /**
- * Check every `<wire name> {json}` call in a plugin message against the input
- * schema of the tool it names, returning one description per mismatch.
- *
- * A worked example is documentation the model executes, so it decays exactly
- * like code and silently: renaming a parameter or a result key leaves the
- * example compiling, passing a substring assertion, and teaching a call that
- * now fails.
- */
-/**
  * The concrete calls a plugin's system message demonstrates, parsed back into
  * the wire tool name and the arguments each one teaches.
  *
@@ -575,6 +566,15 @@ function workedExampleCalls(
   }));
 }
 
+/**
+ * Check every `<wire name> {json}` call in a plugin message against the input
+ * schema of the tool it names, returning one description per mismatch.
+ *
+ * A worked example is documentation the model executes, so it decays exactly
+ * like code and silently: renaming a parameter or a result key leaves the
+ * example compiling, passing a substring assertion, and teaching a call that
+ * now fails.
+ */
 function workedExampleCallsAgainstSchemas(
   plugin: {
     modelId: string;
@@ -1628,15 +1628,26 @@ describe("connector tools selected for harness runs", () => {
     expect(newEmail).toHaveLength(1);
     expect(draft?.validateInput?.(newEmail[0])).toBeNull();
 
-    // And the reply example's identifiers are placeholders this tool itself
-    // refuses. That is the point of them: a placeholder that parses — the
-    // angle-bracketed `<hit.messageIdHeader>` that stood here satisfied the
-    // Message-ID rule exactly — is forwarded to Gmail, which rejects the call
-    // without naming a field. One that does not parse is refused here, against
-    // the field to fill in.
+    // And the reply example's identifiers stay placeholders. That is the point
+    // of them: a placeholder that parses — the angle-bracketed
+    // `<hit.messageIdHeader>` that stood here satisfied the Message-ID rule
+    // exactly — is forwarded to Gmail, which rejects the call without naming a
+    // field. One that does not parse is refused here, against the field to
+    // fill in.
     const reply = drafted.filter((call) => "threadId" in call);
     expect(reply).toHaveLength(1);
     expect(draft?.validateInput?.(reply[0])).toBeInstanceOf(Error);
+
+    // Both literals are pinned because only one of them is load-bearing for the
+    // assertion above. `inReplyTo` carries it through `RfcMessageIdSchema`;
+    // `threadId` is an unformatted `min(1)` string, so every placeholder parses
+    // and restoring `<hit.threadId>` alone leaves the whole-call assertion
+    // green. `threadId` is also the field with no argument-naming on Google's
+    // side, per the open consequence in docs/connectors.md — it travels in the
+    // request body, which `googleRejectedArgument` cannot read — so it is the
+    // one that most needs to stay a placeholder, and the literal is the only
+    // guard available for it until that check exists.
+    expect(reply[0]).toMatchObject({ threadId: "…", inReplyTo: "…" });
   });
 
   it("preloads an explicitly attached workspace identity without dropping another eligible personal plugin", async () => {
