@@ -9,16 +9,36 @@ import type { z } from "zod";
  */
 const REPORTED_ISSUES = 3;
 
-/** Issue paths and codes, reduced to something that stays code-shaped. */
+/**
+ * The whole value, when the rejection is about its shape rather than a field.
+ *
+ * Underscored rather than parenthesized so it passes `scheduledAlarmErrorCode`
+ * on its own terms; a bare `root` would be indistinguishable from a field of
+ * that name.
+ */
+const ROOT_PATH = "_root_";
+
+/** Issue paths and codes, before the message is reduced to a code shape. */
 function describeIssues(error: z.ZodError): string {
-  const described = error.issues.slice(0, REPORTED_ISSUES).map((issue) => {
-    // `:` separates the fields of one issue and joins them, so a path segment
-    // carrying one would read as an extra field. Segments are object keys and
-    // array indices, which never legitimately contain one.
-    const path = issue.path.length === 0 ? "(root)" : issue.path.join(".").replace(/[^A-Za-z0-9_.-]/gu, "_");
-    return `${path}:${issue.code}`;
-  });
-  return described.join(":") || "(no_issues)";
+  const described = error.issues.slice(0, REPORTED_ISSUES).map((issue) => (
+    `${issue.path.length === 0 ? ROOT_PATH : issue.path.join(".")}:${issue.code}`
+  ));
+  return described.join(":") || "no_issues";
+}
+
+/**
+ * Everything `scheduledAlarmErrorCode` will pass through, and nothing else.
+ *
+ * Applied once to the finished message rather than to each part, because a
+ * per-part sanitizer is one branch away from being bypassed — the first version
+ * of this file spelled the root path `(root)`, sanitized only the other branch,
+ * and so degraded exactly the whole-value shape mismatch a version skew
+ * produces back to `handler_error`. `:` survives because it is the separator;
+ * a path segment carrying one reads as an extra field, which is a worse message
+ * than a substituted character and not a lost one.
+ */
+function codeShaped(message: string): string {
+  return message.replace(/[^A-Za-z0-9_:.-]/gu, "_");
 }
 
 /**
@@ -51,5 +71,5 @@ export function parseRpcInput<Schema extends z.ZodType>(
 ): z.infer<Schema> {
   const result = schema.safeParse(input);
   if (result.success) return result.data;
-  throw new Error(`${schemaName}_invalid:${describeIssues(result.error)}`.slice(0, 120));
+  throw new Error(codeShaped(`${schemaName}_invalid:${describeIssues(result.error)}`).slice(0, 120));
 }
