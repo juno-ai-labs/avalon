@@ -731,10 +731,67 @@ the regional activities dead-letter queue, per
 [`workstream-durable-object.md`](workstream-durable-object.md#operations). A
 missing scheduled run is a schedule row whose `next_due_at` is null or an
 alarm entry behind its backoff gate in `_internal_durable_alarms`;
-`sidekick_scheduled_alarm_failed` names the entry and the handler's code. A
+`sidekick_scheduled_alarm_failed` names the entry and the handler's code. When
+that code is a schema rejection it names the schema and the failing paths — a
+bare `ZodError` there is a parse that has not yet been moved onto
+`parseRpcInput`, and is itself the defect to fix before diagnosing further. A
 run refusing provider writes with "This automation run is no longer running"
 was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
+
+### 2026-09-14 — A publication that cannot parse says which field it choked on
+
+**What changed:** `applyExternalEventRegistrations` parses its input through
+`parseRpcInput` (`apps/api/src/lib/rpc-input.ts`) rather than
+`Schema.parse`. On a rejection it throws a plain `Error` whose message is
+`<schema>_invalid:<path>:<code>` for the first three issues, capped at 120
+characters.
+
+**Why:** A `ZodError` does not survive a Durable Object RPC hop. The serializer
+reduces it to a bare `Error` carrying no `issues`, no derived message and not
+even the name, so the calling object logs the five letters `ZodError` and
+stops.
+
+That was not a cosmetic loss. A Sidekick's registrations are written only by
+the publication tail — `applyEffects` → `replaceRegistrations` → this RPC — and
+in production a malformed projection made that hop throw on every attempt. The
+alarm has no retry ceiling, so it retried forever; the Sidekick meanwhile
+showed as published, because `lifecycle` and `accepted_definition_revision` are
+committed in the accept's own transaction and nothing a reader sees consults
+`applied_effects_revision`. The visible symptom was a workspace Fireflies
+connection delivering `meeting.summarized` correctly and matching zero
+destinations, with `sidekick_scheduled_alarm_failed ZodError` as the only
+evidence — which names neither the field, nor the schema, nor which of the
+handler's several parses failed.
+
+Issue paths and codes are schema shape, not member data; `errorHandler` already
+draws that line when it records `validation_issues`, so the same line is drawn
+here and values are left behind. The message stays inside the character class
+`scheduledAlarmErrorCode` requires, so the operator notice at the third attempt
+carries the code rather than degrading to `handler_error`.
+
+**How it is proved:**
+`apps/api/test-workers/external-event-rules.test.ts` sends a malformed
+projection through a real WorkspaceDO RPC hop and asserts the rejection names
+`external_event_registration_projection_invalid` and `evaluators.0.source`.
+Restoring `Schema.parse` fails it with `expected 'ZodError' to contain …` —
+the production symptom exactly, which is what makes the test worth having on
+real workerd rather than against the schema.
+
+**What a future change has to respect:** the Sidekick showing as published
+while its registrations are missing is still true, and is not fixed here. This
+change makes that state diagnosable in one log line; making it visible — a
+Sidekick whose `applied_effects_revision` trails its accepted revision should
+not read as healthy — is a change of its own.
+
+**Considered and rejected:** widening `reportScheduledAlarmAttempt` to unpack a
+Zod issue list. There is nothing left to unpack by the time it runs; the issues
+are gone at the boundary, which is the only place they still exist. Also
+rejected: moving every DO RPC entry point onto `parseRpcInput` in this change.
+The primitive is there for the next one to adopt as it is touched; converting
+some hundred call sites blind is how a diagnostic fix becomes a risk.
+
+Shipped in the pull request for this change.
 
 ### 2026-09-14 — `matching` is the model's spelling; `all` stays the stored one
 
