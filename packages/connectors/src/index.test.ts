@@ -1963,6 +1963,35 @@ describe("connectors", () => {
     expect(decoded).toContain("References: <earlier@example.com> <original@example.com>\r\n");
   });
 
+  it("names both repairs when a send carries a threadId with no inReplyTo", async () => {
+    const adapter = googleAdapter(async () => googleJson({ id: "unused" }));
+    const args = {
+      to: ["support@example.com"],
+      subject: "Partnership enquiry",
+      body: "Hello.",
+      threadId: "thread-1",
+    };
+    // A brand-new email has no message to reply to, so "supply the Message-ID"
+    // is advice it cannot take: the model either invents an id and mis-threads
+    // the mail, or reports the tool as broken. Dropping the stray threadId is
+    // the repair that applies, so the refusal has to offer it.
+    const issues = adapter.validateToolInput?.("gmail.send", args)?.issues ?? [];
+    // Selected by path rather than position, which also pins where the refusal
+    // is reported: the harness renders `<path>: <message>`, so it has to name
+    // the field the first instruction tells the model to drop.
+    const issue = issues.find((candidate) => candidate.path.join(".") === "threadId");
+    expect(issue?.message).toContain("Omit threadId to start a new email conversation");
+    expect(issue?.message).toContain("inReplyTo");
+    expect(issue?.message).toContain("Never invent a Message-ID");
+
+    // A new message with neither field is not the error's business at all.
+    expect(adapter.validateToolInput?.("gmail.send", {
+      to: ["support@example.com"],
+      subject: "Partnership enquiry",
+      body: "Hello.",
+    })).toBeNull();
+  });
+
   it("returns a followable thread for a sent message, whose id is not nested", async () => {
     const fetcher: typeof fetch = async () =>
       googleJson({ id: "message-sent", threadId: "thread-sent", labelIds: ["SENT"] });
