@@ -95,6 +95,7 @@ try {
     '--mac',
     '--arm64',
     `--config.directories.output=${stagingDirectory}`,
+    `--config.mac.provisioningProfile=${process.env.RALLY_MAC_PROVISIONING_PROFILE_PATH}`,
     '--publish',
     'never',
   ];
