@@ -478,6 +478,42 @@ describe("Daytona Terminal provider", () => {
     expect(sandbox.delete).toHaveBeenCalledWith(60, true);
   });
 
+  it("reports a sandbox mid-transition as startable, never as lost", async () => {
+    // Acquisition replaces a sandbox this mapping calls `expired` or `failed`,
+    // and replacement discards its files. Daytona publishes twenty-two states
+    // to this union's seven, and it auto-stops and auto-archives on its own
+    // schedule — so a tool call landing inside one of those transitions must
+    // not read as a verdict that the workspace is gone.
+    const observed = [
+      ["stopping", "starting"],
+      ["archiving", "starting"],
+      ["destroying", "starting"],
+      ["pausing", "starting"],
+      ["resizing", "starting"],
+      ["snapshotting", "starting"],
+      ["forking", "starting"],
+      ["pulling_snapshot", "starting"],
+      ["resuming", "starting"],
+      ["paused", "stopped"],
+      // Verdicts, and only these two.
+      ["error", "failed"],
+      ["build_failed", "failed"],
+      ["destroyed", "expired"],
+      // Anything a later SDK adds waits rather than being replaced.
+      ["a_state_this_sdk_has_never_published", "unknown"],
+    ] as const;
+    const get = vi.fn(async (name: string) => ({ id: "sandbox-1", name: "stable", state: name }));
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "snapshot", emergencyDisabled: false,
+    }, () => ({ create: vi.fn(), get }));
+
+    for (const [daytonaState, expected] of observed) {
+      await expect(provider.getSandbox(daytonaState), daytonaState)
+        .resolves.toMatchObject({ state: expected });
+    }
+  });
+
   it("evicts every alias after lifecycle changes", async () => {
     const first = {
       id: "sandbox-alias", name: "provider-stable-name", state: "started",

@@ -14,6 +14,7 @@ import type {
 import {
   DAYTONA_REQUEST_TIMEOUT_MS,
   type TerminalSandboxProvider,
+  type TerminalSandboxState,
 } from "../src/services/terminal/daytona-provider";
 import { sha256Hex } from "../src/lib/crypto";
 import {
@@ -142,11 +143,21 @@ function fixture(
         (_error, stage) => { probeFailures.push(stage); },
       )
     : undefined;
+  // Acquisition reads the provider's state back rather than trusting the row,
+  // so a double that always answered "running" would hide a stop this runtime
+  // performs itself — command fencing stops the sandbox and the next
+  // acquisition is what starts it again.
+  const sandboxState = { current: "running" as TerminalSandboxState };
   const provider: TerminalSandboxProvider = {
-    createSandbox: vi.fn(async (input) => ({ id: "sandbox-runtime", name: input.stableName, state: "running" as const, domainAllowList: input.domainAllowList })),
-    getSandbox: vi.fn(async (name) => ({ id: "sandbox-runtime", name, state: "running" as const, domainAllowList: [] })),
-    startSandbox: vi.fn(async () => undefined), stopSandbox: vi.fn(async () => undefined),
-    archiveSandbox: vi.fn(async () => undefined), deleteSandbox: vi.fn(async () => undefined),
+    createSandbox: vi.fn(async (input) => {
+      sandboxState.current = "running";
+      return { id: "sandbox-runtime", name: input.stableName, state: "running" as const, domainAllowList: input.domainAllowList };
+    }),
+    getSandbox: vi.fn(async (name) => ({ id: "sandbox-runtime", name, state: sandboxState.current, domainAllowList: [] })),
+    startSandbox: vi.fn(async () => { sandboxState.current = "running"; }),
+    stopSandbox: vi.fn(async () => { sandboxState.current = "stopped"; }),
+    archiveSandbox: vi.fn(async () => { sandboxState.current = "archived"; }),
+    deleteSandbox: vi.fn(async () => { sandboxState.current = "expired"; }),
     updateNetworkPolicy: vi.fn(async () => undefined),
     configureGitHubReadAccess: vi.fn(async () => undefined), clearGitHubReadAccess: vi.fn(async () => undefined),
     readFile: vi.fn(async (_id, path) => files.get(path) ?? new Uint8Array()),
@@ -302,7 +313,7 @@ function fixture(
     false,
     acquisitionObserved,
   );
-  return { database, objectStore, files, provider, resources, publisher, coordinator, ledger, probeRoot, probeFailures, instructions, runtime: createDaytonaTerminalRuntime(
+  return { database, objectStore, files, provider, sandboxState, resources, publisher, coordinator, ledger, probeRoot, probeFailures, instructions, runtime: createDaytonaTerminalRuntime(
     testTerminalPortFactory(objectStore), coordinator, provider, resources, publisher, null, prepareSandbox,
     () => clock.now().getTime(), instructions) };
 }
@@ -708,7 +719,7 @@ describe("Daytona Terminal runtime", () => {
 
   it("stops a retained accepted command before a linked run uses the sandbox", async () => {
     const clockNow = Date.now();
-    const { objectStore, provider, runtime } = fixture({ now: () => new Date(clockNow) });
+    const { objectStore, provider, runtime, sandboxState } = fixture({ now: () => new Date(clockNow) });
     loseObservationAfterSubmission(provider);
 
     await expect(runtime.runCommand(context, { command: "sleep 3", timeoutMs: 3_000 }))
@@ -736,7 +747,9 @@ describe("Daytona Terminal runtime", () => {
     const linkedContext = { ...context, harnessRunId: R2, toolCallId: "call-linked" };
     let finishStop!: () => void;
     vi.mocked(provider.stopSandbox).mockImplementationOnce(async () => (
-      new Promise<void>((resolve) => { finishStop = resolve; })
+      new Promise<void>((resolve) => {
+        finishStop = () => { sandboxState.current = "stopped"; resolve(); };
+      })
     ));
 
     const firstLinkedRead = runtime.readFile(linkedContext, "src/file.txt");
@@ -855,7 +868,7 @@ describe("Daytona Terminal runtime", () => {
 
   it("keeps an aborted command unsettled until tokenized recovery confirms provider stop", async () => {
     const controller = new AbortController();
-    const { objectStore, provider, runtime } = fixture();
+    const { objectStore, provider, runtime, sandboxState } = fixture();
     vi.mocked(provider.runCommand).mockImplementationOnce(async (_id, input) => {
       await input.onSubmitted?.("provider-command-aborted");
       return new Promise((_resolve, reject) => {
@@ -864,7 +877,7 @@ describe("Daytona Terminal runtime", () => {
     });
     vi.mocked(provider.stopSandbox)
       .mockRejectedValueOnce(new Error("first stop failed"))
-      .mockResolvedValueOnce(undefined);
+      .mockImplementationOnce(async () => { sandboxState.current = "stopped"; });
     const abortedContext = { ...context, signal: controller.signal };
     const command = runtime.runCommand(abortedContext, {
       command: "sleep 100",
