@@ -11,6 +11,7 @@ import {
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
+  WorkspaceWorkstreamPageEventSchema,
 } from "@rally/contracts";
 import {
   conversationEffectHash,
@@ -1555,6 +1556,18 @@ describe("Durable Objects in the Workers runtime", () => {
       const page = await workspace.listWorkstreams(request);
       expect(page.items[0]?.id).toBe(WORKSTREAM_ID);
       expect(page.items[0]?.lastAccessedAt).not.toBeNull();
+      const socketPagePromise = nextMessageOfType(peer, "workspace_workstream_page");
+      peer.send(JSON.stringify({
+        type: "list_workstreams",
+        requestId: "00000000-0000-7000-8000-000000000418",
+        limit: 20,
+        includeSystem: false,
+      }));
+      const socketPage = WorkspaceWorkstreamPageEventSchema.parse(await socketPagePromise);
+      expect(socketPage.items.map(({ id, scope }) => ({ id, scope }))).toEqual([
+        { id: WORKSTREAM_ID, scope: "workspace" },
+        { id: newerId, scope: "workspace" },
+      ]);
       const legacyPage = await workspace.listWorkstreams({ ...request,
         before: `${Date.parse("2026-08-28T20:00:00.000Z")}:${newerId}` });
       expect(legacyPage.items[0]?.id).toBe(WORKSTREAM_ID);
