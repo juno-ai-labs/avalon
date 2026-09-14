@@ -17,8 +17,7 @@ export function createInferenceDelayObserver(
     if (announced) {
       announced = false;
       const clear = () => onChange?.(false);
-      delivery = delivery.then(clear, clear);
-      void delivery.catch(() => undefined);
+      delivery = delivery.then(clear, clear).catch(() => undefined);
     }
   };
   signal?.addEventListener('abort', stop, { once: true });
@@ -31,8 +30,7 @@ export function createInferenceDelayObserver(
           if (!waiting || signal?.aborted) return;
           announced = true;
           return onChange(true);
-        });
-        void delivery.catch(() => undefined);
+        }).catch(() => undefined);
       }, INFERENCE_DELAY_NOTICE_MS);
     },
     observedOutput: stop,

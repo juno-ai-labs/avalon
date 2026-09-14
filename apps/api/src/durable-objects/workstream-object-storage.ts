@@ -658,7 +658,8 @@ export class WorkstreamObjectStore {
       ));
       const current = row?.event_sequence ?? 0;
       const sequence = Math.max(current + 1, requestedSequence ?? 0);
-      const event = applyInferenceDelayEvent(this.storage, ServerSocketEventSchema.parse({ ...unsequencedEvent, sequence }));
+      const parsedEvent = ServerSocketEventSchema.parse({ ...unsequencedEvent, sequence });
+      const event = applyInferenceDelayEvent(this.storage, parsedEvent);
       this.storage.sql.exec(
         `INSERT INTO realtime_state(id, event_sequence, updated_at) VALUES (1, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
@@ -690,6 +691,9 @@ export class WorkstreamObjectStore {
        JOIN runs execution ON execution.run_id = delay.execution_id
        JOIN runs root ON root.run_id = delay.run_id
        WHERE delay.active = 1 AND execution.status = 'running' AND root.status = 'running'
+         AND EXISTS (SELECT 1 FROM workstream WHERE id = 1 AND exact_state = 'running')
+         AND root.run_id = (SELECT run_id FROM runs WHERE parent_tool_call_id IS NULL
+                            ORDER BY created_at DESC, run_id DESC LIMIT 1)
          AND execution.legacy_attempt_id = delay.attempt_id AND execution.lease_expires_at > ?
        ORDER BY delay.inference_request_id`, Date.now(),
     ).toArray().map((row) => InferenceDelayStateSchema.parse({

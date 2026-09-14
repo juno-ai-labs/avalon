@@ -6212,6 +6212,19 @@ describe("Durable Objects in the Workers runtime", () => {
       first.send(JSON.stringify({ type: "request_snapshot" }));
       expect(await reconnect).toMatchObject({ activeInferenceDelays: [{ inferenceRequestId: delay.inferenceRequestId }] });
 
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE workstream SET exact_state = 'completed' WHERE id = 1`);
+      });
+      const stoppedResync = nextMessageOfType(first, "resync_required");
+      first.send(JSON.stringify({ type: "subscribe", afterSequence: 100_000 }));
+      expect(await stoppedResync).toMatchObject({ activeInferenceDelays: [] });
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE workstream SET exact_state = 'running' WHERE id = 1`);
+      });
+      const restored = nextMessageOfType(first, "snapshot");
+      first.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+      expect(await restored).toMatchObject({ activeInferenceDelays: [{ inferenceRequestId: delay.inferenceRequestId }] });
+
       const concurrent = { ...delay, executionId: childRunId, inferenceRequestId: "00000000-0000-7000-8000-000000000141" };
       const concurrentNotice = nextMessageOfType(first, delay.type);
       await publish(concurrent);

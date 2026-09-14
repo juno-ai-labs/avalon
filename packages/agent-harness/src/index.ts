@@ -20,7 +20,7 @@ import {
 import { AzureInferenceEndpointSchema } from "@rally/contracts/url-schemas";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
 import { createInferenceDelayObserver, INFERENCE_TTFT_TIMEOUT_MS } from "./inference-delay";
-import { createStreamWatchdog } from "@juno-ai/bind/completion";
+import { createInferenceStreamWatchdog } from "./inference-stream-watchdog";
 import { chatRequestToJSON } from "@openrouter/sdk/models/chatrequest.js";
 import { chatResultFromJSON } from "@openrouter/sdk/models/chatresult.js";
 import { chatStreamChunkFromJSON } from "@openrouter/sdk/models/chatstreamchunk.js";
@@ -1057,14 +1057,9 @@ export class OpenRouterClient {
     const delayObserver = createInferenceDelayObserver(input.onInferenceDelay, input.signal);
     const requestStartedAt = Date.now();
     let firstOutputAt: number | null = null;
-    const watchdog = createStreamWatchdog({
+    const watchdog = createInferenceStreamWatchdog({
       timeToFirstTokenMs: this.config.ttftTimeoutMs ?? INFERENCE_TTFT_TIMEOUT_MS,
       interChunkMs: this.config.streamIdleTimeoutMs ?? 15_000,
-      // The absolute timer starts before fetch; reserve establishment as well
-      // so a slow response head cannot shorten the first-output allowance.
-      maxCallDurationMs: (this.config.requestEstablishmentTimeoutMs ?? 30_000)
-        + (this.config.ttftTimeoutMs ?? INFERENCE_TTFT_TIMEOUT_MS)
-        + (this.config.streamIdleTimeoutMs ?? 15_000),
       external: input.signal ?? null,
     });
     const establishment = new AbortController();
@@ -1269,14 +1264,9 @@ export class AzureOpenAIClient {
     const delayObserver = createInferenceDelayObserver(input.onInferenceDelay, input.signal);
     const requestStartedAt = Date.now();
     let firstOutputAt: number | null = null;
-    const watchdog = createStreamWatchdog({
+    const watchdog = createInferenceStreamWatchdog({
       timeToFirstTokenMs: this.config.ttftTimeoutMs ?? INFERENCE_TTFT_TIMEOUT_MS,
       interChunkMs: this.config.streamIdleTimeoutMs ?? 15_000,
-      // The absolute timer starts before fetch; reserve establishment as well
-      // so a slow response head cannot shorten the first-output allowance.
-      maxCallDurationMs: (this.config.requestEstablishmentTimeoutMs ?? 30_000)
-        + (this.config.ttftTimeoutMs ?? INFERENCE_TTFT_TIMEOUT_MS)
-        + (this.config.streamIdleTimeoutMs ?? 15_000),
       external: input.signal ?? null,
     });
     const establishment = new AbortController();
