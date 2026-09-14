@@ -25,6 +25,7 @@ export default async function signMacosNativeComponents(context) {
     join(applicationPath, 'Contents/PlugIns/RallyDockTilePluginV2.docktileplugin'),
     join(applicationPath, 'Contents/Resources/native/system-audio-tap.node'),
     join(applicationPath, 'Contents/Resources/native/unified-log.node'),
+    join(applicationPath, 'Contents/Resources/native/push-notifications.node'),
   ];
   for (const componentPath of componentPaths) {
     await run('/usr/bin/codesign', [

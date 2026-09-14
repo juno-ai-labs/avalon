@@ -1060,6 +1060,14 @@ fails when a table referencing `connector_connections` is added without being
 declared, which is the failure that otherwise waits until the next rebuild drops
 its rows.
 
+## Push devices
+
+Migration 0106 adds regional `user_push_devices`, `user_push_device_sessions`, and
+`push_delivery_receipts`. Devices belong to a person and installation; live
+sessions bound by registration establish delivery eligibility. Receipts identify
+one workspace intent and device. Notification content remains in WorkspaceDO,
+read through typed RPC. See [Apple push](push-notifications.md).
+
 ## Changelog
 
 ### 2026-09-13 — Rebuilding a referenced parent empties its dependents first

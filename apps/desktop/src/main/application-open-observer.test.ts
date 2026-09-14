@@ -8,6 +8,7 @@ afterEach(() => vi.useRealTimers());
 
 describe('application-open attribution', () => {
   it('classifies only provable cold-start sources', () => {
+    expect(initialApplicationOpenEntrypoint({ openedAtLogin: false, hasDeepLink: false, hasPushNotification: true })).toBe('push_notification');
     expect(initialApplicationOpenEntrypoint({ openedAtLogin: true, hasDeepLink: false }))
       .toBe('system_start');
     expect(initialApplicationOpenEntrypoint({ openedAtLogin: false, hasDeepLink: true }))

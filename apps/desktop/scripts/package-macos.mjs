@@ -24,6 +24,9 @@ const backupDirectory = join(releaseDirectory, `.previous-${mode}-${suffix}`);
 const configFile = mode === 'local' ? 'electron-builder.local.yml' : 'electron-builder.yml';
 const desktopPackage = JSON.parse(await readFile(join(desktopDirectory, 'package.json'), 'utf8'));
 
+if (!process.env.RALLY_MAC_PROVISIONING_PROFILE_PATH) throw new Error('Set RALLY_MAC_PROVISIONING_PROFILE_PATH to the Developer ID profile with Push Notifications and Associated Domains.');
+await access(process.env.RALLY_MAC_PROVISIONING_PROFILE_PATH);
+
 if (mode === 'release') {
   if (process.env.CSC_LINK) {
     throw new Error(

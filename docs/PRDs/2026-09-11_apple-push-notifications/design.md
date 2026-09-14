@@ -65,7 +65,7 @@ export const PushNotificationIntentSchema = z.object({
   title: z.string(),
   body: z.string(),
   url: z.string().url(),            // the canonical work-stream link the email carries
-  threadKey: z.string(),            // conversation identity, for grouping
+  threadKey: z.string(),            // main workstream identity, including substreams
   collapseKey: z.string().max(64),  // the intent id, a UUID (36 bytes)
 });
 
@@ -310,6 +310,9 @@ Ordering across devices does not matter; ordering across messages is the
 Queue's and is not relied on.
 
 ## Payload rendering
+
+Group by the main workstream ID, including notifications originating in its
+substreams. The notification URL still opens the originating substream.
 
 `renderPushPayload(intent, platform)`:
 

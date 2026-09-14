@@ -7,6 +7,7 @@ import {
   assertDeveloperIdDetails,
   assertEmbeddedUpdateConfig,
   assertExactNestedEntitlements,
+  assertPushProvisioning,
 } from './mac-signature-policy.mjs';
 
 const [mode = 'local', appArgument] = process.argv.slice(2);
@@ -155,7 +156,7 @@ for (const fileName of ['rallyTemplate.png', 'rallyTemplate@2x.png']) {
   }
 }
 
-function inspectEntitlementKeys(componentPath, label, { allowEmpty = false } = {}) {
+function inspectEntitlements(componentPath, label, { allowEmpty = false } = {}) {
   const entitlementResult = spawnSync('/usr/bin/codesign', ['-d', '--entitlements', ':-', componentPath], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -166,7 +167,7 @@ function inspectEntitlementKeys(componentPath, label, { allowEmpty = false } = {
     );
   }
   if (!entitlementResult.stdout?.trim()) {
-    if (allowEmpty) return [];
+    if (allowEmpty) return {};
     throw new Error(`${label} is missing its required entitlements`);
   }
   const plistResult = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '--', '-'], {
@@ -181,8 +182,25 @@ function inspectEntitlementKeys(componentPath, label, { allowEmpty = false } = {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error(`${label} entitlements are not a dictionary`);
   }
-  return Object.keys(parsed);
+  return parsed;
 }
+
+function inspectEntitlementKeys(...args) { return Object.keys(inspectEntitlements(...args)); }
+
+const profileResult = spawnSync('/usr/bin/security', ['cms', '-D', '-i', join(appPath, 'Contents/embedded.provisionprofile')], { encoding: 'utf8' });
+if (profileResult.status !== 0) throw new Error('Missing or unreadable embedded provisioning profile');
+// Profiles also contain dates and certificate data, which cannot convert wholesale to JSON.
+const profileField = (key, format) => {
+  const result = spawnSync('/usr/bin/plutil', ['-extract', key, format, '-o', '-', '--', '-'], { encoding: 'utf8', input: profileResult.stdout });
+  if (result.status !== 0) throw new Error(`Could not decode provisioning profile ${key}`);
+  return format === 'json' ? JSON.parse(result.stdout) : result.stdout.trim();
+};
+assertPushProvisioning({
+  ProvisionsAllDevices: profileField('ProvisionsAllDevices', 'json'),
+  TeamIdentifier: profileField('TeamIdentifier', 'json'),
+  Entitlements: profileField('Entitlements', 'json'),
+  ExpirationDate: profileField('ExpirationDate', 'raw'),
+}, inspectEntitlements(appPath, 'Main app'));
 
 function verifyNestedComponent(componentPath, executablePath, label, { expectEntitlements = true } = {}) {
   if (!existsSync(componentPath)) throw new Error(`Packaged app is missing nested component ${label}`);
@@ -256,6 +274,9 @@ verifyNestedComponent(
   'Rally Core Audio tap',
   { expectEntitlements: false },
 );
+const pushBridgePath = join(resourcesDirectory, 'native/push-notifications.node');
+verifyNestedComponent(pushBridgePath, pushBridgePath, 'Rally push bridge', { expectEntitlements: false });
+
 const unifiedLogPath = join(resourcesDirectory, 'native/unified-log.node');
 verifyNestedComponent(
   unifiedLogPath,
