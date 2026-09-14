@@ -5,7 +5,6 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import clsx from 'clsx';
 import {
   AlertTriangle,
-  Copy,
   Ellipsis,
   FileText,
   FileUp,
@@ -101,6 +100,7 @@ import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState } from '../components/primitives';
+import { CopyButton } from '../components/copy-button';
 import { queueAuthorMember, type ComposerQueueItem } from '../components/composer-queue';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import { ConnectorConnectionsProvider } from '../components/connector-mentions';
@@ -669,14 +669,12 @@ export function RunFailureNotice({
   message,
   requestId,
   retrying,
-  onCopyRequestId,
   onRetry,
 }: {
   code: string;
   message: string;
   requestId?: string;
   retrying: boolean;
-  onCopyRequestId: () => void;
   onRetry: () => void;
 }): React.JSX.Element {
   return (
@@ -686,11 +684,18 @@ export function RunFailureNotice({
         <strong>Run failed</strong>
         <p>{message}</p>
         <code>{code}</code>
+        {/* The id is shown beside its control rather than hidden behind a
+            sentence: the message asks for it to be copied for support, and a
+            copy control is an icon, so the value has to be on screen for the
+            icon to be about something. */}
+        {requestId ? (
+          <div className="copy-detail run-failure-request">
+            <span>Request ID <span className="mono">{requestId}</span></span>
+            <CopyButton label="Copy request ID" size={12} value={requestId} />
+          </div>
+        ) : null}
       </div>
       <div className="run-failure-actions">
-        {requestId ? (
-          <Button onClick={onCopyRequestId}><Copy aria-hidden="true" size={13} /> Copy request ID</Button>
-        ) : null}
         <Button className="button-primary" disabled={retrying} onClick={onRetry}>
           {retrying ? <LoaderCircle aria-hidden="true" className="spin" size={13} /> : <RefreshCcw aria-hidden="true" size={13} />}
           Retry
@@ -2293,7 +2298,6 @@ export function ConversationSurface({
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
               message={detail.latestHarnessRun.error?.message ?? 'Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support.'}
-              onCopyRequestId={() => void desktopBridge().copyText(detail.latestHarnessRun?.requestId ?? detail.latestHarnessRun!.id)}
               onRetry={() => retry.mutate()}
               requestId={detail.latestHarnessRun.requestId ?? detail.latestHarnessRun.id}
               retrying={retry.isPending}

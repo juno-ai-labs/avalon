@@ -1,8 +1,9 @@
-import { Check, Copy, Database, ExternalLink, Maximize2 } from 'lucide-react';
+import { Database, ExternalLink, Maximize2 } from 'lucide-react';
 import React from 'react';
 
 import { DetailHeaderActions } from './detail-header-actions';
-import { Button, EmptyState, IconButton, InsetSurface, SegmentedControl } from './primitives';
+import { CopyButton } from './copy-button';
+import { EmptyState, IconButton, InsetSurface, SegmentedControl } from './primitives';
 
 /**
  * The rail's detail for a **live artifact**: a published site Rally serves.
@@ -93,7 +94,6 @@ export function SiteResourceDetail({
    * not on screen to be covered.
    */
   const [showingData, setShowingData] = React.useState(false);
-  const [copied, setCopied] = React.useState(false);
 
   /**
    * A fresh open code, for one navigation.
@@ -274,22 +274,16 @@ export function SiteResourceDetail({
         >
           <Maximize2 size={15} />
         </IconButton>
-        <IconButton
+        {/* The canonical public link carries no access code or viewer
+            identity. Copying it shares the current site with anyone. */}
+        <CopyButton
+          copyText={surface.copyText}
           disabled={!access}
-          label={copied ? 'Copied' : 'Copy public link'}
+          label="Copy public link"
+          size={15}
           tooltipSide="top"
-          onClick={() => {
-            if (!access) return;
-            // The canonical public link carries no access code or viewer
-            // identity. Copying it shares the current site with anyone.
-            void surface.copyText(access.canonicalUrl).then(() => {
-              setCopied(true);
-              window.setTimeout(() => setCopied(false), 1_500);
-            });
-          }}
-        >
-          {copied ? <Check size={15} /> : <Copy size={15} />}
-        </IconButton>
+          value={access?.canonicalUrl ?? ''}
+        />
         <IconButton
           disabled={!access}
           label="Open in browser"
@@ -367,18 +361,26 @@ function SiteDataPanel({
   const columns = tables.find((table) => table.name === selected)?.columns ?? [];
   return (
     <div className="site-data">
-      <SegmentedControl
-        ariaLabel="Which stored table to show"
-        onChange={setSelected}
-        options={tables.map((table) => ({
-          value: table.name,
-          label: table.name,
-          // The count is what a person picks a table by, and the control takes
-          // plain text labels, so it rides along as the segment's own tooltip.
-          title: `${table.rowCount} rows`,
-        }))}
-        value={selected ?? ''}
-      />
+      <div className="site-data-toolbar">
+        <SegmentedControl
+          ariaLabel="Which stored table to show"
+          onChange={setSelected}
+          options={tables.map((table) => ({
+            value: table.name,
+            label: table.name,
+            // The count is what a person picks a table by, and the control takes
+            // plain text labels, so it rides along as the segment's own tooltip.
+            title: `${table.rowCount} rows`,
+          }))}
+          value={selected ?? ''}
+        />
+        <CopyButton
+          copyText={surface.copyText}
+          disabled={!selected}
+          label="Copy as CSV"
+          value={() => loadTable(resourceId, selected ?? '').then(({ csv }) => csv)}
+        />
+      </div>
       <InsetSurface className="site-data-scroll">
         <table>
           <thead>
@@ -401,15 +403,6 @@ function SiteDataPanel({
           </tbody>
         </table>
       </InsetSurface>
-      <Button
-        className="site-data-export"
-        onClick={() => {
-          if (!selected) return;
-          void loadTable(resourceId, selected).then(({ csv }) => surface.copyText(csv));
-        }}
-      >
-        <Copy size={14} /> Copy as CSV
-      </Button>
     </div>
   );
 }

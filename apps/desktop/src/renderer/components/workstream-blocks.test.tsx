@@ -1417,7 +1417,13 @@ describe('MessageBlock markdown', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy code' }));
 
     await waitFor(() => expect(copyText).toHaveBeenCalledWith('const ready = true;'));
-    expect(screen.getByRole('button', { name: 'Copy code' })).toBeEnabled();
+    // The control says so, and the same click is the retry.
+    const failed = await screen.findByRole('button', { name: 'Copy failed — click to retry' });
+    expect(failed).toBeEnabled();
+    const writes = copyText.mock.calls.length;
+    fireEvent.click(failed);
+    await screen.findByRole('button', { name: 'Code copied' });
+    expect(copyText.mock.calls).toHaveLength(writes + 1);
   });
 });
 
