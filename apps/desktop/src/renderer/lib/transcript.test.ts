@@ -34,6 +34,7 @@ import {
   isComposerQueueOverlay,
   pendingOverlayInputId,
   pendingTranscriptInputOverlay,
+  type TranscriptOverlay,
 } from './transcript';
 
 const base = {
@@ -3251,6 +3252,30 @@ describe('composer queue overlays', () => {
       transcriptSequence: 4,
       elicitation: { status: 'answered', answer: ['workspace'] },
     });
+  });
+
+  it('keeps the reorder id on a send the room has accepted but not yet snapshotted', () => {
+    // The shape `conversation-surface` writes when `createMessage` resolves: it
+    // keeps the optimistic overlay's identity, gains the server turn id, and
+    // becomes a queued row — but it carries no `queueSequence`, because only a
+    // reorder or the next snapshot ever assigns one. It is a draggable row for
+    // that whole window, and keying "is this a queue row?" on the sequence
+    // dropped it into the non-draggable `sending` bucket at the bottom.
+    const accepted: TranscriptOverlay = {
+      identity: { type: 'client_message', clientMessageId: 'client-accepted', turnId: 'turn-1' },
+      provenance: { source: 'client_command', phase: 'accepted' },
+      position: { afterTranscriptSequence: 4, eventSequence: 91 },
+      message: createTextMessage({
+        ...base,
+        id: 'turn-1',
+        clientMessageId: 'client-accepted',
+        authorType: 'human',
+        text: 'Just accepted',
+        deliveryState: 'queue_pending',
+      }),
+    };
+    expect(pendingOverlayInputId(accepted)).toBe('turn-1');
+    expect(isComposerQueueOverlay(accepted, { harnessRunning: true })).toBe(true);
   });
 
   it('sorts the composer queue by queueSequence and parks sending rows last', () => {

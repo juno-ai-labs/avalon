@@ -838,9 +838,11 @@ that step never settles, and `applyBindLoopTransition` refuses the
 `protocol_user_appended` transition a steer, a queued message, or a
 resident-context delivery would need. The queue is therefore not drained in
 arrival order while a question is open: `inputsBindCanAccept` reads the withheld
-calls out of the live Bind projection, promotes the admitted answers that close
-them — at a safe step and at activation alike — and hands Bind nothing else
-until the batch settles. A batch withheld for any other reason keeps arrival
+calls out of the live Bind projection and promotes the admitted answers that
+close them first — at a safe step and at activation alike. That is a reordering
+rather than a hold: the tool result an answer appends settles the batch, so the
+rest of the queue follows it in the same pass, in arrival order, and only a
+question still unanswered holds anything back. A batch withheld for any other reason keeps arrival
 order and Bind's loud refusal, because repairing one is a run's own job and a
 queue that quietly reorders itself around it would hide that. `queue` means
 deliver after the persistent loop next becomes idle; promotion wakes that same
@@ -1729,7 +1731,9 @@ while the last assistant step holds an unanswered question. `inputsBindCanAccept
 reads the withheld tool calls out of the live Bind projection, promotes the
 admitted answers that close them first, and hands Bind nothing else until the
 batch settles — at a safe step (`settlePendingSteersAtStep`) and at activation
-(`activatePendingInput`) alike. `SubstreamAgent` no longer picks the queue head
+(`activatePendingInput`) alike. The queue is reordered behind the answer rather
+than held for a later step: the tool result settles the batch, so a queued
+message follows it in the same pass. `SubstreamAgent` no longer picks the queue head
 to activate; it asks `nextActivationInput` for the input the loop can actually
 take, and gets `undefined` while the only thing waiting is a message that would
 be refused. A host authority's derived inputs park on the same rule rather than
@@ -1773,7 +1777,6 @@ queue rather than in Bind, because Bind is right to refuse the shape and only
 the object knows which pending row would fix it. A room wedged before this
 shipped recovers on its own: the answer is still in the queue, and the next wake
 promotes it.
-
 
 ### 2026-09-11 — A read is acknowledged by the conversation that was read
 
