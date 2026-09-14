@@ -18,12 +18,12 @@
 
 A participant who did some of a work stream's thinking in ChatGPT or Claude
 before bringing it to Rally can bring that conversation with them. Beside the
-work-stream header's overflow menu sits an **Import** control — a box with an
-arrow pointing down into it. It takes the link to a shared conversation, shows
+work-stream header's overflow menu sits **Import conversation**, an import
+icon with a text label. It takes the link to a shared conversation, shows
 what it found and who it thinks was talking, and, once the participant
-confirms, writes the conversation into the transcript as if it had happened in
-the room: the owner's messages as their own turns when they are a member, or as
-a named guest when they are not; the assistant's replies as turns by **ChatGPT**
+confirms, writes the complete conversation into the transcript as visibly
+imported history: the owner's messages as their own turns when they are a member,
+or as a named guest when they are not; the assistant's replies as turns by **ChatGPT**
 or **Claude**, each carrying the provider's mark. Rally does not reply to any of
 it and the addressing classifier never runs — the same statement-of-intent
 mechanism the demo seeder uses, generalized from "a script says whether Rally
@@ -31,12 +31,15 @@ answers" to "an import says nobody is asking".
 
 The imported conversation is one collapsible block in the transcript, headed by
 a line saying who imported what from where, and one **artifact** in the
-contextual rail: a Markdown rendering of the whole conversation, with any images
+work-stream sidebar: a Markdown rendering of the whole conversation, with images
 the shared page shows attached to the turns they belonged to. From the next turn
 on, Rally can be asked about it like anything else said in the room; after a
 compaction the artifact is still there for the resource tools. Reasoning, tool
 calls, and hidden system messages are not imported; what a reader of the shared
-page sees is what arrives.
+page sees is what arrives. Every message on both sides carries **Imported ·
+Claude** or **Imported · ChatGPT** beside its author, with source details on
+selection. Reading shows actual progress phases; the source browser remains
+hidden unless the website requires the person to interact with it.
 
 ## Motivation
 
@@ -47,7 +50,7 @@ to paste the text as one enormous message (attributed to the paster, with the
 assistant's words in their mouth) or to attach the share link and hope somebody
 follows it. Neither makes the conversation *part of the room*: the transcript
 cannot show who said what, Rally cannot treat it as history rather than as a
-request, and the rail cannot list it as something the room is built on.
+request, and the artifact list cannot show it as something the room is built on.
 
 The request that produced this PRD came with two live examples — a shared
 ChatGPT conversation that produced an infographic through several rounds of
@@ -69,6 +72,13 @@ and no user row (Slack members, inbound email); and the desktop app already
 shows third-party web content inside a fenced browser view, the live-artifact
 viewer. What is new is small and named below.
 
+The product follow-up on 2026-09-13 made the visual requirement explicit:
+"id like for those imported messages to be tagged/labeled such that it is
+clear they were imported from an external session." A header alone disappears
+when a reader scrolls into a long import, while sequential message playback
+can look like a live assistant run. Persistent labels and a read-and-review
+flow make the origin and operation clear.
+
 ## Goals
 
 1. A participant pastes a public ChatGPT share link or a public Claude link
@@ -79,9 +89,9 @@ viewer. What is new is small and named below.
    workspace member only with the importer's confirmation, and otherwise
    appears under their own name as a guest; the assistant appears as ChatGPT or
    Claude with the provider's mark, never as Rally and never as a member.
-3. The import is one thing in the room and one thing in the rail: a collapsible
-   block in the transcript and an artifact in the contextual rail, each linking
-   to the other, so a reader can fold a fifty-message import to a line and a
+3. The import is one thing in the room and one thing in the artifact list: a
+   collapsible block in the transcript and an artifact in the work-stream
+   sidebar, each linking to the other, so a reader can fold an import to a line and a
    colleague can open the whole conversation as a document.
 4. Rally treats the imported conversation as history. The next turn that asks
    about it is answered from the transcript with no tool call, and after a
@@ -90,9 +100,15 @@ viewer. What is new is small and named below.
    to, through the same upload and verification path as a composer attachment;
    anything the page names but does not serve is marked in place rather than
    dropped silently.
-6. Failure is specific and never partial. A link that is private, expired,
-   unsupported, or that needs a sign-in the person declines names its reason in
-   the dialog; a conversation is written whole or not at all.
+6. Failure is truthful and never partial. The dialog explains the source's
+   actual state and distinguishes a known failed write from an unknown outcome
+   after a lost connection; a conversation is written whole or not at all.
+7. Reading exposes its actual phase, produces a complete preview, and asks
+   for confirmation before anything is posted. The source browser appears only
+   when interaction is necessary.
+8. Every imported message, including a member's own messages, identifies its
+   source without hovering or finding the block header. Its details identify
+   the original time, import time, and person who confirmed its attribution.
 
 ## Non-goals
 
@@ -105,9 +121,10 @@ viewer. What is new is small and named below.
    export archives. Where a page needs a sign-in — a public Claude Code session
    is visible only to someone signed in to claude.ai — the person signs in
    inside the fenced view on their own machine, in a partition Rally never
-   reads and discards afterwards. The share link is the only ingress, and
-   "public" means "anyone holding the link can read it", which is exactly the
-   condition under which copying it into a workspace needs no further consent.
+   reads and discards afterwards. The share link is the only ingress. Regular
+   public chat shares require no provider sign-in; public Claude Code sessions
+   follow the provider's logged-in-viewer rule. Ordinary private conversation
+   URLs and workspace-restricted shares remain unsupported even after sign-in.
    An export-archive import is a different, offline product and a different
    PRD. Deferred.
 3. **Backdating — rejected.** Imported turns are stamped with the real clock,
@@ -136,7 +153,7 @@ viewer. What is new is small and named below.
    built now.
 8. **Removing an import — deferred, and named so nobody assumes it.** Canonical
    turns are immutable, so an import cannot be undone by deleting rows. What is
-   possible today is detaching the artifact from the rail. A retraction
+   possible today is detaching the artifact from the work stream. A retraction
    mechanism for a whole block is its own change; until it exists the
    confirmation step is the safeguard, and the dialog says so.
 9. **Guest accounts — rejected.** A guest is a label on turns, not an identity.
@@ -145,62 +162,118 @@ viewer. What is new is small and named below.
    participants table is keyed on a member's user id — does not move.
 10. **Editing imported turns, or attributing individual turns differently
     after the fact — rejected.** Attribution is decided once, in the
-    confirmation step, for the whole conversation.
+    confirmation step, for the whole conversation. Selecting a subset or
+    summarizing the source before import is also deferred; this flow preserves
+    the complete captured conversation.
 
 ## Product behavior
 
-### The import control
+### Entry point and destination
 
-The work-stream header's action row gains an **Import** icon button — the
-`Import` glyph from `lucide-react`, an open-topped box with an arrow pointing
-down into it — placed immediately before the overflow menu's ellipsis, with the
-tooltip *Import a shared conversation*. It is the row's first dedicated action
-icon (sharing is an item in that overflow menu today, *Copy work-stream link*,
-not an icon), so the same item is also offered inside the overflow menu as
-*Import a shared conversation…*: the row hides its icons at narrow widths, and
-the menu is what remains. Both open the same dialog. A substream shows the
-control in its own header and imports into the substream.
+The work-stream header shows the existing Lucide **Import** glyph followed by
+**Import conversation**, immediately before **⋯**. It is a secondary action;
+the composer retains its normal send action. The accessible name and tooltip
+are **Import a shared conversation**.
 
-The control is shown to any workspace member who can open the conversation.
-Importing is posting: an importer who was not yet a participant becomes one
-with reason `message`, exactly as sending a message would make them.
+When the header cannot fit the label, the control can reduce to its icon. The
+overflow menu also contains **Import a shared conversation…**, including where
+dedicated header actions are hidden. Both actions open the same dialog. A
+substream's action targets that substream and names it explicitly.
 
-### Reading the link
+The dialog is bound to the workspace, work stream, and substream from which it
+was opened. It never silently retargets an import after navigation. Opening,
+reading, or canceling a preview does not add a participant. Confirmation follows
+the posting rules: a member who was not yet a participant becomes one with
+reason `message`, as with an ordinary message. The control is available to any
+workspace member who can open the destination conversation.
 
-The dialog opens on one field, *Paste a link to a shared conversation*, with
-a line naming what is accepted: a ChatGPT share link (`chatgpt.com/share/…`), a
-Claude share link (`claude.ai/share/…`), or a public Claude Code session
-(`claude.ai/code/session_…`). Anything else is refused in place, before any
-request is made, with *Rally can import shared ChatGPT and Claude conversations.
-This link is not one.*
+### Paste a link
 
-Submitting starts a **preview**. The dialog opens the link in a **fenced
-browser view** inside the app — the live-artifact viewer's isolation contract,
-pinned to the provider's host, with a throwaway partition — where the page loads
-exactly as it would in a browser: it passes the provider's bot check by being a
-real browser on the person's own machine, and if it asks for a sign-in (a public
-Claude Code session is visible only to someone signed in to claude.ai) the
-person signs in there, as themselves, and Rally never sees the credential. The
-dialog reads *Reading the shared conversation…* beside the view, with a cancel
-control; closing the dialog cancels a preview that has not been confirmed and
-discards the partition. Once the page has rendered, the app captures the
-transcript from the responses the page itself loaded — a ChatGPT share carries
-it in the page's HTML, a Claude share fetches it from `/api/chat_snapshots/<id>`,
-a Claude Code session from its own session endpoint — and sends those bytes to
-the regional Worker, which parses them with the provider's source adapter,
-stores the result against the import, and the dialog shows what it found:
+The dialog is titled **Import a shared conversation**. It contains one field,
+**Shared conversation link**, a short supported-source line, and **Add to
+[destination]**. The actions are **Cancel** and **Read conversation**. Enter
+in a valid link field performs the latter action.
 
-| The dialog shows | From |
-| --- | --- |
-| The provider's mark and the conversation's title | The page's own title |
-| Who the page says owns it, or *the page does not name its owner* | Claude Code sessions name the owner; a ChatGPT share is anonymous unless the sharer opted in |
-| The count of messages on each side, the date of the first and last, and the model where the page names one | The parsed conversation |
-| How many images will come in, and how many files the page names but does not serve | The parsed attachments |
-| Where it will land: this work stream, or the substream the dialog was opened from | The importer's position |
+Supported link families are `chatgpt.com/share/…`, `claude.ai/share/…`, and
+`claude.ai/code/session_…`. Empty input disables reading. An unsupported URL
+gets the inline error **Use a shared ChatGPT, Claude, or Claude Code link.**
+Validation parses the URL and provider path; a provider name elsewhere in an
+unrelated URL is not a match.
 
-Nothing is written to the room by a preview. A preview the importer neither
-confirms nor cancels is abandoned by the importer's next action on the dialog or
-by the open retention limit below.
+Pasting a share link into the ordinary composer does not automatically import
+it or change sending behavior. There is no provider sign-in step before reading
+a regular public share.
+
+### Reading and provider interaction
+
+The dialog replaces the link form with **Reading shared conversation…** and
+the actual phase of the operation. Progress is private to the importer; other
+participants see no provisional messages or loading block.
+
+| Phase | Visible copy | Behavior |
+| --- | --- | --- |
+| Opening | **Opening shared conversation…** | Load the source page in the temporary isolated browser view, kept out of sight. |
+| Reading | **Reading messages…** | Collect the conversation, including additional source pages when required. A discovered-message count may appear only when it is known. |
+| Attachments, when present | **Preparing attachments…** | Resolve what the shared page makes available and record unavailable attachments for the preview. |
+| Source needs sign-in | **Sign in to Claude to read this shared session.** | Reveal the actual provider page within the dialog, with its origin visible. Resume reading after sign-in succeeds. |
+| Source needs verification | **Complete the website check to continue.** | Reveal the provider's check for the person to complete; resume after it succeeds. |
+| Preparing | **Preparing preview…** | Finish parsing, order the messages, and prepare attribution and attachment information. |
+
+Regular public ChatGPT and Claude chat shares are read without provider
+sign-in. Claude Code has different access rules: Anthropic documents its public
+sessions as visible to logged-in Claude users. A browser check alone does not
+mean the conversation requires sign-in. The dialog responds to the source's
+actual state; it does not show a generic sign-in request whenever reading
+fails. See [OpenAI's shared-link access rules][chatgpt-access] and
+[Anthropic's Code sharing rules][claude-code-access].
+
+The browser disappears again when interaction is complete. The rest of the
+flow remains Rally's interface. **Cancel**, the close control, or Escape before
+confirmation stops the preview, closes its browser, and leaves the transcript
+untouched. A late completion from a canceled preview cannot reopen it.
+
+The UI shows phases rather than an invented percentage or estimated duration.
+It does not animate source words as though an assistant were generating them.
+The preview becomes ready only after the complete readable message sequence is
+captured; reaching the end of the initially rendered page is not sufficient.
+
+Once the page is readable, the main process captures transcript responses
+loaded by that page and sends the bytes to the regional Worker for the
+provider's deterministic adapter to parse. A ChatGPT share carries the data in
+its HTML, a Claude share loads `/api/chat_snapshots/<id>`, and a Claude Code
+session uses its session and event responses. Capturing an initial page does
+not establish that all source messages have been read. The parsed preview is
+stored against the import; no preview writes to the room. Abandoned previews
+follow the open retention limit below.
+
+### Review and attribution
+
+The ready dialog is titled **Ready to import** and shows:
+
+- Provider, source title, original date range, and the destination.
+- Total source-message count, with counts for the person and assistant, and
+  the model name where the page provides it.
+- Owner name supplied by the page, or **The shared page does not name its owner**.
+- **Attribute the person's messages to**, using the member-or-guest selection
+  rules under **Deciding who spoke** below. The importer can correct the
+  proposal before confirming.
+- A readable preview of the full captured sequence, using ordinary message and
+  Markdown rendering. Long previews can be scrolled; no arbitrary message cap
+  truncates the conversation being confirmed.
+- Available attachment counts and explicitly named unavailable files. A source
+  that does not expose an upload shows **Not available from the shared page**
+  beside that file. Unknown counts or dates are stated as unavailable, not zero
+  or an invented timestamp.
+- **Messages will be labeled “Imported · [provider]”.**
+
+The primary button reads **Import N messages**, where N is the captured source
+message count. Splitting an oversized source message into stored turns does not
+inflate that number; split parts retain the same source-message identity and
+label. The secondary action is **Cancel**. Confirmation applies to exactly the
+content and attribution shown, without an unreviewed refresh of the source.
+
+The dialog also states **Imported messages cannot currently be removed from
+the transcript**, per non-goal 8.
 
 ### Deciding who spoke
 
@@ -221,8 +294,8 @@ it. The proposal, in order:
 The importer can choose any workspace member from the picker instead. Choosing a
 member who is not yet a participant adds them as one, by the importer, exactly
 as the facepile's add-participant control would, and the dialog says so before
-confirmation: *Priya will be added to this work stream.* They receive the usual
-participant notification and nothing more.
+confirmation: *Priya will be added to this work stream*, or names the target
+substream. They receive the usual participant notification and nothing more.
 
 Rally never attributes words to a member on a name match alone: the confirmation
 is the importer's assertion, and it is recorded as one — the block header names
@@ -234,12 +307,36 @@ The assistant's side is never a choice. It is **ChatGPT** for a ChatGPT
 conversation and **Claude** for a Claude one, drawn with the provider's mark in
 the byline where a person's turn carries the accent dot.
 
-### What lands in the transcript
+### Confirmation and insertion
 
-Confirming writes the conversation to the room as one contiguous run of
-canonical turns, appended at the end of the transcript at the moment of
-confirmation, in one transaction: either the whole block is there or none of it
-is, and no live message from another participant can land in the middle of it.
+After confirmation, the primary action is disabled and the dialog shows
+**Adding N messages to [destination]…**. The import is one operation, identified
+durably so that repeated confirmation or reconnect resolves to the same result.
+Closing the progress surface after confirmation dismisses it; it does not claim
+to cancel a write already admitted. A later visit to Import shows the pending
+operation or its result until its outcome is known.
+
+The full transcript block becomes visible after its write succeeds. All of its
+messages are appended together in source order, with no live message inserted
+between them. The room writes the system turn and all imported canonical
+turns in one transaction. Participants never see half of a failed import,
+per-message send spinners, or a replay of the assistant's typing. The completed import includes
+the transcript artifact described below.
+
+If the importer is still in the originating dialog, completion closes it and
+positions the feed at the imported block's header, expanded, so the person can
+start at the beginning. This is an explicit consequence of confirmation and
+uses the existing transcript navigation mechanism. If the person dismissed the
+dialog or moved elsewhere, completion does not move their viewport or switch
+conversations; it offers **View imported conversation** in the existing import
+result surface. It preserves their composer draft.
+
+Other participants retain the usual follow-versus-reading behavior from
+[transcript scrolling](../../transcript-scrolling.md). A reader scrolled into
+history keeps their position. The import creates one unread item through its
+header, not one for each source message.
+
+### What lands in the transcript
 
 The run opens with a system turn — *Alex imported a ChatGPT conversation:
 Create Work Graph Infographic* — which is what the sidebar preview, the activity
@@ -252,14 +349,9 @@ Each imported turn is then an ordinary turn of one of three shapes:
 
 | The source said | The room shows | Written as |
 | --- | --- | --- |
-| The owner, matched to a member | The member's own turn, with their name and accent dot, in their own bubble | A human turn by that member, exactly as if they had sent it |
+| The owner, matched to a member | The member's own turn, with their name and accent dot, in their own bubble | A human turn by that member, retaining the import provenance and source label |
 | The owner, as a guest | *Morgan (guest)* with a plain accent dot | An external-actor turn: provider `chatgpt` or `claude`, display name as confirmed |
 | The assistant | *ChatGPT* or *Claude*, with the provider's mark in place of the dot | An external-actor turn: provider `chatgpt` or `claude`, display name *ChatGPT* or *Claude*, the model name the page gave in the turn's provenance |
-
-Every imported turn's byline carries the context label *imported*, and its
-hover reveals the original instant the page recorded for it — *said Sep 4,
-2026 at 3:36 PM* — beside the real time it was written to the room. The
-transcript's own clock is the latter.
 
 Text is rendered as Markdown through the same renderer as any turn. A source
 message longer than the message limit (`MESSAGE_MAX_CHARACTERS`, an existing
@@ -274,17 +366,63 @@ file the page names but does not serve (a user's upload on a ChatGPT share shows
 only its name) is a single line in the turn — *Attachment not available from the
 shared page: brief.pdf* — never a silent gap.
 
-**The block.** The client draws the contiguous run as one **imported
-conversation block**: a header row carrying the provider's mark, the title, the
-message count, the original date range, the owner label as confirmed, a link to
-the source page, and a chip for the artifact; below it, the turns. The header's
-chevron folds the whole run to that one row, the same chevron and quarter-turn
-the work accordion and the markdown headings already use, so a reader learns
-nothing new. The block arrives expanded, each reader's fold is their own and is
-remembered for the session, and a folded block still anchors the system turn so
-a link to it lands where it should. The block is derived on the client from the
-run's shared import id, the way the work accordion is derived from a run's rows;
-the server writes turns, not layout.
+### The imported block and message labels
+
+The block arrives expanded. A quiet vertical rule groups its messages with a
+header that reads **[Importer] imported a [provider] conversation**. The header
+also contains the source title, message count, original date range when known,
+confirmed owner, **View original**, and **Transcript**. The first opens the
+original provider URL; the second opens the saved Markdown artifact through
+Rally's existing artifact preview. The artifact also appears in the work-stream
+sidebar's artifact list; this does not introduce another rail or panel.
+
+The following illustrates the hierarchy; its conversation and counts are
+examples, not a required fixture:
+
+```text
+Alex imported a Claude conversation                         10:43 AM
+⌄ Queue reliability                              Imported · Claude
+  4 messages · Original: Sep 12, 2026 · Morgan (guest) & Claude
+  View original ↗   Transcript
+
+  Morgan (guest)   [Imported · Claude]                        10:43 AM
+  Can we make failed deliveries easier to recover?
+
+  Claude         [Imported · Claude]                       10:43 AM
+  Yes. Keep a record of each failed delivery…
+```
+
+Every message, on both sides, carries the text **Imported · Claude** or
+**Imported · ChatGPT** in its byline. Consecutive messages by one author still
+show the label on each message. This includes imported messages attributed to
+the current reader, split message parts, and messages containing only an
+attachment. The context label must not disappear when ordinary byline grouping
+would otherwise suppress the author row.
+
+The label uses a compact import glyph and the existing context-label treatment,
+with readable text in both themes. Color alone never conveys provenance. The
+provider's author mark supplements its written name; it is never Rally's mark.
+Message bodies retain ordinary typography, Markdown, and attachment rendering.
+The source label remains visible without hovering and wraps with the byline
+at narrow widths instead of becoming an unlabeled icon.
+
+Selecting a message's label opens a small **Import details** popover containing
+the provider and title, original message timestamp when available, import
+timestamp, importer, confirmed speaker, and source link. It states that the
+speaker attribution was confirmed by the importer. These are provenance
+details, not a claim that Rally verified the identity behind the original page.
+Original timestamps describe when words were said; the transcript's own clock
+continues to show when the import was added to Rally.
+
+The header chevron collapses the complete sequence into its source header.
+Title, provider, **Imported** label, count, provenance, and source/artifact
+actions remain available. Folding is per reader and remembered for the current
+session. Reopening restores source order. A link to a specific imported message
+expands the block as needed and shows that message with its source label.
+
+The block is derived on the client from the turns' shared import id. The
+server writes canonical turns, not layout. The header retains the system-turn
+anchor when folded.
 
 ### The artifact
 
@@ -295,9 +433,9 @@ carries the whole conversation with a heading per speaker turn and each
 attachment cited by its resource link, so the citation renderer draws it inline.
 Its canonical URL is the share link. It is attached to the conversation as an
 **artifact** — the `generated` relationship, authored by the importer — so it
-appears in the rail's artifact list with the provider's mark, opens in the
+appears in the work-stream sidebar's artifact list with the provider's mark, opens in the
 document viewer, and is listed to the agent by `workstream_list_resources` like
-any other resource. The block's header chip opens it; the artifact card's
+any other resource. The block's **Transcript** action opens it; the artifact card's
 *Show in transcript* jumps to the block.
 
 Re-importing a link whose content has changed since produces a new block and a
@@ -321,24 +459,40 @@ After a compaction the turns are summarized like everything else; the artifact
 survives in the resource inventory and Rally reads it with the resource tools
 when a task needs the verbatim text.
 
-### Failure, offline, and repeats
+### Failures, duplicates, and offline behavior
 
-| State | The dialog | The room |
+| Situation | What the importer sees | Transcript outcome |
 | --- | --- | --- |
-| Unsupported link | Refused before any request, with what is supported | Untouched |
-| Page not public, expired, or gone | *This conversation is not publicly shared, or the link has expired.* | Untouched |
-| The page asks for a sign-in | The view shows the provider's sign-in; the dialog says *This session is visible only to someone signed in to claude.ai. Sign in here to import it; Rally does not keep the sign-in.* | Untouched |
-| The page shows a browser check | The view shows it; the person completes it and the preview continues | Untouched |
-| The page rendered but no transcript could be captured | *Rally could not read this conversation.* — with the import id for support | Untouched |
-| The page changed shape and the adapter could not parse it | *Rally could not read this conversation's format* — with the import id; the fetched page is retained for diagnosis | Untouched |
-| Confirmed, then the write failed | *The import did not complete. Nothing was added.* with retry | Untouched — the write is one transaction |
-| Offline during a preview | The view cannot load the page; the dialog says so and offers retry | Untouched |
-| Offline after confirming | The block arrives with the feed when the socket returns, like any turn | Written; the importer sees it on reconnect |
-| Same link, same content, same conversation | Refused, linking to the existing block | Untouched |
+| Link is unavailable, inaccessible, or expired | **This shared conversation is unavailable, or you do not have access.** Offer another link. | Unchanged. Do not invent the precise cause. |
+| Page loads but cannot be read completely | **Rally couldn't read the complete conversation.** Offer retry and a support reference. | Unchanged; no successful partial import. |
+| Provider format is unsupported | **Rally can't import this conversation's format yet.** | Unchanged. |
+| No importable messages | **No messages were found to import.** | Confirmation is unavailable. |
+| Offline before confirmation | **You're offline. Reconnect to read this conversation.** Preserve the link and allow cancel/retry. | Unchanged. |
+| Write is known to have failed | **The import didn't complete. Nothing was added.** Offer retry of the same operation. | Unchanged. |
+| Connection is lost after confirmation | **Checking whether the import completed…** Resolve the existing operation on reconnect. | Unknown until reconciled; do not claim failure or create a second operation. |
+| Same link and unchanged content already imported here | **This conversation is already imported.** Offer **View imported conversation**. | No duplicate block. |
+| Source has changed since its previous import | Show a fresh preview and **Import updated conversation** with its count. | On confirmation, append a new block and version the existing artifact as described under **The artifact**. |
 
-An import is a durable operation with an id; repeating a confirmation returns
-its existing progress and result rather than a second block. There is no
-estimated time and no fabricated progress bar; the phase is the progress.
+Unavailable attachments are disclosed in the preview and represented on the
+corresponding imported message. A readable conversation can succeed with that
+disclosure; unreadable messages cannot be silently omitted to make it succeed.
+
+A parse failure retains the captured page for diagnosis under the open
+retention policy. Repeated confirmation reads the durable operation's existing
+status and result; a lost response is not proof that nothing was written.
+
+### Accessibility and interaction
+
+Use the shared dialog, button, field, tooltip, popover, and disclosure
+primitives. The link field receives focus on open; Cancel and Escape restore
+focus to the initiating control before confirmation. The dialog announces phase
+changes and completion politely, without reading the entire imported transcript
+as a live update. Errors are announced and leave the recovery action reachable.
+
+Source details work by click, keyboard, and touch. The disclosure communicates
+expanded state. Loading and insertion obey reduced-motion preferences. Import
+labels, source names, and recovery actions remain readable in light and dark
+appearance and at narrow conversation widths.
 
 ## Impact on the product contract
 
@@ -427,9 +581,9 @@ None yet.
    a colleague's words in the wrong mouth. The confirmation is recorded as the
    importer's assertion in the block header and in each turn's provenance.
 6. **Real clock, original instants preserved.** Per non-goal 3. Each turn's
-   provenance carries the instant the page recorded; the byline shows it on
-   hover and the block header shows the range. The transcript's order and clock
-   are the room's.
+   provenance carries the instant the page recorded; selecting the import
+   label opens it alongside the import time, and the block header shows the
+   original date range. The transcript's order and clock are the room's.
 7. **The artifact is a Markdown resource with the `generated` relationship,
    authored by the importer.** The user-facing word is *artifact*, and in the
    data model an artifact is the `generated` direction on a resource
@@ -455,8 +609,8 @@ None yet.
 10. **The operation is rows plus a Workflow that only points at them.** Preview
     and commit are phases of one durable import row, driven the way demo
     preparation is driven: every phase idempotent, the row written by the phase,
-    the client reading the row. A synchronous request was rejected because a
-    fetch with a stealth proxy and a page of images runs for tens of seconds and
+    the client reading the row. A synchronous request was rejected because
+    browser interaction and attachment preparation can outlive a connection;
     a dropped connection must not lose a confirmed import.
 11. **Idempotency by identity, not by checks.** An import is identified by
     conversation, canonical source URL, and content hash; every imported turn's
@@ -472,6 +626,24 @@ None yet.
     for splitting and `MAX_ATTACHMENT_BYTES` for each image. The host allowlist
     is not a quantity and needs no number.
 
+13. **Use text with the header icon where it fits.** A new, infrequent action
+    needs a discoverable name. An icon-only control remains
+    the compact treatment, with an overflow-menu fallback.
+14. **Keep the source browser hidden until interaction is required.** Ordinary
+    public shares need no account setup. Showing the entire provider website
+    throughout reading makes another application's interface part of every
+    import and obscures Rally's progress and confirmation.
+15. **Label every imported message with both origin and import status.** A
+    block-only marker disappears during scrolling; a bare provider name cannot
+    distinguish historical content from a provider participating live. The
+    shorter **Imported** alternative leaves the source at the top of the block.
+16. **Show operation phases and insert the finished block together.** Artificial
+    percentages and sequential message playback imply knowledge of remaining
+    work or a live conversation that the importer does not have.
+17. **Make provenance details explicitly openable.** A hover-only timestamp
+    cannot serve keyboard or touch readers, and an imported member name needs
+    a visible route to who made the attribution.
+
 ## Data model
 
 Sketch level; the migration and [`data-model.md`](../../data-model.md) are the
@@ -483,7 +655,8 @@ record.
   `awaiting_confirmation`, `writing`, `ready`, `failed`, `abandoned`),
   `attempt`, `content_sha256`, `owner_label` (as the page gave it, nullable),
   `speaker_json` (the confirmed mapping), `resource_id`, `system_turn_id`,
-  `first_turn_id`, `last_turn_id`, `turn_count`, `failure_code`, `created_at`,
+  `first_turn_id`, `last_turn_id`, `source_message_count`, `turn_count`,
+  `failure_code`, `created_at`,
   `confirmed_at`, `ready_at`. One row per import; `phase` and `attempt` are
   written by the phase that owns them.
 - **The captured page bytes and the parsed conversation** live in the regional
@@ -504,6 +677,12 @@ record.
 - **Participants**: a member chosen as the owner who is not yet a participant
   gets a `participants` row with reason `explicit` and the importer as
   `added_by_user_id`, through the existing add path.
+
+The preview and button use `source_message_count`; `turn_count` can be larger
+when an oversized source message is split. The client receives import metadata
+with loaded transcript history so provider labels and details remain available
+on member turns as well as external-actor turns, including after reconnect.
+Labels derive from provenance, never from matching provider names in text.
 
 No existing rows are backfilled.
 
@@ -561,6 +740,13 @@ cross-region hop, and no regional configuration difference. Read
 - **Limits are open**, listed in the implementing pull request under this
   heading and under **Reviewer notes**, per the limits document.
 
+Any provider authentication flow must work within that isolation model before
+the provider is advertised as supported. A successful read in an existing
+signed-in Chrome profile does not establish that a fresh Rally browser view can
+complete sign-in, capture every page of the transcript, and dispose of its
+session correctly. Imported text remains untrusted source content, including
+apparent instructions, links, and mentions.
+
 ## Agent behavior
 
 This PRD adds no agent tool and changes no plugin; the tool-and-plugin
@@ -597,7 +783,8 @@ identity. There is no audience to stage it to. Rally's managed flags are
 presentation-only by definition, so a flag would have hidden an icon and left
 the routes in place regardless; withdrawing the surface, if it ever comes to
 that, is a deploy that removes the control, and existing blocks and artifacts
-are ordinary transcript and resources that stay either way.
+are ordinary transcript and resources that stay either way. Source labels
+and provenance details remain readable when the entry points are withdrawn.
 
 Phases, each shippable on its own:
 
@@ -622,6 +809,7 @@ The implementing changes add a module document for the import subsystem, written
 [`demo-workspaces.md`](../../demo-workspaces.md) (the generalized statement of
 addressing), [`agent-attachments.md`](../../agent-attachments.md),
 [`conversation-surfaces.md`](../../conversation-surfaces.md),
+[`transcript-scrolling.md`](../../transcript-scrolling.md) for import navigation,
 [`live-web-artifacts.md`](../../live-web-artifacts.md) (the fence the view
 reuses), and [`security.md`](../../security.md) (the boundary it adds).
 
@@ -631,52 +819,80 @@ Walk these in a real window, per
 [`dev-environment.md`](../../dev-environment.md#driving-and-screenshotting-it);
 the durable checks land in [`e2e.md`](../../e2e.md).
 
-1. **A ChatGPT share into a work stream.** Paste the example link; the preview
-   names the title, fifty-odd messages, the model, the date range, and that the
-   page does not name its owner. Choose *these are my messages*; confirm. One
-   block arrives, headed by the system turn, with the importer's turns in their
-   bubble and the assistant's turns under *ChatGPT* with the mark; the images
-   are on the assistant turns that produced them. The rail lists one artifact
-   with the mark; its card jumps to the block; the block's chip opens the
-   document. Another participant's sidebar shows one unread item, not fifty.
-2. **A guest.** Import a page whose owner is not a member; confirm the guest
-   default. Turns read *Name (guest)*; a mention of that name resolves nowhere;
-   nobody was notified.
-3. **A matched member who was not a participant.** Choose them; the dialog
-   warns they will be added; after confirmation they are a participant with
-   reason `explicit`, added by the importer, and received one participant
-   notification.
-4. **Rally does nothing, then does the right thing.** No run starts and the
-   classifier is not called (the room's harness-run receipts show none). The
-   next message — *summarize what the assistant in there concluded* — is
-   answered from the transcript with no tool call, and the answer attributes the
-   conclusions to ChatGPT, not to itself.
-5. **Fold.** The header chevron folds the block to one row and unfolds it; a
-   link to the system turn lands on the folded block.
-6. **Nothing partial.** Kill the Worker between the fetch and the write, and
-   again mid-write; the room has either the whole block or none, and the dialog
-   says which.
-7. **Refusals.** An unsupported link, a private link, and the same link twice
-   each produce their named message and leave the room untouched.
-8. **Compaction.** After a compaction the artifact is still in the rail and the
-   agent reads it through `workstream_read_resource` when asked for the verbatim
-   text.
-9. **Every new limit is open**: `rg -n "LIMIT UNSET"` outside `docs/` lists
-   each one this feature added.
-10. **No flag stands between a member and the control.** A fresh workspace's
-    member sees the import control with no operator action anywhere.
+1. **Discover and target.** From a work stream and a supported substream, use
+   the labeled header control and its compact/menu fallback. The dialog names
+   the correct destination and preserves the composer draft.
+2. **Read a public chat anonymously.** Import a working ChatGPT share and
+   Claude share in a fresh temporary browser session. Normal reading shows
+   Rally's phases without displaying a website or requesting provider sign-in.
+3. **Complete required interaction.** With a public Claude Code session or a
+   provider check, the actual page appears with its origin, resumes reading
+   after interaction, and disappears when the preview is ready. Cancel closes
+   it and adds nothing.
+4. **Read the full sequence.** Use a conversation longer than its initially
+   rendered page, including Markdown and attachments. All readable messages
+   appear in order; unavailable attachments are disclosed before confirmation.
+5. **Confirm attribution.** Exercise a matched member, a corrected member, an
+   anonymous owner, and a guest. Nothing is posted on a name match alone; any
+   added participant is disclosed before confirmation. A newly added member
+   receives reason `explicit`, the importer as the adding member, and one
+   normal participant notification.
+6. **Observe insertion.** Confirm an import while another participant sends a
+   message. Reading remains private; **Adding N messages…** resolves to one
+   contiguous block, one unread item, and its transcript artifact. Rally does
+   not respond and live messages do not split the block. Harness-run receipts
+   and classifier checks establish that no run or classification was
+   triggered; the next request is answered with conclusions attributed to the
+   source assistant.
+7. **Recognize every imported message.** Scroll beyond the header and inspect
+   both authors, consecutive messages, the current member's messages, split
+   parts, and attachment-only messages. Each still says **Imported ·
+   provider**. Reload and load older history; the labels survive.
+8. **Inspect provenance.** Open a label by keyboard and pointer. Original
+   time, import time, importer, attributed speaker, and source are
+   distinguishable; absent source metadata is not invented. The provider
+   author is never Rally.
+9. **Fold and navigate.** Collapse and reopen the block, open its artifact,
+   and navigate directly to an imported message. The header remains
+   informative, ordering is stable, and one reader's fold does not affect
+   another reader. A link to the system turn lands on the folded header.
+10. **Preserve the reading position.** Import completion positions the active
+    importer at the header. A participant reading history is not moved;
+    leaving or dismissing the import does not cause a later route or viewport
+    jump.
+11. **Recover without duplication.** Cancel during reading; fail a write; lose
+    the confirmation response; reconnect; and repeat confirmation. Show the
+    truthful state and resolve to at most one block for the same operation.
+    Unchanged re-import links to the existing block; changed content gets its
+    own reviewed block and artifact version. Also interrupt the Worker before
+    and during the write: the room contains the whole block or none of it, and
+    the dialog reconciles any unknown outcome.
+12. **Compaction.** After compaction, the artifact remains in the work-stream
+    sidebar and Rally reads its verbatim text through
+    `workstream_read_resource` when asked.
+13. **Every new limit is open.** `rg -n "LIMIT UNSET"` outside `docs/` lists
+    each limit introduced by this feature, with no new defensive number chosen
+    by the implementation.
+14. **No flag gates the control.** A member of a fresh workspace sees the
+    import action with no operator configuration.
+15. **Inspect the real window.** Check light/dark appearance, narrow widths,
+    focus restoration, source popovers, disclosure, and reduced motion. Use
+    the repository's [visible-change
+    verification](../../dev-environment.md#driving-and-screenshotting-it) and
+    [test guidance](../../testing.md); a mockup or DOM assertion alone does
+    not prove the shipped experience.
 
 ## Open questions
 
-- **What does a Claude Code session page load? — settles the phase 2
-  adapter, blocks nothing else.** A public session is visible only to a
-  signed-in claude.ai user, so the sandbox could not load one, and the session
-  route is a separate shell from the main claude.ai bundle, so its endpoint is
-  not in the code the sandbox could read
-  ([research.md §5](research.md#5-what-the-documentation-and-the-app-bundle-say)).
-  The build's first task loads the example session in the fenced view, signed
-  in, and records the response the page reads; the adapter is written against
-  that capture and the decision log records the shape.
+- **Can a fresh Rally view complete the full Claude Code import? — settles
+  the phase 2 adapter, blocks nothing else.** The follow-up investigation read a
+  shared Code session in a signed-in Chrome profile. That does not yet prove
+  sign-in inside the isolated temporary view or capture of the complete event
+  sequence. The build loads a working public session in that view, records the
+  transcript responses including pagination, and verifies session disposal.
+  The adapter is written against that capture; the decision log records the
+  shape and any change needed for provider authentication. The earlier sandbox
+  limitation remains recorded in [research.md](research.md).
 - **ChatGPT images — best effort, does not block.** The share carries images
   as `sediment://` pointers the hydrated page resolves inside its own session;
   the view captures the resolved image responses the page loads. If a pointer
@@ -690,6 +906,6 @@ the durable checks land in [`e2e.md`](../../e2e.md).
   `MESSAGE_MAX_CHARACTERS`; a page load in the view is bounded by the open
   preview deadline; and one import writes one transaction of `turn_count + 1`
   rows plus one resource per image.
-- **Wording for guests.** *Morgan (guest)* is the proposal; *Morgan · guest* in the
-  byline's context-label slot is the alternative. Decide with the designer of
-  the byline; nothing else depends on it.
+
+[chatgpt-access]: https://help.openai.com/en/articles/7925741-chatgpt-shared-links-faq
+[claude-code-access]: https://code.claude.com/docs/en/claude-code-on-the-web#share-sessions
