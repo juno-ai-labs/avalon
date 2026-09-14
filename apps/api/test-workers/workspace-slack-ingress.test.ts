@@ -611,7 +611,6 @@ describe("Slack agent sessions", () => {
       slack_stream_ts: null,
       last_delivery_key: null,
       reaction_current: null,
-      reaction_cursor: 0,
     });
 
     const byThread = WorkspaceSlackSessionResultSchema.parse(await workspace().slackSessionByThread({
@@ -756,38 +755,36 @@ describe("Slack agent sessions", () => {
 
   it("settles the status reaction only against the emoji the caller removed", async () => {
     await createSession();
-    const settle = (expected: string | null, reaction: string | null, cursor?: number) =>
+    const settle = (expected: string | null, reaction: string | null) =>
       workspace().settleSlackSessionReaction({
         workspaceId: WORKSPACE_ID,
         sessionId: "session-1",
         expected,
         reaction,
-        ...(cursor === undefined ? {} : { cursor }),
         at: at(5),
       }).then((result) => WorkspaceSlackSessionReactionResultSchema.parse(result));
 
     // NULL is a state, not a missing value: this transition removed nothing.
-    expect(await settle(null, "eyes", 1)).toEqual({ outcome: "settled" });
+    expect(await settle(null, "eyes")).toEqual({ outcome: "settled" });
     // The same caller retrying, or a rival that read the same empty slot,
     // loses — the row no longer carries what it expected to remove.
-    expect(await settle(null, "hourglass")).toEqual({ outcome: "raced" });
-    expect(await settle("eyes", "hourglass")).toEqual({ outcome: "settled" });
+    expect(await settle(null, "white_check_mark")).toEqual({ outcome: "raced" });
+    expect(await settle("eyes", "white_check_mark")).toEqual({ outcome: "settled" });
     const session = WorkspaceSlackSessionResultSchema.parse(await workspace().slackSessionById({
       workspaceId: WORKSPACE_ID,
       sessionId: "session-1",
     })).session;
-    // The losing settle wrote nothing, so the cursor is still the winner's.
-    expect(session).toMatchObject({ reaction_current: "hourglass", reaction_cursor: 1 });
+    // The losing settle wrote nothing, so the winner's emoji still stands.
+    expect(session).toMatchObject({ reaction_current: "white_check_mark" });
   });
 
-  it("restarts the rotation when a follow-up re-anchors the reaction", async () => {
+  it("moves the status reaction when a follow-up re-anchors it", async () => {
     await createSession();
     await workspace().settleSlackSessionReaction({
       workspaceId: WORKSPACE_ID,
       sessionId: "session-1",
       expected: null,
       reaction: "eyes",
-      cursor: 3,
       at: at(5),
     });
 
@@ -807,7 +804,6 @@ describe("Slack agent sessions", () => {
       reaction_channel_id: "C1",
       reaction_message_ts: "9.0",
       reaction_current: "eyes",
-      reaction_cursor: 0,
     });
   });
 

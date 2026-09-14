@@ -244,13 +244,12 @@ a demo" without waking a retired object to ask. It is a shadow written after
 the fact, owned by [`demo-workspaces.md`](demo-workspaces.md); retirement never
 reads it, and a workspace no demo made has no row for it to touch.
 
-Two workspace-scoped Durable Object classes are **not** gated and not walked:
+One workspace-scoped Durable Object class is **not** gated and not walked:
 `ArtifactHostDO`, which serves a work stream's published artifacts and asks
 `WorkstreamDO.canReadWorkstream` before serving — that answer is `false` on a
 retired work stream, so a retired workspace's artifacts stop serving on their
 next visibility check, but the host itself is never tombstoned and its own
-alarm and facet storage are untouched; and `SlackReactionTicker`, whose alarm
-is bounded and self-clearing. Gating and walking artifact hosts is the
+alarm and facet storage are untouched. Gating and walking artifact hosts is the
 remaining piece of "nothing in it ever writes again", recorded under **Open
 questions**.
 

@@ -299,7 +299,6 @@ export const WorkspaceSlackSessionSchema = deferredZodSchema(() => z.strictObjec
   reaction_message_ts: z.string().nullable(),
   /** Only what Rally placed itself, so a transition never takes a member's. */
   reaction_current: z.string().nullable(),
-  reaction_cursor: z.number().int().nonnegative(),
 }));
 
 export const WorkspaceSlackSessionResultSchema = deferredZodSchema(() => z.strictObject({
@@ -425,7 +424,6 @@ export const WorkspaceSlackSessionReactionRequestSchema = deferredZodSchema(() =
   sessionId: z.string().min(1),
   expected: z.string().nullable(),
   reaction: z.string().nullable(),
-  cursor: z.number().int().nonnegative().optional(),
   at: TimestampSchema,
 }));
 
@@ -437,10 +435,9 @@ export const WorkspaceSlackSessionReactionResultSchema = deferredZodSchema(() =>
 /**
  * Move the status reaction onto the message that made the newest prompt.
  *
- * A follow-up in an existing thread restarts the rotation rather than resuming
- * the previous run's position, so the cursor resets to 0 here. Unconditional,
- * unlike {@link WorkspaceSlackSessionReactionRequestSchema}: this is the run
- * declaring where its status now lives, not a transition racing another.
+ * Unconditional, unlike {@link WorkspaceSlackSessionReactionRequestSchema}:
+ * this is the run declaring where its status now lives, not a transition
+ * racing another.
  */
 export const WorkspaceSlackSessionReactionAnchorRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
