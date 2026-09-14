@@ -245,7 +245,6 @@ jobs:
       # from hiding the identity in a transient keychain that the final DMG
       # signing hook cannot see.
       CSC_NAME: Juno AI Labs Inc. (7ZLT6A8W25)
-      RALLY_MAC_PROVISIONING_PROFILE_PATH: ${{ runner.temp }}/rally.provisionprofile
       APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -284,6 +283,8 @@ jobs:
         env:
           RALLY_MAC_PROVISIONING_PROFILE: ${{ secrets.RALLY_MAC_PROVISIONING_PROFILE }}
         run: |
+          RALLY_MAC_PROVISIONING_PROFILE_PATH="$RUNNER_TEMP/rally.provisionprofile"
+          echo "RALLY_MAC_PROVISIONING_PROFILE_PATH=$RALLY_MAC_PROVISIONING_PROFILE_PATH" >> "$GITHUB_ENV"
           test -n "$RALLY_MAC_PROVISIONING_PROFILE"
           printf '%s' "$RALLY_MAC_PROVISIONING_PROFILE" | openssl base64 -d -A > "$RALLY_MAC_PROVISIONING_PROFILE_PATH"
 
