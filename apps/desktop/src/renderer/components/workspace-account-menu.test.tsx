@@ -206,7 +206,7 @@ describe('workspace account menu', () => {
     openMenu();
 
     const menu = screen.getByRole('menu');
-    expect(within(menu).getByText('global workspace')).toBeVisible();
+    expect(within(menu).getByText('Workspace')).toBeVisible();
     expect(within(menu).queryByRole('menuitem', { name: /Reconnect/u })).not.toBeInTheDocument();
     expect(within(menu).queryByText(/Reconnect your account/u)).not.toBeInTheDocument();
   });

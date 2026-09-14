@@ -1,4 +1,4 @@
-import { configuredRegions, isConfiguredRegion } from "@rally/contracts/regions";
+import { isConfiguredRegion } from "@rally/contracts/regions";
 import type { Region } from "@rally/contracts/regions";
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
@@ -165,7 +165,7 @@ async function classifyInactiveGenerations(
 
 async function purgeExpiredUploadGenerations(rootDirectory: string, now: Date): Promise<string[]> {
   const purged: string[] = [];
-  for (const route of configuredRegions) {
+  for (const route of await listDirectories(join(rootDirectory, 'upload'))) {
     const routeDirectory = join(rootDirectory, 'upload', route);
     for (const generationId of await listDirectories(routeDirectory)) {
       const directory = join(routeDirectory, generationId);

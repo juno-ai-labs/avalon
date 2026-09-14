@@ -28,12 +28,11 @@ function parsedPreferences(value: string | null): DevicePreferences | null {
     const workspaceName = candidate['workspaceName'];
     const microphoneDeviceId = candidate['microphoneDeviceId'];
     const theme = parseThemeChoice(candidate['theme']);
-    if (selectedRegion !== undefined && !isConfiguredRegion(selectedRegion)) return null;
     if (workspaceName !== undefined && typeof workspaceName !== 'string') return null;
     if (microphoneDeviceId !== undefined && typeof microphoneDeviceId !== 'string') return null;
     return {
       version: 1,
-      ...(selectedRegion ? { selectedRegion } : {}),
+      ...(isConfiguredRegion(selectedRegion) ? { selectedRegion } : {}),
       ...(typeof workspaceName === 'string' ? { workspaceName: workspaceName.trim() } : {}),
       ...(typeof microphoneDeviceId === 'string' && microphoneDeviceId.trim()
         ? { microphoneDeviceId: microphoneDeviceId.trim() }
