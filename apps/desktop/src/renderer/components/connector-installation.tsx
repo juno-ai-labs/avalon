@@ -2,6 +2,7 @@ import { AshbyEventLabels, type ConnectorInstallation } from "@rally/contracts";
 import { useState, useSyncExternalStore } from 'react';
 import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { RallyApi } from '../lib/api';
+import { CopyField } from './copy-button';
 import { Button, InlineError, Modal } from './primitives';
 import { SettingLabel } from '../settings/setting-label';
 import { settings } from '../settings/registry';
@@ -104,7 +105,6 @@ export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, on
   const online = useSyncExternalStore(subscribeOnline, readOnline);
   const [apiKey, setApiKey] = useState('');
   const [registration, setRegistration] = useState<{ destination: string; signingSecret: string; account: string } | null>(null);
-  const [copied, setCopied] = useState<'destination' | 'secret' | 'failed' | null>(null);
   const recovery = useWorkspaceInstallationRecovery(api, 'fireflies', (connectionId) => {
     setApiKey('');
     onSuccess();
@@ -145,22 +145,14 @@ export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, on
         <li>Save.</li>
       </ol>
       {/* Copied rather than read: a connection URL is longer than the field,
-          and the secret is deliberately the one thing nobody should retype. */}
-      <label className="form-field"><span>Endpoint URL</span><input aria-label="Fireflies endpoint URL" readOnly spellCheck={false} value={registration.destination} /></label>
-      <Button onClick={() => { void desktopBridge().copyText(registration.destination).then(() => setCopied('destination')).catch(() => setCopied('failed')); }}>
-        {copied === 'destination' ? 'Endpoint copied' : 'Copy endpoint'}
-      </Button>
-      <label className="form-field"><span>Signing secret</span><input aria-label="Fireflies signing secret" readOnly spellCheck={false} type="password" value={registration.signingSecret} /></label>
-      <Button onClick={() => { void desktopBridge().copyText(registration.signingSecret).then(() => setCopied('secret')).catch(() => setCopied('failed')); }}>
-        {copied === 'secret' ? 'Secret copied' : 'Copy signing secret'}
-      </Button>
-      {/* Said out loud rather than left to a label that silently never changes:
-          the clipboard refuses often enough (an unfocused window, a denied
-          permission) and this secret cannot be read back off the screen, so a
-          copy that failed has to be a thing the administrator is told about. */}
-      <p aria-live="polite">{copied === 'failed'
-        ? 'Copying failed. Select the value in the field and copy it by hand before closing.'
-        : copied ? 'Copied to the clipboard.' : ''}</p>
+          and the secret is deliberately the one thing nobody should retype.
+          The control says whether the copy worked — the clipboard refuses
+          often enough (an unfocused window, a denied permission) and this
+          secret cannot be read back off the screen, so a copy that failed has
+          to be a thing the administrator is shown, and the field is the one
+          place they are looking. */}
+      <CopyField copyLabel="Copy endpoint" inputLabel="Fireflies endpoint URL" label="Endpoint URL" value={registration.destination} />
+      <CopyField copyLabel="Copy signing secret" inputLabel="Fireflies signing secret" label="Signing secret" secret value={registration.signingSecret} />
       <p><strong>Copy the signing secret now.</strong> Rally will not show it again; replacing it means removing this connection and connecting again.</p>
       {/* The one consequence that reaches a system the administrator is not
           looking at: Fireflies keeps a single URL, so saving this silently

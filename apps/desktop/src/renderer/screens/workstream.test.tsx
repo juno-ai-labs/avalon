@@ -1059,25 +1059,29 @@ describe('JumpToLatestButton', () => {
 });
 
 describe('RunFailureNotice', () => {
-  it('shows a typed member-safe error and exposes retry and request-id actions', () => {
-    const onCopyRequestId = vi.fn();
+  it('shows a typed member-safe error, the request id beside its copy control, and retry', async () => {
+    copyText.mockReset();
+    copyText.mockResolvedValue(undefined);
     const onRetry = vi.fn();
     render(
-      <RunFailureNotice
-        code="context_limit_exceeded"
-        message="The run exceeded the model context window."
-        onCopyRequestId={onCopyRequestId}
-        onRetry={onRetry}
-        requestId="run-request-123"
-        retrying={false}
-      />,
+      <Tooltip.Provider>
+        <RunFailureNotice
+          code="context_limit_exceeded"
+          message="The run exceeded the model context window."
+          onRetry={onRetry}
+          requestId="run-request-123"
+          retrying={false}
+        />
+      </Tooltip.Provider>,
     );
 
     expect(screen.getByRole('alert')).toHaveTextContent('The run exceeded the model context window.');
     expect(screen.getByRole('alert')).toHaveTextContent('context_limit_exceeded');
+    // The id is on screen, so the icon beside it is about something.
+    expect(screen.getByRole('alert')).toHaveTextContent('run-request-123');
     fireEvent.click(screen.getByRole('button', { name: 'Copy request ID' }));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith('run-request-123'));
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(onCopyRequestId).toHaveBeenCalledOnce();
     expect(onRetry).toHaveBeenCalledOnce();
   });
 
@@ -1086,7 +1090,6 @@ describe('RunFailureNotice', () => {
       <RunFailureNotice
         code="provider_timeout"
         message="The provider timed out."
-        onCopyRequestId={vi.fn()}
         onRetry={vi.fn()}
         retrying
       />,
