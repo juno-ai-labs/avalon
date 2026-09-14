@@ -94,7 +94,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
-| `packages/contracts/src/automation-evaluators.ts` | The strict external-event evaluator grammar (`always`, or `all` over leaves), the delivery message the matcher emits, and `automationBindableResourceTypes` — the one answer to which resources a rule may name, which search, both validators and the `resourceId` normalizer all read. |
+| `packages/contracts/src/automation-evaluators.ts` | The strict external-event evaluator grammar (`always`, or `matching` over leaves), the preprocess that still accepts the pre-rename `all` on rows already stored, the delivery message the matcher emits, and `automationBindableResourceTypes` — the one answer to which resources a rule may name, which search, both validators and the `resourceId` normalizer all read. |
 | `apps/api/src/services/external-event-evaluator.ts` | The pure predicate evaluator WorkspaceDO matches registrations with. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Migration 31: `automation_directory` and `workspace_external_event_registrations`; `applyAutomationDirectory`, `listAutomationDirectory`, `listWorkstreamAutomations`, `automationOwner`, `workstreamParticipant`, `applyExternalEventRegistrations`, `matchExternalEventDestinations`, and the owning-room archive fan-out `notifyOwningRoomArchival`. |
 | `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `admitExternalEvent`, and a run child's effects to the object through the shared effect leg. |
@@ -297,12 +297,23 @@ stream sends no evaluator object, while an automation needs predicates because
 it selects event families, content, people, and provider fields.
 
 An evaluator rule is one AND group: `when` is `{kind: "always"}` or
-`{kind: "all", allOf: [leaf, ...]}` over the manifest's declared attributes.
+`{kind: "matching", allOf: [leaf, ...]}` over the manifest's declared attributes.
 Unknown keys, operators, attributes, plugin/event pairs, duplicate ids, empty
 groups, non-finite numbers, and wrong scalar kinds are rejected at every
 boundary; missing fields make positive and negative predicates false and only
 `presence.not_exists` matches absence; matching is case-sensitive with no
 coercion. A rule that needs OR is two rules.
+
+`matching` was spelled `all` until the rename, and rows carrying that spelling
+are still stored in `definition_revisions.evaluator_rules_json` and
+`workspace_external_event_registrations.evaluator_json`. A Zod `preprocess` on
+`ExternalEventPredicateV1Schema` rewrites the legacy discriminant before
+validation, so both columns keep parsing while every reader past that seam sees
+`matching` alone. Because it maps the value *before* the union rather than
+adding a third branch to it, the JSON schema `set_evaluator_rules` derives for
+the drafting model still names one spelling — which is the point of the rename,
+`all` being indistinguishable from `always` to a model reading the two side by
+side. What has to be true before the seam can go is in the changelog.
 
 A rule may also narrow itself to one resource, and `automationBindableResourceTypes`
 (contracts) is the single answer to which one: the resource types the rule's own
@@ -618,7 +629,7 @@ or the memory store the automation scope lives in.
 | `apps/api/test/scoped-memory.test.ts` | `pnpm --filter @rally/api test` | A Sidekick's conversation resolving the workspace scope and its own `sidekick` scope. |
 | `apps/api/test/resend-inbound-email.test.ts`, `workstream-email-routing.test.ts`, `workstream-email-address.test.ts` | `pnpm --filter @rally/api test` | The single admission call, its receipts, and the address claim. |
 | `apps/api/test/access-revocation.test.ts` | `pnpm --filter @rally/api test` | The workspace fan-out naming an automation and the consumer walking its children. |
-| `packages/agent-harness/src/automation-creator-tools.test.ts` | `pnpm --filter @rally/agent-harness test` | The drafting tools, the `all` evaluator shape, and the submission pre-check. |
+| `packages/agent-harness/src/automation-creator-tools.test.ts` | `pnpm --filter @rally/agent-harness test` | The drafting tools, the `matching` evaluator shape, the tool schema offering that spelling alone, and the submission pre-check. |
 | `packages/contracts/src/automation-evaluator-resources.test.ts` | `pnpm --filter @rally/contracts test` | Which resources a rule may name: the bindable set and its predicate, and the sentinel and structural cases that drop an id before the parse. |
 | `apps/api/test/automation-creator-catalog.test.ts` | `pnpm --filter @rally/api test` | The drafting catalog and its research tools against the routed workspace database: the connection a webhook earns by its triggers alone, people search, and `resources_search` returning only bindable containers — the fresher event resource beside them left out, and nothing at all where a connector declares no relationship. |
 
@@ -724,6 +735,47 @@ alarm entry behind its backoff gate in `_internal_durable_alarms`;
 run refusing provider writes with "This automation run is no longer running"
 was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
+
+### 2026-09-14 — The AND-group predicate is `matching`, and stored `all` rows are still read
+
+**What changed:** The external-event predicate's conjunction discriminant is
+`matching`. `always` is untouched, and so is the `allOf` field name. A
+`preprocess` on `ExternalEventPredicateV1Schema` rewrites a legacy `all` to
+`matching` before validation, so the rule grammar has one canonical spelling
+everywhere past that seam.
+
+**Why:** The union's two arms sat next to each other and read as near-synonyms.
+`all` means "every one of these leaves holds"; `always` means "every event of
+this type". A model reading them side by side has nothing to separate them, and
+this grammar is written by the drafting model through `set_evaluator_rules`
+rather than by a person — so the ambiguity landed in authored rules, not just in
+review comments. `matching` cannot be misread as a quantifier over events.
+
+**Considered and rejected:** Admitting `all` as a third union branch that
+transforms to `matching`, which is the shape this normally takes. It parses
+stored rows identically, but `z.toJSONSchema(…, { io: "input" })` renders a
+union branch by branch, so the tool schema would have offered the model *both*
+spellings and reinstated exactly the collision the rename removes. Zod treats a
+`preprocess`'s input as unrepresentable and falls through to the canonical
+union, which is why the compatibility lives there and not in the union.
+`automation-creator-tools.test.ts` asserts the generated schema names `matching`
+and `always` and not `all`, so that regression fails a test rather than reaching
+a model. Also rejected: a migration rewriting the stored columns now, which
+buys nothing a preprocess does not and has to run in both regions.
+
+**Consequences:** `all` is accepted at exactly one place and is legal in stored
+data only — never in anything written, and never in a value a reader branches
+on. Any new reader of the discriminant must compare against `matching`. The
+seam can only be deleted once no stored row spells it `all`: that needs a
+migration over `definition_revisions.evaluator_rules_json` and
+`workspace_external_event_registrations.evaluator_json` in every region, or
+proof that every revision and registration predating the rename has since been
+rewritten by a normal accept or reconcile. Deleting it without one of those does
+not fail a parse anybody sees in review — it throws inside
+`matchExternalEventDestinations` on the delivery path, and every event-driven
+Sidekick registered before the rename silently stops waking. Note that
+`ReadPolicy` in `authorization-policy.ts` has its own unrelated `{kind: 'all'}`;
+it shares the spelling and nothing else, and was deliberately left alone.
 
 ### 2026-09-13 — Removing a Sidekick is presented as archive
 
