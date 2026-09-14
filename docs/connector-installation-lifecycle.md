@@ -102,7 +102,9 @@ Fireflies is the worked example of a provider that can automate none of this.
 It exposes no webhook create, inspect, update or delete operation anywhere in
 its API — only a dashboard page — so its facet declares create, update, remove
 and rotate **manual**, and inspect and reconcile **unsupported**. Three
-consequences follow without any Fireflies-specific code in the runner.
+consequences follow without any Fireflies-specific code in the runner. Its
+verifying delivery is usually the dashboard's test event rather than a meeting;
+[`connectors.md`](connectors.md#fireflies) has how the ingress treats it.
 
 A manual create never reaches `management.create`: the runner settles the step
 as action required carrying the facet's `manualInstructions`. Because that path
