@@ -94,7 +94,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
-| `packages/contracts/src/automation-evaluators.ts` | The strict external-event evaluator grammar (`always`, or `all` over leaves), the delivery message the matcher emits, and `automationBindableResourceTypes` — the one answer to which resources a rule may name, which search, both validators and the `resourceId` normalizer all read. |
+| `packages/contracts/src/automation-evaluators.ts` | The strict external-event evaluator grammar (`always`, or `matching` over leaves), the preprocess that still accepts the pre-rename `all` on rows already stored, the delivery message the matcher emits, and `automationBindableResourceTypes` — the one answer to which resources a rule may name, which search, both validators and the `resourceId` normalizer all read. |
 | `apps/api/src/services/external-event-evaluator.ts` | The pure predicate evaluator WorkspaceDO matches registrations with. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Migration 31: `automation_directory` and `workspace_external_event_registrations`; `applyAutomationDirectory`, `listAutomationDirectory`, `listWorkstreamAutomations`, `automationOwner`, `workstreamParticipant`, `applyExternalEventRegistrations`, `matchExternalEventDestinations`, and the owning-room archive fan-out `notifyOwningRoomArchival`. |
 | `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `admitExternalEvent`, and a run child's effects to the object through the shared effect leg. |
@@ -297,12 +297,23 @@ stream sends no evaluator object, while an automation needs predicates because
 it selects event families, content, people, and provider fields.
 
 An evaluator rule is one AND group: `when` is `{kind: "always"}` or
-`{kind: "all", allOf: [leaf, ...]}` over the manifest's declared attributes.
+`{kind: "matching", allOf: [leaf, ...]}` over the manifest's declared attributes.
 Unknown keys, operators, attributes, plugin/event pairs, duplicate ids, empty
 groups, non-finite numbers, and wrong scalar kinds are rejected at every
 boundary; missing fields make positive and negative predicates false and only
 `presence.not_exists` matches absence; matching is case-sensitive with no
 coercion. A rule that needs OR is two rules.
+
+`matching` was spelled `all` until the rename, and rows carrying that spelling
+are still stored in `definition_revisions.evaluator_rules_json` and
+`workspace_external_event_registrations.evaluator_json`. A Zod `preprocess` on
+`ExternalEventPredicateV1Schema` rewrites the legacy discriminant before
+validation, so both columns keep parsing while every reader past that seam sees
+`matching` alone. Because it maps the value *before* the union rather than
+adding a third branch to it, the JSON schema `set_evaluator_rules` derives for
+the drafting model still names one spelling — which is the point of the rename,
+`all` being indistinguishable from `always` to a model reading the two side by
+side. What has to be true before the seam can go is in the changelog.
 
 A rule may also narrow itself to one resource, and `automationBindableResourceTypes`
 (contracts) is the single answer to which one: the resource types the rule's own
@@ -613,12 +624,12 @@ or the memory store the automation scope lives in.
 | `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | The binding half in isolation: the table absent from D1, a recommended plugin bound from the workspace object's connections, a missing one refused, a disabled row skipped for the live one. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and watched work streams; a redelivery admits once. |
 | `apps/api/test-workers/conversation-parent-contract.test.ts`, `conversation-effect-queue.test.ts` | `pnpm --filter @rally/api test:workers` | The parent contract through the real ticket route, and the effect legs an automation's children use, including a child effect producing no `parent_effect` row. Owned by [`workstream-durable-object.md`](workstream-durable-object.md#testing). |
-| `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, and the connector vocabulary. |
+| `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, the connector vocabulary an authoring rule is held to — and the boundary between the two predicate spellings, which is where a change that let the model's `matching` reach a stored column would fail. |
 | `apps/api/test/run-authority-validity.test.ts` | `pnpm --filter @rally/api test` | A running run admitted, a paused or unknown one stopped, connector evidence not re-read after admission, and a run with no automation reference asking no automation. |
 | `apps/api/test/scoped-memory.test.ts` | `pnpm --filter @rally/api test` | A Sidekick's conversation resolving the workspace scope and its own `sidekick` scope. |
 | `apps/api/test/resend-inbound-email.test.ts`, `workstream-email-routing.test.ts`, `workstream-email-address.test.ts` | `pnpm --filter @rally/api test` | The single admission call, its receipts, and the address claim. |
 | `apps/api/test/access-revocation.test.ts` | `pnpm --filter @rally/api test` | The workspace fan-out naming an automation and the consumer walking its children. |
-| `packages/agent-harness/src/automation-creator-tools.test.ts` | `pnpm --filter @rally/agent-harness test` | The drafting tools, the `all` evaluator shape, and the submission pre-check. |
+| `packages/agent-harness/src/automation-creator-tools.test.ts` | `pnpm --filter @rally/agent-harness test` | The drafting tools, the `matching` evaluator shape, the tool schema offering that spelling alone, and the submission pre-check. |
 | `packages/contracts/src/automation-evaluator-resources.test.ts` | `pnpm --filter @rally/contracts test` | Which resources a rule may name: the bindable set and its predicate, and the sentinel and structural cases that drop an id before the parse. |
 | `apps/api/test/automation-creator-catalog.test.ts` | `pnpm --filter @rally/api test` | The drafting catalog and its research tools against the routed workspace database: the connection a webhook earns by its triggers alone, people search, and `resources_search` returning only bindable containers — the fresher event resource beside them left out, and nothing at all where a connector declares no relationship. |
 
@@ -724,6 +735,111 @@ alarm entry behind its backoff gate in `_internal_durable_alarms`;
 run refusing provider writes with "This automation run is no longer running"
 was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
+
+### 2026-09-14 — `matching` is the model's spelling; `all` stays the stored one
+
+**What changed:** The external-event predicate now has two schemas.
+`ExternalEventPredicateV1Schema` is the stored one and still spells its
+conjunction `all`, unchanged. `ModelFacingExternalEventPredicateV1Schema`
+spells it `matching` and is a `transform` onto the stored one; it is what
+`DraftExternalEventEvaluatorV1Schema` uses, and therefore what
+`set_evaluator_rules` advertises. `always` and the `allOf` field name are
+untouched on both sides.
+
+**Why:** `all` and `always` sat next to each other and read as near-synonyms —
+`all` means "every one of these leaves holds", `always` means "every event of
+this type". A model authoring this grammar has nothing to separate them, so the
+ambiguity landed in real rules rather than in review comments. But the
+discriminant is also *stored*, and Worker versions deploy gradually and can be
+rolled back, so a version serving beside or after this one must be able to read
+anything it writes. Renaming the stored spelling would have written rows the
+previous version cannot parse — the same silent outage as the reverse, arriving
+by rollback instead of by migration. Confining `matching` to the model's side of
+the boundary buys the legibility with no stored change at all, so there is no
+compatibility window to manage and nothing to migrate later.
+
+**How the two stay apart:** `z.toJSONSchema(…, { io: "input" })` renders a
+transform's *input*, so the tool offers `matching` and never `all`; parsing
+yields its *output*, so every reader and every column sees `all`. The stored
+schema does not admit `matching` at all, which is what makes "a `matching`
+reached a column" a parse failure in a test rather than a row nobody notices.
+`packages/contracts` and `apps/api/test/external-event-evaluator.test.ts` pin
+both directions.
+
+**Considered and rejected:** renaming the stored discriminant with a
+`preprocess` accepting the legacy `all`. It reads as the conservative option and
+is the opposite: the parse canonicalizes to `matching` and the writers persist
+whatever they parsed, so the first accept under the new version rewrites
+`definition_revisions.evaluator_rules_json`, `automation.evaluator_projection_json`
+and `workspace_external_event_registrations.evaluator_json` into a spelling the
+previous version refuses. Three columns rather than the two an earlier draft of
+this entry named: the projection is written from the parsed set in `apply`, and
+replayed by the `sidekick_publication` alarm and by `resumeFromPause`, both of
+which reach `applyExternalEventRegistrations`. Also rejected: keeping that
+design and translating back to `all` at each write, which leaves three
+boundaries that must each remember to, and a fourth that will be added later
+without.
+
+**Consequences:** `matching` exists in exactly one schema and must not spread;
+anything reading a predicate compares against `all`. A future change may rename
+the stored spelling once no Worker version predating it can serve or be rolled
+back to — at which point the transform becomes an identity and should be
+deleted, not left to suggest the two ever disagreed. `ReadPolicy` in
+`authorization-policy.ts` has its own unrelated `{kind: 'all'}`; it shares the
+spelling and nothing else.
+
+**Also in this change: a source-binding disagreement names both sides.**
+`submit_draft`'s `sidekick_activity_source_unbound` refusal now names the
+bindings the submitted triggers declare and the rules sitting outside that set,
+and `set_evaluator_rules` echoes the same two facts as `declaredSourceBindings`
+and `rulesNamingNoTrigger` once a draft exists. Both read one predicate,
+`unboundEvaluatorRules`, which is the one `automationDraftAcceptanceBlocker`
+refuses on.
+
+**Why:** a source binding key is invented by the drafting model and discoverable
+from no catalog — `plugin_inspect` does not emit one and `resources_search`
+returns none — so it is the one field where both halves of a disagreement are
+values only the model itself chose. "They must agree" therefore left it guessing
+which of two labels it had typed wrong. A production drafting run merging a
+second trigger into an existing Sidekick hit exactly that and stopped, having
+correctly diagnosed the refusal and had no way to act on it.
+
+The echo is a report and not a refusal, and is silent when nothing has been
+submitted: rules may be set before the draft, which is what keeps the two calls
+order-independent, and a disagreement at that moment may be against a draft the
+model is about to replace. Refusing there would answer the ordering question the
+buffering exists to avoid. A future change must keep both sites on
+`unboundEvaluatorRules` rather than rederiving either: an echo that cleared a
+submission the object then rejected would be worse than no echo, because it
+would be believed.
+
+**And the field itself now says what it is.** `sourceBindingKey`'s description
+told the model to take the value "from plugin_inspect or resources_search
+rather than composed". Neither returns one: the `plugin_inspect` projection has
+no such field, and `resources_search` fills `sourceBindingKeys` with `[]` for
+every row. The value is a label the model composes, validated only as
+`^[a-z][a-z0-9_-]{0,62}$` and resolved away at apply, so the description named
+a lookup that has never existed. It now says the label is composed, that no
+tool returns one, that the identical label goes on each rule, and that
+narrowing to a channel or folder is `resourceId`'s business rather than this
+field's. The rule half is described too, which it never was — the side that has
+to match was the undocumented one.
+
+**Why:** the two descriptions contradicted each other, and the wrong one won. A
+connector declaring no resource relationship — Fireflies declares none, so
+`automationBindableResourceTypes` is empty for it by construction — makes
+`resources_search` correctly return nothing, and that tool's own description
+says exactly what to do about it: omit `resourceId` and filter on a declared
+field. A production drafting run read the `sourceBindingKey` sentence instead,
+searched, found nothing, and reported to the person that a workspace
+administrator had to expose "a bindable Fireflies resource" — a thing no
+administrator can create. The draft it refused to make was already legal.
+
+**Consequences:** the one case where the value is *not* the model's to choose
+is where a resource search returns `sourceBindingKeys` for the resource a rule
+names; `evaluatorRuleIssues` has always narrowed to those when present, and the
+description now states that exception rather than leaving it to a refusal.
+Populating `sourceBindingKeys` later therefore needs no further wording change.
 
 ### 2026-09-13 — Removing a Sidekick is presented as archive
 
