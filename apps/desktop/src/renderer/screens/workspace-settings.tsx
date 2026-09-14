@@ -1,4 +1,5 @@
 import { AshbyWorkspaceSetup, ConnectorInstallationDetails, FirefliesWorkspaceSetup, useWorkspaceInstallationRecovery } from '../components/connector-installation';
+import { CopyButton, CopyField } from '../components/copy-button';
 import { ServerCog } from 'lucide-react';
 import { connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 import { PersonalSetup } from './guided-onboarding';
@@ -12,8 +13,6 @@ import { digestDeliverySetting } from '../settings/digest-provider';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import {
-  Check,
-  Copy,
   GitBranch,
   Globe,
   LockKeyhole,
@@ -410,7 +409,6 @@ export function WorkspaceSettingsScreen({
   const [role, setRole] = useState<'admin' | 'member'>('member');
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
   const [createdDelivery, setCreatedDelivery] = useState<'sent' | 'skipped' | null>(null);
-  const [copied, setCopied] = useState(false);
   const [userTimezone, setUserTimezone] = useState(workspace.currentUser.timezone);
   const [workspaceTimezone, setWorkspaceTimezone] = useState(workspace.timezone);
   const [terminalMode, setTerminalMode] = useState<'trusted_only' | 'full_internet'>('trusted_only');
@@ -442,7 +440,6 @@ export function WorkspaceSettingsScreen({
     signingSecret: string;
     signatureFormat: string;
   } | null>(null);
-  const [webhookCopied, setWebhookCopied] = useState<'endpoint' | 'secret' | null>(null);
   const [webhookRotationTarget, setWebhookRotationTarget] = useState<WorkstreamConnection | null>(null);
   const [customMcpModalScope, setCustomMcpModalScope] = useState<'you' | 'workspace' | null>(null);
   const [customMcpName, setCustomMcpName] = useState('');
@@ -784,7 +781,6 @@ export function WorkspaceSettingsScreen({
     onSuccess: (result) => {
       setCreatedUrl(result.inviteUrl);
       setCreatedDelivery(result.emailDelivery);
-      setCopied(false);
       setEmail('');
       void queryClient.invalidateQueries({ queryKey: ['workspace-invitations'] });
     },
@@ -1066,12 +1062,6 @@ export function WorkspaceSettingsScreen({
     setCustomMcpModalScope(scope);
   };
 
-  const copyInvitation = async (): Promise<void> => {
-    if (!createdUrl) return;
-    await desktopBridge().copyText(createdUrl);
-    setCopied(true);
-  };
-
   const githubSettings = githubRepositorySettings.data;
   const selectedGitHubSettingsConnection = githubSettingsConnections.find((connection) => (
     connection.id === githubSettingsConnectionId
@@ -1314,10 +1304,7 @@ export function WorkspaceSettingsScreen({
                           <strong>{createdDelivery === 'sent' ? 'Invitation emailed' : 'Invite link ready'}</strong>
                           <small>{createdDelivery === 'sent' ? 'It expires in seven days. You can also copy the one-time link.' : 'Email delivery is disabled outside production. Copy the one-time link to test the flow.'}</small>
                         </div>
-                        <Button onClick={() => void copyInvitation()}>
-                          {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
-                          {copied ? 'Copied' : 'Copy link'}
-                        </Button>
+                        <CopyButton label="Copy invite link" size={15} value={createdUrl} />
                       </div>
                     )}
                     {revokeInvitation.error && <InlineError>{revokeInvitation.error.message}</InlineError>}
@@ -1568,7 +1555,6 @@ export function WorkspaceSettingsScreen({
                                           setWebhookDisplayName(connection.displayName);
                                           setWebhookEventTypes('');
                                           setWebhookSecretResult(null);
-                                          setWebhookCopied(null);
                                           setWebhookRotationTarget(connection);
                                         }}
                                         tooltip="Refresh this webhook by replacing its signing secret."
@@ -1686,7 +1672,6 @@ export function WorkspaceSettingsScreen({
                                       setWebhookEventTypes('');
                                       setWebhookIdempotencyKey(crypto.randomUUID());
                                       setWebhookSecretResult(null);
-                                      setWebhookCopied(null);
                                       setWebhookRotationTarget(null);
                                       return;
                                     }
@@ -1722,7 +1707,6 @@ export function WorkspaceSettingsScreen({
                                     setWebhookEventTypes('');
                                     setWebhookIdempotencyKey(crypto.randomUUID());
                                     setWebhookSecretResult(null);
-                                    setWebhookCopied(null);
                                     setWebhookRotationTarget(null);
                                     return;
                                   }
@@ -2182,7 +2166,6 @@ export function WorkspaceSettingsScreen({
             setWebhookModalScope(null);
             setWebhookRotationTarget(null);
             setWebhookSecretResult(null);
-            setWebhookCopied(null);
           }}
           open={webhookModalScope !== null}
           title={webhookRotationTarget ? `Refresh ${webhookDisplayName}?` : 'Create inbound webhook'}
@@ -2190,28 +2173,19 @@ export function WorkspaceSettingsScreen({
           {webhookSecretResult ? (
             <div className="settings-list-card webhook-secret-result">
               <p>Copy the endpoint and secret now. Rally will not show this secret again.</p>
-              <label className="form-field">
-                <span><SettingLabel setting={settings.webhookEndpoint} /></span>
-                <input aria-label="Webhook endpoint" readOnly spellCheck={false} value={webhookSecretResult.endpoint} />
-              </label>
-              <Button onClick={() => {
-                void bridge.copyText(webhookSecretResult.endpoint);
-                setWebhookCopied('endpoint');
-              }}>
-                {webhookCopied === 'endpoint' ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
-                {webhookCopied === 'endpoint' ? 'Endpoint copied' : 'Copy endpoint'}
-              </Button>
-              <label className="form-field">
-                <span><SettingLabel setting={settings.webhookSecret} /></span>
-                <input aria-label="Webhook signing secret" readOnly spellCheck={false} type="password" value={webhookSecretResult.signingSecret} />
-              </label>
-              <Button onClick={() => {
-                void bridge.copyText(webhookSecretResult.signingSecret);
-                setWebhookCopied('secret');
-              }}>
-                {webhookCopied === 'secret' ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
-                {webhookCopied === 'secret' ? 'Secret copied' : 'Copy secret'}
-              </Button>
+              <CopyField
+                copyLabel="Copy endpoint"
+                inputLabel="Webhook endpoint"
+                label={<SettingLabel setting={settings.webhookEndpoint} />}
+                value={webhookSecretResult.endpoint}
+              />
+              <CopyField
+                copyLabel="Copy secret"
+                inputLabel="Webhook signing secret"
+                label={<SettingLabel setting={settings.webhookSecret} />}
+                secret
+                value={webhookSecretResult.signingSecret}
+              />
               <small>Sign the exact UTF-8 JSON bytes using: <code>{webhookSecretResult.signatureFormat}</code></small>
             </div>
           ) : webhookRotationTarget ? (

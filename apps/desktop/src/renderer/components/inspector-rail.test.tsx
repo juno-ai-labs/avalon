@@ -243,12 +243,11 @@ describe('InspectorRail details', () => {
     expect(screen.getByText(emailAddress)).toBeVisible();
 
     const copyButton = screen.getByRole('button', { name: 'Copy work-stream email address' });
-    expect(copyButton).toHaveAttribute('title', 'Copy work-stream email address');
     fireEvent.click(copyButton);
 
     expect(copyText).toHaveBeenCalledWith(emailAddress);
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Work-stream email address copied' })).toHaveAttribute('title', 'Copied');
+      expect(screen.getByRole('button', { name: 'Copied' })).toHaveClass('copy-button-copied');
     });
   });
 
@@ -263,10 +262,9 @@ describe('InspectorRail details', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy work-stream email address' }));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Copy failed; retry work-stream email address' }))
-        .toHaveAttribute('title', 'Copy failed — click to retry');
+      expect(screen.getByRole('button', { name: 'Copy failed — click to retry' })).toBeEnabled();
     });
-    expect(screen.getByRole('status')).toHaveTextContent('could not be copied');
+    expect(screen.getByText('Copy failed. Try again.')).toBeInTheDocument();
   });
 
   // The watch control sits beside the button that opens the resource, rather

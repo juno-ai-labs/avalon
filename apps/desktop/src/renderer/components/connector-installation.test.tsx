@@ -313,6 +313,24 @@ describe('Fireflies workspace setup', () => {
     expect(closed).toHaveBeenCalled();
   });
 
+  it('hands the endpoint and the secret out through icon copy controls beside their fields', async () => {
+    const api = apiReturning(setupResponse());
+    show(<FirefliesWorkspaceSetup api={api} attemptId="00000000-0000-4000-8000-0000000000af"
+      onSuccess={() => {}} onClose={() => {}} onRecovered={() => {}} />);
+    fireEvent.change(screen.getByLabelText(/Fireflies API key/u), { target: { value: 'a-workspace-key' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Connect' })); });
+    await screen.findByText('Finish in Fireflies');
+
+    // An icon, named by its tooltip, rather than a sentence under the field.
+    const copyEndpoint = screen.getByRole('button', { name: 'Copy endpoint' });
+    expect(copyEndpoint).toHaveClass('icon-button');
+    expect(copyEndpoint).toHaveTextContent('');
+    fireEvent.click(copyEndpoint);
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith(manualRegistration.destination));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy signing secret' }));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith(manualRegistration.signingSecret));
+  });
+
   it('says so when copying the secret fails, rather than claiming it worked', async () => {
     const api = apiReturning(setupResponse());
     copyText.mockRejectedValueOnce(new Error('clipboard unavailable'));
@@ -323,8 +341,13 @@ describe('Fireflies workspace setup', () => {
     await screen.findByText('Finish in Fireflies');
 
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Copy signing secret' })); });
-    expect(await screen.findByText(/Copying failed/u)).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Copy signing secret' })).toBeVisible();
+    // The control itself carries the failure, and stays the way to try again.
+    const failed = await screen.findByRole('button', { name: 'Copy failed — click to retry' });
+    expect(failed).toBeEnabled();
+    expect(screen.getByText('Copy failed. Try again.')).toBeInTheDocument();
+    await act(async () => { fireEvent.click(failed); });
+    await waitFor(() => expect(copyText).toHaveBeenCalledTimes(2));
+    expect(screen.getByLabelText('Fireflies signing secret')).toHaveValue(manualRegistration.signingSecret);
   });
 
   it('keeps a rejected key in the form and stores nothing', async () => {

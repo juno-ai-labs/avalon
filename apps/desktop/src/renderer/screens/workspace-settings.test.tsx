@@ -1882,7 +1882,7 @@ describe('Workspace settings', () => {
       { timeout: 10_000 },
     );
     expect(await screen.findByText('Invitation emailed', undefined, { timeout: 10_000 })).toBeVisible();
-    fireEvent.click(await screen.findByRole('button', { name: 'Copy link' }, { timeout: 10_000 }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy invite link' }, { timeout: 10_000 }));
     await waitFor(() => expect(copyText).toHaveBeenCalledWith(inviteUrl), { timeout: 10_000 });
 
     fireEvent.click(screen.getByRole('button', { name: `Revoke invitation for ${invitation.email}` }));

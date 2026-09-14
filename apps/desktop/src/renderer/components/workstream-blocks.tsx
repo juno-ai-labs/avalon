@@ -64,6 +64,7 @@ import {
 } from '../lib/markdown-collapse';
 import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
+import { useCopy } from '../lib/use-copy';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
@@ -233,7 +234,6 @@ function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry }
   renderDiagrams?: boolean;
   telemetry?: MessageCopyTelemetry;
 }): React.JSX.Element {
-  const [copied, setCopied] = useState(false);
   const rawLanguage = language.trim().toLowerCase();
   const normalizedLanguage = rawLanguage || 'plain';
   const requestedLanguage = markdownLanguageAliases[normalizedLanguage] ?? normalizedLanguage;
@@ -245,19 +245,19 @@ function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry }
   // wrote. An explicit ```text or ```plain fence still gets one.
   const languageLabel = rawLanguage ? codeLanguageLabel(normalizedLanguage, requestedLanguage) : '';
 
-  const copy = async (): Promise<void> => {
-    try {
-      await desktopBridge().copyText(code);
+  // The header's control is its own element rather than a `CopyButton`: the
+  // block renders wherever markdown does, including a card drawn for export
+  // with no tooltip provider above it, and the header's rule already sizes and
+  // paints the button. The behaviour underneath is still the shared one.
+  const { copy, state: copyState } = useCopy({
+    value: code,
+    onCopied: () => {
       if (telemetry) reportTelemetryProductIntent({
         kind: 'content_copied', contentType: 'code_block', resourceType: 'message',
         resourceId: telemetry.messageId, workstreamId: telemetry.workstreamId,
       });
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1_500);
-    } catch {
-      setCopied(false);
-    }
-  };
+    },
+  });
 
   const highlighted = (
     <Highlight code={code} language={highlightedLanguage} theme={markdownCodeTheme}>
@@ -283,8 +283,16 @@ function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry }
       {glance ? null : (
         <div className="markdown-code-block-header">
           <span className="markdown-code-language">{languageLabel}</span>
-          <button aria-label={copied ? 'Code copied' : 'Copy code'} onClick={() => void copy()} type="button">
-            {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
+          <button
+            aria-label={copyState === 'copied' ? 'Code copied' : copyState === 'failed' ? 'Copy failed — click to retry' : 'Copy code'}
+            onClick={() => void copy()}
+            type="button"
+          >
+            {copyState === 'copied'
+              ? <Check aria-hidden="true" size={14} />
+              : copyState === 'failed'
+                ? <CircleAlert aria-hidden="true" size={14} />
+                : <Copy aria-hidden="true" size={14} />}
           </button>
         </div>
       )}
