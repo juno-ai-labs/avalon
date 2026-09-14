@@ -586,6 +586,9 @@ export function createFirefliesConnector(config: FirefliesConnectorConfig): Conn
       [FirefliesCapabilities.workspaceRead]: ["workspace"],
       [FirefliesCapabilities.personalRead]: ["personal"],
     },
+    // As Granola: the webhook belongs to the workspace install, and
+    // `normalize` refuses a personal connection.
+    activityConnectionScopes: ["workspace"],
     webhookActivity: {
       async verify(input) {
         if (!input.verificationSecret) {

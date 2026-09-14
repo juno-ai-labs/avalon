@@ -2,9 +2,13 @@ import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import { alreadyAborted, neverAborts } from "./test-signals";
 import { NormalizedActivitySchema } from "@rally/contracts";
+import { createAshbyConnector } from "./ashby";
+import { createFirefliesConnector } from "./fireflies";
+import { createGranolaConnector } from "./granola";
 import {
   __testing,
   assertPrincipalAccess,
+  connectorActivitySupportsScope,
   connectorSupportsSurface,
   ConnectorRegistry,
   createGenericWebhookConnector,
@@ -69,6 +73,61 @@ describe("connectors", () => {
         return { ok: true, message: "Configured" };
       },
     }])).toThrow(/without a protocol adapter/u);
+  });
+
+  it("carries no events to a personal connection of a connector whose webhook is the workspace install's", () => {
+    // Each of these three refuses a personal connection from `normalize`, so
+    // a trigger advertised on one is an event that can never arrive. Declared
+    // here rather than inferred, because nothing about a manifest says which
+    // side of the install a provider's webhook lives on.
+    const workspaceOnly = [
+      createGranolaConnector({ redirectUri: "https://api.example.test/connections/granola/callback" }),
+      createFirefliesConnector({ redirectUri: "https://api.example.test/connections/fireflies/callback" }),
+      createAshbyConnector({ redirectUri: "https://api.example.test/connections/ashby/callback" }),
+    ];
+
+    for (const adapter of workspaceOnly) {
+      expect(connectorActivitySupportsScope(adapter, "workspace")).toBe(true);
+      expect(connectorActivitySupportsScope(adapter, "personal")).toBe(false);
+    }
+    // Narrowed per connector: a webhook a personal connection owns is still
+    // delivered to it.
+    expect(connectorActivitySupportsScope(createGenericWebhookConnector(), "personal")).toBe(true);
+  });
+
+  it("refuses an adapter that narrows the scopes of activity it does not produce", () => {
+    // The narrowing is a claim about events, so an adapter with none is a
+    // declaration nothing reads — and the next reader would take its silence
+    // for "activity works everywhere" rather than "there is no activity".
+    expect(() => new ConnectorRegistry([{
+      agentPlugin: {
+        providerType: "eventless",
+        wireNamePrefix: "eventless",
+        description: "Test-only connector with no events.",
+        systemMessage: "Use only the tools exposed by this test connector.",
+        tools: [],
+      },
+      activityConnectionScopes: ["workspace"],
+      manifest: {
+        type: "eventless",
+        displayName: "Eventless",
+        supportedScopes: ["personal", "workspace"],
+        oauthRequired: true,
+        capabilities: [],
+        activityTriggers: [],
+        resourceTypes: [],
+        tools: [],
+        supportsWatches: false,
+        supportsPolling: false,
+        supportsWebhooks: false,
+      },
+      async executeTool(name) {
+        throw new Error(`Unexpected tool ${name}`);
+      },
+      async healthCheck() {
+        return { ok: true, message: "Configured" };
+      },
+    }])).toThrow(/narrows the scopes of activity it does not produce/u);
   });
 
   it("does not let another user borrow a personal connection", () => {

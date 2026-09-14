@@ -794,6 +794,18 @@ Connectors expose one of two provider-facing activity facets while sharing the s
 - `webhookActivity.verify` verifies exact raw bytes and returns a provider-neutral delivery envelope; `normalize` applies connection scope and provider-specific semantics. Ashby, GitHub, Granola, Linear, Notion, and generic webhook use this facet.
 - `pollingActivity` declares named streams and polls each from an opaque provider-native high-watermark. Its required `normalizeHighWatermark` hook canonicalizes sequences, dates, cursors, legacy values, or composite provider state both when checkpoints are loaded and before they are committed. The shared checkpoint runner bounds retries and backlog scheduling while leaving provider hooks in control of checkpoint semantics, pagination, reset/reconciliation rules, and activity normalization. Google currently supplies Gmail, Calendar, and Drive streams.
 
+**A connector whose events reach Rally in only some connection scopes says so
+in `activityConnectionScopes`,** which narrows `manifest.supportedScopes` for
+activity the way `capabilityConnectionScopes` narrows it for a capability, and
+is read through `connectorActivitySupportsScope`. Granola, Fireflies and Ashby
+declare `["workspace"]`: their webhook belongs to the workspace install, and
+each `normalize` throws `unauthorized` for any other connection. Nothing in a
+manifest says which side of an install a provider's webhook lives on, so this
+is declared rather than inferred, and an adapter that narrows activity it does
+not produce is refused at registry construction. What reads it is the drafting
+catalog, in
+[`automation-lifecycle.md`](automation-lifecycle.md#drafting-in-the-conversation).
+
 #### Declaring what a digest may read
 
 **Every activity type a connector declares must say whether a person should be told about it in a digest, and there is no default.** `ConnectorActivityTriggerDescriptor` carries a required `digestible`, and `defineConnectorActivityTriggers` takes the event types as two lists rather than one:
@@ -964,6 +976,8 @@ configuration that was actually established.
 Every rule below was learned from a defect in production or in review, and each names the failure that produced it. A new adapter is expected to satisfy all of them; several are enforced by the compiler or by `apps/api/test/connector-credential-freshness.test.ts`, which enumerates the registry so a connector is enrolled by existing rather than by someone remembering it.
 
 **A pagination cursor says what to send when there is none, and spells that value `anyOf`.** Every cursor names the result field it is copied from, states that it is opaque and never constructed, and declares `anyOf: [{string, minLength: 1}, {null}]`, the spelling that says so without depending on the sanitizer; since `@juno-ai/bind` 14 the flat `type: ["string", "null"]` reaches the model as the same union, and `apps/api/test/tool-schema-sanitization.test.ts` asserts the delivered null branch for every property of every tool rather than only the cursors. Both halves are enforced by `apps/api/test/tool-argument-empty-strings.test.ts` and `apps/api/test/tool-schema-sanitization.test.ts`, which enumerate the registry through `apps/api/test/helpers/connector-cursors.ts` so a connector is enrolled by existing; a cursor named outside `CURSOR_PARAMETERS` is the one case still enrolled by someone remembering. *A run told to read a shared Drive folder invented `"/"`, `"1"`, and `"next"` for `pageToken` across eight calls, each rejected whole by Google, and then answered from public web search instead; the description added first did not stop it, because `minLength: 1` reads as a floor to clear when nothing says absence is expressible.*
+
+**An event a connection cannot receive is never advertised to it.** A connector whose `normalize` refuses a connection scope declares that scope out of `activityConnectionScopes`, so no surface offers it a trigger on that connection. *A personal Granola connection advertised its four triggers, and the Sidekick drafted on one applied, activated, and never fired; nothing in the product distinguished that from a Sidekick that had nothing to do yet.*
 
 **Never refuse an incoming request because a stored status says the connection is unhealthy.** Gate on `disabled` — a person's decision — and on nothing else; see [Stored status is a belief, not a gate](#stored-status-is-a-belief-not-a-gate). *A Slack installation refused sixteen hours of events, unfurls, identity links and automation deliveries without once asking Slack whether the grant still worked, and overwrote the accurate diagnosis of its own failure while doing so.*
 
@@ -1384,6 +1398,29 @@ member data. The event type is safe because of what it is, not because of where
 it sits, so it is named at the site that knows that.
 
 Shipped in the pull request for this change.
+
+### 2026-09-14 — A connector declares which scopes its events can arrive in
+
+**What changed:** `activityConnectionScopes` narrows a connector's supported
+scopes for activity, beside the `capabilityConnectionScopes` that narrows them
+for a capability, and Granola, Fireflies and Ashby declare `["workspace"]`.
+`connectorActivitySupportsScope` is the one reader. Registry construction
+refuses a declaration naming a scope the manifest does not support, and one on
+an adapter with no activity at all.
+
+**Why:** All three refuse a personal connection from `normalize`, because the
+provider's webhook is created by the workspace install — a fact that appears
+nowhere in a manifest, so every consumer that wanted it was inferring it or,
+in the drafting catalog's case, not asking at all. Declared per connector
+rather than derived from `webhookActivity`, because the asymmetry is the
+provider's and not a property of the facet: GitHub, Linear, Notion and a
+generic webhook all deliver to a personal connection through that same facet.
+
+**Consequences:** A connector that starts delivering events to personal
+connections drops the declaration in its adapter, and every surface that asks
+this question follows. The eventless-adapter refusal exists so the field
+cannot become a claim nothing reads: silence has to keep meaning "the
+connector's own scopes", not "there is no activity here".
 
 ### 2026-09-14 — A new Gmail email is demonstrated, not only described
 
