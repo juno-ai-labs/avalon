@@ -834,6 +834,57 @@ Keep P50 below one second and P90 below two seconds as unverified acceptance
 targets until a representative trace set exists. Do not merge replay or failure
 cohorts into those percentiles.
 
+### 2026-09-02 — Preload admits native handshake phases
+
+**What changed:** The dependency-free preload validator now accepts the complete
+closed `handshake_phase` shape emitted by the main-process socket broker. It
+admits only the seven declared phase names, a finite nonnegative duration, a
+nonnegative integer route index, the generated socket ID, and the proxy flag.
+The IPC regression carries a real phase through main's sender and the same parser
+preload uses.
+
+**Why:** The first packaged 1.249 cohort contained 39 click-scoped
+`workstream_open` records and none carried proxy-resolution, DNS, TCP, TLS,
+edge-upgrade, proxy-connect, or failed-route timing, even though the main-process
+broker emitted that vocabulary. The Zod schema declared `handshake_phase`, but
+preload deliberately carries a dependency-free closed parser and that parser had
+branches only for open, message, error, and close. It therefore discarded every
+valid timing before the renderer could annotate the flow. The validator test
+claimed to cover every broker event shape while omitting the same variant.
+
+The same cohort joined by trace ID to Worker `http_request` and `api_socket`
+records put the first application-observable Worker millisecond at the start of
+`api_socket` for all 39 requests. The mean 607 ms residual therefore precedes
+request-scoped authentication and Worker-to-object forwarding. Ten independent
+upgrades from the same Mac completed DNS, TCP, and TLS in 37–61 ms while first
+response arrived in 465–917 ms. A temporary 0.41 KiB Worker on a unique route
+under the same API hostname returned upgrades in 88–176 ms while fall-through
+requests to the 7.4 MiB API Worker took 541–562 ms. That indicates roughly
+350–450 ms of potential ingress savings, but does not verify the net reduction
+of a permanent ingress Worker that must also authorize and forward the upgrade.
+
+**Considered and rejected:** Treating the missing properties as a query or
+regional-upload defect was contradicted by the same omission in macOS Unified
+Logging. Adding another Worker header or timing system would duplicate the
+existing native boundaries without recovering the dropped events. Renderer
+buffering was also rejected: construction and listener attachment remain one
+uninterrupted renderer turn, and it would not repair a phase preload already
+discarded. Moving Durable Object classes is unnecessary; a future ingress Worker
+can cross-script bind the existing namespaces. Copying the ticket-signing secret
+and adding regional route promotion are nevertheless a separate security and
+deployment change, not something to hide inside this parser correction.
+
+**Consequences:** Historical native phase absence does not mean DNS, TLS, or
+proxy resolution took zero time. A packaged build containing this change will
+provide the first usable phase cohort. A dedicated regional socket-ingress Worker
+may save roughly 350–450 ms, but its permanent implementation remains unmeasured
+and requires explicit ticket-secret provisioning and service-first rollout work.
+Cloudflare's pinned synchronous clock can still report zero inside Worker startup,
+so client-native phases and the trace-ID join remain complementary rather than
+interchangeable. Per-phase duration annotations are last-write-wins across route
+attempts; read `failedRouteCount` beside them rather than treating them as an
+attributed history of every failed route.
+
 ### 2026-09-02 — Prepared admission separates hidden work from upgrade fallback
 
 **What changed:** The ticket-correlated warm completion now reports whether it
