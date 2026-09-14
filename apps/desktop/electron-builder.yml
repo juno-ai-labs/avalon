@@ -51,8 +51,13 @@ mac:
       to: native/system-audio-tap.node
     - from: .native-build/unified-log.node
       to: native/unified-log.node
+    - from: .native-build/push-notifications.node
+      to: native/push-notifications.node
+  provisioningProfile: ${env.RALLY_MAC_PROVISIONING_PROFILE_PATH}
   category: public.app-category.productivity
   extendInfo:
+    NSUserActivityTypes:
+      - NSUserActivityTypeBrowsingWeb
     NSMicrophoneUsageDescription: Rally uses the microphone only when you start dictation or meeting notes.
     NSAudioCaptureUsageDescription: Rally captures computer audio only when you record meeting notes.
     NSDockTilePlugIn: RallyDockTilePluginV2.docktileplugin

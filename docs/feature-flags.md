@@ -874,11 +874,11 @@ decision about both regions at once, not a local change to a loader.
 Ace automatically ensures all ten `agent-model-*` JSON flags plus
 `meeting-recording-enabled`, `suggested-work-enabled`,
 `multiple-workspaces-enabled`,
-`live-artifacts-enabled`, and `digests-enabled` exist on every
+`live-artifacts-enabled`, `push-notifications-enabled`, and `digests-enabled` exist on every
 merge-to-main deployment. It seeds model flags from the checked-in Worker
 defaults and does not overwrite an existing definition. Every product flag
-defaults off except
-`digests-enabled`, which defaults **on** — a digest already sends by default
+defaults off except `push-notifications-enabled`, which defaults **on** for
+everyone from launch, and `digests-enabled`, which defaults **on** — a digest already sends by default
 for every existing person, so provisioning it must not be the thing that
 silently stops delivery; see [`digests.md`](digests.md#the-run). Once created,
 edit product flags and each model flag's current default route through Ace
@@ -1150,6 +1150,13 @@ one module decides what those ids mean. Add the fact to the loader for its
 entity, emit it only when it is known, keep it inside the boundary above, and
 add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
+
+## Apple push
+
+`push-notifications-enabled` defaults on for everyone and is provisioned by Ace. The client
+contract exposes `pushNotificationsEnabled`; the same boolean evaluator gates
+both intent enqueue and delivery. Turning it off stops queued sends as well as
+hiding the Notifications section.
 
 ## Changelog
 

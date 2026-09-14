@@ -912,6 +912,16 @@ remove an old mapping only after confirming no regional
 EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
+## Apple notifications
+
+Apple device registrations reuse authenticated workspace sessions and the regional
+D1 control plane. The existing notification access decision runs again when the
+queue consumer sends. The native bridge handles permission state and explicit
+notification responses; main validates the work-stream link through the shared
+parser before navigation. Only the main app gains Push Notifications and
+Associated Domains entitlements; helpers retain their existing entitlement set.
+[Apple push](push-notifications.md) owns provisioning and release verification.
+
 ## Changelog
 
 ### 2026-09-12 — Authenticate once within each HTTP request
@@ -1463,8 +1473,9 @@ the Dock disagrees with the product forever.
 the sign-in screen, not a crash, because an undecryptable envelope is already
 caught and treated as no session. Signing is unaffected — a Developer ID
 Application certificate is issued to the team, not to a bundle identifier, and
-none of the entitlements in `resources/entitlements.mac.plist` requires a
-provisioning profile.
+at the time of the rename none of the entitlements required a provisioning
+profile. Apple push and associated domains now require the embedded Developer ID
+profile described in [Apple push](push-notifications.md).
 
 The bundle identifier is the expensive part, and it is not only a TCC and
 login-item reset. **Squirrel.Mac cannot update across a bundle-ID change**, per

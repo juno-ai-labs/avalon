@@ -1,3 +1,5 @@
+import type { WorkspaceNotificationIntentDelivery } from "../durable-objects/workspace-notification-intent-protocol";
+import { enqueuePushDelivery } from "./push-delivery-service";
 import { asWorkspaceId, asWorkstreamId, asUserId, asSubstreamId } from "@rally/contracts";
 
 import type { Env } from "../env";
@@ -221,6 +223,59 @@ export async function applyWorkstreamRegionalEffect(
 }
 
 /** Resolve current regional identity/delivery state and execute one intent. */
+export async function notificationDeliveryContext(env: Env, row: WorkspaceNotificationIntentDelivery) {
+  const typedWorkspaceId = asWorkspaceId(row.workspaceId);
+  const workspaceId = row.workspaceId;
+  const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, typedWorkspaceId, workspaceDOName(env.AVALON_REGION, typedWorkspaceId));
+  const identity = await workspaceRegionalDatabase(env).prepare(
+    `SELECT user.email AS recipient_email, user.name AS recipient_name,
+            workspace.name AS workspace_name
+       FROM users user JOIN workspaces workspace ON workspace.id = ?
+       JOIN workspace_members member ON member.workspace_id = workspace.id
+        AND member.user_id = user.id AND member.status = 'active'
+      WHERE user.id = ?`,
+  ).bind(workspaceId, row.recipientUserId).first<NotificationRecipientIdentity>();
+  if (!identity) return { outcome: "skipped" as const, reason: "recipient_inactive_or_identity_missing" };
+  const payload: unknown = JSON.parse(row.payloadJson);
+  const participantAdded = row.notificationKind === "participant_added";
+  const effect = participantAdded
+    ? WorkstreamParticipantNotificationEffectSchema.parse(payload)
+    : WorkstreamMentionNotificationEffectSchema.parse(payload);
+  const childId = effect.substreamId && effect.substreamId !== "0" ? effect.substreamId : null;
+  if (childId) {
+    const parent = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, typedWorkspaceId,
+      workstreamDOName(env.AVALON_REGION, typedWorkspaceId, asWorkstreamId(row.workstreamId)));
+    const access = await parent.authorizeViewer({ workspaceId: typedWorkspaceId, parentId: row.workstreamId,
+      userId: asUserId(row.recipientUserId), substreamId: asSubstreamId(childId) });
+    if (!access.authorized || access.archived) {
+      return { outcome: "skipped" as const, reason: "access_revoked" };
+    }
+  }
+
+  const rawDirectoryState = await workspace.notificationDirectoryState({
+    workspaceId: row.workspaceId,
+    workstreamId: row.workstreamId,
+    userId: row.recipientUserId,
+  });
+  const viewer = rawDirectoryState
+    ? WorkspaceDirectoryNotificationStateSchema.parse(rawDirectoryState)
+    : null;
+  if (
+    !viewer
+    || viewer.authorityGeneration < row.sourceGeneration
+    || (
+      viewer.authorityGeneration === row.sourceGeneration
+      && viewer.viewerVersion < row.requiredDirectoryVersion
+    )
+  ) {
+    return { outcome: "pending" as const, reason: "directory_projection_pending", viewer };
+  }
+  if (!childId && !viewer.listable) return { outcome: "skipped" as const, reason: "recipient_not_listable" };
+  const originator = effect.kind === "mention_notification" ? effect.authorUserId : effect.actorUserId;
+  if (effect.recipientUserId === originator) return { outcome: "skipped" as const, reason: "self_notification" };
+  return { outcome: "ready" as const, identity, effect, childId, viewer };
+}
+
 export async function processWorkstreamNotificationIntent(
   env: Env,
   workspaceId: string,
@@ -276,144 +331,35 @@ export async function processWorkstreamNotificationIntent(
 
   const row = claim.intent;
   const leaseId = claim.leaseId;
-  const identity = await workspaceRegionalDatabase(env).prepare(
-    `SELECT user.email AS recipient_email, user.name AS recipient_name,
-            workspace.name AS workspace_name
-       FROM users user JOIN workspaces workspace ON workspace.id = ?
-       JOIN workspace_members member ON member.workspace_id = workspace.id
-        AND member.user_id = user.id AND member.status = 'active'
-      WHERE user.id = ?`,
-  ).bind(workspaceId, row.recipientUserId).first<NotificationRecipientIdentity>();
-  if (!identity) {
-    await requireNotificationIntentTransition(workspace, {
-      workspaceId: typedWorkspaceId,
-      intentId,
-      leaseId,
-      transition: "settle",
-      state: "skipped",
-    });
-    logInfo(env, "workstream_notification_terminal", {
-      workspace_id: workspaceId,
-      workstream_id: row.workstreamId,
-      notification_intent_id: intentId,
-      kind: row.notificationKind,
-      recipient_user_id: row.recipientUserId,
-      outcome: "skipped",
-      reason: "recipient_inactive_or_identity_missing",
-    });
-    return "skipped";
-  }
-
-  const payload: unknown = JSON.parse(row.payloadJson);
-  const participantAdded = row.notificationKind === "participant_added";
-  const effect = participantAdded
-    ? WorkstreamParticipantNotificationEffectSchema.parse(payload)
-    : WorkstreamMentionNotificationEffectSchema.parse(payload);
-  const childId = effect.substreamId && effect.substreamId !== "0" ? effect.substreamId : null;
-  if (childId) {
-    const parent = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, typedWorkspaceId,
-      workstreamDOName(env.AVALON_REGION, typedWorkspaceId, asWorkstreamId(row.workstreamId)));
-    const access = await parent.authorizeViewer({ workspaceId: typedWorkspaceId, parentId: row.workstreamId,
-      userId: asUserId(row.recipientUserId), substreamId: asSubstreamId(childId) });
-    if (!access.authorized || access.archived) {
-      await requireNotificationIntentTransition(workspace, { workspaceId: typedWorkspaceId, intentId, leaseId,
-        transition: "settle", state: "skipped" });
-      return "skipped";
+  const context = await notificationDeliveryContext(env, row);
+  if (context.outcome !== "ready") {
+    if (context.outcome === "pending") {
+      const transition = await transitionNotificationIntent(workspace, {
+        workspaceId: typedWorkspaceId, intentId, leaseId, transition: "defer", errorCode: context.reason,
+      });
+      logInfo(env, "workstream_notification_deferred", {
+        workspace_id: row.workspaceId, workstream_id: row.workstreamId, notification_intent_id: intentId,
+        kind: row.notificationKind, recipient_user_id: row.recipientUserId,
+        outcome: transition.outcome === "applied" ? "busy" : transition.outcome,
+        reason: transition.outcome === "applied" ? context.reason : "notification_lease_lost_before_defer",
+        required_generation: row.sourceGeneration, current_generation: context.viewer?.authorityGeneration ?? null,
+        required_directory_version: row.requiredDirectoryVersion, current_directory_version: context.viewer?.viewerVersion ?? null,
+        current_state: transition.outcome === "lease_lost" ? transition.state : null,
+      });
+      if (transition.outcome === "lease_lost" && (transition.state === "delivered" || transition.state === "skipped")) return transition.state;
+    } else {
+      await requireNotificationIntentTransition(workspace, { workspaceId: typedWorkspaceId, intentId, leaseId, transition: "settle", state: "skipped" });
     }
+    if (context.outcome === "skipped") logInfo(env, "workstream_notification_terminal", {
+      workspace_id: workspaceId, workstream_id: row.workstreamId, notification_intent_id: intentId,
+      kind: row.notificationKind, recipient_user_id: row.recipientUserId, outcome: "skipped", reason: context.reason,
+    });
+    return context.outcome === "pending" ? "busy" : "skipped";
   }
-
-  const rawDirectoryState = await workspace.notificationDirectoryState({
-    workspaceId: row.workspaceId,
-    workstreamId: row.workstreamId,
-    userId: row.recipientUserId,
-  });
-  const viewer = rawDirectoryState
-    ? WorkspaceDirectoryNotificationStateSchema.parse(rawDirectoryState)
-    : null;
-  if (
-    !viewer
-    || viewer.authorityGeneration < row.sourceGeneration
-    || (
-      viewer.authorityGeneration === row.sourceGeneration
-      && viewer.viewerVersion < row.requiredDirectoryVersion
-    )
-  ) {
-    const transition = await transitionNotificationIntent(workspace, {
-      workspaceId: typedWorkspaceId,
-      intentId,
-      leaseId,
-      transition: "defer",
-      errorCode: "directory_projection_pending",
-    });
-    logInfo(env, "workstream_notification_deferred", {
-      workspace_id: row.workspaceId,
-      workstream_id: row.workstreamId,
-      notification_intent_id: intentId,
-      kind: row.notificationKind,
-      recipient_user_id: row.recipientUserId,
-      outcome: transition.outcome === "applied" ? "busy" : transition.outcome,
-      reason: transition.outcome === "applied"
-        ? "directory_projection_pending"
-        : "notification_lease_lost_before_defer",
-      required_generation: row.sourceGeneration,
-      current_generation: viewer?.authorityGeneration ?? null,
-      required_directory_version: row.requiredDirectoryVersion,
-      current_directory_version: viewer?.viewerVersion ?? null,
-      current_state: transition.outcome === "lease_lost" ? transition.state : null,
-    });
-    if (transition.outcome === "lease_lost" && transition.state === "delivered") return "delivered";
-    if (transition.outcome === "lease_lost" && transition.state === "skipped") return "skipped";
-    return "busy";
-  }
-  if (!childId && !viewer.listable) {
-    await requireNotificationIntentTransition(workspace, {
-      workspaceId: typedWorkspaceId,
-      intentId,
-      leaseId,
-      transition: "settle",
-      state: "skipped",
-    });
-    logInfo(env, "workstream_notification_terminal", {
-      workspace_id: row.workspaceId,
-      workstream_id: row.workstreamId,
-      notification_intent_id: intentId,
-      kind: row.notificationKind,
-      recipient_user_id: row.recipientUserId,
-      outcome: "skipped",
-      reason: "recipient_not_listable",
-    });
-    return "skipped";
-  }
-
-  // Nobody is told about their own doing, whichever kind this is: a person who
-  // mentions themselves, or who adds themselves on the way to making a work
-  // stream personal, already knows.
-  const originatorUserId = effect.kind === "mention_notification"
-    ? effect.authorUserId
-    : effect.actorUserId;
-  if (effect.recipientUserId === originatorUserId) {
-    await requireNotificationIntentTransition(workspace, {
-      workspaceId: typedWorkspaceId,
-      intentId,
-      leaseId,
-      transition: "settle",
-      state: "skipped",
-    });
-    logInfo(env, "workstream_notification_terminal", {
-      workspace_id: row.workspaceId,
-      workstream_id: row.workstreamId,
-      notification_intent_id: intentId,
-      kind: row.notificationKind,
-      recipient_user_id: effect.recipientUserId,
-      outcome: "skipped",
-      reason: "self_notification",
-    });
-    return "skipped";
-  }
+  const { identity, effect, childId, viewer } = context;
   try {
-    // Both kinds try Slack first and fall back to email, because a linked
-    // member reads Slack and an unlinked one has only an inbox. The two are
-    // sequenced rather than fanned out so nobody is told twice.
+    const push = await enqueuePushDelivery(env, { region: env.AVALON_REGION, workspaceId: row.workspaceId,
+      recipientUserId: row.recipientUserId, intentId });
     const recipient = {
       recipientUserId: effect.recipientUserId,
       recipientEmail: identity.recipient_email,
@@ -450,7 +396,7 @@ export async function processWorkstreamNotificationIntent(
       reason: slack === "sent" ? "provider_accepted" : "fallback_required",
     });
     let email: "sent" | "skipped" | null = null;
-    if (slack !== "sent") {
+    if (slack !== "sent" && !push) {
       const fallback = {
         ...recipient,
         recipientName: identity.recipient_name,
@@ -491,6 +437,7 @@ export async function processWorkstreamNotificationIntent(
       leaseId,
       transition: "settle",
       state: "delivered",
+      retainPayload: push,
     });
     logInfo(env, "workstream_notification_terminal", {
       workspace_id: row.workspaceId,
@@ -500,8 +447,8 @@ export async function processWorkstreamNotificationIntent(
       source_id: sourceId,
       recipient_user_id: effect.recipientUserId,
       outcome: "delivered",
-      reason: slack === "sent" ? "slack_sent" : "email_fallback_completed",
-      delivery_channel: slack === "sent" ? "slack" : "email",
+      reason: push ? "push_enqueued" : slack === "sent" ? "slack_sent" : "email_fallback_completed",
+      delivery_channel: push ? "push" : slack === "sent" ? "slack" : "email",
       slack_outcome: slack,
       email_outcome: email,
     });

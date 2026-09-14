@@ -237,6 +237,7 @@
       // per region because the payload names a workspace and only that
       // region's objects hold its sockets. See docs/access-revocation.md.
       { "binding": "ACCESS_REVOCATION_QUEUE", "queue": "avalon-eu-access-revocations" },
+      { "binding": "PUSH_DELIVERY_QUEUE", "queue": "avalon-eu-push-deliveries" },
       // Durable Object migration reports. A queue rather than a service
       // binding to the tracker: the whole fleet converges on one registry
       // object, nothing waits on the outcome, and a queue is a resource both
@@ -270,6 +271,16 @@
         "max_batch_timeout": 1,
         "max_retries": 5,
         "dead_letter_queue": "avalon-eu-access-revocations-dead-letter"
+      },
+      {
+        "queue": "avalon-eu-push-deliveries",
+        // Reuse the existing regional queue policy: ten-message batches,
+        // one-second batching, five retries, then the operational dead-letter
+        // queue. Push needs no separate retry scheduler.
+        "max_batch_size": 10,
+        "max_batch_timeout": 1,
+        "max_retries": 5,
+        "dead_letter_queue": "avalon-eu-push-deliveries-dead-letter"
       },
       {
         "queue": "avalon-eu-product-feature-flags",

@@ -114,3 +114,6 @@ jobs:
 
       - name: Deploy the site
         run: pnpm --filter @rally/site run deploy
+
+      - name: Verify Apple association
+        run: node scripts/check-apple-app-association.mjs
