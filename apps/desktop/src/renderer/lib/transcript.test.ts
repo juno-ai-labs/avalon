@@ -3191,6 +3191,58 @@ describe('composer queue overlays', () => {
     expect(isComposerQueueOverlay(overlay, { harnessRunning: false })).toBe(true);
   });
 
+  it('answers the question a pending elicitation response closes instead of queueing a blank row', () => {
+    const questionId = '00000000-0000-7000-8000-0000000000f1';
+    const answered = {
+      id: questionId,
+      workstreamId: '00000000-0000-7000-8000-0000000000f2',
+      harnessRunId: '00000000-0000-7000-8000-0000000000f3',
+      prompt: 'Which ownership scope?',
+      responseType: 'multi_select' as const,
+      options: [{ value: 'workspace', label: 'Workspace', description: null }],
+      minimumSelections: 1,
+      maximumSelections: 1,
+      targetUserId: null,
+      status: 'answered' as const,
+      answer: ['workspace'],
+      answeredByUserId: '00000000-0000-7000-8000-0000000000f4',
+      createdAt: '2026-08-05T11:59:00.000Z',
+      answeredAt: '2026-08-05T12:00:00.000Z',
+    };
+    const overlay = pendingTranscriptInputOverlay({
+      ...pendingHuman,
+      inputId: '00000000-0000-7000-8000-000000000104',
+      futureTurnId: '00000000-0000-7000-8000-000000000104',
+      clientMessageId: `elicitation-response:${questionId}`,
+      block: {
+        ...pendingHuman.block,
+        blockId: 'block-4',
+        text: '',
+        messageType: 'elicitation' as const,
+        structuredContent: { kind: 'elicitation_response', elicitation: answered },
+      },
+    }, 'workstream-one', { source: 'socket_snapshot', snapshotId: 'snapshot-1' });
+
+    // Not a queued message: it is the answer, and it says so where the
+    // question is rather than as a row on the composer.
+    expect(isComposerQueueOverlay(overlay, { harnessRunning: true })).toBe(false);
+    expect(overlay.message.deliveryState).toBeUndefined();
+    expect(overlay.message).toMatchObject({
+      messageType: 'elicitation',
+      elicitation: { id: questionId, status: 'answered' },
+    });
+    // The question turn carries the status frozen at `open`; sharing its UI
+    // identity is what lets the answer replace it.
+    const open = createElicitationMessage({
+      ...base,
+      id: overlay.message.id,
+      authorType: 'agent',
+      elicitation: { ...answered, status: 'open', answer: null, answeredByUserId: null, answeredAt: null },
+    });
+    expect(upsertTranscriptMessage([open], overlay.message)[0])
+      .toMatchObject({ elicitation: { status: 'answered' } });
+  });
+
   it('sorts the composer queue by queueSequence and parks sending rows last', () => {
     const first = pendingTranscriptInputOverlay(pendingHuman, 'workstream-one', {
       source: 'rest_snapshot',

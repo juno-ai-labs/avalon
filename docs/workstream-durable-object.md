@@ -832,18 +832,19 @@ owner.
 finishes, its reserved assistant turn becomes canonical, and every tool call it
 already emitted settles before pending steer inputs are promoted in arrival
 order and included in the next model request. **An `answer`-suspend is the
-exception, and today it fails rather than waiting**: a tool that halts on
-`needs_input` withholds its result until a human answers, so that step never
-settles, and `applyBindLoopTransition` refuses the `protocol_user_appended`
-transition a steer (or a resident-context delivery) would need. Preparation runs
-before the transaction, so nothing is written and nothing is marked delivered —
-but `requiredPort` turns the throw into a terminal `run_state_persistence_failed`,
-and because answers share this queue and it drains oldest-first, a steer ahead of
-the answer blocks the answer too. The fix is to park both kinds of input for a
-step that opened an elicitation; see the 2026-09-12 entry in
-[`agent-harness.md`](agent-harness.md). `queue` means deliver after the
-persistent loop next becomes idle; promotion wakes that same loop rather than
-creating another one. If failure or stop prevents a steer boundary, the input
+exception: the answer goes first, and the rest of the queue waits for it.** A
+tool that halts on `needs_input` withholds its result until a human answers, so
+that step never settles, and `applyBindLoopTransition` refuses the
+`protocol_user_appended` transition a steer, a queued message, or a
+resident-context delivery would need. The queue is therefore not drained in
+arrival order while a question is open: `inputsBindCanAccept` reads the withheld
+calls out of the live Bind projection, promotes the admitted answers that close
+them — at a safe step and at activation alike — and hands Bind nothing else
+until the batch settles. A batch withheld for any other reason keeps arrival
+order and Bind's loud refusal, because repairing one is a run's own job and a
+queue that quietly reorders itself around it would hide that. `queue` means
+deliver after the persistent loop next becomes idle; promotion wakes that same
+loop rather than creating another one. If failure or stop prevents a steer boundary, the input
 falls forward to the next idle activation and is never lost. Multiple inputs
 remain distinct; no later steer overwrites an earlier one.
 While the loop is executing, Electron always admits a newly composed message
@@ -1720,6 +1721,57 @@ the type when an older caller omits it. This lets the desktop distinguish custom
 MCP identity without trusting the saved name or reading WorkspaceDO on replay.
 
 ## Changelog
+
+### 2026-09-14 — An open question takes its answer out of turn, and parks the rest of the queue
+
+**What changed:** the pending-input queue is no longer drained in arrival order
+while the last assistant step holds an unanswered question. `inputsBindCanAccept`
+reads the withheld tool calls out of the live Bind projection, promotes the
+admitted answers that close them first, and hands Bind nothing else until the
+batch settles — at a safe step (`settlePendingSteersAtStep`) and at activation
+(`activatePendingInput`) alike. `SubstreamAgent` no longer picks the queue head
+to activate; it asks `nextActivationInput` for the input the loop can actually
+take, and gets `undefined` while the only thing waiting is a message that would
+be refused. A host authority's derived inputs park on the same rule rather than
+being prepared and thrown out.
+
+**Why:** this wedged real rooms, permanently, with no way out from the product.
+Queue a message while a run is going, have the run stop to ask a question, then
+answer it: the message was admitted first, so it was what the loop tried to
+activate, and `applyBindLoopTransition` refuses `protocol_user_appended` while a
+tool result is withheld. A pending input that throws stays where it is, so the
+queue stopped at its head and the answer behind it — admitted, committed, the
+`elicitation_requests` row already `answered` — was never promoted. The card is
+drawn from the canonical turn that promotion writes, so the question kept coming
+back every time a snapshot landed, over the answer the person had just given,
+and answering again did the same thing. The 2026-09-12 entry in
+[`agent-harness.md`](agent-harness.md) had already found the head-of-line
+blocking by reading the code and called the fix "park both kinds of input";
+parking alone is only half of it, because the input that has to move is the one
+at the back.
+
+**Considered and rejected:** telling the drain, out of band, that the batch that
+just ran opened an answer-suspend — the field the 2026-09-12 entry proposed.
+It is true at a safe step and says nothing at activation, which is where the
+loop actually was, and it is a second copy of a fact the projection already
+holds. Refusing to admit a message while a question is open: the message that
+wedged these rooms was queued *before* anyone knew a question was coming, and a
+composer that goes dead while the room waits on a human is a worse product than
+one that lets you type ahead. Reordering the queue around any withheld batch:
+a batch withheld by a crash is a run's own to repair from its tool receipts, and
+turning that loud refusal into a silent stall would cost the only signal we get.
+
+**Consequences:** promotion order is no longer admission order, so an answer's
+canonical turn can sit above a message queued before it — which is also how the
+room reads: the question, the answer, then what the person had lined up. The
+queue's own order is unchanged, and so is what the composer shows. Anything new
+that appends a user message to the projection has to go through
+`inputsBindCanAccept`, or it inherits the same wedge; the rule lives with the
+queue rather than in Bind, because Bind is right to refuse the shape and only
+the object knows which pending row would fix it. A room wedged before this
+shipped recovers on its own: the answer is still in the queue, and the next wake
+promotes it.
+
 
 ### 2026-09-11 — A read is acknowledged by the conversation that was read
 
