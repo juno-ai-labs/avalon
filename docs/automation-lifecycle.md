@@ -777,6 +777,31 @@ Sidekick registered before the rename silently stops waking. Note that
 `ReadPolicy` in `authorization-policy.ts` has its own unrelated `{kind: 'all'}`;
 it shares the spelling and nothing else, and was deliberately left alone.
 
+**Also in this change: a source-binding disagreement names both sides.**
+`submit_draft`'s `sidekick_activity_source_unbound` refusal now names the
+bindings the submitted triggers declare and the rules sitting outside that set,
+and `set_evaluator_rules` echoes the same two facts as `declaredSourceBindings`
+and `rulesNamingNoTrigger` once a draft exists. Both read one predicate,
+`unboundEvaluatorRules`, which is the one `automationDraftAcceptanceBlocker`
+refuses on.
+
+**Why:** a source binding key is invented by the drafting model and discoverable
+from no catalog — `plugin_inspect` does not emit one and `resources_search`
+returns none — so it is the one field where both halves of a disagreement are
+values only the model itself chose. "They must agree" therefore left it guessing
+which of two labels it had typed wrong. A production drafting run merging a
+second trigger into an existing Sidekick hit exactly that and stopped, having
+correctly diagnosed the refusal and had no way to act on it.
+
+The echo is a report and not a refusal, and is silent when nothing has been
+submitted: rules may be set before the draft, which is what keeps the two calls
+order-independent, and a disagreement at that moment may be against a draft the
+model is about to replace. Refusing there would answer the ordering question the
+buffering exists to avoid. A future change must keep both sites on
+`unboundEvaluatorRules` rather than rederiving either: an echo that cleared a
+submission the object then rejected would be worse than no echo, because it
+would be believed.
+
 ### 2026-09-13 — Removing a Sidekick is presented as archive
 
 **What changed:** The current client calls the retained tombstone transition
