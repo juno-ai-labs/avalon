@@ -636,6 +636,8 @@ prove layout, focus, scroll position, or overlap.
 takes the question's UI identity (`elicitationMessageId`), carries the parsed
 elicitation, and has no delivery state, so `isComposerQueueOverlay` and
 `pendingOverlayInputId` both leave it out of the composer queue.
+`composeTranscript` then folds it into the canonical question row it answers,
+so the two are one row at the question's position.
 
 **Why:** the card is drawn from the canonical elicitation turn, and that turn
 carries the status frozen at `open` — only the answer's own turn ever replaces
@@ -653,12 +655,19 @@ a failure, a reconnect, and a second answer from another participant — while t
 room already sends everything needed to say so honestly. Filtering empty pending
 inputs out of the queue: that hides the symptom and leaves the question asking.
 
-**Consequences:** `preferLogicalMessage` is what settles the two copies, so an
-answered elicitation keeps beating an open one regardless of merge order —
-anything that changes that precedence puts the card back. `queueSequence` is now
-the marker of composer-queue membership: an overlay without one is not a row and
-cannot be reordered. The loop promoting the answer out of turn is the other half
-of this, and lives in the 2026-09-14 entry in
+**Consequences:** the feed is *composed*, not upserted, and the two paths
+reconcile differently. `composeTranscript` drops an overlay only when its
+identity already has a canonical row, and an answer is keyed by its own client
+message while the question is keyed by the question — so review caught both
+being emitted under one message id, the question drawn twice and a duplicate
+React key. `composeTranscript` now folds the answer's status into the canonical
+question row and takes the overlay out, which is the same "one row, at the
+question's position" rule `orderedTranscriptMessages` already applies to the
+canonical pair. A test that reaches this through `upsertTranscriptMessage`
+proves nothing: that helper belongs to the socket path, not to the feed.
+`queueSequence` is now the marker of composer-queue membership: an overlay
+without one is not a row and cannot be reordered. The loop promoting the answer
+out of turn is the other half of this, and lives in the 2026-09-14 entry in
 [`workstream-durable-object.md`](workstream-durable-object.md).
 
 

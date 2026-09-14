@@ -3231,16 +3231,26 @@ describe('composer queue overlays', () => {
       messageType: 'elicitation',
       elicitation: { id: questionId, status: 'answered' },
     });
-    // The question turn carries the status frozen at `open`; sharing its UI
-    // identity is what lets the answer replace it.
-    const open = createElicitationMessage({
-      ...base,
+    // The feed is composed, not upserted: the canonical question turn carries
+    // the status frozen at `open`, and both rows share one message id, so the
+    // answer has to replace that row rather than land beside it.
+    const open = {
+      ...createElicitationMessage({
+        ...base,
+        id: overlay.message.id,
+        authorType: 'agent',
+        elicitation: { ...overlay.message.elicitation!, status: 'open', answer: null },
+      }),
+      transcriptSequence: 4,
+      transcriptTurnId: 'question-turn',
+    };
+    const composed = composeTranscript([open], [overlay]);
+    expect(composed).toHaveLength(1);
+    expect(composed[0]).toMatchObject({
       id: overlay.message.id,
-      authorType: 'agent',
-      elicitation: { ...overlay.message.elicitation!, status: 'open', answer: null },
+      transcriptSequence: 4,
+      elicitation: { status: 'answered', answer: ['workspace'] },
     });
-    expect(upsertTranscriptMessage([open], overlay.message)[0])
-      .toMatchObject({ elicitation: { status: 'answered' } });
   });
 
   it('sorts the composer queue by queueSequence and parks sending rows last', () => {
