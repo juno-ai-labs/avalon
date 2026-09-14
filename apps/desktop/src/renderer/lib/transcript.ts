@@ -976,16 +976,58 @@ export function removeTranscriptOverlay(
 }
 
 /**
+ * Answer an already-loaded question in place, and take the overlay out.
+ *
+ * A question and its answer are one row: the canonical projection gives them
+ * one message id and keeps the question's position. An answer still waiting to
+ * be promoted has no canonical turn for that projection to fold, and
+ * `transcriptOverlaysWithoutCanonicalMatch` does not drop it either — it
+ * matches on identity, and this overlay is keyed by its own client message
+ * while the canonical row is keyed by the question. Composed as it stood, both
+ * were emitted: the question drawn twice, once open and once answered, under
+ * one React key. Only the status and the answer move; everything positional
+ * stays the question's, because that is the row the reader is looking at.
+ */
+function answeredElicitationCanonical(
+  canonical: readonly Message[],
+  overlays: readonly TranscriptOverlay[],
+): { canonical: readonly Message[]; overlays: TranscriptOverlay[] } {
+  const answers = new Map<string, TranscriptOverlay>();
+  for (const overlay of overlays) {
+    const elicitation = overlay.message.elicitation;
+    if (overlay.message.messageType !== 'elicitation' || elicitation?.status !== 'answered') continue;
+    if (!canonical.some((message) => message.elicitation?.id === elicitation.id)) continue;
+    answers.set(elicitation.id, overlay);
+  }
+  if (answers.size === 0) return { canonical, overlays: [...overlays] };
+  const folded = new Set(answers.values());
+  return {
+    canonical: canonical.map((message) => {
+      const answer = message.elicitation ? answers.get(message.elicitation.id) : undefined;
+      return answer?.message.elicitation
+        ? { ...message, elicitation: answer.message.elicitation }
+        : message;
+    }),
+    overlays: overlays.filter((overlay) => !folded.has(overlay)),
+  };
+}
+
+/**
  * Compose already-ordered canonical rows with explicitly sourced, non-durable
  * overlays. Canonical projection is the expensive side and is memoized by the
  * screen; sorting it again on every reveal tick would put the whole loaded
  * transcript on the display-rate path.
  */
 export function composeTranscript(
-  canonical: readonly Message[],
+  canonicalRows: readonly Message[],
   overlays: readonly TranscriptOverlay[],
 ): Message[] {
-  const live = transcriptOverlaysWithoutCanonicalMatch(canonical, overlays);
+  const answered = answeredElicitationCanonical(
+    canonicalRows,
+    transcriptOverlaysWithoutCanonicalMatch(canonicalRows, overlays),
+  );
+  const canonical = answered.canonical;
+  const live = answered.overlays;
   const activeAssistantTurns = new Set(live.flatMap((overlay) =>
     overlay.identity.type === 'assistant_turn' ? [overlay.identity.turnId] : []));
   let previousCanonicalSequence = 0;
