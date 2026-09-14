@@ -6,6 +6,7 @@ import {
   WorkstreamSocketCommandResultSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   type AgentCompactionState,
+  type InferenceDelayState,
   type ActiveStreamCheckpoint,
   type ClientSocketEvent,
   type WorkstreamSocketCommandResult,
@@ -118,6 +119,7 @@ export interface WorkstreamSocketConnection {
   sendReady: boolean;
   /** Legacy telemetry field name; this now reports the message-carrying room socket. */
   workspaceSocketState: 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
+  activeInferenceDelays: InferenceDelayState[];
   activeCompaction: AgentCompactionState | null;
   createMessage(input: CreateWorkstreamMessageInput): Promise<AcceptedWorkstreamTurn>;
   answerElicitation(
@@ -748,6 +750,7 @@ export function useWorkstreamSocket(
   const [openingError, setOpeningError] = useState<string>();
   const [openingRetryGeneration, setOpeningRetryGeneration] = useState(0);
   const [sendReady, setSendReady] = useState(false);
+  const [activeInferenceDelays, setActiveInferenceDelays] = useState<InferenceDelayState[]>([]);
   const [activeCompaction, setActiveCompaction] = useState<AgentCompactionState | null>(null);
   const attempts = useRef(0);
   const retryOpening = useCallback((): void => {
@@ -831,6 +834,7 @@ export function useWorkstreamSocket(
   useEffect(() => {
     attempts.current = 0;
     setActiveCompaction(null);
+    setActiveInferenceDelays((current) => current.length === 0 ? current : []);
     setOpeningError(undefined);
     if (!api || !enabled) {
       setState('idle');
@@ -1339,6 +1343,7 @@ export function useWorkstreamSocket(
           'The work stream resynchronized while loading transcript ranges.',
         );
         setActiveCompaction(event.activeCompaction);
+        setActiveInferenceDelays(event.activeInferenceDelays);
         canonicalResyncActiveStreams = event.reason === 'history_unavailable'
           ? event.activeStreams
           : [];
@@ -1509,6 +1514,7 @@ export function useWorkstreamSocket(
         if (contextChunkCount === 0) queryClient.setQueryData(contextQueryKey, null);
         else queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
         setActiveCompaction(event.activeCompaction);
+        setActiveInferenceDelays(event.activeInferenceDelays);
         queryClient.setQueryData<number>(
           workstreamSocketSnapshotGenerationQueryKey(parentId, substreamId),
           (current) => (current ?? 0) + 1,
@@ -1690,7 +1696,10 @@ export function useWorkstreamSocket(
         scheduleReveal();
       } else if (event.type === 'harness_status_changed') {
         applyHarnessStatus(queryClient, parentId, normalizeHarnessStatus(event.status), substreamId);
-        if (event.status !== 'running') setActiveCompaction(null);
+        if (event.status !== 'running') {
+          setActiveCompaction(null);
+          setActiveInferenceDelays((current) => current.length === 0 ? current : []);
+        }
         if (
           event.status === 'running'
           || event.status === 'needs_input'
@@ -1701,6 +1710,11 @@ export function useWorkstreamSocket(
         ) {
           requestCanonicalSnapshot();
         }
+      } else if (event.type === 'inference_delay_changed') {
+        setActiveInferenceDelays((current) => {
+          const others = current.filter((delay) => delay.inferenceRequestId !== event.inferenceRequestId);
+          return event.active ? [...others, event] : others;
+        });
       } else if (event.type === 'compaction_started') {
         setActiveCompaction(event.compaction);
       } else if (event.type === 'compaction_finished') {
@@ -1869,6 +1883,7 @@ export function useWorkstreamSocket(
       resumeState.lastSequence = 0;
       streamCursors.clear();
       setActiveCompaction(null);
+      setActiveInferenceDelays((current) => current.length === 0 ? current : []);
       clearReconnectTimer();
       clearOpeningTimer();
       connectGeneration += 1;
@@ -2378,6 +2393,7 @@ export function useWorkstreamSocket(
       sendReady: sendReady && admissionAllowed,
       workspaceSocketState,
       activeCompaction,
+      activeInferenceDelays,
       answerElicitation,
       createMessage,
       loadTranscriptRange,
@@ -2390,6 +2406,7 @@ export function useWorkstreamSocket(
     [
       admissionAllowed,
       activeCompaction,
+      activeInferenceDelays,
       answerElicitation,
       createMessage,
       loadTranscriptRange,

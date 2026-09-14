@@ -627,6 +627,29 @@ scrolled up, which is the defect that shipped to review. Any visible
 change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
+## Slow model notice
+
+The shared work-stream and Sidekick conversation surface shows an inline status
+beside active response activity while the socket reports a delayed inference
+belonging to the displayed running harness run: “The model is currently slowed
+down. Responses might take longer.” It uses the semantic warning colour and
+`role="status"`. It is not a transcript message and has no retained exit
+animation. First output, inference settlement, terminal run status, or a
+conversation change clears it immediately. Tool work and inter-chunk pauses
+do not create a warning. Multiple delayed calls share one notice until the last
+relevant delay clears.
+
+## Changelog
+
+### 2026-09-14 — Show slow inference as temporary response status
+
+A model may need longer than the old first-token deadline. The user requested
+an inline explanation after 30 seconds, present only during that wait. The
+surface consumes attempt-scoped server status rather than timing the whole run,
+so tool work cannot look like model slowness and a completed warning does not
+linger through an exit animation.
+
+
 ### 2026-09-14 — An admitted answer closes its question before the loop promotes it
 
 **What changed:** `pendingTranscriptInputOverlay` projects a pending input whose

@@ -22,7 +22,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 55;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 56;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3006,6 +3006,20 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
   "CREATE TRIGGER workstream_search_display_update\n    AFTER UPDATE OF title, archived_at ON workstream\n    WHEN NEW.title IS NOT OLD.title OR NEW.archived_at IS NOT OLD.archived_at\n    BEGIN\n      INSERT INTO durable_outbox\n        (message_id, channel, destination_kind, destination_id, partition_key,\n         source_version, source_epoch, contract_version, payload_json, payload_ref,\n         payload_hash, state, attempts, not_before, created_at, acked_at)\n      VALUES ('search-conversation', 'search_conversation_v1', 'queue', 'activity', 'search',\n        NEW.updated_at, 0, 1, json_object(), NULL, 'search-conversation', 'pending', 0, 0, NEW.updated_at, NULL)\n      ON CONFLICT(message_id) DO UPDATE SET source_version = excluded.source_version,\n        state = 'pending', not_before = 0;\n    END",
   "PRAGMA defer_foreign_keys = OFF"
 ] },
+  {
+    version: 56,
+    description: "checkpoint transient inference delay with attempt settlement fences",
+    statements: [
+      `CREATE TABLE inference_delay_status (
+        inference_request_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+        execution_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+        attempt_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        active INTEGER NOT NULL CHECK (active IN (0, 1))
+      ) STRICT`,
+    ],
+  },
 ];
 
 /**

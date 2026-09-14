@@ -7610,3 +7610,14 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .attachment-lightbox-content.has-gallery { padding-bottom: 130px; }
 
 :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-attachments { grid-column: 1 / -1; grid-row: 1; width: 100%; padding: 10px 12px 2px; }
+
+/* Ephemeral inference status, cleared as soon as first output arrives. */
+.inference-delay-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  color: var(--av-sys-color-warning-base);
+  font-size: 13px;
+}
+.inference-delay-notice > svg { flex-shrink: 0; }

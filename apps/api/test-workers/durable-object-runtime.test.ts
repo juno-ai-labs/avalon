@@ -6109,6 +6109,179 @@ describe("Durable Objects in the Workers runtime", () => {
     second.close(1000, "done");
   });
 
+  it("broadcasts inference delay, restores it on reconnect, and fences settled or superseded attempts", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      parentKind: "workstream",
+      parentId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
+    const harnessRunId = "00000000-0000-7000-8000-000000000125";
+    const childRunId = "00000000-0000-7000-8000-000000000145";
+    const attemptId = "00000000-0000-7000-8000-000000000126";
+    await runInDurableObject(stub, async (instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE workstream SET title = 'Inference wait', exact_state = 'running', updated_at = ?
+          WHERE id = 1`,
+        Date.now(),
+      );
+      for (const executionId of [harnessRunId, childRunId]) {
+        state.storage.sql.exec(
+          `INSERT INTO runs
+             (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+              next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+              idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+              input_tokens, output_tokens, cost_micros, output_bytes, origin,
+              execution_principal_json, chain_depth, parent_run_id, chain_root_run_id, created_at, updated_at)
+           VALUES (?, '0', 'running', '{}', 0, 0, '', 0, 0, ?, 0, 0, 0, 0, 0, 0,
+                   0, 0, 0, 0, 'user_message', '{}', ?, ?, ?, ?, ?)`,
+          executionId,
+          Date.now(),
+          executionId === harnessRunId ? 0 : 1,
+          executionId === harnessRunId ? null : harnessRunId,
+          harnessRunId,
+          Date.now(),
+          Date.now(),
+        );
+        state.storage.sql.exec(`UPDATE runs SET legacy_attempt_id = ?, lease_expires_at = ? WHERE run_id = ?`,
+          attemptId, Date.now() + 600_000, executionId);
+      }
+      state.storage.sql.exec(`UPDATE runs SET parent_tool_call_id = ? WHERE run_id = ?`,
+        "call:child", childRunId);
+    });
+    const connect = async (ticketId: string): Promise<WebSocket> => {
+      const response = await stub.fetch("https://substream.test/socket", {
+        headers: {
+          Upgrade: "websocket",
+          "x-rally-workspace-id": WORKSPACE_ID,
+          "x-rally-workstream-id": WORKSTREAM_ID,
+          "x-rally-substream-id": "0",
+          "x-rally-user-id": USER_ID,
+          "x-rally-session-id": SESSION_ID,
+          "x-rally-socket-ticket-id": ticketId,
+          "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        },
+      });
+      expect(response.status).toBe(101);
+      const socket = response.webSocket!;
+      socket.accept();
+      return socket;
+    };
+
+    const delay = {
+      type: "inference_delay_changed",
+      harnessRunId, executionId: harnessRunId, attemptId,
+      inferenceRequestId: "00000000-0000-7000-8000-000000000140",
+      turnId: "turn:1", active: true,
+    };
+    const publish = async (event: Record<string, unknown>) => {
+      const result = await stub.publishEvent({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, event });
+      expect(result.status).toBe(202);
+    };
+    const first = await connect("00000000-0000-7000-8000-000000000127");
+    const second = await connect("00000000-0000-7000-8000-000000000128");
+    try {
+      for (const socket of [first, second]) {
+        const snapshot = nextMessageOfType(socket, "snapshot");
+        socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+        expect(await snapshot).toMatchObject({ activeInferenceDelays: [] });
+      }
+      const notices = [first, second].map((socket) => nextMessageOfType(socket, delay.type));
+      await publish(delay);
+      for (const notice of notices) expect(await notice).toMatchObject(delay);
+      await evictDurableObject(stub);
+      const reconnect = nextMessageOfType(first, "snapshot");
+      first.send(JSON.stringify({ type: "request_snapshot" }));
+      expect(await reconnect).toMatchObject({ activeInferenceDelays: [{ inferenceRequestId: delay.inferenceRequestId }] });
+
+      const concurrent = { ...delay, executionId: childRunId, inferenceRequestId: "00000000-0000-7000-8000-000000000141" };
+      const concurrentNotice = nextMessageOfType(first, delay.type);
+      await publish(concurrent);
+      expect(await concurrentNotice).toMatchObject(concurrent);
+      const cleared = nextMessageOfType(first, delay.type);
+      await publish({ ...delay, active: false });
+      expect(await cleared).toMatchObject({ ...delay, active: false });
+      const late = nextMessageOfType(first, delay.type);
+      await publish(delay);
+      expect(await late).toMatchObject({ ...delay, active: false });
+      const remaining = nextMessageOfType(first, "snapshot");
+      first.send(JSON.stringify({ type: "request_snapshot" }));
+      expect((await remaining).activeInferenceDelays).toEqual([{
+        harnessRunId, executionId: childRunId, attemptId,
+        inferenceRequestId: concurrent.inferenceRequestId, turnId: delay.turnId,
+      }]);
+
+      // A clear received after lease expiry must remain cleared after renewal.
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE runs SET lease_expires_at = ? WHERE run_id = ?`,
+          Date.now() - 1, childRunId);
+      });
+      await publish({ ...concurrent, active: false });
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE runs SET lease_expires_at = ? WHERE run_id = ?`,
+          Date.now() + 600_000, childRunId);
+      });
+      const renewed = nextMessageOfType(first, "snapshot");
+      first.send(JSON.stringify({ type: "request_snapshot" }));
+      expect(await renewed).toMatchObject({ activeInferenceDelays: [] });
+
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE runs SET legacy_attempt_id = ? WHERE run_id IN (?, ?)`,
+          "00000000-0000-7000-8000-000000000142", harnessRunId, childRunId);
+      });
+      const stale = nextMessageOfType(first, delay.type);
+      await publish({ ...concurrent, inferenceRequestId: "00000000-0000-7000-8000-000000000143" });
+      expect(await stale).toMatchObject({ active: false });
+      const recovered = nextMessageOfType(first, "snapshot");
+      first.send(JSON.stringify({ type: "request_snapshot" }));
+      expect(await recovered).toMatchObject({ activeInferenceDelays: [] });
+
+      const replacement = nextMessageOfType(first, delay.type);
+      await publish({ ...delay, attemptId: "00000000-0000-7000-8000-000000000142",
+        inferenceRequestId: "00000000-0000-7000-8000-000000000144" });
+      expect(await replacement).toMatchObject({ active: true });
+
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE runs SET status = 'completed' WHERE run_id = ?`, harnessRunId);
+        state.storage.sql.exec(`UPDATE workstream SET exact_state = 'completed' WHERE id = 1`);
+      });
+      const done = nextMessageOfType(first, "harness_status_changed");
+      await publish({ type: "harness_status_changed", status: "completed" });
+      expect(await done).toMatchObject({ status: "completed" });
+      await runInDurableObject(stub, (_instance, state) => {
+        expect(state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM inference_delay_status`,
+        ).one().count).toBe(0);
+      });
+      const terminalLate = nextMessageOfType(first, delay.type);
+      await publish(delay);
+      expect(await terminalLate).toMatchObject({ active: false });
+      const terminalSnapshot = nextMessageOfType(first, "snapshot");
+      first.send(JSON.stringify({ type: "request_snapshot" }));
+      expect(await terminalSnapshot).toMatchObject({ activeInferenceDelays: [] });
+    } finally {
+      first.close(1000, "done"); second.close(1000, "done");
+    }
+  });
+
   it("ignores retired message events and accepts the next authenticated subscription", async () => {
     await seedOpenAuthority();
     const id = env.SUBSTREAM_AGENTS.idFromName(

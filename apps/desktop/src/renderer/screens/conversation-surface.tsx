@@ -73,7 +73,7 @@ import { useTranscriptHistory } from '../lib/use-transcript-history';
 import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
-import { ActivityPresence, JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
+import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
 import { RIGHT_SIDEBAR_ENABLED, type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
@@ -2290,6 +2290,9 @@ export function ConversationSurface({
               virtualizer={transcriptVirtualizer}
             />
           )}
+          {detail.harnessStatus === 'running'
+            && socketConnection.activeInferenceDelays.some((delay) => delay.harnessRunId === detail.latestHarnessRunId)
+            && <InferenceDelayNotice />}
           <ActivityPresence>{activityRow?.kind === 'compacting'
             ? <AgentCompactionIndicator />
             : activityRow?.kind === 'timing'

@@ -19,6 +19,7 @@ import {
 } from "@rally/contracts";
 import { AzureInferenceEndpointSchema } from "@rally/contracts/url-schemas";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
+import { createInferenceDelayObserver, INFERENCE_TTFT_TIMEOUT_MS } from "./inference-delay";
 import { createStreamWatchdog } from "@juno-ai/bind/completion";
 import { chatRequestToJSON } from "@openrouter/sdk/models/chatrequest.js";
 import { chatResultFromJSON } from "@openrouter/sdk/models/chatresult.js";
@@ -503,6 +504,7 @@ export interface ChatRequest {
   reasoningEffort?: "low" | "medium" | "high" | undefined;
   trace?: OpenRouterTracePayload | undefined;
   signal?: AbortSignal | undefined;
+  onInferenceDelay?: (active: boolean) => void | Promise<void>;
 }
 
 export interface StreamResult {
@@ -1052,15 +1054,17 @@ export class OpenRouterClient {
     onDelta: (delta: string) => void | Promise<void>,
     onOutput: () => void
   ): Promise<StreamResult> {
+    const delayObserver = createInferenceDelayObserver(input.onInferenceDelay, input.signal);
     const requestStartedAt = Date.now();
     let firstOutputAt: number | null = null;
     const watchdog = createStreamWatchdog({
-      timeToFirstTokenMs: this.config.ttftTimeoutMs ?? 120_000,
+      timeToFirstTokenMs: this.config.ttftTimeoutMs ?? INFERENCE_TTFT_TIMEOUT_MS,
       interChunkMs: this.config.streamIdleTimeoutMs ?? 15_000,
-      maxCallDurationMs: Math.max(
-        this.config.ttftTimeoutMs ?? 120_000,
-        (this.config.ttftTimeoutMs ?? 120_000) + (this.config.streamIdleTimeoutMs ?? 15_000),
-      ),
+      // The absolute timer starts before fetch; reserve establishment as well
+      // so a slow response head cannot shorten the first-output allowance.
+      maxCallDurationMs: (this.config.requestEstablishmentTimeoutMs ?? 30_000)
+        + (this.config.ttftTimeoutMs ?? INFERENCE_TTFT_TIMEOUT_MS)
+        + (this.config.streamIdleTimeoutMs ?? 15_000),
       external: input.signal ?? null,
     });
     const establishment = new AbortController();
@@ -1122,6 +1126,7 @@ export class OpenRouterClient {
       });
     }
 
+    delayObserver.open();
     let content = "";
     let usage: Record<string, number> | null = null;
     let finishReason: string | null = null;
@@ -1146,14 +1151,21 @@ export class OpenRouterClient {
         if (choice.finishReason) finishReason = choice.finishReason;
         const text = choice.delta?.content;
         const toolCallDeltas = choice.delta?.toolCalls ?? [];
-        watchdog.observedChunk(text || toolCallDeltas.length > 0 ? "answer" : "none");
+        if (text || toolCallDeltas.length > 0) delayObserver.observedOutput();
+        // Metadata/keepalives must not restart the first-output deadline.
+        if (text || toolCallDeltas.length > 0 || firstOutputAt !== null) {
+          watchdog.observedChunk(text || toolCallDeltas.length > 0 ? "answer" : "none");
+        }
         if (text || toolCallDeltas.length > 0) {
           firstOutputAt ??= Date.now();
           onOutput();
         }
         if (text) {
           content += text;
-          deltaChain = deltaChain.then(() => onDelta(text));
+          deltaChain = deltaChain.then(async () => {
+            await delayObserver.flush();
+            await onDelta(text);
+          });
         }
         for (const deltaCall of toolCallDeltas) {
           const current = pendingCalls.get(deltaCall.index) ?? {
@@ -1176,6 +1188,7 @@ export class OpenRouterClient {
       if (done) break;
       responseBytes += value.byteLength;
       parser.feed(decoder.decode(value, { stream: true }));
+      await delayObserver.flush();
     }
     parser.feed(decoder.decode());
     await deltaChain;
@@ -1206,6 +1219,7 @@ export class OpenRouterClient {
     } finally {
       clearTimeout(establishmentTimer);
       watchdog.dispose();
+      await delayObserver.finish();
     }
   }
 
@@ -1252,15 +1266,17 @@ export class AzureOpenAIClient {
       throw new AzureOpenAIRequestError("Azure does not support OpenRouter plugins");
     }
     assertAzureMessages(input.messages);
+    const delayObserver = createInferenceDelayObserver(input.onInferenceDelay, input.signal);
     const requestStartedAt = Date.now();
     let firstOutputAt: number | null = null;
     const watchdog = createStreamWatchdog({
-      timeToFirstTokenMs: this.config.ttftTimeoutMs ?? 120_000,
+      timeToFirstTokenMs: this.config.ttftTimeoutMs ?? INFERENCE_TTFT_TIMEOUT_MS,
       interChunkMs: this.config.streamIdleTimeoutMs ?? 15_000,
-      maxCallDurationMs: Math.max(
-        this.config.ttftTimeoutMs ?? 120_000,
-        (this.config.ttftTimeoutMs ?? 120_000) + (this.config.streamIdleTimeoutMs ?? 15_000),
-      ),
+      // The absolute timer starts before fetch; reserve establishment as well
+      // so a slow response head cannot shorten the first-output allowance.
+      maxCallDurationMs: (this.config.requestEstablishmentTimeoutMs ?? 30_000)
+        + (this.config.ttftTimeoutMs ?? INFERENCE_TTFT_TIMEOUT_MS)
+        + (this.config.streamIdleTimeoutMs ?? 15_000),
       external: input.signal ?? null,
     });
     const establishment = new AbortController();
@@ -1306,6 +1322,7 @@ export class AzureOpenAIClient {
         });
       }
 
+      delayObserver.open();
       let content = "";
       let usage: Record<string, number> | null = null;
       let finishReason: string | null = null;
@@ -1328,11 +1345,18 @@ export class AzureOpenAIClient {
           if (choice.finishReason) finishReason = choice.finishReason;
           const text = choice.delta?.content;
           const toolCallDeltas = choice.delta?.toolCalls ?? [];
-          watchdog.observedChunk(text || toolCallDeltas.length > 0 ? "answer" : "none");
+          if (text || toolCallDeltas.length > 0) delayObserver.observedOutput();
+          // Metadata/keepalives must not restart the first-output deadline.
+          if (text || toolCallDeltas.length > 0 || firstOutputAt !== null) {
+            watchdog.observedChunk(text || toolCallDeltas.length > 0 ? "answer" : "none");
+          }
           if (text || toolCallDeltas.length > 0) firstOutputAt ??= Date.now();
           if (text) {
             content += text;
-            deltaChain = deltaChain.then(() => onDelta(text));
+            deltaChain = deltaChain.then(async () => {
+              await delayObserver.flush();
+              await onDelta(text);
+            });
           }
           for (const deltaCall of toolCallDeltas) {
             const current = pendingCalls.get(deltaCall.index) ?? {
@@ -1355,6 +1379,7 @@ export class AzureOpenAIClient {
         if (done) break;
         responseBytes += value.byteLength;
         parser.feed(decoder.decode(value, { stream: true }));
+        await delayObserver.flush();
       }
       parser.feed(decoder.decode());
       await deltaChain;
@@ -1383,6 +1408,7 @@ export class AzureOpenAIClient {
     } finally {
       clearTimeout(establishmentTimer);
       watchdog.dispose();
+      await delayObserver.finish();
     }
   }
 }
@@ -3505,6 +3531,8 @@ export interface RunHarnessInput {
     providerOperationId?: string;
   }) => void | Promise<void>;
   onAmbiguousExternalWrite?: (event: { toolCallId: string; pluginId: string; toolName: string }) => void | Promise<void>;
+  /** Transient first-output wait status, scoped to a provider invocation. */
+  onInferenceDelay?: (event: { inferenceRequestId: string; turnId: string; active: boolean }) => void | Promise<void>;
   /** Receives the complete provider request body immediately before dispatch. */
   onInferenceRequest?: (request: InferenceRequestEvent) => void | Promise<void>;
   onInferenceAttempt?: (attempt: InferenceAttemptEvent) => void | Promise<void>;
