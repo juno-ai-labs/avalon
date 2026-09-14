@@ -849,9 +849,11 @@ export function pendingTranscriptInputOverlay(
 export function pendingOverlayInputId(overlay: TranscriptOverlay): string | undefined {
   // An answer to a question is an admitted pending input as well, but it is
   // not a row anyone can reorder: counting it as one would shift the sequences
-  // a reorder assigns onto the rows around it. Carrying a queue sequence is
-  // what makes an overlay one of those rows.
-  if (overlay.queueSequence === undefined) return undefined;
+  // a reorder assigns onto the rows around it. The test is the message kind and
+  // nothing wider — a send the room has just accepted is a queued row with a
+  // server turn id and no queue sequence yet, and keying on the sequence took
+  // its reorder id away for the whole window before the next snapshot.
+  if (overlay.message.messageType === 'elicitation') return undefined;
   if (overlay.identity.type === 'loop_input') return overlay.identity.inputId;
   if (overlay.identity.type === 'client_message' && overlay.identity.turnId) {
     return overlay.identity.turnId;
