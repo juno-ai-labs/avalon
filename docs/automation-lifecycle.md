@@ -90,7 +90,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/durable-objects/automation-do-protocol.ts` | The request schemas the Worker and the Queue consumer send it, and the two alarm kinds `automation_schedule` and `automation_run`. |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The parent half it inherits: child registry, projections, receipts, aggregation, the outbox and its drain. See [`workstream-durable-object.md`](workstream-durable-object.md). |
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through, which resolves whether the caller is in the owning room before asking the object. |
-| `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
+| `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
 | `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the drafting plugin's host, which creates a room's automation on its first submission and posts the proposal card; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; `createAutomationPostResultPlugin`, the `sidekick_post_result` tool; and the run prompt context built from the definition. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), and `AutomationDraftProposedV1` (the card). |
@@ -101,7 +101,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `admitExternalEvent`, and a run child's effects to the object through the shared effect leg. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is a Sidekick resolves the workspace scope and the Sidekick's own `sidekick` scope. |
-| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Delete, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
+| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Archive Sidekick, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
 | `apps/desktop/src/renderer/components/appearance-picker.tsx` | The one icon-and-colour palette, shared with the work stream's header. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows. |
 | `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | Enabled standalone Sidekick tiles above the account menu open library details, and `SidekickStripTile`, the tile shape they and the empty strip's **New Sidekick** action share; the center rail shows the participant facepile and this room's Sidekicks. |
 | `apps/desktop/src/renderer/components/sidekick-section.tsx` | `SidekickSection`, the **Sidekicks** section both of a work stream's rails render, and `workstreamSidekickRows`, the merge of what the room owns with what its conversation loaded — owned first, one row per Sidekick, `undefined` until both answers are in. |
@@ -419,7 +419,7 @@ instructions name is the run's own work with its connector tools.
 | --- | --- | --- |
 | `pause` | a manager | `runs` in `pending`, `running`, or `needs_input` become `stopped`; `lifecycle = 'paused'`, `paused_by = 'person'`; schedule and run alarm entries cancelled; the workspace's registrations replaced with `[]`; sidebar row enqueued |
 | `resume` | a manager | each schedule's next due instant recomputed from now (a paused automation does not fire what it slept through), `lifecycle = 'active'`, `paused_by` cleared, alarms re-armed, the accepted evaluator projection re-registered with a fresh sequence boundary; refused with `sidekick_room_archived` while the owning room is archived |
-| `remove` (`DELETE`) | a manager | open runs stopped, `lifecycle = 'deleted'`, alarms cancelled, registrations replaced with `[]`; the object is kept, and `authorizeViewer` answers unauthorized and archived from then on |
+| `archive` (`POST /sidekicks/:id/archive`; legacy `DELETE` remains for installed clients) | a manager | open runs stopped, stored `lifecycle = 'deleted'`, alarms cancelled, registrations replaced with `[]`; the object, conversation, and run history remain stored but become inaccessible, and `authorizeViewer` answers unauthorized and archived from then on. `deleted` is the compatibility tombstone name, not a claim that retained data was destroyed. There is no unarchive operation or archived-Sidekick browser yet. |
 | `setOwningRoomArchived` | `WorkspaceDO`, from a directory effect that archived or unarchived the owning room | archiving pauses an `active` automation with `paused_by = 'room_archive'`; unarchiving resumes only an automation the archive paused, so a person's pause is never undone by somebody unarchiving the room. The Worker's viewer decision reports `archived` while the room is, which makes the automation's conversation and runs read-only |
 
 Who may manage (`assertManager`): the author or the run-as principal; for a
@@ -730,6 +730,32 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-13 — Removing a Sidekick is presented as archive
+
+**What changed:** The current client calls the retained tombstone transition
+**Archive Sidekick** and sends `POST /sidekicks/:id/archive`. The confirmation
+states that schedules stop while the retained conversation and run history
+become inaccessible. The
+legacy `DELETE` route still reaches the same transition for installed clients;
+the persisted lifecycle remains `deleted`, and no archive browser or unarchive
+operation was added.
+
+**Why:** The operation never destroyed the Sidekick object or its historical
+data, so “Delete” overstated what happened and hid the retention semantics from
+the person making the choice.
+
+**Considered:** Renaming the stored lifecycle to `archived` now would require a
+schema and projection migration without changing any behavior available in the
+product. The compatibility tombstone is kept until a future unarchive design
+needs to make archived objects addressable again.
+
+**Consequences:** New clients use an archive-shaped API and vocabulary. Old
+clients continue to work, archived Sidekicks remain absent from the library,
+and restoration remains deliberately unavailable. During a rolling Worker
+deployment, a new client falls back to legacy `DELETE` only when the archive
+request returns the generic `not_found` route response; a domain
+`sidekick_not_found` response is not replayed.
 
 ### 2026-09-11 — A Sidekick's result names the Sidekick, and its documents land in the room
 

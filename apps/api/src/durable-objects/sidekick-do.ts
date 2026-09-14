@@ -542,13 +542,13 @@ export class SidekickDO extends ConversationParentDurableObject {
     await this.initialized;
     const request = AutomationSubmitDefinitionRequestSchema.parse(input);
     const row = this.assertAutomation(request.workspaceId, request.automationId);
-    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was deleted");
+    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
     const definitionJson = JSON.stringify(request.draft);
     const definitionHash = await sha256(definitionJson);
     const now = Date.now();
     const revision = this.state.storage.transactionSync(() => {
       const latest = this.assertAutomation(request.workspaceId, request.automationId);
-      if (latest.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was deleted");
+      if (latest.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
       const definitionRevision = latest.current_definition_revision + 1;
       this.state.storage.sql.exec(
         `INSERT INTO definition_revisions
@@ -605,7 +605,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     await this.initialized;
     const request = AutomationActorRequestSchema.parse(input);
     const row = this.assertAutomation(request.workspaceId, request.automationId);
-    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was deleted");
+    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
     this.assertManager(row, request.actor);
     if (row.owning_room_archived_at !== null) {
       throw new ApiError(409, "sidekick_room_archived", "The work stream that owns this Sidekick is archived");
@@ -764,7 +764,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     const request = AutomationSetAppearanceRequestSchema.parse(input);
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertManager(row, request.actor);
-    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was deleted");
+    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
     const patch = WorkstreamAppearancePatchSchema.parse(request.appearance);
     const current = row.appearance_json
       ? WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json))
@@ -1983,7 +1983,7 @@ export class SidekickDO extends ConversationParentDurableObject {
   }
 
   private assertViewer(row: AutomationRow, actor: AutomationActor): void {
-    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was deleted");
+    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
     if (row.scope === "workspace" || row.author_user_id === actor.userId || row.run_as_user_id === actor.userId) return;
     if (row.scope === "workstream" && actor.participantOfOwningWorkstream) return;
     throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
@@ -1999,7 +1999,7 @@ export class SidekickDO extends ConversationParentDurableObject {
   private detail(): AutomationDetail {
     const row = this.row();
     if (!row) throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
-    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was deleted");
+    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
     const current = this.revision(row.current_definition_revision);
     const lastRunAt = first(this.state.storage.sql.exec<{ created_at: number }>(
       `SELECT created_at FROM runs ORDER BY created_at DESC LIMIT 1`,

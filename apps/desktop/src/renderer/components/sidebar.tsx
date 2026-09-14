@@ -126,7 +126,6 @@ interface SidebarProps {
   ) => Promise<{ enqueuedCount: number; archivedNoteCount: number }>;
   onChangeNoteScope: (note: NoteSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onChangeWorkstreamScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>;
-  onDeleteAutomation: (automation: AutomationSummary) => Promise<void>;
   onMarkWorkstreamUnread: (workstream: WorkstreamSummary) => Promise<void>;
   /**
    * Pin or unpin for the signed-in person, on every device they use.
@@ -985,7 +984,7 @@ function WorkstreamRow({
           {debugEnabled && <CopyWorkstreamLinkItem workstreamId={workstream.id} workspace={workspace} />}
           <ContextMenu.Separator className="menu-separator" />
           {/* Names its noun, as every other destructive item in these menus
-              does — "Archive note", "Archive draft", "Delete automation". A
+              does — "Archive note", "Archive draft", "Archive Sidekick". A
               bare "Archive" under Mark as unread and Rename reads as archiving
               the messages rather than removing the work stream from everyone's
               sidebar for good. */}

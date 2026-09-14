@@ -64,15 +64,6 @@ export function upsertProjectDirectory(
 
 
 /**
- * Whether the screen at this route is showing the named automation, and would
- * therefore be stranded once it stops being served. A draft and an accepted
- * automation share the one route, so this covers both.
- */
-export function showsAutomation(pathname: string, automationId: string): boolean {
-  return pathname === `/automations/${automationId}` || pathname === `/sidekicks/${automationId}`;
-}
-
-/**
  * The shell class that says the window's own buttons are painted over the page,
  * or none. Reserving room for them is `docs/assumptions.md` item 25.
  *
@@ -264,12 +255,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // room for their context rail; other routes keep the original reservation.
   const sidebarCompact = sidebarCollapsed || sidebarConstrained;
   const effectiveSidebarWidth = sidebarCompact ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
-  // An archived draft is as gone as a deleted automation; the landing replaces
-  // the entry so Back cannot return to either.
-  const leaveAutomationScreen = (automationId: string): void => {
-    if (showsAutomation(location.pathname, automationId)) openFirstWorkstream();
-  };
-
   // The main pane keeps room for an inspector that is still fading out.
   const showShellRail = RIGHT_SIDEBAR_ENABLED && (railOpen || railLeaving) && !location.pathname.startsWith('/notes/');
   const expandForShellRail = RIGHT_SIDEBAR_ENABLED && railOpen && !location.pathname.startsWith('/notes/');
@@ -684,19 +669,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           // on every PATCH, while `last_people_activity_at` is not, so the
           // sidebar's sort key is deliberately left alone here.
           patchCachedWorkstream(queryClient, updated.id, { scope: updated.scope, updatedAt: updated.updatedAt });
-        }}
-        onDeleteAutomation={async (automation) => {
-          if (!api) return;
-          await api.deleteAutomation(automation.id);
-          // Deleting closes any run that was opened ahead of its planned time,
-          // so the work-stream list is stale too — and that one is not pushed
-          // off the automation write the way the automation list is.
-          await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-          // Leaving the deleted automation's route replaces it rather than
-          // pushing, so Back cannot return to it, and the detail query goes
-          // with it so nothing can render the automation from cache.
-          leaveAutomationScreen(automation.id);
-          queryClient.removeQueries({ queryKey: ['automation', automation.id] });
         }}
         onMarkWorkstreamUnread={async (workstream) => {
           if (!api) return;
