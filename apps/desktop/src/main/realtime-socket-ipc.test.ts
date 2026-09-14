@@ -58,14 +58,20 @@ describe('realtime socket IPC', () => {
     expect(assertSender).toHaveBeenCalledWith(event);
     expect(broker.open).toHaveBeenCalledWith(17, openInput(), expect.any(Function));
     const emit = broker.open.mock.calls[0]?.[2] as (socketEvent: DesktopRealtimeSocketEvent) => void;
-    const socketEvent: DesktopRealtimeSocketEvent = {
+    const handshakeEvent: DesktopRealtimeSocketEvent = {
       type: 'handshake_phase', socketId, phase: 'tls',
       durationMs: 24.6, routeIndex: 0, proxied: false,
     };
-    emit(socketEvent);
+    const messageEvent: DesktopRealtimeSocketEvent = {
+      type: 'message', socketId, data: '{"type":"snapshot"}',
+    };
+    emit(handshakeEvent);
+    emit(messageEvent);
 
-    expect(send).toHaveBeenCalledWith(REALTIME_SOCKET_IPC_CHANNELS.event, socketEvent);
-    expect(parseRealtimeSocketEvent(send.mock.calls[0]?.[1])).toEqual(socketEvent);
+    expect(send).toHaveBeenNthCalledWith(1, REALTIME_SOCKET_IPC_CHANNELS.event, handshakeEvent);
+    expect(send).toHaveBeenNthCalledWith(2, REALTIME_SOCKET_IPC_CHANNELS.event, messageEvent);
+    expect(parseRealtimeSocketEvent(send.mock.calls[0]?.[1])).toEqual(handshakeEvent);
+    expect(parseRealtimeSocketEvent(send.mock.calls[1]?.[1])).toEqual(messageEvent);
   });
 
   it('rejects malformed input and an unauthorized sender before broker admission', () => {

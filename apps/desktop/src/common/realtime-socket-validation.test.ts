@@ -1,17 +1,20 @@
 import { describe, expect, it } from 'vitest';
+import { DesktopRealtimeSocketHandshakePhaseSchema } from './realtime-socket';
 import { parseRealtimeSocketEvent } from './realtime-socket-validation';
 
 const socketId = '00000000-0000-4000-8000-000000000002';
 
 describe('parseRealtimeSocketEvent', () => {
   it('accepts every closed broker event shape', () => {
-    expect(parseRealtimeSocketEvent({
-      type: 'handshake_phase', socketId, phase: 'proxy_resolution',
-      durationMs: 6.4, routeIndex: 0, proxied: false,
-    })).toEqual({
-      type: 'handshake_phase', socketId, phase: 'proxy_resolution',
-      durationMs: 6.4, routeIndex: 0, proxied: false,
-    });
+    for (const phase of DesktopRealtimeSocketHandshakePhaseSchema.options) {
+      expect(parseRealtimeSocketEvent({
+        type: 'handshake_phase', socketId, phase,
+        durationMs: 6.4, routeIndex: 0, proxied: false,
+      })).toEqual({
+        type: 'handshake_phase', socketId, phase,
+        durationMs: 6.4, routeIndex: 0, proxied: false,
+      });
+    }
     expect(parseRealtimeSocketEvent({
       type: 'open', socketId, protocol: 'rally.ticket.v1', extensions: '',
     })).toEqual({ type: 'open', socketId, protocol: 'rally.ticket.v1', extensions: '' });
@@ -24,7 +27,7 @@ describe('parseRealtimeSocketEvent', () => {
     })).toEqual({ type: 'close', socketId, code: 1_000, reason: 'done', wasClean: true });
   });
 
-  it('rejects invalid IDs, missing fields, wrong field types, and extra authority', () => {
+  it('rejects malformed broker events', () => {
     for (const event of [
       { type: 'error', socketId: 'not-a-socket-id' },
       { type: 'open', socketId, protocol: 'rally.ticket.v1' },
@@ -36,6 +39,30 @@ describe('parseRealtimeSocketEvent', () => {
       {
         type: 'handshake_phase', socketId, phase: 'dns',
         durationMs: -1, routeIndex: 0, proxied: false,
+      },
+      {
+        type: 'handshake_phase', socketId, phase: 'dns',
+        durationMs: Number.NaN, routeIndex: 0, proxied: false,
+      },
+      {
+        type: 'handshake_phase', socketId, phase: 'dns',
+        durationMs: Number.POSITIVE_INFINITY, routeIndex: 0, proxied: false,
+      },
+      {
+        type: 'handshake_phase', socketId, phase: 'dns',
+        durationMs: 1, routeIndex: -1, proxied: false,
+      },
+      {
+        type: 'handshake_phase', socketId, phase: 'dns',
+        durationMs: 1, routeIndex: 0.5, proxied: false,
+      },
+      {
+        type: 'handshake_phase', socketId, phase: 'dns',
+        durationMs: 1, routeIndex: 0, proxied: 'no',
+      },
+      {
+        type: 'handshake_phase', socketId, phase: 'dns',
+        durationMs: 1, routeIndex: 0, proxied: false, url: 'wss://attacker.example',
       },
       { type: 'close', socketId, code: 1_000, reason: '', wasClean: 'yes' },
       { type: 'error', socketId, url: 'wss://attacker.example' },

@@ -833,6 +833,7 @@ failure semantics, while non-route callers still need their own check.
 Keep P50 below one second and P90 below two seconds as unverified acceptance
 targets until a representative trace set exists. Do not merge replay or failure
 cohorts into those percentiles.
+
 ### 2026-09-02 — Preload admits native handshake phases
 
 **What changed:** The dependency-free preload validator now accepts the complete
@@ -880,7 +881,9 @@ may save roughly 350–450 ms, but its permanent implementation remains unmeasur
 and requires explicit ticket-secret provisioning and service-first rollout work.
 Cloudflare's pinned synchronous clock can still report zero inside Worker startup,
 so client-native phases and the trace-ID join remain complementary rather than
-interchangeable.
+interchangeable. Per-phase duration annotations are last-write-wins across route
+attempts; read `failedRouteCount` beside them rather than treating them as an
+attributed history of every failed route.
 
 ### 2026-09-02 — Prepared admission separates hidden work from upgrade fallback
 
