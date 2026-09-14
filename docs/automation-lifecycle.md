@@ -802,6 +802,34 @@ buffering exists to avoid. A future change must keep both sites on
 submission the object then rejected would be worse than no echo, because it
 would be believed.
 
+**And the field itself now says what it is.** `sourceBindingKey`'s description
+told the model to take the value "from plugin_inspect or resources_search
+rather than composed". Neither returns one: the `plugin_inspect` projection has
+no such field, and `resources_search` fills `sourceBindingKeys` with `[]` for
+every row. The value is a label the model composes, validated only as
+`^[a-z][a-z0-9_-]{0,62}$` and resolved away at apply, so the description named
+a lookup that has never existed. It now says the label is composed, that no
+tool returns one, that the identical label goes on each rule, and that
+narrowing to a channel or folder is `resourceId`'s business rather than this
+field's. The rule half is described too, which it never was — the side that has
+to match was the undocumented one.
+
+**Why:** the two descriptions contradicted each other, and the wrong one won. A
+connector declaring no resource relationship — Fireflies declares none, so
+`automationBindableResourceTypes` is empty for it by construction — makes
+`resources_search` correctly return nothing, and that tool's own description
+says exactly what to do about it: omit `resourceId` and filter on a declared
+field. A production drafting run read the `sourceBindingKey` sentence instead,
+searched, found nothing, and reported to the person that a workspace
+administrator had to expose "a bindable Fireflies resource" — a thing no
+administrator can create. The draft it refused to make was already legal.
+
+**Consequences:** the one case where the value is *not* the model's to choose
+is where a resource search returns `sourceBindingKeys` for the resource a rule
+names; `evaluatorRuleIssues` has always narrowed to those when present, and the
+description now states that exception rather than leaving it to a refusal.
+Populating `sourceBindingKeys` later therefore needs no further wording change.
+
 ### 2026-09-13 — Removing a Sidekick is presented as archive
 
 **What changed:** The current client calls the retained tombstone transition
