@@ -10,7 +10,7 @@ import type {
 } from "@rally/contracts";
 import {
   AddressingClassificationSchema,
-  AutomationSetEvaluatorRulesInputV1Schema,
+  AutomationSetEvaluatorRulesModelInputV1Schema,
   isSentinelAutomationResourceId,
   withoutUnusableAutomationResourceIds,
   AutomationDraftSchema,
@@ -2820,7 +2820,7 @@ const requestElicitationInputJsonSchema = memoizedValue(
 );
 const automationEvaluatorRulesJsonSchema = memoizedValue(
   () => withoutSentinelIdAlternatives(
-    z.toJSONSchema(AutomationSetEvaluatorRulesInputV1Schema, { io: "input" }),
+    z.toJSONSchema(AutomationSetEvaluatorRulesModelInputV1Schema, { io: "input" }),
   ) as Record<string, unknown>,
 );
 

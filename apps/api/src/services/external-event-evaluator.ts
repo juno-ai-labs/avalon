@@ -122,6 +122,13 @@ export interface ValidatedDraftEvaluator {
  *
  * The provider schema can prove structure. This boundary proves meaning against
  * the exact manifests, people and resources inspected in this compiler run.
+ *
+ * "Draft" names where the rules came from, not the shape they arrive in: the
+ * only caller is `prepareApplication`, which has already read them back out of
+ * `evaluator_rules_json`. So `when` is the stored spelling here — `all`, never
+ * the `matching` the drafting tool accepts — and a fixture written the other
+ * way fails as an `invalid_union` that reads like a schema bug rather than a
+ * side mix-up.
  */
 export function validateDraftEvaluatorRules(
   rawInput: unknown,

@@ -624,7 +624,7 @@ or the memory store the automation scope lives in.
 | `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | The binding half in isolation: the table absent from D1, a recommended plugin bound from the workspace object's connections, a missing one refused, a disabled row skipped for the live one. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and watched work streams; a redelivery admits once. |
 | `apps/api/test-workers/conversation-parent-contract.test.ts`, `conversation-effect-queue.test.ts` | `pnpm --filter @rally/api test:workers` | The parent contract through the real ticket route, and the effect legs an automation's children use, including a child effect producing no `parent_effect` row. Owned by [`workstream-durable-object.md`](workstream-durable-object.md#testing). |
-| `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, and the connector vocabulary. |
+| `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, the connector vocabulary an authoring rule is held to — and the boundary between the two predicate spellings, which is where a change that let the model's `matching` reach a stored column would fail. |
 | `apps/api/test/run-authority-validity.test.ts` | `pnpm --filter @rally/api test` | A running run admitted, a paused or unknown one stopped, connector evidence not re-read after admission, and a run with no automation reference asking no automation. |
 | `apps/api/test/scoped-memory.test.ts` | `pnpm --filter @rally/api test` | A Sidekick's conversation resolving the workspace scope and its own `sidekick` scope. |
 | `apps/api/test/resend-inbound-email.test.ts`, `workstream-email-routing.test.ts`, `workstream-email-address.test.ts` | `pnpm --filter @rally/api test` | The single admission call, its receipts, and the address claim. |
@@ -736,46 +736,57 @@ run refusing provider writes with "This automation run is no longer running"
 was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
-### 2026-09-14 — The AND-group predicate is `matching`, and stored `all` rows are still read
+### 2026-09-14 — `matching` is the model's spelling; `all` stays the stored one
 
-**What changed:** The external-event predicate's conjunction discriminant is
-`matching`. `always` is untouched, and so is the `allOf` field name. A
-`preprocess` on `ExternalEventPredicateV1Schema` rewrites a legacy `all` to
-`matching` before validation, so the rule grammar has one canonical spelling
-everywhere past that seam.
+**What changed:** The external-event predicate now has two schemas.
+`ExternalEventPredicateV1Schema` is the stored one and still spells its
+conjunction `all`, unchanged. `ModelFacingExternalEventPredicateV1Schema`
+spells it `matching` and is a `transform` onto the stored one; it is what
+`DraftExternalEventEvaluatorV1Schema` uses, and therefore what
+`set_evaluator_rules` advertises. `always` and the `allOf` field name are
+untouched on both sides.
 
-**Why:** The union's two arms sat next to each other and read as near-synonyms.
-`all` means "every one of these leaves holds"; `always` means "every event of
-this type". A model reading them side by side has nothing to separate them, and
-this grammar is written by the drafting model through `set_evaluator_rules`
-rather than by a person — so the ambiguity landed in authored rules, not just in
-review comments. `matching` cannot be misread as a quantifier over events.
+**Why:** `all` and `always` sat next to each other and read as near-synonyms —
+`all` means "every one of these leaves holds", `always` means "every event of
+this type". A model authoring this grammar has nothing to separate them, so the
+ambiguity landed in real rules rather than in review comments. But the
+discriminant is also *stored*, and Worker versions deploy gradually and can be
+rolled back, so a version serving beside or after this one must be able to read
+anything it writes. Renaming the stored spelling would have written rows the
+previous version cannot parse — the same silent outage as the reverse, arriving
+by rollback instead of by migration. Confining `matching` to the model's side of
+the boundary buys the legibility with no stored change at all, so there is no
+compatibility window to manage and nothing to migrate later.
 
-**Considered and rejected:** Admitting `all` as a third union branch that
-transforms to `matching`, which is the shape this normally takes. It parses
-stored rows identically, but `z.toJSONSchema(…, { io: "input" })` renders a
-union branch by branch, so the tool schema would have offered the model *both*
-spellings and reinstated exactly the collision the rename removes. Zod treats a
-`preprocess`'s input as unrepresentable and falls through to the canonical
-union, which is why the compatibility lives there and not in the union.
-`automation-creator-tools.test.ts` asserts the generated schema names `matching`
-and `always` and not `all`, so that regression fails a test rather than reaching
-a model. Also rejected: a migration rewriting the stored columns now, which
-buys nothing a preprocess does not and has to run in both regions.
+**How the two stay apart:** `z.toJSONSchema(…, { io: "input" })` renders a
+transform's *input*, so the tool offers `matching` and never `all`; parsing
+yields its *output*, so every reader and every column sees `all`. The stored
+schema does not admit `matching` at all, which is what makes "a `matching`
+reached a column" a parse failure in a test rather than a row nobody notices.
+`packages/contracts` and `apps/api/test/external-event-evaluator.test.ts` pin
+both directions.
 
-**Consequences:** `all` is accepted at exactly one place and is legal in stored
-data only — never in anything written, and never in a value a reader branches
-on. Any new reader of the discriminant must compare against `matching`. The
-seam can only be deleted once no stored row spells it `all`: that needs a
-migration over `definition_revisions.evaluator_rules_json` and
-`workspace_external_event_registrations.evaluator_json` in every region, or
-proof that every revision and registration predating the rename has since been
-rewritten by a normal accept or reconcile. Deleting it without one of those does
-not fail a parse anybody sees in review — it throws inside
-`matchExternalEventDestinations` on the delivery path, and every event-driven
-Sidekick registered before the rename silently stops waking. Note that
-`ReadPolicy` in `authorization-policy.ts` has its own unrelated `{kind: 'all'}`;
-it shares the spelling and nothing else, and was deliberately left alone.
+**Considered and rejected:** renaming the stored discriminant with a
+`preprocess` accepting the legacy `all`. It reads as the conservative option and
+is the opposite: the parse canonicalizes to `matching` and the writers persist
+whatever they parsed, so the first accept under the new version rewrites
+`definition_revisions.evaluator_rules_json`, `automation.evaluator_projection_json`
+and `workspace_external_event_registrations.evaluator_json` into a spelling the
+previous version refuses. Three columns rather than the two an earlier draft of
+this entry named: the projection is written from the parsed set in `apply`, and
+replayed by the `sidekick_publication` alarm and by `resumeFromPause`, both of
+which reach `applyExternalEventRegistrations`. Also rejected: keeping that
+design and translating back to `all` at each write, which leaves three
+boundaries that must each remember to, and a fourth that will be added later
+without.
+
+**Consequences:** `matching` exists in exactly one schema and must not spread;
+anything reading a predicate compares against `all`. A future change may rename
+the stored spelling once no Worker version predating it can serve or be rolled
+back to — at which point the transform becomes an identity and should be
+deleted, not left to suggest the two ever disagreed. `ReadPolicy` in
+`authorization-policy.ts` has its own unrelated `{kind: 'all'}`; it shares the
+spelling and nothing else.
 
 **Also in this change: a source-binding disagreement names both sides.**
 `submit_draft`'s `sidekick_activity_source_unbound` refusal now names the
