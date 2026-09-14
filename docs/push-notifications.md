@@ -59,6 +59,8 @@ APNs registration rather than a heartbeat. Sign-out cancels pending work and
 unregisters natively immediately; captured credentials permit best-effort server
 cleanup without delaying local credential removal. Optional push settings I/O
 cannot abort application startup.
+APNs groups notifications by the main workstream ID, including notifications
+from its substreams. Clicks still target the originating substream.
 Clicks pass the HTTPS link through the existing work-stream parser and scheme
 navigation, including pending navigation before sign-in or window readiness.
 
@@ -132,3 +134,5 @@ serialized and cancelable because permission prompts and network requests can
 outlive session changes; this optional transport must never delay sign-out or
 prevent app startup. Provider credential failures stop the current queue batch
 rather than repeating the same failure and operator alert for every device.
+Notification grouping uses the main workstream so its substreams appear together,
+while click destinations preserve the originating conversation.
