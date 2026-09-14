@@ -1538,12 +1538,15 @@ export class WorkstreamTranscriptStorage {
     const steps: PreparedPendingBindStep[] = [];
     const keys: string[] = [];
     if (inputs.length === 0) return { steps, next: previous, keys };
-    // A derived input is a `protocol_user_appended` like any other, so an open
-    // question refuses it too — and this preparer runs before the settlement
+    // A derived input is a `protocol_user_appended` like any other, so any
+    // withheld batch refuses it — and this preparer runs before the settlement
     // transaction, which means the throw failed the whole settled step rather
-    // than the delivery. Undelivered is the honest outcome: nothing is marked
-    // delivered, and the next settled step appends it.
-    if (this.openQuestionToolCallIds(previous).size > 0) return { steps, next: previous, keys };
+    // than the delivery. The predicate is the whole batch, not a question:
+    // there is nothing loud to preserve on this path, because the throw becomes
+    // a terminal `run_state_persistence_failed` on a step that had completed.
+    // Undelivered is the honest outcome: nothing is marked delivered, and the
+    // next settled step appends it.
+    if (pendingBindToolBatch(previous) !== null) return { steps, next: previous, keys };
     const alreadyProjected = new Set(this.currentBindProvenanceKeys(
       previous.loopId,
       inputs.map((entry) => entry.provenance),
@@ -3723,8 +3726,9 @@ export class WorkstreamTranscriptStorage {
    * queue stopped at its head, the answer behind it was never promoted, and
    * the question could not be dismissed by anyone, because the card is drawn
    * from the canonical turn the promotion writes. The answer therefore goes
-   * first, and anything queued while a question is still open waits for it
-   * rather than failing the room's next step.
+   * first. That is a reordering, not a hold: the tool result an answer appends
+   * settles the batch, so the rest of the queue follows it in the same pass, in
+   * arrival order. Only a question still unanswered holds anything back.
    */
   private inputsBindCanAccept(
     projection: BindLoopProjectionState | null,

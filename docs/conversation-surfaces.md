@@ -670,7 +670,6 @@ without one is not a row and cannot be reordered. The loop promoting the answer
 out of turn is the other half of this, and lives in the 2026-09-14 entry in
 [`workstream-durable-object.md`](workstream-durable-object.md).
 
-
 ### 2026-09-13 — The in-flight sweep is painted on each surface of a turn, not on its wrapper
 
 **What changed:** The shimmer that marks a person's turn as still in flight

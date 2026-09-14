@@ -1299,7 +1299,6 @@ alone was not enough, is in the 2026-09-14 entry in
 [`workstream-durable-object.md`](workstream-durable-object.md), which owns the
 queue.
 
-
 ### 2026-09-12 — Bind 15 carries the loop patch, and this repository stops patching
 
 **What changed:** `@juno-ai/bind` moves from 14.0.0 to 15.0.0, whose new surface
