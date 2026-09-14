@@ -16,6 +16,8 @@ it('maps provider answers without disabling devices on a provider credential fai
   expect(del).toHaveBeenCalledOnce();
   request.mockResolvedValueOnce(Response.json({ reason: 'Unregistered', timestamp: 123 }, { status: 410 }));
   expect(await sendApns(env, device, '{}', 'collapse')).toMatchObject({ outcome: 'unregistered', timestamp: 123 });
+  request.mockResolvedValueOnce(Response.json({ reason: 'Unregistered' }, { status: 410 }));
+  expect((await sendApns(env, device, '{}', 'collapse')).outcome).toBe('transient');
   request.mockResolvedValueOnce(Response.json({ reason: 'TooManyRequests' }, { status: 429 }));
   expect((await sendApns(env, device, '{}', 'collapse')).outcome).toBe('transient');
 });

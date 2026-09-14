@@ -53,6 +53,7 @@ export function assertEmbeddedUpdateConfig(contents) {
 }
 
 export function assertPushProvisioning(profile, entitlements, now = Date.now()) {
+  if (profile.ProvisionsAllDevices !== true) throw new Error('Push provisioning profile must support Developer ID distribution');
   const domains = ['applinks:rallywith.ai', 'applinks:www.rallywith.ai'];
   if (!profile.TeamIdentifier?.includes('7ZLT6A8W25')
     || profile.Entitlements?.['com.apple.application-identifier'] !== '7ZLT6A8W25.ai.rallywith.desktop'

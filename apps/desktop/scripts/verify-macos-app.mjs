@@ -196,6 +196,7 @@ const profileField = (key, format) => {
   return format === 'json' ? JSON.parse(result.stdout) : result.stdout.trim();
 };
 assertPushProvisioning({
+  ProvisionsAllDevices: profileField('ProvisionsAllDevices', 'json'),
   TeamIdentifier: profileField('TeamIdentifier', 'json'),
   Entitlements: profileField('Entitlements', 'json'),
   ExpirationDate: profileField('ExpirationDate', 'raw'),

@@ -1,6 +1,5 @@
 import { z } from "zod";
 import type { Env } from "../../env";
-import { notifyOps } from "../../observability/ops-slack-notifier";
 import { APNS_PAYLOAD_BYTES } from "./push-payload";
 import type { PushDevice } from "../push-device-service";
 
@@ -15,6 +14,9 @@ export interface ApnsOutcome {
 export function pushConfigured(env: Env): boolean {
   return Boolean(env.APNS_AUTH_KEY?.trim() && env.APNS_KEY_ID?.trim());
 }
+export function pushAvailable(env: Env): boolean {
+  return pushConfigured(env) && (env.APP_ENV === "production" || env.APP_ENV === "staging");
+}
 function base64url(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
@@ -28,7 +30,7 @@ export async function mintProviderToken(pem: string, kid: string, iat: number): 
   return `${body}.${base64url(new Uint8Array(signature))}`;
 }
 export async function sendApns(env: Env, device: PushDevice, payload: string, collapseId: string): Promise<ApnsOutcome> {
-  if (!pushConfigured(env) || (env.APP_ENV !== "production" && env.APP_ENV !== "staging")) return { outcome: "skipped" };
+  if (!pushAvailable(env)) return { outcome: "skipped" };
   if (new TextEncoder().encode(payload).byteLength > APNS_PAYLOAD_BYTES) return { outcome: "rejected", reason: "payload_too_large" };
   const cacheKey = `apns-provider:${env.APNS_KEY_ID!}`;
   try {
@@ -46,12 +48,13 @@ export async function sendApns(env: Env, device: PushDevice, payload: string, co
     if (response.status === 200) return { outcome: "sent", status: 200 };
     const details = ErrorSchema.safeParse(text ? JSON.parse(text) : {}).data ?? {};
     const result = { status: response.status, ...details };
-    if (response.status === 410) return { ...result, outcome: "unregistered" };
+    if (response.status === 410) return details.timestamp === undefined
+      ? { ...result, outcome: "transient", reason: "missing_unregistered_timestamp" }
+      : { ...result, outcome: "unregistered" };
     if (details.reason === "BadDeviceToken") return { ...result, outcome: "bad_token" };
     if (response.status === 403 || details.reason === "TooManyProviderTokenUpdates") {
       const throttled = details.reason === "TooManyProviderTokenUpdates";
       if (!throttled) await env.INFERENCE_PRICING_CACHE.delete(cacheKey);
-      await notifyOps(env, { event: "push_provider_auth_failed", summary: "Apple push provider authentication needs attention.", fields: { reason: details.reason ?? "unknown" } });
       return { ...result, outcome: throttled ? "provider_token_throttled" : "provider_auth_failed" };
     }
     return { ...result, outcome: response.status === 429 || response.status >= 500 ? "transient" : "rejected" };

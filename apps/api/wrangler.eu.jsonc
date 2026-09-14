@@ -274,10 +274,9 @@
       },
       {
         "queue": "avalon-eu-push-deliveries",
-        // One message is one person losing access, and each is handled
-        // independently, so a batch buys fewer invocations and nothing else.
-        // The short timeout matters here: the message is the only thing
-        // standing between a revoked session and an open socket.
+        // Reuse the existing regional queue policy: ten-message batches,
+        // one-second batching, five retries, then the operational dead-letter
+        // queue. Push needs no separate retry scheduler.
         "max_batch_size": 10,
         "max_batch_timeout": 1,
         "max_retries": 5,
