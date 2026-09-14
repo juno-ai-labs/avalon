@@ -503,7 +503,7 @@ export function releaseWorkspaceSlackThreadClaim(
 const SLACK_SESSION_COLUMNS = `id, workspace_id, connection_id, slack_team_id, slack_user_id,
   slack_channel_id, slack_thread_ts, slack_stream_ts, workstream_id, last_delivery_key,
   opening_client_message_id, invocation_kind, channel_type, assigned_user_id,
-  reaction_channel_id, reaction_message_ts, reaction_current, reaction_cursor`;
+  reaction_channel_id, reaction_message_ts, reaction_current`;
 
 function sessionResult(row: WorkspaceSlackSession | undefined): WorkspaceSlackSessionResult {
   return WorkspaceSlackSessionResultSchema.parse({ session: row ?? null });
@@ -729,15 +729,12 @@ export function settleWorkspaceSlackSessionReaction(
   storage: DurableObjectStorage,
   request: WorkspaceSlackSessionReactionRequest,
 ): WorkspaceSlackSessionReactionResult {
-  const cursorAssignment = request.cursor === undefined ? "" : ", reaction_cursor = ?";
-  const cursorBinding = request.cursor === undefined ? [] : [request.cursor];
   const settled = storage.sql.exec<{ id: string }>(
     `UPDATE slack_agent_sessions
-        SET reaction_current = ?${cursorAssignment}, updated_at = ?
+        SET reaction_current = ?, updated_at = ?
       WHERE id = ? AND workspace_id = ? AND reaction_current IS ?
       RETURNING id`,
     request.reaction,
-    ...cursorBinding,
     request.at,
     request.sessionId,
     request.workspaceId,
@@ -803,7 +800,7 @@ export function recordWorkspaceSlackFeedback(
   });
 }
 
-/** Re-anchor the status reaction and restart the rotation from its first emoji. */
+/** Move the status reaction onto the message that made the newest prompt. */
 export function anchorWorkspaceSlackSessionReaction(
   storage: DurableObjectStorage,
   request: WorkspaceSlackSessionReactionAnchorRequest,
@@ -811,7 +808,7 @@ export function anchorWorkspaceSlackSessionReaction(
   storage.sql.exec(
     `UPDATE slack_agent_sessions
         SET reaction_channel_id = ?, reaction_message_ts = ?, reaction_current = ?,
-            reaction_cursor = 0, updated_at = ?
+            updated_at = ?
       WHERE id = ? AND workspace_id = ?`,
     request.channelId,
     request.messageTs,

@@ -71,7 +71,6 @@ export interface Env {
   WORKSTREAM_DOS: DurableObjectNamespace<WorkstreamDO>;
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
-  SLACK_REACTION_TICKERS: DurableObjectNamespace;
   /** One supervisor per live web artifact, named by the artifact's own id. */
   ARTIFACT_HOSTS: DurableObjectNamespace<ArtifactHostDO>;
   /**
@@ -380,7 +379,6 @@ const EnvContractSchema = z.object({
   WORKSTREAM_DOS: binding<DurableObjectNamespace<WorkstreamDO>>(),
   WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
-  SLACK_REACTION_TICKERS: binding<DurableObjectNamespace>(),
   ARTIFACT_HOSTS: binding<DurableObjectNamespace<ArtifactHostDO>>(),
   ARTIFACT_LOADER: binding<WorkerLoader>().optional(),
   ACTIVITY_QUEUE: binding<Queue>(),

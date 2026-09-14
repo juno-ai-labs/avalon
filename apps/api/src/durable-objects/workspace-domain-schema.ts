@@ -74,6 +74,11 @@ function workspaceIdentityFences(): string[] {
  * D1 cutover: WorkspaceDO applies them as a schema migration, and the test
  * fixture that stands in for an object database applies them to the snapshot it
  * builds. One definition, so the two cannot drift.
+ *
+ * `reaction_cursor` is vestigial: it held the position of a rotating working
+ * emoji that no longer exists, and nothing reads or writes it. It stays because
+ * a shipped migration is never edited, and dropping the column would buy an
+ * irreversible rebuild of a live table to reclaim one integer per session.
  */
 export const SLACK_REACTION_COLUMN_STATEMENTS = [
   `ALTER TABLE slack_agent_sessions ADD COLUMN reaction_channel_id TEXT`,

@@ -157,7 +157,6 @@ export {
 export {
   resolveSlackReactions,
   slackDefaultReactionFor,
-  slackWorkingReaction,
   SlackEmojiNameSchema,
   SlackReactionOutcomes,
   SlackReactionOverrideSchema,
