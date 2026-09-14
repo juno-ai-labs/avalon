@@ -78,6 +78,8 @@ team `7ZLT6A8W25`. Store the base64 Developer ID provisioning profile in the
 `desktop-release` secret `RALLY_MAC_PROVISIONING_PROFILE`; local packaging uses
 `RALLY_MAC_PROVISIONING_PROFILE_PATH`. Packaging requires the profile and checks
 its identity, capabilities and expiry. No extra pre-expiry margin is imposed.
+The packager passes the resolved profile path as an electron-builder CLI option;
+the `mac.provisioningProfile` YAML field does not expand environment macros.
 
 Publish the site association files before desktop release. The desktop release
 preflight checks both live hosts, so independently triggered deployments cannot
