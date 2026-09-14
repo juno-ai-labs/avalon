@@ -3741,6 +3741,13 @@ export class WorkstreamTranscriptStorage {
       if (!answers.has(toolCallId)) answers.set(toolCallId, pending);
     }
     const closing = [...answers.values()];
+    // Every question answered, or none of the queue moves. One question still
+    // open leaves the batch unsettled, and `lastAssistantStepIsSettled` is
+    // false for an unsettled batch however many of its siblings are closed —
+    // so appending anything else here is the exact refusal this selector
+    // exists to avoid, not a queue that could have drained a little further.
+    // The rest is parked, not dropped: it is the same queue on the next pass,
+    // and the last answer releases it.
     if (answers.size !== openToolCallIds.size) return closing;
     const closed = new Set(closing);
     return [...closing, ...pendingInputs.filter((pending) => !closed.has(pending))];
