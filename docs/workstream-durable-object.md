@@ -1574,14 +1574,16 @@ MCP identity without trusting the saved name or reading WorkspaceDO on replay.
 Substream migration 56 adds `inference_delay_status`, transient per-inference
 checkpoints and settlement tombstones. `inference_delay_changed` shares the
 normal sequenced, authorized conversation socket pipeline. It carries the root
-harness run, owning execution and lease attempt, inference request, turn, and
+harness run, owning execution and lease attempt, parent attempt for children, inference request, turn, and
 active flag. Both root and inline child calls publish to their own conversation.
-The object checks the running root/execution and current execution lease before
+The object checks the running root/execution and both current lease attempts before
 accepting a notice. A cleared attempt cannot become active again; terminal run
-status removes its checkpoints. First output publishes the attempt-scoped clear before its answer delta.
+status removes its checkpoints. First output initiates the attempt-scoped clear;
+status transport cannot block inference. Tombstones also fence activation delivery
+that finishes after its clear.
 Snapshots and resyncs use the same store query for `activeInferenceDelays`, selecting
 the current root of a running conversation and filtering out settled,
-expired, or superseded executions. Old snapshots default to an empty list.
+expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
 
@@ -1592,6 +1594,8 @@ surviving the inference itself. Conversation-owned checkpoints, lease checks,
 and settlement tombstones replace a client elapsed-time guess: old callbacks
 cannot resurrect a warning, and concurrent calls clear independently. These
 rows are runtime status, never transcript history or workspace-wide broadcasts.
+Children carry their parent attempt identity because a replacement parent may
+reuse the root run ID while an old child lease is still current.
 
 ### 2026-09-14 — An open question takes its answer out of turn, and parks the rest of the queue
 

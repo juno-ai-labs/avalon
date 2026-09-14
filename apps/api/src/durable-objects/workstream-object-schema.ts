@@ -3014,6 +3014,7 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         inference_request_id TEXT PRIMARY KEY,
         run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
         execution_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+        root_attempt_id TEXT NOT NULL,
         attempt_id TEXT NOT NULL,
         turn_id TEXT NOT NULL,
         active INTEGER NOT NULL CHECK (active IN (0, 1))

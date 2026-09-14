@@ -309,9 +309,10 @@ function applyInferenceDelayEvent(storage: DurableObjectStorage, event: ServerSo
     `SELECT execution.run_id FROM runs execution JOIN runs root ON root.run_id = ?
      WHERE execution.run_id = ? AND execution.legacy_attempt_id = ?
        AND execution.status = 'running' AND root.status = 'running'
+       AND root.legacy_attempt_id = ? AND root.lease_expires_at > ?
        AND execution.lease_expires_at > ?
        AND (execution.run_id = root.run_id OR execution.chain_root_run_id = root.run_id)`,
-    event.harnessRunId, event.executionId, event.attemptId, Date.now(),
+    event.harnessRunId, event.executionId, event.attemptId, event.parentAttemptId ?? event.attemptId, Date.now(), Date.now(),
   ));
   if (!owned) {
     // Settlement can race lease renewal. Clear its own checkpoint even while
@@ -325,10 +326,10 @@ function applyInferenceDelayEvent(storage: DurableObjectStorage, event: ServerSo
   }
   storage.sql.exec(
     `INSERT INTO inference_delay_status
-       (inference_request_id, run_id, execution_id, attempt_id, turn_id, active)
-     VALUES (?, ?, ?, ?, ?, ?)
+       (inference_request_id, run_id, execution_id, root_attempt_id, attempt_id, turn_id, active)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(inference_request_id) DO UPDATE SET active = MIN(inference_delay_status.active, excluded.active)`,
-    event.inferenceRequestId, event.harnessRunId, event.executionId, event.attemptId, event.turnId,
+    event.inferenceRequestId, event.harnessRunId, event.executionId, event.parentAttemptId ?? event.attemptId, event.attemptId, event.turnId,
     event.active ? 1 : 0,
   );
   const row = first(storage.sql.exec<{ active: number }>(
@@ -684,9 +685,9 @@ export class WorkstreamObjectStore {
 
   activeInferenceDelays(): InferenceDelayState[] {
     return this.storage.sql.exec<{
-      run_id: string; execution_id: string; attempt_id: string; inference_request_id: string; turn_id: string;
+      run_id: string; execution_id: string; root_attempt_id: string; attempt_id: string; inference_request_id: string; turn_id: string;
     }>(
-      `SELECT delay.run_id, delay.execution_id, delay.attempt_id, delay.inference_request_id, delay.turn_id
+      `SELECT delay.run_id, delay.execution_id, delay.root_attempt_id, delay.attempt_id, delay.inference_request_id, delay.turn_id
        FROM inference_delay_status delay
        JOIN runs execution ON execution.run_id = delay.execution_id
        JOIN runs root ON root.run_id = delay.run_id
@@ -694,10 +695,12 @@ export class WorkstreamObjectStore {
          AND EXISTS (SELECT 1 FROM workstream WHERE id = 1 AND exact_state = 'running')
          AND root.run_id = (SELECT run_id FROM runs WHERE parent_tool_call_id IS NULL
                             ORDER BY created_at DESC, run_id DESC LIMIT 1)
+         AND root.legacy_attempt_id = delay.root_attempt_id AND root.lease_expires_at > ?
          AND execution.legacy_attempt_id = delay.attempt_id AND execution.lease_expires_at > ?
-       ORDER BY delay.inference_request_id`, Date.now(),
+       ORDER BY delay.inference_request_id`, Date.now(), Date.now(),
     ).toArray().map((row) => InferenceDelayStateSchema.parse({
       harnessRunId: row.run_id, executionId: row.execution_id, attemptId: row.attempt_id,
+      ...(row.execution_id !== row.run_id ? { parentAttemptId: row.root_attempt_id } : {}),
       inferenceRequestId: row.inference_request_id, turnId: row.turn_id,
     }));
   }
