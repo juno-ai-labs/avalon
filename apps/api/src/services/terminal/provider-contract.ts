@@ -6,13 +6,23 @@ import type {
 /** Existing provider request bound used by durable submission fencing. */
 export const DAYTONA_REQUEST_TIMEOUT_MS = 120_000;
 
+/**
+ * Daytona's sandbox states, reduced to what Rally decides between.
+ *
+ * `unknown` is the fallback, and it is a member rather than a collapse into
+ * `failed` because the difference is destructive: acquisition replaces a lost
+ * sandbox, and Daytona publishes twenty-two states to this union's seven. A
+ * state nobody has mapped — a newer SDK's, or one of the transitional ones —
+ * must be waited out, never read as a verdict that the workspace is gone.
+ */
 export type TerminalSandboxState =
   | "starting"
   | "running"
   | "stopped"
   | "archived"
   | "expired"
-  | "failed";
+  | "failed"
+  | "unknown";
 
 export interface TerminalSandboxSnapshot {
   id: string;
