@@ -4817,7 +4817,7 @@ it('keeps inference delays attempt-scoped and clears them on settlement and conv
   expect(result.current.activeInferenceDelays).toEqual([delay]);
   const other = { ...delay, inferenceRequestId: '00000000-0000-7000-8000-000000000703' };
   act(() => socket.message({ type: 'inference_delay_changed', sequence: 2, occurredAt: '2026-09-14T20:00:00Z', ...other, active: true }));
-  expect(result.current.activeInferenceDelays).toHaveLength(2);
+  expect(result.current.activeInferenceDelays).toEqual([delay, other]);
   act(() => socket.message({ type: 'inference_delay_changed', sequence: 3, occurredAt: '2026-09-14T20:00:01Z', ...delay, active: false }));
   expect(result.current.activeInferenceDelays.map((entry) => entry.inferenceRequestId)).toEqual([other.inferenceRequestId]);
   act(() => socket.message({ type: 'harness_status_changed', sequence: 4, occurredAt: '2026-09-14T20:00:02Z', status: 'completed' }));
