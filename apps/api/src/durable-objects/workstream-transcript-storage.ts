@@ -27,6 +27,7 @@ import {
   bindLoopNonSystemMessageCount,
   BIND_LOOP_PROJECTOR_VERSION,
   modelMessageWithoutProvenance,
+  pendingBindToolBatch,
   projectBindLoopMessages,
   type BindCompactionCommit,
   type BindLoopMessage,
@@ -1537,6 +1538,12 @@ export class WorkstreamTranscriptStorage {
     const steps: PreparedPendingBindStep[] = [];
     const keys: string[] = [];
     if (inputs.length === 0) return { steps, next: previous, keys };
+    // A derived input is a `protocol_user_appended` like any other, so an open
+    // question refuses it too — and this preparer runs before the settlement
+    // transaction, which means the throw failed the whole settled step rather
+    // than the delivery. Undelivered is the honest outcome: nothing is marked
+    // delivered, and the next settled step appends it.
+    if (this.openQuestionToolCallIds(previous).size > 0) return { steps, next: previous, keys };
     const alreadyProjected = new Set(this.currentBindProvenanceKeys(
       previous.loopId,
       inputs.map((entry) => entry.provenance),
@@ -1616,7 +1623,7 @@ export class WorkstreamTranscriptStorage {
       || beforeLoop.bind_state_revision !== input.expectedBindStateRevision) {
       throw new Error("bind_loop_head_conflict");
     }
-    const pending = this.oldestActivationInput();
+    const pending = this.oldestActivationInput(previous);
     if (!pending || pending.input_id !== input.expectedInputId) {
       throw new Error("substream_loop_activation_input_changed");
     }
@@ -1648,7 +1655,7 @@ export class WorkstreamTranscriptStorage {
           input.expectedBindStateRevision,
         );
       }
-      const currentPending = this.oldestActivationInput();
+      const currentPending = this.oldestActivationInput(previous);
       if (!currentPending || !samePendingInput(pending, currentPending)) {
         throw new Error("substream_loop_activation_input_changed");
       }
@@ -3647,7 +3654,7 @@ export class WorkstreamTranscriptStorage {
     ).toArray();
   }
 
-  private oldestActivationInput(): PendingLoopInputRow | undefined {
+  private visibleActivationInputs(): PendingLoopInputRow[] {
     return this.sql.exec<PendingLoopInputRow>(
       `SELECT input_id, loop_id, input_sequence, prepared_turn_id,
               admitted_after_transcript_sequence, mode, actor, author_user_id,
@@ -3664,8 +3671,90 @@ export class WorkstreamTranscriptStorage {
                AND preparing.state = 'preparing'
                AND preparing.input_sequence < pending_loop_inputs.input_sequence
           )
-        ORDER BY input_sequence LIMIT 1`,
+        ORDER BY input_sequence`,
+    ).toArray();
+  }
+
+  private oldestActivationInput(
+    projection: BindLoopProjectionState | null,
+  ): PendingLoopInputRow | undefined {
+    return this.inputsBindCanAccept(projection, this.visibleActivationInputs())[0];
+  }
+
+  /**
+   * The pending input that can start this loop's next cycle, or `undefined`
+   * while nothing in the queue can move it on.
+   */
+  nextActivationInput(loopId: string): PendingLoopInputRow | undefined {
+    return this.oldestActivationInput(this.readBindProjection(loopId));
+  }
+
+  /**
+   * The withheld calls of an open question, and nothing else.
+   *
+   * A batch withheld for any other reason is a run's own to repair from its
+   * tool receipts, and it keeps the behaviour it has: the queue stays FIFO and
+   * Bind refuses the head loudly, rather than a silent stall nothing reports.
+   */
+  private openQuestionToolCallIds(projection: BindLoopProjectionState): Set<string> {
+    const withheld = pendingBindToolBatch(projection);
+    if (!withheld) return new Set();
+    const open = new Set<string>();
+    for (const call of withheld.calls) {
+      const asked = this.sql.exec<{ elicitation_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT elicitation_id FROM elicitation_requests WHERE tool_call_id = ?`,
+        call.receiptToolCallId,
+      ).toArray()[0];
+      if (asked) open.add(call.receiptToolCallId);
+    }
+    return open.size === withheld.calls.length ? open : new Set();
+  }
+
+  /**
+   * Pending inputs in the order Bind will take them.
+   *
+   * The queue is FIFO because that is the order the room said things in. Bind's
+   * protocol is not: while the last assistant step holds an unanswered
+   * question, every user message is refused, because a tool result has to
+   * follow its own call directly. The one input that moves the loop on is the
+   * answer to that question — and it is admitted *behind* whatever was queued
+   * while the question was on screen. Handing Bind the queue head there threw
+   * on every attempt, and a pending input that throws stays where it is: the
+   * queue stopped at its head, the answer behind it was never promoted, and
+   * the question could not be dismissed by anyone, because the card is drawn
+   * from the canonical turn the promotion writes. The answer therefore goes
+   * first, and anything queued while a question is still open waits for it
+   * rather than failing the room's next step.
+   */
+  private inputsBindCanAccept(
+    projection: BindLoopProjectionState | null,
+    pendingInputs: readonly PendingLoopInputRow[],
+  ): PendingLoopInputRow[] {
+    const openToolCallIds = projection === null
+      ? new Set<string>()
+      : this.openQuestionToolCallIds(projection);
+    if (openToolCallIds.size === 0) return [...pendingInputs];
+    const answers = new Map<string, PendingLoopInputRow>();
+    for (const pending of pendingInputs) {
+      const toolCallId = this.answeredQuestionToolCallId(pending);
+      if (toolCallId === null || !openToolCallIds.has(toolCallId)) continue;
+      if (!answers.has(toolCallId)) answers.set(toolCallId, pending);
+    }
+    const closing = [...answers.values()];
+    if (answers.size !== openToolCallIds.size) return closing;
+    const closed = new Set(closing);
+    return [...closing, ...pendingInputs.filter((pending) => !closed.has(pending))];
+  }
+
+  /** The withheld tool call this pending input closes, when it is an answer to one. */
+  private answeredQuestionToolCallId(pending: PendingLoopInputRow): string | null {
+    const { elicitationId } = parsePendingInputMaterial(pending).authorization;
+    if (elicitationId === null) return null;
+    const row = this.sql.exec<{ tool_call_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT tool_call_id FROM elicitation_requests WHERE elicitation_id = ?`,
+      elicitationId,
     ).toArray()[0];
+    return row === undefined ? null : String(row.tool_call_id);
   }
 
   private async preparePendingBindAppends(
@@ -3688,7 +3777,7 @@ export class WorkstreamTranscriptStorage {
     // in the pass, which is also the order the room saw them in.
     const scanThrough = this.transcriptThrough();
     const appendedInThisPass = new Set<string>();
-    for (const pending of pendingInputs) {
+    for (const pending of this.inputsBindCanAccept(previous, pendingInputs)) {
       const material = parsePendingInputMaterial(pending);
       // The transition below appends `bindPayload`, which is always the user
       // message the model reads; the canonical payload's role follows the

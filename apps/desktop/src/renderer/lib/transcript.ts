@@ -763,6 +763,29 @@ export function transcriptOverlayIdentityKey(identity: TranscriptOverlayIdentity
   }
 }
 
+/**
+ * The answered question an admitted elicitation answer carries, if it is one.
+ *
+ * An answer is not a queued message. It is the only thing that closes the
+ * question already on screen, and the canonical question turn carries the
+ * status frozen at `open` — only the answer's own turn ever replaces it. Until
+ * the loop promotes that turn the answer is a pending input, so a room that
+ * projected it as ordinary text put a blank row on the composer queue and
+ * showed the question still asking, which every fresh snapshot restored over
+ * the reader's own answer.
+ */
+function pendingInputElicitation(
+  block: PendingTranscriptInput['block'],
+): ElicitationData | undefined {
+  if (block.messageType !== 'elicitation' || !block.structuredContent) return undefined;
+  const parsed = ElicitationSchema.safeParse(
+    'elicitation' in block.structuredContent
+      ? block.structuredContent['elicitation']
+      : block.structuredContent,
+  );
+  return parsed.success ? normalizeElicitation(parsed.data) : undefined;
+}
+
 /** Project one server-owned, non-canonical loop input into presentation state. */
 export function pendingTranscriptInputOverlay(
   input: PendingTranscriptInput,
@@ -771,6 +794,7 @@ export function pendingTranscriptInputOverlay(
     source: 'socket_event' | 'socket_snapshot' | 'rest_snapshot';
   }>,
 ): TranscriptOverlay {
+  const elicitation = pendingInputElicitation(input.block);
   return {
     identity: input.clientMessageId
       ? { type: 'client_message', clientMessageId: input.clientMessageId, turnId: input.futureTurnId }
@@ -782,9 +806,9 @@ export function pendingTranscriptInputOverlay(
         ? provenance.eventSequence
         : input.inputSequence,
     },
-    queueSequence: input.inputSequence,
+    ...(elicitation ? {} : { queueSequence: input.inputSequence }),
     message: {
-      id: input.futureTurnId,
+      id: elicitation ? elicitationMessageId(elicitation.id) : input.futureTurnId,
       ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
       workstreamId,
       sequenceNumber: 0,
@@ -797,7 +821,10 @@ export function pendingTranscriptInputOverlay(
         },
       } : {}),
       ...(input.externalActor ? { externalActor: { ...input.externalActor } } : {}),
-      messageType: input.block.messageType === 'system' ? 'system' : 'text',
+      messageType: elicitation
+        ? 'elicitation'
+        : input.block.messageType === 'system' ? 'system' : 'text',
+      ...(elicitation ? { elicitation } : {}),
       text: input.block.text,
       mentions: input.block.mentions?.map((mention) => ({
         type: mention.type,
@@ -808,7 +835,9 @@ export function pendingTranscriptInputOverlay(
       })),
       attachments: input.block.attachments?.map((attachment) => ({ ...attachment })),
       createdAt: input.admittedAtUtc,
-      deliveryState: input.deliveryMode === 'steer' ? 'steer_pending' : 'queue_pending',
+      ...(elicitation ? {} : {
+        deliveryState: input.deliveryMode === 'steer' ? 'steer_pending' : 'queue_pending',
+      }),
     },
   };
 }
@@ -818,6 +847,11 @@ export function pendingTranscriptInputOverlay(
  * when the overlay is still an optimistic send with no server identity.
  */
 export function pendingOverlayInputId(overlay: TranscriptOverlay): string | undefined {
+  // An answer to a question is an admitted pending input as well, but it is
+  // not a row anyone can reorder: counting it as one would shift the sequences
+  // a reorder assigns onto the rows around it. Carrying a queue sequence is
+  // what makes an overlay one of those rows.
+  if (overlay.queueSequence === undefined) return undefined;
   if (overlay.identity.type === 'loop_input') return overlay.identity.inputId;
   if (overlay.identity.type === 'client_message' && overlay.identity.turnId) {
     return overlay.identity.turnId;

@@ -1275,6 +1275,31 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-09-14 — The queue, not Bind, decides what an open question may be followed by
+
+**What changed:** the hazard the 2026-09-12 entry below records as live — a
+steer or queued message ahead of an elicitation answer in one FIFO, killing the
+run with `run_state_persistence_failed` and blocking the answer behind it — is
+fixed on Rally's side of the port. Bind's refusal is unchanged and stays
+correct; `applyBindLoopTransition` still rejects `protocol_user_appended` while a
+tool result is withheld, and `pendingBindToolBatch` is what the object now reads
+to see which calls are open.
+
+**Why:** the entry below found this by reading the code and proposed a new field
+on the settled step saying whether the batch opened an answer-suspend. That
+field would have been Rally's to add, and it is not the one that was needed:
+it exists only at a safe step, and the rooms this actually wedged were idle,
+parked on the question, activating from the queue. The projection already
+carries the answer.
+
+**Consequences:** no change to the Bind package or to the ports. The entry
+below's "what a future change has to respect" paragraph stands as the record of
+what was believed on 2026-09-12; the mechanism that replaced it, and why parking
+alone was not enough, is in the 2026-09-14 entry in
+[`workstream-durable-object.md`](workstream-durable-object.md), which owns the
+queue.
+
+
 ### 2026-09-12 — Bind 15 carries the loop patch, and this repository stops patching
 
 **What changed:** `@juno-ai/bind` moves from 14.0.0 to 15.0.0, whose new surface
