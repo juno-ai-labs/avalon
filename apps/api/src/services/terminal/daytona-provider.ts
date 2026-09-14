@@ -120,24 +120,55 @@ class TerminalSandboxInitializationError extends Error {
   }
 }
 
+/**
+ * Every state `SandboxState` publishes, named rather than defaulted.
+ *
+ * The fallback used to be `failed`, which was harmless while `failed` only
+ * produced a retryable error — and became destructive when acquisition started
+ * replacing a lost sandbox, because thirteen of Daytona's twenty-two states
+ * fell through to it. `stopping` and `archiving` are the ones that matter:
+ * Daytona auto-stops and auto-archives on its own schedule, so a tool call that
+ * lands mid-transition would have read `failed` and discarded a workspace a
+ * retry five seconds later would have restored. Transitional states are
+ * therefore `starting` — the bucket that already means wait and retry — `error`
+ * and `build_failed` are the only verdicts, and anything a later SDK adds
+ * arrives as `unknown`, which waits rather than replaces.
+ */
 function sandboxState(value: string | undefined): TerminalSandboxState {
   switch (value) {
     case "started":
     case "running":
       return "running";
     case "stopped":
+    case "paused":
       return "stopped";
     case "archived":
       return "archived";
     case "destroyed":
     case "deleted":
       return "expired";
+    // Every state in transit, in either direction. Each one settles into a
+    // state Rally can act on, and none of them is a workspace that is gone.
     case "creating":
     case "starting":
     case "restoring":
+    case "resuming":
+    case "pending_build":
+    case "building_snapshot":
+    case "pulling_snapshot":
+    case "stopping":
+    case "archiving":
+    case "pausing":
+    case "destroying":
+    case "resizing":
+    case "snapshotting":
+    case "forking":
       return "starting";
-    default:
+    case "error":
+    case "build_failed":
       return "failed";
+    default:
+      return "unknown";
   }
 }
 

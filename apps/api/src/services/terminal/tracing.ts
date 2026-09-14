@@ -35,6 +35,7 @@ export type TerminalUtilityOperation =
   | "resource.publish.inspect_before"
   | "resource.publish.inspect_after"
   | "resource.import.inspect"
+  | "resource.import.stage"
   | "resource.import.finalize"
   | "repository.bootstrap"
   | "repository.publish.status"

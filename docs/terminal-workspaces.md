@@ -229,7 +229,29 @@ The workspace's alarm stops an idle running sandbox after five minutes,
 archives it after sixty minutes, and deletes it after thirty days. Daytona's
 15-minute auto-stop is only a provider backstop. Due transitions use a bounded
 object-local claim that outlives the provider request limit and reconcile
-observed provider state after ambiguous calls. Before stop
+observed provider state after ambiguous calls.
+
+**Acquisition reads the provider's state back before reusing a sandbox the row
+already names, and before any other provider call**, because the backstop — and
+any transition the alarm did not run — moves the sandbox without moving the row.
+What Daytona reports decides the acquisition: `running` is used and its
+deadlines refreshed, `stopped` and `archived` are started, and a sandbox Daytona
+has destroyed, errored, or no longer has at all is replaced by a fresh
+generation under the same lease. Every other state — in transit, or one the
+provider maps to `unknown` — is a retry. That replacement is why the read-back
+exists rather than a report: archiving releases a sandbox's runner, so a file or
+command call on one answers `404 … does not have a runner`, and an `archived`
+row has no pending deadline for the lifecycle pass to reconcile — the dead id
+would otherwise be retried by every later run until the thirty-day expiry.
+
+The read happens **first** because the two steps that used to precede it,
+authority replacement and policy reconciliation, both mutate the sandbox the row
+names: a work stream whose sandbox was lost *and* whose authority or policy
+revision had moved would otherwise fail on a bare `deleteSandbox` or
+`stopSandbox` one branch before the recovery. Replacement is the destructive
+branch, so it is entered only for the states Daytona reports as destroyed or
+errored — never for the state mapping's fallback, which is why that fallback is
+`unknown` rather than `failed`. Before stop
 or deletion Rally saves a bounded Git diff (or a summary when the diff is too
 large) as a generated resource. Filesystem archives are not copied to R2; after
 expiry a participant explicitly starts fresh and the next tool gets a new root.
@@ -639,7 +661,8 @@ utility additionally supplies one fixed `operation_detail`: `path.resolve`,
 `file.inspect`, `file.read_page`, `file.replace`, `file.apply_patch`,
 `file.temp_cleanup`, `resource.publish.inspect_before`,
 `resource.publish.inspect_after`, `resource.import.inspect`,
-`resource.import.finalize`, `repository.bootstrap`, `instructions.probe`, one
+`resource.import.stage`, `resource.import.finalize`, `repository.bootstrap`,
+`instructions.probe`, one
 of the six `repository.publish.*` inspection phases, `lifecycle.final_diff`,
 `lifecycle.backup`, or `lifecycle.backup_cleanup`.
 
@@ -689,6 +712,58 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-13 — Acquisition asks Daytona what the sandbox is, and replaces one it has lost
+
+**What changed:** `TerminalSandboxCoordinator.acquire` no longer branches on
+`lifecycle_state` for a row that already names a sandbox. It reads the provider
+state back once per acquisition, before any other provider call, and drives from
+that — use `running`, start `stopped` or `archived`, retry everything else, and
+replace a sandbox reported `expired`, `failed`, or absent by bumping the
+generation through `replaceGeneration` and provisioning its successor under the
+same lease. The replacement emits `terminal_sandbox_replaced_after_loss` and a
+`start_fresh` acquisition action. A start that throws re-observes before
+deciding, so a restore still in flight is a retry rather than a discarded
+workspace, and provider failures leave acquisition as a typed
+`sandbox_unavailable` instead of Daytona's own text. `sandboxState` now names
+all twenty-two states the Daytona SDK publishes and answers `unknown` for
+anything it does not, so the mapping's fallback is no longer a verdict.
+
+**Why:** A work stream that published a site could never update it again. The
+row said `running` while Daytona had auto-archived the sandbox, archiving
+releases the runner, and every file and command call answered `404 Sandbox with
+ID … does not have a runner`. Nothing recovered: the raw provider error went to
+the model, which reported a platform outage and advised waiting, and an
+`archived` row has no pending deadline for the lifecycle pass to act on, so the
+dead id survived to the thirty-day expiry. The two schedules were always going
+to diverge — Rally stops at five minutes and archives at sixty, Daytona stops at
+fifteen and archives at sixty on its own clock — and the row was being trusted
+as though only Rally could move the sandbox.
+
+**Considered and rejected:** *Reporting the loss and letting a participant start
+fresh*, which is what the error strings have always said to do — except that
+`startFresh` is behind no route and refuses any state but `expired` or `failed`,
+so the advice named a repair nobody could perform. *Replacing on any failed
+start*, which would discard a workspace for a restore that merely outran its
+own deadline. *Trusting the row and retrying the tool*, which is the behavior
+this replaces.
+
+**What a future change has to respect:** the read-back is one provider GET per
+acquisition — once per harness run, not once per tool, because the run-local
+acquisition cache still holds — it happens before anything else touches the
+provider, and every branch below it decides from the observed state rather than
+the row. **Replacement is entered only from states Daytona reports as
+destroyed or errored.** Review caught this the wrong way round: the state
+mapping collapsed thirteen of Daytona's twenty-two states into `failed`, so a
+tool call landing inside the auto-stop or auto-archive this document describes
+would have deleted the workspace a retry five seconds later would have restored
+— the recovery causing the loss it exists to prevent. A new provider state is
+therefore added to the mapping deliberately or it arrives as `unknown` and
+waits. A replacement is destructive by design: it costs the run its scratch
+files, which is acceptable only because nothing durable lives solely in a
+sandbox. If that ever stops being true — a file the product cannot reconstruct
+from R2, the repository, or the final diff — this path needs a preservation step
+before `replaceGeneration`, not a quieter failure.
 
 ### 2026-09-11 — A work-stream Sidekick publishes into the room that owns it
 
