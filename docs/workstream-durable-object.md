@@ -1569,6 +1569,30 @@ rows retain null and their original labels; later activity revisions preserve
 the type when an older caller omits it. This lets the desktop distinguish custom
 MCP identity without trusting the saved name or reading WorkspaceDO on replay.
 
+## Active inference delay
+
+Substream migration 56 adds `inference_delay_status`, transient per-inference
+checkpoints and settlement tombstones. `inference_delay_changed` shares the
+normal sequenced, authorized conversation socket pipeline. It carries the root
+harness run, owning execution and lease attempt, inference request, turn, and
+active flag. Both root and inline child calls publish to their own conversation.
+The object checks the running root/execution and current execution lease before
+accepting a notice. A cleared attempt cannot become active again; terminal run
+status removes its checkpoints. First output publishes the attempt-scoped clear before its answer delta.
+Snapshots and resyncs expose `activeInferenceDelays`, filtering out settled,
+expired, or superseded executions. Old snapshots default to an empty list.
+
+## Changelog
+
+### 2026-09-14 — Keep slowdown notices scoped to a live inference
+
+The new 30-second first-output warning must survive a socket reconnect without
+surviving the inference itself. Conversation-owned checkpoints, lease checks,
+and settlement tombstones replace a client elapsed-time guess: old callbacks
+cannot resurrect a warning, and concurrent calls clear independently. These
+rows are runtime status, never transcript history or workspace-wide broadcasts.
+
+
 ### 2026-09-14 — An open question takes its answer out of turn, and parks the rest of the queue
 
 **What changed:** the pending-input queue is no longer drained in arrival order

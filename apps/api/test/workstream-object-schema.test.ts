@@ -88,6 +88,7 @@ const EXPECTED_TABLES = [
   "durable_outbox",
   "elicitation_requests",
   "inference_attempts",
+  "inference_delay_status",
   "member_attention",
   "object_retirement",
   "object_versions",

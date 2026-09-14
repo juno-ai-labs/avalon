@@ -1192,6 +1192,30 @@ the breaker first, which is stated in the test rather than left to be inferred.
 Nothing pins `breakerScope`, so deleting that one property from `routePlan` would
 silently return every test to the shared key while each still passes alone.
 
+## Slow inference status
+
+Streaming Azure and OpenRouter calls allow 180,000 ms for first answer text or
+tool-call output after the response stream opens. The independent establishment
+and inter-chunk deadlines remain in force; the overall timer reserves the
+establishment allowance so it cannot shorten the first-output window. Empty
+chunks and metadata do not restart that window. A shared per-stream observer
+notifies `onInferenceDelay` after 30,000 ms, then clears on first output or any
+settlement, including cancellation. Its timer and queued notifications are
+attempt-local and disposed before provider traversal or tool execution.
+
+## Changelog
+
+### 2026-09-14 — Explain a slow first response before timing it out
+
+Two Azure Sol calls hit the prior 45-second first-output watchdog. The user
+selected a three-minute allowance and a temporary warning after 30 seconds;
+those numbers are product decisions, not measured provider guarantees. The
+warning follows each inference, never elapsed run time, and clears before
+output/tool execution or settlement. Keepalives no longer restart the first-token
+clock; doing so would let an empty stream avoid the stated deadline. Existing
+establishment and inter-chunk limits remain independent.
+
+
 ### 2026-09-14 — The queue, not Bind, decides what an open question may be followed by
 
 **What changed:** the hazard the 2026-09-12 entry below records as live — a

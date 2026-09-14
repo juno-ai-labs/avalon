@@ -265,7 +265,7 @@ export class MeetingNotesService {
         maxWebResults: 0,
         maxCostCents: final ? 200 : 100,
         requestEstablishmentTimeoutMs: numericEnv(this.env, "HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS", 20_000),
-        ttftTimeoutMs: numericEnv(this.env, "HARNESS_TTFT_TIMEOUT_MS", 45_000),
+        ttftTimeoutMs: numericEnv(this.env, "HARNESS_TTFT_TIMEOUT_MS", 180_000),
         streamIdleTimeoutMs: numericEnv(this.env, "HARNESS_STREAM_IDLE_TIMEOUT_MS", 30_000),
         sameModelRetries: 0,
         // The live pass owns a one-minute cadence, so it never waits and

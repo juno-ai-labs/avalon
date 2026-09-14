@@ -1,3 +1,4 @@
+import { INFERENCE_TTFT_TIMEOUT_MS } from "./inference-delay";
 import {
   detectCompletionDefect,
   createTurnTextStream,
@@ -570,7 +571,7 @@ export const TRANSPORT_RETRY_MAX_DELAY_MS = 30_000;
 function planWorstCaseMs(plan: RoutePlan, config: RunHarnessInput["config"]): number {
   const candidates = plan.stages.reduce((total, stage) => total + stage.candidates.length, 0);
   const perCandidateMs = (config.requestEstablishmentTimeoutMs ?? 30_000)
-    + (config.ttftTimeoutMs ?? 120_000);
+    + (config.ttftTimeoutMs ?? INFERENCE_TTFT_TIMEOUT_MS);
   return Math.max(1, candidates) * perCandidateMs;
 }
 
@@ -2232,6 +2233,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             args.onOutputProgress?.(Math.max(1, Math.ceil(delta.length / 4)));
             await streamEventChain;
           };
+          const onInferenceDelay = (active: boolean) => args.input.onInferenceDelay?.({
+            inferenceRequestId, turnId: args.turnId, active,
+          });
           const rawResult = candidate.providerId === AZURE_PROVIDER
             ? await new AzureOpenAIClient({
                 ...args.input.config.azure!,
@@ -2252,6 +2256,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                 includeWebSearch: false,
                 reasoningEffort,
                 signal: args.signal,
+                onInferenceDelay,
               }, handleDelta)
             : await new OpenRouterClient({
                 ...args.input.config,
@@ -2266,6 +2271,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                 reasoningEffort,
                 trace,
                 signal: args.signal,
+                onInferenceDelay,
               }, handleDelta);
           const result = normalizeRoutedResult(
             candidate,

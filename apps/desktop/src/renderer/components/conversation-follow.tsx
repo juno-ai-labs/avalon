@@ -1,4 +1,4 @@
-import { ArrowDown, Square } from 'lucide-react';
+import { ArrowDown, Square, TriangleAlert } from 'lucide-react';
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { IconButton } from './primitives';
 
@@ -77,5 +77,15 @@ export function RunStoppedNotice(): React.JSX.Element {
         <p>This run was stopped by request.</p>
       </div>
     </section>
+  );
+}
+
+/** Live inference status; deliberately not retained for an exit animation. */
+export function InferenceDelayNotice(): React.JSX.Element {
+  return (
+    <div className="inference-delay-notice" role="status">
+      <TriangleAlert aria-hidden="true" size={15} />
+      <span>The model is currently slowed down. Responses might take longer.</span>
+    </div>
   );
 }
