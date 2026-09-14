@@ -6374,7 +6374,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (authority && authority.archived_at !== null) return null;
     const loop = this.loop.loop();
     if (loop?.status === "executing") return loop.lease_expires_at;
-    if (loop && this.loop.pendingInputs().length > 0) return now;
+    // What the loop can take, not what is queued. A room parked on a question
+    // with a message queued behind it has pending input and no work: waking on
+    // it would re-arm at `now` on every alarm, for as long as the question
+    // stays open. Admitting the answer arms its own wake.
+    if (loop && this.transcript.nextActivationInput(loop.loop_id) !== undefined) return now;
     const preparation = this.product.nextRecoverableInputPreparationAt(now);
     if (preparation !== null) return preparation;
     // An admission this isolate is still preparing is in-memory work standing

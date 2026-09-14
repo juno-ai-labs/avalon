@@ -1733,7 +1733,9 @@ batch settles — at a safe step (`settlePendingSteersAtStep`) and at activation
 to activate; it asks `nextActivationInput` for the input the loop can actually
 take, and gets `undefined` while the only thing waiting is a message that would
 be refused. A host authority's derived inputs park on the same rule rather than
-being prepared and thrown out.
+being prepared and thrown out, and `nextLoopWorkAt` derives its execution lane
+from the same answer, so a parked room sleeps instead of re-arming at `now` on
+every alarm (see [`durable-object-alarms.md`](durable-object-alarms.md)).
 
 **Why:** this wedged real rooms, permanently, with no way out from the product.
 Queue a message while a run is going, have the run stop to ask a question, then
