@@ -4827,3 +4827,48 @@ it('keeps inference delays attempt-scoped and clears them on settlement and conv
   rerender({ substreamId: '00000000-0000-7000-8000-000000000704' });
   expect(result.current.activeInferenceDelays).toEqual([]);
 });
+
+it('retains an active delay when a conversation remounts after its event sequence', async () => {
+  vi.stubGlobal('WebSocket', FakeWebSocket);
+  const queryClient = new QueryClient();
+  const parentId = '00000000-0000-7000-8000-00000000062f';
+  const runId = '00000000-0000-7000-8000-000000000700';
+  const delay = {
+    harnessRunId: runId, executionId: runId,
+    attemptId: '00000000-0000-7000-8000-000000000701',
+    inferenceRequestId: '00000000-0000-7000-8000-000000000702', turnId: 'turn:1',
+  };
+  const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
+    url: `wss://api.rally.test/workstreams/${parentId}`, ticket: 'socket-ticket',
+    protocols: socketTicketProtocols('socket-ticket'),
+  })) });
+  function Socket(): React.JSX.Element {
+    const connection = useWorkstreamSocket(api, parentId, true);
+    return <div data-testid="retained-delay">{connection.activeInferenceDelays.map((entry) => entry.inferenceRequestId).join(',')}</div>;
+  }
+  function Tree({ mounted }: { mounted: boolean }): React.JSX.Element {
+    return <QueryClientProvider client={queryClient}>
+      <WorkstreamSocketResumeProvider scope="delay-review">
+        {mounted ? <Socket /> : null}
+      </WorkstreamSocketResumeProvider>
+    </QueryClientProvider>;
+  }
+  const rendered = render(<Tree mounted />);
+  await flushPromises();
+  const socket = FakeWebSocket.instances[0]!;
+  act(() => {
+    socket.open();
+    socket.message(snapshotFrame({ sequence: 1, workstream: { id: parentId, harnessStatus: 'running', latestHarnessRunId: runId } }));
+    socket.message({ type: 'inference_delay_changed', sequence: 2, occurredAt: '2026-09-14T20:00:00Z', ...delay, active: true });
+  });
+  expect(rendered.getByTestId('retained-delay').textContent).toBe(delay.inferenceRequestId);
+  rendered.rerender(<Tree mounted={false} />);
+  rendered.rerender(<Tree mounted />);
+  await flushPromises();
+  const resumed = FakeWebSocket.instances.at(-1)!;
+  act(() => resumed.open());
+  expect(sentFrames(resumed)).toContainEqual(expect.objectContaining({ type: 'subscribe', afterSequence: 2 }));
+  expect(rendered.getByTestId('retained-delay').textContent).toBe(delay.inferenceRequestId);
+  act(() => resumed.message({ type: 'inference_delay_changed', sequence: 3, occurredAt: '2026-09-14T20:00:01Z', ...delay, active: false }));
+  expect(rendered.getByTestId('retained-delay').textContent).toBe('');
+});

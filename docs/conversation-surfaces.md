@@ -637,7 +637,9 @@ down. Responses might take longer.” It uses the semantic warning colour and
 animation. First output, inference settlement, terminal run status, or a
 conversation change clears it immediately. Tool work and inter-chunk pauses
 do not create a warning. Multiple delayed calls share one notice until the last
-relevant delay clears.
+relevant delay clears. The workspace-scoped resume registry retains the delay set
+alongside its socket sequence, so revisiting a conversation can resume after the
+activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
 
@@ -647,7 +649,8 @@ A model may need longer than the old first-token deadline. The user requested
 an inline explanation after 30 seconds, present only during that wait. The
 surface consumes attempt-scoped server status rather than timing the whole run,
 so tool work cannot look like model slowness and a completed warning does not
-linger through an exit animation.
+linger through an exit animation. Delay state travels with retained resume cursors
+because replay cannot reconstruct an activation older than the retained sequence.
 
 ### 2026-09-14 — An admitted answer closes its question before the loop promotes it
 

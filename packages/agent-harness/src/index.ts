@@ -1054,7 +1054,6 @@ export class OpenRouterClient {
     onDelta: (delta: string) => void | Promise<void>,
     onOutput: () => void
   ): Promise<StreamResult> {
-    const delayObserver = createInferenceDelayObserver(input.onInferenceDelay, input.signal);
     const requestStartedAt = Date.now();
     let firstOutputAt: number | null = null;
     const watchdog = createInferenceStreamWatchdog({
@@ -1062,6 +1061,7 @@ export class OpenRouterClient {
       interChunkMs: this.config.streamIdleTimeoutMs ?? 15_000,
       external: input.signal ?? null,
     });
+    const delayObserver = createInferenceDelayObserver(input.onInferenceDelay, watchdog.signal);
     const establishment = new AbortController();
     let establishmentTimedOut = false;
     const establishmentTimer = setTimeout(() => {
@@ -1261,7 +1261,6 @@ export class AzureOpenAIClient {
       throw new AzureOpenAIRequestError("Azure does not support OpenRouter plugins");
     }
     assertAzureMessages(input.messages);
-    const delayObserver = createInferenceDelayObserver(input.onInferenceDelay, input.signal);
     const requestStartedAt = Date.now();
     let firstOutputAt: number | null = null;
     const watchdog = createInferenceStreamWatchdog({
@@ -1269,6 +1268,7 @@ export class AzureOpenAIClient {
       interChunkMs: this.config.streamIdleTimeoutMs ?? 15_000,
       external: input.signal ?? null,
     });
+    const delayObserver = createInferenceDelayObserver(input.onInferenceDelay, watchdog.signal);
     const establishment = new AbortController();
     let establishmentTimedOut = false;
     const establishmentTimer = setTimeout(() => {

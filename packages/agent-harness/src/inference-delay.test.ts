@@ -6,7 +6,7 @@ afterEach(() => vi.useRealTimers());
 
 for (const provider of ['azure', 'openrouter'] as const) {
   describe(`${provider} first-output delay`, () => {
-    function stream(headDelay = 0, streamIdleTimeoutMs = 15_000, rejectNotice = false) {
+    function stream(headDelay = 0, streamIdleTimeoutMs = 15_000, rejectNotice = false, hangNotice = false) {
       vi.useFakeTimers();
       const abort = new AbortController();
       const changes: boolean[] = [];
@@ -17,7 +17,7 @@ for (const provider of ['azure', 'openrouter'] as const) {
         init?.signal?.addEventListener('abort', () => controller.error(init.signal?.reason), { once: true });
         return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
       };
-      const input = { model: 'test/model', messages: [], signal: abort.signal, onInferenceDelay: (active: boolean) => { changes.push(active); if (rejectNotice) throw new Error("socket unavailable"); } };
+      const input = { model: 'test/model', messages: [], signal: abort.signal, onInferenceDelay: (active: boolean) => { changes.push(active); if (rejectNotice) throw new Error("socket unavailable"); if (hangNotice) return new Promise<void>(() => undefined); } };
       const client = provider === 'azure'
         ? new AzureOpenAIClient({ endpoint: 'https://test.openai.azure.com', apiKey: 'key', streamIdleTimeoutMs, fetch: fetcher })
         : new OpenRouterClient({ apiKey: 'key', primaryModel: 'test/model', sameModelRetries: 0, streamIdleTimeoutMs, fetch: fetcher });
@@ -76,6 +76,18 @@ for (const provider of ['azure', 'openrouter'] as const) {
       await s.result.catch(() => undefined);
       await vi.advanceTimersByTimeAsync(180_000);
       expect(s.changes).toEqual([]);
+    });
+
+    it.each(['output', 'abort', 'timeout', 'empty'] as const)('settles %s despite permanently pending notification transport', async (kind) => {
+      const s = stream(0, 15_000, false, true);
+      await vi.advanceTimersByTimeAsync(30_000);
+      if (kind === 'output') { s.send({ content: 'Completed' }); s.controller.close(); }
+      if (kind === 'empty') s.controller.close();
+      if (kind === 'abort') s.abort.abort();
+      if (kind === 'timeout') await vi.advanceTimersByTimeAsync(150_000);
+      if (kind === 'output') await expect(s.result).resolves.toMatchObject({ content: 'Completed' });
+      else await s.result.catch(() => undefined);
+      expect(s.changes).toEqual([true, false]);
     });
 
     it('allows continued output after a slow first token beyond the former total cap', async () => {
@@ -186,4 +198,22 @@ it('keeps rejected notifications from replacing output or provider errors', asyn
   await expect(observer.flush()).resolves.toBeUndefined();
   observer.observedOutput();
   await expect(observer.finish()).resolves.toBeUndefined();
+});
+
+it.each(['abort', 'output', 'finish'] as const)('releases a permanently pending notification on %s', async (settlement) => {
+  vi.useFakeTimers();
+  const controller = new AbortController();
+  const changes: boolean[] = [];
+  const observer = createInferenceDelayObserver((active) => {
+    changes.push(active);
+    return new Promise<void>(() => undefined);
+  }, controller.signal);
+  observer.open();
+  await vi.advanceTimersByTimeAsync(30_000);
+  await observer.flush();
+  expect(changes).toEqual([true]);
+  if (settlement === 'abort') controller.abort();
+  if (settlement === 'output') observer.observedOutput();
+  await observer.finish();
+  expect(changes).toEqual([true, false]);
 });

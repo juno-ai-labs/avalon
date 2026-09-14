@@ -11,16 +11,25 @@ export function createInferenceDelayObserver(
   let waiting = true;
   let announced = false;
   let delivery = Promise.resolve();
+  let releaseDelivery!: () => void;
+  const aborted = new Promise<void>((resolve) => { releaseDelivery = resolve; });
+  const deliver = (active: boolean) => Promise.race([
+    Promise.resolve().then(() => onChange?.(active)).catch(() => undefined),
+    aborted,
+  ]);
   const stop = () => {
     waiting = false;
     clearTimeout(timer);
+    releaseDelivery();
     if (announced) {
       announced = false;
-      const clear = () => onChange?.(false);
+      const clear = () => deliver(false);
       delivery = delivery.then(clear, clear).catch(() => undefined);
     }
   };
-  signal?.addEventListener('abort', stop, { once: true });
+  const abort = () => { releaseDelivery(); stop(); };
+  if (signal?.aborted) abort();
+  else signal?.addEventListener('abort', abort, { once: true });
   return {
     open() {
       if (!onChange || !waiting || signal?.aborted) return;
@@ -29,15 +38,17 @@ export function createInferenceDelayObserver(
         delivery = delivery.then(() => {
           if (!waiting || signal?.aborted) return;
           announced = true;
-          return onChange(true);
+          return deliver(true);
         }).catch(() => undefined);
       }, INFERENCE_DELAY_NOTICE_MS);
     },
     observedOutput: stop,
-    flush: () => delivery,
+    // Status transport must never hold up reading the next provider chunk.
+    flush: () => Promise.resolve(),
     async finish() {
       stop();
-      signal?.removeEventListener('abort', stop);
+      signal?.removeEventListener('abort', abort);
+      releaseDelivery();
       await delivery;
     },
   };

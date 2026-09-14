@@ -1206,6 +1206,9 @@ notifies `onInferenceDelay` after 30,000 ms, then clears on first output or any
 settlement, including cancellation. Its timer and queued notifications are
 attempt-local and disposed before provider traversal or tool execution. Notification
 failures are swallowed by the observer and cannot replace provider output or errors.
+Provider reads do not wait for status transport; first output, disposal, and abort
+release pending notification delivery without inventing another timeout. The
+conversation settlement tombstone rejects an activation that arrives after its clear.
 
 ## Changelog
 
@@ -1220,7 +1223,8 @@ clock; doing so would let an empty stream avoid the stated deadline. Existing
 establishment and inter-chunk limits remain independent. Bounded child and meeting
 callers keep their prior first-output allowance rather than silently losing retries
 to their shorter total budgets. Healthy output has no synthetic cap derived from idle
-timeouts; the caller owns total duration.
+timeouts; the caller owns total duration. Ancillary status callbacks cannot hold
+provider reads or cancellation hostage, including when a callback never settles.
 
 ### 2026-09-14 — The queue, not Bind, decides what an open question may be followed by
 

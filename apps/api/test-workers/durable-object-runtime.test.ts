@@ -6225,7 +6225,7 @@ describe("Durable Objects in the Workers runtime", () => {
       first.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
       expect(await restored).toMatchObject({ activeInferenceDelays: [{ inferenceRequestId: delay.inferenceRequestId }] });
 
-      const concurrent = { ...delay, executionId: childRunId, inferenceRequestId: "00000000-0000-7000-8000-000000000141" };
+      const concurrent = { ...delay, parentAttemptId: attemptId, executionId: childRunId, inferenceRequestId: "00000000-0000-7000-8000-000000000141" };
       const concurrentNotice = nextMessageOfType(first, delay.type);
       await publish(concurrent);
       expect(await concurrentNotice).toMatchObject(concurrent);
@@ -6238,9 +6238,24 @@ describe("Durable Objects in the Workers runtime", () => {
       const remaining = nextMessageOfType(first, "snapshot");
       first.send(JSON.stringify({ type: "request_snapshot" }));
       expect((await remaining).activeInferenceDelays).toEqual([{
-        harnessRunId, executionId: childRunId, attemptId,
+        harnessRunId, executionId: childRunId, attemptId, parentAttemptId: attemptId,
         inferenceRequestId: concurrent.inferenceRequestId, turnId: delay.turnId,
       }]);
+
+      // Superseding only the parent must fence a still-leased child's notice.
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE runs SET legacy_attempt_id = ? WHERE run_id = ?`,
+          "00000000-0000-7000-8000-000000000142", harnessRunId);
+      });
+      const parentStale = nextMessageOfType(first, delay.type);
+      await publish({ ...concurrent, inferenceRequestId: "00000000-0000-7000-8000-000000000146" });
+      expect(await parentStale).toMatchObject({ active: false });
+      const parentSnapshot = nextMessageOfType(first, "snapshot");
+      first.send(JSON.stringify({ type: "request_snapshot" }));
+      expect(await parentSnapshot).toMatchObject({ activeInferenceDelays: [] });
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE runs SET legacy_attempt_id = ? WHERE run_id = ?`, attemptId, harnessRunId);
+      });
 
       // A clear received after lease expiry must remain cleared after renewal.
       await runInDurableObject(stub, (_instance, state) => {
