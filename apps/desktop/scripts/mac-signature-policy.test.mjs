@@ -83,6 +83,7 @@ test('embedded updater is pinned to the stable arm64 channel', () => {
 test('profile decoder reads the Developer ID boolean using macOS plutil', { skip: process.platform !== 'darwin' }, () => {
   const source = readFileSync(new URL('./verify-macos-app.mjs', import.meta.url), 'utf8');
   const decoder = source.slice(source.indexOf('const profileField ='), source.indexOf('\nfunction verifyNestedComponent'));
+  let decoded = 0;
   for (const expected of [true, false]) {
     const xml = `<?xml version="1.0"?><plist version="1.0"><dict>
       <key>ProvisionsAllDevices</key><${expected}/>
@@ -93,9 +94,13 @@ test('profile decoder reads the Developer ID boolean using macOS plutil', { skip
     runInNewContext(decoder, {
       spawnSync, profileResult: { stdout: xml }, appPath: '/fixture/Rally.app',
       inspectEntitlements: () => ({}),
-      assertPushProvisioning: (profile) => assert.equal(profile.ProvisionsAllDevices, expected),
+      assertPushProvisioning: (profile) => {
+        assert.equal(profile.ProvisionsAllDevices, expected);
+        decoded++;
+      },
     });
   }
+  assert.equal(decoded, 2, 'Both profile values must reach the policy check');
 });
 
 test('push profile must match the app capabilities and remain valid', async () => {
