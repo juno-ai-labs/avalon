@@ -108,7 +108,7 @@ export const FIREFLIES_MANUAL_INSTRUCTIONS = [
   "Fireflies labels that field optional. Rally requires it: without the secret every delivery is rejected, so a webhook saved without one sends nothing Rally will accept.",
   "Under Event Subscriptions, tick both Meeting Transcribed and Meeting Summarized — `meeting.transcribed` and `meeting.summarized` in Fireflies' delivery History. Leave Meeting Bot Joined unticked — Rally rejects it.",
   "Save. Fireflies holds one webhook URL per account, so this replaces any URL already configured there.",
-  "Send a test event from that page. Rally can't check the page itself; the connection changes to Connected when the test event, or the first meeting, arrives.",
+  "Select Send test event. Rally can't check the page itself; the connection changes to Connected when the test event, or the first meeting, arrives.",
 ].join(" ");
 
 export const firefliesTools: ToolDefinition[] = (() => {

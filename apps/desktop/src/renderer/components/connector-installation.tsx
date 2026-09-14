@@ -147,6 +147,7 @@ export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, on
         <li>Under <strong>Webhook Configuration</strong>, paste the endpoint URL below into <strong>Webhook URL</strong>, and the signing secret into <strong>Signing Secret</strong>.</li>
         <li>Under <strong>Event Subscriptions</strong>, tick both <strong>Meeting Transcribed</strong> and <strong>Meeting Summarized</strong>. Leave <strong>Meeting Bot Joined</strong> unticked — Rally rejects it.</li>
         <li><strong>Save</strong>.</li>
+        <li>Select <strong>Send test event</strong>. Rally accepts it and the connection turns <strong>Connected</strong>, so this is how the setup gets confirmed without waiting for a meeting.</li>
       </ol>
       {/* Fireflies marks the secret optional and Rally does not accept an
           unsigned delivery, so this is the step that silently costs somebody an
@@ -178,7 +179,7 @@ export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, on
       <div className="dialog-callout">
         <p><strong>This replaces any webhook URL already on that page.</strong> Fireflies holds one per account, so if another Rally workspace is connected to this Fireflies account, it stops receiving meetings.</p>
       </div>
-      <p>Until this is done, no meetings reach Rally. Rally can't check that page for you: after saving, use its <strong>Send test event</strong> button, and the connection changes to <strong>Connected</strong> as soon as the test event arrives. A finished meeting does the same, usually within a couple of minutes.</p>
+      <p>Until this is done, no meetings reach Rally. Rally can't check that page for you — the connection changes to <strong>Connected</strong> as soon as the test event arrives. A finished meeting does the same, usually within a couple of minutes.</p>
     </Modal>;
   }
   // Dismissal is refused while the setup is in flight. The mutation does not
