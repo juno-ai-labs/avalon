@@ -12,7 +12,6 @@ export interface ArchiveAutomationDialogProps {
 export function ArchiveAutomationDialog({ target, onClose, onConfirm }: ArchiveAutomationDialogProps): React.JSX.Element {
   const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isDraft = target?.status === 'draft';
   const close = (): void => {
     if (archiving) return;
     setError(null);
@@ -25,9 +24,7 @@ export function ArchiveAutomationDialog({ target, onClose, onConfirm }: ArchiveA
       await onConfirm();
       onClose();
     } catch (failure) {
-      setError(failure instanceof Error
-        ? failure.message
-        : isDraft ? 'The draft could not be deleted.' : 'The Sidekick could not be archived.');
+      setError(failure instanceof Error ? failure.message : 'The Sidekick could not be archived.');
     } finally {
       setArchiving(false);
     }
@@ -38,7 +35,7 @@ export function ArchiveAutomationDialog({ target, onClose, onConfirm }: ArchiveA
         <>
           <Button disabled={archiving} onClick={close}>Cancel</Button>
           <Button className="button-danger" disabled={archiving} onClick={() => void submit()}>
-            {isDraft ? 'Delete' : 'Archive'}
+            Archive
           </Button>
         </>
       )}
@@ -46,19 +43,20 @@ export function ArchiveAutomationDialog({ target, onClose, onConfirm }: ArchiveA
         if (!open) close();
       }}
       open={target !== null}
-      title={isDraft ? 'Delete draft' : 'Archive Sidekick'}
+      title={target?.status === 'draft' ? 'Archive draft' : 'Archive Sidekick'}
     >
       <p className="modal-copy">
-        {isDraft ? (
+        {target?.status === 'draft' ? (
           <>
-            <strong>{target.name}</strong> and the conversation that was writing it are
-            deleted for good. Rally has no way to bring a draft back.
+            <strong>{target.name}</strong> will be removed from your Sidekicks. Its
+            conversation will remain stored but will no longer be viewable. Rally does
+            not offer a way to unarchive Sidekicks yet.
           </>
         ) : (
           <>
             <strong>{target?.name}</strong> will be removed from your Sidekicks and its
-            schedules will stop. Its conversation and past runs will be kept. Rally does
-            not offer a way to unarchive Sidekicks yet.
+            schedules will stop. Its conversation and run history will remain stored but
+            will no longer be viewable. Rally does not offer a way to unarchive Sidekicks yet.
           </>
         )}
       </p>

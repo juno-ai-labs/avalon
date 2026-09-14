@@ -126,7 +126,6 @@ interface SidebarProps {
   ) => Promise<{ enqueuedCount: number; archivedNoteCount: number }>;
   onChangeNoteScope: (note: NoteSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onChangeWorkstreamScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>;
-  onArchiveAutomation: (automation: AutomationSummary) => Promise<void>;
   onMarkWorkstreamUnread: (workstream: WorkstreamSummary) => Promise<void>;
   /**
    * Pin or unpin for the signed-in person, on every device they use.

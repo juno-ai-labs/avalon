@@ -177,7 +177,8 @@ describe('AutomationHeader', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive Sidekick' }));
     const dialog = await screen.findByRole('dialog', { name: 'Archive Sidekick' });
     expect(within(dialog).getByText('Weekly changelog')).toBeVisible();
-    expect(within(dialog).getByText(/conversation and past runs will be kept/u)).toBeVisible();
+    expect(within(dialog).getByText(/conversation and run history will remain stored/u)).toBeVisible();
+    expect(within(dialog).getByText(/will no longer be viewable/u)).toBeVisible();
     expect(within(dialog).getByText(/does not offer a way to unarchive Sidekicks yet/u)).toBeVisible();
     expect(handlers.onArchive).not.toHaveBeenCalled();
 
@@ -188,6 +189,18 @@ describe('AutomationHeader', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Archive' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive Sidekick' })).not.toBeInTheDocument());
     expect(handlers.onArchive).toHaveBeenCalledTimes(2);
+  });
+
+  it('archives a draft with accurate retained-conversation copy', async () => {
+    const handlers = renderHeader(draft);
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive draft' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive draft' });
+    expect(within(dialog).getByText(/conversation will remain stored but will no longer be viewable/u)).toBeVisible();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive' }));
+    await waitFor(() => expect(handlers.onArchive).toHaveBeenCalledOnce());
   });
 
   it('keeps runs off the initial page and shows them only through More and Run history', async () => {

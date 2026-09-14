@@ -1,7 +1,7 @@
 import { AutomationGlyph } from './workstream-glyph';
 import { AppearancePicker } from './appearance-picker';
 import { useState } from 'react';
-import { Archive, CirclePause, Ellipsis, History, Mail, Play, Trash2 } from 'lucide-react';
+import { Archive, CirclePause, Ellipsis, History, Mail, Play } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { ArchiveAutomationDialog } from './archive-automation-dialog';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
@@ -25,7 +25,7 @@ export interface AutomationHeaderProps {
   error?: string | undefined;
   onPause: () => void;
   onResume: () => void;
-  /** Archives the Sidekick once confirmed; draft targets are still deleted. */
+  /** Archives the Sidekick once confirmed. */
   onArchive: () => Promise<void>;
   onRunNow: () => void;
   /**
@@ -140,8 +140,8 @@ export function AutomationHeader({
                   disabled={pending !== null}
                   onSelect={() => setConfirmingArchive(true)}
                 >
-                  {automation.lifecycle === 'draft' ? <Trash2 size={14} /> : <Archive size={14} />}
-                  {automation.lifecycle === 'draft' ? 'Delete draft' : 'Archive Sidekick'}
+                  <Archive size={14} />
+                  {automation.lifecycle === 'draft' ? 'Archive draft' : 'Archive Sidekick'}
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
