@@ -3,6 +3,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 
 import {
@@ -15,6 +16,19 @@ import {
 
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const workflowPath = join(repositoryDirectory, '.github/workflows/release-desktop-macos.yml');
+
+test('the packager passes the resolved provisioning profile as one builder argument', async () => {
+  const source = await readFile(join(repositoryDirectory, 'apps/desktop/scripts/package-macos.mjs'), 'utf8');
+  const expression = source.match(/const builderArgs = (\[[\s\S]*?\]);/u)?.[1];
+  assert.ok(expression);
+  const profile = '/runner/temp/Rally Developer ID.provisionprofile';
+  const args = runInNewContext(expression, {
+    configFile: 'electron-builder.yml',
+    stagingDirectory: '/release/staging',
+    process: { env: { RALLY_MAC_PROVISIONING_PROFILE_PATH: profile } },
+  });
+  assert.ok(args.includes(`--config.mac.provisioningProfile=${profile}`));
+});
 
 test('a new release supersedes pending ones without cancelling a running one', async () => {
   const workflow = await readFile(workflowPath, 'utf8');

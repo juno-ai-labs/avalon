@@ -53,7 +53,6 @@ mac:
       to: native/unified-log.node
     - from: .native-build/push-notifications.node
       to: native/push-notifications.node
-  provisioningProfile: ${env.RALLY_MAC_PROVISIONING_PROFILE_PATH}
   category: public.app-category.productivity
   extendInfo:
     NSUserActivityTypes:
