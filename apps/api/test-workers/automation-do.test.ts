@@ -636,7 +636,7 @@ describe("AutomationDO", () => {
             event: { kind: "event_type" as const, eventType: "deploy.finished" },
           },
           when: {
-            kind: "all" as const,
+            kind: "matching" as const,
             allOf: [{ kind: "string" as const, attribute: "service", operator: "equals" as const, value: "checkout" }],
           },
         },

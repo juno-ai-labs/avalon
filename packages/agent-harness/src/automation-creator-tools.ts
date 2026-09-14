@@ -408,7 +408,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
                 input: evaluator.source.resourceId,
               });
             }
-            if (!descriptor || evaluator.when.kind !== "all") continue;
+            if (!descriptor || evaluator.when.kind !== "matching") continue;
             {
               for (const [leafIndex, leaf] of evaluator.when.allOf.entries()) {
                 const field = (descriptor.filterFields ?? []).find((candidate) => candidate.key === leaf.attribute);
