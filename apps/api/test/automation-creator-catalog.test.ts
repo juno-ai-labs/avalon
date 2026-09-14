@@ -225,6 +225,69 @@ describe("automation-creator plugin catalog", () => {
     // faked.
   });
 
+  it("advertises a connector's events only to a connection whose scope can receive them", async () => {
+    const localDb = localDatabase();
+    insertConnection(localDb, {
+      id: "00000000-0000-4000-8000-000000000211",
+      connectorType: "granola",
+      scope: "personal",
+      ownerUserId: USER_ID,
+      modelPluginId: "plugin_granola",
+    });
+    insertConnection(localDb, {
+      id: "00000000-0000-4000-8000-000000000212",
+      connectorType: "generic_webhook",
+      scope: "personal",
+      ownerUserId: USER_ID,
+      modelPluginId: "plugin_webhook",
+      configJson: JSON.stringify({ eventTypes: ["order.created"] }),
+    });
+    const input = workflowInput();
+
+    const pluginsList = await automationCreatorTool(localDb, input, "plugins_list");
+    const listed = await pluginsList.execute({}, { toolCallId: "list-personal" } as never);
+    const entries = (listed.output as {
+      plugins: Array<{ pluginId: string; activityTriggerCount: number; activityTriggersUnavailable?: string }>;
+    }).plugins;
+
+    // Granola's webhook belongs to the workspace install and its `normalize`
+    // refuses every other connection, so the four triggers this personal
+    // connection used to advertise were events it could never receive: the
+    // Sidekick drafted on one applied, activated, and then never fired.
+    const granolaEntry = entries.find((entry) => entry.pluginId === "plugin_granola");
+    expect(granolaEntry?.activityTriggerCount).toBe(0);
+    expect(granolaEntry?.activityTriggersUnavailable).toMatch(/workspace connection/u);
+
+    // Narrowed per connector, not per scope: a personal webhook receives its
+    // own deliveries and keeps every trigger it configured.
+    const webhookEntry = entries.find((entry) => entry.pluginId === "plugin_webhook");
+    expect(webhookEntry?.activityTriggerCount).toBe(1);
+    expect(webhookEntry).not.toHaveProperty("activityTriggersUnavailable");
+  });
+
+  it("keeps every trigger on a workspace connection of the same connector", async () => {
+    const localDb = localDatabase();
+    insertConnection(localDb, {
+      id: "00000000-0000-4000-8000-000000000213",
+      connectorType: "granola",
+      scope: "workspace",
+      ownerUserId: null,
+      modelPluginId: "plugin_granola",
+    });
+
+    const pluginsList = await automationCreatorTool(localDb, workflowInput(), "plugins_list");
+    const listed = await pluginsList.execute({}, { toolCallId: "list-workspace" } as never);
+    const entry = (listed.output as {
+      plugins: Array<{ pluginId: string; activityTriggerCount: number; activityTriggersUnavailable?: string }>;
+    }).plugins.find((candidate) => candidate.pluginId === "plugin_granola");
+
+    // Counted rather than enumerated: which events Granola declares is the
+    // connector's business and changes with its API, while the contrast with
+    // the personal connection's zero above is what this asserts.
+    expect(entry?.activityTriggerCount).toBeGreaterThan(0);
+    expect(entry).not.toHaveProperty("activityTriggersUnavailable");
+  });
+
   it("returns active workspace members matching a name or email fragment, excluding suspended ones", async () => {
     const localDb = localDatabase();
     const activeUserId = "00000000-0000-4000-8000-000000000301";
