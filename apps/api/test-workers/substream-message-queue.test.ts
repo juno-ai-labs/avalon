@@ -44,6 +44,7 @@ import {
   releaseHeldLoop,
   seedWorkspaceControlPlane,
 } from "./helpers/substream-fixture";
+import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import type { Env } from "../src/env";
 
@@ -140,7 +141,7 @@ async function initializeWorkstream(
 async function sendMessage(
   stub: DurableObjectStub,
   input: { text: string; clientMessageId: string },
-): Promise<{ turnId: string; deliveryState: string }> {
+): Promise<{ turnId: string; deliveryState: string; queued: boolean }> {
   const result = await product(stub, {
     operation: "create_message",
     auth: AUTH,
@@ -156,6 +157,7 @@ async function sendMessage(
   return {
     turnId: (result.body.turn as { turnId: string }).turnId,
     deliveryState: String(result.body.deliveryState),
+    queued: result.body.queued === true,
   };
 }
 
@@ -591,6 +593,93 @@ describe("a message queued behind a live run", () => {
       await settledInOrder(stub, [queued.turnId]);
       expect((await providerUserTurns(stub)).at(-1)!.join(" "))
         .toContain("queued across an eviction");
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("tells the sender nothing is ahead of a message admitted into a quiet room", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [assistantTurn("answering the opening message"), assistantTurn("answering the follow-up")],
+        { primaryModel: MODEL, fallbackModels: [] },
+      );
+      const opened = await initializeWorkstream(stub, "opening message");
+      await expect.poll(async () => (await executionReceipts(stub))
+        .find((run) => run.run_id === opened.body.harnessRunId)?.terminalized_at !== null,
+      { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toBe(true);
+      await waitForLoopRelease(stub);
+
+      // Nothing holds the loop, so this message is the one an activation is
+      // about to promote rather than one waiting for a turn already running.
+      // `deliveryState` cannot say so — every human message is admitted through
+      // the same mailbox and comes back `pending` either way — which is why the
+      // sender was told a queue it was never in, for as long as promotion took.
+      const answered = await sendMessage(stub, {
+        text: "answered straight away",
+        clientMessageId: "queue-idle-1",
+      });
+      expect(answered.deliveryState).toBe("pending");
+      expect(answered.queued).toBe(false);
+
+      await settledInOrder(stub, [answered.turnId]);
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("tells the sender a message admitted behind a running turn is queued", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [assistantTurn("answering the opening message")],
+        { primaryModel: MODEL, fallbackModels: [] },
+      );
+      const opened = await initializeWorkstream(stub, "opening message");
+      await expect.poll(async () => (await executionReceipts(stub))
+        .find((run) => run.run_id === opened.body.harnessRunId)?.terminalized_at !== null,
+      { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toBe(true);
+      await waitForLoopRelease(stub);
+
+      await runInDurableObject(stub, (_instance, state) => {
+        holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+      });
+      const first = await sendMessage(stub, {
+        text: "waiting on the held run",
+        clientMessageId: "queue-held-1",
+      });
+      const second = await sendMessage(stub, {
+        text: "waiting behind the first",
+        clientMessageId: "queue-held-2",
+      });
+      expect([first.queued, second.queued]).toEqual([true, true]);
+
+      // The rows every other viewer reads have to agree with the receipt the
+      // sender got: the composer queue is drawn from these, and a snapshot that
+      // disagreed would put the message back on the composer a beat later.
+      const heldProjection = await runInDurableObject(stub, (_instance, state) =>
+        new WorkstreamTranscriptStorage(state.storage).pendingTranscriptInputs()
+          .map((input) => ({ turnId: input.futureTurnId, queued: input.queued })));
+      expect(heldProjection).toEqual([
+        { turnId: first.turnId, queued: true },
+        { turnId: second.turnId, queued: true },
+      ]);
+
+      // Releasing the hold and reading in the same synchronous turn — no alarm
+      // can interleave — is the loop idle with a queue still standing. Only the
+      // head is promoted from there, so only the head stops being queued.
+      const releasedProjection = await runInDurableObject(stub, (_instance, state) => {
+        releaseHeldLoop(state);
+        return new WorkstreamTranscriptStorage(state.storage).pendingTranscriptInputs()
+          .map((input) => ({ turnId: input.futureTurnId, queued: input.queued }));
+      });
+      expect(releasedProjection).toEqual([
+        { turnId: first.turnId, queued: false },
+        { turnId: second.turnId, queued: true },
+      ]);
     } finally {
       await restoreProviderFetch(stub);
     }

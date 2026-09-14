@@ -819,14 +819,29 @@ same `client_message_id` is checked against both canonical and pending authority
 so an ambiguous-response retry returns the same future turn ID without
 admitting another input or loop.
 
-Every public message-admission response contains only the accepted `turn`
-identity and a truthful `deliveryState` of `canonical` or `pending`. A replay
+Every public message-admission response contains the accepted `turn` identity, a
+truthful `deliveryState` of `canonical` or `pending`, and `queued` — whether
+anything is ahead of this message. A replay
 reports the row's current state, not a separate replay outcome. It never reports
 `agentInvoked`, a nullable harness-run ID, or an activation flag: committing a
 pending input may request an internal loop wake, but admission does not prove
 that an execution has started. `activationRequest` and whether this call inserted
 the row remain private between the product transaction and its SubstreamAgent
 owner.
+
+`queued` is a separate field because `deliveryState` cannot answer it. Every
+human message enters through this mailbox, so `pending` is what a message into a
+quiet room and a message behind a running turn both get, and the two differ only
+in what happens next. `SubstreamLoopStorage.activatingInputId` is the one place
+that difference is decided: the head of the visible queue while the loop is
+idle — the input the next activation promotes — and null while a run holds the
+loop, because everything admitted then waits for that run's next safe boundary.
+`queued` is that identity compared against this input, and
+`PendingTranscriptInput.queued` carries the same comparison to every viewer, so
+the private receipt the sender gets and the rows the room fans out cannot
+disagree about which messages are waiting. Nothing may present a message with
+`queued: false` as queued; the surface that does is
+[`conversation-surfaces.md`](conversation-surfaces.md)'s composer queue.
 
 `steer` means deliver after the current step: the in-flight provider response
 finishes, its reserved assistant turn becomes canonical, and every tool call it
@@ -1223,6 +1238,7 @@ misrouted product statement now fails because the table or column is absent.
 - **No synchronous product transaction callback may return a Promise.** This includes `transactionSync`, `commitRuntimeMutation`, and `commitWithRegionalEffects`, whether the Promise is visible as `async` or hidden behind a helper. Prepare asynchronous transcript material first, then commit only synchronous SQLite work and revalidate its fences inside the transaction.
 - **One unexpired attempt lease owns a child run.** Two owners can duplicate an external tool effect or terminal assistant message.
 - **A steering record names the targeted run.** A generic “steer next” flag can stop an unrelated future run.
+- **A message nothing is ahead of is never presented as queued.** `deliveryState` is `pending` for every human message, so `queued` — on the admission receipt and on `PendingTranscriptInput`, both read from `activatingInputId` — is the only field that separates a message waiting behind a run from one starting the next turn. A surface that infers queueing from `deliveryState` or from `deliveryMode` announces a queue for every message anybody sends.
 - **Compaction results cannot cover rows above their input fence.** Otherwise a message accepted during summarization disappears from model context.
 - **Child-to-parent and parent-to-workspace effects are hash-deduplicated and versioned.** Queue ordering and delivery uniqueness are not trusted; the parent numbers its own projections so the workspace compares one clock per key.
 - **`workstream_authority_routes` and the `workstreams` anchor are keyed by the conversation parent id, of either kind.** Loop activation, socket admission, and the notification generation fence all read the route by `(workspace_id, workstream_id)`; a second route table per parent kind would give the same conversation two fences.
@@ -1406,11 +1422,16 @@ cycle in admission order and none of them appears in the running turn's model
 array; a drag reorders promotion rather than only the composer's list; a
 duplicate client message id admits one input and one run; and a queued message
 survives the run it waited on failing mid-stream, being stopped, and the object
-being replaced before its activation runs. Its last two cases are the
+being replaced before its activation runs. Two more are the
 head-of-line gate from both sides — a message admitted behind an unsettled one
 is *hidden rather than dropped* and both are delivered in order, and a
 preparation that fails terminally releases the queue behind it instead of
-holding the substream. Both suites share one deterministic OpenRouter boundary
+holding the substream. Two more take `queued`: a message admitted into a quiet
+room says nothing is ahead of it though its `deliveryState` is `pending` like
+every other, and a pair admitted against a held loop both say they are waiting
+in the receipt *and* in the pending-input rows — then, with the hold released
+and the projection read in the same synchronous turn, only the head stops
+saying so. Both suites share one deterministic OpenRouter boundary
 in `test-workers/helpers/scripted-provider.ts`; the queue suite's first shape
 used a scripted *refusal* to fail a run and quietly poisoned every later test in
 the file, because a refusal opens the provider circuit for that model across the
@@ -1720,6 +1741,50 @@ the type when an older caller omits it. This lets the desktop distinguish custom
 MCP identity without trusting the saved name or reading WorkspaceDO on replay.
 
 ## Changelog
+
+### 2026-09-14 — Admission says whether anything is ahead of the message, not just that it is pending
+
+**What changed:** the message-admission receipt and `PendingTranscriptInput`
+both carry `queued`, read from one new place — `activatingInputId`, the head of
+the visible queue while the loop is idle, null while a run holds it.
+`deliveryState` is unchanged and still answers only whether the turn is
+canonical yet. The composer queue draws on `queued`; a pending input nothing is
+ahead of reads as `sending` and stays in the transcript.
+
+**Why:** every message anybody sent flashed **Queued** before appearing as a
+message. The mailbox is the one admission path for human input, so a message
+into a quiet room is `pending` exactly like a message behind a running turn, and
+the desktop had nothing else to read: it announced a queue for every send and
+withdrew it when promotion landed — locally about a tenth of a second, and as
+long as the round trip plus activation takes anywhere else. The room already
+computed the distinction, in the same transaction, to decide whether admission
+requests an activation; it simply never said so. What was wrong with the old
+answer is not that it was imprecise but that it was a guess dressed as a fact:
+`deliveryMode` is the intent the *sender* asked for, and reading the room's
+behavior out of it can only ever be right by coincidence.
+
+**Considered and rejected:** widening `deliveryState` to `canonical | starting |
+queued`, which is the shape this really wants — one field, three real outcomes,
+no combination to keep consistent. `safeParseSocketEvent` forgives an unknown
+*key*, which is what makes an added field safe for a client that has not
+updated; it cannot forgive an unknown enum *value*, so a new authority would
+have broken sends on every older desktop. The additive boolean is the version of
+the same answer that deploys in either order, and `queued` defaults to `true` so
+a client reading an authority that predates it keeps the behavior described
+above rather than silently claiming nothing is ever queued.
+
+Also rejected: leaving the receipt alone and letting the client wait for the
+`loop_input_upserted` frame to say. It is the same answer one round trip later,
+which is the whole of what was wrong here, and it makes the correct rendering
+depend on a best-effort outbox flush.
+
+**Consequences:** `queued` is meaningful only while `deliveryState` is
+`pending`; every producer sends `false` alongside `canonical`, and a reader must
+check `deliveryState` first. A new admission result builder has to answer it —
+there is no default on the server side, only on the wire. The rule that only the
+*head* is unqueued matters when the loop is idle with a queue still standing
+(an activation in flight, or one that failed): promotion takes one input, so the
+rest are still waiting and still say so.
 
 ### 2026-09-11 — A read is acknowledged by the conversation that was read
 

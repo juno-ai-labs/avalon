@@ -123,11 +123,25 @@ export function resourceVersionsQueryKey(
 ): readonly [string, string | null, number | null] {
   return ['resource-versions', resourceId, currentVersion];}
 
+/**
+ * How an admitted message reads until its canonical turn arrives.
+ *
+ * `deliveryState` alone cannot answer this. Every human message is admitted
+ * through the pending-input mailbox, so it comes back `pending` whether it is
+ * waiting behind a running turn or starting one this instant — and reading a
+ * queue out of that announced one for every message anybody sent, for as long
+ * as the room took to promote it. `queued` is the room's own answer, so a
+ * message nothing is ahead of stays `sending`: the turn it starts is being
+ * worked on, which is what `sending` has always meant here, and it keeps the
+ * row in the transcript rather than moving it onto the composer and back.
+ */
 export function acceptedMessageOverlayDeliveryState(
   deliveryState: WorkstreamMessageDeliveryState,
   requestedMode: WorkstreamMessageDeliveryMode | undefined,
+  queued: boolean,
 ): Message['deliveryState'] {
   if (deliveryState === 'canonical') return undefined;
+  if (!queued) return 'sending';
   return requestedMode === 'steer' ? 'steer_pending' : 'queue_pending';
 }
 
@@ -1882,6 +1896,7 @@ export function ConversationSurface({
         const overlayDeliveryState = acceptedMessageOverlayDeliveryState(
           created.deliveryState,
           deliveryMode,
+          created.queued,
         );
         return upsertTranscriptOverlay(
           removeTranscriptOverlay(current, (overlay) => overlay === optimistic),

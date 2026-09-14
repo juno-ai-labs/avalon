@@ -3309,6 +3309,7 @@ export class WorkstreamObjectProductService {
         createdAt: new Date(input.created_at).toISOString(),
       },
       deliveryState: "pending",
+      queued: input.input_id !== this.loops.activatingInputId(),
       activationRequest: loop.status === "idle" ? {
         kind: "activate_substream_loop",
         loopId: loop.loop_id,
@@ -3330,6 +3331,7 @@ export class WorkstreamObjectProductService {
         createdAt: new Date(existing.created_at).toISOString(),
       },
       deliveryState: "canonical",
+      queued: false,
       activationRequest: null,
       inserted: false,
     };
@@ -3365,6 +3367,7 @@ export class WorkstreamObjectProductService {
     return {
       turn: { turnId: messageId, clientMessageId, createdAt: new Date(createdAt).toISOString() },
       deliveryState: "canonical",
+      queued: false,
       activationRequest: null,
       inserted: false,
     };
@@ -3383,6 +3386,7 @@ export class WorkstreamObjectProductService {
         createdAt: new Date(input.created_at).toISOString(),
       },
       deliveryState: "pending",
+      queued: input.input_id !== this.loops.activatingInputId(),
       activationRequest: loop.status === "idle" ? {
         kind: "activate_substream_loop",
         loopId: loop.loop_id,
@@ -3861,6 +3865,7 @@ export class WorkstreamObjectProductService {
           createdAt: new Date(preparation.created_at).toISOString(),
         },
         deliveryState: "canonical",
+        queued: false,
         activationRequest: null,
         inserted: true,
       };
@@ -4464,6 +4469,7 @@ export class WorkstreamObjectProductService {
         createdAt: new Date(committed.result.createdAt).toISOString(),
       },
       deliveryState: "canonical",
+      queued: false,
       activationRequest: null,
       inserted: committed.result.inserted,
     };

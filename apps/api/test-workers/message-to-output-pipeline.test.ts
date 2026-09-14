@@ -1202,6 +1202,8 @@ describe("a member's message travels the whole pipeline", () => {
           createdAt: new Date(now).toISOString(),
         },
         deliveryState: "pending",
+        // The hold above is a run in flight, which is what queueing means.
+        queued: true,
       },
     });
     expect(replay).toEqual({
@@ -1213,6 +1215,7 @@ describe("a member's message travels the whole pipeline", () => {
           createdAt: new Date(now).toISOString(),
         },
         deliveryState: "pending",
+        queued: true,
       },
     });
     await runInDurableObject(stub, (_instance, state) => {
@@ -1269,6 +1272,8 @@ describe("a member's message travels the whole pipeline", () => {
           createdAt: expect.any(String),
         },
         deliveryState: "canonical",
+        // Delivered history: there is nothing left for it to be behind.
+        queued: false,
       },
     });
     await runInDurableObject(stub, (_instance, state) => {
@@ -1355,6 +1360,7 @@ describe("a member's message travels the whole pipeline", () => {
           createdAt: expect.any(String),
         },
         deliveryState: "canonical",
+        queued: false,
       },
     });
     expect(final).toEqual({
@@ -1366,6 +1372,8 @@ describe("a member's message travels the whole pipeline", () => {
           createdAt: expect.any(String),
         },
         deliveryState: "pending",
+        // Nothing holds the loop, so this answer starts the next turn itself.
+        queued: false,
       },
     });
     await runInDurableObject(stub, (_instance, state) => {
@@ -1708,6 +1716,7 @@ describe("a member's message travels the whole pipeline", () => {
         createdAt: expect.any(String),
       },
       deliveryState: "pending",
+      queued: true,
     });
     const turnId = (followUp.body.turn as { turnId: string }).turnId;
     await runInDurableObject(stub, (_instance, state) => {
@@ -2395,8 +2404,8 @@ describe("a member's message travels the whole pipeline", () => {
     // pending input nor any message-owned run.
     expect((repeat.body.turn as { turnId: string }).turnId)
       .toBe((first.body.turn as { turnId: string }).turnId);
-    expect(Object.keys(first.body).sort()).toEqual(["deliveryState", "turn"]);
-    expect(Object.keys(repeat.body).sort()).toEqual(["deliveryState", "turn"]);
+    expect(Object.keys(first.body).sort()).toEqual(["deliveryState", "queued", "turn"]);
+    expect(Object.keys(repeat.body).sort()).toEqual(["deliveryState", "queued", "turn"]);
     expect(["canonical", "pending"]).toContain(first.body.deliveryState);
     expect(["canonical", "pending"]).toContain(repeat.body.deliveryState);
 

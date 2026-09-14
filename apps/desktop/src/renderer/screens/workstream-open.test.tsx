@@ -824,7 +824,7 @@ describe('socket-first work-stream open', () => {
     const child = recoveryBoot({ title: 'Private child', participants: [creator] });
     const createMessage = vi.fn(async () => {
       expect(api.addSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id);
-      return { turnId: 'turn', clientMessageId: 'message', createdAt: new Date().toISOString(), deliveryState: 'queued' };
+      return { turnId: 'turn', clientMessageId: 'message', createdAt: new Date().toISOString(), deliveryState: 'pending', queued: true };
     });
     retainedSocket.mockReturnValue({ state: 'connected', workspaceSocketState: 'connected', sendReady: true, createMessage, requestSnapshot: vi.fn() });
     api.getWorkspaceMembers.mockResolvedValue([creator, newcomer]);

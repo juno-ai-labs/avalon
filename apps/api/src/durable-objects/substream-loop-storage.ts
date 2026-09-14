@@ -300,6 +300,27 @@ export class SubstreamLoopStorage {
   }
 
   /**
+   * The one input nothing is ahead of: the head of the queue while the loop is
+   * idle. That is the input the next activation takes — `SubstreamAgent` reads
+   * `pendingInputs()[0]` and promotes it into a canonical turn in the same
+   * transaction as the run it mints.
+   *
+   * Null while a run holds the loop, because every input admitted then waits
+   * for that run's next safe boundary however short the wait turns out to be.
+   * This is the same question `pendingMessageResult` already answers to decide
+   * whether admission requests an activation, named once so the receipt a
+   * sender gets and the pending-input rows every viewer gets cannot disagree
+   * about which messages are waiting.
+   *
+   * Pass `pending` when the caller already holds the visible list; the default
+   * re-reads it.
+   */
+  activatingInputId(pending: readonly PendingLoopInputRow[] = this.pendingInputs()): string | null {
+    if (this.loop()?.status !== "idle") return null;
+    return pending[0]?.input_id ?? null;
+  }
+
+  /**
    * Reassign promotion order among currently visible pending inputs.
    *
    * Named ids take the order the caller sent. Ids that have already been

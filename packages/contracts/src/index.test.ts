@@ -821,8 +821,15 @@ describe("boundary contracts", () => {
         createdAt: "2026-08-28T12:00:00.000Z",
       },
       deliveryState: "pending" as const,
+      queued: false as const,
     };
     expect(WorkstreamSocketCommandResultSchema.parse(accepted)).toEqual(accepted);
+    // An authority that predates `queued` sends none, and the reading a sender
+    // had before it existed — everything queued — is the one that survives.
+    const { queued: _queued, ...beforeQueued } = accepted;
+    void _queued;
+    expect(WorkstreamSocketCommandResultSchema.parse(beforeQueued))
+      .toEqual({ ...accepted, queued: true });
     expect(WorkstreamSocketCommandResultSchema.safeParse({
       ...accepted,
       agentInvoked: true,

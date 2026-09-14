@@ -3164,6 +3164,7 @@ describe('composer queue overlays', () => {
     futureTurnId: '00000000-0000-7000-8000-000000000101',
     inputSequence: 3,
     deliveryMode: 'queue' as const,
+    queued: true,
     afterTranscriptSequence: 4,
     actor: 'human' as const,
     authorUserId: 'user-1',
@@ -3189,6 +3190,34 @@ describe('composer queue overlays', () => {
     expect(overlay.queueSequence).toBe(3);
     expect(pendingOverlayInputId(overlay)).toBe(pendingHuman.inputId);
     expect(isComposerQueueOverlay(overlay, { harnessRunning: false })).toBe(true);
+  });
+
+  it('keeps a pending input nothing is ahead of out of the composer queue', () => {
+    // The row the object is about to promote. It reaches the client through the
+    // same pending-input frame as a waiting one and carries the same
+    // `deliveryMode`, so reading the queue out of the mode alone put every
+    // message anybody sent on the composer until promotion landed.
+    const starting = pendingTranscriptInputOverlay(
+      { ...pendingHuman, queued: false },
+      'workstream-one',
+      { source: 'socket_event', eventType: 'loop_input_upserted', eventSequence: 12 },
+    );
+    expect(starting.message.deliveryState).toBe('sending');
+    expect(isComposerQueueOverlay(starting, { harnessRunning: false })).toBe(false);
+    // Still out of the queue when the work stream looks busy from here: that
+    // flag is the room's `exact_state`, written when a workflow starts, and the
+    // object has already said this input is not waiting for one.
+    expect(isComposerQueueOverlay(starting, { harnessRunning: true })).toBe(false);
+  });
+
+  it('keeps a steering input nothing is ahead of out of the composer queue', () => {
+    const starting = pendingTranscriptInputOverlay(
+      { ...pendingHuman, deliveryMode: 'steer' as const, queued: false },
+      'workstream-one',
+      { source: 'socket_snapshot', snapshotId: 'snapshot-1' },
+    );
+    expect(starting.message.deliveryState).toBe('sending');
+    expect(isComposerQueueOverlay(starting, { harnessRunning: true })).toBe(false);
   });
 
   it('sorts the composer queue by queueSequence and parks sending rows last', () => {

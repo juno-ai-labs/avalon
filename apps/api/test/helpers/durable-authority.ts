@@ -1175,6 +1175,7 @@ export function testSubstreamAgentsBinding(
           bodyJson: JSON.stringify({
             turn: result.turn,
             deliveryState: result.deliveryState,
+            queued: result.queued,
           }),
         };
       } catch (error) {
@@ -1201,6 +1202,7 @@ export function testSubstreamAgentsBinding(
           bodyJson: JSON.stringify({
             turn: result.turn,
             deliveryState: result.deliveryState,
+            queued: result.queued,
           }),
         };
       } catch (error) {
