@@ -56,13 +56,13 @@ test("every allowlisted pattern is one this file has reasoned about", () => {
   // adding one here is deliberately not optional.
   assert.equal(
     allowlistRegexes(config).length,
-    3,
+    4,
     "a new .gitleaks.toml allowlist pattern needs a test in this file proving what it still rejects",
   );
 });
 
 test("the placeholder PEM exception admits only a short alphabetic body", () => {
-  const patterns = allowlistRegexes(config).filter((pattern) => pattern.includes("PRIVATE KEY"));
+  const patterns = allowlistRegexes(config).filter((pattern) => pattern.includes("PRIVATE KEY") && !pattern.includes("exportKey"));
   assert.equal(patterns.length, 1);
   const allowlist = new RegExp(patterns[0], "u");
 
@@ -127,4 +127,18 @@ test("the Granola fixture exception admits only the encoded synthetic phrase", (
   assert.doesNotMatch(`${fixture}a`, allowlist);
   assert.doesNotMatch(`a${fixture}`, allowlist);
   assert.doesNotMatch(fixture.slice(0, -1), allowlist);
+});
+
+
+test("the generated PEM exception admits source interpolation but no key material", () => {
+  const patterns = allowlistRegexes(config).filter((pattern) => pattern.includes("exportKey"));
+  assert.equal(patterns.length, 1);
+  const allowlist = new RegExp(patterns[0], "u");
+  const source = readFileSync(new URL("../apps/api/test/push-payload.test.ts", import.meta.url), "utf8");
+  assert.match(source, allowlist);
+  // CI pins Gitleaks 8.18, whose PEM match ends one hyphen early.
+  assert.match(source.replace("END PRIVATE KEY-----", "END PRIVATE KEY----"), allowlist);
+  const material = Buffer.from("ephemeral key material").toString("base64");
+  const withKeyMaterial = source.replace("${Buffer.from(await crypto.subtle.exportKey('pkcs8', keys.privateKey)).toString('base64')}", material);
+  assert.doesNotMatch(withKeyMaterial, allowlist);
 });

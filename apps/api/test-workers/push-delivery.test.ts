@@ -1,12 +1,13 @@
+import { enqueuePushDelivery } from '../src/services/push-delivery-service';
 import { processWorkstreamNotificationIntent } from '../src/services/conversation-effect-service';
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from 'cloudflare:workers';
-import { reset, runInDurableObject } from 'cloudflare:test';
+import { reset, runInDurableObject, createMessageBatch, createExecutionContext, getQueueResult } from 'cloudflare:test';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { asUserId, asWorkspaceId, asWorkstreamId } from '@rally/contracts';
 import migration from '../../../packages/db/migrations/0106_user_push_devices.sql?raw';
 import { workspaceDOName } from '../src/durable-objects/names';
-import { deliverPush } from '../src/queues/push-delivery-consumer';
+import { deliverPush, consumePushDeliveryQueue } from '../src/queues/push-delivery-consumer';
 import { splitSqlStatements } from '../src/lib/sql-statements';
 import { registerPushDevice } from '../src/services/push-device-service';
 import { clearFlagTargetingAttributeCache } from '../src/services/flag-targeting-attributes';
@@ -91,9 +92,25 @@ it('disables devices Apple reports unregistered', async () => {
 });
 
 it('keeps enqueued content readable after the producer settles its intent', async () => {
-  const producerEnv = { ...pushEnv(), APNS_AUTH_KEY: 'configured', APNS_KEY_ID: 'configured' };
+  // Local workerd cannot select a jurisdiction; all storage and RPC still use its real namespace.
+  const producerEnv = { ...pushEnv(), APP_ENV: 'staging' as const, APNS_AUTH_KEY: 'configured', APNS_KEY_ID: 'configured',
+    WORKSPACE_DOS: createTestEnv({ WORKSPACE_DOS: { jurisdiction: () => env.WORKSPACE_DOS } }).WORKSPACE_DOS,
+  };
   expect(await processWorkstreamNotificationIntent(producerEnv, workspaceId, 'mention:one')).toBe('delivered');
   const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
   expect(await deliverPush(producerEnv, message(), send)).toBe(true);
   expect(send).toHaveBeenCalledTimes(2);
+});
+
+it('does not enqueue a transport disabled in the local environment', async () => {
+  expect(await enqueuePushDelivery({ ...pushEnv(), APP_ENV: 'development', APNS_AUTH_KEY: 'configured', APNS_KEY_ID: 'configured' }, message())).toBe(false);
+});
+it('stops a batch at the first provider credential fault and retries its remaining messages', async () => {
+  await addIntent('mention:two');
+  const batch = createMessageBatch('avalon-global-push-deliveries', ['mention:one', 'mention:two'].map(id => ({ id, body: message(id), timestamp: new Date(), attempts: 1 })));
+  const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'provider_auth_failed', reason: 'InvalidProviderToken' }));
+  await consumePushDeliveryQueue(batch, pushEnv(), send);
+  expect(send).toHaveBeenCalledOnce();
+  const result = await getQueueResult(batch, createExecutionContext());
+  expect(result.retryMessages).toEqual([{ msgId: 'mention:one' }, { msgId: 'mention:two' }]);
 });
